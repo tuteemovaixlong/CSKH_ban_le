@@ -23,6 +23,7 @@ from retailops_baseline import ModelConfig
 from agent_protocol import PROTOCOL
 from retailops_agent import AgentError, RemoteAgent, run_agent
 from retailops_tools import BoundTools
+from retailops_providers import API_MODEL, api_from_environment
 from retailops_conversation import Catalog, describe_order
 
 REASONS = {"ordered_by_mistake": "Tôi đặt nhầm", "no_longer_needed": "Tôi không còn cần"}
@@ -86,7 +87,13 @@ class BusinessStore:
                   messages TEXT NOT NULL, result TEXT NOT NULL, created_at REAL NOT NULL,
                   UNIQUE(conversation_id, request_id)
                 );
+                CREATE TABLE IF NOT EXISTS provider_daily_usage (
+                  day TEXT NOT NULL, provider_id TEXT NOT NULL, attempts INTEGER NOT NULL,
+                  PRIMARY KEY(day,provider_id)
+                );
             ''')
+            if 'provider_id' not in {row['name'] for row in db.execute('PRAGMA table_info(conversations)')}:
+                db.execute("ALTER TABLE conversations ADD COLUMN provider_id TEXT NOT NULL DEFAULT 'custom'")
 
     @contextmanager
     def connection(self, write=False):
@@ -146,13 +153,24 @@ class BusinessStore:
             row["payload"] = json.loads(row["payload"])
         return result
 
-    def new_conversation(self, customer):
+    def new_conversation(self, customer, provider_id='custom'):
         cid = str(uuid.uuid4())
         with self.connection(write=True) as db:
             db.execute('DELETE FROM conversations WHERE expires_at < ?', (time.time(),))
-            db.execute('INSERT INTO conversations(id,customer_id,expires_at) VALUES (?,?,?)',
-                       (cid, customer, time.time() + 1800))
-        return {'conversation_id': cid, 'context': {'order_id': None, 'product_id': None}}
+            db.execute('INSERT INTO conversations(id,customer_id,expires_at,provider_id) VALUES (?,?,?,?)',
+                       (cid, customer, time.time() + 1800, provider_id))
+        return {'conversation_id': cid, 'provider_id': provider_id, 'context': {'order_id': None, 'product_id': None}}
+
+    def reserve_api_attempt(self, limit):
+        # Reserve before network I/O; even failed/timed-out calls can be billable.
+        day = time.strftime('%Y-%m-%d', time.gmtime())
+        with self.connection(write=True) as db:
+            row = db.execute("SELECT attempts FROM provider_daily_usage WHERE day=? AND provider_id='api'", (day,)).fetchone()
+            require(row is None or row['attempts'] < limit, 429, 'api_daily_limit',
+                    'Demo đã hết lượt chat API hôm nay (UTC). Bạn có thể chọn custom model đang được cấu hình.')
+            db.execute("""INSERT INTO provider_daily_usage(day,provider_id,attempts) VALUES (?,'api',1)
+                ON CONFLICT(day,provider_id) DO UPDATE SET attempts=attempts+1""", (day,))
+            db.execute("DELETE FROM provider_daily_usage WHERE day < date('now','-31 days')")
 
     def conversation(self, customer, cid):
         require(isinstance(cid, str) and re.fullmatch(r'[a-f0-9-]{36}', cid),
@@ -274,10 +292,36 @@ class BusinessStore:
 
 
 class Application:
-    def __init__(self, store, tokens, infer=None):
+    def __init__(self, store, tokens, infer=None, api_infer=None, api_daily_limit=20):
         self.store, self.tokens, self.infer = store, tokens, infer
+        self.api_infer = api_infer
+        if type(api_daily_limit) is not int or not 1 <= api_daily_limit <= 10000:
+            raise ValueError('API daily turn limit must be an integer from 1 to 10000')
+        self.api_daily_limit = api_daily_limit
         self.catalog = Catalog()
         self.agent_lock = threading.Lock()
+
+    def providers(self):
+        custom_model = getattr(getattr(self.infer, 'config', None), 'model', 'qwen3.5:4b')
+        api_model = getattr(self.api_infer, 'model', API_MODEL)
+        return {'default_provider': 'custom', 'providers': [
+            {'id': 'custom', 'label': 'Custom model · Colab/Ollama', 'model': custom_model,
+             'configured': self.infer is not None, 'notice': 'Cần phiên model đang chạy. Kết nối được kiểm tra khi gửi tin.'},
+            {'id': 'api', 'label': 'API · OpenRouter', 'model': api_model,
+             'configured': self.api_infer is not None,
+             'notice': f'API tính phí theo sử dụng, tối đa {self.api_daily_limit} lần thử chat/ngày UTC cho demo. Contributor: nội dung có thể được Meta dùng để cải thiện sản phẩm. Chỉ nhập dữ liệu giả lập.',
+             'daily_turn_limit': self.api_daily_limit}]}
+
+    def new_conversation(self, customer, body):
+        require(isinstance(body, dict) and set(body) in (set(), {'provider_id'}),
+                400, 'invalid_fields', 'Chỉ chọn nguồn model đã được cấu hình.')
+        provider_id = body.get('provider_id', 'custom')
+        require(isinstance(provider_id, str) and provider_id in ('custom', 'api'),
+                400, 'invalid_provider', 'Nguồn model không hợp lệ.')
+        # Offline custom sessions still support direct business buttons. API is opt-in.
+        require(provider_id != 'api' or self.api_infer is not None, 503, 'provider_not_configured',
+                'API chưa được chủ demo cấu hình. Hãy chọn custom model.')
+        return self.store.new_conversation(customer, provider_id)
 
     def authenticate(self, header):
         token = header.removeprefix("Bearer ") if header.startswith("Bearer ") else ""
@@ -298,7 +342,9 @@ class Application:
         replay = self.store.replay(customer, snapshot['id'], request_id, digest)
         if replay:
             return replay
-        require(self.infer is not None, 503, 'model_offline',
+        provider_id = snapshot['provider_id']
+        gateway = self.infer if provider_id == 'custom' else self.api_infer if provider_id == 'api' else None
+        require(gateway is not None, 503, 'model_offline',
                 'Model chưa kết nối. Bạn vẫn có thể dùng các nút tra đơn và yêu cầu hủy.')
         require(self.agent_lock.acquire(blocking=False), 429, 'model_busy',
                 'Model đang xử lý một cuộc trò chuyện khác. Bạn thử lại sau nhé.')
@@ -307,7 +353,11 @@ class Application:
             replay = self.store.replay(customer, snapshot['id'], request_id, digest)
             if replay:
                 return replay
-            identity = self.infer.inspect()
+            if hasattr(gateway, 'for_turn'):
+                gateway = gateway.for_turn()
+            identity = {**gateway.inspect(), 'selection': provider_id}
+            if provider_id == 'api':
+                self.store.reserve_api_attempt(self.api_daily_limit)
             bound = BoundTools(self.store, self.catalog, customer, snapshot, identity)
 
             def execute(name, arguments):
@@ -319,10 +369,10 @@ class Application:
                         bound.cancel_order = None
                     return {'error': exc.code, 'message': exc.message}
 
-            answer = run_agent(self.infer, text, self.store.history(customer, snapshot['id']), execute, identity)
+            answer = run_agent(gateway, text, self.store.history(customer, snapshot['id']), execute, identity)
             result = {'action': 'choose_cancel_reason' if bound.cancel_order else 'reply',
                       'message': answer['message'], 'source': 'llm_agent', 'model_used': True,
-                      'context': bound.context, 'trace': answer['trace'], 'replayed': False}
+                      'context': bound.context, 'trace': answer['trace'], 'provider_id': provider_id, 'replayed': False}
             if bound.cancel_order:
                 result['order'] = bound.cancel_order
             self.store.finish_turn(customer, snapshot, request_id, digest, answer['messages'], result, bound.versions)
@@ -333,7 +383,7 @@ class Application:
         except (RuntimeError, ValueError, OSError):
             self.store.event(customer, 'agent_failed', code='model_unavailable')
             raise ApiError(503, 'model_unavailable',
-                           'Không kết nối được agent Colab. Kiểm tra notebook, tunnel và inference token; chat chưa thay đổi đơn.') from None
+                           'Không kết nối được nguồn model đã chọn. Kiểm tra cấu hình; hệ thống không tự chuyển model.') from None
         finally:
             self.agent_lock.release()
 
@@ -374,7 +424,7 @@ class Server(ThreadingHTTPServer):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "RetailOpsDemo/0.4"
+    server_version = "RetailOpsDemo/0.4.1"
     sys_version = ""
 
     def setup(self):
@@ -423,7 +473,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.command == "GET" and path == "/healthz":
             with app.store.connection() as db:
                 db.execute("SELECT 1 FROM orders LIMIT 1").fetchone()
-            return self.reply(200, {"status": "ok", "scope": "synthetic-demo", "version": "0.4", "agent_protocol": PROTOCOL})
+            return self.reply(200, {"status": "ok", "scope": "synthetic-demo", "version": "0.4.1", "agent_protocol": PROTOCOL})
         assets = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"),
                   "/styles.css": ("styles.css", "text/css; charset=utf-8")}
         if self.command == "GET" and path in assets:
@@ -434,7 +484,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.command == "GET":
             if path == "/api/session":
                 return self.reply(200, {"customer_id": customer, "name": "Mai Anh" if customer == "C-001" else "Khách mẫu",
-                                        "model_configured": app.infer is not None, "scope": "synthetic-demo"})
+                                        "model_configured": app.infer is not None or app.api_infer is not None, "scope": "synthetic-demo"})
+            if path == "/api/providers":
+                return self.reply(200, app.providers())
             if path == "/api/orders":
                 return self.reply(200, {"orders": app.store.orders(customer)})
             if path == "/api/events":
@@ -451,8 +503,7 @@ class Handler(BaseHTTPRequestHandler):
             require(0 < size <= 16384, 413, "body_too_large", "Yêu cầu quá lớn hoặc rỗng.")
             body = json.loads(self.rfile.read(size))
             if path == '/api/conversations':
-                fields(body, set())
-                return self.reply(201, app.store.new_conversation(customer))
+                return self.reply(201, app.new_conversation(customer, body))
             focus = re.fullmatch(r'/api/conversations/([a-f0-9-]{36})/focus', path)
             if focus:
                 return self.reply(200, app.focus(customer, focus[1], body))
@@ -482,7 +533,9 @@ def main():
                                        base_url=os.getenv('RETAILOPS_MODEL_URL', '')),
                             allowed_host=os.getenv('RETAILOPS_ALLOWED_HOST', ''),
                             token=os.getenv('RETAILOPS_INFERENCE_TOKEN', ''))
-    app = Application(store, {hashlib.sha256(token.encode()).hexdigest(): "C-001"}, infer)
+    app = Application(store, {hashlib.sha256(token.encode()).hexdigest(): 'C-001'}, infer,
+                      api_infer=api_from_environment(),
+                      api_daily_limit=int(os.getenv('RETAILOPS_API_DAILY_TURN_LIMIT', '20')))
     address = (os.getenv("RETAILOPS_API_BIND", "127.0.0.1"), int(os.getenv("RETAILOPS_API_PORT", "8000")))
     print("RetailOps synthetic API started; model configured:", infer is not None, flush=True)
     with Server(address, app) as server:

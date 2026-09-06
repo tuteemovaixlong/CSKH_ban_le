@@ -21,6 +21,7 @@ jobs:
         run: |
           python3 scripts/build_agent_notebook.py --check
           node --check web/app.js
+          node tests/test_provider_selector.js
       - name: Unit and HTTP contract tests (no model, no secrets)
         run: python3 -m unittest discover -s tests -v
       - name: Build CPU-only baseline image

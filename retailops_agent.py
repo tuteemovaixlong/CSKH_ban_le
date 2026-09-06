@@ -58,7 +58,9 @@ def run_agent(gateway, text, history, execute, identity, timeout=110):
     messages = list(history) + [{'role': 'user', 'content': text}]
     fresh = [messages[-1]]
     trace = {'turn_id': str(uuid.uuid4()), 'protocol': PROTOCOL, 'model': identity['name'],
-             'model_digest': identity['digest'], 'ollama_version': identity.get('ollama_version'),
+             'provider': identity.get('provider', 'custom'),
+             'model_digest': identity.get('digest'), 'ollama_version': identity.get('ollama_version'),
+             'reported_cost_usd': 0.0 if identity.get('provider') == 'openrouter' else None,
              'model_calls': 0, 'prompt_tokens': 0, 'generated_tokens': 0, 'tools': [], 'steps': []}
     tool_count = 0
     for step in range(MAX_MODEL_CALLS):
@@ -71,9 +73,16 @@ def run_agent(gateway, text, history, execute, identity, timeout=110):
             response = gateway.chat(messages, allow_tools, max(1, min(30, int(deadline-time.monotonic()))))
             trace['prompt_tokens'] += response.get('prompt_eval_count') or 0
             trace['generated_tokens'] += response.get('eval_count') or 0
+            if trace['reported_cost_usd'] is not None:
+                cost = response.get('reported_cost_usd')
+                trace['reported_cost_usd'] = round(trace['reported_cost_usd'] + cost, 8) if cost is not None else None
             trace['steps'].append({k: response.get(k) for k in ('load_duration', 'prompt_eval_duration', 'eval_duration')})
             message = assistant_message(response)
+        except AgentError as exc:
+            trace['reported_cost_usd'] = None  # A failed request may still have been billed.
+            raise AgentError(exc.code, str(exc), trace) from None
         except (RuntimeError, ValueError, OSError, KeyError, TypeError) as exc:
+            trace['reported_cost_usd'] = None
             # Never echo upstream bodies, URLs or tokens.
             raise AgentError('agent_response_failed', 'Không nhận được câu trả lời hợp lệ từ model. Chat chưa thực hiện thay đổi đơn.', trace) from None
         messages.append(message); fresh.append(message)

@@ -25,7 +25,7 @@ def cell(kind, source, identity):
 
 def build():
     names = ['retailops_baseline.py', 'inference_proxy.py', 'retailops_agent.py', 'agent_protocol.py',
-             'retailops_api.py', 'retailops_tools.py', 'retailops_conversation.py', 'data/products.json',
+             'retailops_api.py', 'retailops_providers.py', 'retailops_tools.py', 'retailops_conversation.py', 'data/products.json',
              'data/smoke.jsonl', 'notebooks/agent_smoke.py', 'notebooks/colab_runtime.py']
     names += [p.relative_to(ROOT).as_posix() for p in sorted((ROOT/'tests').glob('*.py'))]
     names += [p.relative_to(ROOT).as_posix() for p in sorted((ROOT/'web').glob('*')) if p.is_file()]
@@ -50,7 +50,7 @@ for _name, _source in _sources.items():
         raise RuntimeError('Invalid embedded source path')
     _dest.parent.mkdir(parents=True, exist_ok=True)
     _dest.write_text(_source, encoding='utf-8')
-for _name in ('agent_protocol', 'retailops_agent', 'retailops_tools', 'retailops_api', 'retailops_conversation', 'retailops_baseline', 'inference_proxy'):
+for _name in ('agent_protocol', 'retailops_agent', 'retailops_tools', 'retailops_providers', 'retailops_api', 'retailops_conversation', 'retailops_baseline', 'inference_proxy'):
     sys.modules.pop(_name, None)
 if str(BASE) in sys.path: sys.path.remove(str(BASE))
 sys.path.insert(0, str(BASE))

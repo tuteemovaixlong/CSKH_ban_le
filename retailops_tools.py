@@ -64,7 +64,7 @@ class BoundTools:
                     'next_step': 'User must select a reason and press the separate confirmation button.' if eligible
                     else 'Order cannot be cancelled in its current state.'}
         if name == 'get_runtime_info':
-            return {k: self.identity.get(k) for k in ('name', 'digest', 'details', 'ollama_version', 'agent_protocol')}
+            return {k: self.identity.get(k) for k in ('name', 'digest', 'details', 'ollama_version', 'agent_protocol', 'provider', 'identity_source')}
         if name == 'get_current_time':
             now = datetime.now(timezone(timedelta(hours=7)))
             return {'date': now.date().isoformat(), 'time': now.isoformat(timespec='seconds'),

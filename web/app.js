@@ -7,16 +7,41 @@ const statuses = {pending: 'Chờ xử lý', delivered: 'Đã giao', cancelled: 
 const reasons = {ordered_by_mistake: 'Tôi đặt nhầm', no_longer_needed: 'Tôi không còn cần'};
 const money = value => new Intl.NumberFormat('vi-VN', {style: 'currency', currency: 'VND'}).format(value);
 let token = '', orders = [], selected = 'O-101', pending = null, busy = false, conversationId = null;
-const sourceLabels = {interface: 'Hướng dẫn giao diện', store_data: 'Dữ liệu đơn hàng', llm_agent: 'Qwen · Hội thoại'};
+let providerId = 'custom', providerOptions = [];
+const sourceLabels = {interface: 'Hướng dẫn giao diện', store_data: 'Dữ liệu đơn hàng', llm_agent: 'Hội thoại model'};
 function showContext(context) {
   byId('conversation-context').textContent = context?.order_id ? 'Đang trao đổi: ' + context.order_id
     : context?.product_id ? 'Đang trao đổi: sản phẩm ' + context.product_id : 'Chưa chọn đơn hoặc sản phẩm';
 }
-async function newConversation() {
-  if (pending) { message('Bạn xử lý đề xuất đang chờ xác nhận trước khi mở cuộc trò chuyện mới nhé.'); return; }
-  const result = await api('/api/conversations', {}); conversationId = result.conversation_id;
-  showContext(result.context); byId('messages').replaceChildren();
-  message('Phiên mới đã sẵn sàng. Gửi câu hỏi để trò chuyện với Qwen; bạn cũng có thể chọn đơn bên phải.', 'assistant', 'interface');
+function selectedProvider() {
+  return providerOptions.find(p => p.id === providerId);
+}
+function renderProvider() {
+  const select = byId('model-provider'); select.replaceChildren();
+  for (const provider of providerOptions) {
+    const option = el('option', '', provider.label + (provider.configured ? '' : ' — Chưa cấu hình'));
+    option.value = provider.id; option.disabled = !provider.configured;
+    select.append(option);
+  }
+  select.value = providerId;
+  const provider = selectedProvider();
+  byId('provider-detail').textContent = provider ? provider.model + ' · ' +
+    (provider.configured ? 'Đã cấu hình; gửi tin để kiểm tra kết nối.' : 'Nguồn model chưa được bật.') : '';
+  byId('provider-notice').textContent = provider?.notice || '';
+  document.querySelector('.model-status strong').textContent = provider?.configured ? 'Đã chọn nguồn model' : 'Model chưa sẵn sàng';
+  document.querySelector('.model-status div span').textContent = provider?.label || 'Có thể dùng các nút tra đơn';
+}
+async function newConversation(nextProvider = providerId) {
+  if (pending) {
+    byId('model-provider').value = providerId;
+    message('Bạn xử lý đề xuất đang chờ xác nhận trước khi đổi nguồn hoặc mở cuộc trò chuyện mới nhé.', 'assistant', 'interface');
+    return;
+  }
+  const result = await api('/api/conversations', {provider_id: nextProvider});
+  conversationId = result.conversation_id; providerId = result.provider_id;
+  renderProvider(); showContext(result.context); byId('messages').replaceChildren();
+  message('Phiên mới dùng ' + (selectedProvider()?.model || 'model đã chọn') +
+    '. Gửi câu hỏi hoặc chọn đơn bên phải. Khi đổi nguồn, lịch sử bắt đầu lại; trạng thái đơn được giữ.', 'assistant', 'interface');
 }
 const lockPage = locked => {
   byId('login-shell').hidden = !locked;
@@ -40,10 +65,10 @@ async function api(path, body, extra = {}) {
   return result;
 }
 
-function message(text, role = 'assistant', source = null) {
+function message(text, role = 'assistant', source = null, model = null) {
   const row = el('div', 'message ' + role), label = el('div', 'message-label');
   label.append(el('span', role === 'assistant' ? 'mini-r' : '', role === 'assistant' ? 'R' : ''));
-  label.append(document.createTextNode(role === 'user' ? 'Bạn' : 'RetailOps' + (source ? ' · ' + sourceLabels[source] : '')));
+  label.append(document.createTextNode(role === 'user' ? 'Bạn' : 'RetailOps' + (source ? ' · ' + sourceLabels[source] : '') + (model ? ' · ' + model : '')));
   row.append(label, el('div', 'bubble', text)); byId('messages').append(row);
   requestAnimationFrame(() => { byId('messages').scrollTop = byId('messages').scrollHeight; });
   return row;
@@ -52,7 +77,7 @@ function message(text, role = 'assistant', source = null) {
 async function act(callback) {
   if (busy) return;
   busy = true;
-  document.querySelectorAll('button').forEach(b => { if (!b.disabled) { b.dataset.busyDisabled = 'true'; b.disabled = true; } });
+  document.querySelectorAll('button, #model-provider').forEach(b => { if (!b.disabled) { b.dataset.busyDisabled = 'true'; b.disabled = true; } });
   try { await callback(); }
   catch (error) { message(error.message || 'Mất kết nối. Tải lại trạng thái trước khi thử tiếp.'); }
   finally {
@@ -76,7 +101,7 @@ function renderOrder() {
   const cancel = el('button', 'order-action', 'Yêu cầu hủy đơn này'); cancel.onclick = () => act(() => chooseReason(order.id)); area.append(cancel);
 }
 
-const eventLabels = {order_viewed: 'Tra cứu đơn', cancellation_proposed: 'Tạo đề xuất hủy', order_cancelled: 'Đã xác nhận hủy', proposal_dismissed: 'Bỏ đề xuất', model_extraction: 'Model phân tích yêu cầu', model_unavailable: 'Không kết nối được model', chat_replied: 'Trả lời hội thoại', agent_replied: 'Qwen trả lời', agent_failed: 'Lượt chat chưa hoàn tất'};
+const eventLabels = {order_viewed: 'Tra cứu đơn', cancellation_proposed: 'Tạo đề xuất hủy', order_cancelled: 'Đã xác nhận hủy', proposal_dismissed: 'Bỏ đề xuất', model_extraction: 'Model phân tích yêu cầu', model_unavailable: 'Không kết nối được model', chat_replied: 'Trả lời hội thoại', agent_replied: 'Model trả lời', agent_failed: 'Lượt chat chưa hoàn tất'};
 async function refresh() {
   const [data, history] = await Promise.all([api('/api/orders'), api('/api/events')]); orders = data.orders;
   if (!orders.some(o => o.id === selected)) selected = orders[0]?.id;
@@ -148,7 +173,11 @@ function showTrace(row, trace, replayed = false) {
   details.append(el('p', '', trace.model + ' · ' + trace.model_calls + ' lượt gọi model' +
     (trace.latency_ms !== undefined ? ' · ' + (trace.latency_ms / 1000).toFixed(2) + ' giây' : '')),
     el('p', '', 'Công cụ: ' + (names.join(' → ') || 'Không dùng công cụ ở lượt này')),
-    el('small', '', 'Mã lượt: ' + trace.turn_id + ' · Digest: ' + trace.model_digest));
+    el('small', '', 'Mã lượt: ' + trace.turn_id + (trace.model_digest ? ' · Digest: ' + trace.model_digest : ' · API không cung cấp digest trọng số')));
+  if (trace.provider) details.append(el('small', '', 'Nguồn: ' + trace.provider));
+  if (trace.reported_cost_usd !== null && trace.reported_cost_usd !== undefined) {
+    details.append(el('small', '', 'Chi phí lượt này do API báo: $' + trace.reported_cost_usd.toFixed(6)));
+  }
   row.append(details);
 }
 
@@ -157,7 +186,7 @@ async function send(text, requestId = crypto.randomUUID(), retry = false) {
   if (!retry) message(text, 'user');
   byId('message').value = '';
   const status = document.querySelector('.model-status');
-  status.querySelector('strong').textContent = 'Qwen đang xử lý…';
+  status.querySelector('strong').textContent = 'Model đang xử lý…';
   status.querySelector('div span').textContent = 'Đang đọc hội thoại và gọi công cụ khi cần';
   byId('messages').setAttribute('aria-busy', 'true');
   let result;
@@ -177,12 +206,12 @@ async function send(text, requestId = crypto.randomUUID(), retry = false) {
     status.querySelector('div span').textContent = 'Có thể thử lại hoặc dùng các nút thao tác';
     return;
   } finally { byId('messages').removeAttribute('aria-busy'); }
-  const row = message(result.message, 'assistant', result.source);
+  const row = message(result.message, 'assistant', result.source, result.trace?.model);
   showTrace(row, result.trace, result.replayed);
   if (result.replayed) {
     row.append(el('small', 'replay-note', 'Đây là câu trả lời đã lưu của lần gửi trước. Bảng đơn bên phải hiển thị trạng thái hiện tại.'));
   } else { showContext(result.context); }
-  status.querySelector('strong').textContent = 'Qwen vừa phản hồi';
+  status.querySelector('strong').textContent = 'Model vừa phản hồi';
   status.querySelector('div span').textContent = 'Xem công cụ và thời gian bên dưới câu trả lời';
   if (result.action === 'choose_cancel_reason') await chooseReason(result.order.id);
   else await refresh();
@@ -192,10 +221,10 @@ byId('login-form').onsubmit = async event => {
   event.preventDefault(); token = byId('demo-token').value.trim(); byId('login-error').textContent = '';
   const button = event.currentTarget.querySelector('button'); button.disabled = true;
   try {
-    const session = await api('/api/session'); await refresh();
+    await api('/api/session');
+    const choices = await api('/api/providers'); providerOptions = choices.providers; providerId = choices.default_provider;
+    await refresh();
     byId('demo-token').value = ''; lockPage(false); byId('messages').replaceChildren();
-    document.querySelector('.model-status strong').textContent = session.model_configured ? 'Đã cấu hình model' : 'Model chưa kết nối';
-    document.querySelector('.model-status div span').textContent = session.model_configured ? 'Gửi câu chat để kiểm tra kết nối' : 'Tra đơn bằng nút vẫn hoạt động';
     await newConversation();
   } catch (error) { token = ''; byId('login-error').textContent = error.message; }
   finally { button.disabled = false; }
@@ -206,7 +235,15 @@ byId('message').onkeydown = event => { if (event.key === 'Enter' && !event.shift
 document.querySelectorAll('[data-prompt]').forEach(b => { b.onclick = () => act(() => send(b.dataset.prompt)); });
 document.querySelectorAll('[data-order]').forEach(b => { b.onclick = () => act(() => lookupOrder(b.dataset.order)); });
 byId('reset').onclick = () => act(async () => { await refresh(); message('Đã tải lại dữ liệu từ máy chủ.'); });
-byId('new-conversation').onclick = () => act(newConversation);
+byId('new-conversation').onclick = () => act(() => newConversation());
+byId('model-provider').onchange = () => {
+  const requested = byId('model-provider').value;
+  if (busy) { byId('model-provider').value = providerId; return; }
+  act(async () => {
+    try { await newConversation(requested); }
+    finally { byId('model-provider').value = providerId; }
+  });
+};
 byId('about').onclick = () => byId('about-dialog').showModal(); byId('close-about').onclick = () => byId('about-dialog').close();
 byId('approve-confirm').onclick = () => act(confirm); byId('dismiss-confirm').onclick = () => act(dismiss);
 byId('confirm-dialog').oncancel = event => { event.preventDefault(); act(dismiss); };
