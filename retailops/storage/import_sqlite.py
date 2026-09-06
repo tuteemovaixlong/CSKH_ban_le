@@ -29,7 +29,8 @@ def read_database(path, component, tables):
             db.row_factory = sqlite3.Row
             db.execute('BEGIN')
             marker = [dict(row) for row in db.execute('SELECT component,version FROM retailops_schema')]
-            if marker not in ([{'component': component, 'version': 1}], [{'component': 'business', 'version': 2}] if component == 'business' else []):
+            allowed_versions = (1, 2) if component == 'business' else (1,)
+            if len(marker) != 1 or marker[0]['component'] != component or marker[0]['version'] not in allowed_versions:
                 raise ValueError('Import requires identity v1 and business v1/v2 in a stopped persistent SQLite snapshot.')
             if db.execute('PRAGMA integrity_check').fetchone()[0] != 'ok' or db.execute('PRAGMA foreign_key_check').fetchall():
                 raise ValueError('SQLite snapshot failed integrity checks.')

@@ -1,11 +1,7 @@
-"""Bounded native tool-calling loop; no business writes or text routing rules."""
-import json
-import time
-import uuid
+"""Model gateway adapters and compatibility entrypoint for the bounded graph."""
 from dataclasses import replace
 
-from agent_protocol import (MAX_MODEL_CALLS, MAX_TOOL_CALLS, PROTOCOL, ProtocolError,
-                            assistant_message, build_request, validate_messages, validate_tool)
+from agent_protocol import PROTOCOL, build_request
 from retailops_baseline import LocalOllama, RemoteOllama
 
 

@@ -65,6 +65,15 @@ class MigrationTests(unittest.TestCase):
                 self.assertEqual(db.execute('SELECT version FROM retailops_schema').fetchone()[0], 2)
                 self.assertEqual(db.execute('SELECT count(*) FROM graph_runs').fetchone()[0], 0)
 
+    def test_import_rejects_missing_identity_version_marker(self):
+        from retailops.storage.import_sqlite import read_database, IDENTITY_TABLES
+        path = self.path.with_name('identity.sqlite3')
+        IdentityStore(path)
+        with sqlite3.connect(path) as db:
+            db.execute('DELETE FROM retailops_schema')
+        with self.assertRaisesRegex(ValueError, 'identity v1'):
+            read_database(path, 'identity', IDENTITY_TABLES)
+
     def test_failed_migration_rolls_back_ddl_and_version_marker(self):
         def fail(db):
             db.execute('CREATE TABLE partial_write(id TEXT)')
