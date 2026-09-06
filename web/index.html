@@ -32,7 +32,7 @@
 
   <main>
     <header class="topbar"><div class="breadcrumb">RetailOps <span>/</span> <strong>Hỗ trợ đơn hàng</strong></div><span class="demo-badge">DEMO · DỮ LIỆU GIẢ LẬP</span></header>
-    <section class="page-heading"><div><div class="eyebrow">XIN CHÀO, MAI ANH</div><h1>Hỗ trợ đơn hàng</h1><p>Tra cứu và thử xử lý yêu cầu ngay trong cuộc trò chuyện.</p></div><div class="model-status"><span class="status-indicator"></span><div><strong>Model chưa kết nối</strong><span>Tra đơn và danh mục vẫn hoạt động</span></div></div></section>
+    <section class="page-heading"><div><div class="eyebrow">XIN CHÀO, MAI ANH</div><h1>Hỗ trợ đơn hàng</h1><p>Tra cứu và thử xử lý yêu cầu ngay trong cuộc trò chuyện.</p></div><div class="model-status"><span class="status-indicator"></span><div><strong>Model chưa kết nối</strong><span>Các nút tra đơn vẫn hoạt động</span></div></div></section>
     <div class="workspace">
       <section class="chat-panel" aria-labelledby="chat-title">
         <div class="panel-heading"><div class="agent-avatar" aria-hidden="true">R</div><div><h2 id="chat-title">Trợ lý RetailOps</h2><span>Tra đơn · Thông tin sản phẩm · Yêu cầu hủy</span></div><span class="session-pill">Phiên thử</span></div>
@@ -46,10 +46,10 @@
         <div class="scope-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4v5c0 5-8 9-8 9s-8-4-8-9V7l8-4Z"/><path d="m8 12 3 3 5-6"/></svg><p>Trạng thái và nhật ký được lưu tại backend. Tải lại trang không khôi phục đơn đã hủy.</p></div>
       </aside>
     </div>
-    <footer>RetailOps <span>Phiên bản hội thoại 0.3</span></footer>
+    <footer>RetailOps <span>Phiên bản hội thoại 0.4</span></footer>
   </main>
 
   <dialog id="confirm-dialog" aria-labelledby="confirm-title"><div class="dialog-inner"><span class="small-tag">XÁC NHẬN THAO TÁC MẪU</span><h2 id="confirm-title">Hủy đơn O-101?</h2><p id="confirm-description"></p><div class="confirm-detail"><span>Lý do</span><strong id="confirm-reason"></strong></div><p class="dialog-note">Thao tác sẽ cập nhật đơn giả lập tại backend và lưu nhật ký. Không có giao dịch cửa hàng thật.</p><div class="dialog-actions"><button class="secondary" id="dismiss-confirm">Giữ đơn hàng</button><button class="primary" id="approve-confirm">Xác nhận hủy đơn mẫu</button></div></div></dialog>
-  <dialog id="about-dialog" aria-labelledby="about-title"><div class="dialog-inner"><span class="small-tag">RETAILOPS DEMO</span><h2 id="about-title">Luồng nghiệp vụ có lưu dữ liệu</h2><p>Bạn có thể tra hai đơn mẫu, chọn lý do hủy, xác nhận hoặc giữ đơn. Trạng thái đơn và nhật ký được lưu tại backend.</p><p>Lời chào, thông tin đơn và sản phẩm được trả lời bằng quy tắc cùng dữ liệu cửa hàng. Một số yêu cầu nghiệp vụ vẫn dùng model để nhận diện ý định. Nguồn trả lời được ghi ở từng tin nhắn; model không tự thực hiện hủy đơn.</p><p>Mỗi lần đăng nhập tạo một cuộc trò chuyện riêng. Ngữ cảnh hết hạn sau 30 phút không sử dụng. Bấm Cuộc trò chuyện mới để bỏ ngữ cảnh; trạng thái đơn và nhật ký vẫn được giữ.</p><button class="primary" id="close-about">Bắt đầu thử</button></div></dialog>
+  <dialog id="about-dialog" aria-labelledby="about-title"><div class="dialog-inner"><span class="small-tag">RETAILOPS DEMO</span><h2 id="about-title">Luồng nghiệp vụ có lưu dữ liệu</h2><p>Bạn có thể tra hai đơn mẫu, chọn lý do hủy, xác nhận hoặc giữ đơn. Trạng thái đơn và nhật ký được lưu tại backend.</p><p>Qwen đọc lịch sử gần đây, chọn công cụ tra dữ liệu rồi viết câu trả lời. Chi tiết mỗi lượt cho biết model và công cụ đã dùng. Các nút tra đơn đọc trực tiếp từ backend. Hủy đơn luôn cần bạn chọn lý do và bấm xác nhận riêng.</p><p>Mỗi lần đăng nhập tạo một cuộc trò chuyện riêng. Lịch sử gửi cho model được giới hạn theo độ dài và tối đa 6 lượt gần đây. Ngữ cảnh hết hạn sau 30 phút không sử dụng. Chỉ nhập dữ liệu giả lập, không nhập thông tin cá nhân hoặc mã bí mật. Bấm Cuộc trò chuyện mới để bỏ ngữ cảnh; trạng thái đơn và nhật ký vẫn được giữ.</p><button class="primary" id="close-about">Bắt đầu thử</button></div></dialog>
 </body>
 </html>

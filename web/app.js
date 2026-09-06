@@ -7,7 +7,7 @@ const statuses = {pending: 'Chờ xử lý', delivered: 'Đã giao', cancelled: 
 const reasons = {ordered_by_mistake: 'Tôi đặt nhầm', no_longer_needed: 'Tôi không còn cần'};
 const money = value => new Intl.NumberFormat('vi-VN', {style: 'currency', currency: 'VND'}).format(value);
 let token = '', orders = [], selected = 'O-101', pending = null, busy = false, conversationId = null;
-const sourceLabels = {assistant_rules: 'Hướng dẫn hỗ trợ', store_data: 'Dữ liệu đơn hàng', catalog: 'Danh mục sản phẩm mẫu', model_and_store: 'Model nhận diện · Backend trả lời'};
+const sourceLabels = {interface: 'Hướng dẫn giao diện', store_data: 'Dữ liệu đơn hàng', llm_agent: 'Qwen · Hội thoại'};
 function showContext(context) {
   byId('conversation-context').textContent = context?.order_id ? 'Đang trao đổi: ' + context.order_id
     : context?.product_id ? 'Đang trao đổi: sản phẩm ' + context.product_id : 'Chưa chọn đơn hoặc sản phẩm';
@@ -16,7 +16,7 @@ async function newConversation() {
   if (pending) { message('Bạn xử lý đề xuất đang chờ xác nhận trước khi mở cuộc trò chuyện mới nhé.'); return; }
   const result = await api('/api/conversations', {}); conversationId = result.conversation_id;
   showContext(result.context); byId('messages').replaceChildren();
-  message('Chào bạn! Mình có thể tra đầy đủ thông tin đơn, giải thích sản phẩm trong danh mục và hỗ trợ yêu cầu hủy. Bạn muốn xem mục nào?', 'assistant', 'assistant_rules');
+  message('Phiên mới đã sẵn sàng. Gửi câu hỏi để trò chuyện với Qwen; bạn cũng có thể chọn đơn bên phải.', 'assistant', 'interface');
 }
 const lockPage = locked => {
   byId('login-shell').hidden = !locked;
@@ -29,12 +29,13 @@ async function api(path, body, extra = {}) {
     method: body === undefined ? 'GET' : 'POST',
     headers: {Authorization: 'Bearer ' + token, ...(body === undefined ? {} : {'Content-Type': 'application/json'}), ...extra},
     body: body === undefined ? undefined : JSON.stringify(body),
-    credentials: 'omit', cache: 'no-store', signal: AbortSignal.timeout(90000),
+    credentials: 'omit', cache: 'no-store', signal: AbortSignal.timeout(150000),
   });
   const result = await response.json();
   if (!response.ok) {
     if (response.status === 401) lockPage(true);
-    throw new Error(result.message || 'Không hoàn tất yêu cầu.');
+    const error = new Error(result.message || 'Không hoàn tất yêu cầu.');
+    error.trace = result.trace; throw error;
   }
   return result;
 }
@@ -75,7 +76,7 @@ function renderOrder() {
   const cancel = el('button', 'order-action', 'Yêu cầu hủy đơn này'); cancel.onclick = () => act(() => chooseReason(order.id)); area.append(cancel);
 }
 
-const eventLabels = {order_viewed: 'Tra cứu đơn', cancellation_proposed: 'Tạo đề xuất hủy', order_cancelled: 'Đã xác nhận hủy', proposal_dismissed: 'Bỏ đề xuất', model_extraction: 'Model phân tích yêu cầu', model_unavailable: 'Không kết nối được model', chat_replied: 'Trả lời hội thoại'};
+const eventLabels = {order_viewed: 'Tra cứu đơn', cancellation_proposed: 'Tạo đề xuất hủy', order_cancelled: 'Đã xác nhận hủy', proposal_dismissed: 'Bỏ đề xuất', model_extraction: 'Model phân tích yêu cầu', model_unavailable: 'Không kết nối được model', chat_replied: 'Trả lời hội thoại', agent_replied: 'Qwen trả lời', agent_failed: 'Lượt chat chưa hoàn tất'};
 async function refresh() {
   const [data, history] = await Promise.all([api('/api/orders'), api('/api/events')]); orders = data.orders;
   if (!orders.some(o => o.id === selected)) selected = orders[0]?.id;
@@ -139,23 +140,52 @@ async function dismiss() {
   } catch (error) { byId('confirm-error').textContent = error.message; }
 }
 
-async function send(text) {
+function showTrace(row, trace, replayed = false) {
+  if (!trace) return;
+  const details = el('details', 'agent-trace');
+  details.append(el('summary', '', 'Chi tiết lượt trả lời' + (replayed ? ' · Kết quả đã lưu' : '')));
+  const names = trace.tools.map(t => t.name + (t.status === 'error' ? ' (bị từ chối / lỗi)' : ''));
+  details.append(el('p', '', trace.model + ' · ' + trace.model_calls + ' lượt gọi model' +
+    (trace.latency_ms !== undefined ? ' · ' + (trace.latency_ms / 1000).toFixed(2) + ' giây' : '')),
+    el('p', '', 'Công cụ: ' + (names.join(' → ') || 'Không dùng công cụ ở lượt này')),
+    el('small', '', 'Mã lượt: ' + trace.turn_id + ' · Digest: ' + trace.model_digest));
+  row.append(details);
+}
+
+async function send(text, requestId = crypto.randomUUID(), retry = false) {
   text = text.trim(); if (!text) return;
-  message(text, 'user'); byId('message').value = '';
+  if (!retry) message(text, 'user');
+  byId('message').value = '';
   const status = document.querySelector('.model-status');
+  status.querySelector('strong').textContent = 'Qwen đang xử lý…';
+  status.querySelector('div span').textContent = 'Đang đọc hội thoại và gọi công cụ khi cần';
+  byId('messages').setAttribute('aria-busy', 'true');
+  let result;
   try {
-    const result = await api('/api/chat', {text, conversation_id: conversationId}); message(result.message, 'assistant', result.source);
-    showContext(result.context);
-    if (result.model_used) {
-      status.querySelector('strong').textContent = 'Model vừa phản hồi'; status.querySelector('div span').textContent = 'Qwen nhận diện · Backend kiểm tra';
-    }
-    if (result.order) selected = result.order.id;
-    if (result.action === 'choose_cancel_reason') await chooseReason(result.order.id);
-    else await refresh();
+    result = await api('/api/chat', {text, conversation_id: conversationId, request_id: requestId});
   } catch (error) {
-    showContext(null);
-    status.querySelector('strong').textContent = 'Chat chưa hoàn tất'; status.querySelector('div span').textContent = 'Có thể dùng các nút tra / hủy đơn'; throw error;
-  }
+    const row = message(error.message || 'Mất kết nối trong lúc chờ model.', 'assistant', 'interface');
+    showTrace(row, error.trace);
+    const retryButton = el('button', 'order-action', 'Thử lại tin nhắn này');
+    const originalConversation = conversationId;
+    retryButton.onclick = () => act(async () => {
+      if (conversationId !== originalConversation) return;
+      retryButton.remove(); await send(text, requestId, true);
+    });
+    row.append(retryButton);
+    status.querySelector('strong').textContent = 'Chat chưa hoàn tất';
+    status.querySelector('div span').textContent = 'Có thể thử lại hoặc dùng các nút thao tác';
+    return;
+  } finally { byId('messages').removeAttribute('aria-busy'); }
+  const row = message(result.message, 'assistant', result.source);
+  showTrace(row, result.trace, result.replayed);
+  if (result.replayed) {
+    row.append(el('small', 'replay-note', 'Đây là câu trả lời đã lưu của lần gửi trước. Bảng đơn bên phải hiển thị trạng thái hiện tại.'));
+  } else { showContext(result.context); }
+  status.querySelector('strong').textContent = 'Qwen vừa phản hồi';
+  status.querySelector('div span').textContent = 'Xem công cụ và thời gian bên dưới câu trả lời';
+  if (result.action === 'choose_cancel_reason') await chooseReason(result.order.id);
+  else await refresh();
 }
 
 byId('login-form').onsubmit = async event => {

@@ -13,3 +13,6 @@
 !data/smoke.jsonl
 !data/products.json
 !Dockerfile
+!retailops_agent.py
+!retailops_tools.py
+!agent_protocol.py

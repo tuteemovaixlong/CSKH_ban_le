@@ -1,6 +1,6 @@
 """Private, synthetic RetailOps API. Serve only through the documented SSM tunnel.
 
-The model extracts intent. Only an authenticated, explicit confirmation changes
+The model chats through read-only tools. Only an authenticated, explicit confirmation changes
 an order. This standard-library server is a single-instance demo, not public hosting.
 """
 from __future__ import annotations
@@ -19,8 +19,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from retailops_baseline import ModelConfig, RemoteOllama, Runner, Store
-from retailops_conversation import Catalog, describe_order, matches, normalize, route
+from retailops_baseline import ModelConfig
+from agent_protocol import PROTOCOL
+from retailops_agent import AgentError, RemoteAgent, run_agent
+from retailops_tools import BoundTools
+from retailops_conversation import Catalog, describe_order
 
 REASONS = {"ordered_by_mistake": "Tôi đặt nhầm", "no_longer_needed": "Tôi không còn cần"}
 ROOT = Path(__file__).resolve().parent
@@ -28,8 +31,9 @@ STATUSES = {"pending": "Chờ xử lý", "delivered": "Đã giao", "cancelled": 
 
 
 class ApiError(Exception):
-    def __init__(self, status, code, message):
+    def __init__(self, status, code, message, trace=None):
         self.status, self.code, self.message = status, code, message
+        self.trace = trace
         super().__init__(message)
 
 
@@ -74,6 +78,13 @@ class BusinessStore:
                   id TEXT PRIMARY KEY, customer_id TEXT NOT NULL,
                   order_id TEXT, product_id TEXT,
                   revision INTEGER NOT NULL DEFAULT 0, expires_at REAL NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS agent_turns (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                  customer_id TEXT NOT NULL, request_id TEXT NOT NULL, input_hash TEXT NOT NULL,
+                  messages TEXT NOT NULL, result TEXT NOT NULL, created_at REAL NOT NULL,
+                  UNIQUE(conversation_id, request_id)
                 );
             ''')
 
@@ -163,6 +174,51 @@ class BusinessStore:
                 (oid, pid, time.time()+1800, snapshot['id'], customer, snapshot['revision'], time.time())).rowcount
             require(updated == 1, 409, 'conversation_changed', 'Ngữ cảnh đã thay đổi hoặc hết hạn. Hãy gửi lại yêu cầu trong cuộc trò chuyện hiện tại.')
 
+    def replay(self, customer, cid, request_id, digest):
+        with self.connection() as db:
+            row = db.execute('''SELECT input_hash,result FROM agent_turns
+                WHERE conversation_id=? AND customer_id=? AND request_id=?''',
+                (cid, customer, request_id)).fetchone()
+        if row:
+            require(row['input_hash'] == digest, 409, 'request_conflict', 'Mã yêu cầu đã dùng cho nội dung khác.')
+            result = json.loads(row['result'])
+            # The answer is explicitly an old result. Never reopen a stale cancel card.
+            return {**result, 'replayed': True, 'action': 'reply'}
+        return None
+
+    def history(self, customer, cid):
+        with self.connection() as db:
+            rows = db.execute('''SELECT messages FROM agent_turns WHERE conversation_id=? AND customer_id=?
+                ORDER BY id DESC LIMIT 6''', (cid, customer)).fetchall()
+        turns, characters, count = [], 0, 0
+        for row in rows:
+            messages = json.loads(row['messages'])
+            size = sum(len(m.get('content', '')) + len(json.dumps(m.get('tool_calls', []), ensure_ascii=False)) for m in messages)
+            if characters + size > 4500 or count + len(messages) > 16:
+                break  # Keep whole contiguous turns, never orphan tool calls/results.
+            characters += size; count += len(messages); turns.append(messages)
+        return [m for turn in reversed(turns) for m in turn]
+
+    def finish_turn(self, customer, snapshot, request_id, digest, messages, result, versions):
+        with self.connection(write=True) as db:
+            for oid, version in versions.items():
+                require(self.owned(db, customer, oid)['version'] == version, 409, 'order_changed_during_chat',
+                        'Đơn đã thay đổi trong lúc model trả lời. Hãy gửi lại để đọc trạng thái mới.')
+            context = result['context']
+            updated = db.execute('''UPDATE conversations SET order_id=?,product_id=?,revision=revision+1,expires_at=?
+                WHERE id=? AND customer_id=? AND revision=? AND expires_at>?''',
+                (context['order_id'], context['product_id'], time.time()+1800, snapshot['id'], customer,
+                 snapshot['revision'], time.time())).rowcount
+            require(updated == 1, 409, 'conversation_changed', 'Ngữ cảnh đã thay đổi hoặc hết hạn. Hãy gửi lại trong cuộc trò chuyện hiện tại.')
+            db.execute('''INSERT INTO agent_turns(conversation_id,customer_id,request_id,input_hash,messages,result,created_at)
+                VALUES (?,?,?,?,?,?,?)''', (snapshot['id'], customer, request_id, digest,
+                json.dumps(messages, ensure_ascii=False), json.dumps(result, ensure_ascii=False), time.time()))
+            # Transcript retention is bounded; expired conversations are removed on next creation.
+            db.execute('''DELETE FROM agent_turns WHERE conversation_id=? AND id NOT IN
+                (SELECT id FROM agent_turns WHERE conversation_id=? ORDER BY id DESC LIMIT 6)''',
+                (snapshot['id'], snapshot['id']))
+            self.log(db, customer, 'agent_replied', context['order_id'], trace=result['trace'])
+
     def propose(self, customer, body):
         fields(body, {"order_id", "order_version", "cancel_reason"})
         oid, version, reason = body["order_id"], body["order_version"], body["cancel_reason"]
@@ -217,31 +273,11 @@ class BusinessStore:
         return {"message": "Đã bỏ đề xuất. Trạng thái đơn được giữ nguyên."}
 
 
-class ModelInference:
-    def __init__(self, output):
-        self.output = Path(output)
-        self.lock = threading.Lock()
-
-    def __call__(self, text):
-        require(self.lock.acquire(blocking=False), 429, "model_busy", "Model đang xử lý yêu cầu khác. Vui lòng thử lại.")
-        try:
-            config = ModelConfig(model=os.getenv("RETAILOPS_MODEL", "qwen3.5:4b"),
-                                 base_url=os.getenv("RETAILOPS_MODEL_URL", ""), timeout_s=15)
-            gateway = RemoteOllama(config, allowed_host=os.getenv("RETAILOPS_ALLOWED_HOST", ""),
-                                   token=os.getenv("RETAILOPS_INFERENCE_TOKEN", ""))
-            runner = Runner(gateway, Store(self.output / "api-inference.sqlite3"))
-            result = runner.infer(text, cache=False, scope="synthetic-business-demo")
-            if not result.get("valid") and "raw_output" not in result:
-                raise RuntimeError("Inference transport failed")
-            return result
-        finally:
-            self.lock.release()
-
-
 class Application:
     def __init__(self, store, tokens, infer=None):
         self.store, self.tokens, self.infer = store, tokens, infer
         self.catalog = Catalog()
+        self.agent_lock = threading.Lock()
 
     def authenticate(self, header):
         token = header.removeprefix("Bearer ") if header.startswith("Bearer ") else ""
@@ -251,95 +287,55 @@ class Application:
         return customer
 
     def chat(self, customer, body):
-        require(isinstance(body, dict) and set(body) in ({'text'}, {'text', 'conversation_id'}),
-                400, 'invalid_fields', 'Các trường của yêu cầu không hợp lệ.')
-        text = body["text"]
-        require(isinstance(text, str) and 0 < len(text.strip()) <= 2000, 400, "invalid_text", "Nhập yêu cầu tối đa 2.000 ký tự.")
-        snapshot = self.store.conversation(customer, body['conversation_id']) if 'conversation_id' in body else None
-        oid = snapshot['order_id'] if snapshot else None
-        pid = snapshot['product_id'] if snapshot else None
-        plan = route(text, self.catalog)
-
-        def reply(action, message, source='assistant_rules', **extra):
-            self.store.remember(customer, snapshot, oid, pid)
-            self.store.event(customer, 'chat_replied', action=action, source=source)
-            return {'action': action, 'message': message, 'source': source, 'model_used': source == 'model_and_store',
-                    'context': {'order_id': oid, 'product_id': pid}, **extra}
-
-        kind = plan['kind']
-        if kind == 'ambiguous':
-            oid, pid = None, None
-            return reply('clarify', 'Bạn đang nhắc đến nhiều đơn hoặc sản phẩm. Hãy chọn một mục để mình trả lời chính xác.')
-        if kind == 'greeting':
-            return reply('greeting', 'Chào bạn! Mình có thể tra thông tin đơn, giải thích sản phẩm trong danh mục và hỗ trợ yêu cầu hủy. Bạn muốn xem đơn hay sản phẩm nào?')
-        if kind == 'courtesy':
-            return reply('courtesy', 'Cảm ơn bạn. Nếu cần xem thêm đơn hoặc sản phẩm, bạn cứ hỏi nhé.')
-        if kind == 'outside':
-            return reply('unsupported', 'Câu hỏi này nằm ngoài phạm vi hỗ trợ cửa hàng. Mình có thể giúp bạn về đơn hàng và sản phẩm trong danh mục mẫu.')
-        if kind == 'unsupported_business':
-            return reply('unsupported', 'Bản hiện tại chưa hỗ trợ đổi/trả, hoàn tiền hoặc sửa địa chỉ. Mình có thể tra thông tin đơn và hỗ trợ yêu cầu hủy nếu đơn đủ điều kiện.')
-        if kind == 'keep':
-            return reply('keep_order', 'Tin nhắn này không thực hiện hủy đơn. Nếu đang có đề xuất chờ xác nhận, hãy chọn Giữ đơn hàng trên hộp xác nhận để bỏ đề xuất đó.')
-
-        # An explicit new order is resolved against the authenticated owner, even
-        # if the previous conversation referred to a different accessible order.
-        order = None
-        if plan['ids']:
-            oid, pid = None, None  # Never fall back to the previous order on a failed lookup.
-            try:
-                order = self.store.lookup(customer, plan['ids'][0])
-            except ApiError:
-                self.store.remember(customer, snapshot, None, None)
-                raise
-            oid = order['id']
-            linked = self.catalog.for_order(order)
-            pid = linked['id'] if linked else None
-
-        if kind == 'product':
-            named = plan['products'][0] if plan['products'] else None
-            if named:
-                # Naming a different product does not leave an unrelated order
-                # as the target for a later cancellation follow-up.
-                if pid != named['id']:
-                    oid = None
-                pid = named['id']
-            elif plan.get('unknown_named'):
-                oid, pid = None, None
-                return reply('product_not_found', 'Mình chưa tìm thấy sản phẩm bạn nêu trong danh mục. Hiện có Áo thun Essential, Áo khoác Everyday và Áo polo.')
-            product = self.catalog.products.get(pid)
-            if product is None:
-                return reply('clarify', 'Bạn muốn hỏi sản phẩm nào? Hãy nêu tên sản phẩm hoặc tra một đơn trước.')
-            return reply('product_details', self.catalog.describe(product, plan.get('field')), 'catalog',
-                         product=product, catalog_source=self.catalog.source)
-
-        if kind == 'order':
-            if oid is None:
-                return reply('clarify', 'Bạn muốn xem đơn nào? Hãy gửi một mã đơn, ví dụ O-101 hoặc O-102.')
-            # Read state again on every turn, never render a stale order snapshot.
-            order = order or self.store.lookup(customer, oid)
-            product = self.catalog.for_order(order)
-            pid = product['id'] if product else None
-            return reply('lookup_order', describe_order(order, STATUSES, REASONS, plan.get('field')), 'store_data', order=order)
-
-        model_text = text
-        if not plan['ids'] and matches(r'\b(don (nay|do|ay)|ma (nay|do)|this order|that order)\b', normalize(text)):
-            if oid is None:
-                return reply('clarify', 'Mình chưa xác định được đơn đang nhắc tới. Bạn gửi mã đơn trước nhé.')
-            self.store.lookup(customer, oid)
-            model_text = text + '\nMã đơn được tham chiếu trong phiên: ' + oid
-            require(len(model_text) <= 2000, 400, 'invalid_text', 'Bạn rút ngắn yêu cầu để mình thêm mã đơn đang trao đổi nhé.')
+        fields(body, {'text', 'conversation_id', 'request_id'})
+        text, request_id = body['text'], body['request_id']
+        require(isinstance(text, str) and 0 < len(text.strip()) <= 2000,
+                400, 'invalid_text', 'Nhập yêu cầu tối đa 2.000 ký tự.')
+        require(isinstance(request_id, str) and re.fullmatch(r'[A-Za-z0-9_-]{16,128}', request_id),
+                400, 'invalid_request_id', 'Thiếu mã yêu cầu hội thoại.')
+        snapshot = self.store.conversation(customer, body['conversation_id'])
+        digest = hashlib.sha256(text.encode()).hexdigest()
+        replay = self.store.replay(customer, snapshot['id'], request_id, digest)
+        if replay:
+            return replay
+        require(self.infer is not None, 503, 'model_offline',
+                'Model chưa kết nối. Bạn vẫn có thể dùng các nút tra đơn và yêu cầu hủy.')
+        require(self.agent_lock.acquire(blocking=False), 429, 'model_busy',
+                'Model đang xử lý một cuộc trò chuyện khác. Bạn thử lại sau nhé.')
         try:
-            result = self._model_chat(customer, model_text)
-        except ApiError:
-            self.store.remember(customer, snapshot, None, None)
-            raise
-        if result.get('order'):
-            order = result['order']
-            oid = order['id']
-            product = self.catalog.for_order(order)
-            pid = product['id'] if product else None
-        action, message = result.pop('action'), result.pop('message')
-        return reply(action, message, 'model_and_store', **result)
+            # A concurrent completed retry must not spend GPU or duplicate history.
+            replay = self.store.replay(customer, snapshot['id'], request_id, digest)
+            if replay:
+                return replay
+            identity = self.infer.inspect()
+            bound = BoundTools(self.store, self.catalog, customer, snapshot, identity)
+
+            def execute(name, arguments):
+                try:
+                    return bound(name, arguments)
+                except ApiError as exc:
+                    if name in ('get_order', 'prepare_cancellation'):
+                        bound.context = {'order_id': None, 'product_id': None}
+                        bound.cancel_order = None
+                    return {'error': exc.code, 'message': exc.message}
+
+            answer = run_agent(self.infer, text, self.store.history(customer, snapshot['id']), execute, identity)
+            result = {'action': 'choose_cancel_reason' if bound.cancel_order else 'reply',
+                      'message': answer['message'], 'source': 'llm_agent', 'model_used': True,
+                      'context': bound.context, 'trace': answer['trace'], 'replayed': False}
+            if bound.cancel_order:
+                result['order'] = bound.cancel_order
+            self.store.finish_turn(customer, snapshot, request_id, digest, answer['messages'], result, bound.versions)
+            return result
+        except AgentError as exc:
+            self.store.event(customer, 'agent_failed', code=exc.code, trace=exc.trace)
+            raise ApiError(503, exc.code, str(exc), exc.trace) from None
+        except (RuntimeError, ValueError, OSError):
+            self.store.event(customer, 'agent_failed', code='model_unavailable')
+            raise ApiError(503, 'model_unavailable',
+                           'Không kết nối được agent Colab. Kiểm tra notebook, tunnel và inference token; chat chưa thay đổi đơn.') from None
+        finally:
+            self.agent_lock.release()
 
     def focus(self, customer, cid, body):
         fields(body, {'order_id'})
@@ -351,35 +347,6 @@ class Application:
         self.store.remember(customer, snapshot, order['id'], pid)
         return {'order': order, 'message': describe_order(order, STATUSES, REASONS),
                 'context': {'order_id': order['id'], 'product_id': pid}, 'source': 'store_data', 'model_used': False}
-
-    def _model_chat(self, customer, text):
-        require(self.infer is not None, 503, "model_offline", "Model chưa kết nối. Bạn vẫn có thể tra đơn và chọn yêu cầu hủy ở bảng đơn hàng.")
-        try:
-            record = self.infer(text)
-        except ApiError:
-            raise
-        except (RuntimeError, ValueError, OSError):
-            self.store.event(customer, "model_unavailable")
-            raise ApiError(503, "model_unavailable", "Không gọi được model. Đơn hàng chưa thay đổi; hãy dùng các nút thao tác.") from None
-        self.store.event(customer, "model_extraction", valid=bool(record.get("valid")), latency_ms=record.get("latency_ms"))
-        decision = record.get("decision") if record.get("valid") else None
-        if not decision:
-            return {"action": "clarify", "message": "Chưa xác định được yêu cầu hợp lệ. Hãy gửi đủ mã đơn và lý do, hoặc dùng các nút thao tác.", "model_valid": False}
-        action, oid = decision["action"], decision["order_id"]
-        if action in ("lookup_order", "cancel_order"):
-            explicit_ids = set(re.findall(r"(?<![A-Za-z0-9_-])[A-Z]{1,6}-[0-9]{1,8}(?![A-Za-z0-9_-])", text))
-            require(explicit_ids == {oid}, 422, "ungrounded_order", "Hãy ghi rõ đúng một mã đơn; không dùng mã đơn do model suy đoán.")
-            order = self.store.lookup(customer, oid)
-            if action == "lookup_order":
-                return {"action": action, "order": order, "message": describe_order(order, STATUSES, REASONS)}
-            require(order["status"] == "pending", 409, "not_cancellable", "Đơn không còn ở trạng thái cho phép hủy.")
-            # Deliberately discard the model's reason, even if schema-valid. The
-            # user must select a reason and approve the stored proposal separately.
-            return {"action": "choose_cancel_reason", "order": order,
-                    "message": "Chọn lý do hủy bên dưới. Đơn chỉ thay đổi sau khi bạn xác nhận."}
-        return {"action": action, "message": "Hiện chỉ hỗ trợ tra và hủy đơn mẫu." if action == "unsupported"
-                else "Vui lòng nêu rõ một mã đơn và yêu cầu cần xử lý. Bạn cũng có thể dùng các nút thao tác."}
-
 
 class Server(ThreadingHTTPServer):
     daemon_threads = True
@@ -407,7 +374,7 @@ class Server(ThreadingHTTPServer):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "RetailOpsDemo/0.3"
+    server_version = "RetailOpsDemo/0.4"
     sys_version = ""
 
     def setup(self):
@@ -439,7 +406,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self.route()
         except ApiError as exc:
-            self.reply(exc.status, {"error": exc.code, "message": exc.message})
+            self.reply(exc.status, {"error": exc.code, "message": exc.message,
+                                    **({"trace": exc.trace} if exc.trace else {})})
         except (ValueError, UnicodeError, TypeError):
             self.reply(400, {"error": "bad_request", "message": "Yêu cầu không hợp lệ."})
         except (BrokenPipeError, ConnectionResetError, TimeoutError):
@@ -455,7 +423,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.command == "GET" and path == "/healthz":
             with app.store.connection() as db:
                 db.execute("SELECT 1 FROM orders LIMIT 1").fetchone()
-            return self.reply(200, {"status": "ok", "scope": "synthetic-demo", "version": "0.3"})
+            return self.reply(200, {"status": "ok", "scope": "synthetic-demo", "version": "0.4", "agent_protocol": PROTOCOL})
         assets = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"),
                   "/styles.css": ("styles.css", "text/css; charset=utf-8")}
         if self.command == "GET" and path in assets:
@@ -508,7 +476,12 @@ def main():
     output = Path(os.getenv("RETAILOPS_OUTPUT", str(ROOT / "artifacts")))
     store = BusinessStore(output / "business.sqlite3")
     store.seed()
-    infer = ModelInference(output) if os.getenv("RETAILOPS_MODEL_ENABLED", "false").lower() == "true" else None
+    infer = None
+    if os.getenv('RETAILOPS_MODEL_ENABLED', 'false').lower() == 'true':
+        infer = RemoteAgent(ModelConfig(model=os.getenv('RETAILOPS_MODEL', 'qwen3.5:4b'),
+                                       base_url=os.getenv('RETAILOPS_MODEL_URL', '')),
+                            allowed_host=os.getenv('RETAILOPS_ALLOWED_HOST', ''),
+                            token=os.getenv('RETAILOPS_INFERENCE_TOKEN', ''))
     app = Application(store, {hashlib.sha256(token.encode()).hexdigest(): "C-001"}, infer)
     address = (os.getenv("RETAILOPS_API_BIND", "127.0.0.1"), int(os.getenv("RETAILOPS_API_PORT", "8000")))
     print("RetailOps synthetic API started; model configured:", infer is not None, flush=True)
