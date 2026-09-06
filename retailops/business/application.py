@@ -4,13 +4,17 @@ import re
 import threading
 from retailops.core import ApiError, REASONS, STATUSES, fields, require
 from retailops.identity.bearer import authenticate_bearer
+from retailops.business.permissions import CANCEL, ROLE_PERMISSIONS
 from retailops_agent import AgentError, run_agent
 from retailops_tools import BoundTools
 from retailops_providers import API_MODEL
 from retailops_conversation import Catalog, describe_order
 
 class Application:
-    def __init__(self, store, tokens, infer=None, api_infer=None, api_daily_limit=20):
+    def __init__(self, store, tokens, infer=None, api_infer=None, api_daily_limit=20, *, role='customer'):
+        if role not in ROLE_PERMISSIONS:
+            raise ValueError('Unknown application role.')
+        self.role, self.permissions = role, ROLE_PERMISSIONS[role]
         self.store, self.tokens, self.infer = store, tokens, infer
         self.api_infer = api_infer
         if type(api_daily_limit) is not int or not 1 <= api_daily_limit <= 10000:
@@ -46,6 +50,9 @@ class Application:
     def authenticate(self, header):
         return authenticate_bearer(header, self.tokens)
 
+    def require_permission(self, permission):
+        require(permission in self.permissions, 403, 'permission_denied', 'Tài khoản này không có quyền thực hiện thao tác.')
+
     def chat(self, customer, body):
         fields(body, {'text', 'conversation_id', 'request_id'})
         text, request_id = body['text'], body['request_id']
@@ -74,7 +81,8 @@ class Application:
             identity = {**gateway.inspect(), 'selection': provider_id}
             if provider_id == 'api':
                 self.quota_store.reserve_api_attempt(self.api_daily_limit)
-            bound = BoundTools(self.store, self.catalog, customer, snapshot, identity)
+            bound = BoundTools(self.store, self.catalog, customer, snapshot, identity,
+                               can_cancel=CANCEL in self.permissions)
 
             def execute(name, arguments):
                 try:

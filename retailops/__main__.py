@@ -5,6 +5,8 @@ import json
 from retailops.bootstrap import serve_private, serve_public
 from retailops.config import Settings
 from retailops.models import build_gateways
+from retailops.core import ApiError
+from retailops.identity import cli as identity_cli
 
 
 def main():
@@ -14,6 +16,7 @@ def main():
     check.add_argument('--interface', choices=('public', 'private'), default='public')
     commands.add_parser('serve-public', help='Serve HTTPS backend behind Caddy.')
     commands.add_parser('serve-private', help='Serve private localhost/SSM API.')
+    identity_cli.add_parser(commands)
     args = parser.parse_args()
     try:
         if args.command == 'check-config':
@@ -22,10 +25,16 @@ def main():
             print(json.dumps({'result': 'CONFIG_VALID', **settings.summary(), 'connectivity_checked': False}))
         elif args.command == 'serve-public':
             serve_public()
+        elif args.command == 'identity':
+            print(json.dumps(identity_cli.run(args), ensure_ascii=False))
         else:
             serve_private()
     except ValueError as error:
         parser.exit(2, str(error) + '\n')
+    except ApiError as error:
+        parser.exit(2, error.code + ': ' + error.message + '\n')
+    except OSError:
+        parser.exit(2, 'Cannot access the configured data or credential file. Check permissions and use a new credential filename.\n')
 
 
 if __name__ == '__main__':

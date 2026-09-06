@@ -13,11 +13,15 @@ class SessionBinding:
     application: Application = field(repr=False)
     customer_id: str
     workspace_id: str
+    tenant_id: str | None = None
+    principal_id: str | None = None
+    display_name: str | None = None
 
 
 class SessionBackend(Protocol):
     cookie_name: str
     session_seconds: int
+    data_mode: str
 
     def login(self, token: str) -> str: ...
     def resolve(self, header: str) -> ContextManager[SessionBinding]: ...

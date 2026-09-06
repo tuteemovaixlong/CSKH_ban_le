@@ -25,6 +25,8 @@ def main():
         data = temp / 'data'; data.mkdir(); data.chmod(0o777)  # disposable fixture, no real data
         # Keep the directory owned by the runner so it can remove UID-10001 DB files.
         guests = data / 'public-guests'; guests.mkdir(); guests.chmod(0o777)
+        for folder in (data/'persistent', data/'persistent'/'tenants'):
+            folder.mkdir(); folder.chmod(0o777)
         compose = (ROOT / 'deploy/compose.public.yaml').read_text().replace('"80:80"', '"127.0.0.1:18080:80"').replace('"443:443"', '"127.0.0.1:18443:443"')
         (temp/'compose.public.yaml').write_text(compose)
         (temp/'Caddyfile').write_text((ROOT/'deploy/Caddyfile').read_text().replace('{$RETAILOPS_PUBLIC_HOST} {', '{$RETAILOPS_PUBLIC_HOST} {\n\ttls internal'))
@@ -71,6 +73,31 @@ def main():
             assert request('/api/logout',{})[0] == 200
             assert request('/api/orders')[0] == 401
             print('PUBLIC_HTTPS_PROXY_COOKIE_FLOW_OK (temporary test CA; no public certificate or paid inference)')
+            # Provision through the packaged operator CLI, then switch the same HTTPS stack.
+            admin = base+['exec','-T','web','python','-m','retailops','identity']
+            run(admin+['init-tenant','--tenant','ci-shop','--name','CI shop','--seed-demo'])
+            member = json.loads(run(admin+['create-member','--tenant','ci-shop','--principal','ci-viewer',
+                '--name','CI viewer','--customer','C-002','--role','viewer']))['membership_id']
+            run(admin+['issue-credential','--membership',member,'--credential-file','/tmp/ci-account-code'])
+            code = run(base+['exec','-T','web','cat','/tmp/ci-account-code']).strip()
+            with (temp/'public.env').open('a') as config:
+                config.write('RETAILOPS_DATA_MODE=persistent-demo\n')
+            run(base+['up','-d','--no-build','--pull','never','--force-recreate','--wait','--wait-timeout','60','web'])
+            assert request('/healthz')[1]['data_mode'] == 'persistent-demo'
+            assert request('/api/login',{'token':INVITE})[0] == 401
+            assert request('/api/login',{'token':code},jar='account')[0] == 200
+            assert request('/api/session',jar='account')[1]['role'] == 'viewer'
+            assert request('/api/orders',jar='account')[1]['orders'][0]['id'] == 'O-202'
+            assert request('/api/orders/O-101',jar='account')[0] == 404
+            assert request('/api/cancellation-proposals',{'order_id':'O-202','order_version':1,
+                'cancel_reason':'ordered_by_mistake'},jar='account')[0] == 403
+            assert request('/api/logout',{},jar='account')[0] == 200
+            run(base+['restart','web'])
+            # Compose --wait handles readiness after the restart, without contacting a model.
+            run(base+['up','-d','--no-build','--pull','never','--wait','--wait-timeout','60','web'])
+            assert request('/api/login',{'token':code},jar='account')[0] == 200
+            assert request('/api/orders',jar='account')[1]['orders'][0]['id'] == 'O-202'
+            print('PERSISTENT_HTTPS_ACCOUNT_FLOW_OK (packaged CLI, isolation, roles, restart)')
         except Exception:
             print(run(base+['logs','--tail','40']))  # fixture stack only, contains no real secrets
             raise

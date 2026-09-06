@@ -8,7 +8,9 @@ const reasons = {ordered_by_mistake: 'Tôi đặt nhầm', no_longer_needed: 'T�
 const money = value => new Intl.NumberFormat('vi-VN', {style: 'currency', currency: 'VND'}).format(value);
 let token = '', orders = [], selected = 'O-101', pending = null, busy = false, conversationId = null;
 let providerId = 'custom', providerOptions = [];
+let canCancel = true;
 const cookieAuth = document.body?.dataset.auth === 'cookie';
+const persistentAccount = document.body?.dataset.dataMode === 'persistent-demo';
 const sourceLabels = {interface: 'Hướng dẫn giao diện', store_data: 'Dữ liệu đơn hàng', llm_agent: 'Hội thoại model'};
 function showContext(context) {
   byId('conversation-context').textContent = context?.order_id ? 'Đang trao đổi: ' + context.order_id
@@ -89,9 +91,13 @@ async function act(callback) {
 
 function renderOrder() {
   const order = orders.find(o => o.id === selected), area = byId('order-details'); area.replaceChildren();
-  document.querySelectorAll('[data-order]').forEach(b => {
-    const active = b.dataset.order === selected; b.classList.toggle('selected', active); b.setAttribute('aria-pressed', String(active));
-  });
+  const tabs = byId('order-tabs'); tabs.replaceChildren();
+  for (const item of orders) {
+    const active = item.id === selected, button = el('button', active ? 'selected' : '', item.id);
+    button.dataset.order = item.id; button.setAttribute('aria-pressed', String(active));
+    button.onclick = () => act(() => lookupOrder(item.id)); tabs.append(button);
+  }
+  byId('order-count').textContent = orders.length + ' đơn mẫu';
   if (!order) { area.append(el('p', 'order-empty', 'Chưa có thông tin đơn. Hãy kết nối hoặc tải lại dữ liệu.')); return; }
   const top = el('div', 'order-line'); top.append(el('h3', '', order.id), el('span', 'badge ' + order.status, statuses[order.status]));
   const item = el('div', 'item'), copy = el('div'); copy.append(el('strong', '', order.name), el('p', '', order.variant)); item.append(copy);
@@ -99,7 +105,9 @@ function renderOrder() {
   area.append(top, el('p', 'order-date', 'Đơn giả lập · Phiên bản ' + order.version), item, total);
   area.append(el('p', 'order-policy', order.status === 'pending' ? 'Có thể yêu cầu hủy. Cần chọn lý do và xác nhận.' : order.status === 'delivered' ? 'Đơn đã giao không đủ điều kiện hủy.' : 'Đơn đã hủy. Trạng thái được lưu trên máy chủ.'));
   const lookup = el('button', 'order-action', 'Tra cứu đơn này'); lookup.onclick = () => act(() => lookupOrder(order.id)); area.append(lookup);
-  const cancel = el('button', 'order-action', 'Yêu cầu hủy đơn này'); cancel.onclick = () => act(() => chooseReason(order.id)); area.append(cancel);
+  if (canCancel) {
+    const cancel = el('button', 'order-action', 'Yêu cầu hủy đơn này'); cancel.onclick = () => act(() => chooseReason(order.id)); area.append(cancel);
+  } else { area.append(el('p', 'order-policy', 'Tài khoản của bạn có quyền xem; không được tạo yêu cầu hủy.')); }
 }
 
 const eventLabels = {order_viewed: 'Tra cứu đơn', cancellation_proposed: 'Tạo đề xuất hủy', order_cancelled: 'Đã xác nhận hủy', proposal_dismissed: 'Bỏ đề xuất', model_extraction: 'Model phân tích yêu cầu', model_unavailable: 'Không kết nối được model', chat_replied: 'Trả lời hội thoại', agent_replied: 'Model trả lời', agent_failed: 'Lượt chat chưa hoàn tất'};
@@ -123,6 +131,7 @@ async function lookupOrder(id) {
 }
 
 async function chooseReason(id) {
+  if (!canCancel) { message('Tài khoản của bạn có quyền xem; không được tạo yêu cầu hủy.', 'assistant', 'interface'); return; }
   const result = await api('/api/conversations/' + conversationId + '/focus', {order_id: id});
   const order = result.order; showContext(result.context); selected = order.id; await refresh();
   if (order.status !== 'pending') { message('Đơn ' + id + ' ' + statuses[order.status].toLowerCase() + ', không đủ điều kiện hủy.'); return; }
@@ -219,9 +228,18 @@ async function send(text, requestId = crypto.randomUUID(), retry = false) {
 }
 
 async function openSession() {
-  await api('/api/session');
+  const session = await api('/api/session');
+  canCancel = Array.isArray(session.permissions) ? session.permissions.includes('orders:cancel') : true;
+  byId('profile-name').textContent = session.name || 'Khách hàng';
+  byId('profile-avatar').textContent = (session.name || 'KH').slice(0, 2).toUpperCase();
+  byId('profile-role').textContent = canCancel ? 'Khách hàng giả lập' : 'Chỉ xem dữ liệu mẫu';
+  byId('greeting').textContent = 'XIN CHÀO, ' + (session.name || 'BẠN').toUpperCase();
+  document.querySelectorAll('[data-prompt]').forEach(button => { button.hidden = persistentAccount; });
+  byId('message').placeholder = persistentAccount ? 'Hỏi về đơn hàng hoặc sản phẩm của bạn…' : 'Ví dụ: Tôi muốn hủy đơn O-101…';
   const choices = await api('/api/providers'); providerOptions = choices.providers; providerId = choices.default_provider;
   await refresh();
+  pending = null; conversationId = null;
+  if (byId('confirm-dialog').open) byId('confirm-dialog').close();
   byId('demo-token').value = ''; lockPage(false); byId('messages').replaceChildren();
   await newConversation();
 }
@@ -241,7 +259,6 @@ byId('logout').onclick = () => act(async () => {
 byId('chat-form').onsubmit = event => { event.preventDefault(); act(() => send(byId('message').value)); };
 byId('message').onkeydown = event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); act(() => send(event.target.value)); } };
 document.querySelectorAll('[data-prompt]').forEach(b => { b.onclick = () => act(() => send(b.dataset.prompt)); });
-document.querySelectorAll('[data-order]').forEach(b => { b.onclick = () => act(() => lookupOrder(b.dataset.order)); });
 byId('reset').onclick = () => act(async () => { await refresh(); message('Đã tải lại dữ liệu từ máy chủ.'); });
 byId('new-conversation').onclick = () => act(() => newConversation());
 byId('model-provider').onchange = () => {
@@ -259,8 +276,12 @@ const error = el('p', 'proposal-error'); error.id = 'confirm-error'; error.setAt
 byId('confirm-dialog').querySelector('.dialog-actions').before(error);
 renderOrder();
 if (cookieAuth) {
-  byId('login-description').textContent = 'Nhập mã mời từ chủ dự án. Mỗi khách có bộ đơn mẫu riêng. Phiên có hiệu lực 8 giờ. Đóng phiên sẽ kết thúc quyền truy cập bộ dữ liệu này.';
-  byId('session-note').textContent = 'Dữ liệu thuộc phiên demo riêng của bạn, có hiệu lực 8 giờ. Tải lại trang giữ trạng thái; đóng phiên rồi đăng nhập tạo bộ đơn mới.';
+  byId('login-description').textContent = persistentAccount
+    ? 'Nhập mã truy cập cá nhân do quản trị viên cấp. Phiên có hiệu lực 8 giờ. Đăng nhập lại để tiếp tục xem dữ liệu của tài khoản.'
+    : 'Nhập mã mời từ chủ dự án. Mỗi khách có bộ đơn mẫu riêng. Phiên có hiệu lực 8 giờ. Đóng phiên sẽ kết thúc quyền truy cập bộ dữ liệu này.';
+  byId('session-note').textContent = persistentAccount
+    ? 'Dữ liệu mẫu thuộc tài khoản của bạn. Hết phiên hoặc đăng xuất vẫn giữ đơn hàng và nhật ký; đăng nhập lại để tiếp tục.'
+    : 'Dữ liệu thuộc phiên demo riêng của bạn, có hiệu lực 8 giờ. Tải lại trang giữ trạng thái; đóng phiên rồi đăng nhập tạo bộ đơn mới.';
   const loginButton = byId('login-form').querySelector('button'); loginButton.disabled = true;
   openSession().catch(error => { lockPage(true); if (error.message && !/mã mời|phiên demo/i.test(error.message)) byId('login-error').textContent = error.message; })
     .finally(() => { loginButton.disabled = false; });

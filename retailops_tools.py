@@ -5,12 +5,13 @@ from retailops_conversation import normalize
 
 
 class BoundTools:
-    def __init__(self, store, catalog, customer, snapshot, identity):
+    def __init__(self, store, catalog, customer, snapshot, identity, *, can_cancel=True):
         self.store, self.catalog, self.customer = store, catalog, customer
         self.context = {k: snapshot[k] for k in ('order_id', 'product_id')}
         self.identity = identity
         self.versions = {}
         self.cancel_order = None
+        self.can_cancel = can_cancel
 
     def read_order(self, oid, focus=True):
         with self.store.connection() as db:
@@ -57,6 +58,8 @@ class BoundTools:
             return {'order': order, 'product': self.catalog.products.get(self.context['product_id']),
                     'note': 'These are current focused records, not permission to change them.'}
         if name == 'prepare_cancellation':
+            if not self.can_cancel:
+                return {'error': 'permission_denied', 'message': 'This account can view orders but cannot request cancellation.'}
             order = self.read_order(args['order_id'])
             eligible = order['status'] == 'pending'
             self.cancel_order = order if eligible else None

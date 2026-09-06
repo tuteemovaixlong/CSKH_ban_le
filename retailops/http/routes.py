@@ -1,12 +1,14 @@
 """Business route dispatch for both HTTP adapters; identity comes from the server."""
 import re
 from retailops.core import ApiError, fields
+from retailops.business.permissions import CANCEL
 
 def api_result(app, customer, method, path, body=None, idempotency_key=None):
     if method == "GET":
         if path == "/api/session":
             return (200, {"customer_id": customer, "name": "Mai Anh" if customer == "C-001" else "Khách mẫu",
-                                    "model_configured": app.infer is not None or app.api_infer is not None, "scope": "synthetic-demo"})
+                                    "model_configured": app.infer is not None or app.api_infer is not None,
+                                    "permissions": sorted(app.permissions), "role": app.role, "scope": "synthetic-demo"})
         if path == "/api/providers":
             return (200, app.providers())
         if path == "/api/orders":
@@ -25,9 +27,11 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
         if path == "/api/chat":
             return (200, app.chat(customer, body))
         if path == "/api/cancellation-proposals":
+            app.require_permission(CANCEL)
             return (201, app.store.propose(customer, body))
         m = re.fullmatch(r"/api/cancellation-proposals/([a-f0-9-]{36})/(confirm|dismiss)", path)
         if m:
+            app.require_permission(CANCEL)
             if m[2] == "confirm":
                 return (200, app.store.confirm(customer, m[1], body, idempotency_key))
             fields(body, set())

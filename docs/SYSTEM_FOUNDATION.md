@@ -1,4 +1,4 @@
-# RetailOps 0.6 — Khung hệ thống, giai đoạn 1
+# RetailOps 0.7 — Khung hệ thống, giai đoạn 1–2
 
 ## Mục tiêu và phạm vi
 
@@ -6,11 +6,12 @@ Hoàn thiện ranh giới module của ứng dụng đang chạy trước khi be
 Một process ứng dụng vẫn dùng các module nghiệp vụ chung cho web HTTPS, API riêng và
 notebook. Đây là **modular monolith**: chia trách nhiệm trong code, chưa tách dịch vụ triển khai.
 
-Phiên bản này thực hiện việc tách module, cấu hình tập trung, khởi tạo các thành phần
-và ranh giới danh tính giữa HTTP với nghiệp vụ. Nó **chưa hoàn tất toàn bộ khung production**:
-chế độ hỗ trợ hiện tại vẫn là `synthetic-demo`, không có tài khoản doanh nghiệp, RBAC
-hoặc kho đơn hàng multi-tenant bền vững. `RETAILOPS_DATA_MODE=production` bị từ chối
-khi khởi động để không vô tình sử dụng vòng đời dữ liệu demo cho đơn thật.
+Giai đoạn 1 tách module, cấu hình và session binding. Giai đoạn 2 thêm identity backend
+với tài khoản cá nhân, tenant/customer/role, database theo cửa hàng và migration v1.
+Chi tiết và hướng dẫn vận hành: [Persistent identity](PERSISTENT_IDENTITY.md).
+Mặc định `synthetic-demo` giữ hành vi guest cũ; `persistent-demo` bật tài khoản và dữ liệu
+không phụ thuộc thời hạn phiên. Cả hai chỉ dùng dữ liệu giả lập. `production` vẫn bị từ chối.
+Khung điều phối request/budget và tích hợp hệ thống bán hàng còn ở các giai đoạn sau.
 
 ## Các phần đã có trong code
 
@@ -20,6 +21,8 @@ khi khởi động để không vô tình sử dụng vòng đời dữ liệu d
 | `retailops/bootstrap.py` | Khởi tạo gateways, dữ liệu/phiên và HTTP theo thứ tự; validate adapter trước khi tạo dữ liệu |
 | `retailops/identity/contracts.py` | `SessionBackend` và `SessionBinding`: ứng dụng, khách hàng và workspace được xác định phía server |
 | `retailops/identity/demo.py` | Mã mời, cookie, hết hạn và dọn **workspace demo** |
+| `retailops/identity/store.py`, `persistent.py`, `cli.py` | Tài khoản, membership, mã cá nhân, session thu hồi được và dữ liệu tenant bền vững |
+| `retailops/business/permissions.py`, `schema.py`, `retailops/schema.py` | Quyền nghiệp vụ và migration SQLite có version |
 | `retailops/identity/bearer.py` | Xác thực bearer cho API riêng qua localhost/SSM |
 | `retailops/business/store.py` | SQLite, quyền sở hữu, trạng thái/version, proposal, xác nhận, idempotency và audit trong transaction |
 | `retailops/business/application.py` | Use case hội thoại, chọn nguồn model và ngữ cảnh đơn/sản phẩm |
@@ -60,8 +63,8 @@ HTTP, session hay inference và có thể chạy transaction độc lập trong 
   `<output>/public-guests/`. Cấu trúc file/schema cũ tương thích với phiên bản này.
 - Agent chỉ chuẩn bị giao diện hủy. Backend vẫn yêu cầu xác nhận riêng và kiểm tra lại
   owner/status/version/TTL/idempotency trước khi ghi dữ liệu cùng audit.
-- Contract session là điểm gắn identity backend tiếp theo; **nó chưa tự cung cấp tenant
-  authorization hoặc làm SQLite schema hiện tại trở thành schema production**.
+- Persistent backend gắn tenant/principal/customer/role phía server, lưu tại `<output>/persistent/`.
+  Tenant có database riêng; HTTP và tool hủy kiểm tra quyền. Xem phạm vi còn giới hạn trong tài liệu phase 2.
 
 ## Khởi động và kiểm tra cấu hình
 
@@ -128,12 +131,11 @@ kiểm tra Docker/HTTPS như trước.
 
 | Giai đoạn | Việc phải hoàn tất | Điều kiện hoàn tất |
 |---|---|---|
-| 1 — PR này | Module, cấu hình, factory và session binding | Luồng cũ qua test; các ranh giới mới được kiểm tra; notebook và Docker đóng gói đủ |
-| 2 — Identity và dữ liệu bền vững | Mô hình tenant/customer/role; identity backend; schema migration và repository theo tenant; tách hẳn thời hạn session khỏi thời hạn đơn | Logout/expiry không mất đơn; tenant khác không đọc/ghi lẫn; có đường migration và restore |
+| 1 — Đã có | Module, cấu hình, factory và session binding | Luồng cũ qua test; các ranh giới mới được kiểm tra; notebook và Docker đóng gói đủ |
+| 2 — Đã có cho dữ liệu giả lập | Mô hình tenant/customer/role; identity backend; schema migration và repository theo tenant; tách hẳn thời hạn session khỏi thời hạn đơn | Logout/expiry không mất đơn; tenant khác không đọc/ghi lẫn; có đường migration và restore |
 | 3 — Luồng điều phối hệ thống | Khóa conversation, admission theo provider/tenant, lifecycle request và budget reservation; trạng thái pending/failed rõ ràng | Không đảo lịch sử, không thực hiện giao dịch lặp, không gọi vượt phần ngân sách đã giữ |
 | 4 — Tích hợp và vận hành | Hợp đồng hệ thống bán hàng/provider; promotion đúng image đã qua gate; backup/restore/rollback | Một workflow từ đăng nhập đến giao dịch và khôi phục chạy được trên staging |
 | 5 — Đo và tối ưu | Baseline toàn tuyến, tải, chất lượng và chi phí; sau đó mới cache, serving hoặc fine-tune theo kết quả | So sánh trước–sau tái lập được trên cùng tập tác vụ |
 
-Giai đoạn 2 cần bắt đầu từ mô hình danh tính và vòng đời dữ liệu, không chỉ thay driver
-database. Tài liệu kiến trúc phải cập nhật theo implementation, không coi bảng này là
-danh sách tính năng đã có. Hiện không thêm dịch vụ trả phí hoặc thay đổi hạ tầng EC2.
+Giai đoạn 3 là phần làm tiếp: điều phối request và giữ ngân sách trước khi gọi provider.
+Các hàng 3–5 là kế hoạch, chưa phải tính năng đã hoàn tất. Không thêm dịch vụ trả phí hoặc thay đổi hạ tầng EC2 trong phase 2.
