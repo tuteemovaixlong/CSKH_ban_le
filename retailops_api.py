@@ -20,6 +20,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from retailops_baseline import ModelConfig, RemoteOllama, Runner, Store
+from retailops_conversation import Catalog, describe_order, matches, normalize, route
 
 REASONS = {"ordered_by_mistake": "Tôi đặt nhầm", "no_longer_needed": "Tôi không còn cần"}
 ROOT = Path(__file__).resolve().parent
@@ -69,6 +70,11 @@ class BusinessStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_business_events_customer_id_id
                   ON business_events(customer_id, id);
+                CREATE TABLE IF NOT EXISTS conversations (
+                  id TEXT PRIMARY KEY, customer_id TEXT NOT NULL,
+                  order_id TEXT, product_id TEXT,
+                  revision INTEGER NOT NULL DEFAULT 0, expires_at REAL NOT NULL
+                );
             ''')
 
     @contextmanager
@@ -128,6 +134,34 @@ class BusinessStore:
         for row in result:
             row["payload"] = json.loads(row["payload"])
         return result
+
+    def new_conversation(self, customer):
+        cid = str(uuid.uuid4())
+        with self.connection(write=True) as db:
+            db.execute('DELETE FROM conversations WHERE expires_at < ?', (time.time(),))
+            db.execute('INSERT INTO conversations(id,customer_id,expires_at) VALUES (?,?,?)',
+                       (cid, customer, time.time() + 1800))
+        return {'conversation_id': cid, 'context': {'order_id': None, 'product_id': None}}
+
+    def conversation(self, customer, cid):
+        require(isinstance(cid, str) and re.fullmatch(r'[a-f0-9-]{36}', cid),
+                400, 'invalid_conversation', 'Mã cuộc trò chuyện không hợp lệ.')
+        with self.connection() as db:
+            row = db.execute('SELECT * FROM conversations WHERE id=? AND customer_id=?', (cid, customer)).fetchone()
+        require(row is not None, 404, 'conversation_not_found', 'Không tìm thấy cuộc trò chuyện của bạn. Hãy mở cuộc trò chuyện mới.')
+        require(row['expires_at'] > time.time(), 409, 'conversation_expired', 'Cuộc trò chuyện đã hết hạn. Hãy bấm Cuộc trò chuyện mới.')
+        return dict(row)
+
+    def remember(self, customer, snapshot, oid, pid):
+        if snapshot is None:
+            return
+        with self.connection(write=True) as db:
+            if oid is not None:
+                self.owned(db, customer, oid)
+            updated = db.execute('''UPDATE conversations SET order_id=?,product_id=?,revision=revision+1,expires_at=?
+                WHERE id=? AND customer_id=? AND revision=? AND expires_at>?''',
+                (oid, pid, time.time()+1800, snapshot['id'], customer, snapshot['revision'], time.time())).rowcount
+            require(updated == 1, 409, 'conversation_changed', 'Ngữ cảnh đã thay đổi hoặc hết hạn. Hãy gửi lại yêu cầu trong cuộc trò chuyện hiện tại.')
 
     def propose(self, customer, body):
         fields(body, {"order_id", "order_version", "cancel_reason"})
@@ -207,6 +241,7 @@ class ModelInference:
 class Application:
     def __init__(self, store, tokens, infer=None):
         self.store, self.tokens, self.infer = store, tokens, infer
+        self.catalog = Catalog()
 
     def authenticate(self, header):
         token = header.removeprefix("Bearer ") if header.startswith("Bearer ") else ""
@@ -216,9 +251,108 @@ class Application:
         return customer
 
     def chat(self, customer, body):
-        fields(body, {"text"})
+        require(isinstance(body, dict) and set(body) in ({'text'}, {'text', 'conversation_id'}),
+                400, 'invalid_fields', 'Các trường của yêu cầu không hợp lệ.')
         text = body["text"]
         require(isinstance(text, str) and 0 < len(text.strip()) <= 2000, 400, "invalid_text", "Nhập yêu cầu tối đa 2.000 ký tự.")
+        snapshot = self.store.conversation(customer, body['conversation_id']) if 'conversation_id' in body else None
+        oid = snapshot['order_id'] if snapshot else None
+        pid = snapshot['product_id'] if snapshot else None
+        plan = route(text, self.catalog)
+
+        def reply(action, message, source='assistant_rules', **extra):
+            self.store.remember(customer, snapshot, oid, pid)
+            self.store.event(customer, 'chat_replied', action=action, source=source)
+            return {'action': action, 'message': message, 'source': source, 'model_used': source == 'model_and_store',
+                    'context': {'order_id': oid, 'product_id': pid}, **extra}
+
+        kind = plan['kind']
+        if kind == 'ambiguous':
+            oid, pid = None, None
+            return reply('clarify', 'Bạn đang nhắc đến nhiều đơn hoặc sản phẩm. Hãy chọn một mục để mình trả lời chính xác.')
+        if kind == 'greeting':
+            return reply('greeting', 'Chào bạn! Mình có thể tra thông tin đơn, giải thích sản phẩm trong danh mục và hỗ trợ yêu cầu hủy. Bạn muốn xem đơn hay sản phẩm nào?')
+        if kind == 'courtesy':
+            return reply('courtesy', 'Cảm ơn bạn. Nếu cần xem thêm đơn hoặc sản phẩm, bạn cứ hỏi nhé.')
+        if kind == 'outside':
+            return reply('unsupported', 'Câu hỏi này nằm ngoài phạm vi hỗ trợ cửa hàng. Mình có thể giúp bạn về đơn hàng và sản phẩm trong danh mục mẫu.')
+        if kind == 'unsupported_business':
+            return reply('unsupported', 'Bản hiện tại chưa hỗ trợ đổi/trả, hoàn tiền hoặc sửa địa chỉ. Mình có thể tra thông tin đơn và hỗ trợ yêu cầu hủy nếu đơn đủ điều kiện.')
+        if kind == 'keep':
+            return reply('keep_order', 'Tin nhắn này không thực hiện hủy đơn. Nếu đang có đề xuất chờ xác nhận, hãy chọn Giữ đơn hàng trên hộp xác nhận để bỏ đề xuất đó.')
+
+        # An explicit new order is resolved against the authenticated owner, even
+        # if the previous conversation referred to a different accessible order.
+        order = None
+        if plan['ids']:
+            oid, pid = None, None  # Never fall back to the previous order on a failed lookup.
+            try:
+                order = self.store.lookup(customer, plan['ids'][0])
+            except ApiError:
+                self.store.remember(customer, snapshot, None, None)
+                raise
+            oid = order['id']
+            linked = self.catalog.for_order(order)
+            pid = linked['id'] if linked else None
+
+        if kind == 'product':
+            named = plan['products'][0] if plan['products'] else None
+            if named:
+                # Naming a different product does not leave an unrelated order
+                # as the target for a later cancellation follow-up.
+                if pid != named['id']:
+                    oid = None
+                pid = named['id']
+            elif plan.get('unknown_named'):
+                oid, pid = None, None
+                return reply('product_not_found', 'Mình chưa tìm thấy sản phẩm bạn nêu trong danh mục. Hiện có Áo thun Essential, Áo khoác Everyday và Áo polo.')
+            product = self.catalog.products.get(pid)
+            if product is None:
+                return reply('clarify', 'Bạn muốn hỏi sản phẩm nào? Hãy nêu tên sản phẩm hoặc tra một đơn trước.')
+            return reply('product_details', self.catalog.describe(product, plan.get('field')), 'catalog',
+                         product=product, catalog_source=self.catalog.source)
+
+        if kind == 'order':
+            if oid is None:
+                return reply('clarify', 'Bạn muốn xem đơn nào? Hãy gửi một mã đơn, ví dụ O-101 hoặc O-102.')
+            # Read state again on every turn, never render a stale order snapshot.
+            order = order or self.store.lookup(customer, oid)
+            product = self.catalog.for_order(order)
+            pid = product['id'] if product else None
+            return reply('lookup_order', describe_order(order, STATUSES, REASONS, plan.get('field')), 'store_data', order=order)
+
+        model_text = text
+        if not plan['ids'] and matches(r'\b(don (nay|do|ay)|ma (nay|do)|this order|that order)\b', normalize(text)):
+            if oid is None:
+                return reply('clarify', 'Mình chưa xác định được đơn đang nhắc tới. Bạn gửi mã đơn trước nhé.')
+            self.store.lookup(customer, oid)
+            model_text = text + '\nMã đơn được tham chiếu trong phiên: ' + oid
+            require(len(model_text) <= 2000, 400, 'invalid_text', 'Bạn rút ngắn yêu cầu để mình thêm mã đơn đang trao đổi nhé.')
+        try:
+            result = self._model_chat(customer, model_text)
+        except ApiError:
+            self.store.remember(customer, snapshot, None, None)
+            raise
+        if result.get('order'):
+            order = result['order']
+            oid = order['id']
+            product = self.catalog.for_order(order)
+            pid = product['id'] if product else None
+        action, message = result.pop('action'), result.pop('message')
+        return reply(action, message, 'model_and_store', **result)
+
+    def focus(self, customer, cid, body):
+        fields(body, {'order_id'})
+        require(isinstance(body['order_id'], str), 400, 'invalid_order', 'Mã đơn không hợp lệ.')
+        snapshot = self.store.conversation(customer, cid)
+        order = self.store.lookup(customer, body['order_id'])
+        product = self.catalog.for_order(order)
+        pid = product['id'] if product else None
+        self.store.remember(customer, snapshot, order['id'], pid)
+        return {'order': order, 'message': describe_order(order, STATUSES, REASONS),
+                'context': {'order_id': order['id'], 'product_id': pid}, 'source': 'store_data', 'model_used': False}
+
+    def _model_chat(self, customer, text):
         require(self.infer is not None, 503, "model_offline", "Model chưa kết nối. Bạn vẫn có thể tra đơn và chọn yêu cầu hủy ở bảng đơn hàng.")
         try:
             record = self.infer(text)
@@ -237,7 +371,7 @@ class Application:
             require(explicit_ids == {oid}, 422, "ungrounded_order", "Hãy ghi rõ đúng một mã đơn; không dùng mã đơn do model suy đoán.")
             order = self.store.lookup(customer, oid)
             if action == "lookup_order":
-                return {"action": action, "order": order, "message": f"Đơn {oid}: {STATUSES[order['status']]}."}
+                return {"action": action, "order": order, "message": describe_order(order, STATUSES, REASONS)}
             require(order["status"] == "pending", 409, "not_cancellable", "Đơn không còn ở trạng thái cho phép hủy.")
             # Deliberately discard the model's reason, even if schema-valid. The
             # user must select a reason and approve the stored proposal separately.
@@ -273,7 +407,7 @@ class Server(ThreadingHTTPServer):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "RetailOpsDemo/0.2"
+    server_version = "RetailOpsDemo/0.3"
     sys_version = ""
 
     def setup(self):
@@ -321,7 +455,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.command == "GET" and path == "/healthz":
             with app.store.connection() as db:
                 db.execute("SELECT 1 FROM orders LIMIT 1").fetchone()
-            return self.reply(200, {"status": "ok", "scope": "synthetic-demo"})
+            return self.reply(200, {"status": "ok", "scope": "synthetic-demo", "version": "0.3"})
         assets = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"),
                   "/styles.css": ("styles.css", "text/css; charset=utf-8")}
         if self.command == "GET" and path in assets:
@@ -348,6 +482,12 @@ class Handler(BaseHTTPRequestHandler):
             size = int(lengths[0])
             require(0 < size <= 16384, 413, "body_too_large", "Yêu cầu quá lớn hoặc rỗng.")
             body = json.loads(self.rfile.read(size))
+            if path == '/api/conversations':
+                fields(body, set())
+                return self.reply(201, app.store.new_conversation(customer))
+            focus = re.fullmatch(r'/api/conversations/([a-f0-9-]{36})/focus', path)
+            if focus:
+                return self.reply(200, app.focus(customer, focus[1], body))
             if path == "/api/chat":
                 return self.reply(200, app.chat(customer, body))
             if path == "/api/cancellation-proposals":

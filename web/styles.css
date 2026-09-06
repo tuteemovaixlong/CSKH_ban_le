@@ -9,3 +9,5 @@
 @media(prefers-reduced-motion:reduce){*{animation:none!important;scroll-behavior:auto!important;transition:none!important}}
 
 .login-shell{position:fixed;inset:0;z-index:20;background:#181b29;display:grid;place-items:center;padding:24px}.login-shell[hidden]{display:none}.login-card{background:white;border-radius:20px;padding:36px;max-width:440px;width:100%;display:grid;gap:18px}.login-card h1{font-size:30px;line-height:1.2}.login-card p{line-height:1.6}.login-card input{font:inherit;padding:12px;border:1px solid #aeb4c2;border-radius:8px;min-width:0}.login-card label{font-weight:600}#login-error{color:#a32338;min-height:24px}.proposal-error{color:#a32338;line-height:1.5}button:disabled{cursor:wait;opacity:.6}.order-empty{padding:24px;line-height:1.7}.model-status strong{display:block}.messages:empty{min-height:300px}
+
+.conversation-context{padding:10px 20px;margin:0;background:#f0f3ff;border-bottom:1px solid #dce1f2;font-size:14px;color:#374273;line-height:1.5}.message-label{flex-wrap:wrap;line-height:1.5}

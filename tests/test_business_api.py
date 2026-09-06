@@ -182,7 +182,8 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(self.request('/api/chat', {'text': 'hello'}, {'Origin': 'https://evil.example'})[0], 403)
         self.assertEqual(self.request('/api/chat', {'text': 'hello'}, {'Content-Type': 'text/plain'})[0], 415)
         self.assertEqual(self.request('/api/chat', {'text': 'x'*17000})[0], 413)
-        self.assertEqual(self.request('/api/chat', {'text': 'hello'})[0], 503)
+        self.assertEqual(self.request('/api/chat', {'text': 'hello'})[0], 200)
+        self.assertEqual(self.request('/api/chat', {'text': 'Cancel O-101 because I ordered by mistake'})[0], 503)
         self.assertEqual(self.request('/api/chat', {'text': 'hello', 'customer_id': 'C-002'})[0], 400)
 
 
