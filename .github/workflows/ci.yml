@@ -22,9 +22,18 @@ jobs:
           python3 scripts/build_agent_notebook.py --check
           node --check web/app.js
           node tests/test_provider_selector.js
+          node tests/test_public_session.js
       - name: Unit and HTTP contract tests (no model, no secrets)
-        run: python3 -m unittest discover -s tests -v
+        run: |
+          python3 -m pip install --only-binary=:all: --require-hashes -r requirements-web.txt
+          python3 -m unittest discover -s tests -v
+      - name: Validate HTTPS configuration without issuing a certificate
+        run: |
+          bash -n deploy/start-public-web.sh
+          docker run --rm --network none -e RETAILOPS_PUBLIC_HOST=retailops.example.com -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.11.4-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
       - name: Build CPU-only baseline image
         run: docker build -t retailops:ci .
       - name: Verify packaged application
         run: docker run --rm --entrypoint python retailops:ci -m unittest discover -s tests -v
+      - name: Verify HTTPS proxy and cookie session with a temporary test CA
+        run: python3 scripts/check_public_https.py

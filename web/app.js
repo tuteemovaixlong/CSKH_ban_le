@@ -8,6 +8,7 @@ const reasons = {ordered_by_mistake: 'Tôi đặt nhầm', no_longer_needed: 'T�
 const money = value => new Intl.NumberFormat('vi-VN', {style: 'currency', currency: 'VND'}).format(value);
 let token = '', orders = [], selected = 'O-101', pending = null, busy = false, conversationId = null;
 let providerId = 'custom', providerOptions = [];
+const cookieAuth = document.body?.dataset.auth === 'cookie';
 const sourceLabels = {interface: 'Hướng dẫn giao diện', store_data: 'Dữ liệu đơn hàng', llm_agent: 'Hội thoại model'};
 function showContext(context) {
   byId('conversation-context').textContent = context?.order_id ? 'Đang trao đổi: ' + context.order_id
@@ -52,9 +53,9 @@ lockPage(true);
 async function api(path, body, extra = {}) {
   const response = await fetch(path, {
     method: body === undefined ? 'GET' : 'POST',
-    headers: {Authorization: 'Bearer ' + token, ...(body === undefined ? {} : {'Content-Type': 'application/json'}), ...extra},
+    headers: {...(cookieAuth ? {} : {Authorization: 'Bearer ' + token}), ...(body === undefined ? {} : {'Content-Type': 'application/json'}), ...extra},
     body: body === undefined ? undefined : JSON.stringify(body),
-    credentials: 'omit', cache: 'no-store', signal: AbortSignal.timeout(150000),
+    credentials: cookieAuth ? 'same-origin' : 'omit', cache: 'no-store', signal: AbortSignal.timeout(150000),
   });
   const result = await response.json();
   if (!response.ok) {
@@ -217,19 +218,26 @@ async function send(text, requestId = crypto.randomUUID(), retry = false) {
   else await refresh();
 }
 
+async function openSession() {
+  await api('/api/session');
+  const choices = await api('/api/providers'); providerOptions = choices.providers; providerId = choices.default_provider;
+  await refresh();
+  byId('demo-token').value = ''; lockPage(false); byId('messages').replaceChildren();
+  await newConversation();
+}
 byId('login-form').onsubmit = async event => {
   event.preventDefault(); token = byId('demo-token').value.trim(); byId('login-error').textContent = '';
   const button = event.currentTarget.querySelector('button'); button.disabled = true;
   try {
-    await api('/api/session');
-    const choices = await api('/api/providers'); providerOptions = choices.providers; providerId = choices.default_provider;
-    await refresh();
-    byId('demo-token').value = ''; lockPage(false); byId('messages').replaceChildren();
-    await newConversation();
+    if (cookieAuth) { await api('/api/login', {token}); token = ''; }
+    await openSession();
   } catch (error) { token = ''; byId('login-error').textContent = error.message; }
   finally { button.disabled = false; }
 };
-byId('logout').onclick = () => { token = ''; location.reload(); };
+byId('logout').onclick = () => act(async () => {
+  if (cookieAuth) await api('/api/logout', {});
+  token = ''; location.reload();
+});
 byId('chat-form').onsubmit = event => { event.preventDefault(); act(() => send(byId('message').value)); };
 byId('message').onkeydown = event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); act(() => send(event.target.value)); } };
 document.querySelectorAll('[data-prompt]').forEach(b => { b.onclick = () => act(() => send(b.dataset.prompt)); });
@@ -250,3 +258,10 @@ byId('confirm-dialog').oncancel = event => { event.preventDefault(); act(dismiss
 const error = el('p', 'proposal-error'); error.id = 'confirm-error'; error.setAttribute('role', 'alert');
 byId('confirm-dialog').querySelector('.dialog-actions').before(error);
 renderOrder();
+if (cookieAuth) {
+  byId('login-description').textContent = 'Nhập mã mời từ chủ dự án. Mỗi khách có bộ đơn mẫu riêng. Phiên có hiệu lực 8 giờ. Đóng phiên sẽ kết thúc quyền truy cập bộ dữ liệu này.';
+  byId('session-note').textContent = 'Dữ liệu thuộc phiên demo riêng của bạn, có hiệu lực 8 giờ. Tải lại trang giữ trạng thái; đóng phiên rồi đăng nhập tạo bộ đơn mới.';
+  const loginButton = byId('login-form').querySelector('button'); loginButton.disabled = true;
+  openSession().catch(error => { lockPage(true); if (error.message && !/mã mời|phiên demo/i.test(error.message)) byId('login-error').textContent = error.message; })
+    .finally(() => { loginButton.disabled = false; });
+}
