@@ -17,3 +17,11 @@
 .agent-trace p { margin: 6px 0; }
 .agent-trace small, .replay-note { display: block; line-height: 1.5; }
 .messages[aria-busy="true"] { opacity: .85; }
+
+.provider-controls { padding: 12px 22px; border-bottom: 1px solid #e8eaf0; background: #f8f9fc; }
+.provider-controls label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 6px; color: #41465a; }
+.provider-controls select { width: 100%; max-width: 400px; border: 1px solid #cbd0de; border-radius: 8px; padding: 9px 12px; font: inherit; font-size: 13px; background: white; color: #25293b; }
+.provider-controls select:focus-visible { outline: 2px solid #675fe8; outline-offset: 2px; }
+.provider-controls select:disabled { opacity: .65; }
+.provider-controls p { margin: 6px 0 0; font-size: 11px; line-height: 1.5; color: #555c70; overflow-wrap: anywhere; }
+.provider-controls small { display: block; margin-top: 4px; font-size: 11px; color: #555c70; }

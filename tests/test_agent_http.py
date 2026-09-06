@@ -105,7 +105,7 @@ class ChainTests(unittest.TestCase):
             self.assertEqual(request['tools'], TOOLS)
             self.assertNotIn('format', request)
         self.assertEqual(self.request(base+'/api/chat', body, token='c'*40)[0], 404)
-        self.assertEqual(self.request(base+'/healthz')[1]['version'], '0.4')
+        self.assertEqual(self.request(base+'/healthz')[1]['version'], '0.4.1')
         self.assertEqual(self.request(base+'/api/chat', {**body, 'messages': []})[0], 400)
 
     def test_agent_endpoints_require_token_and_reject_prompt_override(self):

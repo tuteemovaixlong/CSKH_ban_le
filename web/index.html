@@ -36,6 +36,16 @@
     <div class="workspace">
       <section class="chat-panel" aria-labelledby="chat-title">
         <div class="panel-heading"><div class="agent-avatar" aria-hidden="true">R</div><div><h2 id="chat-title">Trợ lý RetailOps</h2><span>Tra đơn · Thông tin sản phẩm · Yêu cầu hủy</span></div><span class="session-pill">Phiên thử</span></div>
+        <div class="provider-controls">
+          <label for="model-provider">Nguồn model</label>
+          <select id="model-provider" aria-describedby="provider-detail provider-notice provider-switch-note">
+            <option value="custom">Custom model · Colab/Ollama</option>
+            <option value="api" disabled>API · Chưa cấu hình</option>
+          </select>
+          <p id="provider-detail" aria-live="polite"></p>
+          <p id="provider-notice"></p>
+          <small id="provider-switch-note">Đổi nguồn sẽ mở cuộc trò chuyện mới.</small>
+        </div>
         <p class="conversation-context" id="conversation-context" aria-live="polite">Chưa chọn đơn hoặc sản phẩm</p><div class="messages" id="messages" role="log" aria-live="polite" aria-relevant="additions text" tabindex="0"></div>
         <div class="composer-area"><div class="suggestions" aria-label="Yêu cầu mẫu"><button data-prompt="Kiểm tra đơn O-101">Tra đơn O-101 <span>↗</span></button><button data-prompt="Hủy đơn O-101 vì tôi đặt nhầm">Hủy đơn O-101 <span>↗</span></button><button data-prompt="Hủy đơn O-102">Thử đơn đã giao <span>↗</span></button></div><form id="chat-form"><label class="sr-only" for="message">Yêu cầu của bạn</label><textarea id="message" rows="1" maxlength="1000" placeholder="Ví dụ: Tôi muốn hủy đơn O-101…" required></textarea><button class="send" type="submit" aria-label="Gửi yêu cầu"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 7-7 7 7M12 5v14"/></svg></button></form><div class="composer-note">Dữ liệu giả lập · Hủy đơn luôn cần bạn xác nhận</div></div>
       </section>
@@ -46,10 +56,10 @@
         <div class="scope-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4v5c0 5-8 9-8 9s-8-4-8-9V7l8-4Z"/><path d="m8 12 3 3 5-6"/></svg><p>Trạng thái và nhật ký được lưu tại backend. Tải lại trang không khôi phục đơn đã hủy.</p></div>
       </aside>
     </div>
-    <footer>RetailOps <span>Phiên bản hội thoại 0.4</span></footer>
+    <footer>RetailOps <span>Phiên bản hội thoại 0.4.1</span></footer>
   </main>
 
   <dialog id="confirm-dialog" aria-labelledby="confirm-title"><div class="dialog-inner"><span class="small-tag">XÁC NHẬN THAO TÁC MẪU</span><h2 id="confirm-title">Hủy đơn O-101?</h2><p id="confirm-description"></p><div class="confirm-detail"><span>Lý do</span><strong id="confirm-reason"></strong></div><p class="dialog-note">Thao tác sẽ cập nhật đơn giả lập tại backend và lưu nhật ký. Không có giao dịch cửa hàng thật.</p><div class="dialog-actions"><button class="secondary" id="dismiss-confirm">Giữ đơn hàng</button><button class="primary" id="approve-confirm">Xác nhận hủy đơn mẫu</button></div></div></dialog>
-  <dialog id="about-dialog" aria-labelledby="about-title"><div class="dialog-inner"><span class="small-tag">RETAILOPS DEMO</span><h2 id="about-title">Luồng nghiệp vụ có lưu dữ liệu</h2><p>Bạn có thể tra hai đơn mẫu, chọn lý do hủy, xác nhận hoặc giữ đơn. Trạng thái đơn và nhật ký được lưu tại backend.</p><p>Qwen đọc lịch sử gần đây, chọn công cụ tra dữ liệu rồi viết câu trả lời. Chi tiết mỗi lượt cho biết model và công cụ đã dùng. Các nút tra đơn đọc trực tiếp từ backend. Hủy đơn luôn cần bạn chọn lý do và bấm xác nhận riêng.</p><p>Mỗi lần đăng nhập tạo một cuộc trò chuyện riêng. Lịch sử gửi cho model được giới hạn theo độ dài và tối đa 6 lượt gần đây. Ngữ cảnh hết hạn sau 30 phút không sử dụng. Chỉ nhập dữ liệu giả lập, không nhập thông tin cá nhân hoặc mã bí mật. Bấm Cuộc trò chuyện mới để bỏ ngữ cảnh; trạng thái đơn và nhật ký vẫn được giữ.</p><button class="primary" id="close-about">Bắt đầu thử</button></div></dialog>
+  <dialog id="about-dialog" aria-labelledby="about-title"><div class="dialog-inner"><span class="small-tag">RETAILOPS DEMO</span><h2 id="about-title">Luồng nghiệp vụ có lưu dữ liệu</h2><p>Bạn có thể tra hai đơn mẫu, chọn lý do hủy, xác nhận hoặc giữ đơn. Trạng thái đơn và nhật ký được lưu tại backend.</p><p>Model bạn chọn đọc lịch sử gần đây, chọn công cụ tra dữ liệu rồi viết câu trả lời. Nguồn chưa cấu hình không thể chọn. Đổi nguồn tạo cuộc trò chuyện mới để tách lịch sử; chỉ gửi tin mới gọi model. Chi tiết mỗi lượt cho biết model và công cụ đã dùng. Các nút tra đơn đọc trực tiếp từ backend. Hủy đơn luôn cần bạn chọn lý do và bấm xác nhận riêng.</p><p>Mỗi lần đăng nhập tạo một cuộc trò chuyện riêng. Lịch sử gửi cho model được giới hạn theo độ dài và tối đa 6 lượt gần đây. Ngữ cảnh hết hạn sau 30 phút không sử dụng. Chỉ nhập dữ liệu giả lập, không nhập thông tin cá nhân hoặc mã bí mật. Bấm Cuộc trò chuyện mới để bỏ ngữ cảnh; trạng thái đơn và nhật ký vẫn được giữ.</p><button class="primary" id="close-about">Bắt đầu thử</button></div></dialog>
 </body>
 </html>
