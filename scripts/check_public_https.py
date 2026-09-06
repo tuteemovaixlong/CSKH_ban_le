@@ -5,7 +5,6 @@ temporary Compose project and volumes. No API credentials or inference calls.
 """
 import json
 import os
-import shutil
 import subprocess
 import tempfile
 import time
@@ -24,6 +23,8 @@ def main():
     with tempfile.TemporaryDirectory(prefix='retailops-https-ci-') as folder:
         temp = Path(folder)
         data = temp / 'data'; data.mkdir(); data.chmod(0o777)  # disposable fixture, no real data
+        # Keep the directory owned by the runner so it can remove UID-10001 DB files.
+        guests = data / 'public-guests'; guests.mkdir(); guests.chmod(0o777)
         compose = (ROOT / 'deploy/compose.public.yaml').read_text().replace('"80:80"', '"127.0.0.1:18080:80"').replace('"443:443"', '"127.0.0.1:18443:443"')
         (temp/'compose.public.yaml').write_text(compose)
         (temp/'Caddyfile').write_text((ROOT/'deploy/Caddyfile').read_text().replace('{$RETAILOPS_PUBLIC_HOST} {', '{$RETAILOPS_PUBLIC_HOST} {\n\ttls internal'))
