@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+# Local business-demo state and access credentials
+artifacts-business-local/
+api.env

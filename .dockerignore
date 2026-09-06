@@ -1,6 +1,11 @@
 *
 !retailops_baseline.py
 !inference_proxy.py
+!retailops_api.py
+!web/
+!web/*
+!deploy/
+!deploy/compose.api.yaml
 !tests/
 !tests/*.py
 !data/

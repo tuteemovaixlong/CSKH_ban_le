@@ -1,0 +1,31 @@
+services:
+  api:
+    image: ${RETAILOPS_IMAGE:?Use the deployed.env file created by CD}
+    init: true
+    restart: unless-stopped
+    entrypoint: ["python", "retailops_api.py"]
+    command: []
+    env_file:
+      - inference.env
+      - api.env
+    environment:
+      RETAILOPS_OUTPUT: /data
+      RETAILOPS_API_BIND: 0.0.0.0
+      RETAILOPS_API_PORT: "8000"
+    ports:
+      - "127.0.0.1:8080:8000"
+    volumes:
+      - ${RETAILOPS_DATA_DIR:-/opt/retailops/artifacts}:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 64
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz',timeout=3).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
