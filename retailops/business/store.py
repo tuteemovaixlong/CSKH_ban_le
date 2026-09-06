@@ -13,57 +13,24 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from retailops.core import REASONS, fields, require
+from retailops.schema import migrate
+from retailops.business.schema import initialize as initialize_schema
 
 class BusinessStore:
-    def __init__(self, path):
+    def __init__(self, path, *, create=True):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.connection() as db:
-            db.executescript('''
-                PRAGMA journal_mode=WAL;
-                CREATE TABLE IF NOT EXISTS orders (
-                  id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, name TEXT NOT NULL,
-                  variant TEXT NOT NULL, amount INTEGER NOT NULL,
-                  status TEXT NOT NULL CHECK(status IN ('pending','delivered','cancelled')),
-                  version INTEGER NOT NULL DEFAULT 1, cancel_reason TEXT
-                );
-                CREATE INDEX IF NOT EXISTS idx_orders_customer_id ON orders(customer_id);
-                CREATE TABLE IF NOT EXISTS proposals (
-                  id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, order_id TEXT NOT NULL REFERENCES orders(id),
-                  order_version INTEGER NOT NULL, reason TEXT NOT NULL,
-                  expires_at REAL NOT NULL, state TEXT NOT NULL DEFAULT 'pending',
-                  confirm_key TEXT, result TEXT,
-                  UNIQUE(customer_id, confirm_key)
-                );
-                CREATE TABLE IF NOT EXISTS business_events (
-                  id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id TEXT NOT NULL,
-                  created_at REAL NOT NULL, kind TEXT NOT NULL, order_id TEXT, payload TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_business_events_customer_id_id
-                  ON business_events(customer_id, id);
-                CREATE TABLE IF NOT EXISTS conversations (
-                  id TEXT PRIMARY KEY, customer_id TEXT NOT NULL,
-                  order_id TEXT, product_id TEXT,
-                  revision INTEGER NOT NULL DEFAULT 0, expires_at REAL NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS agent_turns (
-                  id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-                  customer_id TEXT NOT NULL, request_id TEXT NOT NULL, input_hash TEXT NOT NULL,
-                  messages TEXT NOT NULL, result TEXT NOT NULL, created_at REAL NOT NULL,
-                  UNIQUE(conversation_id, request_id)
-                );
-                CREATE TABLE IF NOT EXISTS provider_daily_usage (
-                  day TEXT NOT NULL, provider_id TEXT NOT NULL, attempts INTEGER NOT NULL,
-                  PRIMARY KEY(day,provider_id)
-                );
-            ''')
-            if 'provider_id' not in {row['name'] for row in db.execute('PRAGMA table_info(conversations)')}:
-                db.execute("ALTER TABLE conversations ADD COLUMN provider_id TEXT NOT NULL DEFAULT 'custom'")
+        with self.connection(create=create) as db:
+            db.execute('PRAGMA journal_mode=WAL')
+        with self.connection(write=True) as db:
+            migrate(db, 'business', initialize_schema)
 
     @contextmanager
-    def connection(self, write=False):
-        db = sqlite3.connect(self.path, timeout=5)
+    def connection(self, write=False, *, create=False):
+        # Only explicit construction may create a database. A lost mount must not
+        # silently create a blank database while a cached repository is in use.
+        uri = self.path.resolve().as_uri() + ('?mode=rwc' if create else '?mode=rw')
+        db = sqlite3.connect(uri, uri=True, timeout=5)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA foreign_keys=ON")
         try:
@@ -80,11 +47,27 @@ class BusinessStore:
     def seed(self):
         # INSERT OR IGNORE preserves cancelled orders across process/container restarts.
         with self.connection(write=True) as db:
+            db.executemany("INSERT OR IGNORE INTO customers VALUES (?,?)", [('C-001','Mai Anh'),('C-002','Khách mẫu')])
             db.executemany("INSERT OR IGNORE INTO orders(id, customer_id, name, variant, amount, status) VALUES (?,?,?,?,?,?)", [
                 ("O-101", "C-001", "Áo thun Essential", "Trắng · Size M · Số lượng 1", 299000, "pending"),
                 ("O-102", "C-001", "Áo khoác Everyday", "Đen · Size L · Số lượng 1", 799000, "delivered"),
                 ("O-202", "C-002", "Áo polo", "Xanh · Size M · Số lượng 1", 399000, "pending"),
             ])
+
+    def add_customer(self, customer_id, name):
+        require(isinstance(customer_id, str) and re.fullmatch(r'[A-Za-z0-9_-]{1,64}', customer_id)
+                and isinstance(name, str) and 0 < len(name.strip()) <= 100,
+                400, 'invalid_customer', 'Thông tin khách hàng không hợp lệ.')
+        with self.connection(write=True) as db:
+            require(db.execute('SELECT 1 FROM customers WHERE id=?', (customer_id,)).fetchone() is None,
+                    409, 'customer_exists', 'Khách hàng đã tồn tại.')
+            db.execute('INSERT INTO customers VALUES (?,?)', (customer_id, name))
+
+    def customer(self, customer_id):
+        with self.connection() as db:
+            row = db.execute('SELECT * FROM customers WHERE id=?', (customer_id,)).fetchone()
+        require(row is not None, 404, 'customer_not_found', 'Không tìm thấy khách hàng.')
+        return dict(row)
 
     @staticmethod
     def owned(db, customer, oid):

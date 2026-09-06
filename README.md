@@ -1,10 +1,11 @@
-## Khung hệ thống — 0.6
+## Khung hệ thống — 0.7
 
 [Kiến trúc module, cách chạy và phần khung còn lại](docs/SYSTEM_FOUNDATION.md).
 Lõi nghiệp vụ, xác thực phiên, HTTP và cấu hình đã được tách trong package `retailops/`.
 Entrypoint cũ vẫn tương thích; có thêm `python -m retailops check-config --interface public`
 để kiểm tra cấu hình mà không in secret, tạo database hay gọi model.
-Phiên bản này vẫn chỉ chạy dữ liệu giả lập; tài khoản doanh nghiệp và dữ liệu multi-tenant bền vững là giai đoạn tiếp theo.
+Có thêm [tài khoản cá nhân và dữ liệu theo cửa hàng](docs/PERSISTENT_IDENTITY.md) ở chế độ `persistent-demo`: logout không xóa đơn, quyền `customer`/`viewer`, migration SQLite và công cụ cấp/thu hồi mã.
+Mặc định vẫn là `synthetic-demo`; cả hai chế độ chỉ dành cho dữ liệu giả lập.
 
 ## Web HTTPS trên EC2
 
@@ -27,7 +28,7 @@ Luồng nghiệp vụ: tra đơn → chọn lý do hủy → xem lại → xác 
 và nhật ký. Model chỉ gợi ý luồng; backend kiểm tra chủ sở hữu, trạng thái, phiên
 bản đơn, thời hạn đề xuất và idempotency trước khi thực hiện.
 
-API là demo riêng trên localhost/SSM, chưa phải dịch vụ công khai. Ở bản 0.4.1,
+Web có thể chạy HTTPS công khai trên EC2; API riêng vẫn dùng localhost/SSM.
 bạn chọn custom model (Colab/Ollama) hoặc API OpenRouter ngay trong giao diện.
 Mọi câu chat gọi model đã chọn để đọc lịch sử, chọn công cụ đọc dữ liệu và sinh câu trả lời.
 Backend kiểm soát quyền truy cập và mọi giao dịch. Các nút tra/hủy vẫn hoạt động

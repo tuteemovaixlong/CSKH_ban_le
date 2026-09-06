@@ -22,6 +22,7 @@ COOKIE = '__Host-retailops_session'
 SESSION_SECONDS = 8 * 3600
 
 class GuestSessions:
+    data_mode = 'synthetic-demo'
     cookie_name = COOKIE
     session_seconds = SESSION_SECONDS
 

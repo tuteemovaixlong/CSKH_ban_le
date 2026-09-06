@@ -9,6 +9,7 @@ from retailops.config import Settings
 from retailops.business.application import Application
 from retailops.business.store import BusinessStore
 from retailops.identity.demo import GuestSessions
+from retailops.identity.persistent import PersistentSessions
 from retailops.http.private import Server
 from retailops.http.public import PublicWeb
 from retailops.models import build_gateways
@@ -19,8 +20,12 @@ def build_public_app(settings: Settings | None = None) -> PublicWeb:
     if settings.interface != 'public':
         raise ValueError('Public startup requires public settings.')
     gateways = build_gateways(settings)  # Validate all enabled adapters before writing data.
-    sessions = GuestSessions(settings.output/'public-guests', settings.access_token,
-                             gateways.custom, gateways.api, settings.api_daily_turn_limit)
+    if settings.data_mode == 'persistent-demo':
+        sessions = PersistentSessions(settings.output/'persistent', gateways.custom, gateways.api,
+                                      settings.api_daily_turn_limit)
+    else:
+        sessions = GuestSessions(settings.output/'public-guests', settings.access_token,
+                                 gateways.custom, gateways.api, settings.api_daily_turn_limit)
     return PublicWeb(settings.origin, sessions)
 
 

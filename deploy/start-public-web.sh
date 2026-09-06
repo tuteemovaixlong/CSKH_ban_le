@@ -68,10 +68,12 @@ values['RETAILOPS_PUBLIC_HOST'] = host
 values['RETAILOPS_PUBLIC_ORIGIN'] = 'https://' + host
 values.setdefault('RETAILOPS_PUBLIC_INVITE_TOKEN', secrets.token_urlsafe(32))
 values.setdefault('RETAILOPS_PUBLIC_CUSTOM_ENABLED', 'false')
+values.setdefault('RETAILOPS_DATA_MODE', 'synthetic-demo')
 assert re.fullmatch(r'[A-Za-z0-9_-]{32,128}', values['RETAILOPS_PUBLIC_INVITE_TOKEN']), 'Invalid public invite token.'
 assert values['RETAILOPS_PUBLIC_CUSTOM_ENABLED'] in ('true','false'), 'Custom flag must be true or false.'
-allowed={'RETAILOPS_PUBLIC_HOST','RETAILOPS_PUBLIC_ORIGIN','RETAILOPS_PUBLIC_INVITE_TOKEN','RETAILOPS_PUBLIC_CUSTOM_ENABLED'}
-assert set(values) == allowed, 'public.env should contain only its four documented settings. Put API settings in api.env.'
+assert values['RETAILOPS_DATA_MODE'] in ('synthetic-demo','persistent-demo'), 'Invalid data mode.'
+allowed={'RETAILOPS_PUBLIC_HOST','RETAILOPS_PUBLIC_ORIGIN','RETAILOPS_PUBLIC_INVITE_TOKEN','RETAILOPS_PUBLIC_CUSTOM_ENABLED','RETAILOPS_DATA_MODE'}
+assert set(values) == allowed, 'public.env contains unsupported settings. Put API settings in api.env.'
 Path(destination).write_text(''.join(key+'='+value+'\n' for key,value in values.items()))
 PY
 if [[ -f public.env ]]; then
@@ -107,6 +109,10 @@ else
   printf '%s\n' 'Check inbound 80/443, host firewall and Caddy logs. Do not bypass browser certificate warnings.'
   exit 1
 fi
-printf '%s\n' 'Read RETAILOPS_PUBLIC_INVITE_TOKEN from /opt/retailops/public.env privately, and share it only with invited demo users.'
+if [[ $(sed -n 's/^RETAILOPS_DATA_MODE=//p' public.env) == persistent-demo ]]; then
+  printf '%s\n' 'Persistent accounts use individual codes provisioned with python -m retailops identity. See docs/PERSISTENT_IDENTITY.md.'
+else
+  printf '%s\n' 'Read RETAILOPS_PUBLIC_INVITE_TOKEN from /opt/retailops/public.env privately, and share it only with invited demo users.'
+fi
 printf '%s\n' 'API needs its own valid configuration in api.env. HTTPS readiness does not test paid inference.'
 RETAILOPS_HTTPS_SETUP

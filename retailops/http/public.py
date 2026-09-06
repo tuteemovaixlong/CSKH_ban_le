@@ -57,6 +57,7 @@ class PublicWeb:
         if path == '/healthz' and method == 'GET':
             self.sessions.check_health()
             return 200, {'status': 'ok', 'scope': 'synthetic-demo', 'version': VERSION,
+                         'data_mode': self.sessions.data_mode,
                          'agent_protocol': PROTOCOL, 'hosting': 'public-https'}, mime, headers
         assets = {'/': ('index.html', 'text/html; charset=utf-8'), '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
                   '/styles.css': ('styles.css', 'text/css; charset=utf-8')}
@@ -65,7 +66,8 @@ class PublicWeb:
             # Fixed assets, no user-supplied file lookup. Public mode is a non-executable data attribute.
             data = (ROOT / 'web' / name).read_bytes()
             if path == '/':
-                data = data.replace(b'<body>', b'<body data-auth="cookie">')
+                mode = b' data-data-mode="persistent-demo"' if self.sessions.data_mode == 'persistent-demo' else b''
+                data = data.replace(b'<body>', b'<body data-auth="cookie"' + mode + b'>')
             return 200, data, mime, headers
         require(path.startswith('/api/'), 404, 'not_found', 'Không tìm thấy đường dẫn.')
         body = None
@@ -88,4 +90,7 @@ class PublicWeb:
             status, result = api_result(app, binding.customer_id, method, path, body, env.get('HTTP_IDEMPOTENCY_KEY'))
             if path == '/api/session':
                 result.update(self.sessions.metadata())
+                if binding.principal_id is not None:
+                    result.update(tenant_id=binding.tenant_id, principal_id=binding.principal_id,
+                                  name=binding.display_name)
             return status, result, mime, headers

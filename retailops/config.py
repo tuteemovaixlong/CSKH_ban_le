@@ -60,9 +60,11 @@ class Settings:
     def __post_init__(self):
         if self.interface not in ('public', 'private'):
             raise ValueError('Interface must be public or private.')
-        if self.data_mode != DATA_MODE:
-            raise ValueError('Only synthetic-demo is implemented. Durable identity and data require a separate backend.')
-        if not re.fullmatch(r'[A-Za-z0-9_-]{32,128}', self.access_token):
+        if self.data_mode not in (DATA_MODE, 'persistent-demo'):
+            raise ValueError('Data mode must be synthetic-demo or persistent-demo; real customer data is not supported yet.')
+        if self.data_mode == 'persistent-demo' and self.interface != 'public':
+            raise ValueError('Persistent accounts require the public HTTPS interface.')
+        if self.data_mode == DATA_MODE and not re.fullmatch(r'[A-Za-z0-9_-]{32,128}', self.access_token):
             name = 'RETAILOPS_PUBLIC_INVITE_TOKEN' if self.interface == 'public' else 'RETAILOPS_DEMO_TOKEN'
             raise ValueError(name + ' must be a random 32–128 character URL-safe value.')
         if self.interface == 'public':
