@@ -10,6 +10,8 @@ class Element {
   replaceChildren(...nodes) { this.children=nodes; }
   querySelector() { return this.button ||= new Element(); }
   before() {}
+  showModal() {this.open=true;}
+  close() {this.open=false;}
   setAttribute(k,v) { this[k]=v; }
   removeAttribute(k) { delete this[k]; }
   remove() {}
@@ -32,6 +34,7 @@ const context=vm.createContext({document,console,Intl,Date,AbortSignal,crypto:{r
     else if(url==='/api/providers') body={default_provider:'api',providers:[{id:'api',model:'fixture-model',label:'API',configured:true}]};
     else if(url==='/api/session') body={name: 'Khách B', permissions: persistent ? ['orders:read'] : ['orders:read','orders:cancel']};
     else if(url==='/api/orders') body={orders:persistent ? [{id:'O-202',name:'Áo polo',variant:'M',amount:399000,status:'pending',version:1}] : []};
+    else if(url==='/api/cancellation-proposals') body={proposals:[{proposal_id:'saved-proposal-id',reason:'ordered_by_mistake',expires_at:Date.now()/1000+600,order:{id:'O-101',name:'Áo thun',amount:299000}}]};
     else if(url==='/api/events') body={events:[]};
     else if(url==='/api/conversations') body={conversation_id:'fixture-conversation',provider_id:'api',context:{}};
     return {status,ok:status===200,json:async()=>body};
@@ -67,6 +70,16 @@ const run=code=>vm.runInContext(code,context);
   const before=requests.filter(r=>r.url==='/api/login').length;
   await run('openSession()');
   assert.equal(requests.filter(r=>r.url==='/api/login').length,before);
+  if (!persistent) {
+    assert.ok(requests.some(r=>r.url==='/api/cancellation-proposals'));
+    assert.equal(get('confirm-dialog').open,undefined);
+    const rows=get('messages').children;
+    const button=rows.flatMap(r=>r.children).find(n=>n.textContent==='Xem lại đề xuất');
+    assert.ok(button); await button.onclick();
+    assert.equal(run('pending.key'),'saved-proposal-id');
+    assert.equal(get('confirm-dialog').open,true);
+    assert.ok(!requests.some(r=>r.url.endsWith('/confirm')));
+  }
   await get('logout').onclick();
   assert.equal(authenticated,false);assert.equal(reloaded,true);
   assert.equal(requests.at(-1).url,'/api/logout');

@@ -28,6 +28,7 @@ jobs:
           persist-credentials: false
       - name: Verify source and image without inference
         run: |
+          python3 -m pip install --only-binary=:all: --require-hashes -r requirements-graph.txt
           python3 -m unittest discover -s tests -v
           docker build -t retailops:deploy .
           docker run --rm --entrypoint python retailops:deploy -m unittest discover -s tests -v

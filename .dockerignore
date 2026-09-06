@@ -31,3 +31,5 @@
 !deploy/start-public-web.sh
 **/__pycache__/
 **/*.pyc
+
+!requirements-graph.txt

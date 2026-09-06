@@ -56,6 +56,13 @@ def initialize(db, schema, component):
         raise ValueError('Schema and component mismatch.')
     exists = db.raw.execute('SELECT 1 FROM pg_namespace WHERE nspname=%s', (schema,)).fetchone()
     if exists:
+        if component == 'business':
+            row = db.raw.execute(sql.SQL('SELECT component,version FROM {}.retailops_schema').format(sql.Identifier(schema))).fetchone()
+            if row == {'component': 'business', 'version': 1}:
+                db.raw.execute(sql.SQL('SET LOCAL search_path TO {}, pg_catalog').format(sql.Identifier(schema)))
+                from retailops.workflow.schema import initialize as graph_schema
+                graph_schema(db)
+                db.execute("UPDATE retailops_schema SET version=2 WHERE component='business'")
         assert_schema(db, schema, component)
         return False
     db.raw.execute(sql.SQL('CREATE SCHEMA {}').format(sql.Identifier(schema)))
@@ -64,5 +71,8 @@ def initialize(db, schema, component):
     for statement in IDENTITY_DDL if component == 'identity' else BUSINESS_DDL:
         db.raw.execute(statement)
     db.execute('CREATE TABLE retailops_schema (component TEXT PRIMARY KEY, version INTEGER NOT NULL)')
-    db.execute('INSERT INTO retailops_schema VALUES (?,1)', (component,))
+    if component == 'business':
+        from retailops.workflow.schema import initialize as graph_schema
+        graph_schema(db)
+    db.execute('INSERT INTO retailops_schema VALUES (?,?)', (component, 2 if component == 'business' else 1))
     return True

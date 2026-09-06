@@ -82,7 +82,7 @@ def assert_schema(db, schema, component):
     if not exists:
         raise ValueError('PostgreSQL schema is missing. Run the explicit database initialization/import command.')
     rows = db.raw.execute(sql.SQL('SELECT component,version FROM {}.retailops_schema').format(sql.Identifier(schema))).fetchall()
-    if len(rows) != 1 or rows[0] != {'component': component, 'version': 1}:
+    if len(rows) != 1 or rows[0] != {'component': component, 'version': 2 if component == 'business' else 1}:
         raise ValueError('Unsupported PostgreSQL schema version or component.')
 
 

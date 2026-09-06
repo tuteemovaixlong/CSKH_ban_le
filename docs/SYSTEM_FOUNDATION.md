@@ -1,4 +1,4 @@
-# RetailOps 0.8 — Khung hệ thống, giai đoạn 1–2
+# RetailOps 0.9 — Khung hệ thống, giai đoạn 1–3
 
 ## Mục tiêu và phạm vi
 
@@ -12,7 +12,7 @@ PostgreSQL là backend tùy chọn, có schema theo tenant, nhập snapshot SQLi
 Xem [PostgreSQL](POSTGRESQL.md). Chi tiết và hướng dẫn vận hành: [Persistent identity](PERSISTENT_IDENTITY.md).
 Mặc định `synthetic-demo` giữ hành vi guest cũ; `persistent-demo` bật tài khoản và dữ liệu
 không phụ thuộc thời hạn phiên. Cả hai chỉ dùng dữ liệu giả lập. `production` vẫn bị từ chối.
-Khung điều phối request/budget và tích hợp hệ thống bán hàng còn ở các giai đoạn sau.
+LangGraph thêm checkpoint từng bước và interrupt xác nhận; xem [hướng dẫn](LANGGRAPH.md). Admission theo tenant, ngân sách USD và tích hợp hệ thống bán hàng vẫn chưa hoàn tất.
 
 ## Các phần đã có trong code
 
@@ -28,6 +28,7 @@ Khung điều phối request/budget và tích hợp hệ thống bán hàng còn
 | `retailops/business/store.py` | SQLite, quyền sở hữu, trạng thái/version, proposal, xác nhận, idempotency và audit trong transaction |
 | `retailops/business/application.py` | Use case hội thoại, chọn nguồn model và ngữ cảnh đơn/sản phẩm |
 | `retailops/storage/`, `retailops/identity/postgres.py` | PostgreSQL adapter, DDL rõ ràng, import SQLite và account backend |
+| `retailops/workflow/` | LangGraph model/tools và interrupt xác nhận, SQL checkpointer, lease theo request |
 | `retailops/models.py` | Hợp đồng `ModelGateway` và factory cho custom/API được cấu hình; không tự fallback |
 | `retailops/http/routes.py` | Cùng bộ business routes dùng cho HTTP public/private |
 | `retailops/http/public.py` | HTTPS-facing WSGI, Host/Origin/cookie và giới hạn request; nhận danh tính từ session backend |
@@ -36,8 +37,8 @@ Khung điều phối request/budget và tích hợp hệ thống bán hàng còn
 
 Các thành phần agent/inference hiện có (`retailops_agent.py`, `retailops_tools.py`,
 `retailops_providers.py`, `agent_protocol.py`, `inference_proxy.py`) vẫn là implementation
-được các module mới sử dụng. Chưa đổi prompt, thuật toán chọn tool, số model calls,
-khóa chat dùng chung hay hành vi nhà cung cấp.
+được các module mới sử dụng. Prompt/tool protocol và giới hạn số lần gọi giữ nguyên. Vòng model/tools đã chuyển sang graph;
+khóa process được bổ sung bằng lease SQL theo request. Hủy đơn vẫn qua transaction riêng.
 
 ```mermaid
 flowchart TB
@@ -135,9 +136,10 @@ kiểm tra Docker/HTTPS như trước.
 |---|---|---|
 | 1 — Đã có | Module, cấu hình, factory và session binding | Luồng cũ qua test; các ranh giới mới được kiểm tra; notebook và Docker đóng gói đủ |
 | 2 — Đã có cho dữ liệu giả lập | Mô hình tenant/customer/role; identity backend; schema migration và repository theo tenant; tách hẳn thời hạn session khỏi thời hạn đơn | Logout/expiry không mất đơn; tenant khác không đọc/ghi lẫn; có đường migration và restore |
-| 3 — Luồng điều phối hệ thống | Khóa conversation, admission theo provider/tenant, lifecycle request và budget reservation; trạng thái pending/failed rõ ràng | Không đảo lịch sử, không thực hiện giao dịch lặp, không gọi vượt phần ngân sách đã giữ |
+| 3 — Đã có graph/checkpoint, còn admission nâng cao | Khóa conversation, admission theo provider/tenant, lifecycle request và budget reservation; trạng thái pending/failed rõ ràng | Không đảo lịch sử, không thực hiện giao dịch lặp, không gọi vượt phần ngân sách đã giữ |
 | 4 — Tích hợp và vận hành | Hợp đồng hệ thống bán hàng/provider; promotion đúng image đã qua gate; backup/restore/rollback | Một workflow từ đăng nhập đến giao dịch và khôi phục chạy được trên staging |
 | 5 — Đo và tối ưu | Baseline toàn tuyến, tải, chất lượng và chi phí; sau đó mới cache, serving hoặc fine-tune theo kết quả | So sánh trước–sau tái lập được trên cùng tập tác vụ |
 
-Giai đoạn 3 là phần làm tiếp: điều phối request và giữ ngân sách trước khi gọi provider.
-Các hàng 3–5 là kế hoạch, chưa phải tính năng đã hoàn tất. Không thêm dịch vụ trả phí hoặc thay đổi hạ tầng EC2 trong phase 2.
+Giai đoạn 3 đã có LangGraph, checkpoint bền vững, lease theo request và interrupt xác nhận.
+Hạn mức API vẫn là số lần thử/ngày, chưa phải reservation theo USD/token. RAG/pgvector, MCP,
+multi-agent và các hàng 4–5 còn phía trước. Chưa thay đổi hạ tầng trả phí.
