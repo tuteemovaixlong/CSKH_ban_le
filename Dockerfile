@@ -7,6 +7,7 @@ COPY retailops_baseline.py inference_proxy.py retailops_api.py retailops_convers
 COPY web /app/web
 COPY deploy/compose.api.yaml /app/deploy/compose.api.yaml
 COPY retailops_public.py /app/
+COPY retailops /app/retailops
 COPY deploy/compose.public.yaml deploy/Caddyfile deploy/start-public-web.sh /app/deploy/
 COPY tests /app/tests
 COPY data/smoke.jsonl /app/data/smoke.jsonl

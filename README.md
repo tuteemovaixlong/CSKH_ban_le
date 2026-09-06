@@ -1,4 +1,12 @@
-## Web HTTPS trên EC2 — 0.5
+## Khung hệ thống — 0.6
+
+[Kiến trúc module, cách chạy và phần khung còn lại](docs/SYSTEM_FOUNDATION.md).
+Lõi nghiệp vụ, xác thực phiên, HTTP và cấu hình đã được tách trong package `retailops/`.
+Entrypoint cũ vẫn tương thích; có thêm `python -m retailops check-config --interface public`
+để kiểm tra cấu hình mà không in secret, tạo database hay gọi model.
+Phiên bản này vẫn chỉ chạy dữ liệu giả lập; tài khoản doanh nghiệp và dữ liệu multi-tenant bền vững là giai đoạn tiếp theo.
+
+## Web HTTPS trên EC2
 
 [Xem hướng dẫn triển khai HTTPS](docs/PUBLIC_HTTPS.md). Bản mới phục vụ web bằng Caddy + Waitress, có cookie và bộ đơn riêng cho mỗi khách. API được chọn mặc định khi đã cấu hình; không cần giữ laptop/SSM hoặc Colab khi dùng API. Chứng chỉ và kết nối API thật cần xác nhận trên EC2.
 

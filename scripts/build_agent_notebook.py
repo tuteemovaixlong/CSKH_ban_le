@@ -28,6 +28,7 @@ def build():
              'retailops_api.py', 'retailops_public.py', 'retailops_providers.py', 'retailops_tools.py', 'retailops_conversation.py', 'data/products.json',
              'data/smoke.jsonl', 'notebooks/agent_smoke.py', 'notebooks/colab_runtime.py']
     names += [p.relative_to(ROOT).as_posix() for p in sorted((ROOT/'tests').glob('*.py'))]
+    names += [p.relative_to(ROOT).as_posix() for p in sorted((ROOT/'retailops').rglob('*.py'))]
     names += [p.relative_to(ROOT).as_posix() for p in sorted((ROOT/'web').glob('*')) if p.is_file()]
     files = {name: (ROOT/name).read_text(encoding='utf-8') for name in names}
     raw = json.dumps(files, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()
@@ -52,6 +53,9 @@ for _name, _source in _sources.items():
     _dest.write_text(_source, encoding='utf-8')
 for _name in ('agent_protocol', 'retailops_agent', 'retailops_tools', 'retailops_providers', 'retailops_public', 'retailops_api', 'retailops_conversation', 'retailops_baseline', 'inference_proxy'):
     sys.modules.pop(_name, None)
+for _name in list(sys.modules):
+    if _name == 'retailops' or _name.startswith('retailops.'):
+        sys.modules.pop(_name, None)
 if str(BASE) in sys.path: sys.path.remove(str(BASE))
 sys.path.insert(0, str(BASE))
 ARTIFACTS = BASE / 'artifacts'
