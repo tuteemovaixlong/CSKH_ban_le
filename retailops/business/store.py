@@ -10,6 +10,7 @@ import re
 import sqlite3
 import time
 import uuid
+from datetime import datetime, timedelta, timezone
 from contextlib import contextmanager
 from pathlib import Path
 from retailops.core import REASONS, fields, require
@@ -45,10 +46,10 @@ class BusinessStore:
             db.close()
 
     def seed(self):
-        # INSERT OR IGNORE preserves cancelled orders across process/container restarts.
+        # Conflict handling preserves cancelled orders across process/container restarts.
         with self.connection(write=True) as db:
-            db.executemany("INSERT OR IGNORE INTO customers VALUES (?,?)", [('C-001','Mai Anh'),('C-002','Khách mẫu')])
-            db.executemany("INSERT OR IGNORE INTO orders(id, customer_id, name, variant, amount, status) VALUES (?,?,?,?,?,?)", [
+            db.executemany("INSERT INTO customers VALUES (?,?) ON CONFLICT DO NOTHING", [('C-001','Mai Anh'),('C-002','Khách mẫu')])
+            db.executemany("INSERT INTO orders(id, customer_id, name, variant, amount, status) VALUES (?,?,?,?,?,?) ON CONFLICT DO NOTHING", [
                 ("O-101", "C-001", "Áo thun Essential", "Trắng · Size M · Số lượng 1", 299000, "pending"),
                 ("O-102", "C-001", "Áo khoác Everyday", "Đen · Size L · Số lượng 1", 799000, "delivered"),
                 ("O-202", "C-002", "Áo polo", "Xanh · Size M · Số lượng 1", 399000, "pending"),
@@ -118,8 +119,9 @@ class BusinessStore:
             require(row is None or row['attempts'] < limit, 429, 'api_daily_limit',
                     'Demo đã hết lượt chat API hôm nay (UTC). Bạn có thể chọn custom model đang được cấu hình.')
             db.execute("""INSERT INTO provider_daily_usage(day,provider_id,attempts) VALUES (?,'api',1)
-                ON CONFLICT(day,provider_id) DO UPDATE SET attempts=attempts+1""", (day,))
-            db.execute("DELETE FROM provider_daily_usage WHERE day < date('now','-31 days')")
+                ON CONFLICT(day,provider_id) DO UPDATE SET attempts=provider_daily_usage.attempts+1""", (day,))
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=31)).date().isoformat()
+            db.execute("DELETE FROM provider_daily_usage WHERE day < ?", (cutoff,))
 
     def conversation(self, customer, cid):
         require(isinstance(cid, str) and re.fullmatch(r'[a-f0-9-]{36}', cid),

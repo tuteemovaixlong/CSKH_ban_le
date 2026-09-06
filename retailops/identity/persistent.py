@@ -65,13 +65,16 @@ class PersistentSessions:
                 401, 'unauthorized', 'Nhập mã truy cập cá nhân để mở phiên.')
         return hashlib.sha256(secret.encode()).hexdigest()
 
+    def check_storage(self, member):
+        require(self.tenant_path(member).is_file(), 503, 'tenant_storage_unavailable',
+                'Kho dữ liệu chưa sẵn sàng; cần quản trị viên kiểm tra.')
+
     @contextmanager
     def resolve(self, header):
         sid = self.cookie_id(header)
         member = self.control.resolve(sid)
         self.control.rate('session:'+sid, 60)
-        require(self.tenant_path(member).is_file(), 503, 'tenant_storage_unavailable',
-                'Kho dữ liệu chưa sẵn sàng; cần quản trị viên kiểm tra.')
+        self.check_storage(member)
         key = (member['id'], member['auth_version'])
         with self.lock:
             if key not in self.apps:

@@ -4,6 +4,10 @@ sudo bash <<'RETAILOPS_HTTPS_SETUP'
 set -euo pipefail
 umask 077
 cd /opt/retailops
+if [[ -d postgres-secrets ]]; then
+  echo 'PostgreSQL is configured. Use compose.public.yaml together with compose.postgres.yaml; see docs/POSTGRESQL.md.' >&2
+  exit 2
+fi
 # Optional: set an owned hostname whose A record already points to this EC2.
 # Empty on the first run uses retailops.<public IPv4 with dashes>.sslip.io.
 PUBLIC_HOSTNAME=""

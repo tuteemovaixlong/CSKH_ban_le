@@ -21,8 +21,12 @@ def build_public_app(settings: Settings | None = None) -> PublicWeb:
         raise ValueError('Public startup requires public settings.')
     gateways = build_gateways(settings)  # Validate all enabled adapters before writing data.
     if settings.data_mode == 'persistent-demo':
-        sessions = PersistentSessions(settings.output/'persistent', gateways.custom, gateways.api,
-                                      settings.api_daily_turn_limit)
+        if settings.storage_backend == 'postgresql':
+            from retailops.identity.postgres import PostgresSessions
+            sessions = PostgresSessions(settings.database_url, gateways.custom, gateways.api, settings.api_daily_turn_limit)
+        else:
+            sessions = PersistentSessions(settings.output/'persistent', gateways.custom, gateways.api,
+                                          settings.api_daily_turn_limit)
     else:
         sessions = GuestSessions(settings.output/'public-guests', settings.access_token,
                                  gateways.custom, gateways.api, settings.api_daily_turn_limit)

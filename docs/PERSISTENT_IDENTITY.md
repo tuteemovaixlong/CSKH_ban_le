@@ -1,5 +1,7 @@
 # RetailOps 0.7 — Tài khoản và dữ liệu độc lập với phiên
 
+Từ 0.8 có thêm [PostgreSQL](POSTGRESQL.md). Các đường dẫn và backup SQLite trong tài liệu này áp dụng cho backend SQLite.
+
 Đây là giai đoạn 2 của khung hệ thống, dùng **dữ liệu giả lập**. Không cần thêm dịch vụ
 AWS, GPU hoặc gọi API model để cấp tài khoản và thử các luồng nghiệp vụ.
 

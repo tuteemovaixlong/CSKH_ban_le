@@ -219,3 +219,4 @@ __marimo__/
 # Local business-demo state and access credentials
 artifacts-business-local/
 api.env
+postgres-secrets/
