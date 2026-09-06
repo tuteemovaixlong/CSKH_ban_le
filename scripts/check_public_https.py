@@ -6,6 +6,7 @@ temporary Compose project and volumes. No API credentials or inference calls.
 import json
 import os
 import subprocess
+import shutil
 import tempfile
 import time
 from pathlib import Path
@@ -40,13 +41,15 @@ def main():
         curl = ['curl','--noproxy','*','--silent','--show-error','--max-time','10',
                 '--cacert',str(temp/'root.crt'),'--connect-to',HOST+':443:127.0.0.1:18443']
 
-        def request(path, body=None, jar='alice', origin='https://'+HOST):
+        def request(path, body=None, jar='alice', origin='https://'+HOST, headers=()):
             args = curl + ['--cookie',str(temp/(jar+'.cookies')),'--cookie-jar',str(temp/(jar+'.cookies')),
                            '--output',str(temp/'response.json'),'--write-out','%{http_code}',
                            '--dump-header',str(temp/'headers.txt')]
             if body is not None:
                 (temp/'request.json').write_text(json.dumps(body))
                 args += ['-H','Origin: '+origin,'-H','Content-Type: application/json','--data-binary','@'+str(temp/'request.json')]
+            for header in headers:
+                args += ['-H', header]
             status = int(run(args+['https://'+HOST+path]))
             return status, json.loads((temp/'response.json').read_text())
         try:
@@ -98,11 +101,49 @@ def main():
             assert request('/api/login',{'token':code},jar='account')[0] == 200
             assert request('/api/orders',jar='account')[1]['orders'][0]['id'] == 'O-202'
             print('PERSISTENT_HTTPS_ACCOUNT_FLOW_OK (packaged CLI, isolation, roles, restart)')
+            # Cancel an order before moving the stopped SQLite workspace to PostgreSQL.
+            run(admin+['set-role','--membership',member,'--role','customer'])
+            assert request('/api/login',{'token':code},jar='account')[0] == 200
+            proposal = request('/api/cancellation-proposals',{'order_id':'O-202','order_version':1,
+                'cancel_reason':'ordered_by_mistake'},jar='account')[1]
+            assert request('/api/cancellation-proposals/'+proposal['proposal_id']+'/confirm',{'confirmed':True},
+                jar='account',headers=['Idempotency-Key: ci-postgres-migration'])[0] == 200
+            for name in ('compose.postgres.yaml','init-postgres.sh'):
+                shutil.copy2(ROOT/'deploy'/name,temp/name)
+            run(['python3',str(ROOT/'deploy/configure-postgres.py'),'--directory',str(temp)])
+            pgbase = base+['-f',str(temp/'compose.postgres.yaml')]
+            run(pgbase+['up','-d','--wait','--wait-timeout','90','postgres'])
+            run(base+['stop','web'])
+            run(pgbase+['run','--rm','--no-deps','--entrypoint','python','web','-m','retailops','database',
+                        'import-sqlite','--offline-snapshot','/data/persistent'])
+            run(pgbase+['up','-d','--no-build','--pull','never','--wait','--wait-timeout','60','web'])
+            assert request('/healthz')[1]['storage_backend'] == 'postgresql'
+            assert request('/api/orders',jar='account')[0] == 401
+            assert request('/api/login',{'token':code},jar='account')[0] == 200
+            assert request('/api/orders',jar='account')[1]['orders'][0]['status'] == 'cancelled'
+            assert request('/api/orders/O-101',jar='account')[0] == 404
+            # Runtime credentials must be the limited application role, never the bootstrap superuser.
+            flags = run(pgbase+['exec','-T','postgres','psql','-U','postgres','-d','retailops','-Atc',
+                "SELECT rolsuper OR rolcreatedb OR rolcreaterole FROM pg_roles WHERE rolname='retailops'"]).strip()
+            assert flags == 'f'
+            dump = run(pgbase+['exec','-T','postgres','pg_dump','-U','postgres','-d','retailops','--no-owner','--no-acl'])
+            run(pgbase+['exec','-T','postgres','createdb','-U','postgres','-O','retailops','retailops_restore'])
+            run(pgbase+['exec','-T','postgres','psql','-U','retailops','-d','retailops_restore','-v','ON_ERROR_STOP=1'], input=dump)
+            restored = run(pgbase+['exec','-T','web','python','-c',
+                "from retailops.config import database_settings; import os; from psycopg.conninfo import make_conninfo; "
+                "from retailops.identity.postgres import PostgresSessions; "
+                "s=PostgresSessions(make_conninfo(database_settings(os.environ)[1],dbname='retailops_restore')); "
+                "assert s.business_store('ci-shop').orders('C-002')[0]['status']=='cancelled'; print('RESTORE_OK')"])
+            assert 'RESTORE_OK' in restored
+            print('POSTGRES_HTTPS_IMPORT_RESTORE_OK (limited DB role; no external inference)')
         except Exception:
             print(run(base+['logs','--tail','40']))  # fixture stack only, contains no real secrets
             raise
         finally:
-            run(base+['down','--volumes','--remove-orphans'])
+            cleanup_base = base+['-f',str(temp/'compose.postgres.yaml')] if (temp/'compose.postgres.yaml').exists() else base
+            run(cleanup_base+['down','--volumes','--remove-orphans'])
+            if (temp/'postgres-secrets').exists():
+                shutil.rmtree(temp/'postgres-secrets')
 
 
 if __name__ == '__main__':

@@ -53,7 +53,13 @@ def add_parser(commands):
 
 
 def run(args):
-    sessions = PersistentSessions(args.output/'persistent')
+    from retailops.config import database_settings
+    backend, dsn = database_settings(os.environ)
+    if backend == 'postgresql':
+        from retailops.identity.postgres import PostgresSessions
+        sessions = PostgresSessions(dsn)
+    else:
+        sessions = PersistentSessions(args.output/'persistent')
     action = args.identity_action
     if action == 'init-tenant':
         sessions.provision_tenant(args.tenant, args.name, seed_demo=args.seed_demo)

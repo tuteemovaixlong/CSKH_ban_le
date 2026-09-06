@@ -58,6 +58,7 @@ class PublicWeb:
             self.sessions.check_health()
             return 200, {'status': 'ok', 'scope': 'synthetic-demo', 'version': VERSION,
                          'data_mode': self.sessions.data_mode,
+                         'storage_backend': self.sessions.metadata().get('storage_backend', 'sqlite'),
                          'agent_protocol': PROTOCOL, 'hosting': 'public-https'}, mime, headers
         assets = {'/': ('index.html', 'text/html; charset=utf-8'), '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
                   '/styles.css': ('styles.css', 'text/css; charset=utf-8')}

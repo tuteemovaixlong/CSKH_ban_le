@@ -1,10 +1,11 @@
-## Khung hệ thống — 0.7
+## Khung hệ thống — 0.8
 
 [Kiến trúc module, cách chạy và phần khung còn lại](docs/SYSTEM_FOUNDATION.md).
 Lõi nghiệp vụ, xác thực phiên, HTTP và cấu hình đã được tách trong package `retailops/`.
 Entrypoint cũ vẫn tương thích; có thêm `python -m retailops check-config --interface public`
 để kiểm tra cấu hình mà không in secret, tạo database hay gọi model.
 Có thêm [tài khoản cá nhân và dữ liệu theo cửa hàng](docs/PERSISTENT_IDENTITY.md) ở chế độ `persistent-demo`: logout không xóa đơn, quyền `customer`/`viewer`, migration SQLite và công cụ cấp/thu hồi mã.
+Có thêm [backend PostgreSQL và chuyển dữ liệu SQLite](docs/POSTGRESQL.md), dùng chung luật nghiệp vụ và không tự chuyển database đang chạy.
 Mặc định vẫn là `synthetic-demo`; cả hai chế độ chỉ dành cho dữ liệu giả lập.
 
 ## Web HTTPS trên EC2

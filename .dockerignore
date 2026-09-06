@@ -22,6 +22,10 @@
 !retailops/**/*.py
 !retailops/*.py
 !requirements-web.txt
+!requirements-postgres.txt
+!deploy/compose.postgres.yaml
+!deploy/init-postgres.sh
+!deploy/configure-postgres.py
 !deploy/compose.public.yaml
 !deploy/Caddyfile
 !deploy/start-public-web.sh

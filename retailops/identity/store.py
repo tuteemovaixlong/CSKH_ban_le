@@ -5,6 +5,7 @@ import secrets
 import sqlite3
 import time
 import uuid
+from datetime import datetime, timedelta, timezone
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -103,7 +104,7 @@ class IdentityStore:
             require(db.execute('SELECT 1 FROM memberships WHERE tenant_id=? AND principal_id=?',
                                (tenant_id, principal_id)).fetchone() is None,
                     409, 'membership_exists', 'Tài khoản đã thuộc cửa hàng này.')
-            db.execute('INSERT OR IGNORE INTO principals VALUES (?,?)', (principal_id, name))
+            db.execute('INSERT INTO principals VALUES (?,?) ON CONFLICT DO NOTHING', (principal_id, name))
             mid = str(uuid.uuid4())
             db.execute('INSERT INTO memberships(id,tenant_id,principal_id,customer_id,role) VALUES (?,?,?,?,?)',
                        (mid, tenant_id, principal_id, customer_id, role))
@@ -150,11 +151,12 @@ class IdentityStore:
     def rate(self, bucket, limit):
         window = int(time.time()) // 60
         with self.connection(write=True) as db:
-            row = db.execute('SELECT window,count FROM identity_rate WHERE bucket=?', (bucket,)).fetchone()
+            row = db.execute('SELECT "window",count FROM identity_rate WHERE bucket=?', (bucket,)).fetchone()
             require(row is None or row['window'] != window or row['count'] < limit,
                     429, 'rate_limited', 'Có quá nhiều yêu cầu. Vui lòng thử lại sau một phút.')
             db.execute('''INSERT INTO identity_rate VALUES (?,?,1) ON CONFLICT(bucket) DO UPDATE SET
-                count=CASE WHEN window=excluded.window THEN count+1 ELSE 1 END, window=excluded.window''', (bucket, window))
+                count=CASE WHEN identity_rate."window"=excluded."window" THEN identity_rate.count+1 ELSE 1 END,
+                "window"=excluded."window"''', (bucket, window))
 
     def login(self, token, lifetime, capacity):
         self.rate('login', 15)  # Commit bad-login attempts separately from failed authentication.
@@ -166,7 +168,7 @@ class IdentityStore:
                 (hashlib.sha256(token.encode()).hexdigest(),)).fetchone()
             require(row is not None, 401, 'unauthorized', 'Mã truy cập cá nhân chưa đúng hoặc đã bị thu hồi.')
             db.execute('DELETE FROM sessions WHERE expires_at<=?', (time.time(),))
-            require(db.execute('SELECT count(*) FROM sessions').fetchone()[0] < capacity,
+            require(db.execute('SELECT count(*) AS total FROM sessions').fetchone()['total'] < capacity,
                     429, 'session_capacity', 'Hệ thống đã đủ phiên đăng nhập. Vui lòng thử lại sau.')
             secret = secrets.token_urlsafe(32)
             db.execute('INSERT INTO sessions VALUES (?,?,?,?)', (hashlib.sha256(secret.encode()).hexdigest(),
@@ -194,7 +196,7 @@ class IdentityStore:
     def purge(self):
         with self.connection(write=True) as db:
             db.execute('DELETE FROM sessions WHERE expires_at<=?', (time.time(),))
-            db.execute('DELETE FROM identity_rate WHERE window<?', (int(time.time())//60-2,))
+            db.execute('DELETE FROM identity_rate WHERE "window"<?', (int(time.time())//60-2,))
 
     def reserve_api_attempt(self, limit):
         day = time.strftime('%Y-%m-%d', time.gmtime())
@@ -202,5 +204,6 @@ class IdentityStore:
             row = db.execute("SELECT attempts FROM provider_daily_usage WHERE day=? AND provider_id='api'", (day,)).fetchone()
             require(row is None or row['attempts'] < limit, 429, 'api_daily_limit', 'Đã hết lượt chat API hôm nay (UTC).')
             db.execute("""INSERT INTO provider_daily_usage VALUES (?,'api',1) ON CONFLICT(day,provider_id)
-                DO UPDATE SET attempts=attempts+1""", (day,))
-            db.execute("DELETE FROM provider_daily_usage WHERE day < date('now','-31 days')")
+                DO UPDATE SET attempts=provider_daily_usage.attempts+1""", (day,))
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=31)).date().isoformat()
+            db.execute("DELETE FROM provider_daily_usage WHERE day < ?", (cutoff,))

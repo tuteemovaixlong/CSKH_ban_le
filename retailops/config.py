@@ -38,6 +38,25 @@ def integer(env, name, default, minimum, maximum):
     return value
 
 
+def database_settings(env):
+    backend = env.get('RETAILOPS_STORAGE_BACKEND', 'sqlite')
+    if backend not in ('sqlite', 'postgresql'):
+        raise ValueError('RETAILOPS_STORAGE_BACKEND must be sqlite or postgresql.')
+    if backend == 'sqlite':
+        return backend, ''
+    value, filename = env.get('RETAILOPS_DATABASE_URL', ''), env.get('RETAILOPS_DATABASE_URL_FILE', '')
+    if value and filename:
+        raise ValueError('Set only one PostgreSQL connection source.')
+    if filename:
+        try:
+            value = Path(filename).read_text().strip()
+        except OSError:
+            raise ValueError('Cannot read the PostgreSQL connection file.') from None
+    from retailops.storage.postgres import validate_dsn
+    validate_dsn(value)
+    return backend, value
+
+
 @dataclass(frozen=True)
 class Settings:
     interface: str
@@ -56,6 +75,8 @@ class Settings:
     api_key: str = field(default='', repr=False)
     api_model: str = 'meta/muse-spark-1.3-contributor'
     api_daily_turn_limit: int = 20
+    storage_backend: str = 'sqlite'
+    database_url: str = field(default='', repr=False)
 
     def __post_init__(self):
         if self.interface not in ('public', 'private'):
@@ -64,6 +85,13 @@ class Settings:
             raise ValueError('Data mode must be synthetic-demo or persistent-demo; real customer data is not supported yet.')
         if self.data_mode == 'persistent-demo' and self.interface != 'public':
             raise ValueError('Persistent accounts require the public HTTPS interface.')
+        if self.storage_backend not in ('sqlite', 'postgresql'):
+            raise ValueError('Storage backend must be sqlite or postgresql.')
+        if self.storage_backend == 'postgresql':
+            if self.interface != 'public' or self.data_mode != 'persistent-demo':
+                raise ValueError('PostgreSQL requires persistent-demo on the HTTPS interface.')
+            from retailops.storage.postgres import validate_dsn
+            validate_dsn(self.database_url)
         if self.data_mode == DATA_MODE and not re.fullmatch(r'[A-Za-z0-9_-]{32,128}', self.access_token):
             name = 'RETAILOPS_PUBLIC_INVITE_TOKEN' if self.interface == 'public' else 'RETAILOPS_DEMO_TOKEN'
             raise ValueError(name + ' must be a random 32–128 character URL-safe value.')
@@ -80,6 +108,7 @@ class Settings:
             raise ValueError('Interface must be public or private.')
         env = os.environ if environ is None else environ
         public = interface == 'public'
+        backend, database_url = database_settings(env)
         return cls(
             interface=interface,
             output=Path(env.get('RETAILOPS_OUTPUT', '/data' if public else str(ROOT/'artifacts'))),
@@ -97,9 +126,11 @@ class Settings:
             api_key=env.get('OPENROUTER_API_KEY', ''),
             api_model=env.get('RETAILOPS_API_MODEL', 'meta/muse-spark-1.3-contributor'),
             api_daily_turn_limit=integer(env, 'RETAILOPS_API_DAILY_TURN_LIMIT', 20, 1, 10000),
+            storage_backend=backend, database_url=database_url,
         )
 
     def summary(self):
         return {'version': VERSION, 'interface': self.interface, 'data_mode': self.data_mode,
+                'storage_backend': self.storage_backend,
                 'custom_enabled': self.custom_enabled, 'api_enabled': self.api_enabled,
                 'api_daily_turn_limit': self.api_daily_turn_limit}

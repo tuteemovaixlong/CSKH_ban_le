@@ -1,4 +1,4 @@
-# RetailOps 0.7 — Khung hệ thống, giai đoạn 1–2
+# RetailOps 0.8 — Khung hệ thống, giai đoạn 1–2
 
 ## Mục tiêu và phạm vi
 
@@ -8,7 +8,8 @@ notebook. Đây là **modular monolith**: chia trách nhiệm trong code, chưa 
 
 Giai đoạn 1 tách module, cấu hình và session binding. Giai đoạn 2 thêm identity backend
 với tài khoản cá nhân, tenant/customer/role, database theo cửa hàng và migration v1.
-Chi tiết và hướng dẫn vận hành: [Persistent identity](PERSISTENT_IDENTITY.md).
+PostgreSQL là backend tùy chọn, có schema theo tenant, nhập snapshot SQLite có đối chiếu và kiểm tra restore.
+Xem [PostgreSQL](POSTGRESQL.md). Chi tiết và hướng dẫn vận hành: [Persistent identity](PERSISTENT_IDENTITY.md).
 Mặc định `synthetic-demo` giữ hành vi guest cũ; `persistent-demo` bật tài khoản và dữ liệu
 không phụ thuộc thời hạn phiên. Cả hai chỉ dùng dữ liệu giả lập. `production` vẫn bị từ chối.
 Khung điều phối request/budget và tích hợp hệ thống bán hàng còn ở các giai đoạn sau.
@@ -26,6 +27,7 @@ Khung điều phối request/budget và tích hợp hệ thống bán hàng còn
 | `retailops/identity/bearer.py` | Xác thực bearer cho API riêng qua localhost/SSM |
 | `retailops/business/store.py` | SQLite, quyền sở hữu, trạng thái/version, proposal, xác nhận, idempotency và audit trong transaction |
 | `retailops/business/application.py` | Use case hội thoại, chọn nguồn model và ngữ cảnh đơn/sản phẩm |
+| `retailops/storage/`, `retailops/identity/postgres.py` | PostgreSQL adapter, DDL rõ ràng, import SQLite và account backend |
 | `retailops/models.py` | Hợp đồng `ModelGateway` và factory cho custom/API được cấu hình; không tự fallback |
 | `retailops/http/routes.py` | Cùng bộ business routes dùng cho HTTP public/private |
 | `retailops/http/public.py` | HTTPS-facing WSGI, Host/Origin/cookie và giới hạn request; nhận danh tính từ session backend |
