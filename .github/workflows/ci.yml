@@ -39,7 +39,7 @@ jobs:
           RETAILOPS_UI_TEST_MODE=persistent node tests/test_public_session.js
       - name: Unit and HTTP contract tests (no model, no secrets)
         run: |
-          python3 -m pip install --only-binary=:all: --require-hashes -r requirements-web.txt -r requirements-postgres.txt
+          python3 -m pip install --only-binary=:all: --require-hashes -r requirements-web.txt -r requirements-postgres.txt -r requirements-graph.txt
           python3 -m unittest discover -s tests -v
       - name: Validate HTTPS configuration without issuing a certificate
         run: |

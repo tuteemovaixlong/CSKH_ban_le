@@ -139,7 +139,7 @@ class PersistentTests(unittest.TestCase):
         for action, data in (('confirm', {'confirmed': True}), ('dismiss', {})):
             self.assertEqual(self.request('/api/cancellation-proposals/'+proposal['proposal_id']+'/'+action,
                                           data, viewer, HTTP_IDEMPOTENCY_KEY='viewer'*4)[0], 403)
-        def model_run(gateway, text, history, execute, identity):
+        def model_run(gateway, text, history, execute, identity, **options):
             self.assertEqual(execute('prepare_cancellation', {'order_id': 'O-101'})['error'], 'permission_denied')
             self.assertEqual(execute('get_order', {'order_id': 'O-101'})['order']['id'], 'O-101')
             return {'message': 'Read only.', 'trace': {}, 'messages': []}

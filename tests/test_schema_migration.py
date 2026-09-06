@@ -45,11 +45,34 @@ class MigrationTests(unittest.TestCase):
             self.assertEqual(len(store.events('C-901')), 1)
             self.assertTrue(store.confirm('C-901', 'old-proposal', {'confirmed': True}, 'legacy-confirm-key')['replayed'])
             with store.connection() as db:
-                self.assertEqual(tuple(db.execute('SELECT * FROM retailops_schema').fetchone()), ('business', 1))
+                self.assertEqual(tuple(db.execute('SELECT * FROM retailops_schema').fetchone()), ('business', 2))
                 row = db.execute('SELECT revision,provider_id FROM conversations').fetchone()
                 self.assertEqual(tuple(row), (3, 'custom'))
                 self.assertEqual(db.execute('PRAGMA integrity_check').fetchone()[0], 'ok')
                 self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(), [])
+
+    def test_v1_business_upgrades_once_preserving_existing_orders(self):
+        store = BusinessStore(self.path)
+        store.seed()
+        with store.connection(write=True) as db:
+            for name in ('graph_writes', 'graph_checkpoints', 'graph_runs'):
+                db.execute('DROP TABLE '+name)
+            db.execute("UPDATE retailops_schema SET version=1 WHERE component='business'")
+        for _ in range(2):
+            reopened = BusinessStore(self.path)
+            self.assertEqual(reopened.orders('C-001')[0]['status'], 'pending')
+            with reopened.connection() as db:
+                self.assertEqual(db.execute('SELECT version FROM retailops_schema').fetchone()[0], 2)
+                self.assertEqual(db.execute('SELECT count(*) FROM graph_runs').fetchone()[0], 0)
+
+    def test_import_rejects_missing_identity_version_marker(self):
+        from retailops.storage.import_sqlite import read_database, IDENTITY_TABLES
+        path = self.path.with_name('identity.sqlite3')
+        IdentityStore(path)
+        with sqlite3.connect(path) as db:
+            db.execute('DELETE FROM retailops_schema')
+        with self.assertRaisesRegex(ValueError, 'identity v1'):
+            read_database(path, 'identity', IDENTITY_TABLES)
 
     def test_failed_migration_rolls_back_ddl_and_version_marker(self):
         def fail(db):

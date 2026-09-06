@@ -24,7 +24,7 @@ def cell(kind, source, identity):
 
 
 def build():
-    names = ['retailops_baseline.py', 'inference_proxy.py', 'retailops_agent.py', 'agent_protocol.py',
+    names = ['requirements-graph.txt', 'retailops_baseline.py', 'inference_proxy.py', 'retailops_agent.py', 'agent_protocol.py',
              'retailops_api.py', 'retailops_public.py', 'retailops_providers.py', 'retailops_tools.py', 'retailops_conversation.py', 'data/products.json',
              'data/smoke.jsonl', 'notebooks/agent_smoke.py', 'notebooks/colab_runtime.py']
     names += [p.relative_to(ROOT).as_posix() for p in sorted((ROOT/'tests').glob('*.py'))]
@@ -62,6 +62,7 @@ ARTIFACTS = BASE / 'artifacts'
 ARTIFACTS.mkdir(exist_ok=True)
 _manifest = {{'bundle_sha256': SOURCE_BUNDLE_SHA256, 'files': {{k: hashlib.sha256(v.encode()).hexdigest() for k, v in _sources.items()}}}}
 (ARTIFACTS / 'source-manifest.json').write_text(json.dumps(_manifest, indent=2), encoding='utf-8')
+subprocess.run([sys.executable, '-m', 'pip', 'install', '--quiet', '--only-binary=:all:', '--require-hashes', '-r', str(BASE/'requirements-graph.txt')], check=True)
 subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-q'], cwd=BASE, check=True)
 print('AGENT_SOURCE_READY: không cần upload ZIP.')
 '''

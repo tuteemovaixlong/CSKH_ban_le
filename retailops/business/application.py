@@ -1,5 +1,7 @@
 """Application use cases: conversation, provider selection and focused order lookup."""
 import hashlib
+import json
+from contextlib import ExitStack
 import re
 import threading
 from retailops.core import ApiError, REASONS, STATUSES, fields, require
@@ -71,16 +73,33 @@ class Application:
                 'Model chưa kết nối. Bạn vẫn có thể dùng các nút tra đơn và yêu cầu hủy.')
         require(self.agent_lock.acquire(blocking=False), 429, 'model_busy',
                 'Model đang xử lý một cuộc trò chuyện khác. Bạn thử lại sau nhé.')
+        stack = ExitStack()
         try:
+            from retailops.workflow.checkpoints import workflow
+            fingerprint = hashlib.sha256(json.dumps([digest, self.role, provider_id]).encode()).hexdigest()
+            saver, snapshot = stack.enter_context(workflow(self.store, customer, 'chat-v1',
+                [snapshot['id'], request_id], fingerprint, snapshot, expires_at=snapshot['expires_at']))
             # A concurrent completed retry must not spend GPU or duplicate history.
             replay = self.store.replay(customer, snapshot['id'], request_id, digest)
             if replay:
                 return replay
             if hasattr(gateway, 'for_turn'):
                 gateway = gateway.for_turn()
-            identity = {**gateway.inspect(), 'selection': provider_id}
-            if provider_id == 'api':
-                self.quota_store.reserve_api_attempt(self.api_daily_limit)
+            saved = saver.get_tuple(saver.config())
+            saved_state = saved.checkpoint.get('channel_values', {}) if saved else {}
+            if saved_state.get('complete'):
+                trace = saved_state['trace']
+                identity = {'name': trace['model'], 'digest': trace['model_digest'],
+                            'provider': trace['provider'], 'ollama_version': trace['ollama_version']}
+            else:
+                identity = gateway.inspect()
+            identity = {**identity, 'selection': provider_id}
+            reserved = False
+            def before_model():
+                nonlocal reserved
+                if provider_id == 'api' and not reserved:
+                    self.quota_store.reserve_api_attempt(self.api_daily_limit)
+                    reserved = True
             bound = BoundTools(self.store, self.catalog, customer, snapshot, identity,
                                can_cancel=CANCEL in self.permissions)
 
@@ -93,7 +112,16 @@ class Application:
                         bound.cancel_order = None
                     return {'error': exc.code, 'message': exc.message}
 
-            answer = run_agent(gateway, text, self.store.history(customer, snapshot['id']), execute, identity)
+            def capture():
+                return {'context': dict(bound.context), 'versions': dict(bound.versions), 'cancel_order': bound.cancel_order}
+
+            def restore(state):
+                bound.context = dict(state['context'])
+                bound.versions = dict(state['versions'])
+                bound.cancel_order = state['cancel_order']
+
+            answer = run_agent(gateway, text, self.store.history(customer, snapshot['id']), execute, identity,
+                               saver=saver, capture=capture, restore=restore, before_model=before_model)
             result = {'action': 'choose_cancel_reason' if bound.cancel_order else 'reply',
                       'message': answer['message'], 'source': 'llm_agent', 'model_used': True,
                       'context': bound.context, 'trace': answer['trace'], 'provider_id': provider_id, 'replayed': False}
@@ -109,7 +137,10 @@ class Application:
             raise ApiError(503, 'model_unavailable',
                            'Không kết nối được nguồn model đã chọn. Kiểm tra cấu hình; hệ thống không tự chuyển model.') from None
         finally:
-            self.agent_lock.release()
+            try:
+                stack.close()
+            finally:
+                self.agent_lock.release()
 
     def focus(self, customer, cid, body):
         fields(body, {'order_id'})

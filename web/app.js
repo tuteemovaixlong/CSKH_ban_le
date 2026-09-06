@@ -146,14 +146,31 @@ async function chooseReason(id) {
   }
   button.onclick = () => act(async () => {
     const proposal = await api('/api/cancellation-proposals', {order_id: id, order_version: order.version, cancel_reason: reason});
-    pending = {...proposal, key: crypto.randomUUID()};
     card.querySelectorAll('button,input').forEach(n => { n.disabled = true; delete n.dataset.busyDisabled; });
-    byId('confirm-title').textContent = 'Hủy đơn ' + proposal.order.id + '?';
-    byId('confirm-description').textContent = proposal.order.name + ' · ' + money(proposal.order.amount) + '. Đề xuất có hiệu lực 10 phút.';
-    byId('confirm-reason').textContent = reasons[proposal.reason];
-    byId('confirm-error').textContent = ''; byId('confirm-dialog').showModal(); await refresh();
+    openProposal(proposal); await refresh();
   });
   card.append(button, el('small', '', 'Chọn lý do rồi kiểm tra đơn trước khi xác nhận.')); row.append(card);
+}
+
+function openProposal(proposal) {
+  // Proposal ID is a stable idempotency key, not an authentication credential.
+  pending = {...proposal, key: proposal.proposal_id};
+  byId('confirm-title').textContent = 'Hủy đơn ' + proposal.order.id + '?';
+  byId('confirm-description').textContent = proposal.order.name + ' · ' + money(proposal.order.amount)
+    + '. Hết hạn: ' + new Date(proposal.expires_at * 1000).toLocaleTimeString('vi-VN') + '.';
+  byId('confirm-reason').textContent = reasons[proposal.reason];
+  byId('confirm-error').textContent = ''; byId('confirm-dialog').showModal();
+}
+
+async function restoreProposals() {
+  if (!canCancel) return;
+  const result = await api('/api/cancellation-proposals');
+  for (const proposal of result.proposals || []) {
+    const row = message('Bạn còn đề xuất hủy ' + proposal.order.id + ' đang chờ xác nhận.', 'assistant', 'store_data');
+    const button = el('button', 'secondary', 'Xem lại đề xuất');
+    button.onclick = () => act(async () => { openProposal(proposal); });
+    row.append(button);
+  }
 }
 
 async function confirm() {
@@ -242,6 +259,7 @@ async function openSession() {
   if (byId('confirm-dialog').open) byId('confirm-dialog').close();
   byId('demo-token').value = ''; lockPage(false); byId('messages').replaceChildren();
   await newConversation();
+  await restoreProposals();
 }
 byId('login-form').onsubmit = async event => {
   event.preventDefault(); token = byId('demo-token').value.trim(); byId('login-error').textContent = '';

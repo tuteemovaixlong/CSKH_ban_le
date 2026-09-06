@@ -1,3 +1,5 @@
+> Với image 0.9, business schema là v2. Kho v1 đang chạy cần bước [database migrate](LANGGRAPH.md) trước khi bật web 0.9.
+
 # RetailOps 0.8 — PostgreSQL cho khung hệ thống
 
 PostgreSQL là backend tùy chọn cho `persistent-demo`. SQLite vẫn là mặc định cho demo cũ

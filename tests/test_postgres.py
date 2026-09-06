@@ -18,6 +18,7 @@ import unittest
 from unittest.mock import patch
 
 import test_persistent_identity as fixtures
+import test_workflows as workflows
 from retailops.bootstrap import build_public_app
 from retailops.config import Settings
 from retailops.core import ApiError, ROOT
@@ -32,7 +33,10 @@ DSN = os.environ.get('RETAILOPS_TEST_DATABASE_URL', '')
 
 
 @unittest.skipUnless(DSN, 'PostgreSQL integration runs in CI with a dedicated test database.')
-class PostgresTests(unittest.TestCase):
+class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
+    def fresh_store(self):
+        return self.sessions.business_store('shop-a')
+
     @classmethod
     def setUpClass(cls):
         import psycopg
@@ -190,6 +194,39 @@ class PostgresTests(unittest.TestCase):
         with transaction(DSN) as db:
             self.assertIsNone(db.execute('SELECT 1 FROM pg_namespace WHERE nspname=?', (IDENTITY_SCHEMA,)).fetchone())
         self.assertEqual(import_snapshot(DSN, source)['result'], 'POSTGRES_IMPORT_VERIFIED')
+
+    def test_import_keeps_pending_langgraph_approval_resumable(self):
+        from retailops.business.application import Application
+        from retailops.http.routes import api_result
+        from retailops.workflow import approval
+        source = Path(self.temp.name)/'pending-snapshot'
+        old = PersistentSessions(source)
+        store = old.provision_tenant('old-shop', 'Old shop', seed_demo=True)
+        proposal = api_result(Application(store, {}), 'C-001', 'POST', '/api/cancellation-proposals', fixtures.PROPOSAL)[1]
+        self.clear()
+        report = import_snapshot(DSN, source)
+        self.assertTrue(any(k.endswith('.graph_checkpoints') and v['rows'] > 0 for k,v in report['tables'].items()))
+        self.restart()
+        app = Application(self.sessions.business_store('old-shop'), {})
+        result = approval.confirm(app, 'C-001', proposal['proposal_id'], {'confirmed': True}, 'import-graph-confirm')
+        self.assertEqual(result['order']['version'], 2)
+        self.assertEqual(old.business_store('old-shop').orders('C-001')[0]['status'], 'pending')
+
+    def test_business_v1_migration_is_explicit_preserves_data_and_idempotent(self):
+        from retailops.storage.pg_schema import initialize
+        store = self.fresh_store()
+        with store.connection(write=True) as db:
+            for name in ('graph_writes', 'graph_checkpoints', 'graph_runs'):
+                db.execute('DROP TABLE '+name)
+            db.execute("UPDATE retailops_schema SET version=1 WHERE component='business'")
+        with self.assertRaises(ValueError):
+            self.fresh_store()
+        for _ in range(2):
+            with store.connection(write=True) as db:
+                initialize(db, store.schema, 'business')
+        self.assertEqual(self.fresh_store().orders('C-001')[0]['status'], 'pending')
+        with store.connection() as db:
+            self.assertEqual(db.execute('SELECT version FROM retailops_schema').fetchone()['version'], 2)
 
     def test_future_schema_is_rejected_without_downgrade(self):
         with transaction(DSN, write=True) as db:
