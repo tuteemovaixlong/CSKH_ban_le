@@ -17,3 +17,8 @@
 !retailops_tools.py
 !agent_protocol.py
 !retailops_providers.py
+!retailops_public.py
+!requirements-web.txt
+!deploy/compose.public.yaml
+!deploy/Caddyfile
+!deploy/start-public-web.sh

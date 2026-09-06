@@ -1,3 +1,7 @@
+## Web HTTPS trên EC2 — 0.5
+
+[Xem hướng dẫn triển khai HTTPS](docs/PUBLIC_HTTPS.md). Bản mới phục vụ web bằng Caddy + Waitress, có cookie và bộ đơn riêng cho mỗi khách. API được chọn mặc định khi đã cấu hình; không cần giữ laptop/SSM hoặc Colab khi dùng API. Chứng chỉ và kết nối API thật cần xác nhận trên EC2.
+
 # RetailOps — hỗ trợ khách hàng bán lẻ
 
 Baseline Qwen chạy trên Colab; API và giao diện chạy trên CPU/EC2 với dữ liệu giả lập.

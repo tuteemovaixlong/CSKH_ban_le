@@ -14,7 +14,7 @@
     <form class="login-card" id="login-form">
       <span class="small-tag">RETAILOPS · DỮ LIỆU GIẢ LẬP</span>
       <h1 id="login-title">Mở phiên hỗ trợ</h1>
-      <p>Nhập mã truy cập demo được tạo trên máy chủ.</p>
+      <p id="login-description">Nhập mã truy cập demo được tạo trên máy chủ.</p>
       <label for="demo-token">Mã truy cập</label>
       <input type="password" id="demo-token" autocomplete="off" minlength="32" maxlength="128" required>
       <button class="primary" type="submit">Kết nối</button>
@@ -53,10 +53,10 @@
       <aside class="context-panel" aria-label="Thông tin và lịch sử đơn hàng">
         <section class="order-panel"><div class="section-header"><h2>Đơn hàng của bạn</h2><span>2 đơn mẫu</span></div><div class="order-tabs" role="group" aria-label="Chọn đơn hàng"><button class="selected" data-order="O-101" aria-pressed="true">O-101</button><button data-order="O-102" aria-pressed="false">O-102</button></div><div id="order-details" aria-live="polite"></div></section>
         <section class="activity-panel"><div class="section-header"><h2>Nhật ký xử lý</h2><span id="event-count">0 sự kiện</span></div><div id="activity" aria-live="polite"><p class="activity-empty">Các thao tác của bạn sẽ xuất hiện ở đây.</p></div></section>
-        <div class="scope-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4v5c0 5-8 9-8 9s-8-4-8-9V7l8-4Z"/><path d="m8 12 3 3 5-6"/></svg><p>Trạng thái và nhật ký được lưu tại backend. Tải lại trang không khôi phục đơn đã hủy.</p></div>
+        <div class="scope-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4v5c0 5-8 9-8 9s-8-4-8-9V7l8-4Z"/><path d="m8 12 3 3 5-6"/></svg><p id="session-note">Trạng thái và nhật ký được lưu tại backend. Tải lại trang không khôi phục đơn đã hủy.</p></div>
       </aside>
     </div>
-    <footer>RetailOps <span>Phiên bản hội thoại 0.4.1</span></footer>
+    <footer>RetailOps <span>Phiên bản hội thoại 0.5</span></footer>
   </main>
 
   <dialog id="confirm-dialog" aria-labelledby="confirm-title"><div class="dialog-inner"><span class="small-tag">XÁC NHẬN THAO TÁC MẪU</span><h2 id="confirm-title">Hủy đơn O-101?</h2><p id="confirm-description"></p><div class="confirm-detail"><span>Lý do</span><strong id="confirm-reason"></strong></div><p class="dialog-note">Thao tác sẽ cập nhật đơn giả lập tại backend và lưu nhật ký. Không có giao dịch cửa hàng thật.</p><div class="dialog-actions"><button class="secondary" id="dismiss-confirm">Giữ đơn hàng</button><button class="primary" id="approve-confirm">Xác nhận hủy đơn mẫu</button></div></div></dialog>

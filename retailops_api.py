@@ -1,7 +1,7 @@
-"""Private, synthetic RetailOps API. Serve only through the documented SSM tunnel.
+"""RetailOps business logic and private SSM HTTP entrypoint.
 
 The model chats through read-only tools. Only an authenticated, explicit confirmation changes
-an order. This standard-library server is a single-instance demo, not public hosting.
+an order. Public HTTPS uses retailops_public.py with Waitress behind Caddy.
 """
 from __future__ import annotations
 
@@ -298,13 +298,15 @@ class Application:
         if type(api_daily_limit) is not int or not 1 <= api_daily_limit <= 10000:
             raise ValueError('API daily turn limit must be an integer from 1 to 10000')
         self.api_daily_limit = api_daily_limit
+        self.quota_store = store
+        self.default_provider = 'custom'
         self.catalog = Catalog()
         self.agent_lock = threading.Lock()
 
     def providers(self):
         custom_model = getattr(getattr(self.infer, 'config', None), 'model', 'qwen3.5:4b')
         api_model = getattr(self.api_infer, 'model', API_MODEL)
-        return {'default_provider': 'custom', 'providers': [
+        return {'default_provider': self.default_provider, 'providers': [
             {'id': 'custom', 'label': 'Custom model · Colab/Ollama', 'model': custom_model,
              'configured': self.infer is not None, 'notice': 'Cần phiên model đang chạy. Kết nối được kiểm tra khi gửi tin.'},
             {'id': 'api', 'label': 'API · OpenRouter', 'model': api_model,
@@ -315,7 +317,7 @@ class Application:
     def new_conversation(self, customer, body):
         require(isinstance(body, dict) and set(body) in (set(), {'provider_id'}),
                 400, 'invalid_fields', 'Chỉ chọn nguồn model đã được cấu hình.')
-        provider_id = body.get('provider_id', 'custom')
+        provider_id = body.get('provider_id', self.default_provider)
         require(isinstance(provider_id, str) and provider_id in ('custom', 'api'),
                 400, 'invalid_provider', 'Nguồn model không hợp lệ.')
         # Offline custom sessions still support direct business buttons. API is opt-in.
@@ -357,7 +359,7 @@ class Application:
                 gateway = gateway.for_turn()
             identity = {**gateway.inspect(), 'selection': provider_id}
             if provider_id == 'api':
-                self.store.reserve_api_attempt(self.api_daily_limit)
+                self.quota_store.reserve_api_attempt(self.api_daily_limit)
             bound = BoundTools(self.store, self.catalog, customer, snapshot, identity)
 
             def execute(name, arguments):
@@ -424,7 +426,7 @@ class Server(ThreadingHTTPServer):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "RetailOpsDemo/0.4.1"
+    server_version = "RetailOpsDemo/0.5"
     sys_version = ""
 
     def setup(self):
@@ -473,7 +475,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.command == "GET" and path == "/healthz":
             with app.store.connection() as db:
                 db.execute("SELECT 1 FROM orders LIMIT 1").fetchone()
-            return self.reply(200, {"status": "ok", "scope": "synthetic-demo", "version": "0.4.1", "agent_protocol": PROTOCOL})
+            return self.reply(200, {"status": "ok", "scope": "synthetic-demo", "version": "0.5", "agent_protocol": PROTOCOL})
         assets = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"),
                   "/styles.css": ("styles.css", "text/css; charset=utf-8")}
         if self.command == "GET" and path in assets:
@@ -481,19 +483,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, (ROOT / "web" / name).read_bytes(), mime)
         require(path.startswith("/api/"), 404, "not_found", "Không tìm thấy đường dẫn.")
         customer = app.authenticate(self.headers.get("Authorization", ""))
-        if self.command == "GET":
-            if path == "/api/session":
-                return self.reply(200, {"customer_id": customer, "name": "Mai Anh" if customer == "C-001" else "Khách mẫu",
-                                        "model_configured": app.infer is not None or app.api_infer is not None, "scope": "synthetic-demo"})
-            if path == "/api/providers":
-                return self.reply(200, app.providers())
-            if path == "/api/orders":
-                return self.reply(200, {"orders": app.store.orders(customer)})
-            if path == "/api/events":
-                return self.reply(200, {"events": app.store.events(customer)})
-            m = re.fullmatch(r"/api/orders/([A-Z]{1,6}-[0-9]{1,8})", path)
-            if m:
-                return self.reply(200, {"order": app.store.lookup(customer, m[1])})
+        body = None
         if self.command == "POST":
             require(self.headers.get("Origin") in (None, "http://" + host), 403, "invalid_origin", "Nguồn yêu cầu không hợp lệ.")
             require(self.headers.get_content_type() == "application/json", 415, "json_required", "Yêu cầu phải là JSON.")
@@ -502,22 +492,42 @@ class Handler(BaseHTTPRequestHandler):
             size = int(lengths[0])
             require(0 < size <= 16384, 413, "body_too_large", "Yêu cầu quá lớn hoặc rỗng.")
             body = json.loads(self.rfile.read(size))
-            if path == '/api/conversations':
-                return self.reply(201, app.new_conversation(customer, body))
-            focus = re.fullmatch(r'/api/conversations/([a-f0-9-]{36})/focus', path)
-            if focus:
-                return self.reply(200, app.focus(customer, focus[1], body))
-            if path == "/api/chat":
-                return self.reply(200, app.chat(customer, body))
-            if path == "/api/cancellation-proposals":
-                return self.reply(201, app.store.propose(customer, body))
-            m = re.fullmatch(r"/api/cancellation-proposals/([a-f0-9-]{36})/(confirm|dismiss)", path)
-            if m:
-                if m[2] == "confirm":
-                    return self.reply(200, app.store.confirm(customer, m[1], body, self.headers.get("Idempotency-Key")))
-                fields(body, set())
-                return self.reply(200, app.store.dismiss(customer, m[1]))
-        raise ApiError(404, "not_found", "Không tìm thấy đường dẫn.")
+        status, result = api_result(app, customer, self.command, path, body, self.headers.get("Idempotency-Key"))
+        return self.reply(status, result)
+
+
+def api_result(app, customer, method, path, body=None, idempotency_key=None):
+    if method == "GET":
+        if path == "/api/session":
+            return (200, {"customer_id": customer, "name": "Mai Anh" if customer == "C-001" else "Khách mẫu",
+                                    "model_configured": app.infer is not None or app.api_infer is not None, "scope": "synthetic-demo"})
+        if path == "/api/providers":
+            return (200, app.providers())
+        if path == "/api/orders":
+            return (200, {"orders": app.store.orders(customer)})
+        if path == "/api/events":
+            return (200, {"events": app.store.events(customer)})
+        m = re.fullmatch(r"/api/orders/([A-Z]{1,6}-[0-9]{1,8})", path)
+        if m:
+            return (200, {"order": app.store.lookup(customer, m[1])})
+    if method == "POST":
+        if path == '/api/conversations':
+            return (201, app.new_conversation(customer, body))
+        focus = re.fullmatch(r'/api/conversations/([a-f0-9-]{36})/focus', path)
+        if focus:
+            return (200, app.focus(customer, focus[1], body))
+        if path == "/api/chat":
+            return (200, app.chat(customer, body))
+        if path == "/api/cancellation-proposals":
+            return (201, app.store.propose(customer, body))
+        m = re.fullmatch(r"/api/cancellation-proposals/([a-f0-9-]{36})/(confirm|dismiss)", path)
+        if m:
+            if m[2] == "confirm":
+                return (200, app.store.confirm(customer, m[1], body, idempotency_key))
+            fields(body, set())
+            return (200, app.store.dismiss(customer, m[1]))
+    raise ApiError(404, "not_found", "Không tìm thấy đường dẫn.")
+
 
 
 def main():
