@@ -1,0 +1,20 @@
+services:
+  baseline:
+    image: ${RETAILOPS_IMAGE:-retailops:dev}
+    build: .
+    init: true
+    env_file: inference.env
+    environment:
+      RETAILOPS_OUTPUT: /data
+    volumes:
+      - ${RETAILOPS_DATA_DIR:-./artifacts}:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 512m
+    command: ["--help"]

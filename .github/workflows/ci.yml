@@ -1,0 +1,25 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  offline:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Unit and HTTP contract tests (no model, no secrets)
+        run: python3 -m unittest discover -s tests -v
+      - name: Build CPU-only baseline image
+        run: docker build -t retailops:ci .
+      - name: Verify packaged application
+        run: docker run --rm --entrypoint python retailops:ci -m unittest discover -s tests -v

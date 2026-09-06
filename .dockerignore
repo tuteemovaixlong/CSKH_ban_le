@@ -1,0 +1,8 @@
+*
+!retailops_baseline.py
+!inference_proxy.py
+!tests/
+!tests/*.py
+!data/
+!data/smoke.jsonl
+!Dockerfile

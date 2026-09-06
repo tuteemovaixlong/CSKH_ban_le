@@ -1,0 +1,37 @@
+Offline unit verification only; actual Qwen inference was not run.
+
+test_decoding_config_isolation (test_baseline.CacheKeyTests.test_decoding_config_isolation) ... ok
+test_model_version_isolation (test_baseline.CacheKeyTests.test_model_version_isolation) ... ok
+test_no_semantic_normalization (test_baseline.CacheKeyTests.test_no_semantic_normalization) ... ok
+test_prompt_invalidation (test_baseline.CacheKeyTests.test_prompt_invalidation) ... ok
+test_same_input_same_key (test_baseline.CacheKeyTests.test_same_input_same_key) ... ok
+test_schema_invalidation (test_baseline.CacheKeyTests.test_schema_invalidation) ... ok
+test_scope_isolation (test_baseline.CacheKeyTests.test_scope_isolation) ... ok
+test_stable_dictionary_serialization (test_baseline.CacheKeyTests.test_stable_dictionary_serialization) ... ok
+test_cache_default_off (test_baseline.StorageRunnerTests.test_cache_default_off) ... ok
+test_cache_scope_isolation_in_runner (test_baseline.StorageRunnerTests.test_cache_scope_isolation_in_runner) ... ok
+test_cloud_tag_rejected (test_baseline.StorageRunnerTests.test_cloud_tag_rejected) ... ok
+test_eval_bypasses_cache_each_repeat (test_baseline.StorageRunnerTests.test_eval_bypasses_cache_each_repeat) ... [1/2] unit: PASS
+[2/2] unit: PASS
+ok
+test_invalid_output_not_cached (test_baseline.StorageRunnerTests.test_invalid_output_not_cached) ... ok
+test_opt_in_cache_hit_no_generation (test_baseline.StorageRunnerTests.test_opt_in_cache_hit_no_generation) ... ok
+test_remote_endpoint_rejected (test_baseline.StorageRunnerTests.test_remote_endpoint_rejected) ... ok
+test_synthetic_cases_well_formed (test_baseline.StorageRunnerTests.test_synthetic_cases_well_formed) ... ok
+test_truncated_output_rejected (test_baseline.StorageRunnerTests.test_truncated_output_rejected) ... ok
+test_ttl_expiry (test_baseline.StorageRunnerTests.test_ttl_expiry) ... ok
+test_bad_action (test_baseline.ValidationTests.test_bad_action) ... ok
+test_cancel_without_reason (test_baseline.ValidationTests.test_cancel_without_reason) ... ok
+test_extra_key (test_baseline.ValidationTests.test_extra_key) ... ok
+test_id_types (test_baseline.ValidationTests.test_id_types) ... ok
+test_missing_key (test_baseline.ValidationTests.test_missing_key) ... ok
+test_unsupported_no_attached_id (test_baseline.ValidationTests.test_unsupported_no_attached_id) ... ok
+test_valid_cancel (test_baseline.ValidationTests.test_valid_cancel) ... ok
+test_valid_clarification (test_baseline.ValidationTests.test_valid_clarification) ... ok
+test_valid_lookup (test_baseline.ValidationTests.test_valid_lookup) ... ok
+test_valid_unsupported (test_baseline.ValidationTests.test_valid_unsupported) ... ok
+
+----------------------------------------------------------------------
+Ran 28 tests in 0.020s
+
+OK
