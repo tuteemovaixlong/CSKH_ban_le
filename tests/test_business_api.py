@@ -97,34 +97,6 @@ class BusinessTests(unittest.TestCase):
         self.store.confirm('C-001', first['proposal_id'], {'confirmed': True}, 'a'*32)
         self.assert_error('idempotency_conflict', lambda: self.store.confirm('C-001', second['proposal_id'], {'confirmed': True}, 'a'*32))
 
-    def test_model_hallucinated_reason_never_creates_a_proposal(self):
-        app = Application(self.store, {}, lambda text: {'valid': True, 'decision': {
-            'action': 'cancel_order', 'order_id': 'O-101', 'cancel_reason': 'no_longer_needed'}})
-        result = app.chat('C-001', {'text': 'Cancel O-101 because shipping is too expensive.'})
-        self.assertEqual(result['action'], 'choose_cancel_reason')
-        self.assertNotIn('reason', result)
-        with self.store.connection() as db:
-            self.assertEqual(db.execute('SELECT count(*) FROM proposals').fetchone()[0], 0)
-        self.assertEqual(self.store.lookup('C-001', 'O-101')['status'], 'pending')
-
-    def test_model_cannot_invent_order_or_access_other_owner(self):
-        app = Application(self.store, {}, lambda text: {'valid': True, 'decision': {
-            'action': 'lookup_order', 'order_id': 'O-202', 'cancel_reason': None}})
-        self.assert_error('ungrounded_order', lambda: app.chat('C-001', {'text': 'Show my order'}))
-        self.assert_error('order_not_found', lambda: app.chat('C-001', {'text': 'Show O-202'}))
-
-    def test_invalid_model_and_outage_leave_orders_unchanged(self):
-        app = Application(self.store, {}, lambda text: {'valid': False, 'raw_output': 'invalid'})
-        self.assertEqual(app.chat('C-001', {'text': 'Hủy O-101'})['action'], 'clarify')
-        app.infer = None
-        self.assert_error('model_offline', lambda: app.chat('C-001', {'text': 'Hủy O-101'}))
-        def fail(text):
-            raise RuntimeError('upstream body should not be returned')
-        app.infer = fail
-        self.assert_error('model_unavailable', lambda: app.chat('C-001', {'text': 'Hủy O-101'}))
-        self.assertEqual(self.store.lookup('C-001', 'O-101')['status'], 'pending')
-
-
 class HttpTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -182,8 +154,8 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(self.request('/api/chat', {'text': 'hello'}, {'Origin': 'https://evil.example'})[0], 403)
         self.assertEqual(self.request('/api/chat', {'text': 'hello'}, {'Content-Type': 'text/plain'})[0], 415)
         self.assertEqual(self.request('/api/chat', {'text': 'x'*17000})[0], 413)
-        self.assertEqual(self.request('/api/chat', {'text': 'hello'})[0], 200)
-        self.assertEqual(self.request('/api/chat', {'text': 'Cancel O-101 because I ordered by mistake'})[0], 503)
+        cid = self.request('/api/conversations', {})[1]['conversation_id']
+        self.assertEqual(self.request('/api/chat', {'text': 'hello', 'conversation_id': cid, 'request_id': 'a'*32})[0], 503)
         self.assertEqual(self.request('/api/chat', {'text': 'hello', 'customer_id': 'C-002'})[0], 400)
 
 

@@ -1,5 +1,7 @@
 # RetailOps 0.3 — hội thoại có ngữ cảnh và dữ liệu nguồn
 
+> Tài liệu lịch sử bản 0.2/0.3. Với phiên bản hiện tại, dùng [AGENT_V04.md](AGENT_V04.md), gồm notebook mới, hợp đồng chat và các bước nâng cấp.
+
 ## Thay đổi
 
 Bản 0.2 nhận diện tra/hủy đơn nhưng các lời chào, câu hỏi sản phẩm và câu ngoài

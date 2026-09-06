@@ -18,6 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from retailops_baseline import LocalOllama, ModelConfig, SCHEMA, SYSTEM, canonical
+from agent_protocol import PROTOCOL, build_request, validate_envelope
 
 MAX_BODY = 32768
 
@@ -91,11 +92,14 @@ def create_server(config: ModelConfig, token: str, port: int = 8001) -> Threadin
         def do_GET(self):
             if not self.authenticated():
                 return
-            if self.path not in ("/api/version", "/api/tags", "/healthz"):
+            if self.path not in ("/api/version", "/api/tags", "/healthz", "/agent/identity"):
                 self.reply(404, {"error": "route_not_allowed"})
                 return
             try:
-                if self.path == "/api/tags":
+                if self.path == '/agent/identity':
+                    data = {**gateway.inspect(), 'agent_protocol': PROTOCOL,
+                            'inference_session_id': session_id, 'proxy_sha256': proxy_hash}
+                elif self.path == "/api/tags":
                     data = gateway.request(self.path)
                     data = {"models": [m for m in data.get("models", [])
                                        if config.model in (m.get("name"), m.get("model"))]}
@@ -112,7 +116,7 @@ def create_server(config: ModelConfig, token: str, port: int = 8001) -> Threadin
         def do_POST(self):
             if not self.authenticated():
                 return
-            if self.path != "/api/chat":
+            if self.path not in ("/api/chat", "/agent/chat"):
                 self.reply(404, {"error": "route_not_allowed"})
                 return
             if self.headers.get("Transfer-Encoding"):
@@ -120,7 +124,7 @@ def create_server(config: ModelConfig, token: str, port: int = 8001) -> Threadin
                 return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
-                if not 0 < length <= MAX_BODY:
+                if not 0 < length <= (65536 if self.path == '/agent/chat' else MAX_BODY):
                     self.reply(413, {"error": "body_size_out_of_range"})
                     return
                 if self.headers.get_content_type() != "application/json":
@@ -129,16 +133,23 @@ def create_server(config: ModelConfig, token: str, port: int = 8001) -> Threadin
                 raw = self.rfile.read(length)
                 if len(raw) != length:
                     raise ValueError("Incomplete body")
-                text, options = validate_request(json.loads(raw), config.model)
+                if self.path == '/agent/chat':
+                    messages, allow_tools = validate_envelope(json.loads(raw))
+                else:
+                    text, options = validate_request(json.loads(raw), config.model)
             except (ValueError, UnicodeError, OSError):
-                self.reply(400, {"error": "invalid_extraction_request"})
+                self.reply(400, {"error": "invalid_agent_request" if self.path == '/agent/chat' else "invalid_extraction_request"})
                 return
             if not busy.acquire(blocking=False):
                 self.reply(429, {"error": "inference_busy"})
                 return
             try:
-                worker = LocalOllama(replace(config, **options))
-                self.reply(200, worker.generate(text))
+                if self.path == '/agent/chat':
+                    worker = LocalOllama(replace(config, timeout_s=30))
+                    self.reply(200, worker.request('/api/chat', build_request(config.model, messages, allow_tools)))
+                else:
+                    worker = LocalOllama(replace(config, **options))
+                    self.reply(200, worker.generate(text))
             except (RuntimeError, ValueError, OSError):
                 self.reply(503, {"error": "inference_unavailable"})
             finally:
@@ -151,8 +162,9 @@ def create_server(config: ModelConfig, token: str, port: int = 8001) -> Threadin
 
 def main():
     config = ModelConfig(model=os.getenv("RETAILOPS_MODEL", "qwen3.5:4b"))
-    server = create_server(config, os.environ.get("RETAILOPS_INFERENCE_TOKEN", ""))
-    print("RetailOps experiment proxy listening on 127.0.0.1:8001", flush=True)
+    port = int(os.getenv('RETAILOPS_PROXY_PORT', '8001'))
+    server = create_server(config, os.environ.get("RETAILOPS_INFERENCE_TOKEN", ""), port)
+    print(f"RetailOps proxy {PROTOCOL} listening on 127.0.0.1:{port}", flush=True)
     try:
         server.serve_forever()
     finally:

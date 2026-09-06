@@ -1,5 +1,7 @@
 # RetailOps: chạy giao diện với backend thật trên dữ liệu giả lập
 
+> Tài liệu lịch sử bản 0.2/0.3. Với phiên bản hiện tại, dùng [AGENT_V04.md](AGENT_V04.md), gồm notebook mới, hợp đồng chat và các bước nâng cấp.
+
 Hướng dẫn dưới đây ghi lại bản API 0.2. Với bản hội thoại 0.3, xem thêm
 [ngữ cảnh, nguồn trả lời và lệnh cập nhật EC2](CONVERSATION_V03.md).
 Ở 0.3, lời chào và một số câu tra cứu/danh mục cũng hoạt động khi Colab tắt.
