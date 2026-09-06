@@ -1,0 +1,38 @@
+{
+  "source": "Danh mục giả lập RetailOps v1",
+  "products": [
+    {
+      "id": "P-101",
+      "name": "Áo thun Essential",
+      "aliases": ["áo thun essential", "essential"],
+      "category": "Áo thun",
+      "description": "Sản phẩm áo thun trong danh mục thử nghiệm RetailOps.",
+      "variants": ["Trắng · Size M"],
+      "material": null,
+      "care": null,
+      "stock": null
+    },
+    {
+      "id": "P-102",
+      "name": "Áo khoác Everyday",
+      "aliases": ["áo khoác everyday", "everyday"],
+      "category": "Áo khoác",
+      "description": "Sản phẩm áo khoác trong danh mục thử nghiệm RetailOps.",
+      "variants": ["Đen · Size L"],
+      "material": null,
+      "care": null,
+      "stock": null
+    },
+    {
+      "id": "P-202",
+      "name": "Áo polo",
+      "aliases": ["áo polo"],
+      "category": "Áo polo",
+      "description": "Sản phẩm áo polo trong danh mục thử nghiệm RetailOps.",
+      "variants": ["Xanh · Size M"],
+      "material": null,
+      "care": null,
+      "stock": null
+    }
+  ]
+}

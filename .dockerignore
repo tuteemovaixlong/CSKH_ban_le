@@ -2,6 +2,7 @@
 !retailops_baseline.py
 !inference_proxy.py
 !retailops_api.py
+!retailops_conversation.py
 !web/
 !web/*
 !deploy/
@@ -10,4 +11,5 @@
 !tests/*.py
 !data/
 !data/smoke.jsonl
+!data/products.json
 !Dockerfile
