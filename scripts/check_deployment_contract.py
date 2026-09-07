@@ -35,7 +35,8 @@ def main():
     require(
         "deploy/rollout-public-web.sh",
         "deployed.env",
-        "previous.env",
+        "previous_image",
+        "deployed.rollback.",
         "--force-recreate",
         "verify_live",
         "sha256sum",
