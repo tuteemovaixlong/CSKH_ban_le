@@ -297,10 +297,45 @@ def build():
 
     try:
         ngrok.set_auth_token(_ngrok_token)
-        _agent_tunnel = ngrok.connect(
-            addr='http://127.0.0.1:8002', proto='http',
-            bind_tls=True, inspect=False,
-        )
+
+        # A previous Cell 3 in this runtime can leave an ngrok agent process alive
+        # even after its tunnel object was disconnected. Kill only the local agent
+        # before claiming the account's static dev endpoint again.
+        try:
+            ngrok.kill()
+        except Exception as _exc:
+            print('Local ngrok cleanup warning:', type(_exc).__name__)
+        time.sleep(1.0)
+
+        _agent_tunnel = None
+        _tunnel_error = None
+        for _attempt in range(1, 7):
+            try:
+                _agent_tunnel = ngrok.connect(
+                    addr='http://127.0.0.1:8002', proto='http',
+                    bind_tls=True, inspect=False,
+                )
+                break
+            except Exception as _exc:
+                _tunnel_error = _exc
+                _message = str(_exc)
+                if 'ERR_NGROK_334' not in _message and 'already online' not in _message:
+                    raise
+                print(
+                    f'ngrok endpoint is still online; retry {_attempt}/6 ' \n                    '(pooling stays disabled)…',
+                    flush=True,
+                )
+                try:
+                    ngrok.kill()
+                except Exception:
+                    pass
+                time.sleep(min(2 * _attempt, 10))
+
+        if _agent_tunnel is None:
+            raise RuntimeError(
+                'Ngrok static endpoint vẫn đang online ở runtime/process khác. ' \n                'Hãy dừng CELL STOP ở notebook cũ hoặc tắt endpoint/runtime cũ rồi ' \n                'chạy lại CELL 3. Không bật pooling: pooling có thể trộn proxy v1/v2. ' \n                'Last error: ' + str(_tunnel_error)
+            )
+
         _public = urlsplit(_agent_tunnel.public_url)
         if _public.scheme != 'https' or not _public.hostname:
             raise RuntimeError('HTTPS tunnel required')
@@ -311,6 +346,10 @@ def build():
             except Exception:
                 pass
             _agent_tunnel = None
+        try:
+            ngrok.kill()
+        except Exception:
+            pass
         _agent_proxy.shutdown(); _agent_proxy.server_close(); _agent_proxy = None
         raise
     finally:
@@ -358,6 +397,7 @@ def build():
         try:
             from pyngrok import ngrok
             ngrok.disconnect(_agent_tunnel.public_url)
+            ngrok.kill()
         except Exception as _exc:
             print('Tunnel stop warning:', type(_exc).__name__)
         _agent_tunnel = None
