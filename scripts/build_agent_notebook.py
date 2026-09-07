@@ -68,7 +68,7 @@ def build():
     encoded = base64.b64encode(zlib.compress(raw, 9)).decode()
     digest = hashlib.sha256(raw).hexdigest()
 
-    bootstrap = f'''
+    bootstrap = fr'''
     # CELL 1 — Bootstrap source + dependencies (fresh runtime: run this first)
     import base64, hashlib, json, re, subprocess, sys, zlib
     from pathlib import Path
