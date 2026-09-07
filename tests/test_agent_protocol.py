@@ -17,6 +17,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertNotIn('format', request)
 
     def test_soft_scope_allows_harmless_general_qa_but_keeps_hard_boundaries(self):
+        # This is a source-level policy contract. Model quality is accepted separately on Colab.
         self.assertIn('Harmless general questions and casual conversation are also allowed', SYSTEM)
         self.assertIn('algorithms, programming, mathematics, history, language', SYSTEM)
         self.assertIn('without calling RetailOps business or knowledge tools', SYSTEM)
