@@ -6,21 +6,40 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: deploy-retailops-demo
+  group: pgvector-migration-retailops-demo
   cancel-in-progress: false
 jobs:
   migrate:
     if: github.ref == 'refs/heads/main' && vars.RETAILOPS_DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 30
     environment: demo
     permissions:
       contents: read
+      actions: read
       id-token: write
     env:
       AWS_REGION: ${{ vars.AWS_REGION }}
       EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
     steps:
+      - name: Wait for normal deployment of this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 180); do
+            runs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${GITHUB_SHA}&event=push&per_page=20")
+            read -r status conclusion <<<"$(python3 -c 'import json,sys; data=json.load(sys.stdin); xs=[x for x in data.get("workflow_runs",[]) if x.get("path")==".github/workflows/deploy-ec2.yml"]; x=xs[0] if xs else {}; print(x.get("status","missing"), x.get("conclusion") or "none")' <<<"$runs")"
+            echo "DEPLOY_STATUS=$status/$conclusion"
+            if [[ "$status" == completed ]]; then
+              [[ "$conclusion" == success ]]
+              echo NORMAL_DEPLOY_READY
+              break
+            fi
+            sleep 5
+          done
+          [[ "$status" == completed && "$conclusion" == success ]]
       - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
