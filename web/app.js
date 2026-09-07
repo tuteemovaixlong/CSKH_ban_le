@@ -197,6 +197,26 @@ async function dismiss() {
   } catch (error) { byId('confirm-error').textContent = error.message; }
 }
 
+function showSources(row, sources) {
+  if (!Array.isArray(sources) || !sources.length) return;
+  const checked = sources.filter(s => s && /^KB:[a-f0-9]{24}$/.test(s.citation_id) &&
+    typeof s.title === 'string' && typeof s.source_key === 'string' && typeof s.excerpt === 'string').slice(0, 6);
+  if (!checked.length) return;
+  const details = el('details', 'knowledge-sources');
+  details.append(el('summary', '', 'Ngu\u1ed3n tham kh\u1ea3o (' + checked.length + ')'));
+  details.append(el('small', '', 'Tr\u00edch \u0111o\u1ea1n \u0111\u00e3 truy xu\u1ea5t cho l\u01b0\u1ee3t n\u00e0y; kh\u00f4ng thay th\u1ebf tr\u1ea1ng th\u00e1i \u0111\u01a1n hi\u1ec7n t\u1ea1i.'));
+  for (const source of checked.slice(0, 6)) {
+    const item = el('section', 'knowledge-source');
+    // Never use innerHTML, arbitrary hrefs or model-provided URLs.
+    item.append(el('strong', '', source.title.slice(0, 160)),
+      el('small', '', '[' + source.citation_id + '] ' + source.source_key.slice(0, 240)),
+      el('p', '', source.excerpt.slice(0, 1100)));
+    if (source.truncated) item.append(el('small', '', 'Tr\u00edch \u0111o\u1ea1n \u0111\u00e3 \u0111\u01b0\u1ee3c r\u00fat g\u1ecdn.'));
+    details.append(item);
+  }
+  row.append(details);
+}
+
 function showTrace(row, trace, replayed = false) {
   if (!trace) return;
   const details = el('details', 'agent-trace');
@@ -236,6 +256,7 @@ async function send(text, requestId = crypto.randomUUID(), retry = false) {
     return;
   } finally { byId('messages').removeAttribute('aria-busy'); }
   const row = message(result.message, 'assistant', result.source, result.trace?.model);
+  showSources(row, result.sources);
   showTrace(row, result.trace, result.replayed);
   if (result.replayed) {
     row.append(el('small', 'replay-note', 'Đây là câu trả lời đã lưu của lần gửi trước. Bảng đơn bên phải hiển thị trạng thái hiện tại.'));

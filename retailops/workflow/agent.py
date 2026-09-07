@@ -9,6 +9,7 @@ from langgraph.graph import END, START, StateGraph
 from agent_protocol import (MAX_MODEL_CALLS, MAX_TOOL_CALLS, PROTOCOL, ProtocolError,
                             assistant_message, validate_messages, validate_tool)
 from retailops_agent import AgentError
+from retailops.knowledge.citations import CitationError, cited_sources
 
 
 class AgentState(TypedDict):
@@ -55,6 +56,13 @@ def run(gateway, text, history, execute, identity, timeout=110, *, saver=None,
         calls = message.get('tool_calls', [])
         if calls and (not allow or state['tool_count']+len(calls) > MAX_TOOL_CALLS):
             raise AgentError('agent_budget_exceeded', 'Model chưa hoàn tất trong giới hạn số bước.', trace)
+        if not calls:
+            try:
+                cited_sources(message['content'], state['bound'].get('knowledge', {}).get('sources', []))
+            except CitationError as exc:
+                # Fail before checkpointing a final answer so an explicit retry
+                # can regenerate it using the already-checkpointed tool evidence.
+                raise AgentError(exc.code, 'Model ch\u01b0a tr\u00edch d\u1eabn ngu\u1ed3n h\u1ee3p l\u1ec7. B\u1ea1n c\u00f3 th\u1ec3 th\u1eed l\u1ea1i tin nh\u1eafn n\u00e0y.', trace) from None
         state['messages'].append(message)
         state['fresh'].append(message)
         state['complete'] = not calls
@@ -94,6 +102,8 @@ def run(gateway, text, history, execute, identity, timeout=110, *, saver=None,
     checkpoint = graph.get_state(config) if saver else None
     if checkpoint and checkpoint.values:
         trace = checkpoint.values['trace']
+        if trace.get('protocol') != PROTOCOL:
+            raise AgentError('agent_protocol_changed', 'Phi\u00ean b\u1ea3n agent \u0111\u00e3 thay \u0111\u1ed5i. H\u00e3y m\u1edf cu\u1ed9c tr\u00f2 chuy\u1ec7n m\u1edbi.')
         if (trace['model'], trace['model_digest']) != (identity['name'], identity.get('digest')):
             raise AgentError('model_changed', 'Model đã thay đổi giữa lượt xử lý. Hãy mở cuộc trò chuyện mới.')
         state = graph.invoke(None, config, durability='sync') if checkpoint.next else checkpoint.values

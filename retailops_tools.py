@@ -2,6 +2,7 @@
 from datetime import datetime, timedelta, timezone
 
 from retailops_conversation import normalize
+from retailops.knowledge.tool import KnowledgeTool
 
 
 class BoundTools:
@@ -12,6 +13,7 @@ class BoundTools:
         self.versions = {}
         self.cancel_order = None
         self.can_cancel = can_cancel
+        self.knowledge = KnowledgeTool(store)
 
     def read_order(self, oid, focus=True):
         with self.store.connection() as db:
@@ -27,6 +29,8 @@ class BoundTools:
             'source': 'synthetic-demo/orders'}
 
     def __call__(self, name, args):
+        if name == 'search_knowledge':
+            return self.knowledge.search(args['query'])
         if name == 'list_orders':
             orders = self.store.orders(self.customer)
             return {'orders': [self.read_order(o['id'], focus=False) for o in orders[:10]],

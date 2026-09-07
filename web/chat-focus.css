@@ -198,3 +198,10 @@ body:not(.trace-visible) .agent-trace { display: none !important; }
   .workspace-toggle span { display: none; }
   .workspace-toggle { width: 34px; padding: 7px; }
 }
+
+/* Source evidence stays accessible even when technical traces are hidden. */
+.knowledge-sources { margin: 0.7rem 0 0; padding: 0.65rem 0.8rem; border: 1px solid #e1e3ed; border-radius: 10px; font-size: 0.86rem; min-width: 0; }
+.knowledge-sources summary { cursor: pointer; font-weight: 600; }
+.knowledge-sources small { display: block; margin-top: 0.4rem; overflow-wrap: anywhere; }
+.knowledge-source { margin-top: 0.7rem; padding-top: 0.6rem; border-top: 1px solid #e1e3ed; }
+.knowledge-source p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
