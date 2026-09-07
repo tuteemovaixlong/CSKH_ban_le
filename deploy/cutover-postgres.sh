@@ -25,7 +25,8 @@ image_ref=$(sed -n 's/^RETAILOPS_IMAGE=//p' deployed.env)
 test -n "$image_ref"
 docker image inspect "$image_ref" >/dev/null
 
-extract=$(docker create --network none "$image_ref")nstaging=$(mktemp -d /opt/retailops/pg-cutover.XXXXXX)
+extract=$(docker create --network none "$image_ref")
+staging=$(mktemp -d /opt/retailops/pg-cutover.XXXXXX)
 cleanup() { docker rm "$extract" >/dev/null 2>&1 || true; rm -rf "$staging"; }
 trap cleanup EXIT
 for name in compose.postgres.yaml configure-postgres.py init-postgres.sh; do
@@ -86,13 +87,14 @@ if [[ -n "$snapshot" ]]; then
 fi
 
 if [[ "$imported" != true ]]; then
-  # Import is all-or-nothing. The fallback is allowed only when explicitly requested.
   if [[ "$SEED_FALLBACK" != true ]]; then
     echo 'SQLite import was not verified. PostgreSQL was left without fallback demo data.' >&2
-    echo 'Re-run with --seed-demo-fallback only if losing old demo state is acceptable.' >&2
+    echo 'Re-run with --seed-demo-fallback only if replacing old demo state is acceptable.' >&2
     exit 3
   fi
 
+  # import-sqlite is transactional and only accepts an empty target. If it failed,
+  # database init is safe only when identity has not already been populated.
   init_output=$(pg run --rm --no-deps --entrypoint python web -m retailops database init 2>&1)
   printf '%s\n' "$init_output"
 
