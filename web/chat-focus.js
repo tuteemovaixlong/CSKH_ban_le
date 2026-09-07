@@ -6,90 +6,108 @@
   const sidebar = document.querySelector('.sidebar');
   const context = document.querySelector('.context-panel');
   const toolbar = document.querySelector('.topbar');
-  if (!sidebar || !context || !toolbar) return;
+  const controls = document.getElementById('layout-controls') || toolbar;
+  if (!sidebar || !context || !toolbar || !controls) return;
 
-  sidebar.id ||= 'left-navigation-panel';
+  sidebar.id ||= 'left-support-panel';
   context.id ||= 'right-context-panel';
 
-  const button = (id, cls, label, direction, panel) => {
-    const node = document.createElement('button');
-    node.type = 'button';
-    node.id = id;
-    node.className = cls;
-    node.dataset.layoutControl = 'true';
-    node.setAttribute('aria-label', label);
-    node.setAttribute('aria-controls', panel.id);
-    node.title = label;
+  const icon = pathData => {
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', '0 0 24 24');
     svg.setAttribute('aria-hidden', 'true');
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    path.setAttribute('d', direction === 'left' ? 'm15 18-6-6 6-6' : 'm9 18 6-6-6-6');
+    path.setAttribute('d', pathData);
     svg.append(path);
-    node.append(svg);
+    return svg;
+  };
+
+  const toggleButton = (id, label, pathData, extraClass = '') => {
+    const node = document.createElement('button');
+    node.type = 'button';
+    node.id = id;
+    node.className = 'workspace-toggle ' + extraClass;
+    node.dataset.layoutControl = 'true';
+    node.append(icon(pathData));
+    const text = document.createElement('span'); text.textContent = label; node.append(text);
     return node;
   };
-  const panels = {
-    left: {
-      panel: sidebar, cls: 'sidebar-collapsed',
-      collapse: button('collapse-left-panel', 'panel-toggle panel-toggle-left', 'Thu gọn thanh bên trái', 'left', sidebar),
-      restore: button('restore-left-panel', 'panel-restore panel-restore-left', 'Mở thanh bên trái', 'right', sidebar),
-    },
-    right: {
-      panel: context, cls: 'context-collapsed',
-      collapse: button('collapse-right-panel', 'panel-toggle panel-toggle-right', 'Thu gọn bảng đơn hàng', 'right', context),
-      restore: button('restore-right-panel', 'panel-restore panel-restore-right', 'Mở bảng đơn hàng', 'left', context),
-    },
-  };
-  const key = side => 'retailops.ui.' + side + 'Collapsed';
-  const read = side => {
-    try { return localStorage.getItem(key(side)) === 'true'; }
-    catch (_) { return false; }
-  };
-  // Keep a memory preference too: denied storage must not break a resize.
-  const preference = {left: read('left'), right: read('right')};
 
-  function render() {
-    for (const [side, item] of Object.entries(panels)) {
+  const panelButtons = {
+    left: toggleButton('toggle-left-panel', 'Hỗ trợ', 'M4 5h16M4 12h10M4 19h16', 'panel-layout-toggle'),
+    right: toggleButton('toggle-right-panel', 'Đơn hàng', 'M5 4h14v16H5zM9 4v16', 'panel-layout-toggle'),
+  };
+  const traceButton = toggleButton('toggle-process-trace', 'Quá trình xử lý', 'M8 7h8M6 12h12M9 17h6', 'trace-layout-toggle');
+  panelButtons.left.setAttribute('aria-controls', sidebar.id);
+  panelButtons.right.setAttribute('aria-controls', context.id);
+  traceButton.setAttribute('aria-controls', 'messages');
+
+  const storageKey = side => 'retailops.ui.' + side + 'Collapsed';
+  const traceKey = 'retailops.ui.traceVisible';
+  const read = key => {
+    try { return localStorage.getItem(key); }
+    catch (_) { return null; }
+  };
+  const write = (key, value) => {
+    try { localStorage.setItem(key, String(value)); }
+    catch (_) { /* Keep in-memory layout when storage is blocked. */ }
+  };
+  const preference = {
+    left: read(storageKey('left')) === 'true',
+    right: read(storageKey('right')) === 'true',
+    trace: read(traceKey) === 'true',
+  };
+
+  function renderPanels() {
+    for (const [side, panel] of [['left', sidebar], ['right', context]]) {
       const collapsed = desktop.matches && preference[side];
-      body.classList.toggle(item.cls, collapsed);
-      // hidden removes collapsed content from keyboard navigation and accessibility tree.
-      item.panel.hidden = collapsed;
-      item.restore.hidden = !collapsed;
-      item.collapse.hidden = !desktop.matches;
-      item.collapse.setAttribute('aria-expanded', String(!collapsed));
-      item.restore.setAttribute('aria-expanded', String(!collapsed));
+      body.classList.toggle(side === 'left' ? 'sidebar-collapsed' : 'context-collapsed', collapsed);
+      panel.hidden = collapsed;
+      const button = panelButtons[side];
+      button.hidden = !desktop.matches;
+      button.classList.toggle('is-active', !collapsed);
+      button.setAttribute('aria-expanded', String(!collapsed));
+      button.setAttribute('aria-label', (collapsed ? 'Mở ' : 'Ẩn ') + (side === 'left' ? 'cột hỗ trợ' : 'cột đơn hàng'));
+      button.title = button.getAttribute ? button.getAttribute('aria-label') : '';
     }
   }
 
-  function change(side, collapsed) {
-    if (!desktop.matches) return;
-    preference[side] = collapsed;
-    try { localStorage.setItem(key(side), String(collapsed)); }
-    catch (_) { /* Layout remains usable when browser storage is unavailable. */ }
-    render();
-    (collapsed ? panels[side].restore : panels[side].collapse).focus();
+  function renderTrace() {
+    body.classList.toggle('trace-visible', preference.trace);
+    traceButton.classList.toggle('is-active', preference.trace);
+    traceButton.setAttribute('aria-pressed', String(preference.trace));
+    traceButton.setAttribute('aria-label', (preference.trace ? 'Ẩn' : 'Hiện') + ' quá trình xử lý của model');
   }
 
-  sidebar.prepend(panels.left.collapse);
-  context.prepend(panels.right.collapse);
-  // Controls stay inside main so the existing login lock also locks them.
-  toolbar.prepend(panels.left.restore);
-  toolbar.append(panels.right.restore);
-  for (const [side, item] of Object.entries(panels)) {
-    item.collapse.onclick = () => change(side, true);
-    item.restore.onclick = () => change(side, false);
+  function togglePanel(side) {
+    if (!desktop.matches) return;
+    preference[side] = !preference[side];
+    write(storageKey(side), preference[side]);
+    renderPanels();
+    panelButtons[side].focus();
   }
+
+  function toggleTrace() {
+    preference.trace = !preference.trace;
+    write(traceKey, preference.trace);
+    renderTrace();
+    traceButton.focus();
+  }
+
+  controls.append(panelButtons.left, traceButton, panelButtons.right);
+  panelButtons.left.onclick = () => togglePanel('left');
+  panelButtons.right.onclick = () => togglePanel('right');
+  traceButton.onclick = toggleTrace;
+
   desktop.addEventListener('change', () => {
     const focused = document.activeElement;
-    render();
-    for (const item of Object.values(panels)) {
-      if (item.panel.hidden && item.panel.contains(focused)) item.restore.focus();
-      else if (!desktop.matches && (focused === item.restore || focused === item.collapse)) {
-        const input = document.getElementById('message');
-        if (input) input.focus();
-      }
+    renderPanels();
+    if (!desktop.matches && (focused === panelButtons.left || focused === panelButtons.right)) {
+      const input = document.getElementById('message');
+      if (input) input.focus();
     }
   });
-  render();
+
+  renderPanels();
+  renderTrace();
 })();
