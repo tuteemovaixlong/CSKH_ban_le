@@ -54,8 +54,9 @@ print('GUEST_POSTGRES_CUTOVER_OK')
             assert (data/'public-guests/control.sqlite3').exists()
             print(result.strip())
         except Exception:
-            for diagnostic in (temp/'backups').glob('*/failure-details.txt'):
-                print(run(['sudo','cat',str(diagnostic)]))
+            for backup in (temp/'backups').iterdir() if (temp/'backups').exists() else []:
+                detail = subprocess.run(['sudo','cat',str(backup/'failure-details.txt')],text=True,capture_output=True)
+                print(detail.stdout)
             raise
         finally:
             cleanup = base+['-f',str(temp/'compose.postgres.yaml')] if (temp/'compose.postgres.yaml').exists() else base

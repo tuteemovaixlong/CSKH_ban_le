@@ -5,6 +5,8 @@ import re
 from retailops.core import require
 from retailops.knowledge.embedding import DIMENSION, vector
 
+MIN_SCORE = 0.4
+
 DDL = (
     '''CREATE TABLE IF NOT EXISTS knowledge_meta (
         id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL,
@@ -107,7 +109,7 @@ class Knowledge:
                 (encoded, encoded)).fetchall()
         # Conservative starting threshold, not a calibrated accuracy guarantee.
         return [{**dict(row), 'score': round(row['score'], 5), 'generation': meta['generation']}
-                for row in rows if row['score'] >= 0.5]
+                for row in rows if row['score'] >= MIN_SCORE]
 
     def validate(self, citations):
         if not citations:

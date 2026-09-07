@@ -1,6 +1,6 @@
 """One-time local EC2 cutover. Back up first; never delete source data or DB volumes.
 
-Run as root after CD has delivered image >=0.9. The operator supplies the new
+Run as root after CD has delivered image 0.10. The operator supplies the new
 public hostname. Active guest workspaces require a deliberate identity mapping;
 this helper refuses to flatten them into one shared customer account.
 """
@@ -49,8 +49,8 @@ def migrate(root, host, project="retailops-web"):
                  if line.startswith('RETAILOPS_IMAGE='))
     version = run(['docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'python', image,
                    '-c', 'from retailops.core import VERSION; print(VERSION)'])
-    if version not in ('0.9', '0.10'):
-        raise ValueError('Expected a verified 0.9 or 0.10 deployment image.')
+    if version != '0.10':
+        raise ValueError('Expected a verified 0.10 deployment image.')
     base = ['docker', 'compose', '--project-name', project, '--env-file', 'deployed.env',
             '--env-file', 'public.env', '-f', 'compose.public.yaml']
     pg = base+['-f', 'compose.postgres.yaml']

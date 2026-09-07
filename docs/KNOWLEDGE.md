@@ -9,11 +9,11 @@ Bước này hoàn thiện kho dữ liệu và luồng tra tài liệu. Chưa k�
 - Orders, identity, proposals, audit và LangGraph checkpoint vẫn theo schema đã có.
 - Mỗi tenant có collection tài liệu riêng; HTTP và model không được chọn tenant/schema.
 - Embedding quantized multilingual MiniLM-L12-v2, 384 chiều, ONNX CPU (FastEmbed).
-- Operator tải model một lần, khóa revision và SHA256 từng file trong manifest.
+- Operator tải model một lần từ revision cố định `faf4aa4225822f3bc6376869cb1164e8e3feedd0`, ghi SHA256 từng file trong manifest.
   Web chỉ đọc model đã chuẩn bị; không tự tải, không gọi API embedding/Colab.
 - Operator duyệt và publish toàn bộ collection. Validation và embedding hoàn tất trước
   transaction thay collection; lỗi không xóa collection đang dùng.
-- `search_knowledge` trả tối đa 3 đoạn, cosine >= 0.5. Đây là ngưỡng khởi đầu chưa hiệu chuẩn.
+- `search_knowledge` trả tối đa 3 đoạn, cosine >= 0.4. Đây là ngưỡng khởi đầu chưa hiệu chuẩn.
   Exact search phù hợp collection demo nhỏ (tối đa 100 tài liệu/500 đoạn).
 - Model dẫn `[K1]`, `[K2]`; backend kiểm tra mã dẫn nguồn và generation trước khi commit lượt chat.
   UI hiển thị tên, phiên bản và đoạn trích dưới câu trả lời bằng text thuần.

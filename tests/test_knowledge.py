@@ -64,6 +64,17 @@ class KnowledgeUnitTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 CpuEmbedding(path)
 
+    def test_model_receives_excerpts_while_backend_keeps_generation_for_validation(self):
+        class Collection:
+            def search(self, query):
+                return [dict(id='DOC',ordinal=0,content_hash='hash',generation='generation',
+                             title='Policy',version='1',source='fixture',text='Read only')]
+        bound = BoundTools(None, Catalog(), 'C-001', {'order_id':None,'product_id':None}, {}, knowledge=Collection())
+        result = bound('search_knowledge', {'query':'return'})
+        self.assertEqual(result['documents'][0]['ref'],'K1')
+        self.assertNotIn('generation',result['documents'][0])
+        self.assertEqual(bound.citations[0]['generation'],'generation')
+
     def test_unavailable_tool_is_explicit_and_cannot_change_order(self):
         bound = BoundTools(None, Catalog(), 'C-001', {'order_id':None,'product_id':None}, {})
         self.assertEqual(bound('search_knowledge', {'query':'return'})['error'], 'knowledge_unavailable')

@@ -17,7 +17,11 @@ INVITE = 'ci_synthetic_invite_' + 'a'*40
 
 
 def run(args, **kwargs):
-    return subprocess.run(args, check=True, text=True, capture_output=True, **kwargs).stdout
+    result = subprocess.run(args, text=True, capture_output=True, **kwargs)
+    if result.returncode:
+        print(result.stdout, result.stderr)  # CI fixture only
+        result.check_returncode()
+    return result.stdout
 
 
 def main():
@@ -144,8 +148,9 @@ def main():
             print('POSTGRES_HTTPS_IMPORT_RESTORE_OK (limited DB role; no external inference)')
         except Exception:
             # Only disposable CI data/credentials exist in this stack.
-            for diagnostic in (temp/'backups').glob('*/failure-details.txt'):
-                print(run(['sudo','cat',str(diagnostic)]))
+            for backup in (temp/'backups').iterdir() if (temp/'backups').exists() else []:
+                detail = subprocess.run(['sudo','cat',str(backup/'failure-details.txt')],text=True,capture_output=True)
+                print(detail.stdout)
             print(run(base+['logs','--tail','40']))  # fixture stack only, contains no real secrets
             raise
         finally:
