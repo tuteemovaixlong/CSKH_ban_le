@@ -12,10 +12,10 @@ concurrency:
 jobs:
   offline:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 12
     services:
       postgres:
-        image: postgres:16.15-bookworm
+        image: pgvector/pgvector:0.8.6-pg16-bookworm@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
         env:
           POSTGRES_DB: retailops_test
           POSTGRES_USER: retailops_test
@@ -39,9 +39,10 @@ jobs:
           node tests/test_provider_selector.js
           node tests/test_public_session.js
           RETAILOPS_UI_TEST_MODE=persistent node tests/test_public_session.js
-      - name: Unit and HTTP contract tests (no model, no secrets)
+      - name: Unit, pgvector and HTTP contract tests (no model, no secrets)
         run: |
           python3 -m pip install --only-binary=:all: --require-hashes -r requirements-web.txt -r requirements-postgres.txt -r requirements-graph.txt
+          python3 scripts/prepare_test_pgvector.py
           python3 -m unittest discover -s tests -v
       - name: Validate HTTPS, PostgreSQL and rollout deployment scripts
         run: |
@@ -49,13 +50,14 @@ jobs:
           bash -n deploy/start-public-web.sh
           bash -n deploy/init-postgres.sh
           bash -n deploy/cutover-postgres.sh
+          bash -n deploy/enable-pgvector.sh
           bash -n deploy/rollout-public-web.sh
           docker run --rm --network none -e RETAILOPS_PUBLIC_HOST=retailops.example.com -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.11.4-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
       - name: Build CPU-only baseline image
         run: docker build -t retailops:ci .
       - name: Verify packaged application and deployment helpers
         run: |
-          docker run --rm --network none --entrypoint sh retailops:ci -c 'test -f /app/deploy/rollout-public-web.sh && test -f /app/deploy/cutover-postgres.sh'
+          docker run --rm --network none --entrypoint sh retailops:ci -c 'test -f /app/deploy/rollout-public-web.sh && test -f /app/deploy/cutover-postgres.sh && test -f /app/deploy/enable-pgvector.sh && test -f /app/data/knowledge/cancellation.md'
           docker run --rm --network host -e RETAILOPS_TEST_DATABASE_URL --entrypoint python retailops:ci -m unittest discover -s tests -v
       - name: Verify HTTPS proxy and cookie session with a temporary test CA
         run: python3 scripts/check_public_https.py
