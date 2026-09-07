@@ -17,8 +17,17 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
-      - name: Generate and validate notebook
+      - name: Finalize generator, generate and validate notebook
         run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/build_agent_notebook.py')
+          text = path.read_text(encoding='utf-8')
+          old = "    bootstrap = f'''"
+          new = "    bootstrap = fr'''"
+          assert text.count(old) == 1, 'Unexpected generator source'
+          path.write_text(text.replace(old, new), encoding='utf-8')
+          PY
           python3 -m py_compile scripts/build_agent_notebook.py
           python3 scripts/build_agent_notebook.py
           python3 scripts/build_agent_notebook.py --check
@@ -38,12 +47,12 @@ jobs:
           assert 'retailops-agent-v1' not in text
           print('COLAB_V2_NOTEBOOK_CONTRACT_OK')
           PY
-      - name: Commit generated notebook and remove one-time helper
+      - name: Commit generator + notebook and remove one-time helper
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 - <<'PY'
-          import base64, json, os, urllib.request
+          import json, os, urllib.request
           from pathlib import Path
 
           repo = os.environ['GITHUB_REPOSITORY']
@@ -69,16 +78,13 @@ jobs:
 
           parent_obj = api('GET', '/git/commits/' + parent)
           base_tree = parent_obj['tree']['sha']
-          notebook = Path('notebooks/colab_agent.ipynb').read_text(encoding='utf-8')
-
-          blob = api('POST', '/git/blobs', {'content': notebook, 'encoding': 'utf-8'})['sha']
-          tree = api('POST', '/git/trees', {
-              'base_tree': base_tree,
-              'tree': [
-                  {'path': 'notebooks/colab_agent.ipynb', 'mode': '100644', 'type': 'blob', 'sha': blob},
-                  {'path': '.github/workflows/refresh-colab-v2.yml', 'mode': '100644', 'type': 'blob', 'sha': None},
-              ],
-          })['sha']
+          entries = []
+          for path in ('scripts/build_agent_notebook.py', 'notebooks/colab_agent.ipynb'):
+              content = Path(path).read_text(encoding='utf-8')
+              blob = api('POST', '/git/blobs', {'content': content, 'encoding': 'utf-8'})['sha']
+              entries.append({'path': path, 'mode': '100644', 'type': 'blob', 'sha': blob})
+          entries.append({'path': '.github/workflows/refresh-colab-v2.yml', 'mode': '100644', 'type': 'blob', 'sha': None})
+          tree = api('POST', '/git/trees', {'base_tree': base_tree, 'tree': entries})['sha']
           commit = api('POST', '/git/commits', {
               'message': 'Regenerate simplified Colab v2 notebook',
               'tree': tree,
