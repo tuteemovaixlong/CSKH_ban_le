@@ -9,7 +9,8 @@ if [[ -d postgres-secrets ]]; then
   exit 2
 fi
 # Optional: set an owned hostname whose A record already points to this EC2.
-# Empty on the first run uses retailops.<public IPv4 with dashes>.sslip.io.
+# Empty uses the existing custom hostname, or refreshes the generated sslip.io hostname
+# when a stop/start cycle gives this EC2 a different public IPv4 address.
 PUBLIC_HOSTNAME=""
 test -f deployed.env
 test -f inference.env
@@ -31,19 +32,32 @@ if [[ "$instance_id" != i-0fd116d8927d0e412 ]]; then
 fi
 public_ip=$(curl --noproxy '*' --fail --silent --show-error --max-time 5 -H "X-aws-ec2-metadata-token: $metadata_token" http://169.254.169.254/latest/meta-data/public-ipv4)
 unset metadata_token
-if [[ -z "$PUBLIC_HOSTNAME" && -f public.env ]]; then
-  PUBLIC_HOSTNAME=$(sed -n 's/^RETAILOPS_PUBLIC_HOST=//p' public.env)
+
+auto_hostname="retailops.${public_ip//./-}.sslip.io"
+existing_hostname=""
+if [[ -f public.env ]]; then
+  existing_hostname=$(sed -n 's/^RETAILOPS_PUBLIC_HOST=//p' public.env)
 fi
 if [[ -z "$PUBLIC_HOSTNAME" ]]; then
-  PUBLIC_HOSTNAME="retailops.${public_ip//./-}.sslip.io"
+  if [[ "$existing_hostname" =~ ^retailops\.([0-9]{1,3}-){3}[0-9]{1,3}\.sslip\.io$ ]]; then
+    PUBLIC_HOSTNAME="$auto_hostname"
+    if [[ "$existing_hostname" != "$PUBLIC_HOSTNAME" ]]; then
+      printf 'EC2 public IPv4 changed; refreshing generated hostname: %s -> %s\n' "$existing_hostname" "$PUBLIC_HOSTNAME"
+    fi
+  elif [[ -n "$existing_hostname" ]]; then
+    PUBLIC_HOSTNAME="$existing_hostname"
+  else
+    PUBLIC_HOSTNAME="$auto_hostname"
+  fi
 fi
+
 python3 - "$PUBLIC_HOSTNAME" "$public_ip" <<'PY'
 import ipaddress,re,socket,sys
 host, address = sys.argv[1:]
 assert ipaddress.ip_address(address).is_global, 'EC2 needs a public IPv4 address.'
 assert len(host) <= 253 and '.' in host and all(re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', x) for x in host.split('.')), 'Invalid DNS hostname.'
 resolved = {r[4][0] for r in socket.getaddrinfo(host, 443, socket.AF_INET)}
-assert resolved == {address}, 'DNS must resolve only to this EC2 public IPv4. Check DNS. If the EC2 IP changed, set PUBLIC_HOSTNAME to retailops.NEW-IP-WITH-DASHES.sslip.io.'
+assert resolved == {address}, 'DNS must resolve only to this EC2 public IPv4. Check DNS. For the generated sslip.io host, rerun this script after the instance has a public IPv4. For a custom hostname, update its A record first.'
 print('DNS_OK:', host)
 PY
 container_id=$(docker create --network none "$image_ref")
