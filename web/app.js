@@ -19,6 +19,11 @@ function showContext(context) {
 function selectedProvider() {
   return providerOptions.find(p => p.id === providerId);
 }
+function setModelStatus(title, detail) {
+  const titleNode = byId('model-status-title'), detailNode = byId('model-status-detail');
+  titleNode.textContent = title; titleNode.title = title;
+  detailNode.textContent = detail; detailNode.title = detail;
+}
 function renderProvider() {
   const select = byId('model-provider'); select.replaceChildren();
   for (const provider of providerOptions) {
@@ -31,8 +36,8 @@ function renderProvider() {
   byId('provider-detail').textContent = provider ? provider.model + ' · ' +
     (provider.configured ? 'Đã cấu hình; gửi tin để kiểm tra kết nối.' : 'Nguồn model chưa được bật.') : '';
   byId('provider-notice').textContent = provider?.notice || '';
-  document.querySelector('.model-status strong').textContent = provider?.configured ? 'Đã chọn nguồn model' : 'Model chưa sẵn sàng';
-  document.querySelector('.model-status div span').textContent = provider?.label || 'Có thể dùng các nút tra đơn';
+  setModelStatus(provider?.configured ? 'Đã chọn nguồn model' : 'Model chưa sẵn sàng',
+    provider?.label || 'Có thể dùng các nút tra đơn');
 }
 async function newConversation(nextProvider = providerId) {
   if (pending) {
@@ -80,7 +85,7 @@ function message(text, role = 'assistant', source = null, model = null) {
 async function act(callback) {
   if (busy) return;
   busy = true;
-  document.querySelectorAll('button, #model-provider').forEach(b => { if (!b.disabled) { b.dataset.busyDisabled = 'true'; b.disabled = true; } });
+  document.querySelectorAll('button, #model-provider').forEach(b => { if (!b.disabled && !b.dataset.layoutControl) { b.dataset.busyDisabled = 'true'; b.disabled = true; } });
   try { await callback(); }
   catch (error) { message(error.message || 'Mất kết nối. Tải lại trạng thái trước khi thử tiếp.'); }
   finally {
@@ -195,7 +200,7 @@ async function dismiss() {
 function showTrace(row, trace, replayed = false) {
   if (!trace) return;
   const details = el('details', 'agent-trace');
-  details.append(el('summary', '', 'Chi tiết lượt trả lời' + (replayed ? ' · Kết quả đã lưu' : '')));
+  details.append(el('summary', '', 'Công cụ & thời gian' + (replayed ? ' · Kết quả đã lưu' : '')));
   const names = trace.tools.map(t => t.name + (t.status === 'error' ? ' (bị từ chối / lỗi)' : ''));
   details.append(el('p', '', trace.model + ' · ' + trace.model_calls + ' lượt gọi model' +
     (trace.latency_ms !== undefined ? ' · ' + (trace.latency_ms / 1000).toFixed(2) + ' giây' : '')),
@@ -212,9 +217,7 @@ async function send(text, requestId = crypto.randomUUID(), retry = false) {
   text = text.trim(); if (!text) return;
   if (!retry) message(text, 'user');
   byId('message').value = '';
-  const status = document.querySelector('.model-status');
-  status.querySelector('strong').textContent = 'Model đang xử lý…';
-  status.querySelector('div span').textContent = 'Đang đọc hội thoại và gọi công cụ khi cần';
+  setModelStatus('Model đang xử lý…', 'Đang đọc hội thoại và gọi công cụ khi cần');
   byId('messages').setAttribute('aria-busy', 'true');
   let result;
   try {
@@ -229,8 +232,7 @@ async function send(text, requestId = crypto.randomUUID(), retry = false) {
       retryButton.remove(); await send(text, requestId, true);
     });
     row.append(retryButton);
-    status.querySelector('strong').textContent = 'Chat chưa hoàn tất';
-    status.querySelector('div span').textContent = 'Có thể thử lại hoặc dùng các nút thao tác';
+    setModelStatus('Chat chưa hoàn tất', 'Có thể thử lại hoặc dùng các nút thao tác');
     return;
   } finally { byId('messages').removeAttribute('aria-busy'); }
   const row = message(result.message, 'assistant', result.source, result.trace?.model);
@@ -238,8 +240,8 @@ async function send(text, requestId = crypto.randomUUID(), retry = false) {
   if (result.replayed) {
     row.append(el('small', 'replay-note', 'Đây là câu trả lời đã lưu của lần gửi trước. Bảng đơn bên phải hiển thị trạng thái hiện tại.'));
   } else { showContext(result.context); }
-  status.querySelector('strong').textContent = 'Model vừa phản hồi';
-  status.querySelector('div span').textContent = 'Xem công cụ và thời gian bên dưới câu trả lời';
+  setModelStatus(result.replayed ? 'Kết quả đã lưu' : 'Đã phản hồi',
+    selectedProvider()?.label || 'Model đã chọn');
   if (result.action === 'choose_cancel_reason') await chooseReason(result.order.id);
   else await refresh();
 }

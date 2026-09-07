@@ -33,7 +33,9 @@ jobs:
       - name: Verify embedded agent notebook and JavaScript
         run: |
           python3 scripts/build_agent_notebook.py --check
-          node --check web/app.js
+          for file in web/*.js; do node --check "$file"; done
+          node tests/test_chat_focus.js
+          node tests/test_model_status.js
           node tests/test_provider_selector.js
           node tests/test_public_session.js
           RETAILOPS_UI_TEST_MODE=persistent node tests/test_public_session.js

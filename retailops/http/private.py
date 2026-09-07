@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 from agent_protocol import PROTOCOL
 from retailops.core import ApiError, ROOT, VERSION, require
 from retailops.http.routes import api_result
+from retailops.http.assets import ASSETS
 
 class Server(ThreadingHTTPServer):
     daemon_threads = True
@@ -84,10 +85,8 @@ class Handler(BaseHTTPRequestHandler):
             with app.store.connection() as db:
                 db.execute("SELECT 1 FROM orders LIMIT 1").fetchone()
             return self.reply(200, {"status": "ok", "scope": "synthetic-demo", "version": VERSION, "agent_protocol": PROTOCOL})
-        assets = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"),
-                  "/styles.css": ("styles.css", "text/css; charset=utf-8")}
-        if self.command == "GET" and path in assets:
-            name, mime = assets[path]
+        if self.command == "GET" and path in ASSETS:
+            name, mime = ASSETS[path]
             return self.reply(200, (ROOT / "web" / name).read_bytes(), mime)
         require(path.startswith("/api/"), 404, "not_found", "Không tìm thấy đường dẫn.")
         customer = app.authenticate(self.headers.get("Authorization", ""))

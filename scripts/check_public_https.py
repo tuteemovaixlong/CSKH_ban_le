@@ -66,6 +66,10 @@ def main():
                             '-D','-','-o','/dev/null','-H','Host: '+HOST,'http://127.0.0.1:18080/'])
             assert '308' in redirect and 'https://'+HOST+'/' in redirect
             assert request('/healthz')[1]['hosting'] == 'public-https'
+            for asset in ('app.js', 'styles.css', 'chat-focus.js', 'chat-focus.css'):
+                actual = run(curl + ['--fail', 'https://' + HOST + '/' + asset])
+                assert actual == (ROOT/'web'/asset).read_text(), asset
+            print('PUBLIC_UI_ASSETS_OK (four same-origin assets through Caddy)')
             assert request('/api/orders')[0] == 401
             assert request('/api/login',{'token':INVITE},origin='https://evil.example')[0] == 403
             assert request('/api/login',{'token':INVITE})[0] == 200
