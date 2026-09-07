@@ -17,6 +17,7 @@ def add_parser(commands):
 def run(args):
     from retailops.config import database_settings
     from retailops.storage.pg_repositories import PostgresIdentityStore
+    from retailops.storage.postgres import BUSINESS_SCHEMA_CURRENT
     backend, dsn = database_settings(os.environ)
     if backend != 'postgresql':
         raise ValueError('This command requires RETAILOPS_STORAGE_BACKEND=postgresql.')
@@ -33,5 +34,6 @@ def run(args):
             schema = tenant_schema(tenant['storage_key'])
             with transaction(dsn, schema, write=True) as db:
                 initialize(db, schema, 'business')
-        return {'result': 'POSTGRES_MIGRATED', 'business_schema_version': 2, 'tenants': len(tenants)}
+        return {'result': 'POSTGRES_MIGRATED', 'business_schema_version': BUSINESS_SCHEMA_CURRENT,
+                'tenants': len(tenants)}
     return {'result': 'POSTGRES_SCHEMA_READY', 'version': 1, 'accounts_seeded': False}
