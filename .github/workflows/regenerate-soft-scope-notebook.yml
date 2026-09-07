@@ -1,0 +1,35 @@
+name: Regenerate soft-scope Colab notebook
+
+on:
+  push:
+    branches:
+      - feat/soft-scope-guardrails-v1
+    paths:
+      - agent_protocol.py
+
+permissions:
+  contents: write
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: feat/soft-scope-guardrails-v1
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.13'
+      - name: Regenerate notebook
+        run: python scripts/build_agent_notebook.py
+      - name: Commit generated notebook
+        run: |
+          if git diff --quiet -- notebooks/colab_agent.ipynb; then
+            echo 'Notebook already current.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add notebooks/colab_agent.ipynb
+          git commit -m 'Regenerate Colab notebook for soft scope guardrails'
+          git push origin HEAD:feat/soft-scope-guardrails-v1
