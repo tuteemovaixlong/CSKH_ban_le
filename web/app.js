@@ -63,7 +63,7 @@ async function api(path, body, extra = {}) {
   if (!response.ok) {
     if (response.status === 401) lockPage(true);
     const error = new Error(result.message || 'Không hoàn tất yêu cầu.');
-    error.trace = result.trace; throw error;
+    error.trace = result.trace; error.code = result.error; throw error;
   }
   return result;
 }
@@ -208,6 +208,17 @@ function showTrace(row, trace, replayed = false) {
   row.append(details);
 }
 
+function showCitations(row, citations) {
+  if (!Array.isArray(citations) || !citations.length) return;
+  const panel = el('details', 'agent-trace');
+  panel.append(el('summary', '', 'Nguồn tài liệu (' + citations.length + ')'));
+  for (const cite of citations) {
+    panel.append(el('strong', '', '[' + cite.ref + '] ' + cite.title + ' · ' + cite.version),
+      el('p', '', cite.text), el('small', '', cite.source + ' · Tài liệu giả lập'));
+  }
+  row.append(panel);
+}
+
 async function send(text, requestId = crypto.randomUUID(), retry = false) {
   text = text.trim(); if (!text) return;
   if (!retry) message(text, 'user');
@@ -222,11 +233,12 @@ async function send(text, requestId = crypto.randomUUID(), retry = false) {
   } catch (error) {
     const row = message(error.message || 'Mất kết nối trong lúc chờ model.', 'assistant', 'interface');
     showTrace(row, error.trace);
-    const retryButton = el('button', 'order-action', 'Thử lại tin nhắn này');
+    const needsFreshAnswer = ['invalid_citation', 'knowledge_changed'].includes(error.code);
+    const retryButton = el('button', 'order-action', needsFreshAnswer ? 'Tạo câu trả lời mới' : 'Thử lại tin nhắn này');
     const originalConversation = conversationId;
     retryButton.onclick = () => act(async () => {
       if (conversationId !== originalConversation) return;
-      retryButton.remove(); await send(text, requestId, true);
+      retryButton.remove(); await send(text, needsFreshAnswer ? crypto.randomUUID() : requestId, true);
     });
     row.append(retryButton);
     status.querySelector('strong').textContent = 'Chat chưa hoàn tất';
@@ -235,6 +247,7 @@ async function send(text, requestId = crypto.randomUUID(), retry = false) {
   } finally { byId('messages').removeAttribute('aria-busy'); }
   const row = message(result.message, 'assistant', result.source, result.trace?.model);
   showTrace(row, result.trace, result.replayed);
+  showCitations(row, result.citations);
   if (result.replayed) {
     row.append(el('small', 'replay-note', 'Đây là câu trả lời đã lưu của lần gửi trước. Bảng đơn bên phải hiển thị trạng thái hiện tại.'));
   } else { showContext(result.context); }

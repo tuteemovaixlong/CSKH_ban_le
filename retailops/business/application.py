@@ -25,6 +25,7 @@ class Application:
         self.quota_store = store
         self.default_provider = 'custom'
         self.catalog = Catalog()
+        self.knowledge = None
         self.agent_lock = threading.Lock()
 
     def providers(self):
@@ -76,7 +77,7 @@ class Application:
         stack = ExitStack()
         try:
             from retailops.workflow.checkpoints import workflow
-            fingerprint = hashlib.sha256(json.dumps([digest, self.role, provider_id]).encode()).hexdigest()
+            fingerprint = hashlib.sha256(json.dumps([digest, self.role, provider_id, bool(self.knowledge)]).encode()).hexdigest()
             saver, snapshot = stack.enter_context(workflow(self.store, customer, 'chat-v1',
                 [snapshot['id'], request_id], fingerprint, snapshot, expires_at=snapshot['expires_at']))
             # A concurrent completed retry must not spend GPU or duplicate history.
@@ -94,6 +95,9 @@ class Application:
             else:
                 identity = gateway.inspect()
             identity = {**identity, 'selection': provider_id}
+            if self.knowledge is not None and provider_id == 'custom' and not saved_state.get('complete'):
+                require('knowledge-v1' in identity.get('capabilities', []), 503, 'proxy_upgrade_required',
+                        'RAG cần notebook Colab mới có công cụ tra tài liệu. Hãy cập nhật proxy.')
             reserved = False
             def before_model():
                 nonlocal reserved
@@ -101,7 +105,7 @@ class Application:
                     self.quota_store.reserve_api_attempt(self.api_daily_limit)
                     reserved = True
             bound = BoundTools(self.store, self.catalog, customer, snapshot, identity,
-                               can_cancel=CANCEL in self.permissions)
+                               can_cancel=CANCEL in self.permissions, knowledge=self.knowledge)
 
             def execute(name, arguments):
                 try:
@@ -113,18 +117,24 @@ class Application:
                     return {'error': exc.code, 'message': exc.message}
 
             def capture():
-                return {'context': dict(bound.context), 'versions': dict(bound.versions), 'cancel_order': bound.cancel_order}
+                return {'context': dict(bound.context), 'versions': dict(bound.versions), 'cancel_order': bound.cancel_order, 'citations': list(bound.citations)}
 
             def restore(state):
                 bound.context = dict(state['context'])
                 bound.versions = dict(state['versions'])
                 bound.cancel_order = state['cancel_order']
+                bound.citations = list(state.get('citations', []))
 
             answer = run_agent(gateway, text, self.store.history(customer, snapshot['id']), execute, identity,
                                saver=saver, capture=capture, restore=restore, before_model=before_model)
+            used = set(re.findall(r'\[K([0-9]+)\]', answer['message']))
+            known = {c['ref'][1:] for c in bound.citations}
+            require(used <= known and (not known or bool(used)), 503, 'invalid_citation',
+                    'Model chưa trích dẫn đúng tài liệu. Hãy tạo câu trả lời mới hoặc nêu câu hỏi cụ thể hơn.')
+            citations = [c for c in bound.citations if c['ref'][1:] in used]
             result = {'action': 'choose_cancel_reason' if bound.cancel_order else 'reply',
                       'message': answer['message'], 'source': 'llm_agent', 'model_used': True,
-                      'context': bound.context, 'trace': answer['trace'], 'provider_id': provider_id, 'replayed': False}
+                      'context': bound.context, 'trace': answer['trace'], 'citations': citations, 'provider_id': provider_id, 'replayed': False}
             if bound.cancel_order:
                 result['order'] = bound.cancel_order
             self.store.finish_turn(customer, snapshot, request_id, digest, answer['messages'], result, bound.versions)

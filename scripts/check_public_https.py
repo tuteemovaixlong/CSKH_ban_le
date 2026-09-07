@@ -17,7 +17,11 @@ INVITE = 'ci_synthetic_invite_' + 'a'*40
 
 
 def run(args, **kwargs):
-    return subprocess.run(args, check=True, text=True, capture_output=True, **kwargs).stdout
+    result = subprocess.run(args, text=True, capture_output=True, **kwargs)
+    if result.returncode:
+        print(result.stdout, result.stderr)  # CI fixture only
+        result.check_returncode()
+    return result.stdout
 
 
 def main():
@@ -108,15 +112,11 @@ def main():
                 'cancel_reason':'ordered_by_mistake'},jar='account')[1]
             assert request('/api/cancellation-proposals/'+proposal['proposal_id']+'/confirm',{'confirmed':True},
                 jar='account',headers=['Idempotency-Key: ci-postgres-migration'])[0] == 200
-            for name in ('compose.postgres.yaml','init-postgres.sh'):
-                shutil.copy2(ROOT/'deploy'/name,temp/name)
-            run(['python3',str(ROOT/'deploy/configure-postgres.py'),'--directory',str(temp)])
+            # Exercise the same stopped-snapshot/rollback-aware helper used on EC2.
+            project = base[base.index('--project-name')+1]
+            run(['sudo','python3',str(ROOT/'deploy/migrate-public-postgres.py'),
+                 '--directory',str(temp),'--host',HOST,'--project',project])
             pgbase = base+['-f',str(temp/'compose.postgres.yaml')]
-            run(pgbase+['up','-d','--wait','--wait-timeout','90','postgres'])
-            run(base+['stop','web'])
-            run(pgbase+['run','--rm','--no-deps','--entrypoint','python','web','-m','retailops','database',
-                        'import-sqlite','--offline-snapshot','/data/persistent'])
-            run(pgbase+['up','-d','--no-build','--pull','never','--wait','--wait-timeout','60','web'])
             assert request('/healthz')[1]['storage_backend'] == 'postgresql'
             assert request('/api/orders',jar='account')[0] == 401
             assert request('/api/login',{'token':code},jar='account')[0] == 200
@@ -126,22 +126,37 @@ def main():
             flags = run(pgbase+['exec','-T','postgres','psql','-U','postgres','-d','retailops','-Atc',
                 "SELECT rolsuper OR rolcreatedb OR rolcreaterole FROM pg_roles WHERE rolname='retailops'"]).strip()
             assert flags == 'f'
-            dump = run(pgbase+['exec','-T','postgres','pg_dump','-U','postgres','-d','retailops','--no-owner','--no-acl'])
+            # Publish deterministic vector fixtures before the backup; this is not model evaluation.
+            run(pgbase+['exec','-T','web','python','-c',
+                "import os,sys;sys.path.insert(0,'/app/tests');from test_knowledge import EmbeddingFixture,document; "
+                "from retailops.config import database_settings;from retailops.identity.postgres import PostgresSessions; "
+                "from retailops.knowledge.store import Knowledge; "
+                "Knowledge(PostgresSessions(database_settings(os.environ)[1]).business_store('ci-shop'),EmbeddingFixture()).publish([document()])"])
+            dump = run(pgbase+['exec','-T','postgres','pg_dump','-U','postgres','-d','retailops','--no-owner','--no-acl','--exclude-schema=retailops_extensions'])
             run(pgbase+['exec','-T','postgres','createdb','-U','postgres','-O','retailops','retailops_restore'])
+            run(pgbase+['exec','-T','postgres','psql','-U','postgres','-d','retailops_restore','-v','ON_ERROR_STOP=1'],
+                input=(ROOT/'deploy/enable-pgvector.sql').read_text())
             run(pgbase+['exec','-T','postgres','psql','-U','retailops','-d','retailops_restore','-v','ON_ERROR_STOP=1'], input=dump)
             restored = run(pgbase+['exec','-T','web','python','-c',
                 "from retailops.config import database_settings; import os; from psycopg.conninfo import make_conninfo; "
                 "from retailops.identity.postgres import PostgresSessions; "
                 "s=PostgresSessions(make_conninfo(database_settings(os.environ)[1],dbname='retailops_restore')); "
-                "assert s.business_store('ci-shop').orders('C-002')[0]['status']=='cancelled'; print('RESTORE_OK')"])
+                "assert s.business_store('ci-shop').orders('C-002')[0]['status']=='cancelled'; "
+                "import sys;sys.path.insert(0,'/app/tests');from test_knowledge import EmbeddingFixture;from retailops.knowledge.store import Knowledge; "
+                "assert Knowledge(s.business_store('ci-shop'),EmbeddingFixture()).search('return')[0]['id']=='RETURN'; print('RESTORE_OK')"])
             assert 'RESTORE_OK' in restored
             print('POSTGRES_HTTPS_IMPORT_RESTORE_OK (limited DB role; no external inference)')
         except Exception:
+            # Only disposable CI data/credentials exist in this stack.
+            for backup in (temp/'backups').iterdir() if (temp/'backups').exists() else []:
+                detail = subprocess.run(['sudo','cat',str(backup/'failure-details.txt')],text=True,capture_output=True)
+                print(detail.stdout)
             print(run(base+['logs','--tail','40']))  # fixture stack only, contains no real secrets
             raise
         finally:
             cleanup_base = base+['-f',str(temp/'compose.postgres.yaml')] if (temp/'compose.postgres.yaml').exists() else base
             run(cleanup_base+['down','--volumes','--remove-orphans'])
+            run(['sudo','chown','-R',str(os.getuid())+':'+str(os.getgid()),str(temp)])
             if (temp/'postgres-secrets').exists():
                 shutil.rmtree(temp/'postgres-secrets')
 

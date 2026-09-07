@@ -1,0 +1,10 @@
+# Add after BOTH compose.public.yaml and compose.postgres.yaml, after preparing weights/index.
+services:
+  web:
+    environment:
+      RETAILOPS_RAG_ENABLED: "true"
+      RETAILOPS_EMBEDDING_DIR: /data/embedding-model
+      HF_HUB_OFFLINE: "1"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+    mem_limit: 1g
+    pids_limit: 128

@@ -24,6 +24,9 @@ def build_public_app(settings: Settings | None = None) -> PublicWeb:
         if settings.storage_backend == 'postgresql':
             from retailops.identity.postgres import PostgresSessions
             sessions = PostgresSessions(settings.database_url, gateways.custom, gateways.api, settings.api_daily_turn_limit)
+            if settings.rag_enabled:
+                from retailops.knowledge.embedding import CpuEmbedding
+                sessions.embedding = CpuEmbedding(settings.embedding_dir)
         else:
             sessions = PersistentSessions(settings.output/'persistent', gateways.custom, gateways.api,
                                           settings.api_daily_turn_limit)

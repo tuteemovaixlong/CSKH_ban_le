@@ -1,3 +1,5 @@
+> Bản 0.10 bổ sung pgvector và bộ chuyển đổi có backup/rollback: xem [KNOWLEDGE.md](KNOWLEDGE.md). Dùng hướng dẫn đó cho lần chuyển mới.
+
 > Với image 0.9, business schema là v2. Kho v1 đang chạy cần bước [database migrate](LANGGRAPH.md) trước khi bật web 0.9.
 
 # RetailOps 0.8 — PostgreSQL cho khung hệ thống
@@ -148,12 +150,14 @@ Backup PostgreSQL bằng công cụ PostgreSQL, không copy trực tiếp volume
 set -o pipefail
 sudo install -d -m 0700 /opt/retailops/backups
 retailops_pg_dump=$(sudo mktemp /opt/retailops/backups/retailops.XXXXXX.dump)
-retailops_pg exec -T postgres pg_dump -U postgres -d retailops -Fc | sudo tee "$retailops_pg_dump" >/dev/null
+retailops_pg exec -T postgres pg_dump -U postgres -d retailops --exclude-schema=retailops_extensions -Fc | sudo tee "$retailops_pg_dump" >/dev/null
 ```
 
 Chạy pipeline với `set -o pipefail` để phát hiện lỗi `pg_dump`; kiểm tra exit code và
 `pg_restore --list` trước khi coi đó là bản backup. Giữ cả `postgres-secrets` và cấu hình
 triển khai trong nơi backup bí mật riêng; pg_dump không sao lưu role/password của cluster.
+
+Với 0.10, admin chạy `enable-pgvector.sql` trên database đích để cài extension trước khi restore. Schema extension không nằm trong dump ở trên.
 
 Restore vào **database mới**, tạo bởi admin và có owner `retailops`, rồi dùng `pg_restore
 --exit-on-error --no-owner --no-acl` bằng role ứng dụng. Kiểm tra tài khoản, đơn, audit và

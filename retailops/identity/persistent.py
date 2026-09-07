@@ -80,6 +80,9 @@ class PersistentSessions:
             if key not in self.apps:
                 app = Application(self.business_store(member['tenant_id']), {}, self.infer, self.api_infer,
                                   self.api_daily_limit, role=member['role'])
+                if getattr(self, 'embedding', None) is not None:
+                    from retailops.knowledge.store import Knowledge
+                    app.knowledge = Knowledge(app.store, self.embedding)
                 app.quota_store, app.agent_lock = self.control, self.agent_lock
                 app.default_provider = 'api' if self.api_infer is not None else 'custom'
                 self.apps[key] = app

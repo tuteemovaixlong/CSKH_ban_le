@@ -1,7 +1,7 @@
 """Model gateway adapters and compatibility entrypoint for the bounded graph."""
 from dataclasses import replace
 
-from agent_protocol import PROTOCOL, build_request
+from agent_protocol import CAPABILITIES, PROTOCOL, build_request
 from retailops_baseline import LocalOllama, RemoteOllama
 
 
@@ -17,7 +17,7 @@ class LocalAgent:
         self.config = config
 
     def inspect(self):
-        return {**LocalOllama(self.config).inspect(), 'agent_protocol': PROTOCOL}
+        return {**LocalOllama(self.config).inspect(), 'agent_protocol': PROTOCOL, 'capabilities': CAPABILITIES}
 
     def chat(self, messages, allow_tools, timeout):
         gateway = LocalOllama(replace(self.config, timeout_s=timeout))

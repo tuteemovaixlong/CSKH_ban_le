@@ -33,3 +33,10 @@
 **/*.pyc
 
 !requirements-graph.txt
+
+!data/knowledge/
+!data/knowledge/*.json
+!deploy/migrate-public-postgres.py
+!deploy/compose.rag.yaml
+!deploy/enable-pgvector.sql
+!requirements-embeddings.txt

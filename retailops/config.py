@@ -75,6 +75,8 @@ class Settings:
     api_key: str = field(default='', repr=False)
     api_model: str = 'meta/muse-spark-1.3-contributor'
     api_daily_turn_limit: int = 20
+    rag_enabled: bool = False
+    embedding_dir: Path = Path('/data/embedding-model')
     storage_backend: str = 'sqlite'
     database_url: str = field(default='', repr=False)
 
@@ -92,6 +94,8 @@ class Settings:
                 raise ValueError('PostgreSQL requires persistent-demo on the HTTPS interface.')
             from retailops.storage.postgres import validate_dsn
             validate_dsn(self.database_url)
+        if self.rag_enabled and self.storage_backend != 'postgresql':
+            raise ValueError('RAG requires PostgreSQL persistent accounts.')
         if self.data_mode == DATA_MODE and not re.fullmatch(r'[A-Za-z0-9_-]{32,128}', self.access_token):
             name = 'RETAILOPS_PUBLIC_INVITE_TOKEN' if self.interface == 'public' else 'RETAILOPS_DEMO_TOKEN'
             raise ValueError(name + ' must be a random 32–128 character URL-safe value.')
@@ -127,10 +131,12 @@ class Settings:
             api_model=env.get('RETAILOPS_API_MODEL', 'meta/muse-spark-1.3-contributor'),
             api_daily_turn_limit=integer(env, 'RETAILOPS_API_DAILY_TURN_LIMIT', 20, 1, 10000),
             storage_backend=backend, database_url=database_url,
+            rag_enabled=flag(env, 'RETAILOPS_RAG_ENABLED'),
+            embedding_dir=Path(env.get('RETAILOPS_EMBEDDING_DIR', '/data/embedding-model')),
         )
 
     def summary(self):
         return {'version': VERSION, 'interface': self.interface, 'data_mode': self.data_mode,
-                'storage_backend': self.storage_backend,
+                'storage_backend': self.storage_backend, 'rag_enabled': self.rag_enabled,
                 'custom_enabled': self.custom_enabled, 'api_enabled': self.api_enabled,
                 'api_daily_turn_limit': self.api_daily_turn_limit}

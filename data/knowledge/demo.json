@@ -1,0 +1,22 @@
+[
+  {
+    "id": "POL-CANCEL", "title": "Quy trình hủy đơn mẫu", "version": "demo-2026-09-07",
+    "approved": true, "source": "RetailOps · chính sách giả lập do dự án biên soạn",
+    "content": "DỮ LIỆU GIẢ LẬP. Đơn chờ xử lý có thể yêu cầu hủy. Khách phải chọn lý do Tôi đặt nhầm hoặc Tôi không còn cần, xem lại và bấm nút xác nhận. Đề xuất hết hạn sau 10 phút. Tin nhắn đồng ý trong chat không hủy đơn. Đơn đã giao không được hủy bằng quy trình này. Trạng thái hiện tại phải được đọc từ hệ thống đơn hàng."
+  },
+  {
+    "id": "POL-RETURN", "title": "Hướng dẫn đổi trả mẫu", "version": "demo-2026-09-07",
+    "approved": true, "source": "RetailOps · chính sách giả lập do dự án biên soạn",
+    "content": "DỮ LIỆU GIẢ LẬP. Chính sách đổi trả mẫu: khách liên hệ hỗ trợ trong 7 ngày kể từ khi nhận hàng, cung cấp mã đơn và lý do. Sản phẩm cần còn tem nhãn và chưa qua sử dụng. Nhân viên phải kiểm tra điều kiện cụ thể. Bản demo chỉ giải thích chính sách, chưa có công cụ tạo yêu cầu đổi trả hoặc hoàn tiền. Không được thông báo đã duyệt đổi trả qua chat."
+  },
+  {
+    "id": "POL-SHIPPING", "title": "Thông tin giao hàng mẫu", "version": "demo-2026-09-07",
+    "approved": true, "source": "RetailOps · hướng dẫn vận chuyển giả lập",
+    "content": "DỮ LIỆU GIẢ LẬP. Khoảng giao hàng tham khảo trong chính sách mẫu là 2 đến 5 ngày làm việc sau khi bàn giao cho đơn vị vận chuyển. Đây không phải lịch giao đã xác nhận của một đơn cụ thể. Phí vận chuyển, mã vận đơn và ngày giao thực tế hiện chưa có trong dữ liệu đơn mẫu. Không suy ra đơn đã giao từ mốc thời gian tham khảo."
+  },
+  {
+    "id": "GUIDE-MATERIAL", "title": "Chất liệu và hướng dẫn bảo quản", "version": "demo-2026-09-07",
+    "approved": true, "source": "RetailOps · hướng dẫn danh mục giả lập",
+    "content": "DỮ LIỆU GIẢ LẬP. Danh mục Áo thun Essential, Áo khoác Everyday và Áo polo chưa cung cấp thành phần chất liệu hoặc hướng dẫn giặt riêng. Cần đọc nhãn chăm sóc trên sản phẩm hoặc hỏi nhân viên có dữ liệu xác minh. Không tự khẳng định áo làm từ cotton, polyester hay có thể giặt máy khi danh mục chưa có thông tin."
+  }
+]
