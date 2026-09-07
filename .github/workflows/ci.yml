@@ -67,6 +67,8 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
+      - name: Validate evaluation dataset contract
+        run: python3 scripts/check_eval_dataset.py
       - name: Verify embedded agent notebook and JavaScript
         run: |
           python3 scripts/build_agent_notebook.py --check
