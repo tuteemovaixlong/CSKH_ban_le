@@ -35,8 +35,6 @@ jobs:
         run: |
           python3 -m py_compile deploy/live-e2e.py deploy/trigger_live_e2e.py
           python3 scripts/check_live_e2e_contract.py
-      - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d6849806c4678c61a1 # placeholder
-        if: ${{ false }}
       - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4, resolved 2026-09-06
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
