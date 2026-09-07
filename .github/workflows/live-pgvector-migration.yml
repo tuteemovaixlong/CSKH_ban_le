@@ -1,0 +1,145 @@
+name: One-shot live pgvector migration
+on:
+  push:
+    branches: [ops/live-pgvector-migration]
+    paths: [.github/workflows/live-pgvector-migration.yml]
+permissions:
+  contents: read
+concurrency:
+  group: deploy-retailops-demo
+  cancel-in-progress: false
+jobs:
+  migrate:
+    if: github.ref == 'refs/heads/ops/live-pgvector-migration' && vars.RETAILOPS_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: demo
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
+    steps:
+      - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: retailops-pgvector-${{ github.run_id }}
+      - name: Preflight current live PostgreSQL
+        shell: bash
+        run: |
+          set -euo pipefail
+          command='set -euo pipefail
+          cd /opt/retailops
+          image=$(sed -n "s/^RETAILOPS_IMAGE=//p" deployed.env)
+          test -n "$image"
+          echo "ACTIVATED_IMAGE=$image"
+          test -x /opt/retailops/enable-pgvector.sh
+          bash -n /opt/retailops/enable-pgvector.sh
+          echo PGVECTOR_HELPER_OK
+          dc=(docker compose --project-name retailops-web --env-file deployed.env --env-file public.env -f compose.public.yaml -f compose.postgres.yaml)
+          "${dc[@]}" config --quiet
+          pgc=$("${dc[@]}" ps -q postgres)
+          test -n "$pgc"
+          echo "CURRENT_POSTGRES_IMAGE=$(docker inspect --format "{{.Config.Image}}" "$pgc")"
+          "${dc[@]}" ps'
+          params=$(python3 - "$command" <<'PY'
+          import json,sys
+          print(json.dumps({'commands':[sys.argv[1]],'executionTimeout':['180']}))
+          PY
+          )
+          id=$(aws ssm send-command --region "$AWS_REGION" --instance-ids "$EC2_INSTANCE_ID" \
+            --document-name AWS-RunShellScript --parameters "$params" --timeout-seconds 60 \
+            --comment 'RetailOps pgvector preflight' --query 'Command.CommandId' --output text)
+          for _ in $(seq 1 60); do
+            set +e
+            status=$(aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$id" \
+              --instance-id "$EC2_INSTANCE_ID" --query Status --output text 2>/dev/null)
+            rc=$?
+            set -e
+            if [[ $rc -eq 0 && "$status" != Pending && "$status" != InProgress && "$status" != Delayed ]]; then break; fi
+            sleep 3
+          done
+          aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$id" --instance-id "$EC2_INSTANCE_ID" \
+            --query '{Status:Status,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' --output json
+          [[ "$status" == Success ]]
+      - name: Migrate PostgreSQL v2 to pgvector v3 and ingest demo knowledge
+        shell: bash
+        run: |
+          set -euo pipefail
+          command='set -euo pipefail
+          cd /opt/retailops
+          bash /opt/retailops/enable-pgvector.sh --ingest-demo'
+          params=$(python3 - "$command" <<'PY'
+          import json,sys
+          print(json.dumps({'commands':[sys.argv[1]],'executionTimeout':['900']}))
+          PY
+          )
+          id=$(aws ssm send-command --region "$AWS_REGION" --instance-ids "$EC2_INSTANCE_ID" \
+            --document-name AWS-RunShellScript --parameters "$params" --timeout-seconds 60 \
+            --comment 'RetailOps attended pgvector migration' --query 'Command.CommandId' --output text)
+          echo "SSM_COMMAND_ID=$id"
+          status=Pending
+          for _ in $(seq 1 180); do
+            set +e
+            status=$(aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$id" \
+              --instance-id "$EC2_INSTANCE_ID" --query Status --output text 2>/dev/null)
+            rc=$?
+            set -e
+            if [[ $rc -eq 0 && "$status" != Pending && "$status" != InProgress && "$status" != Delayed ]]; then break; fi
+            sleep 5
+          done
+          aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$id" --instance-id "$EC2_INSTANCE_ID" \
+            --query '{Status:Status,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' --output json
+          [[ "$status" == Success ]]
+      - name: Verify live pgvector, schema v3, knowledge and HTTPS
+        shell: bash
+        run: |
+          set -euo pipefail
+          command='set -euo pipefail
+          cd /opt/retailops
+          dc=(docker compose --project-name retailops-web --env-file deployed.env --env-file public.env -f compose.public.yaml -f compose.postgres.yaml)
+          "${dc[@]}" config --quiet
+          pgc=$("${dc[@]}" ps -q postgres)
+          test -n "$pgc"
+          echo "LIVE_POSTGRES_IMAGE=$(docker inspect --format "{{.Config.Image}}" "$pgc")"
+          ext=$("${dc[@]}" exec -T postgres psql -U postgres -d retailops -At --set ON_ERROR_STOP=1 -c "SELECT n.nspname||chr(58)||e.extversion FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname=chr(118)||chr(101)||chr(99)||chr(116)||chr(111)||chr(114)")
+          echo "LIVE_PGVECTOR_EXTENSION=$ext"
+          [[ "$ext" == retailops_extensions:* ]]
+          "${dc[@]}" run --rm --no-deps --entrypoint python web -m retailops knowledge search --tenant demo-retail --query "chính sách hủy đơn" --limit 3
+          host=$(sed -n "s/^RETAILOPS_PUBLIC_HOST=//p" public.env)
+          test -n "$host"
+          health=$(curl --noproxy "*" --fail --silent --show-error --max-time 20 --retry 5 --retry-delay 2 --retry-all-errors "https://$host/healthz")
+          echo "$health"
+          python3 - "$health" <<"PY"
+          import json,sys
+          p=json.loads(sys.argv[1])
+          assert p.get("status")=="ok", p
+          assert p.get("storage_backend")=="postgresql", p
+          assert p.get("data_mode")=="persistent-demo", p
+          assert p.get("hosting")=="public-https", p
+          print("LIVE_PGVECTOR_RAG_FOUNDATION_OK")
+          PY
+          "${dc[@]}" ps'
+          params=$(python3 - "$command" <<'PY'
+          import json,sys
+          print(json.dumps({'commands':[sys.argv[1]],'executionTimeout':['240']}))
+          PY
+          )
+          id=$(aws ssm send-command --region "$AWS_REGION" --instance-ids "$EC2_INSTANCE_ID" \
+            --document-name AWS-RunShellScript --parameters "$params" --timeout-seconds 60 \
+            --comment 'RetailOps pgvector postflight' --query 'Command.CommandId' --output text)
+          status=Pending
+          for _ in $(seq 1 80); do
+            set +e
+            status=$(aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$id" \
+              --instance-id "$EC2_INSTANCE_ID" --query Status --output text 2>/dev/null)
+            rc=$?
+            set -e
+            if [[ $rc -eq 0 && "$status" != Pending && "$status" != InProgress && "$status" != Delayed ]]; then break; fi
+            sleep 3
+          done
+          aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$id" --instance-id "$EC2_INSTANCE_ID" \
+            --query '{Status:Status,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' --output json
+          [[ "$status" == Success ]]
