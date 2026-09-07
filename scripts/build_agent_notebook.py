@@ -30,6 +30,7 @@ def build():
     names += [p.relative_to(ROOT).as_posix() for p in sorted((ROOT/'tests').glob('*.py'))]
     names += [p.relative_to(ROOT).as_posix() for p in sorted((ROOT/'retailops').rglob('*.py'))]
     names += [p.relative_to(ROOT).as_posix() for p in sorted((ROOT/'web').glob('*')) if p.is_file()]
+    names += [p.relative_to(ROOT).as_posix() for p in sorted((ROOT/'data/knowledge').glob('*.md'))]
     files = {name: (ROOT/name).read_text(encoding='utf-8') for name in names}
     raw = json.dumps(files, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()
     encoded = base64.b64encode(zlib.compress(raw, 9)).decode()

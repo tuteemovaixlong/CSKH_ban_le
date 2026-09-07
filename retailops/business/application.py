@@ -9,6 +9,8 @@ from retailops.identity.bearer import authenticate_bearer
 from retailops.business.permissions import CANCEL, ROLE_PERMISSIONS
 from retailops_agent import AgentError, run_agent
 from retailops_tools import BoundTools
+from retailops.knowledge.citations import CitationError, cited_sources
+from retailops.knowledge.embedding import MODEL_ID as KNOWLEDGE_EMBEDDING_MODEL
 from retailops_providers import API_MODEL
 from retailops_conversation import Catalog, describe_order
 
@@ -113,18 +115,29 @@ class Application:
                     return {'error': exc.code, 'message': exc.message}
 
             def capture():
-                return {'context': dict(bound.context), 'versions': dict(bound.versions), 'cancel_order': bound.cancel_order}
+                return {'context': dict(bound.context), 'versions': dict(bound.versions), 'cancel_order': bound.cancel_order,
+                        'knowledge': bound.knowledge.snapshot()}
 
             def restore(state):
                 bound.context = dict(state['context'])
                 bound.versions = dict(state['versions'])
                 bound.cancel_order = state['cancel_order']
+                bound.knowledge.restore(state.get('knowledge'))
 
             answer = run_agent(gateway, text, self.store.history(customer, snapshot['id']), execute, identity,
                                saver=saver, capture=capture, restore=restore, before_model=before_model)
             result = {'action': 'choose_cancel_reason' if bound.cancel_order else 'reply',
                       'message': answer['message'], 'source': 'llm_agent', 'model_used': True,
                       'context': bound.context, 'trace': answer['trace'], 'provider_id': provider_id, 'replayed': False}
+            # A second provenance check also covers a completed checkpoint replay.
+            try:
+                result['sources'] = cited_sources(answer['message'], bound.knowledge.sources)
+            except CitationError as exc:
+                raise AgentError(exc.code, 'Ngu\u1ed3n tr\u00edch d\u1eabn ch\u01b0a h\u1ee3p l\u1ec7. H\u00e3y g\u1eedi l\u1ea1i c\u00e2u h\u1ecfi.', answer['trace']) from None
+            if bound.knowledge.searches:
+                result['trace']['knowledge'] = {'searches': bound.knowledge.searches,
+                    'retrieved_sources': len(bound.knowledge.sources), 'cited_sources': len(result['sources']),
+                    'citation_check': 'provenance_only', 'embedding_model': KNOWLEDGE_EMBEDDING_MODEL}
             if bound.cancel_order:
                 result['order'] = bound.cancel_order
             self.store.finish_turn(customer, snapshot, request_id, digest, answer['messages'], result, bound.versions)
