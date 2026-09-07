@@ -1,0 +1,24 @@
+name: RAG development source bundle
+on:
+  push:
+    branches: [feat/rag-chat-citations]
+    paths: [.github/workflows/rag-workbench.yml]
+permissions:
+  contents: read
+jobs:
+  bundle:
+    if: github.repository == 'tuteemovaixlong/CSKH_ban_le' && github.ref == 'refs/heads/feat/rag-chat-citations'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Archive tracked source only; no credentials, inference or deployment
+        run: git archive --format=tar.gz --output "$RUNNER_TEMP/retailops-source.tgz" HEAD
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: retailops-source
+          path: ${{ runner.temp }}/retailops-source.tgz
+          retention-days: 1
+          if-no-files-found: error
