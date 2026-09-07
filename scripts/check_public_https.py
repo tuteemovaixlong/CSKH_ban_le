@@ -130,16 +130,31 @@ def main():
             flags = run(pgbase+['exec','-T','postgres','psql','-U','postgres','-d','retailops','-Atc',
                 "SELECT rolsuper OR rolcreatedb OR rolcreaterole FROM pg_roles WHERE rolname='retailops'"]).strip()
             assert flags == 'f'
-            dump = run(pgbase+['exec','-T','postgres','pg_dump','-U','postgres','-d','retailops','--no-owner','--no-acl'])
+            # Database extensions are infrastructure, not tenant/application data. Dump only
+            # the RetailOps-owned schemas, bootstrap pgvector as postgres in the target DB,
+            # then restore all application objects as the limited retailops role.
+            dump = run(pgbase+['exec','-T','postgres','pg_dump','-U','postgres','-d','retailops',
+                '--no-owner','--no-acl','--schema=retailops_identity','--schema=tenant_*'])
             run(pgbase+['exec','-T','postgres','createdb','-U','postgres','-O','retailops','retailops_restore'])
-            run(pgbase+['exec','-T','postgres','psql','-U','retailops','-d','retailops_restore','-v','ON_ERROR_STOP=1'], input=dump)
+            extension_sql = """CREATE SCHEMA retailops_extensions AUTHORIZATION postgres;
+REVOKE ALL ON SCHEMA retailops_extensions FROM PUBLIC;
+GRANT USAGE ON SCHEMA retailops_extensions TO retailops;
+CREATE EXTENSION vector WITH SCHEMA retailops_extensions;
+"""
+            run(pgbase+['exec','-T','postgres','psql','-U','postgres','-d','retailops_restore',
+                '-v','ON_ERROR_STOP=1'], input=extension_sql)
+            run(pgbase+['exec','-T','postgres','psql','-U','retailops','-d','retailops_restore',
+                '-v','ON_ERROR_STOP=1'], input=dump)
+            extension = run(pgbase+['exec','-T','postgres','psql','-U','postgres','-d','retailops_restore','-Atc',
+                "SELECT n.nspname||':'||e.extversion FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='vector'"]).strip()
+            assert extension.startswith('retailops_extensions:')
             restored = run(pgbase+['exec','-T','web','python','-c',
                 "from retailops.config import database_settings; import os; from psycopg.conninfo import make_conninfo; "
                 "from retailops.identity.postgres import PostgresSessions; "
                 "s=PostgresSessions(make_conninfo(database_settings(os.environ)[1],dbname='retailops_restore')); "
                 "assert s.business_store('ci-shop').orders('C-002')[0]['status']=='cancelled'; print('RESTORE_OK')"])
             assert 'RESTORE_OK' in restored
-            print('POSTGRES_HTTPS_IMPORT_RESTORE_OK (limited DB role; no external inference)')
+            print('POSTGRES_HTTPS_IMPORT_RESTORE_OK (limited DB role; pgvector prebootstrapped; no external inference)')
         except Exception:
             print(run(base+['logs','--tail','40']))  # fixture stack only, contains no real secrets
             raise

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Safely switch the existing persistent demo from SQLite to PostgreSQL.
+# Safely switch the existing persistent demo from SQLite to PostgreSQL + pgvector.
 # If verified import cannot be used and the PostgreSQL target is still empty,
 # pass --seed-demo-fallback to provision a fresh synthetic tenant instead.
 set -euo pipefail
@@ -33,7 +33,7 @@ for name in compose.postgres.yaml configure-postgres.py init-postgres.sh; do
   docker cp "$extract:/app/deploy/$name" "$staging/$name"
 done
 install -m 0644 "$staging/compose.postgres.yaml" compose.postgres.yaml
-install -m 0644 "$staging/init-postgres.sh" init-postgres.sh
+install -m 0755 "$staging/init-postgres.sh" init-postgres.sh
 install -m 0700 "$staging/configure-postgres.py" configure-postgres.py
 
 if [[ ! -d postgres-secrets ]]; then
@@ -62,9 +62,9 @@ pg() {
 }
 
 pg config --quiet
-postgres_image='postgres:16.15-bookworm'
+postgres_image='pgvector/pgvector:0.8.6-pg16-bookworm@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b'
 if ! docker image inspect "$postgres_image" >/dev/null 2>&1; then
-  echo "Pulling required PostgreSQL image: $postgres_image"
+  echo "Pulling required PostgreSQL/pgvector image: $postgres_image"
   docker pull "$postgres_image" >/dev/null
 fi
 docker image inspect "$postgres_image" >/dev/null
@@ -99,20 +99,19 @@ if [[ "$imported" != true ]]; then
     echo 'Re-run with --seed-demo-fallback only if replacing old demo state is acceptable.' >&2
     exit 3
   fi
-
-  # import-sqlite is transactional and only accepts an empty target. If it failed,
-  # database init is safe only when identity has not already been populated.
   init_output=$(pg run --rm --no-deps --entrypoint python web -m retailops database init 2>&1)
   printf '%s\n' "$init_output"
-
   tenant_id="demo-retail"
   tenant_name="RetailOps Demo Store"
   pg run --rm --no-deps --entrypoint python web -m retailops identity init-tenant --tenant "$tenant_id" --name "$tenant_name" --seed-demo
   echo 'POSTGRES_DEMO_SEEDED'
 fi
 
-# Ensure every tenant business schema is at the current v0.9 schema version.
 pg run --rm --no-deps --entrypoint python web -m retailops database migrate
+if [[ "$SEED_FALLBACK" == true ]]; then
+  pg run --rm --no-deps --entrypoint python web -m retailops knowledge ingest --tenant demo-retail --path /app/data/knowledge
+  echo 'POSTGRES_DEMO_KNOWLEDGE_SEEDED'
+fi
 pg run --rm --no-deps --entrypoint python web -m retailops database check
 pg up -d --no-build --pull never --wait --wait-timeout 90 web caddy
 

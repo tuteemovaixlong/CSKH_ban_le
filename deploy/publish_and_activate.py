@@ -73,25 +73,26 @@ def main():
         raise SystemExit("ECR returned an invalid image digest")
     pinned = f"{registry}/{repo}@{digest}"
 
-    # The installed baseline runner validates repository ownership, pulls the pinned
-    # image, re-runs tests on EC2 and atomically updates deployed.env/previous.env.
     ssm_run(region, instance, shlex.join(["/opt/retailops/deploy-runner.sh", pinned, region]))
     print(f"Activated baseline image: {pinned}")
 
-    # Copy the rollout logic from the exact tested release image instead of trusting
-    # a mutable host copy. The rollout script no-ops when public HTTPS is not configured.
+    # Install attended helpers from the exact tested release image. Only the public
+    # web rollout runs automatically; database migration helpers are installed but
+    # require an operator to invoke them explicitly.
     rollout = f"""
 set -euo pipefail
 cd /opt/retailops
 image_ref={shlex.quote(pinned)}
 container=$(docker create --network none "$image_ref")
-staging=$(mktemp -d /opt/retailops/web-rollout.XXXXXX)
+staging=$(mktemp -d /opt/retailops/release-helpers.XXXXXX)
 cleanup() {{ docker rm "$container" >/dev/null 2>&1 || true; rm -rf "$staging"; }}
 trap cleanup EXIT
-docker cp "$container:/app/deploy/rollout-public-web.sh" "$staging/rollout-public-web.sh"
-test -s "$staging/rollout-public-web.sh"
-/bin/bash -n "$staging/rollout-public-web.sh"
-install -o root -g root -m 0755 "$staging/rollout-public-web.sh" /opt/retailops/rollout-public-web.sh
+for helper in rollout-public-web.sh cutover-postgres.sh enable-pgvector.sh; do
+  docker cp "$container:/app/deploy/$helper" "$staging/$helper"
+  test -s "$staging/$helper"
+  /bin/bash -n "$staging/$helper"
+  install -o root -g root -m 0755 "$staging/$helper" "/opt/retailops/$helper"
+done
 /opt/retailops/rollout-public-web.sh "$image_ref"
 """.strip()
     ssm_run(region, instance, "/bin/bash -lc " + shlex.quote(rollout))

@@ -7,6 +7,7 @@ Entrypoint cũ vẫn tương thích; có thêm `python -m retailops check-config
 Có thêm [tài khoản cá nhân và dữ liệu theo cửa hàng](docs/PERSISTENT_IDENTITY.md) ở chế độ `persistent-demo`: logout không xóa đơn, quyền `customer`/`viewer`, migration SQLite và công cụ cấp/thu hồi mã.
 Có thêm [backend PostgreSQL và chuyển dữ liệu SQLite](docs/POSTGRESQL.md), dùng chung luật nghiệp vụ và không tự chuyển database đang chạy.
 Có thêm [LangGraph, checkpoint và xác nhận có thể khôi phục](docs/LANGGRAPH.md) trên SQLite/PostgreSQL.
+RAG foundation dùng PostgreSQL/pgvector theo schema riêng từng tenant, migration attended v2→v3, ingestion/search hybrid và embedding baseline offline; model-facing retrieval được nối ở phase kế tiếp sau khi storage migration được xác nhận.
 Mặc định vẫn là `synthetic-demo`; cả hai chế độ chỉ dành cho dữ liệu giả lập.
 
 ## Web HTTPS trên EC2

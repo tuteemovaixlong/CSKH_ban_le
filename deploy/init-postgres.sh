@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Executed only by the official PostgreSQL image when its data volume is empty.
+# Executed only by the pgvector/PostgreSQL image when its data volume is empty.
 set -euo pipefail
 export RETAILOPS_DB_PASSWORD
 RETAILOPS_DB_PASSWORD=$(cat /run/secrets/postgres_app_password)
@@ -9,5 +9,9 @@ CREATE ROLE retailops LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION PA
 CREATE DATABASE retailops OWNER retailops;
 \connect retailops
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+CREATE SCHEMA retailops_extensions AUTHORIZATION postgres;
+REVOKE ALL ON SCHEMA retailops_extensions FROM PUBLIC;
+GRANT USAGE ON SCHEMA retailops_extensions TO retailops;
+CREATE EXTENSION vector WITH SCHEMA retailops_extensions;
 SQL
 unset RETAILOPS_DB_PASSWORD

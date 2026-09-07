@@ -5,6 +5,8 @@ import re
 from retailops.core import ApiError
 
 IDENTITY_SCHEMA = 'retailops_identity'
+BUSINESS_SCHEMA_CURRENT = 3
+BUSINESS_SCHEMA_COMPATIBLE = (2, 3)  # v2 remains readable during the attended pgvector rollout.
 
 
 def driver():
@@ -65,14 +67,11 @@ def transaction(dsn, schema=IDENTITY_SCHEMA, *, write=False):
         with pg.connect(dsn, connect_timeout=5, row_factory=dict_row) as connection:
             connection.execute("SET LOCAL statement_timeout='15s'")
             connection.execute("SET LOCAL lock_timeout='5s'")
-            # Only the server-selected schema is searched. Never fall back to public.
             connection.execute(sql.SQL('SET LOCAL search_path TO {}, pg_catalog').format(sql.Identifier(schema)))
             if write:
-                # Preserve the existing SQLite serialized-write contract across processes.
                 connection.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))', (schema,))
             yield Queries(connection)
     except pg.Error:
-        # Database errors can include SQL values/DSNs; do not expose them to HTTP or logs.
         raise ApiError(503, 'database_unavailable', 'Kho dữ liệu chưa sẵn sàng. Vui lòng thử lại hoặc liên hệ quản trị viên.') from None
 
 
@@ -82,7 +81,11 @@ def assert_schema(db, schema, component):
     if not exists:
         raise ValueError('PostgreSQL schema is missing. Run the explicit database initialization/import command.')
     rows = db.raw.execute(sql.SQL('SELECT component,version FROM {}.retailops_schema').format(sql.Identifier(schema))).fetchall()
-    if len(rows) != 1 or rows[0] != {'component': component, 'version': 2 if component == 'business' else 1}:
+    if len(rows) != 1 or rows[0].get('component') != component:
+        raise ValueError('Unsupported PostgreSQL schema version or component.')
+    version = rows[0].get('version')
+    supported = (1,) if component == 'identity' else BUSINESS_SCHEMA_COMPATIBLE
+    if version not in supported:
         raise ValueError('Unsupported PostgreSQL schema version or component.')
 
 

@@ -27,7 +27,7 @@ from retailops.identity.persistent import PersistentSessions
 from retailops.identity.postgres import PostgresSessions
 from retailops.storage.import_sqlite import import_snapshot
 from retailops.storage.pg_repositories import PostgresIdentityStore
-from retailops.storage.postgres import IDENTITY_SCHEMA, tenant_schema, transaction
+from retailops.storage.postgres import BUSINESS_SCHEMA_CURRENT, IDENTITY_SCHEMA, tenant_schema, transaction
 
 DSN = os.environ.get('RETAILOPS_TEST_DATABASE_URL', '')
 
@@ -226,7 +226,7 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
                 initialize(db, store.schema, 'business')
         self.assertEqual(self.fresh_store().orders('C-001')[0]['status'], 'pending')
         with store.connection() as db:
-            self.assertEqual(db.execute('SELECT version FROM retailops_schema').fetchone()['version'], 2)
+            self.assertEqual(db.execute('SELECT version FROM retailops_schema').fetchone()['version'], BUSINESS_SCHEMA_CURRENT)
 
     def test_future_schema_is_rejected_without_downgrade(self):
         with transaction(DSN, write=True) as db:
