@@ -10,6 +10,43 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  colab-python313:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Verify Colab Python 3.13 binary dependency compatibility
+        run: |
+          python scripts/build_agent_notebook.py --check
+          python - <<'PY'
+          import re
+          from pathlib import Path
+          source = Path('requirements-graph.txt')
+          target = Path('/tmp/retailops-graph-py313.txt')
+          lines = []
+          for line in source.read_text(encoding='utf-8').splitlines():
+              line = line.strip()
+              if not line or line.startswith('#'):
+                  continue
+              line = re.sub(r'\s+--hash=sha256:[0-9a-f]{64}', '', line).strip()
+              assert re.fullmatch(r'[A-Za-z0-9_.-]+==[^\s]+', line), line
+              lines.append(line)
+          target.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+          print('COLAB_PY313_REQUIREMENTS_READY', len(lines))
+          PY
+          python -m pip install --disable-pip-version-check --only-binary=:all: -r /tmp/retailops-graph-py313.txt
+          python - <<'PY'
+          import langgraph, pydantic, httpx
+          import agent_protocol
+          assert agent_protocol.PROTOCOL == 'retailops-agent-v2'
+          assert any(x['function']['name'] == 'search_knowledge' for x in agent_protocol.TOOLS)
+          print('COLAB_PY313_DEPENDENCIES_OK')
+          PY
   offline:
     runs-on: ubuntu-24.04
     timeout-minutes: 12
