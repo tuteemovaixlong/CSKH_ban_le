@@ -41,10 +41,11 @@ jobs:
         run: |
           python3 -m pip install --only-binary=:all: --require-hashes -r requirements-web.txt -r requirements-postgres.txt -r requirements-graph.txt
           python3 -m unittest discover -s tests -v
-      - name: Validate HTTPS configuration without issuing a certificate
+      - name: Validate HTTPS and PostgreSQL deployment scripts
         run: |
           bash -n deploy/start-public-web.sh
           bash -n deploy/init-postgres.sh
+          bash -n deploy/cutover-postgres.sh
           docker run --rm --network none -e RETAILOPS_PUBLIC_HOST=retailops.example.com -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.11.4-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
       - name: Build CPU-only baseline image
         run: docker build -t retailops:ci .
