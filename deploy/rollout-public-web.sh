@@ -23,8 +23,9 @@ if [[ "${image_ref%@*}" != "$allowed_repo" ]]; then
   exit 2
 fi
 activated_image=$(sed -n 's/^RETAILOPS_IMAGE=//p' deployed.env)
-if [[ "$activated_image" != "$image_ref" ]]; then
-  echo 'Refusing rollout: deployed.env does not point at the activated image' >&2
+data_dir=$(sed -n 's/^RETAILOPS_DATA_DIR=//p' deployed.env)
+if [[ "$activated_image" != "$image_ref" || -z "$data_dir" ]]; then
+  echo 'Refusing rollout: deployed.env is incomplete or does not point at the activated image' >&2
   exit 2
 fi
 docker image inspect "$image_ref" >/dev/null
@@ -58,21 +59,22 @@ restore_previous() {
     echo 'No distinct previous live image is available for automatic rollback' >&2
     return 1
   fi
-  if [[ ! -f previous.env ]]; then
-    echo 'previous.env is missing; automatic rollback is unavailable' >&2
-    return 1
-  fi
-  previous_env_image=$(sed -n 's/^RETAILOPS_IMAGE=//p' previous.env)
-  if [[ "$previous_env_image" != "$previous_image" ]]; then
-    echo 'previous.env does not match the previously running web image; refusing ambiguous rollback' >&2
+  if [[ ! "$previous_image" =~ ^[0-9]{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/[a-z0-9._/-]+@sha256:[a-f0-9]{64}$ ]] || [[ "${previous_image%@*}" != "$allowed_repo" ]]; then
+    echo 'Previously running web image is not an allowed pinned RetailOps release; refusing rollback' >&2
     return 1
   fi
   docker image inspect "$previous_image" >/dev/null
-  cp previous.env deployed.env
-  rollback=(docker compose --project-name retailops-web --env-file deployed.env --env-file public.env -f compose.public.yaml)
+  rollback_env=$(mktemp /opt/retailops/deployed.rollback.XXXXXX)
+  printf 'RETAILOPS_IMAGE=%s\nRETAILOPS_DATA_DIR=%s\n' "$previous_image" "$data_dir" > "$rollback_env"
+  chmod 0644 "$rollback_env"
+  rollback=(docker compose --project-name retailops-web --env-file "$rollback_env" --env-file public.env -f compose.public.yaml)
   if [[ -d postgres-secrets ]]; then rollback+=(-f compose.postgres.yaml); fi
   "${rollback[@]}" config --quiet
-  "${rollback[@]}" up -d --no-deps --no-build --pull never --force-recreate --wait --wait-timeout 90 web
+  if ! "${rollback[@]}" up -d --no-deps --no-build --pull never --force-recreate --wait --wait-timeout 90 web; then
+    rm -f "$rollback_env"
+    return 1
+  fi
+  mv "$rollback_env" deployed.env
   echo 'PUBLIC_WEB_ROLLBACK_OK'
 }
 
