@@ -7,6 +7,7 @@ from retailops.core import ApiError, ROOT, VERSION, fields, require
 from retailops.config import public_origin
 from retailops.identity.contracts import SessionBackend
 from retailops.http.routes import api_result
+from retailops.http.assets import ASSETS
 
 CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 
@@ -60,10 +61,8 @@ class PublicWeb:
                          'data_mode': self.sessions.data_mode,
                          'storage_backend': self.sessions.metadata().get('storage_backend', 'sqlite'),
                          'agent_protocol': PROTOCOL, 'hosting': 'public-https'}, mime, headers
-        assets = {'/': ('index.html', 'text/html; charset=utf-8'), '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
-                  '/styles.css': ('styles.css', 'text/css; charset=utf-8')}
-        if method == 'GET' and path in assets:
-            name, mime = assets[path]
+        if method == 'GET' and path in ASSETS:
+            name, mime = ASSETS[path]
             # Fixed assets, no user-supplied file lookup. Public mode is a non-executable data attribute.
             data = (ROOT / 'web' / name).read_bytes()
             if path == '/':
