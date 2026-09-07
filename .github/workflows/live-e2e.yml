@@ -1,0 +1,46 @@
+name: Live E2E
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Live verification depth
+        required: true
+        default: smoke
+        type: choice
+        options:
+          - smoke
+          - full
+permissions:
+  contents: read
+concurrency:
+  group: deploy-retailops-demo
+  cancel-in-progress: false
+jobs:
+  live-e2e:
+    if: vars.RETAILOPS_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: demo
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Validate live E2E harness contract
+        run: |
+          python3 -m py_compile deploy/live-e2e.py deploy/trigger_live_e2e.py
+          python3 scripts/check_live_e2e_contract.py
+      - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d6849806c4678c61a1 # placeholder
+        if: ${{ false }}
+      - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4, resolved 2026-09-06
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: retailops-e2e-${{ github.run_id }}
+      - name: Run live E2E through SSM
+        run: python3 deploy/trigger_live_e2e.py --mode '${{ inputs.mode }}'
