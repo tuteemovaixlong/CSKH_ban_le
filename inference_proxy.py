@@ -18,7 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from retailops_baseline import LocalOllama, ModelConfig, SCHEMA, SYSTEM, canonical
-from agent_protocol import PROTOCOL, build_request, validate_envelope
+from agent_protocol import CAPABILITIES, PROTOCOL, build_request, validate_envelope
 
 MAX_BODY = 32768
 
@@ -97,7 +97,7 @@ def create_server(config: ModelConfig, token: str, port: int = 8001) -> Threadin
                 return
             try:
                 if self.path == '/agent/identity':
-                    data = {**gateway.inspect(), 'agent_protocol': PROTOCOL,
+                    data = {**gateway.inspect(), 'agent_protocol': PROTOCOL, 'capabilities': CAPABILITIES,
                             'inference_session_id': session_id, 'proxy_sha256': proxy_hash}
                 elif self.path == "/api/tags":
                     data = gateway.request(self.path)

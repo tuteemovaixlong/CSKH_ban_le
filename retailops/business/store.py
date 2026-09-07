@@ -170,6 +170,10 @@ class BusinessStore:
 
     def finish_turn(self, customer, snapshot, request_id, digest, messages, result, versions):
         with self.connection(write=True) as db:
+            if result.get('citations'):
+                meta = db.execute('SELECT generation FROM knowledge_meta WHERE id=1').fetchone()
+                require(meta is not None and all(c['generation'] == meta['generation'] for c in result['citations']),
+                        409, 'knowledge_changed', 'Tài liệu vừa thay đổi. Hãy gửi yêu cầu mới.')
             for oid, version in versions.items():
                 require(self.owned(db, customer, oid)['version'] == version, 409, 'order_changed_during_chat',
                         'Đơn đã thay đổi trong lúc model trả lời. Hãy gửi lại để đọc trạng thái mới.')

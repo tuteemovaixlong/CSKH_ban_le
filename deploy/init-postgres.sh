@@ -9,5 +9,9 @@ CREATE ROLE retailops LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION PA
 CREATE DATABASE retailops OWNER retailops;
 \connect retailops
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+CREATE SCHEMA retailops_extensions AUTHORIZATION postgres;
+REVOKE ALL ON SCHEMA retailops_extensions FROM PUBLIC;
+CREATE EXTENSION vector WITH SCHEMA retailops_extensions;
+GRANT USAGE ON SCHEMA retailops_extensions TO retailops;
 SQL
 unset RETAILOPS_DB_PASSWORD

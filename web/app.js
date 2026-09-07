@@ -208,6 +208,17 @@ function showTrace(row, trace, replayed = false) {
   row.append(details);
 }
 
+function showCitations(row, citations) {
+  if (!Array.isArray(citations) || !citations.length) return;
+  const panel = el('details', 'agent-trace');
+  panel.append(el('summary', '', 'Nguồn tài liệu (' + citations.length + ')'));
+  for (const cite of citations) {
+    panel.append(el('strong', '', '[' + cite.ref + '] ' + cite.title + ' · ' + cite.version),
+      el('p', '', cite.text), el('small', '', cite.source + ' · Tài liệu giả lập'));
+  }
+  row.append(panel);
+}
+
 async function send(text, requestId = crypto.randomUUID(), retry = false) {
   text = text.trim(); if (!text) return;
   if (!retry) message(text, 'user');
@@ -235,6 +246,7 @@ async function send(text, requestId = crypto.randomUUID(), retry = false) {
   } finally { byId('messages').removeAttribute('aria-busy'); }
   const row = message(result.message, 'assistant', result.source, result.trace?.model);
   showTrace(row, result.trace, result.replayed);
+  showCitations(row, result.citations);
   if (result.replayed) {
     row.append(el('small', 'replay-note', 'Đây là câu trả lời đã lưu của lần gửi trước. Bảng đơn bên phải hiển thị trạng thái hiện tại.'));
   } else { showContext(result.context); }

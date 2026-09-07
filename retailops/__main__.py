@@ -8,6 +8,7 @@ from retailops.models import build_gateways
 from retailops.core import ApiError
 from retailops.identity import cli as identity_cli
 from retailops.storage import cli as database_cli
+from retailops.knowledge import cli as knowledge_cli
 
 
 def main():
@@ -19,6 +20,7 @@ def main():
     commands.add_parser('serve-private', help='Serve private localhost/SSM API.')
     identity_cli.add_parser(commands)
     database_cli.add_parser(commands)
+    knowledge_cli.add_parser(commands)
     args = parser.parse_args()
     try:
         if args.command == 'check-config':
@@ -29,6 +31,8 @@ def main():
             serve_public()
         elif args.command == 'identity':
             print(json.dumps(identity_cli.run(args), ensure_ascii=False))
+        elif args.command == 'knowledge':
+            print(json.dumps(knowledge_cli.run(args), ensure_ascii=False))
         elif args.command == 'database':
             print(json.dumps(database_cli.run(args), ensure_ascii=False))
         else:

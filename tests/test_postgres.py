@@ -19,6 +19,7 @@ from unittest.mock import patch
 
 import test_persistent_identity as fixtures
 import test_workflows as workflows
+from test_knowledge import KnowledgeCases
 from retailops.bootstrap import build_public_app
 from retailops.config import Settings
 from retailops.core import ApiError, ROOT
@@ -33,7 +34,7 @@ DSN = os.environ.get('RETAILOPS_TEST_DATABASE_URL', '')
 
 
 @unittest.skipUnless(DSN, 'PostgreSQL integration runs in CI with a dedicated test database.')
-class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
+class PostgresTests(KnowledgeCases, workflows.WorkflowCases, unittest.TestCase):
     def fresh_store(self):
         return self.sessions.business_store('shop-a')
 
@@ -42,6 +43,9 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         import psycopg
         if not psycopg.conninfo.conninfo_to_dict(DSN).get('dbname', '').startswith('retailops_test'):
             raise ValueError('Refusing to modify a database not named retailops_test*.')
+        with psycopg.connect(DSN) as db:
+            db.execute('CREATE SCHEMA IF NOT EXISTS retailops_extensions')
+            db.execute('CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA retailops_extensions')
 
     def clear(self):
         from psycopg import sql

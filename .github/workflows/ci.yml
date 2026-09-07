@@ -12,10 +12,10 @@ concurrency:
 jobs:
   offline:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     services:
       postgres:
-        image: postgres:16.15-bookworm
+        image: pgvector/pgvector:0.8.6-pg16-bookworm
         env:
           POSTGRES_DB: retailops_test
           POSTGRES_USER: retailops_test
@@ -39,7 +39,7 @@ jobs:
           RETAILOPS_UI_TEST_MODE=persistent node tests/test_public_session.js
       - name: Unit and HTTP contract tests (no model, no secrets)
         run: |
-          python3 -m pip install --only-binary=:all: --require-hashes -r requirements-web.txt -r requirements-postgres.txt -r requirements-graph.txt
+          python3 -m pip install --only-binary=:all: --require-hashes -r requirements-web.txt -r requirements-postgres.txt -r requirements-graph.txt -r requirements-embeddings.txt
           python3 -m unittest discover -s tests -v
       - name: Validate HTTPS configuration without issuing a certificate
         run: |

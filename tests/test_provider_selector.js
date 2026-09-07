@@ -62,5 +62,11 @@ const run = code => vm.runInContext(code, context);
   assert.equal(run('conversationId'), kept); assert.equal(run('providerId'), 'api');
   run('busy=true'); get('model-provider').value = 'custom'; get('model-provider').onchange();
   assert.equal(get('model-provider').value, 'api');
+  const citationRow = new Element(); context.citationRow = citationRow;
+  run('showCitations(citationRow, [{ref:"K1",title:"<img src=x onerror=alert(1)>",version:"1",source:"javascript:alert(1)",text:"<script>bad()</script>"}])');
+  const texts = [];
+  function walk(n) {texts.push(n.textContent); assert.equal(n.innerHTML, undefined); (n.children || []).forEach(walk);}
+  walk(citationRow);
+  assert.ok(texts.some(t => t && t.includes('<script>bad()</script>')));
   console.log('PROVIDER_SELECTOR_UI_FLOW_OK');
 })().catch(error => { console.error(error); process.exitCode = 1; });

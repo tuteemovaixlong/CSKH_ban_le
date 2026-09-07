@@ -27,6 +27,7 @@ def build():
     names = ['requirements-graph.txt', 'retailops_baseline.py', 'inference_proxy.py', 'retailops_agent.py', 'agent_protocol.py',
              'retailops_api.py', 'retailops_public.py', 'retailops_providers.py', 'retailops_tools.py', 'retailops_conversation.py', 'data/products.json',
              'data/smoke.jsonl', 'notebooks/agent_smoke.py', 'notebooks/colab_runtime.py']
+    names += [p.relative_to(ROOT).as_posix() for p in sorted((ROOT/'data/knowledge').glob('*.json'))]
     names += [p.relative_to(ROOT).as_posix() for p in sorted((ROOT/'tests').glob('*.py'))]
     names += [p.relative_to(ROOT).as_posix() for p in sorted((ROOT/'retailops').rglob('*.py'))]
     names += [p.relative_to(ROOT).as_posix() for p in sorted((ROOT/'web').glob('*')) if p.is_file()]
@@ -67,7 +68,7 @@ subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-q
 print('AGENT_SOURCE_READY: không cần upload ZIP.')
 '''
     cells = [
-        cell('markdown', '''# RetailOps 0.4 — Qwen hội thoại và gọi công cụ
+        cell('markdown', '''# RetailOps 0.10 — Qwen hội thoại và gọi công cụ
         Notebook tự chứa source; dành cho phiên thử có người theo dõi trên Colab L4.
         Chạy từng ô, không Run all (ô cuối dừng proxy). Chọn GPU L4 nếu được cấp.
         Trước khi đổi notebook, tải báo cáo cũ và dừng tunnel/proxy của notebook cũ.
