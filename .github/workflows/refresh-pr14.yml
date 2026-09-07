@@ -29,15 +29,14 @@ jobs:
           RETAILOPS_UI_TEST_MODE=persistent node tests/test_public_session.js
           python3 -m pip install --only-binary=:all: --require-hashes -r requirements-graph.txt
           python3 -m unittest discover -s tests -v
-      - name: Create reviewed Git objects only (never update any branch or deploy)
+      - name: Export source blobs only (no trees, commits, refs, settings or deployment)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 - <<'PY'
-          import json, os, subprocess, urllib.request
+          import hashlib, json, os, subprocess, urllib.request, urllib.error
           from pathlib import Path
           repo = os.environ['GITHUB_REPOSITORY']
-          parent = os.environ['GITHUB_SHA']
           assert repo == 'tuteemovaixlong/CSKH_ban_le'
           assert os.environ['GITHUB_REF'] == 'refs/heads/ui/chat-layout-focus'
           allowed = {'web/index.html', 'web/app.js', 'retailops/http/public.py',
@@ -45,21 +44,26 @@ jobs:
               'scripts/check_public_https.py', 'notebooks/colab_agent.ipynb'}
           changed = set(subprocess.check_output(['git', 'diff', '--name-only'], text=True).splitlines())
           assert changed == allowed, changed
-          def api(path, payload):
-              request = urllib.request.Request('https://api.github.com/repos/' + repo + '/git/' + path,
-                  data=json.dumps(payload).encode(), method='POST',
+          result = {}
+          for path in sorted(changed):
+              # Workflow edits are committed separately through the authorized connector.
+              if path.startswith('.github/'):
+                  continue
+              content = Path(path).read_text(encoding='utf-8')
+              raw = content.encode('utf-8')
+              expected = hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest()
+              request = urllib.request.Request('https://api.github.com/repos/' + repo + '/git/blobs',
+                  data=json.dumps({'content': content, 'encoding': 'utf-8'}).encode(), method='POST',
                   headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
-                      'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json'})
-              with urllib.request.urlopen(request, timeout=60) as response:
-                  return json.load(response)
-          entries = [{'path': p, 'mode': '100644', 'type': 'blob', 'content': Path(p).read_text()} for p in sorted(changed)]
-          # One-time build helper and its write permission do not remain in the final tree.
-          entries += [{'path': p, 'mode': '100644', 'type': 'blob', 'sha': None} for p in
-              ('.github/workflows/refresh-pr14.yml', 'scripts/repair_pr14.py')]
-          base = subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], text=True).strip()
-          tree = api('trees', {'base_tree': base, 'tree': entries})['sha']
-          commit = api('commits', {'message': 'Fix UI asset serving and status selectors; refresh verified Colab bundle',
-              'tree': tree, 'parents': [parent]})['sha']
-          print('REVIEWED_TREE=' + tree)
-          print('REGENERATED_COMMIT=' + commit)
+                      'User-Agent': 'retailops-source-refresh', 'Accept': 'application/vnd.github+json',
+                      'Content-Type': 'application/json'})
+              try:
+                  with urllib.request.urlopen(request, timeout=60) as response:
+                      actual = json.load(response)['sha']
+              except urllib.error.HTTPError as error:
+                  info = json.loads(error.read().decode())
+                  raise SystemExit('Blob export failed: HTTP ' + str(error.code) + ' ' + info.get('message', '')) from None
+              assert actual == expected, path
+              result[path] = actual
+          print('REGENERATED_BLOBS=' + json.dumps(result, sort_keys=True))
           PY
