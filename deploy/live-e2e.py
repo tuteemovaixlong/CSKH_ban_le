@@ -313,7 +313,7 @@ def establish_live_conversation(http, cookie, providers_payload, report):
         conversation_id = conversation.get("conversation_id")
         request_id = "e2e_general_" + uuid.uuid4().hex
         status, general = chat(http, cookie, conversation_id,
-            "Giải thích ngắn gọn quicksort là gì và ý tưởng chia để trị hoạt động ra sao.", request_id)
+            "Giải thích ngắn gọn thuật toán quicksort là gì và ý tưởng chia để trị hoạt động ra sao.", request_id)
         attempts.append({"provider": provider, "chat_status": status})
         if status == 200:
             report["provider_attempts"] = attempts
