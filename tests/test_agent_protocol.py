@@ -2,7 +2,10 @@ import copy
 import unittest
 from unittest.mock import patch
 
-from agent_protocol import PROTOCOL, SYSTEM, TOOLS, ProtocolError, assistant_message, build_request, validate_envelope, validate_messages, validate_tool
+from agent_protocol import (GENERAL_SYSTEM, PROTOCOL, SYSTEM, TOOLS, ProtocolError,
+                            assistant_message, build_request, generation_budget,
+                            request_mode, sanitize_general_answer, validate_envelope,
+                            validate_messages, validate_tool)
 from retailops_agent import AgentError, RemoteAgent
 from retailops_baseline import ModelConfig, RemoteOllama
 
@@ -14,26 +17,70 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(request['tools'], TOOLS)
         self.assertFalse(request['think']); self.assertFalse(request['stream'])
         self.assertEqual(request['options']['num_ctx'], 8192)
+        self.assertEqual(request['options']['num_predict'], 640)
         self.assertNotIn('format', request)
 
-    def test_soft_scope_allows_harmless_general_qa_but_keeps_hard_boundaries(self):
-        # This is a source-level policy contract. Model quality is accepted separately on Colab.
-        self.assertIn('Harmless general questions and casual conversation are also allowed', SYSTEM)
-        self.assertIn('algorithms, programming, mathematics, history, language', SYSTEM)
-        self.assertIn('without calling RetailOps business or knowledge tools', SYSTEM)
-        self.assertIn('Never attach [KB:...]', SYSTEM)
-        self.assertIn('never emit a string that looks like a KB citation', SYSTEM)
-        self.assertIn('Match the requested level of detail', SYSTEM)
-        self.assertIn('asks for a detailed/deep explanation', SYSTEM)
-        self.assertIn('include intuition first', SYSTEM)
-        self.assertIn('terms, equations or pseudocode', SYSTEM)
-        self.assertIn('MUST use\nget_current_time before answering', SYSTEM)
+    def test_general_mode_is_tool_free_and_depth_adaptive(self):
+        deep_messages = [{'role': 'user', 'content': 'Giải thích kỹ thuật toán Soft Actor-Critic (SAC), có công thức và pseudocode.'}]
+        deep = build_request('qwen3.5:4b', deep_messages)
+        self.assertEqual(request_mode(deep_messages), 'general')
+        self.assertEqual(deep['messages'][0]['content'], GENERAL_SYSTEM)
+        self.assertEqual(deep['tools'], [])
+        self.assertEqual(deep['options']['num_predict'], 1024)
+        self.assertIn('NEVER refuse or redirect a harmless', GENERAL_SYSTEM)
+        self.assertIn('No RetailOps tools or knowledge-base tools are available', GENERAL_SYSTEM)
+        self.assertIn('Never emit [KB:...]', GENERAL_SYSTEM)
+
+        short_messages = [{'role': 'user', 'content': 'giải thích ngắn SAC'}]
+        short = build_request('qwen3.5:4b', short_messages)
+        self.assertEqual(short['tools'], [])
+        self.assertEqual(generation_budget(short_messages), 320)
+        self.assertEqual(short['options']['num_predict'], 320)
+
+    def test_retail_time_and_live_questions_do_not_enter_general_mode(self):
+        for text in (
+            'Giải thích chính sách hủy đơn của cửa hàng',
+            'Đơn O-102 hiện tại thế nào?',
+            'mấy giờ rồi? hôm nay ngày bao nhiêu?',
+            'thời tiết Hà Nội hôm nay thế nào?',
+        ):
+            with self.subTest(text=text):
+                messages = [{'role': 'user', 'content': text}]
+                self.assertEqual(request_mode(messages), 'retail')
+                request = build_request('qwen3.5:4b', messages)
+                self.assertEqual(request['messages'][0]['content'], SYSTEM)
+                self.assertEqual(request['tools'], TOOLS)
+
+    def test_ambiguous_followup_inherits_nearest_classified_user_mode(self):
+        general_history = [
+            {'role': 'user', 'content': 'Giải thích thuật toán SAC'},
+            {'role': 'assistant', 'content': 'SAC là một thuật toán học tăng cường.'},
+            {'role': 'user', 'content': 'còn ưu nhược điểm thì sao?'},
+        ]
+        self.assertEqual(request_mode(general_history), 'general')
+        self.assertEqual(build_request('qwen3.5:4b', general_history)['tools'], [])
+
+        retail_history = general_history[:-1] + [{'role': 'user', 'content': 'còn đơn O-102 thì sao?'}]
+        self.assertEqual(request_mode(retail_history), 'retail')
+
+    def test_general_answer_strips_model_invented_kb_syntax(self):
+        cleaned, removed = sanitize_general_answer('SAC tối đa hóa entropy [KB:deadbeefdeadbeefdeadbeef] và reward.')
+        self.assertEqual(cleaned, 'SAC tối đa hóa entropy và reward.')
+        self.assertEqual(removed, 1)
+        untouched, removed = sanitize_general_answer('SAC dùng actor và critic.')
+        self.assertEqual(untouched, 'SAC dùng actor và critic.')
+        self.assertEqual(removed, 0)
+
+    def test_soft_scope_keeps_hard_boundaries_and_live_fact_rules(self):
+        self.assertIn('Never refuse a harmless question merely because it is', SYSTEM)
+        self.assertIn('MUST use get_current_time', SYSTEM)
         self.assertIn('No live external-data tool is available', SYSTEM)
-        self.assertIn('Do not refuse merely because the topic is outside\nretail support', SYSTEM)
         self.assertIn('Hard boundaries remain strict', SYSTEM)
         self.assertIn('cross-tenant data', SYSTEM)
         self.assertIn('bypass authentication, permissions', SYSTEM)
         self.assertIn('Do not ask the user to provide secrets', SYSTEM)
+        self.assertIn('Hard boundaries remain strict', GENERAL_SYSTEM)
+        self.assertIn('private customer data', GENERAL_SYSTEM)
         search = next(t for t in TOOLS if t['function']['name'] == 'search_knowledge')
         self.assertIn('Never use for general knowledge', search['function']['description'])
 
