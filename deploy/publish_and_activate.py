@@ -77,8 +77,7 @@ def main():
     print(f"Activated baseline image: {pinned}")
 
     # Install attended helpers from the exact tested release image. Only the public
-    # web rollout runs automatically; database migration helpers are installed but
-    # require an operator to invoke them explicitly.
+    # web rollout runs automatically; database migration helpers remain operator-only.
     rollout = f"""
 set -euo pipefail
 cd /opt/retailops
@@ -93,10 +92,28 @@ for helper in rollout-public-web.sh cutover-postgres.sh enable-pgvector.sh; do
   /bin/bash -n "$staging/$helper"
   install -o root -g root -m 0755 "$staging/$helper" "/opt/retailops/$helper"
 done
+docker cp "$container:/app/deploy/live-e2e.py" "$staging/live-e2e.py"
+test -s "$staging/live-e2e.py"
+python3 -m py_compile "$staging/live-e2e.py"
+install -o root -g root -m 0755 "$staging/live-e2e.py" /opt/retailops/live-e2e.py
 /opt/retailops/rollout-public-web.sh "$image_ref"
 """.strip()
     ssm_run(region, instance, "/bin/bash -lc " + shlex.quote(rollout))
     print("Public web rollout checked for the activated image")
+
+    # Every configured public release must pass a credential-safe live smoke through
+    # Caddy and the real PostgreSQL-backed session/business path. This does not call a
+    # model and therefore does not spend paid inference. A baseline-only host skips it.
+    smoke = f"""
+set -euo pipefail
+if [[ -f /opt/retailops/public.env ]]; then
+  python3 /opt/retailops/live-e2e.py --mode smoke --expected-image {shlex.quote(pinned)}
+else
+  echo LIVE_E2E_SMOKE_SKIPPED_PUBLIC_WEB_NOT_CONFIGURED
+fi
+""".strip()
+    ssm_run(region, instance, "/bin/bash -lc " + shlex.quote(smoke), execution_timeout=300)
+    print("Live smoke checked for the activated image")
 
 
 if __name__ == "__main__":
