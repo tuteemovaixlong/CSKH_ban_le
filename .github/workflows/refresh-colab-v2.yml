@@ -1,0 +1,89 @@
+name: Refresh Colab v2 notebook
+on:
+  push:
+    branches: [fix/colab-v2-clean-startup]
+    paths:
+      - scripts/build_agent_notebook.py
+      - .github/workflows/refresh-colab-v2.yml
+permissions:
+  contents: read
+jobs:
+  refresh:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Generate and validate notebook
+        run: |
+          python3 -m py_compile scripts/build_agent_notebook.py
+          python3 scripts/build_agent_notebook.py
+          python3 scripts/build_agent_notebook.py --check
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          nb = json.loads(Path('notebooks/colab_agent.ipynb').read_text(encoding='utf-8'))
+          ids = [cell.get('id') for cell in nb['cells'] if cell.get('cell_type') == 'code']
+          assert ids == ['bootstrap', 'runtime', 'tunnel', 'diagnostics', 'stop'], ids
+          text = Path('notebooks/colab_agent.ipynb').read_text(encoding='utf-8')
+          for marker in (
+              'CELL_1_READY', 'CELL_2_READY', 'CELL_3_READY',
+              'retailops-agent-v2', 'search_knowledge',
+              'exact-binary-compat', 'LOCAL_PROXY_V2_OK',
+          ):
+              assert marker in text, marker
+          assert 'retailops-agent-v1' not in text
+          print('COLAB_V2_NOTEBOOK_CONTRACT_OK')
+          PY
+      - name: Commit generated notebook and remove one-time helper
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, urllib.request
+          from pathlib import Path
+
+          repo = os.environ['GITHUB_REPOSITORY']
+          parent = os.environ['GITHUB_SHA']
+          branch = 'fix/colab-v2-clean-startup'
+          token = os.environ['GH_TOKEN']
+
+          def api(method, path, payload=None):
+              data = None if payload is None else json.dumps(payload).encode()
+              req = urllib.request.Request(
+                  'https://api.github.com/repos/' + repo + path,
+                  data=data,
+                  method=method,
+                  headers={
+                      'Authorization': 'Bearer ' + token,
+                      'Accept': 'application/vnd.github+json',
+                      'Content-Type': 'application/json',
+                      'X-GitHub-Api-Version': '2022-11-28',
+                  },
+              )
+              with urllib.request.urlopen(req, timeout=60) as response:
+                  return json.load(response)
+
+          parent_obj = api('GET', '/git/commits/' + parent)
+          base_tree = parent_obj['tree']['sha']
+          notebook = Path('notebooks/colab_agent.ipynb').read_text(encoding='utf-8')
+
+          blob = api('POST', '/git/blobs', {'content': notebook, 'encoding': 'utf-8'})['sha']
+          tree = api('POST', '/git/trees', {
+              'base_tree': base_tree,
+              'tree': [
+                  {'path': 'notebooks/colab_agent.ipynb', 'mode': '100644', 'type': 'blob', 'sha': blob},
+                  {'path': '.github/workflows/refresh-colab-v2.yml', 'mode': '100644', 'type': 'blob', 'sha': None},
+              ],
+          })['sha']
+          commit = api('POST', '/git/commits', {
+              'message': 'Regenerate simplified Colab v2 notebook',
+              'tree': tree,
+              'parents': [parent],
+          })['sha']
+          api('PATCH', '/git/refs/heads/' + branch, {'sha': commit, 'force': False})
+          print('GENERATED_NOTEBOOK_COMMIT=' + commit)
+          PY
