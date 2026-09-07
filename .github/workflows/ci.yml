@@ -102,7 +102,7 @@ jobs:
       - name: Verify packaged application and deployment helpers
         run: |
           docker run --rm --network none --entrypoint sh retailops:ci -c 'test -f /app/deploy/rollout-public-web.sh && test -f /app/deploy/cutover-postgres.sh && test -f /app/deploy/enable-pgvector.sh && test -f /app/deploy/live-e2e.py && test -f /app/data/knowledge/cancellation.md'
-          docker run --rm --network none --entrypoint python retailops:ci -m py_compile /app/deploy/live-e2e.py
+          docker run --rm --network none --entrypoint python retailops:ci -c "compile(open('/app/deploy/live-e2e.py', encoding='utf-8').read(), '/app/deploy/live-e2e.py', 'exec'); print('LIVE_E2E_PACKAGED_SOURCE_OK')"
           docker run --rm --network host -e RETAILOPS_TEST_DATABASE_URL --entrypoint python retailops:ci -m unittest discover -s tests -v
       - name: Verify HTTPS proxy and cookie session with a temporary test CA
         run: python3 scripts/check_public_https.py
