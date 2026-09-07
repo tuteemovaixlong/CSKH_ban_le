@@ -5,7 +5,7 @@ on:
     branches: [main]
   workflow_dispatch:
 permissions:
-  contents: write
+  contents: read
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -16,21 +16,10 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          ref: feat/general-mode-router-v1
-          persist-credentials: true
+          persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
-      - name: Regenerate Colab notebook for this feature branch
-        run: |
-          python scripts/build_agent_notebook.py
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add notebooks/colab_agent.ipynb
-          if ! git diff --cached --quiet; then
-            git commit -m 'Regenerate Colab notebook [skip ci]'
-            git push origin HEAD:feat/general-mode-router-v1
-          fi
       - name: Verify Colab Python 3.13 binary dependency compatibility
         run: |
           python scripts/build_agent_notebook.py --check
