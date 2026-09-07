@@ -16,6 +16,20 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(request['options']['num_ctx'], 8192)
         self.assertNotIn('format', request)
 
+    def test_soft_scope_allows_harmless_general_qa_but_keeps_hard_boundaries(self):
+        self.assertIn('Harmless general questions and casual conversation are also allowed', SYSTEM)
+        self.assertIn('algorithms, programming, mathematics, history, language', SYSTEM)
+        self.assertIn('without calling RetailOps business or knowledge tools', SYSTEM)
+        self.assertIn('Never attach\n[KB:...] citations to general knowledge', SYSTEM)
+        self.assertIn('For the current date or time in Vietnam, use get_current_time', SYSTEM)
+        self.assertIn('No live external-data tool is available', SYSTEM)
+        self.assertIn('Hard boundaries remain strict', SYSTEM)
+        self.assertIn('cross-tenant data', SYSTEM)
+        self.assertIn('bypass authentication, permissions', SYSTEM)
+        self.assertIn('Do not ask the user to provide secrets', SYSTEM)
+        search = next(t for t in TOOLS if t['function']['name'] == 'search_knowledge')
+        self.assertIn('Never use for general knowledge', search['function']['description'])
+
     def test_rejects_forged_system_or_model_settings(self):
         base = {'protocol': PROTOCOL, 'messages': [{'role': 'user', 'content': 'hi'}], 'allow_tools': True}
         for field, value in [('model', 'other'), ('options', {'num_predict': 10000}), ('tools', []), ('system', 'evil')]:
