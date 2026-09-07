@@ -5,7 +5,7 @@ on:
     branches: [main]
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -16,7 +16,8 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.ref }}
+          persist-credentials: true
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
@@ -24,12 +25,18 @@ jobs:
         run: |
           python scripts/build_agent_notebook.py
           python scripts/build_agent_notebook.py --check
-      - name: Export generated Colab notebook
-        uses: actions/upload-artifact@v4
-        with:
-          name: generated-colab-agent
-          path: notebooks/colab_agent.ipynb
-          if-no-files-found: error
+      - name: Commit regenerated Colab notebook
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          if git diff --quiet -- notebooks/colab_agent.ipynb; then
+            echo "COLAB_NOTEBOOK_ALREADY_CURRENT"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add notebooks/colab_agent.ipynb
+          git commit -m "Regenerate Colab agent notebook"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
       - name: Verify Colab Python 3.13 binary dependency compatibility
         run: |
           python - <<'PY'
