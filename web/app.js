@@ -63,7 +63,7 @@ async function api(path, body, extra = {}) {
   if (!response.ok) {
     if (response.status === 401) lockPage(true);
     const error = new Error(result.message || 'Không hoàn tất yêu cầu.');
-    error.trace = result.trace; throw error;
+    error.trace = result.trace; error.code = result.error; throw error;
   }
   return result;
 }
@@ -233,11 +233,12 @@ async function send(text, requestId = crypto.randomUUID(), retry = false) {
   } catch (error) {
     const row = message(error.message || 'Mất kết nối trong lúc chờ model.', 'assistant', 'interface');
     showTrace(row, error.trace);
-    const retryButton = el('button', 'order-action', 'Thử lại tin nhắn này');
+    const needsFreshAnswer = ['invalid_citation', 'knowledge_changed'].includes(error.code);
+    const retryButton = el('button', 'order-action', needsFreshAnswer ? 'Tạo câu trả lời mới' : 'Thử lại tin nhắn này');
     const originalConversation = conversationId;
     retryButton.onclick = () => act(async () => {
       if (conversationId !== originalConversation) return;
-      retryButton.remove(); await send(text, requestId, true);
+      retryButton.remove(); await send(text, needsFreshAnswer ? crypto.randomUUID() : requestId, true);
     });
     row.append(retryButton);
     status.querySelector('strong').textContent = 'Chat chưa hoàn tất';

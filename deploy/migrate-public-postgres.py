@@ -58,10 +58,12 @@ def migrate(root, host, project="retailops-web"):
     backup.mkdir(parents=True, mode=0o700)
     for name in ('public.env', 'deployed.env', 'compose.public.yaml', 'Caddyfile'):
         shutil.copy2(root/name, backup/name)
-    (backup/'runtime.env').write_text('RETAILOPS_IMAGE='+current['Config']['Image']+'\n')
-    (backup/'runtime.env').chmod(0o600)
+    shutil.copy2(root/'deployed.env', backup/'runtime.env')
+    env_update(backup/'runtime.env', {'RETAILOPS_IMAGE': current['Config']['Image']})
     run(base+['stop', 'web'])
     try:
+        if not persistent and any(p.name != 'control.sqlite3' for p in (data/'public-guests').glob('*.sqlite3')):
+            raise ValueError('A guest workspace appeared before web stopped; keeping guest mode.')
         source = data/('persistent' if persistent else 'public-guests')
         if source.exists():
             shutil.copytree(source, backup/source.name)
@@ -111,7 +113,12 @@ print('PERSONAL_ACCOUNT_READY')
         print('PUBLIC_URL: https://'+host, flush=True)
         if not persistent:
             print('ACCESS_CODE_FILE:', data/'access/retailops-owner.code', flush=True)
-    except Exception:
+    except Exception as failure:
+        detail = failure.output if isinstance(failure, subprocess.CalledProcessError) else str(failure)
+        diagnostic = backup/'failure-details.txt'
+        diagnostic.write_text(detail or type(failure).__name__)
+        diagnostic.chmod(0o600)
+        print('PRIVATE_DIAGNOSTIC_FILE:', diagnostic, flush=True)
         shutil.copy2(backup/'public.env', root/'public.env')
         rollback = ['docker', 'compose', '--project-name', project, '--env-file', str(backup/'runtime.env'),
                     '--env-file', 'public.env', '-f', 'compose.public.yaml']

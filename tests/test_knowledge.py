@@ -44,7 +44,7 @@ class KnowledgeUnitTests(unittest.TestCase):
 
     def test_vector_validation_and_normalization(self):
         self.assertEqual(vector([3.0]+[0.0]*383), [1.0]+[0.0]*383)
-        for invalid in ([0.0]*384, [1.0]*383, [float('nan')]*384, [float('inf')]*384):
+        for invalid in ([0.0]*384, [1.0]*383, [float('nan')]*384, [float('inf')]*384, [1e308]*384):
             with self.assertRaises(ValueError):
                 vector(invalid)
 

@@ -7,6 +7,7 @@ import threading
 
 MODEL = 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2'
 REPOSITORY = 'qdrant/paraphrase-multilingual-MiniLM-L12-v2-onnx-Q'
+REVISION = 'faf4aa4225822f3bc6376869cb1164e8e3feedd0'
 DIMENSION = 384
 FILES = ('model_optimized.onnx', 'tokenizer.json', 'tokenizer_config.json',
          'special_tokens_map.json', 'config.json')
@@ -17,7 +18,7 @@ def vector(value):
     if len(values) != DIMENSION or not all(math.isfinite(v) for v in values):
         raise ValueError('Invalid embedding dimension or nonfinite vector.')
     norm = math.sqrt(sum(v*v for v in values))
-    if norm < 1e-12:
+    if not math.isfinite(norm) or norm < 1e-12:
         raise ValueError('Embedding must not be a zero vector.')
     return [v/norm for v in values]
 
@@ -27,11 +28,11 @@ def hashes(path):
 
 
 def prepare(directory):
-    from huggingface_hub import HfApi, snapshot_download
+    from huggingface_hub import snapshot_download
     directory = Path(directory)
     if directory.exists():
         raise ValueError('Use a new model directory; never overwrite weights used by an index.')
-    revision = HfApi(token=False).model_info(REPOSITORY).sha
+    revision = REVISION
     directory.mkdir(parents=True)
     snapshot_download(REPOSITORY, revision=revision, token=False, local_dir=directory, allow_patterns=list(FILES))
     manifest = {'model': MODEL, 'repository': REPOSITORY, 'revision': revision,
@@ -44,7 +45,9 @@ class CpuEmbedding:
     def __init__(self, directory):
         directory = Path(directory)
         manifest = json.loads((directory/'manifest.json').read_text())
-        if (manifest.get('model') != MODEL or manifest.get('dimension') != DIMENSION
+        if (manifest.get('model') != MODEL or manifest.get('repository') != REPOSITORY
+                or manifest.get('pooling') != 'mean' or manifest.get('revision') != REVISION
+                or manifest.get('dimension') != DIMENSION
                 or manifest.get('files') != hashes(directory)):
             raise ValueError('Embedding files do not match the prepared manifest.')
         self.fingerprint = hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()

@@ -130,7 +130,7 @@ class Application:
             used = set(re.findall(r'\[K([0-9]+)\]', answer['message']))
             known = {c['ref'][1:] for c in bound.citations}
             require(used <= known and (not known or bool(used)), 503, 'invalid_citation',
-                    'Model chưa trích dẫn đúng tài liệu. Hãy thử lại với yêu cầu cụ thể hơn.')
+                    'Model chưa trích dẫn đúng tài liệu. Hãy tạo câu trả lời mới hoặc nêu câu hỏi cụ thể hơn.')
             citations = [c for c in bound.citations if c['ref'][1:] in used]
             result = {'action': 'choose_cancel_reason' if bound.cancel_order else 'reply',
                       'message': answer['message'], 'source': 'llm_agent', 'model_used': True,

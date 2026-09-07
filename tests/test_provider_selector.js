@@ -28,10 +28,12 @@ const document = {
 };
 const requests = [];
 let rejectNext = false;
+let rejectCitation = false; let uuidCounter = 0;
 const context = vm.createContext({document, console, Intl, Date, AbortSignal,
-  crypto: {randomUUID: () => 'fixture-request'}, requestAnimationFrame: fn => fn(),
+  crypto: {randomUUID: () => 'fixture-request-'+(++uuidCounter)}, requestAnimationFrame: fn => fn(),
   fetch: async (url, options) => {
     requests.push({url, options});
+    if (rejectCitation) { rejectCitation = false; return {ok:false, status:503, json:async()=>({error:'invalid_citation',message:'Bad source'})}; }
     if (rejectNext) { rejectNext = false; return {ok: false, status: 503, json: async () => ({message: 'Not configured'})}; }
     return {ok: true, json: async () => ({conversation_id: 'conversation-'+requests.length,
       provider_id: JSON.parse(options.body).provider_id, context: {order_id: null, product_id: null}})};
@@ -68,5 +70,14 @@ const run = code => vm.runInContext(code, context);
   function walk(n) {texts.push(n.textContent); assert.equal(n.innerHTML, undefined); (n.children || []).forEach(walk);}
   walk(citationRow);
   assert.ok(texts.some(t => t && t.includes('<script>bad()</script>')));
+  rejectCitation = true;
+  await run('send("return policy", "old-request-id")');
+  const failureRow = get('messages').children.at(-1);
+  const retryCitation = failureRow.children.find(n=>n.textContent==='Tạo câu trả lời mới');
+  assert.ok(retryCitation);
+  run('busy=false');
+  rejectNext=true; // Stop the second attempt without depending on a full chat response fixture.
+  await retryCitation.onclick();
+  assert.notEqual(JSON.parse(requests.at(-1).options.body).request_id, 'old-request-id');
   console.log('PROVIDER_SELECTOR_UI_FLOW_OK');
 })().catch(error => { console.error(error); process.exitCode = 1; });

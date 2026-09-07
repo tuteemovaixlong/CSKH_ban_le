@@ -51,6 +51,18 @@ class CutoverTests(unittest.TestCase):
         self.assertEqual(len(self.calls),1)
         self.assertFalse((self.root/'backups').exists())
 
+    def test_guest_login_race_after_preflight_rolls_back_before_database_init(self):
+        def racing(args):
+            result = self.fake_run(args)
+            if args[-2:] == ['stop','web']:
+                (self.data/'public-guests/new-session.sqlite3').write_bytes(b'new guest')
+            return result
+        with patch.object(self.module.os,'geteuid',return_value=0), patch.object(self.module,'run',side_effect=racing):
+            with self.assertRaises(RuntimeError):
+                self.module.migrate(self.root, 'retailops.example.test')
+        self.assertFalse(any(args[-1:] == ['postgres'] for args in self.calls))
+        self.assertEqual((self.data/'public-guests/new-session.sqlite3').read_bytes(),b'new guest')
+
     def test_failure_preserves_source_backup_and_restores_active_image(self):
         before = (self.root/'public.env').read_text()
         with patch.object(self.module.os,'geteuid',return_value=0), patch.object(self.module,'run',side_effect=self.fake_run):

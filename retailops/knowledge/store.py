@@ -39,8 +39,8 @@ def documents(items):
 
 
 def chunks(text):
-    # Unicode text boundaries, no silent model truncation for long documents.
-    # Keep chunks below the tokenizer limit, including unbroken words/punctuation.
+    # Small overlapping Unicode chunks for the bounded demo collection.
+    # This is character-based splitting, not a semantic boundary detector.
     for start in range(0, len(text), 200):
         part = text[start:start+240].strip()
         if part:

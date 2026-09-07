@@ -128,7 +128,7 @@ def main():
                 "from retailops.config import database_settings;from retailops.identity.postgres import PostgresSessions; "
                 "from retailops.knowledge.store import Knowledge; "
                 "Knowledge(PostgresSessions(database_settings(os.environ)[1]).business_store('ci-shop'),EmbeddingFixture()).publish([document()])"])
-            dump = run(pgbase+['exec' ,'-T','postgres','pg_dump','-U','postgres','-d','retailops','--no-owner','--no-acl','--exclude-schema=retailops_extensions'])
+            dump = run(pgbase+['exec','-T','postgres','pg_dump','-U','postgres','-d','retailops','--no-owner','--no-acl','--exclude-schema=retailops_extensions'])
             run(pgbase+['exec','-T','postgres','createdb','-U','postgres','-O','retailops','retailops_restore'])
             run(pgbase+['exec','-T','postgres','psql','-U','postgres','-d','retailops_restore','-v','ON_ERROR_STOP=1'],
                 input=(ROOT/'deploy/enable-pgvector.sql').read_text())
@@ -137,10 +137,15 @@ def main():
                 "from retailops.config import database_settings; import os; from psycopg.conninfo import make_conninfo; "
                 "from retailops.identity.postgres import PostgresSessions; "
                 "s=PostgresSessions(make_conninfo(database_settings(os.environ)[1],dbname='retailops_restore')); "
-                "assert s.business_store('ci-shop').orders('C-002')[0]['status']=='cancelled'; print('RESTORE_OK')"])
+                "assert s.business_store('ci-shop').orders('C-002')[0]['status']=='cancelled'; "
+                "import sys;sys.path.insert(0,'/app/tests');from test_knowledge import EmbeddingFixture;from retailops.knowledge.store import Knowledge; "
+                "assert Knowledge(s.business_store('ci-shop'),EmbeddingFixture()).search('return')[0]['id']=='RETURN'; print('RESTORE_OK')"])
             assert 'RESTORE_OK' in restored
             print('POSTGRES_HTTPS_IMPORT_RESTORE_OK (limited DB role; no external inference)')
         except Exception:
+            # Only disposable CI data/credentials exist in this stack.
+            for diagnostic in (temp/'backups').glob('*/failure-details.txt'):
+                print(run(['sudo','cat',str(diagnostic)]))
             print(run(base+['logs','--tail','40']))  # fixture stack only, contains no real secrets
             raise
         finally:
