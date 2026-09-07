@@ -74,6 +74,7 @@ restore_previous() {
     rm -f "$rollback_env"
     return 1
   fi
+  "${rollback[@]}" restart caddy >/dev/null || true
   mv "$rollback_env" deployed.env
   echo 'PUBLIC_WEB_ROLLBACK_OK'
 }
@@ -82,14 +83,16 @@ verify_live() {
   local host target_hash live_hash health
   host=$(sed -n 's/^RETAILOPS_PUBLIC_HOST=//p' public.env)
   [[ -n "$host" ]] || return 1
-  target_hash=$(docker run --rm --pull never --network none --entrypoint sha256sum "$image_ref" /app/web/index.html | awk '{print $1}')
+  # index.html is intentionally modified by the public adapter with auth/data-mode
+  # attributes. chat-focus.js is served byte-for-byte and is therefore safe to hash.
+  target_hash=$(docker run --rm --pull never --network none --entrypoint sha256sum "$image_ref" /app/web/chat-focus.js | awk '{print $1}')
   health=$(curl --noproxy '*' --fail --silent --show-error --max-time 15 --retry 5 --retry-delay 2 --retry-all-errors -H 'Cache-Control: no-cache' "https://$host/healthz") || return 1
   python3 - "$health" <<'PY'
 import json,sys
 payload=json.loads(sys.argv[1])
 assert payload.get('status') == 'ok', payload
 PY
-  live_hash=$(curl --noproxy '*' --fail --silent --show-error --max-time 15 --retry 5 --retry-delay 2 --retry-all-errors -H 'Accept-Encoding: identity' -H 'Cache-Control: no-cache' "https://$host/" | sha256sum | awk '{print $1}') || return 1
+  live_hash=$(curl --noproxy '*' --fail --silent --show-error --max-time 15 --retry 5 --retry-delay 2 --retry-all-errors -H 'Accept-Encoding: identity' -H 'Cache-Control: no-cache' "https://$host/chat-focus.js" | sha256sum | awk '{print $1}') || return 1
   [[ "$live_hash" == "$target_hash" ]]
 }
 
