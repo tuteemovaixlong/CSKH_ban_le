@@ -1,7 +1,8 @@
-"""CI entrypoint; requires short-lived AWS credentials, Docker and AWS CLI v2.
+"""CI deployment entrypoint; requires short-lived AWS credentials, Docker and AWS CLI v2.
 
-Activation installs a tested baseline image. It does not start a business API or
-run live inference. The EC2 instance must already exist and be managed by SSM.
+The release image is tested, pushed by digest, activated on EC2, then rolled into the
+public web service when that service is already configured. Baseline-only hosts remain
+baseline-only. Live paid inference is never invoked by this deployment path.
 """
 import json
 import os
@@ -21,6 +22,34 @@ def value(key, pattern):
     if not re.fullmatch(pattern, val):
         raise SystemExit(f"Missing or invalid {key}")
     return val
+
+
+def ssm_run(region, instance, command, execution_timeout=600):
+    parameters = {"commands": [command], "executionTimeout": [str(execution_timeout)]}
+    command_id = run("aws", "ssm", "send-command", "--region", region,
+                     "--instance-ids", instance, "--document-name", "AWS-RunShellScript",
+                     "--parameters", json.dumps(parameters), "--timeout-seconds", "60",
+                     "--query", "Command.CommandId", "--output", "text").strip()
+    deadline = time.monotonic() + execution_timeout + 60
+    while time.monotonic() < deadline:
+        result = subprocess.run(["aws", "ssm", "get-command-invocation", "--region", region,
+                                 "--command-id", command_id, "--instance-id", instance, "--output", "json"],
+                                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if result.returncode:
+            if "InvocationDoesNotExist" not in result.stderr:
+                raise SystemExit("Cannot query SSM invocation; inspect AWS permissions and command status")
+        else:
+            details = json.loads(result.stdout)
+            status = details["Status"]
+            if status == "Success":
+                output = details.get("StandardOutputContent", "").strip()
+                if output:
+                    print(output)
+                return
+            if status not in ("Pending", "InProgress", "Delayed"):
+                raise SystemExit(f"SSM deployment step ended with {status}; inspect command {command_id} in AWS")
+        time.sleep(10)
+    raise SystemExit(f"SSM polling deadline exceeded for command {command_id}; inspect the invocation before retrying")
 
 
 def main():
@@ -43,31 +72,30 @@ def main():
     if not re.fullmatch(r"sha256:[a-f0-9]{64}", digest):
         raise SystemExit("ECR returned an invalid image digest")
     pinned = f"{registry}/{repo}@{digest}"
-    parameters = {"commands": [shlex.join(["/opt/retailops/deploy-runner.sh", pinned, region])],
-                  "executionTimeout": ["600"]}
-    command_id = run("aws", "ssm", "send-command", "--region", region,
-                     "--instance-ids", instance, "--document-name", "AWS-RunShellScript",
-                     "--parameters", json.dumps(parameters), "--timeout-seconds", "60",
-                     "--query", "Command.CommandId", "--output", "text").strip()
-    # Run Command has eventual consistency; poll for this specific invocation.
-    deadline = time.monotonic() + 660
-    while time.monotonic() < deadline:
-        result = subprocess.run(["aws", "ssm", "get-command-invocation", "--region", region,
-                                 "--command-id", command_id, "--instance-id", instance, "--output", "json"],
-                                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        if result.returncode:
-            if "InvocationDoesNotExist" not in result.stderr:
-                raise SystemExit("Cannot query SSM invocation; inspect AWS permissions and command status")
-        else:
-            details = json.loads(result.stdout)
-            status = details["Status"]
-            if status == "Success":
-                print(f"Activated baseline image: {pinned}")
-                return
-            if status not in ("Pending", "InProgress", "Delayed"):
-                raise SystemExit(f"SSM activation ended with {status}; inspect the command in AWS")
-        time.sleep(10)
-    raise SystemExit("SSM polling deadline exceeded; inspect this invocation before retrying")
+
+    # The installed baseline runner validates repository ownership, pulls the pinned
+    # image, re-runs tests on EC2 and atomically updates deployed.env/previous.env.
+    ssm_run(region, instance, shlex.join(["/opt/retailops/deploy-runner.sh", pinned, region]))
+    print(f"Activated baseline image: {pinned}")
+
+    # Copy the rollout logic from the exact tested release image instead of trusting
+    # a mutable host copy. The rollout script no-ops when public HTTPS is not configured.
+    rollout = f"""
+set -euo pipefail
+cd /opt/retailops
+image_ref={shlex.quote(pinned)}
+container=$(docker create --network none "$image_ref")
+staging=$(mktemp -d /opt/retailops/web-rollout.XXXXXX)
+cleanup() {{ docker rm "$container" >/dev/null 2>&1 || true; rm -rf "$staging"; }}
+trap cleanup EXIT
+docker cp "$container:/app/deploy/rollout-public-web.sh" "$staging/rollout-public-web.sh"
+test -s "$staging/rollout-public-web.sh"
+/bin/bash -n "$staging/rollout-public-web.sh"
+install -o root -g root -m 0755 "$staging/rollout-public-web.sh" /opt/retailops/rollout-public-web.sh
+/opt/retailops/rollout-public-web.sh "$image_ref"
+""".strip()
+    ssm_run(region, instance, "/bin/bash -lc " + shlex.quote(rollout))
+    print("Public web rollout checked for the activated image")
 
 
 if __name__ == "__main__":

@@ -9,8 +9,8 @@ COPY web /app/web
 COPY deploy/compose.api.yaml /app/deploy/compose.api.yaml
 COPY retailops_public.py /app/
 COPY retailops /app/retailops
-COPY deploy/compose.public.yaml deploy/Caddyfile deploy/start-public-web.sh /app/deploy/
-COPY deploy/compose.postgres.yaml deploy/init-postgres.sh deploy/configure-postgres.py /app/deploy/
+COPY deploy/compose.public.yaml deploy/Caddyfile deploy/start-public-web.sh deploy/rollout-public-web.sh /app/deploy/
+COPY deploy/compose.postgres.yaml deploy/init-postgres.sh deploy/configure-postgres.py deploy/cutover-postgres.sh /app/deploy/
 COPY tests /app/tests
 COPY data/smoke.jsonl /app/data/smoke.jsonl
 COPY data/products.json /app/data/products.json

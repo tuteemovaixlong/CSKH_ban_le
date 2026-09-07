@@ -28,14 +28,18 @@ jobs:
           persist-credentials: false
       - name: Verify source and image without inference
         run: |
+          python3 scripts/check_deployment_contract.py
+          bash -n deploy/cutover-postgres.sh
+          bash -n deploy/rollout-public-web.sh
           python3 -m pip install --only-binary=:all: --require-hashes -r requirements-graph.txt
           python3 -m unittest discover -s tests -v
           docker build -t retailops:deploy .
+          docker run --rm --network none --entrypoint sh retailops:deploy -c 'test -f /app/deploy/rollout-public-web.sh && test -f /app/deploy/cutover-postgres.sh'
           docker run --rm --entrypoint python retailops:deploy -m unittest discover -s tests -v
       - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4, resolved 2026-09-06
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
           role-session-name: retailops-${{ github.run_id }}
-      - name: Publish image and activate runner through SSM
+      - name: Publish image, activate runner and roll configured public web
         run: python3 deploy/publish_and_activate.py

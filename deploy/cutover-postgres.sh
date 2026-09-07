@@ -62,6 +62,13 @@ pg() {
 }
 
 pg config --quiet
+postgres_image='postgres:16.15-bookworm'
+if ! docker image inspect "$postgres_image" >/dev/null 2>&1; then
+  echo "Pulling required PostgreSQL image: $postgres_image"
+  docker pull "$postgres_image" >/dev/null
+fi
+docker image inspect "$postgres_image" >/dev/null
+echo 'POSTGRES_IMAGE_READY'
 pg up -d --no-build --pull never --wait --wait-timeout 90 postgres
 
 # Stop web before taking any SQLite snapshot or importing it.
@@ -110,7 +117,19 @@ pg run --rm --no-deps --entrypoint python web -m retailops database check
 pg up -d --no-build --pull never --wait --wait-timeout 90 web caddy
 
 host=$(sed -n 's/^RETAILOPS_PUBLIC_HOST=//p' public.env)
-health=$(curl --noproxy '*' --fail --silent --show-error --max-time 15 "https://$host/healthz")
+test -n "$host"
+health=''
+for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  if health=$(curl --noproxy '*' --fail --silent --show-error --max-time 15 "https://$host/healthz" 2>/dev/null); then
+    break
+  fi
+  sleep 5
+done
+if [[ -z "$health" ]]; then
+  echo 'Public HTTPS did not become ready after PostgreSQL cutover.' >&2
+  curl --noproxy '*' --fail --silent --show-error --max-time 15 "https://$host/healthz" || true
+  exit 4
+fi
 printf '%s\n' "$health"
 python3 - "$health" <<'PY'
 import json,sys
