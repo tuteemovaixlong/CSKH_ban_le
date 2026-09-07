@@ -1,0 +1,25 @@
+name: Ngrok conflict notebook check
+on:
+  pull_request:
+    paths:
+      - notebooks/colab_agent.ipynb
+      - scripts/build_agent_notebook.py
+permissions:
+  contents: read
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - run: |
+          python3 scripts/build_agent_notebook.py --check
+          python3 - <<'PY'
+          from pathlib import Path
+          text = Path('notebooks/colab_agent.ipynb').read_text(encoding='utf-8')
+          for marker in ('ERR_NGROK_334', 'pooling stays disabled', 'ngrok.kill()', 'LOCAL_PROXY_V2_OK'):
+              assert marker in text, marker
+          print('NGROK_CONFLICT_NOTEBOOK_OK')
+          PY
