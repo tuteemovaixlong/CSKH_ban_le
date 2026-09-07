@@ -34,12 +34,12 @@ jobs:
           RETAILOPS_UI_TEST_MODE=persistent node tests/test_public_session.js
           python3 scripts/build_agent_notebook.py
           python3 scripts/build_agent_notebook.py --check
-      - name: Create verified detached commit only; never update a ref or deploy
+      - name: Export verified content blobs only; never create a ref or deploy
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 - <<'PY'
-          import json, os, subprocess, urllib.request
+          import json, os, subprocess, urllib.request, urllib.error
           from pathlib import Path
           assert os.environ['GITHUB_REPOSITORY'] == 'tuteemovaixlong/CSKH_ban_le'
           assert os.environ['GITHUB_REF'] == 'refs/heads/feat/rag-chat-citations'
@@ -56,20 +56,19 @@ jobs:
           changed = set(subprocess.check_output(['git','diff','--cached','--name-only'], text=True).splitlines())
           assert changed == allowed | set(removed), changed
           expected_tree = '2e87bbde2a4edab92af3e0ec1f1d6537b0d06597'
-          assert subprocess.check_output(['git','write-tree'], text=True).strip() == expected_tree, 'Result differs from locally reviewed source tree'
-          assert subprocess.check_output(['git','hash-object','notebooks/colab_agent.ipynb'], text=True).strip() == '03096decc6b58dcfa570c21a1e1d910e0bd8bed4'
-          def api(path, payload):
-              req = urllib.request.Request('https://api.github.com/repos/'+os.environ['GITHUB_REPOSITORY']+'/git/'+path,
-                  data=json.dumps(payload).encode(), method='POST',
+          assert subprocess.check_output(['git','write-tree'], text=True).strip() == expected_tree
+          for path in sorted(allowed):
+              content = Path(path).read_text()
+              expected = subprocess.check_output(['git','hash-object',path], text=True).strip()
+              req = urllib.request.Request('https://api.github.com/repos/'+os.environ['GITHUB_REPOSITORY']+'/git/blobs',
+                  data=json.dumps({'encoding':'utf-8','content':content}).encode(), method='POST',
                   headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'], 'Accept':'application/vnd.github+json', 'Content-Type':'application/json'})
-              with urllib.request.urlopen(req, timeout=60) as response: return json.load(response)
-          base = subprocess.check_output(['git','rev-parse','HEAD^{tree}'], text=True).strip()
-          entries = [{'path':p,'mode':'100644','type':'blob','content':Path(p).read_text()} for p in sorted(allowed)]
-          entries += [{'path':p,'mode':'100644','type':'blob','sha':None} for p in removed]
-          tree = api('trees', {'base_tree':base, 'tree':entries})['sha']
-          assert tree == expected_tree
-          commit = api('commits', {'tree':tree,'parents':[os.environ['GITHUB_SHA']],
-              'message':'Connect tenant-scoped RAG to chat with provenance-checked source citations'})['sha']
-          print('VERIFIED_TREE='+tree)
-          print('REGENERATED_COMMIT='+commit)
+              try:
+                  with urllib.request.urlopen(req, timeout=60) as response: actual = json.load(response)['sha']
+              except urllib.error.HTTPError as exc:
+                  print('GIT_OBJECT_ERROR='+exc.read().decode()[:1000])
+                  raise
+              assert actual == expected
+              print('VERIFIED_BLOB='+json.dumps({'path':path,'sha':actual}), flush=True)
+          print('VERIFIED_TREE='+expected_tree)
           PY
