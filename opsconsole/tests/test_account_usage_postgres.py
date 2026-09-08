@@ -9,9 +9,10 @@ DSN = os.environ.get('RETAILOPS_TEST_DATABASE_URL')
 
 @unittest.skipUnless(DSN, 'Requires dedicated CI PostgreSQL database')
 class AccountUsagePostgresTests(unittest.TestCase):
-    def test_membership_quota_and_trace_aggregates(self):
+    def test_membership_quota_route_trace_and_replay(self):
         import psycopg
         from retailops.account_usage import AccountQuotaStore
+        from retailops.http.routes import api_result
         from retailops.storage.pg_repositories import PostgresIdentityStore
 
         control = PostgresIdentityStore(DSN, create=True)
@@ -31,7 +32,16 @@ class AccountUsagePostgresTests(unittest.TestCase):
                 'latency_ms': 1234.5,
                 'reported_cost_usd': 0.002345,
             }, success=True)
-            report = ledger.snapshot(3, api_configured=True)
+
+            class UsageApp:
+                api_daily_limit = 3
+                api_infer = object()
+                infer = object()
+                quota_store = ledger
+
+            status, report = api_result(UsageApp(), 'C-001', 'GET', '/api/account/usage')
+            self.assertEqual(status, 200)
+            self.assertEqual(report['schema'], 'retailops-account-usage-v1')
             self.assertEqual(report['api_quota']['used'], 1)
             self.assertEqual(report['api_quota']['remaining'], 2)
             self.assertEqual(report['totals']['prompt_tokens'], 321)
@@ -40,6 +50,45 @@ class AccountUsagePostgresTests(unittest.TestCase):
             self.assertEqual(report['totals']['reported_cost_usd']['known_sum'], 0.002345)
             self.assertNotIn(membership, str(report))
             self.assertNotIn(principal_id, str(report))
+            self.assertNotIn('C-001', str(report))
+
+            class FakeStore:
+                @staticmethod
+                def conversation(customer, conversation_id):
+                    return {'provider_id': 'custom'}
+
+            class ChatApp(UsageApp):
+                store = FakeStore()
+                @staticmethod
+                def chat(customer, body):
+                    return {'provider_id': 'custom', 'replayed': False, 'trace': {
+                        'model_calls': 1, 'prompt_tokens': 50, 'generated_tokens': 5,
+                        'latency_ms': 500.0, 'reported_cost_usd': None,
+                    }}
+
+            status, _ = api_result(ChatApp(), 'C-001', 'POST', '/api/chat',
+                                   {'conversation_id': '00000000-0000-0000-0000-000000000000',
+                                    'request_id': 'abcdefghijklmnop', 'text': 'demo'})
+            self.assertEqual(status, 200)
+            after_chat = ledger.snapshot(3)
+            self.assertEqual(after_chat['providers']['custom']['turns'], 1)
+            self.assertEqual(after_chat['totals']['prompt_tokens'], 371)
+
+            class ReplayApp(ChatApp):
+                @staticmethod
+                def chat(customer, body):
+                    return {'provider_id': 'custom', 'replayed': True, 'trace': {
+                        'model_calls': 1, 'prompt_tokens': 999, 'generated_tokens': 999,
+                        'latency_ms': 999.0, 'reported_cost_usd': None,
+                    }}
+
+            status, _ = api_result(ReplayApp(), 'C-001', 'POST', '/api/chat',
+                                   {'conversation_id': '00000000-0000-0000-0000-000000000000',
+                                    'request_id': 'abcdefghijklmnop', 'text': 'demo'})
+            self.assertEqual(status, 200)
+            after_replay = ledger.snapshot(3)
+            self.assertEqual(after_replay['totals']['prompt_tokens'], 371)
+            self.assertEqual(after_replay['providers']['custom']['turns'], 1)
         finally:
             with psycopg.connect(DSN) as db:
                 db.execute("DELETE FROM retailops_identity.provider_daily_usage WHERE provider_id LIKE %s", ('acct:' + subject + ':%',))
