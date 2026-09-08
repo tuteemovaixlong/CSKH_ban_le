@@ -87,6 +87,7 @@ jobs:
         run: |
           python3 -m pip install --only-binary=:all: --require-hashes -r requirements-web.txt -r requirements-postgres.txt -r requirements-graph.txt
           python3 scripts/prepare_test_pgvector.py
+          python3 scripts/check_local_dev_auto_login.py
           python3 -m unittest discover -s tests -v
       - name: Validate HTTPS, PostgreSQL and rollout deployment scripts
         run: |
