@@ -10,35 +10,6 @@ concurrency:
   group: ops-console-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  sync-notebook-pr29:
-    if: github.event_name == 'pull_request' && github.event.pull_request.number == 29
-    runs-on: ubuntu-24.04
-    timeout-minutes: 3
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          ref: ${{ github.head_ref }}
-          persist-credentials: true
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
-        with:
-          python-version: '3.12'
-      - name: Regenerate embedded notebook from exact PR head
-        run: python scripts/build_agent_notebook.py
-      - name: Commit notebook only when changed
-        shell: bash
-        run: |
-          if git diff --quiet -- notebooks/colab_agent.ipynb; then
-            echo 'Notebook already synchronized.'
-            exit 0
-          fi
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add notebooks/colab_agent.ipynb
-          git commit -m 'Regenerate embedded agent notebook'
-          git push origin HEAD:${{ github.head_ref }}
-
   portable:
     strategy:
       matrix:
