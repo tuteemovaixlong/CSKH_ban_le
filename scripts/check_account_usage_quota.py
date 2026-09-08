@@ -1,4 +1,4 @@
-"""Deterministic regression checks for account-scoped quota and usage metadata."""
+"""Deterministic dependency-light checks for account-scoped quota metadata."""
 from __future__ import annotations
 
 import json
@@ -11,7 +11,6 @@ sys.path.insert(0, str(ROOT))
 
 from retailops.account_usage import AccountQuotaStore
 from retailops.core import ApiError
-from retailops.http.routes import api_result
 from retailops.identity.store import IdentityStore
 
 
@@ -59,51 +58,8 @@ def main():
         assert first not in serialized and second not in serialized
         assert 'C-1' not in serialized and 'P-1' not in serialized
 
-        class FakeApp:
-            api_daily_limit = 2
-            api_infer = object()
-            infer = object()
-            quota_store = a
-
-        status, routed = api_result(FakeApp(), 'C-1', 'GET', '/api/account/usage')
-        assert status == 200 and routed['schema'] == 'retailops-account-usage-v1'
-
-        class FakeStore:
-            @staticmethod
-            def conversation(customer, cid):
-                return {'provider_id': 'custom'}
-
-        class FakeChatApp(FakeApp):
-            store = FakeStore()
-            @staticmethod
-            def chat(customer, body):
-                return {'provider_id': 'custom', 'replayed': False, 'trace': {
-                    'model_calls': 1, 'prompt_tokens': 50, 'generated_tokens': 5,
-                    'latency_ms': 500.0, 'reported_cost_usd': None,
-                }}
-
-        status, _ = api_result(FakeChatApp(), 'C-1', 'POST', '/api/chat',
-                               {'conversation_id': '00000000-0000-0000-0000-000000000000',
-                                'request_id': 'abcdefghijklmnop', 'text': 'demo'})
-        assert status == 200
-        after = a.snapshot(2)
-        assert after['providers']['custom']['turns'] == 2
-        assert after['totals']['prompt_tokens'] == 350
-
-        class ReplayApp(FakeChatApp):
-            @staticmethod
-            def chat(customer, body):
-                return {'provider_id': 'custom', 'replayed': True, 'trace': {
-                    'model_calls': 1, 'prompt_tokens': 999, 'generated_tokens': 999,
-                    'latency_ms': 999.0, 'reported_cost_usd': None,
-                }}
-
-        api_result(ReplayApp(), 'C-1', 'POST', '/api/chat',
-                   {'conversation_id': '00000000-0000-0000-0000-000000000000',
-                    'request_id': 'abcdefghijklmnop', 'text': 'demo'})
-        replay_after = a.snapshot(2)
-        assert replay_after['totals']['prompt_tokens'] == 350
-
+        # Replays are deliberately not part of this low-level ledger contract; the
+        # HTTP integration test verifies that route-level replay filtering happens.
         with control.connection() as db:
             global_api = db.execute("SELECT attempts FROM provider_daily_usage WHERE provider_id='api'").fetchone()
         assert global_api and global_api['attempts'] == 3
