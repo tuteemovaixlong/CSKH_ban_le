@@ -24,7 +24,9 @@ jobs:
         with:
           python-version: '3.12'
       - name: Portable regression tests (no model)
-        run: python scripts/check_ops_console.py
+        run: |
+          python scripts/check_ops_console.py
+          python scripts/check_account_usage_quota.py
       - name: UI rendering contract
         run: node opsconsole/tests/test_ui.js
       - name: Record unchanged routing baseline
@@ -64,4 +66,5 @@ jobs:
         run: |
           python3 scripts/prepare_test_pgvector.py
           python3 scripts/check_ops_console.py
+          python3 scripts/check_account_usage_quota.py
           python3 -m py_compile deploy/admin-console.py deploy/publish_and_activate.py
