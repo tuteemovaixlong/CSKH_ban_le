@@ -7,6 +7,7 @@ import hashlib
 import os
 import secrets
 
+from retailops.core import ROOT
 from retailops.config import Settings
 from retailops.business.application import Application
 from retailops.business.store import BusinessStore
@@ -61,6 +62,7 @@ def serve_private():
     # server-owned C-001 identity and never exposes this token to the browser.
     env = dict(os.environ)
     env['RETAILOPS_DEMO_TOKEN'] = secrets.token_urlsafe(32)
+    env.setdefault('RETAILOPS_OUTPUT', str(ROOT / 'artifacts-business-local'))
     settings = Settings.from_environment('private', env)
     app = build_private_app(settings)
     print('RetailOps synthetic API started; local auto-login: True; model configured:', app.infer is not None, flush=True)
