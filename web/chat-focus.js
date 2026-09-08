@@ -167,6 +167,8 @@
     latest = data;
     const quota = data.api_quota;
     const totals = data.totals;
+    const custom = data.providers.custom;
+    const api = data.providers.api;
     button.hidden = false;
     usageLabel.textContent = data.api_configured ? 'AI usage · còn ' + quota.remaining + '/' + quota.limit : 'AI usage';
     summary.textContent = data.api_configured
@@ -178,12 +180,11 @@
       row('Output tokens', number(totals.generated_tokens)),
       row('Model calls', number(totals.model_calls)),
       row('Latency trung bình', typeof totals.latency_ms.mean === 'number' ? (totals.latency_ms.mean / 1000).toFixed(2) + ' giây' : 'Chưa đo'),
-      row('Chi phí API đã biết', money(totals.reported_cost_usd.known_sum)),
-      row('Coverage chi phí', (totals.reported_cost_usd.coverage * 100).toFixed(1) + '%'),
+      row('Chi phí API đã biết', money(api.reported_cost_usd.known_sum)),
+      row('Coverage chi phí API', (api.reported_cost_usd.coverage * 100).toFixed(1) + '%'),
       row('Reset quota', new Date(data.reset_at * 1000).toLocaleString('vi-VN') + ' (UTC day)')
     );
-    const custom = data.providers.custom, api = data.providers.api;
-    scope.textContent = 'Custom: ' + custom.turns + ' lượt · API: ' + api.turns + ' lượt. ' + data.measurement_scope;
+    scope.textContent = 'Custom: ' + custom.turns + ' lượt · API: ' + api.turns + ' lượt. Custom compute không được quy thành $0 khi provider không báo cost. ' + data.measurement_scope;
   }
 
   async function refreshUsage() {
