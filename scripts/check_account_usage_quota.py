@@ -14,6 +14,19 @@ from retailops.core import ApiError
 from retailops.identity.store import IdentityStore
 
 
+def ui_contracts():
+    customer = (ROOT / 'web' / 'chat-focus.js').read_text(encoding='utf-8')
+    admin = (ROOT / 'opsconsole' / 'web' / 'admin.js').read_text(encoding='utf-8')
+    for token in ('/api/account/usage', 'api_quota', 'prompt_tokens', 'generated_tokens',
+                  'reported_cost_usd', 'remaining', 'reset_at'):
+        assert token in customer, f'customer account usage UI lost contract: {token}'
+    assert "dataMode !== 'persistent-demo'" in customer, 'account usage control must stay persistent-account only'
+    assert 'credentials: \'same-origin\'' in customer, 'account usage must use the authenticated same-origin cookie'
+    for token in ('routerOnly', 'Latency p50', 'Prompt tokens', 'Output tokens',
+                  'inference_calls = 0'):
+        assert token in admin, f'admin usage/evaluation UI lost contract: {token}'
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix='retailops-account-usage-') as tmp:
         control = IdentityStore(Path(tmp) / 'identity.sqlite3')
@@ -64,6 +77,7 @@ def main():
             global_api = db.execute("SELECT attempts FROM provider_daily_usage WHERE provider_id='api'").fetchone()
         assert global_api and global_api['attempts'] == 3
 
+    ui_contracts()
     print('ACCOUNT_USAGE_QUOTA_OK')
 
 
