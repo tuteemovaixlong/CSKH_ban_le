@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from http.cookies import SimpleCookie
 from pathlib import Path
 
+from retailops.account_usage import AccountQuotaStore
 from retailops.business.application import Application
 from retailops.business.store import BusinessStore
 from retailops.core import require
@@ -80,7 +81,8 @@ class PersistentSessions:
             if key not in self.apps:
                 app = Application(self.business_store(member['tenant_id']), {}, self.infer, self.api_infer,
                                   self.api_daily_limit, role=member['role'])
-                app.quota_store, app.agent_lock = self.control, self.agent_lock
+                app.quota_store = AccountQuotaStore(self.control, member['id'])
+                app.agent_lock = self.agent_lock
                 app.default_provider = 'api' if self.api_infer is not None else 'custom'
                 self.apps[key] = app
                 if len(self.apps) > self.capacity:
