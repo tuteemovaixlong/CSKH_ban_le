@@ -29,7 +29,7 @@ def _record_chat_usage(app, customer, body, result, success):
             return
     try:
         ledger.record_turn(provider, result.get('trace') or {}, success=success)
-    except (TypeError, ValueError):
+    except (ApiError, TypeError, ValueError):
         # Usage telemetry must never turn a valid business/model response into an HTTP failure.
         return
 
