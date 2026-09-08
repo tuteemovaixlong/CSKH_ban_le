@@ -22,7 +22,7 @@ for forbidden in ('print(credential', 'print(customer_credential', 'print(viewer
 
 required_checks = (
     'exact_live_image', 'health', 'public_login_surface', 'session_binding', 'orders',
-    'general_model', 'order_model_tool', 'product_model_tool', 'rag_model_tool',
+    'account_usage', 'general_model', 'order_model_tool', 'product_model_tool', 'rag_model_tool',
     'model_prepares_but_does_not_mutate', 'restart_pending_persistence',
     'confirm_idempotency_and_backend_state', 'viewer_denied_cancel',
 )
