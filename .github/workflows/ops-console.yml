@@ -1,0 +1,65 @@
+name: Ops Console
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ops-console-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  portable:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - name: Regression and rendering contracts (no model)
+        run: |
+          python scripts/check_ops_console.py
+          node opsconsole/tests/test_ui.js
+          python -m opsconsole.cli router --source evals/scenarios/baseline_v1.jsonl --out eval-output --commit ${{ github.sha }}
+      - name: Save measured routing artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: router-${{ matrix.os }}-${{ github.run_id }}
+          path: eval-output/
+          retention-days: 14
+          if-no-files-found: error
+
+  postgres:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.6-pg16-bookworm@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
+        env:
+          POSTGRES_DB: retailops_test
+          POSTGRES_USER: retailops_test
+          POSTGRES_PASSWORD: ci-only-disposable-password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U retailops_test -d retailops_test"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+    env:
+      RETAILOPS_TEST_DATABASE_URL: postgresql://retailops_test:ci-only-disposable-password@127.0.0.1:5432/retailops_test
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Install hashed test dependencies
+        run: python3 -m pip install --only-binary=:all: --require-hashes -r requirements-web.txt -r requirements-postgres.txt -r requirements-graph.txt
+      - name: Read-only PostgreSQL usage integration
+        run: |
+          python3 scripts/prepare_test_pgvector.py
+          python3 scripts/check_ops_console.py
+          python3 -m py_compile deploy/admin-console.py deploy/publish_and_activate.py

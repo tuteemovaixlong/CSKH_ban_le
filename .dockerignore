@@ -29,7 +29,13 @@
 !deploy/compose.public.yaml
 !deploy/Caddyfile
 !deploy/start-public-web.sh
+!requirements-graph.txt
+!opsconsole/
+!opsconsole/**
+!evals/
+!evals/scenarios/
+!evals/scenarios/baseline_v1.jsonl
+!deploy/compose.admin.yaml
+!deploy/admin-console.py
 **/__pycache__/
 **/*.pyc
-
-!requirements-graph.txt

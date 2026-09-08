@@ -96,6 +96,9 @@ docker cp "$container:/app/deploy/live-e2e.py" "$staging/live-e2e.py"
 test -s "$staging/live-e2e.py"
 python3 -m py_compile "$staging/live-e2e.py"
 install -o root -g root -m 0755 "$staging/live-e2e.py" /opt/retailops/live-e2e.py
+docker cp "$container:/app/deploy/admin-console.py" "$staging/admin-console.py"
+python3 -m py_compile "$staging/admin-console.py"
+install -o root -g root -m 0755 "$staging/admin-console.py" /opt/retailops/admin-console.py
 /opt/retailops/rollout-public-web.sh "$image_ref"
 """.strip()
     ssm_run(region, instance, "/bin/bash -lc " + shlex.quote(rollout))
@@ -114,6 +117,19 @@ fi
 """.strip()
     ssm_run(region, instance, "/bin/bash -lc " + shlex.quote(smoke), execution_timeout=300)
     print("Live smoke checked for the activated image")
+
+    # Never enable an admin origin implicitly. An attended first install provisions
+    # the separate credential; subsequent releases refresh the existing console.
+    admin = f"""
+set -euo pipefail
+if [[ -f /opt/retailops/admin.env ]]; then
+  python3 /opt/retailops/admin-console.py install --image {shlex.quote(pinned)} --commit {shlex.quote(sha)}
+  python3 /opt/retailops/live-e2e.py --mode smoke --expected-image {shlex.quote(pinned)}
+else
+  echo ADMIN_CONSOLE_NOT_CONFIGURED
+fi
+""".strip()
+    ssm_run(region, instance, "/bin/bash -lc " + shlex.quote(admin), execution_timeout=600)
 
 
 if __name__ == "__main__":
