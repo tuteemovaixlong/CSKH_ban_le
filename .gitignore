@@ -230,3 +230,10 @@ postgres-secrets/
 /previous.env
 /public.env.bak-*
 /ui-rollback.*.env
+
+# Operator credentials and generated analytics artifacts.
+/admin-secrets/
+/admin-caddy/
+/admin.env
+/console-data/
+/eval-output/
