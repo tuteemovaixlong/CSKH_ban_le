@@ -9,11 +9,18 @@ from retailops.core import ApiError, ROOT, VERSION, require
 from retailops.http.routes import api_result
 from retailops.http.assets import ASSETS
 
+LOCAL_AUTO_CUSTOMER = 'C-001'
+LOOPBACK_BINDS = ('127.0.0.1', 'localhost')
+
+
 class Server(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address, app):
+    def __init__(self, address, app, *, local_auto_login=False):
+        if local_auto_login and address[0] not in LOOPBACK_BINDS:
+            raise ValueError('Local auto-login requires a loopback bind.')
         self.app = app
+        self.local_auto_login = bool(local_auto_login)
         self.slots = threading.BoundedSemaphore(16)
         super().__init__(address, Handler)
 
@@ -87,9 +94,14 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, {"status": "ok", "scope": "synthetic-demo", "version": VERSION, "agent_protocol": PROTOCOL})
         if self.command == "GET" and path in ASSETS:
             name, mime = ASSETS[path]
-            return self.reply(200, (ROOT / "web" / name).read_bytes(), mime)
+            data = (ROOT / "web" / name).read_bytes()
+            if path == "/" and self.server.local_auto_login:
+                # Reuse the frontend's no-Bearer/session bootstrap path. No cookie is
+                # issued locally; identity remains server-owned and loopback-only.
+                data = data.replace(b"<body>", b'<body data-auth="cookie" data-local-auto-login="true">')
+            return self.reply(200, data, mime)
         require(path.startswith("/api/"), 404, "not_found", "Không tìm thấy đường dẫn.")
-        customer = app.authenticate(self.headers.get("Authorization", ""))
+        customer = LOCAL_AUTO_CUSTOMER if self.server.local_auto_login else app.authenticate(self.headers.get("Authorization", ""))
         body = None
         if self.command == "POST":
             require(self.headers.get("Origin") in (None, "http://" + host), 403, "invalid_origin", "Nguồn yêu cầu không hợp lệ.")
@@ -99,5 +111,8 @@ class Handler(BaseHTTPRequestHandler):
             size = int(lengths[0])
             require(0 < size <= 16384, 413, "body_too_large", "Yêu cầu quá lớn hoặc rỗng.")
             body = json.loads(self.rfile.read(size))
+        if self.server.local_auto_login and self.command == "POST" and path == "/api/logout":
+            require(body == {}, 400, "invalid_fields", "Không gửi thêm dữ liệu cho thao tác này.")
+            return self.reply(200, {"logged_out": True, "local_auto_login": True})
         status, result = api_result(app, customer, self.command, path, body, self.headers.get("Idempotency-Key"))
         return self.reply(status, result)
