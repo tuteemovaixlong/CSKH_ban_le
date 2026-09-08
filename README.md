@@ -1,43 +1,65 @@
-## Khung hệ thống — 0.9
+# RetailOps — web hỗ trợ khách hàng bán lẻ trên EC2
 
-[Kiến trúc module, cách chạy và phần khung còn lại](docs/SYSTEM_FOUNDATION.md).
-Lõi nghiệp vụ, xác thực phiên, HTTP và cấu hình đã được tách trong package `retailops/`.
-Entrypoint cũ vẫn tương thích; có thêm `python -m retailops check-config --interface public`
-để kiểm tra cấu hình mà không in secret, tạo database hay gọi model.
-Có thêm [tài khoản cá nhân và dữ liệu theo cửa hàng](docs/PERSISTENT_IDENTITY.md) ở chế độ `persistent-demo`: logout không xóa đơn, quyền `customer`/`viewer`, migration SQLite và công cụ cấp/thu hồi mã.
-Có thêm [backend PostgreSQL và chuyển dữ liệu SQLite](docs/POSTGRESQL.md), dùng chung luật nghiệp vụ và không tự chuyển database đang chạy.
-Có thêm [LangGraph, checkpoint và xác nhận có thể khôi phục](docs/LANGGRAPH.md) trên SQLite/PostgreSQL.
-RAG: [tenant-scoped knowledge search, chat citations and Colab v2 upgrade](docs/RAG_CHAT.md). PostgreSQL/pgvector schema v3 and offline feature-hash baseline; source provenance is validated, not semantic answer quality.
-Mặc định vẫn là `synthetic-demo`; cả hai chế độ chỉ dành cho dữ liệu giả lập.
+**Quy trình sử dụng hiện tại: mở web HTTPS trên EC2. Không cần chạy localhost.**
+VS Code dùng để sửa code và Git; GitHub Actions chạy CI/CD; EC2 chạy web/API/PostgreSQL; Colab chỉ phục vụ model khi chọn Custom. Dự án chỉ dùng dữ liệu giả lập.
 
-## Web HTTPS trên EC2
+## Bắt đầu ở đây
 
-[Xem hướng dẫn triển khai HTTPS](docs/PUBLIC_HTTPS.md). Bản mới phục vụ web bằng Caddy + Waitress, có cookie và bộ đơn riêng cho mỗi khách. API được chọn mặc định khi đã cấu hình; không cần giữ laptop/SSM hoặc Colab khi dùng API. Chứng chỉ và kết nối API thật cần xác nhận trên EC2.
+[Quy trình EC2: mở web, phát triển, test và dọn phần dư](docs/EC2_WEB_WORKFLOW.md).
 
-# RetailOps — hỗ trợ khách hàng bán lẻ
+Địa chỉ được xác minh ngày 2026-09-08: `https://retailops.54-221-116-13.sslip.io`.
+Đây là snapshot, không phải domain cố định: sau stop/start EC2 phải đối chiếu IP và hai biến `RETAILOPS_PUBLIC_HOST` / `RETAILOPS_PUBLIC_ORIGIN` theo runbook.
 
-Baseline Qwen chạy trên Colab; API và giao diện chạy trên CPU/EC2 với dữ liệu giả lập.
+Mở web trong trình duyệt và dùng tài khoản demo đã cấp. Không chạy `python retailops_api.py`, không tạo `RETAILOPS_DEMO_TOKEN` trên Windows và không dùng token local để đăng nhập EC2. Public web vẫn giữ credential/cookie, tenant, customer và quyền truy cập. PR #26 auto-login localhost đã đóng không merge.
 
-- [Bộ chọn model 0.4.1: API hoặc Custom model trong giao diện](docs/MODEL_SELECTOR.md)
-- [Agent 0.4: Qwen hội thoại, công cụ và hướng dẫn nâng cấp Colab/EC2](docs/AGENT_V04.md)
-- [Notebook agent tự chứa](notebooks/colab_agent.ipynb)
-- [Chạy giao diện và API, triển khai EC2, nối Colab](docs/BUSINESS_API.md)
-- [Hội thoại 0.3: ngữ cảnh, danh mục và cách cập nhật EC2](docs/CONVERSATION_V03.md)
-- [Kết quả baseline L4 đầu tiên](docs/BASELINE_L4_2026-09-06.md)
-- [Hướng dẫn baseline](BASELINE_GUIDE.md)
-- [Thiết lập CI/CD](deploy/SETUP.md)
+Luồng nghiệp vụ: tra đơn → chọn lý do hủy → xem lại → xác nhận → lưu trạng thái và nhật ký. Model chỉ hỗ trợ hội thoại và công cụ đọc; backend kiểm tra quyền, chủ sở hữu, trạng thái, phiên bản, thời hạn và idempotency trước giao dịch.
 
-Luồng nghiệp vụ: tra đơn → chọn lý do hủy → xem lại → xác nhận → lưu trạng thái
-và nhật ký. Model chỉ gợi ý luồng; backend kiểm tra chủ sở hữu, trạng thái, phiên
-bản đơn, thời hạn đề xuất và idempotency trước khi thực hiện.
+## Kiến trúc và tài liệu hiện hành
 
-Web có thể chạy HTTPS công khai trên EC2; API riêng vẫn dùng localhost/SSM.
-bạn chọn custom model (Colab/Ollama) hoặc API OpenRouter ngay trong giao diện.
-Mọi câu chat gọi model đã chọn để đọc lịch sử, chọn công cụ đọc dữ liệu và sinh câu trả lời.
-Backend kiểm soát quyền truy cập và mọi giao dịch. Các nút tra/hủy vẫn hoạt động
-khi Colab tắt; chat báo lỗi kết nối. Xem chi tiết model/tool/latency ngay dưới từng
-câu trả lời. Danh mục hiện còn ít dữ liệu, câu trả lời model vẫn cần đánh giá thật.
+| Phần | Tài liệu |
+| --- | --- |
+| Cấu trúc package, cấu hình và ranh giới module | [SYSTEM_FOUNDATION](docs/SYSTEM_FOUNDATION.md) |
+| HTTPS, Caddy và cookie phiên | [PUBLIC_HTTPS](docs/PUBLIC_HTTPS.md) |
+| Tài khoản, membership và thu hồi credential | [PERSISTENT_IDENTITY](docs/PERSISTENT_IDENTITY.md) |
+| PostgreSQL và chuyển dữ liệu SQLite | [POSTGRESQL](docs/POSTGRESQL.md) |
+| LangGraph, checkpoint và xác nhận có thể khôi phục | [LANGGRAPH](docs/LANGGRAPH.md) |
+| RAG, nguồn trích dẫn và protocol Colab v2 | [RAG_CHAT](docs/RAG_CHAT.md) |
+| Chiến lược kiểm thử | [AUTOMATED_TEST_STRATEGY](docs/AUTOMATED_TEST_STRATEGY.md) |
+| Evaluation dataset và scoreboard | [evals](evals/README.md) |
+| Thiết lập CI/CD | [deploy/SETUP](deploy/SETUP.md) |
+
+RAG hiện dùng PostgreSQL/pgvector schema v3 và feature-hash baseline. Kiểm tra provenance của trích dẫn không đồng nghĩa đã chấm semantic faithfulness. Evaluation Runner & Dashboard là bước phát triển tiếp theo, chưa được coi là hoàn thành chỉ nhờ dataset validator hoặc smoke PASS.
+
+## Phát triển và kiểm thử
+
+Sửa code trên nhánh tính năng, bổ sung regression test, tạo PR, đợi CI xanh rồi merge. Workflow deployment trên main build/publish ECR, triển khai qua SSM và kiểm tra live smoke. Không copy source thủ công lên EC2.
+
+CI giữ unit, HTTP, JavaScript, PostgreSQL/pgvector và Docker tests. Các module private/localhost còn trong source vì test và tương thích; chúng không còn là điều kiện để sử dụng web. Không xóa module hay database chỉ vì tên có chữ `api`, `local` hoặc `artifacts`.
+
+**Chạy trên EC2 qua Session Manager, không chạy các lệnh sau trên PowerShell Windows:**
 
 ```bash
-python -m unittest discover -s tests -v
+sudo python3 /opt/retailops/live-e2e.py --mode smoke
 ```
+
+Full test có model call, dữ liệu test riêng và restart web, chỉ chạy trong phiên kiểm thử có chủ đích:
+
+```bash
+sudo python3 /opt/retailops/live-e2e.py --mode full
+```
+
+Các report lưu tại `/opt/retailops/e2e-reports/`. Full runner hiện kiểm tra HTTP qua Caddy, không phải Playwright/browser automation. Kết quả PASS không phải accuracy của model trên toàn bộ evaluation dataset.
+
+## Nguồn model
+
+Trong giao diện chọn Custom model (Colab/Ollama) hoặc API đã được cấu hình. EC2/web và thao tác trực tiếp không cần Colab; chat Custom cần model và endpoint đang hoạt động. Không tự chuyển provider khi một model lỗi. Không đưa token, API key hoặc URL chứa credential vào chat/Git.
+
+[Notebook agent tự chứa](notebooks/colab_agent.ipynb) · [Bộ chọn model](docs/MODEL_SELECTOR.md) · [Hợp đồng agent](docs/AGENT_V04.md).
+
+## Tài liệu lịch sử — không phải hướng dẫn khởi động hằng ngày
+
+Các tài liệu được giữ làm bằng chứng quá trình phát triển, không dùng để quay lại quy trình copy token localhost:
+
+- [Business API 0.2/0.3](docs/BUSINESS_API.md).
+- [Hội thoại 0.3](docs/CONVERSATION_V03.md).
+- [Baseline L4 đầu tiên](docs/BASELINE_L4_2026-09-06.md) và [baseline guide](BASELINE_GUIDE.md).
