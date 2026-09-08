@@ -11,6 +11,9 @@ COPY retailops_public.py /app/
 COPY retailops /app/retailops
 COPY deploy/compose.public.yaml deploy/Caddyfile deploy/start-public-web.sh deploy/rollout-public-web.sh deploy/live-e2e.py /app/deploy/
 COPY deploy/compose.postgres.yaml deploy/init-postgres.sh deploy/configure-postgres.py deploy/cutover-postgres.sh deploy/enable-pgvector.sh /app/deploy/
+COPY opsconsole /app/opsconsole
+COPY evals/scenarios/baseline_v1.jsonl /app/evals/scenarios/baseline_v1.jsonl
+COPY deploy/compose.admin.yaml deploy/admin-console.py /app/deploy/
 COPY tests /app/tests
 COPY data/smoke.jsonl /app/data/smoke.jsonl
 COPY data/products.json /app/data/products.json

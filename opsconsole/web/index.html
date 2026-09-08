@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RetailOps | Admin Console</title>
+<link rel="stylesheet" href="/admin.css"><script src="/admin.js" defer></script>
+</head>
+<body>
+<aside class="rail"><div class="brand">R<span>RetailOps<small>ADMIN CONSOLE</small></span></div>
+<p class="eyebrow">QUAN SÁT HỆ THỐNG</p>
+<nav aria-label="Khu vực quản trị"><button data-tab="evaluation" class="active">Evaluation</button><button data-tab="usage">User Usage</button><button data-tab="operations">Operations</button></nav>
+<div class="rail-note">READ ONLY<br><span>Không chạy model từ dashboard.<br>Dữ liệu giả lập.</span></div>
+</aside>
+<main>
+<header><div><p class="eyebrow">RETAILOPS / OPERATOR WORKSPACE</p><h1>Evaluation &amp; Usage</h1><p class="muted">Kết quả đo được, không phải số minh họa.</p></div><span class="badge">V1 / READ ONLY</span></header>
+<div id="status" role="status">Đang đọc kết quả đã lưu...</div>
+<section id="evaluation" class="view">
+<div class="toolbar"><label for="run">Evaluation run</label><select id="run"></select><button id="refresh">Tải lại</button></div>
+<p id="eval-note" class="notice"></p><div id="eval-cards" class="cards"></div>
+<div class="grid"><article><h2>Tỷ lệ đạt kiểm tra theo nhóm</h2><div id="category-chart"></div></article><article><h2>Router confusion matrix</h2><div id="confusion"></div><p class="muted">Hàng: nhãn đúng. Cột: dự đoán. Unknown được tính là sai.</p></article></div>
+<div class="grid"><article><h2>Latency theo trace (ms)</h2><div id="latency-chart"></div></article><article><h2>Token đã ghi nhận</h2><div id="token-chart"></div></article></div>
+<article><h2>Failure explorer</h2><p class="muted">Chỉ hiển thị case ID, nhãn và check. Không đọc prompt của khách hàng.</p><div id="failures"></div></article>
+<article><h2>Run manifest</h2><pre id="manifest"></pre><p id="limits" class="muted"></p></article>
+</section>
+<section id="usage" class="view" hidden>
+<div class="toolbar"><label for="window">Khoảng thời gian</label><select id="window"><option value="1">24 giờ</option><option value="7" selected>7 ngày</option><option value="30">30 ngày</option></select><label for="traffic">Traffic</label><select id="traffic"><option value="demo_user">Người dùng demo (loại test)</option><option value="test">E2E / evaluation / test</option></select></div>
+<p id="usage-note" class="notice"></p><div id="usage-cards" class="cards"></div>
+<div class="grid"><article><h2>Sự kiện nghiệp vụ</h2><div id="event-chart"></div></article><article><h2>Sự kiện theo ngày UTC</h2><div id="daily-chart"></div></article></div>
+<article><h2>Model / provider usage</h2><div id="models"></div></article>
+<article><h2>Tenant usage / người dùng demo / 30 ngày</h2><div id="tenants"></div><p class="muted">Định danh tenant được pseudonymize; không hiển thị tên, email, token hay nội dung hội thoại.</p></article>
+<article><h2>Phạm vi đo lường</h2><div id="usage-limits"></div></article>
+</section>
+<section id="operations" class="view" hidden><article><h2>Deployment snapshot</h2><pre id="deployment"></pre></article><article><h2>Ranh giới quyền hạn</h2><p>Console chỉ đọc artifact. Không có database credential, model key, Docker socket hoặc endpoint chạy lệnh.</p><p>Đăng nhập quản trị tách biệt với tài khoản khách hàng. Không sử dụng tài khoản Linux root trên web.</p><p>RAG Recall@K và semantic groundedness chưa được đo từ live traffic. DAU, funnel và retry rate chưa có instrumentation đầy đủ.</p></article></section>
+<footer>RetailOps Admin v1 &middot; Synthetic data only &middot; UTC reporting windows</footer>
+</main>
+</body></html>

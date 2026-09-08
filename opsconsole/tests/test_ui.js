@@ -1,0 +1,18 @@
+'use strict';
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const ui = require('../web/admin.js');
+assert.equal(ui.known(null), false);
+assert.equal(ui.known(NaN), false);
+assert.equal(ui.known(0), true);
+assert.equal(ui.fmt(null), 'Chưa đo');
+assert.equal(ui.pct(null), 'Chưa đo');
+assert.equal(ui.pct(0), '0.0%');
+const source = fs.readFileSync(path.join(__dirname, '../web/admin.js'), 'utf8');
+assert(!source.includes('innerHTML'));
+assert(!source.includes('localStorage'));
+assert(!source.includes('Authorization'));
+assert(!source.includes('http://'));
+assert(!source.includes('https://'));
+console.log('OPS_CONSOLE_UI_CONTRACT_OK');
