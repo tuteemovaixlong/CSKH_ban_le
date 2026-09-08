@@ -267,8 +267,37 @@ def login_and_basic_checks(http: HttpClient, tenant: str, credential: str, cooki
 
     status, providers = http.request("/api/providers", cookie=cookie)
     require(status == 200 and isinstance(providers.get("providers"), list), "provider metadata failed")
-    report["checks"].update({"login": True, "session_binding": True, "orders": True, "providers": True})
+
+    status, account_usage = http.request("/api/account/usage", cookie=cookie)
+    require(status == 200 and account_usage.get("schema") == "retailops-account-usage-v1",
+            "account usage metadata failed")
+    quota = account_usage.get("api_quota") or {}
+    require(type(quota.get("limit")) is int and type(quota.get("used")) is int
+            and type(quota.get("remaining")) is int, "account quota counters are invalid")
+    require(quota["limit"] >= 1 and 0 <= quota["used"] <= quota["limit"]
+            and quota["remaining"] == quota["limit"] - quota["used"], "account quota arithmetic is invalid")
+    usage_text = json.dumps(account_usage, ensure_ascii=False, sort_keys=True)
+    require(tenant not in usage_text and session.get("customer_id") not in usage_text,
+            "account usage response exposed tenant/customer identifiers")
+
+    report["checks"].update({
+        "login": True,
+        "session_binding": True,
+        "orders": True,
+        "providers": True,
+        "account_usage": True,
+    })
     report["session"] = {"tenant_id": tenant, "customer_id": session.get("customer_id"), "role": session.get("role")}
+    report["account_usage"] = {
+        "schema": account_usage.get("schema"),
+        "day_utc": account_usage.get("day_utc"),
+        "api_quota": {
+            "limit": quota.get("limit"),
+            "used": quota.get("used"),
+            "remaining": quota.get("remaining"),
+        },
+        "totals": account_usage.get("totals"),
+    }
     return pending, providers
 
 
