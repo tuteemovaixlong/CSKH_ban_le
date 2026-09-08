@@ -57,7 +57,8 @@ jobs:
         with:
           persist-credentials: false
       - name: Install hashed test dependencies
-        run: python3 -m pip install --only-binary=:all: --require-hashes -r requirements-web.txt -r requirements-postgres.txt -r requirements-graph.txt
+        run: |
+          python3 -m pip install --only-binary=:all: --require-hashes -r requirements-web.txt -r requirements-postgres.txt -r requirements-graph.txt
       - name: Read-only PostgreSQL usage integration
         run: |
           python3 scripts/prepare_test_pgvector.py
