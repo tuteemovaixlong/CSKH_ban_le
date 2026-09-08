@@ -129,19 +129,23 @@
     return item;
   };
 
-  const button = make('button', 'AI usage', 'workspace-toggle usage-account-toggle');
+  const button = make('button', undefined, 'workspace-toggle usage-account-toggle');
   button.type = 'button';
   button.id = 'account-usage-button';
   button.dataset.layoutControl = 'true';
   button.hidden = true;
   button.setAttribute('aria-haspopup', 'dialog');
+  button.setAttribute('aria-label', 'Xem hạn mức và sử dụng AI');
+  const usageLabel = make('span', 'AI usage');
+  button.append(usageLabel);
   topbar.prepend(button);
 
   const dialog = document.createElement('dialog');
   dialog.id = 'account-usage-dialog';
   dialog.setAttribute('aria-labelledby', 'account-usage-title');
   const inner = make('div', undefined, 'dialog-inner');
-  inner.append(make('span', 'AI USAGE · HÔM NAY UTC', 'small-tag'), make('h2', 'Hạn mức & sử dụng', ''));
+  const title = make('h2', 'Hạn mức & sử dụng', ''); title.id = 'account-usage-title';
+  inner.append(make('span', 'AI USAGE · HÔM NAY UTC', 'small-tag'), title);
   const summary = make('p', 'Đang tải số liệu tài khoản...', 'dialog-note');
   const details = make('div', undefined, 'account-usage-details');
   const scope = make('p', '', 'dialog-note');
@@ -164,7 +168,7 @@
     const quota = data.api_quota;
     const totals = data.totals;
     button.hidden = false;
-    button.textContent = data.api_configured ? 'AI usage · còn ' + quota.remaining + '/' + quota.limit : 'AI usage';
+    usageLabel.textContent = data.api_configured ? 'AI usage · còn ' + quota.remaining + '/' + quota.limit : 'AI usage';
     summary.textContent = data.api_configured
       ? 'API quota được tính riêng cho tài khoản này. Lượt lỗi hoặc timeout sau khi đã reserve có thể vẫn tiêu quota.'
       : 'API hiện chưa được cấu hình; custom model vẫn ghi nhận token và latency khi trace có dữ liệu.';
