@@ -67,6 +67,18 @@ IDENTITY_DDL = [
 ]
 
 
+CACHE_DDL = [
+    '''CREATE TABLE IF NOT EXISTS semantic_cache (
+        id TEXT PRIMARY KEY, query_text TEXT NOT NULL, query_hash TEXT NOT NULL,
+        embedding retailops_extensions.vector(384) NOT NULL, response_json TEXT NOT NULL,
+        hit_count INTEGER NOT NULL DEFAULT 0, created_at DOUBLE PRECISION NOT NULL,
+        expires_at DOUBLE PRECISION NOT NULL)''',
+    'CREATE INDEX IF NOT EXISTS idx_semantic_cache_hash ON semantic_cache(query_hash)',
+    '''CREATE INDEX IF NOT EXISTS idx_semantic_cache_embedding ON semantic_cache
+        USING hnsw (embedding retailops_extensions.vector_cosine_ops)''',
+]
+
+
 def vector_extension(db):
     row = db.raw.execute("""SELECT n.nspname AS schema,e.extversion AS version FROM pg_extension e
         JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='vector'""").fetchone()
@@ -78,6 +90,12 @@ def vector_extension(db):
 def initialize_knowledge(db):
     vector_extension(db)
     for statement in KNOWLEDGE_DDL:
+        db.raw.execute(statement)
+
+
+def initialize_cache(db):
+    vector_extension(db)
+    for statement in CACHE_DDL:
         db.raw.execute(statement)
 
 

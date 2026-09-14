@@ -21,7 +21,9 @@ def candidate(content='Return policy: unused products may be returned within 7 d
 class RagContractTests(unittest.TestCase):
     def setUp(self):
         self.tool = KnowledgeTool(SimpleNamespace(schema='server-bound-tenant'))
-        self.repo = self.enterContext(patch('retailops.knowledge.tool.KnowledgeRepository'))
+        patcher = patch('retailops.knowledge.tool.KnowledgeRepository')
+        self.repo = patcher.start()
+        self.addCleanup(patcher.stop)
         self.repo.return_value.search.return_value = [candidate()]
 
     def test_protocol_is_versioned_and_tool_never_accepts_scope_or_sql(self):

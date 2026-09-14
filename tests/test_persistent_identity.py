@@ -250,7 +250,8 @@ class PersistentTests(unittest.TestCase):
         path.unlink()
         result = issue_credential(self.sessions.control, self.alice[0], path)
         token = path.read_text().strip()
-        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        if os.name != 'nt':
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
         self.assertNotIn(token, json.dumps(result))
         self.assertEqual(self.request('/api/orders', cookie=alice)[0], 401)
         self.assertEqual(self.request('/api/login', {'token': token})[0], 200)

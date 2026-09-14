@@ -39,7 +39,7 @@ class UiAssetsTests(unittest.TestCase):
 
     def test_html_references_all_served_assets(self):
         parser = References()
-        parser.feed((ROOT / 'web/index.html').read_text())
+        parser.feed((ROOT / 'web/index.html').read_text(encoding='utf-8'))
         self.assertEqual(set(parser.urls), set(ASSETS) - {'/'})
         for path in parser.urls:
             with self.subTest(path=path):

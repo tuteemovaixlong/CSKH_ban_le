@@ -4,6 +4,7 @@ import json
 from contextlib import ExitStack
 import re
 import threading
+import uuid
 from retailops.core import ApiError, REASONS, STATUSES, fields, require
 from retailops.identity.bearer import authenticate_bearer
 from retailops.business.permissions import CANCEL, ROLE_PERMISSIONS
@@ -13,6 +14,7 @@ from retailops.knowledge.citations import CitationError, cited_sources
 from retailops.knowledge.embedding import MODEL_ID as KNOWLEDGE_EMBEDDING_MODEL
 from retailops_providers import API_MODEL
 from retailops_conversation import Catalog, describe_order
+from retailops.business.cache import SemanticCache, ToolCache, is_cacheable_query
 
 class Application:
     def __init__(self, store, tokens, infer=None, api_infer=None, api_daily_limit=20, *, role='customer'):
@@ -28,6 +30,8 @@ class Application:
         self.default_provider = 'custom'
         self.catalog = Catalog()
         self.agent_lock = threading.Lock()
+        self.semantic_cache = SemanticCache(min_similarity=0.65)
+        self.tool_cache = ToolCache(default_ttl=180.0)
 
     def providers(self):
         custom_model = getattr(getattr(self.infer, 'config', None), 'model', 'qwen3.5:4b')
@@ -76,11 +80,46 @@ class Application:
         require(isinstance(request_id, str) and re.fullmatch(r'[A-Za-z0-9_-]{16,128}', request_id),
                 400, 'invalid_request_id', 'Thiếu mã yêu cầu hội thoại.')
         snapshot = self.store.conversation(customer, body['conversation_id'])
+        provider_id = snapshot['provider_id']
         digest = hashlib.sha256(text.encode()).hexdigest()
         replay = self.store.replay(customer, snapshot['id'], request_id, digest)
         if replay:
             return replay
-        provider_id = snapshot['provider_id']
+
+        # Tier 1: Check Semantic / Exact Cache (for custom production model or when cache_api enabled)
+        cached = self.semantic_cache.lookup(text) if (provider_id != 'api' or getattr(self, 'cache_api', False)) else None
+        if cached:
+            cache_trace = {
+                'turn_id': str(uuid.uuid4()),
+                'protocol': 'cache-hit-v1',
+                'model': f"cache:{cached['type']}",
+                'provider': 'cache',
+                'latency_ms': 5.0,
+                'cache_hit': cached['type'],
+                'similarity': cached['similarity'],
+                'matched_query': cached.get('matched_query'),
+                'model_calls': 0,
+                'prompt_tokens': 0,
+                'generated_tokens': 0,
+                'reported_cost_usd': 0.0,
+                'tools': [],
+                'steps': []
+            }
+            cached_result = {
+                'action': cached['action'],
+                'message': cached['answer'],
+                'source': 'semantic_cache',
+                'model_used': False,
+                'context': {'order_id': snapshot.get('order_id'), 'product_id': snapshot.get('product_id')},
+                'trace': cache_trace,
+                'provider_id': snapshot['provider_id'],
+                'replayed': False
+            }
+            user_msg = {'role': 'user', 'content': text}
+            assistant_msg = {'role': 'assistant', 'content': cached['answer']}
+            self.store.finish_turn(customer, snapshot, request_id, digest, [user_msg, assistant_msg], cached_result, {})
+            return cached_result
+
         gateway = self.infer if provider_id == 'custom' else self.api_infer if provider_id == 'api' else None
         require(gateway is not None, 503, 'model_offline',
                 'Model chưa kết nối. Bạn vẫn có thể dùng các nút tra đơn và yêu cầu hủy.')
@@ -117,13 +156,21 @@ class Application:
                                can_cancel=CANCEL in self.permissions)
 
             def execute(name, arguments):
+                cached_res = self.tool_cache.get(customer, name, arguments)
+                if cached_res is not None:
+                    return cached_res
                 try:
-                    return bound(name, arguments)
+                    res = bound(name, arguments)
                 except ApiError as exc:
                     if name in ('get_order', 'prepare_cancellation'):
                         bound.context = {'order_id': None, 'product_id': None}
                         bound.cancel_order = None
                     return {'error': exc.code, 'message': exc.message}
+                if name in ('cancel_order', 'confirm_cancellation', 'update_shipping_address'):
+                    self.tool_cache.invalidate(customer)
+                else:
+                    self.tool_cache.set(customer, name, arguments, res)
+                return res
 
             def capture():
                 return {'context': dict(bound.context), 'versions': dict(bound.versions), 'cancel_order': bound.cancel_order,
@@ -144,7 +191,7 @@ class Application:
             try:
                 result['sources'] = cited_sources(answer['message'], bound.knowledge.sources)
             except CitationError as exc:
-                raise AgentError(exc.code, 'Ngu\u1ed3n tr\u00edch d\u1eabn ch\u01b0a h\u1ee3p l\u1ec7. H\u00e3y g\u1eedi l\u1ea1i c\u00e2u h\u1ecfi.', answer['trace']) from None
+                raise AgentError(exc.code, 'Nguồn trích dẫn chưa hợp lệ. Hãy gửi lại câu hỏi.', answer['trace']) from None
             if bound.knowledge.searches:
                 result['trace']['knowledge'] = {'searches': bound.knowledge.searches,
                     'retrieved_sources': len(bound.knowledge.sources), 'cited_sources': len(result['sources']),
@@ -152,6 +199,10 @@ class Application:
             if bound.cancel_order:
                 result['order'] = bound.cancel_order
             self.store.finish_turn(customer, snapshot, request_id, digest, answer['messages'], result, bound.versions)
+            if (is_cacheable_query(text) and not bound.cancel_order
+                    and not bound.context.get('order_id') and result.get('action') == 'reply'
+                    and (provider_id != 'api' or getattr(self, 'cache_api', False))):
+                self.semantic_cache.store(text, answer['message'], action=result['action'])
             return result
         except AgentError as exc:
             self.store.event(customer, 'agent_failed', code=exc.code, trace=exc.trace)

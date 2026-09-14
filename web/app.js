@@ -220,9 +220,20 @@ function showSources(row, sources) {
 function showTrace(row, trace, replayed = false) {
   if (!trace) return;
   const details = el('details', 'agent-trace');
-  details.append(el('summary', '', 'Công cụ & thời gian' + (replayed ? ' · Kết quả đã lưu' : '')));
-  const names = trace.tools.map(t => t.name + (t.status === 'error' ? ' (bị từ chối / lỗi)' : ''));
-  details.append(el('p', '', trace.model + ' · ' + trace.model_calls + ' lượt gọi model' +
+  let summaryTitle = 'Công cụ & thời gian' + (replayed ? ' · Kết quả đã lưu' : '');
+  if (trace.cache_hit) {
+    summaryTitle = '⚡ Cache Hit (0ms / $0) · ' + summaryTitle;
+  }
+  details.append(el('summary', '', summaryTitle));
+  if (trace.cache_hit) {
+    const hitLabel = trace.cache_hit === 'exact' ? 'Exact Match (Khớp 100%)' : `Semantic Match (Tương đồng ${(trace.similarity * 100).toFixed(1)}%)`;
+    details.append(el('p', '', `⚡ Bộ nhớ đệm (Cache Hit): ${hitLabel} · Tiết kiệm $0.00 · Phản hồi tức thì`));
+    if (trace.matched_query) {
+      details.append(el('small', '', `Khớp với câu hỏi gốc: "${trace.matched_query}"`));
+    }
+  }
+  const names = (trace.tools || []).map(t => t.name + (t.status === 'error' ? ' (bị từ chối / lỗi)' : ''));
+  details.append(el('p', '', (trace.model || 'model') + ' · ' + (trace.model_calls || 0) + ' lượt gọi model' +
     (trace.latency_ms !== undefined ? ' · ' + (trace.latency_ms / 1000).toFixed(2) + ' giây' : '')),
     el('p', '', 'Công cụ: ' + (names.join(' → ') || 'Không dùng công cụ ở lượt này')),
     el('small', '', 'Mã lượt: ' + trace.turn_id + (trace.model_digest ? ' · Digest: ' + trace.model_digest : ' · API không cung cấp digest trọng số')));
