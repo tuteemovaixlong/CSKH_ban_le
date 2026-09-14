@@ -91,6 +91,22 @@ class ApiAdapterTests(unittest.TestCase):
         self.assertEqual(body['provider'], {'only': ['meta'], 'allow_fallbacks': False})
         self.assertNotIn('models', body)
 
+    def test_general_mode_uses_general_system_and_passes_reasoning(self):
+        adapter = OpenRouterAgent(KEY, 'google/gemma-4-26b-a4b-it:free')
+        resp = api_response('Gemma answer')
+        resp['model'] = 'google/gemma-4-26b-a4b-it:free'
+        resp['choices'][0]['message']['reasoning'] = 'Gemma thought process'
+        with patch.object(adapter, 'request', return_value=resp) as request:
+            result = adapter.chat([{'role': 'user', 'content': 'giải thích thuật toán SAC'}], True, 1)
+        body = request.call_args.args[0]
+        from agent_protocol import GENERAL_SYSTEM
+        self.assertEqual(body['messages'][0], {'role': 'system', 'content': GENERAL_SYSTEM})
+        self.assertEqual(body['tools'], [])
+        self.assertEqual(body['tool_choice'], 'none')
+        self.assertEqual(body['provider'], {'allow_fallbacks': False})
+        self.assertNotIn('reasoning', body)
+        self.assertEqual(result['reasoning'], 'Gemma thought process')
+
     def test_api_disabled_by_default_and_models_allowlisted(self):
         with patch.dict(os.environ, {'OPENROUTER_API_KEY': KEY}, clear=True):
             self.assertIsNone(api_from_environment())

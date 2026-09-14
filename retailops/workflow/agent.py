@@ -48,6 +48,8 @@ def run(gateway, text, history, execute, identity, timeout=110, *, saver=None,
             if trace['reported_cost_usd'] is not None:
                 cost = response.get('reported_cost_usd')
                 trace['reported_cost_usd'] = round(trace['reported_cost_usd']+cost, 8) if cost is not None else None
+            if response.get('reasoning'):
+                trace['reasoning'] = response['reasoning']
             trace['steps'].append({k: response.get(k) for k in ('load_duration', 'prompt_eval_duration', 'eval_duration')})
             message = assistant_message(response)
         except AgentError as exc:

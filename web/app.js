@@ -230,6 +230,9 @@ function showTrace(row, trace, replayed = false) {
   if (trace.reported_cost_usd !== null && trace.reported_cost_usd !== undefined) {
     details.append(el('small', '', 'Chi phí lượt này do API báo: $' + trace.reported_cost_usd.toFixed(6)));
   }
+  if (trace.reasoning) {
+    details.append(el('p', '', '💭 Suy luận (Reasoning): ' + trace.reasoning));
+  }
   row.append(details);
 }
 

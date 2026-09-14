@@ -11,12 +11,20 @@ import re
 import urllib.error
 import urllib.request
 
-from agent_protocol import PROTOCOL, SYSTEM, TOOLS, ProtocolError, assistant_message, validate_messages
+from agent_protocol import GENERAL_SYSTEM, PROTOCOL, SYSTEM, TOOLS, ProtocolError, assistant_message, request_mode, validate_messages
 from retailops_agent import AgentError
 from retailops_baseline import NoRedirects
 
 API_MODEL = 'meta/muse-spark-1.3-contributor'
-API_MODELS = {API_MODEL, 'meta/muse-spark-1.2-contributor'}
+API_MODELS = {
+    API_MODEL,
+    'meta/muse-spark-1.2-contributor',
+    'google/gemma-4-26b-a4b-it:free',
+    'google/gemma-4-26b-a4b-it',
+    'google/gemma-4-31b-it:free',
+    'google/gemma-2-9b-it:free',
+}
+
 
 
 class OpenRouterAgent:
@@ -94,11 +102,19 @@ class OpenRouterAgent:
             raise AgentError('api_unavailable', 'Không nhận được phản hồi API hợp lệ. Bạn có thể thử lại sau.') from None
 
     def chat(self, messages, allow_tools, timeout):
-        payload = {'model': self.model, 'messages': [{'role': 'system', 'content': SYSTEM}] + self.translate(messages),
-                   'tools': TOOLS, 'tool_choice': 'auto' if allow_tools else 'none', 'stream': False,
+        mode = request_mode(messages)
+        system_prompt = GENERAL_SYSTEM if mode == 'general' else SYSTEM
+        tools = [] if mode == 'general' else TOOLS
+        tool_choice = 'none' if mode == 'general' or not allow_tools else 'auto'
+        provider_options = {'allow_fallbacks': False}
+        if self.model.startswith('meta/'):
+            provider_options['only'] = ['meta']
+        payload = {'model': self.model, 'messages': [{'role': 'system', 'content': system_prompt}] + self.translate(messages),
+                   'tools': tools, 'tool_choice': tool_choice, 'stream': False,
                    'max_tokens': 2048, 'temperature': 0.2,
-                   'reasoning': {'effort': 'minimal'},
-                   'provider': {'only': ['meta'], 'allow_fallbacks': False}}
+                   'provider': provider_options}
+        if self.model.startswith('meta/'):
+            payload['reasoning'] = {'effort': 'minimal'}
         result = self.request(payload, timeout)
         if result.get('error'):
             raise AgentError('api_unavailable', 'API báo lỗi xử lý. Không tự chuyển model hoặc gửi lại yêu cầu.')
@@ -142,7 +158,7 @@ class OpenRouterAgent:
             raise ProtocolError('Invalid API cost')
         return {'message': clean, 'done_reason': 'stop', 'model': self.model,
                 'prompt_eval_count': usage['prompt_tokens'], 'eval_count': usage['completion_tokens'],
-                'reported_cost_usd': cost}
+                'reported_cost_usd': cost, 'reasoning': raw.get('reasoning')}
 
 
 def api_from_environment():
