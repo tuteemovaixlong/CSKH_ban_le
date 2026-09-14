@@ -123,8 +123,16 @@ class Settings:
             allowed_host=env.get('RETAILOPS_ALLOWED_HOST', ''),
             inference_token=env.get('RETAILOPS_INFERENCE_TOKEN', ''),
             api_enabled=flag(env, 'RETAILOPS_API_ENABLED'),
-            api_key=env.get('GEMINI_API_KEY') or env.get('OPENROUTER_API_KEY', ''),
-            api_model=env.get('RETAILOPS_API_MODEL', 'gemini-2.5-flash' if env.get('GEMINI_API_KEY') else 'meta/muse-spark-1.3-contributor'),
+            api_key=(
+                env.get('ANTHROPIC_API_KEY')
+                or env.get('GEMINI_API_KEY')
+                or env.get('OPENROUTER_API_KEY', '')
+            ),
+            api_model=env.get(
+                'RETAILOPS_API_MODEL',
+                'claude-3-5-haiku-20241022' if env.get('ANTHROPIC_API_KEY')
+                else ('gemini-2.5-flash' if env.get('GEMINI_API_KEY') else 'meta/muse-spark-1.3-contributor')
+            ),
             api_daily_turn_limit=integer(env, 'RETAILOPS_API_DAILY_TURN_LIMIT', 20, 1, 10000),
             storage_backend=backend, database_url=database_url,
         )

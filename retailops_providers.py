@@ -15,6 +15,7 @@ from agent_protocol import GENERAL_SYSTEM, PROTOCOL, SYSTEM, TOOLS, ProtocolErro
 from retailops_agent import AgentError
 from retailops_baseline import NoRedirects
 
+ANTHROPIC_ENDPOINT = 'https://api.anthropic.com/v1/messages'
 GOOGLE_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'
 OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions'
 
@@ -32,6 +33,18 @@ API_MODELS = {
     'gemini-2.0-flash-lite',
     'gemini-1.5-flash',
     'gemini-1.5-pro',
+    'gemini-3.6-flash',
+    'gemini-3.5-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-flash-latest',
+    'gemini-flash-lite-latest',
+    'anthropic/claude-3.5-haiku',
+    'anthropic/claude-3.5-sonnet',
+    'anthropic/claude-3-haiku',
+    'anthropic/claude-3-sonnet',
+    'claude-3-5-haiku-20241022',
+    'claude-3-5-sonnet-20241022',
+    'claude-3-haiku-20240307',
 }
 
 
@@ -44,13 +57,23 @@ class OpenRouterAgent:
         if model not in API_MODELS:
             raise ValueError('API model must be an approved model')
         self.key, self.model = key, model
-        self.is_google = (
+        self.is_anthropic = (
+            key.startswith('sk-ant-')
+            or model.startswith('claude-')
+            or os.getenv('RETAILOPS_API_PROVIDER', '').lower() == 'anthropic'
+        )
+        self.is_google = not self.is_anthropic and (
             model.startswith('gemini-')
             or key.startswith('AIza')
             or key.startswith('AQ.')
             or os.getenv('RETAILOPS_API_PROVIDER', '').lower() == 'google'
         )
-        self.endpoint = GOOGLE_ENDPOINT if self.is_google else OPENROUTER_ENDPOINT
+        if self.is_anthropic:
+            self.endpoint = ANTHROPIC_ENDPOINT
+        elif self.is_google:
+            self.endpoint = GOOGLE_ENDPOINT
+        else:
+            self.endpoint = OPENROUTER_ENDPOINT
         self.ENDPOINT = self.endpoint
         self._messages = {}
         self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirects())
@@ -59,7 +82,12 @@ class OpenRouterAgent:
         return type(self)(self.key, self.model)
 
     def inspect(self):
-        provider_name = 'google' if self.is_google else 'openrouter'
+        if self.is_anthropic:
+            provider_name = 'anthropic'
+        elif self.is_google:
+            provider_name = 'google'
+        else:
+            provider_name = 'openrouter'
         return {'name': self.model, 'digest': None, 'provider': provider_name,
                 'identity_source': 'configured_api_model', 'agent_protocol': PROTOCOL}
 
@@ -93,9 +121,14 @@ class OpenRouterAgent:
         return translated
 
     def request(self, payload, timeout):
-        headers = {'Authorization': 'Bearer ' + self.key, 'Content-Type': 'application/json'}
-        if self.is_google:
-            headers['x-goog-api-key'] = self.key
+        headers = {'Content-Type': 'application/json'}
+        if self.is_anthropic:
+            headers['x-api-key'] = self.key
+            headers['anthropic-version'] = '2023-06-01'
+        else:
+            headers['Authorization'] = 'Bearer ' + self.key
+            if self.is_google:
+                headers['x-goog-api-key'] = self.key
         request = urllib.request.Request(self.endpoint, method='POST',
             headers=headers,
             data=json.dumps(payload, ensure_ascii=False, allow_nan=False).encode())
@@ -121,7 +154,96 @@ class OpenRouterAgent:
             # Strip URLs, upstream bodies and credentials from exceptions.
             raise AgentError('api_unavailable', 'Không nhận được phản hồi API hợp lệ. Bạn có thể thử lại sau.') from None
 
+    def _chat_anthropic(self, messages, allow_tools, timeout):
+        validate_messages(messages)
+        mode = request_mode(messages)
+        system_prompt = GENERAL_SYSTEM if mode == 'general' else SYSTEM
+        anthropic_tools = []
+        if mode != 'general' and allow_tools:
+            for t in TOOLS:
+                fn = t['function']
+                anthropic_tools.append({
+                    'name': fn['name'],
+                    'description': fn['description'],
+                    'input_schema': fn['parameters']
+                })
+
+        anthropic_messages = []
+        i = 0
+        while i < len(messages):
+            m = messages[i]
+            if m['role'] == 'user':
+                anthropic_messages.append({'role': 'user', 'content': m['content']})
+                i += 1
+            elif m['role'] == 'assistant':
+                saved = self._messages.get(i)
+                text = m.get('content') or ''
+                content = []
+                if text:
+                    content.append({'type': 'text', 'text': text})
+                tool_calls = m.get('tool_calls') or (saved.get('tool_calls') if saved else None) or []
+                for call in tool_calls:
+                    fn = call['function']
+                    args = json.loads(fn['arguments']) if isinstance(fn['arguments'], str) else fn['arguments']
+                    content.append({'type': 'tool_use', 'id': call['id'], 'name': fn['name'], 'input': args})
+                anthropic_messages.append({'role': 'assistant', 'content': content or ''})
+                i += 1
+            elif m['role'] == 'tool':
+                tool_results = []
+                while i < len(messages) and messages[i]['role'] == 'tool':
+                    tm = messages[i]
+                    cid = tm.get('tool_call_id') or f'toolu_{i}'
+                    tool_results.append({'type': 'tool_result', 'tool_use_id': cid, 'content': tm['content']})
+                    i += 1
+                anthropic_messages.append({'role': 'user', 'content': tool_results})
+
+        payload = {
+            'model': self.model,
+            'max_tokens': 2048,
+            'temperature': 0.2,
+            'system': system_prompt,
+            'messages': anthropic_messages,
+        }
+        if anthropic_tools:
+            payload['tools'] = anthropic_tools
+
+        result = self.request(payload, timeout)
+        if result.get('error'):
+            raise AgentError('api_unavailable', 'API báo lỗi xử lý. Không tự chuyển model hoặc gửi lại yêu cầu.')
+
+        content_blocks = result.get('content') or []
+        text_parts = []
+        raw_tool_calls = []
+        for block in content_blocks:
+            if block.get('type') == 'text':
+                text_parts.append(block.get('text', ''))
+            elif block.get('type') == 'tool_use':
+                raw_tool_calls.append({
+                    'id': block['id'],
+                    'type': 'function',
+                    'function': {
+                        'name': block['name'],
+                        'arguments': json.dumps(block.get('input', {}), ensure_ascii=False)
+                    }
+                })
+
+        entry = {'role': 'assistant', 'content': ''.join(text_parts)}
+        if raw_tool_calls:
+            entry['tool_calls'] = raw_tool_calls
+            self._messages[len(messages)] = entry
+
+        clean = assistant_message({'message': entry})
+        usage = result.get('usage') or {}
+        prompt_tokens = usage.get('input_tokens', 0)
+        completion_tokens = usage.get('output_tokens', 0)
+
+        return {'message': clean, 'done_reason': 'stop', 'model': self.model,
+                'prompt_eval_count': prompt_tokens, 'eval_count': completion_tokens,
+                'reported_cost_usd': None, 'reasoning': None}
+
     def chat(self, messages, allow_tools, timeout):
+        if self.is_anthropic:
+            return self._chat_anthropic(messages, allow_tools, timeout)
         mode = request_mode(messages)
         system_prompt = GENERAL_SYSTEM if mode == 'general' else SYSTEM
         tools = [] if mode == 'general' else TOOLS
@@ -192,6 +314,15 @@ class OpenRouterAgent:
 def api_from_environment():
     if os.getenv('RETAILOPS_API_ENABLED', 'false').lower() != 'true':
         return None
-    key = os.getenv('GEMINI_API_KEY') or os.getenv('OPENROUTER_API_KEY', '')
-    default_model = 'gemini-2.5-flash' if os.getenv('GEMINI_API_KEY') else API_MODEL
+    key = (
+        os.getenv('ANTHROPIC_API_KEY')
+        or os.getenv('GEMINI_API_KEY')
+        or os.getenv('OPENROUTER_API_KEY', '')
+    )
+    if os.getenv('ANTHROPIC_API_KEY'):
+        default_model = 'claude-3-5-haiku-20241022'
+    elif os.getenv('GEMINI_API_KEY'):
+        default_model = 'gemini-2.5-flash'
+    else:
+        default_model = API_MODEL
     return OpenRouterAgent(key, os.getenv('RETAILOPS_API_MODEL', default_model))

@@ -127,6 +127,37 @@ class ApiAdapterTests(unittest.TestCase):
         adapter_aq = OpenRouterAgent(aq_key, 'gemini-2.5-flash')
         self.assertTrue(adapter_aq.is_google)
 
+    def test_anthropic_claude_adapter_and_environment(self):
+        from retailops_providers import ANTHROPIC_ENDPOINT
+        ant_key = 'sk-ant-api03-' + 'x'*80
+        adapter = OpenRouterAgent(ant_key, 'claude-3-5-haiku-20241022')
+        self.assertTrue(adapter.is_anthropic)
+        self.assertFalse(adapter.is_google)
+        self.assertEqual(adapter.endpoint, ANTHROPIC_ENDPOINT)
+        self.assertEqual(adapter.inspect()['provider'], 'anthropic')
+
+        fake_resp = {
+            'id': 'msg_123',
+            'type': 'message',
+            'role': 'assistant',
+            'content': [{'type': 'text', 'text': 'Claude answer'}],
+            'stop_reason': 'end_turn',
+            'usage': {'input_tokens': 50, 'output_tokens': 20}
+        }
+        with patch.object(adapter, 'request', return_value=fake_resp) as mock_req:
+            res = adapter.chat([{'role': 'user', 'content': 'giải thích thuật toán SAC'}], True, 1)
+        payload = mock_req.call_args.args[0]
+        self.assertEqual(payload['model'], 'claude-3-5-haiku-20241022')
+        self.assertEqual(payload['messages'][0], {'role': 'user', 'content': 'giải thích thuật toán SAC'})
+        self.assertEqual(res['message']['content'], 'Claude answer')
+        self.assertEqual(res['prompt_eval_count'], 50)
+
+        with patch.dict(os.environ, {'RETAILOPS_API_ENABLED': 'true', 'ANTHROPIC_API_KEY': ant_key}, clear=True):
+            agent = api_from_environment()
+            self.assertIsNotNone(agent)
+            self.assertTrue(agent.is_anthropic)
+            self.assertEqual(agent.model, 'claude-3-5-haiku-20241022')
+
     def test_gemini_api_key_from_environment(self):
         with patch.dict(os.environ, {'RETAILOPS_API_ENABLED': 'true', 'GEMINI_API_KEY': KEY}, clear=True):
             agent = api_from_environment()
