@@ -123,6 +123,10 @@ class ApiAdapterTests(unittest.TestCase):
         self.assertNotIn('tools', body)
         self.assertEqual(result['message']['content'], 'Gemini answer')
 
+        aq_key = 'AQ.Ab8RN6L8-cZoyW4_' + 'a'*25
+        adapter_aq = OpenRouterAgent(aq_key, 'gemini-2.5-flash')
+        self.assertTrue(adapter_aq.is_google)
+
     def test_gemini_api_key_from_environment(self):
         with patch.dict(os.environ, {'RETAILOPS_API_ENABLED': 'true', 'GEMINI_API_KEY': KEY}, clear=True):
             agent = api_from_environment()

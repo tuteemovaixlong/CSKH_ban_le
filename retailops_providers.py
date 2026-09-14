@@ -39,7 +39,7 @@ class OpenRouterAgent:
     ENDPOINT = OPENROUTER_ENDPOINT
 
     def __init__(self, key, model=API_MODEL):
-        if not isinstance(key, str) or not re.fullmatch(r'[A-Za-z0-9_-]{32,256}', key):
+        if not isinstance(key, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{32,256}', key):
             raise ValueError('Set a valid API key on the server')
         if model not in API_MODELS:
             raise ValueError('API model must be an approved model')
@@ -47,6 +47,7 @@ class OpenRouterAgent:
         self.is_google = (
             model.startswith('gemini-')
             or key.startswith('AIza')
+            or key.startswith('AQ.')
             or os.getenv('RETAILOPS_API_PROVIDER', '').lower() == 'google'
         )
         self.endpoint = GOOGLE_ENDPOINT if self.is_google else OPENROUTER_ENDPOINT
@@ -92,8 +93,11 @@ class OpenRouterAgent:
         return translated
 
     def request(self, payload, timeout):
+        headers = {'Authorization': 'Bearer ' + self.key, 'Content-Type': 'application/json'}
+        if self.is_google:
+            headers['x-goog-api-key'] = self.key
         request = urllib.request.Request(self.endpoint, method='POST',
-            headers={'Authorization': 'Bearer ' + self.key, 'Content-Type': 'application/json'},
+            headers=headers,
             data=json.dumps(payload, ensure_ascii=False, allow_nan=False).encode())
         try:
             with self._opener.open(request, timeout=timeout) as response:
