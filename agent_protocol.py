@@ -102,6 +102,12 @@ TOOLS = [
     tool('get_current_time', 'Get current date/time in Vietnam, UTC+07:00.'),
     tool('search_knowledge', 'READ ONLY: retrieve tenant-local store policies/FAQ. Cite exact returned citation_id as [KB:...]. Never use for general knowledge and never changes orders.',
          {'query': {'type': 'string', 'maxLength': 200}}),
+    tool('track_shipment', 'Check real-time carrier delivery progress (GHTK/GHN) for one owned order.',
+         {'order_id': {'type': 'string', 'description': 'An order ID to track shipment for.'}}),
+    tool('check_inventory', 'Check real-time stock levels and variant availability by size and color.',
+         {'product_id': {'type': 'string'}, 'size': {'type': 'string'}, 'color': {'type': 'string'}}),
+    tool('request_human_support', 'Escalate conversation to a live human agent when user requests or on severe complaint.',
+         {'reason': {'type': 'string', 'description': 'Reason for handing off to human.'}}),
 ]
 TOOL_ARGUMENTS = {t['function']['name']: set(t['function']['parameters']['properties']) for t in TOOLS}
 

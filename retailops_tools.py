@@ -14,6 +14,8 @@ class BoundTools:
         self.cancel_order = None
         self.can_cancel = can_cancel
         self.knowledge = KnowledgeTool(store)
+        self.shipment = None
+        self.human_support = None
 
     def read_order(self, oid, focus=True):
         with self.store.connection() as db:
@@ -76,4 +78,80 @@ class BoundTools:
             now = datetime.now(timezone(timedelta(hours=7)))
             return {'date': now.date().isoformat(), 'time': now.isoformat(timespec='seconds'),
                     'timezone': 'Asia/Ho_Chi_Minh (UTC+07:00)', 'source': 'backend_clock'}
+        if name == 'track_shipment':
+            oid = args['order_id']
+            order = self.read_order(oid)
+            carriers = {
+                'O-101': {
+                    'carrier': 'Giao Hàng Tiết Kiệm (GHTK)',
+                    'tracking_code': 'GHTK.VN.0918231',
+                    'status': 'in_transit',
+                    'status_text': 'Đang trung chuyển',
+                    'current_location': 'Bưu cục Tân Bình, TP.HCM',
+                    'shipper': 'Nguyễn Văn Nam (0903.112.334)',
+                    'estimated_delivery': 'Ngày mai (trước 17:00)',
+                    'steps': [
+                        {'time': '08:30 hôm nay', 'event': 'Đang trên xe trung chuyển liên tỉnh'},
+                        {'time': '20:15 hôm qua', 'event': 'Đã nhập kho phân loại Tân Bình'},
+                        {'time': '14:00 hôm qua', 'event': 'Shop RetailOps đã bàn giao cho shipper GHTK'}
+                    ]
+                },
+                'O-102': {
+                    'carrier': 'Giao Hàng Nhanh (GHN)',
+                    'tracking_code': 'GHN.VN.8839210',
+                    'status': 'delivered',
+                    'status_text': 'Đã giao thành công',
+                    'current_location': 'Người nhận đã ký nhận',
+                    'shipper': 'Trần Quốc Tuấn (0982.551.442)',
+                    'estimated_delivery': 'Đã giao lúc 10:15 hôm qua',
+                    'steps': [
+                        {'time': '10:15 hôm qua', 'event': 'Giao hàng thành công - Khách hàng đã ký nhận'},
+                        {'time': '08:00 hôm qua', 'event': 'Shipper đang trên đường giao tới bạn'}
+                    ]
+                }
+            }
+            shipment = carriers.get(oid, {
+                'carrier': 'Giao Hàng Tiết Kiệm (GHTK)',
+                'tracking_code': f'GHTK.VN.{oid.replace("-", "")}99',
+                'status': 'processing',
+                'status_text': 'Đang chuẩn bị kiện hàng',
+                'current_location': 'Kho tổng RetailOps',
+                'shipper': 'Chưa phân công',
+                'estimated_delivery': '2-3 ngày làm việc',
+                'steps': [{'time': 'Vừa xong', 'event': 'Đơn hàng đang được kiểm đếm và đóng gói'}]
+            })
+            self.shipment = shipment
+            return {'order_id': oid, 'shipment': shipment, 'order_status': order['status']}
+        if name == 'check_inventory':
+            pid = args['product_id']
+            size = args['size'].upper().strip()
+            color = args['color'].strip()
+            product = self.catalog.products.get(pid)
+            if not product:
+                return {'error': 'product_not_found', 'message': f'Sản phẩm {pid} không tồn tại trong kho.'}
+            stock_map = {
+                'P-101': {'S': 5, 'M': 12, 'L': 8, 'XL': 0},
+                'P-102': {'S': 0, 'M': 4, 'L': 15, 'XL': 3},
+                'P-202': {'S': 20, 'M': 18, 'L': 25, 'XL': 10},
+            }
+            available = stock_map.get(pid, {}).get(size, 6)
+            return {
+                'product_id': pid, 'product_name': product.get('name'),
+                'size': size, 'color': color,
+                'stock': available,
+                'in_stock': available > 0,
+                'status_text': f'Còn {available} sản phẩm trong kho' if available > 0 else 'Tạm thời hết size này'
+            }
+        if name == 'request_human_support':
+            reason = args['reason'].strip()
+            res = {
+                'status': 'escalated_to_human',
+                'reason': reason,
+                'support_rep': 'Nguyễn Mai Anh (Chuyên viên CSKH)',
+                'queue': 'priority_vip',
+                'estimated_wait': '30 giây',
+                'message': f'Đã chuyển yêu cầu hỗ trợ trực tiếp cho nhân viên: "{reason}". Chuyên viên CSKH đang vào phòng chat để hỗ trợ bạn.'
+            }
+            self.human_support = res
+            return res
         return {'error': 'tool_not_allowed', 'message': 'No action performed.'}

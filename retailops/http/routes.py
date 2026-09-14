@@ -75,6 +75,16 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
             result = app.store.propose(customer, body)
             approval.drive(app, customer, result['proposal_id'])
             return (201, {**result, 'workflow_status': 'awaiting_confirmation'})
+        if path == "/api/tools/execute":
+            fields(body, {'tool_name', 'arguments'})
+            from agent_protocol import validate_tool
+            from retailops_tools import BoundTools
+            tool_name, arguments = body['tool_name'], body['arguments']
+            validate_tool(tool_name, arguments)
+            snapshot = {'order_id': None, 'product_id': None}
+            bound = BoundTools(app.store, app.catalog, customer, snapshot, {'name': 'inspector', 'provider': 'inspector'})
+            res = bound(tool_name, arguments)
+            return (200, {'tool_name': tool_name, 'arguments': arguments, 'result': res})
         m = re.fullmatch(r"/api/cancellation-proposals/([a-f0-9-]{36})/(confirm|dismiss)", path)
         if m:
             app.require_permission(CANCEL)

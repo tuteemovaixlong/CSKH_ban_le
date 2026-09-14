@@ -195,6 +195,43 @@ async function dismiss() {
     const result = await api('/api/cancellation-proposals/' + pending.proposal_id + '/dismiss', {});
     pending = null; byId('confirm-dialog').close(); message(result.message); await refresh();
   } catch (error) { byId('confirm-error').textContent = error.message; }
+function showShipment(row, shipment) {
+  if (!shipment) return;
+  const card = el('div', 'shipment-card');
+  const header = el('div', 'shipment-header');
+  header.append(
+    el('strong', '', '🚚 ' + (shipment.carrier || 'Đơn vị vận chuyển')),
+    el('span', 'tracking-pill ' + (shipment.status || ''), shipment.status_text || 'Đang giao')
+  );
+  const body = el('div', 'shipment-body');
+  body.append(
+    el('p', '', 'Mã vận đơn: ' + shipment.tracking_code),
+    el('p', '', 'Vị trí hiện tại: ' + shipment.current_location),
+    el('p', '', 'Shipper: ' + (shipment.shipper || 'Đang phân công')),
+    el('p', 'delivery-eta', '⏰ Dự kiến nhận: ' + shipment.estimated_delivery)
+  );
+  if (Array.isArray(shipment.steps) && shipment.steps.length) {
+    const timeline = el('div', 'shipment-timeline');
+    for (const step of shipment.steps) {
+      const item = el('div', 'timeline-item');
+      item.append(el('span', 'timeline-time', step.time), el('span', 'timeline-event', step.event));
+      timeline.append(item);
+    }
+    body.append(timeline);
+  }
+  card.append(header, body);
+  row.append(card);
+}
+
+function showHumanSupport(row, support) {
+  if (!support) return;
+  const card = el('div', 'human-support-card');
+  card.append(
+    el('div', 'human-header', '🙋 ' + (support.support_rep || 'Chuyên viên CSKH')),
+    el('p', '', support.message || 'Đã chuyển cuộc trò chuyện sang nhân viên hỗ trợ.'),
+    el('span', 'badge-handoff', '🟢 Trực tuyến · Hàng đợi: ' + (support.queue || 'Ưu tiên VIP'))
+  );
+  row.append(card);
 }
 
 function showSources(row, sources) {
@@ -270,6 +307,8 @@ async function send(text, requestId = crypto.randomUUID(), retry = false) {
     return;
   } finally { byId('messages').removeAttribute('aria-busy'); }
   const row = message(result.message, 'assistant', result.source, result.trace?.model);
+  if (result.shipment) showShipment(row, result.shipment);
+  if (result.human_support) showHumanSupport(row, result.human_support);
   showSources(row, result.sources);
   showTrace(row, result.trace, result.replayed);
   if (result.replayed) {
@@ -340,4 +379,53 @@ if (cookieAuth) {
   const loginButton = byId('login-form').querySelector('button'); loginButton.disabled = true;
   openSession().catch(error => { lockPage(true); if (error.message && !/mã mời|phiên demo/i.test(error.message)) byId('login-error').textContent = error.message; })
     .finally(() => { loginButton.disabled = false; });
+}
+
+// Interactive Tool Inspector Harness
+const inspectorDialog = byId('inspector-dialog');
+const toggleInspectorBtn = byId('toggle-inspector');
+const closeInspectorBtn = byId('close-inspector');
+const toolSelect = byId('inspector-tool-select');
+const argsInput = byId('inspector-args-input');
+const runInspectorBtn = byId('inspector-run-btn');
+const inspectorOutput = byId('inspector-output');
+const inspectorLatency = byId('inspector-latency-badge');
+
+const TOOL_DEFAULTS = {
+  'track_shipment': '{\n  "order_id": "O-101"\n}',
+  'check_inventory': '{\n  "product_id": "P-101",\n  "size": "M",\n  "color": "trang"\n}',
+  'request_human_support': '{\n  "reason": "Cần nhân viên tư vấn đổi size áo"\n}',
+  'search_knowledge': '{\n  "query": "Chính sách đổi trả hàng"\n}',
+  'get_order': '{\n  "order_id": "O-101"\n}',
+  'list_orders': '{}'
+};
+
+if (toggleInspectorBtn && inspectorDialog) {
+  toggleInspectorBtn.onclick = () => inspectorDialog.showModal();
+}
+if (closeInspectorBtn && inspectorDialog) {
+  closeInspectorBtn.onclick = () => inspectorDialog.close();
+}
+if (toolSelect && argsInput) {
+  toolSelect.onchange = () => {
+    argsInput.value = TOOL_DEFAULTS[toolSelect.value] || '{}';
+  };
+}
+if (runInspectorBtn && inspectorOutput) {
+  runInspectorBtn.onclick = async () => {
+    try {
+      const tool_name = toolSelect.value;
+      const arguments_obj = JSON.parse(argsInput.value.trim() || '{}');
+      inspectorOutput.textContent = 'Đang thực thi công cụ [' + tool_name + '] tại backend...';
+      inspectorLatency.textContent = '';
+      const t0 = performance.now();
+      const res = await api('/api/tools/execute', { tool_name, arguments: arguments_obj });
+      const ms = (performance.now() - t0).toFixed(1);
+      inspectorLatency.textContent = `⚡ Phản hồi: ${ms}ms`;
+      inspectorOutput.textContent = JSON.stringify(res.result, null, 2);
+    } catch (err) {
+      inspectorLatency.textContent = '❌ Lỗi';
+      inspectorOutput.textContent = 'Error: ' + err.message;
+    }
+  };
 }

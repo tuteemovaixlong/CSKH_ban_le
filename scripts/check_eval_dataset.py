@@ -16,7 +16,8 @@ ALLOWED_MODES = {'general', 'retail'}
 ALLOWED_CATEGORIES = {'order_lookup', 'product', 'policy', 'mixed', 'general', 'safety'}
 KNOWN_TOOLS = {
     'list_orders', 'get_order', 'search_products', 'get_product', 'get_context',
-    'prepare_cancellation', 'get_runtime_info', 'get_current_time', 'search_knowledge'
+    'prepare_cancellation', 'get_runtime_info', 'get_current_time', 'search_knowledge',
+    'track_shipment', 'check_inventory', 'request_human_support'
 }
 FORBIDDEN_FRAGMENTS = (
     'AKIA', 'OPENROUTER_API_KEY=', 'RETAILOPS_INFERENCE_TOKEN=', 'postgresql://'

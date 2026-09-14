@@ -168,19 +168,21 @@ class Application:
                     return {'error': exc.code, 'message': exc.message}
                 if name in ('cancel_order', 'confirm_cancellation', 'update_shipping_address'):
                     self.tool_cache.invalidate(customer)
-                else:
+                elif name != 'request_human_support':
                     self.tool_cache.set(customer, name, arguments, res)
                 return res
 
             def capture():
                 return {'context': dict(bound.context), 'versions': dict(bound.versions), 'cancel_order': bound.cancel_order,
-                        'knowledge': bound.knowledge.snapshot()}
+                        'knowledge': bound.knowledge.snapshot(), 'shipment': bound.shipment, 'human_support': bound.human_support}
 
             def restore(state):
                 bound.context = dict(state['context'])
                 bound.versions = dict(state['versions'])
                 bound.cancel_order = state['cancel_order']
                 bound.knowledge.restore(state.get('knowledge'))
+                bound.shipment = state.get('shipment')
+                bound.human_support = state.get('human_support')
 
             answer = run_agent(gateway, text, self.store.history(customer, snapshot['id']), execute, identity,
                                saver=saver, capture=capture, restore=restore, before_model=before_model)
@@ -198,6 +200,10 @@ class Application:
                     'citation_check': 'provenance_only', 'embedding_model': KNOWLEDGE_EMBEDDING_MODEL}
             if bound.cancel_order:
                 result['order'] = bound.cancel_order
+            if getattr(bound, 'shipment', None):
+                result['shipment'] = bound.shipment
+            if getattr(bound, 'human_support', None):
+                result['human_support'] = bound.human_support
             self.store.finish_turn(customer, snapshot, request_id, digest, answer['messages'], result, bound.versions)
             if (is_cacheable_query(text) and not bound.cancel_order
                     and not bound.context.get('order_id') and result.get('action') == 'reply'

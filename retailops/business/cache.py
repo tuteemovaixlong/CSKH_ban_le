@@ -14,7 +14,7 @@ from retailops.knowledge.embedding import DIMENSION, embedding
 ORDER_PATTERN = re.compile(r'\b[Oo]-\d+\b')
 PRODUCT_PATTERN = re.compile(r'\b[Pp]-\d+\b')
 MUTATION_PATTERN = re.compile(
-    r'\b(hủy|huy|đổi địa chỉ|doi dia chi|cập nhật địa chỉ|cap nhat dia chi|đổi hàng|giao lại|hoàn tiền đơn)\b',
+    r'\b(hủy|huy|đổi địa chỉ|doi dia chi|cập nhật địa chỉ|cap nhat dia chi|đổi hàng|giao lại|hoàn tiền đơn|nhân viên|tu van vien|nguoi that|khiếu nại|khieu nai)\b',
     re.IGNORECASE
 )
 

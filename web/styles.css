@@ -25,3 +25,30 @@
 .provider-controls select:disabled { opacity: .65; }
 .provider-controls p { margin: 6px 0 0; font-size: 11px; line-height: 1.5; color: #555c70; overflow-wrap: anywhere; }
 .provider-controls small { display: block; margin-top: 4px; font-size: 11px; color: #555c70; }
+
+/* Retail Production UI Enhancements */
+.shipment-card { margin: 12px 0 6px; padding: 16px; background: #ffffff; border: 1px solid #dbeafe; border-left: 4px solid #3b82f6; border-radius: 10px; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.08); }
+.shipment-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.shipment-header strong { font-size: 14px; color: #1e3a8a; }
+.tracking-pill { font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 12px; background: #dbeafe; color: #1d4ed8; }
+.tracking-pill.delivered { background: #d1fae5; color: #047857; }
+.shipment-body p { margin: 4px 0; font-size: 12.5px; color: #334155; }
+.delivery-eta { font-weight: 600; color: #2563eb !important; margin-top: 6px !important; }
+.shipment-timeline { margin-top: 10px; padding-top: 8px; border-top: 1px dashed #cbd5e1; display: flex; flex-direction: column; gap: 6px; }
+.timeline-item { display: flex; gap: 8px; font-size: 11px; color: #64748b; }
+.timeline-time { font-weight: 550; color: #475569; min-width: 95px; }
+
+.human-support-card { margin: 12px 0 6px; padding: 14px 18px; background: #fef3c7; border: 1px solid #fde68a; border-left: 4px solid #f59e0b; border-radius: 10px; }
+.human-header { font-size: 13.5px; font-weight: 700; color: #92400e; margin-bottom: 4px; }
+.human-support-card p { font-size: 12.5px; color: #78350f; margin: 4px 0; }
+.badge-handoff { display: inline-block; margin-top: 6px; font-size: 11px; font-weight: 600; background: #d97706; color: #ffffff; padding: 2px 8px; border-radius: 10px; }
+
+/* Tool Inspector Modal */
+.inspector-modal { max-width: 600px; }
+.inspector-form { display: flex; flex-direction: column; gap: 10px; margin: 16px 0; }
+.inspector-form label { font-size: 12px; font-weight: 600; color: #475569; margin-top: 6px; }
+.inspector-form select { padding: 9px 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 13px; background: #f8fafc; color: #0f172a; outline: none; }
+.inspector-form textarea { width: 100%; border: 1px solid #cbd5e1; border-radius: 8px; font-family: monospace; font-size: 12px; padding: 8px; background: #f8fafc; color: #0f172a; resize: vertical; }
+.inspector-actions-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 8px 0; }
+#inspector-latency-badge { font-size: 12px; font-weight: 600; color: #10b981; }
+#inspector-output { background: #0f172a; color: #38bdf8; font-family: monospace; font-size: 11.5px; padding: 12px; border-radius: 8px; max-height: 180px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; margin: 0; }
