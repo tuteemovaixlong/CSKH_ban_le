@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 class Element {
-  constructor() { this.children=[]; this.dataset={}; this.value=''; this.disabled=false; this.textContent=''; this.classList={toggle(){}}; }
+  constructor() { this.children=[]; this.dataset={}; this.value=''; this.disabled=false; this.textContent=''; this.classList={toggle(){}, add(){}, remove(){}, contains(){ return false; }}; }
   append(...nodes) { this.children.push(...nodes); }
   replaceChildren(...nodes) { this.children=nodes; }
   querySelector() { return this.button ||= new Element(); }

@@ -7,7 +7,7 @@ const nodes = new Map();
 class Element {
   constructor() {
     this.children = []; this.dataset = {}; this.value = ''; this.disabled = false;
-    this.textContent = ''; this.attrs = {}; this.classList = {toggle() {}};
+    this.textContent = ''; this.attrs = {}; this.classList = {toggle() {}, add() {}, remove() {}, contains() { return false; }};
   }
   append(...items) { this.children.push(...items); }
   replaceChildren(...items) { this.children = items; }

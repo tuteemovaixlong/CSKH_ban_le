@@ -6,7 +6,7 @@ const vm = require('node:vm');
 const path = require('node:path');
 
 class Element {
-  constructor(tag = 'div') { this.tagName = tag; this.children = []; this.dataset = {}; this.value = ''; this.disabled = false; this.textContent = ''; this.classList = {toggle() {}}; }
+  constructor(tag = 'div') { this.tagName = tag; this.children = []; this.dataset = {}; this.value = ''; this.disabled = false; this.textContent = ''; this.classList = {toggle() {}, add() {}, remove() {}, contains() { return false; }}; }
   append(...nodes) { this.children.push(...nodes); }
   replaceChildren(...nodes) { this.children = nodes; }
   querySelector() { return new Element(); }

@@ -110,22 +110,22 @@ function setHumanMode(active, repName = 'Chuyên viên CSKH (Mai Anh)') {
   const badge = byId('session-badge');
 
   if (active) {
-    if (avatar) { avatar.textContent = 'NV'; avatar.classList.add('human'); }
+    if (avatar) { avatar.textContent = 'NV'; avatar.classList?.toggle?.('human', true); }
     if (title) title.textContent = repName;
     if (subtitle) subtitle.textContent = '🟢 Đang trực tuyến · Tư vấn trực tiếp';
-    if (badge) { badge.textContent = 'Nhân viên'; badge.classList.add('human'); }
+    if (badge) { badge.textContent = 'Nhân viên'; badge.classList?.toggle?.('human', true); }
     if (btnMeet) {
-      btnMeet.classList.add('active');
+      btnMeet.classList?.toggle?.('active', true);
       btnMeet.innerHTML = '🤖 Chuyển lại Bot AI';
       btnMeet.title = 'Chuyển về trợ lý AI tự động';
     }
   } else {
-    if (avatar) { avatar.textContent = 'R'; avatar.classList.remove('human'); }
+    if (avatar) { avatar.textContent = 'R'; avatar.classList?.toggle?.('human', false); }
     if (title) title.textContent = 'Trợ lý RetailOps';
     if (subtitle) subtitle.textContent = 'Tra đơn · Thông tin sản phẩm · Yêu cầu hủy';
-    if (badge) { badge.textContent = 'Phiên AI'; badge.classList.remove('human'); }
+    if (badge) { badge.textContent = 'Phiên AI'; badge.classList?.toggle?.('human', false); }
     if (btnMeet) {
-      btnMeet.classList.remove('active');
+      btnMeet.classList?.toggle?.('active', false);
       btnMeet.innerHTML = '🙋 Gặp nhân viên';
       btnMeet.title = 'Yêu cầu gặp nhân viên tư vấn';
     }
@@ -147,11 +147,10 @@ function renderCsatStars(rating) {
   currentRating = rating;
   const starsContainer = byId('csat-stars');
   if (!starsContainer) return;
-  const stars = starsContainer.querySelectorAll('.star');
+  const stars = starsContainer.querySelectorAll ? starsContainer.querySelectorAll('.star') : [];
   stars.forEach(s => {
-    const val = parseInt(s.dataset.star, 10);
-    if (val <= rating) s.classList.add('selected');
-    else s.classList.remove('selected');
+    const val = parseInt(s.dataset?.star || '0', 10);
+    s.classList?.toggle?.('selected', val <= rating);
   });
   const label = byId('csat-feedback-label');
   if (label) label.textContent = ratingLabels[rating] || (rating + '/5 sao');
