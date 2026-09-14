@@ -296,6 +296,8 @@ async function dismiss() {
     const result = await api('/api/cancellation-proposals/' + pending.proposal_id + '/dismiss', {});
     pending = null; byId('confirm-dialog').close(); message(result.message); await refresh();
   } catch (error) { byId('confirm-error').textContent = error.message; }
+}
+
 function showShipment(row, shipment) {
   if (!shipment) return;
   const card = el('div', 'shipment-card');
