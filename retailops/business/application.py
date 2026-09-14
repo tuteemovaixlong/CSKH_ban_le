@@ -32,12 +32,19 @@ class Application:
     def providers(self):
         custom_model = getattr(getattr(self.infer, 'config', None), 'model', 'qwen3.5:4b')
         api_model = getattr(self.api_infer, 'model', API_MODEL)
+        is_google = getattr(self.api_infer, 'is_google', False) or 'gemini' in str(api_model).lower()
+        api_label = 'API · Google Gemini' if is_google else 'API · OpenRouter'
+        api_notice = (
+            f'API Google AI Studio ({api_model}), giới hạn {self.api_daily_limit} lượt/ngày UTC cho demo.'
+            if is_google else
+            f'API tính phí theo sử dụng, tối đa {self.api_daily_limit} lần thử chat/ngày UTC cho demo. Contributor: nội dung có thể được Meta dùng để cải thiện sản phẩm. Chỉ nhập dữ liệu giả lập.'
+        )
         return {'default_provider': self.default_provider, 'providers': [
             {'id': 'custom', 'label': 'Custom model · Colab/Ollama', 'model': custom_model,
              'configured': self.infer is not None, 'notice': 'Cần phiên model đang chạy. Kết nối được kiểm tra khi gửi tin.'},
-            {'id': 'api', 'label': 'API · OpenRouter', 'model': api_model,
+            {'id': 'api', 'label': api_label, 'model': api_model,
              'configured': self.api_infer is not None,
-             'notice': f'API tính phí theo sử dụng, tối đa {self.api_daily_limit} lần thử chat/ngày UTC cho demo. Contributor: nội dung có thể được Meta dùng để cải thiện sản phẩm. Chỉ nhập dữ liệu giả lập.',
+             'notice': api_notice,
              'daily_turn_limit': self.api_daily_limit}]}
 
     def new_conversation(self, customer, body):

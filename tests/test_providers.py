@@ -107,6 +107,29 @@ class ApiAdapterTests(unittest.TestCase):
         self.assertNotIn('reasoning', body)
         self.assertEqual(result['reasoning'], 'Gemma thought process')
 
+    def test_google_gemini_endpoint_and_payload(self):
+        from retailops_providers import GOOGLE_ENDPOINT
+        adapter = OpenRouterAgent(KEY, 'gemini-2.5-flash')
+        self.assertTrue(adapter.is_google)
+        self.assertEqual(adapter.endpoint, GOOGLE_ENDPOINT)
+        self.assertEqual(adapter.inspect()['provider'], 'google')
+
+        resp = api_response('Gemini answer')
+        resp['model'] = 'gemini-2.5-flash-001'
+        with patch.object(adapter, 'request', return_value=resp) as request:
+            result = adapter.chat([{'role': 'user', 'content': 'giải thích thuật toán SAC'}], True, 1)
+        body = request.call_args.args[0]
+        self.assertNotIn('provider', body)
+        self.assertNotIn('tools', body)
+        self.assertEqual(result['message']['content'], 'Gemini answer')
+
+    def test_gemini_api_key_from_environment(self):
+        with patch.dict(os.environ, {'RETAILOPS_API_ENABLED': 'true', 'GEMINI_API_KEY': KEY}, clear=True):
+            agent = api_from_environment()
+            self.assertIsNotNone(agent)
+            self.assertTrue(agent.is_google)
+            self.assertEqual(agent.model, 'gemini-2.5-flash')
+
     def test_api_disabled_by_default_and_models_allowlisted(self):
         with patch.dict(os.environ, {'OPENROUTER_API_KEY': KEY}, clear=True):
             self.assertIsNone(api_from_environment())

@@ -15,6 +15,9 @@ from agent_protocol import GENERAL_SYSTEM, PROTOCOL, SYSTEM, TOOLS, ProtocolErro
 from retailops_agent import AgentError
 from retailops_baseline import NoRedirects
 
+GOOGLE_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'
+OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions'
+
 API_MODEL = 'meta/muse-spark-1.3-contributor'
 API_MODELS = {
     API_MODEL,
@@ -23,19 +26,31 @@ API_MODELS = {
     'google/gemma-4-26b-a4b-it',
     'google/gemma-4-31b-it:free',
     'google/gemma-2-9b-it:free',
+    'gemini-2.5-flash',
+    'gemini-2.5-flash-lite',
+    'gemini-2.0-flash',
+    'gemini-2.0-flash-lite',
+    'gemini-1.5-flash',
+    'gemini-1.5-pro',
 }
 
 
-
 class OpenRouterAgent:
-    ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions'
+    ENDPOINT = OPENROUTER_ENDPOINT
 
     def __init__(self, key, model=API_MODEL):
         if not isinstance(key, str) or not re.fullmatch(r'[A-Za-z0-9_-]{32,256}', key):
-            raise ValueError('Set a valid OpenRouter API key on the server')
+            raise ValueError('Set a valid API key on the server')
         if model not in API_MODELS:
-            raise ValueError('API model must be an approved Muse Spark Contributor model')
+            raise ValueError('API model must be an approved model')
         self.key, self.model = key, model
+        self.is_google = (
+            model.startswith('gemini-')
+            or key.startswith('AIza')
+            or os.getenv('RETAILOPS_API_PROVIDER', '').lower() == 'google'
+        )
+        self.endpoint = GOOGLE_ENDPOINT if self.is_google else OPENROUTER_ENDPOINT
+        self.ENDPOINT = self.endpoint
         self._messages = {}
         self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirects())
 
@@ -43,9 +58,10 @@ class OpenRouterAgent:
         return type(self)(self.key, self.model)
 
     def inspect(self):
-        # This is configuration, not a successful connectivity probe or a weights hash.
-        return {'name': self.model, 'digest': None, 'provider': 'openrouter',
+        provider_name = 'google' if self.is_google else 'openrouter'
+        return {'name': self.model, 'digest': None, 'provider': provider_name,
                 'identity_source': 'configured_api_model', 'agent_protocol': PROTOCOL}
+
 
     def translate(self, messages):
         validate_messages(messages)
@@ -76,7 +92,7 @@ class OpenRouterAgent:
         return translated
 
     def request(self, payload, timeout):
-        request = urllib.request.Request(self.ENDPOINT, method='POST',
+        request = urllib.request.Request(self.endpoint, method='POST',
             headers={'Authorization': 'Bearer ' + self.key, 'Content-Type': 'application/json'},
             data=json.dumps(payload, ensure_ascii=False, allow_nan=False).encode())
         try:
@@ -106,19 +122,27 @@ class OpenRouterAgent:
         system_prompt = GENERAL_SYSTEM if mode == 'general' else SYSTEM
         tools = [] if mode == 'general' else TOOLS
         tool_choice = 'none' if mode == 'general' or not allow_tools else 'auto'
-        provider_options = {'allow_fallbacks': False}
-        if self.model.startswith('meta/'):
-            provider_options['only'] = ['meta']
         payload = {'model': self.model, 'messages': [{'role': 'system', 'content': system_prompt}] + self.translate(messages),
-                   'tools': tools, 'tool_choice': tool_choice, 'stream': False,
-                   'max_tokens': 2048, 'temperature': 0.2,
-                   'provider': provider_options}
-        if self.model.startswith('meta/'):
-            payload['reasoning'] = {'effort': 'minimal'}
+                   'stream': False, 'max_tokens': 2048, 'temperature': 0.2}
+        if not self.is_google:
+            payload['tools'] = tools
+            payload['tool_choice'] = tool_choice
+            provider_options = {'allow_fallbacks': False}
+            if self.model.startswith('meta/'):
+                provider_options['only'] = ['meta']
+                payload['reasoning'] = {'effort': 'minimal'}
+            payload['provider'] = provider_options
+        else:
+            if tools:
+                payload['tools'] = tools
+                payload['tool_choice'] = tool_choice
         result = self.request(payload, timeout)
         if result.get('error'):
             raise AgentError('api_unavailable', 'API báo lỗi xử lý. Không tự chuyển model hoặc gửi lại yêu cầu.')
-        if result.get('model') != self.model:
+        returned_model = result.get('model') or ''
+        if returned_model != self.model and not (
+            self.is_google and (returned_model.startswith(self.model) or returned_model.startswith('models/' + self.model) or self.model in returned_model)
+        ):
             raise AgentError('api_model_mismatch', 'API trả về model khác cấu hình; lượt chat chưa được chấp nhận.')
         choices = result.get('choices')
         if not isinstance(choices, list) or len(choices) != 1 or not isinstance(choices[0], dict):
@@ -164,4 +188,6 @@ class OpenRouterAgent:
 def api_from_environment():
     if os.getenv('RETAILOPS_API_ENABLED', 'false').lower() != 'true':
         return None
-    return OpenRouterAgent(os.getenv('OPENROUTER_API_KEY', ''), os.getenv('RETAILOPS_API_MODEL', API_MODEL))
+    key = os.getenv('GEMINI_API_KEY') or os.getenv('OPENROUTER_API_KEY', '')
+    default_model = 'gemini-2.5-flash' if os.getenv('GEMINI_API_KEY') else API_MODEL
+    return OpenRouterAgent(key, os.getenv('RETAILOPS_API_MODEL', default_model))
