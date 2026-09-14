@@ -52,3 +52,31 @@
 .inspector-actions-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 8px 0; }
 #inspector-latency-badge { font-size: 12px; font-weight: 600; color: #10b981; }
 #inspector-output { background: #0f172a; color: #38bdf8; font-family: monospace; font-size: 11.5px; padding: 12px; border-radius: 8px; max-height: 180px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; margin: 0; }
+
+/* In-Chat Header Action Buttons & Status */
+.chat-header-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.header-action-btn { display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px; font-size: 12px; font-weight: 550; border-radius: 8px; border: 1px solid #e2e5ee; background: #ffffff; color: #475569; cursor: pointer; transition: all 0.18s ease; }
+.header-action-btn:hover { background: #f8fafc; border-color: #cbd5e1; color: #1e293b; transform: translateY(-1px); }
+.header-action-btn.active { border-color: #f59e0b; background: #fffbeb; color: #b45309; box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.15); }
+.header-action-btn.danger { border-color: #fee2e2; background: #fff5f5; color: #dc2626; }
+.header-action-btn.danger:hover { background: #fee2e2; border-color: #fca5a5; }
+
+.agent-avatar.human { background: linear-gradient(135deg, #f59e0b, #d97706); color: #ffffff; border-color: #fde68a; font-size: 16px; letter-spacing: -0.5px; }
+.session-pill.human { background: #fef3c7; color: #b45309; border: 1px solid #fde68a; font-weight: 600; }
+
+/* CSAT Rating Modal */
+.csat-rating-group { margin: 18px 0 14px; text-align: center; background: #f8fafc; padding: 16px; border-radius: 12px; border: 1px solid #e2e8f0; }
+.csat-rating-group label { display: block; font-size: 12.5px; font-weight: 600; color: #334155; margin-bottom: 8px; }
+.csat-stars { display: flex; justify-content: center; gap: 10px; font-size: 32px; cursor: pointer; user-select: none; line-height: 1; }
+.csat-stars .star { color: #cbd5e1; transition: color 0.15s ease, transform 0.15s ease; display: inline-block; }
+.csat-stars .star:hover, .csat-stars .star.selected { color: #f59e0b; transform: scale(1.15); }
+#csat-feedback-label { display: block; margin-top: 10px; font-size: 12px; font-weight: 600; color: #64748b; }
+
+.session-ended-card { margin: 14px 0 8px; padding: 16px 20px; background: #f0fdf4; border: 1px solid #bbf7d0; border-left: 4px solid #16a34a; border-radius: 10px; }
+.session-ended-card h4 { margin: 0 0 6px; font-size: 13.5px; color: #15803d; font-weight: 700; }
+.session-ended-card p { margin: 4px 0; font-size: 12px; color: #166534; }
+
+.human-badge-mini { background: linear-gradient(135deg, #f59e0b, #d97706); color: white; font-weight: 700; font-size: 10px; padding: 2px 6px; border-radius: 4px; display: inline-block; margin-right: 4px; }
+.message.human-message .bubble { border-left: 3px solid #f59e0b; background: #fffdf5; color: #451a03; }
+
+

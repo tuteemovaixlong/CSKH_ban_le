@@ -6,5 +6,4 @@ ASSETS = {
     "/styles.css": ("styles.css", "text/css; charset=utf-8"),
     "/chat-focus.js": ("chat-focus.js", "text/javascript; charset=utf-8"),
     "/chat-focus.css": ("chat-focus.css", "text/css; charset=utf-8"),
-    "/embed.js": ("embed.js", "text/javascript; charset=utf-8"),
 }

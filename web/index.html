@@ -10,7 +10,6 @@
   <link rel="stylesheet" href="chat-focus.css">
   <script src="app.js" defer></script>
   <script src="chat-focus.js" defer></script>
-  <script src="embed.js" defer></script>
 </head>
 <body>
   <section class="login-shell" id="login-shell" aria-labelledby="login-title">
@@ -52,7 +51,15 @@
 
     <div class="workspace">
       <section class="chat-panel" aria-labelledby="chat-title">
-        <div class="panel-heading"><div class="agent-avatar" aria-hidden="true">R</div><div><h2 id="chat-title">Trợ lý RetailOps</h2><span>Tra đơn · Thông tin sản phẩm · Yêu cầu hủy</span></div><span class="session-pill">Phiên thử</span></div>
+        <div class="panel-heading">
+          <div class="agent-avatar" id="chat-agent-avatar" aria-hidden="true">R</div>
+          <div><h2 id="chat-title">Trợ lý RetailOps</h2><span id="chat-subtitle">Tra đơn · Thông tin sản phẩm · Yêu cầu hủy</span></div>
+          <div class="chat-header-actions" style="margin-left:auto; display:flex; gap:8px; align-items:center;">
+            <button class="header-action-btn" id="btn-meet-human" title="Yêu cầu gặp nhân viên tư vấn">🙋 Gặp nhân viên</button>
+            <button class="header-action-btn danger" id="btn-end-session" title="Kết thúc phiên hỗ trợ">🛑 Kết thúc phiên</button>
+            <span class="session-pill" id="session-badge">Phiên AI</span>
+          </div>
+        </div>
         <div class="provider-controls">
           <label for="model-provider">Nguồn model</label>
           <select id="model-provider" aria-describedby="provider-detail provider-notice provider-switch-note">
@@ -79,6 +86,7 @@
 
   <dialog id="inspector-dialog" aria-labelledby="inspector-title"><div class="dialog-inner inspector-modal"><span class="small-tag">ENTERPRISE DEV & QA HARNESS</span><h2 id="inspector-title">🛠️ Tool Execution Inspector</h2><p>Cắm và kiểm thử trực tiếp các công cụ nghiệp vụ (Retail Tools) với phản hồi thời gian thực.</p><div class="inspector-form"><label for="inspector-tool-select">Chọn công cụ nghiệp vụ:</label><select id="inspector-tool-select"><option value="track_shipment">track_shipment (Hành trình bưu cục GHTK/GHN)</option><option value="check_inventory">check_inventory (Kiểm tra tồn kho theo size/màu)</option><option value="request_human_support">request_human_support (Chuyển giao người thật)</option><option value="search_knowledge">search_knowledge (Tìm kiếm RAG pgvector)</option><option value="get_order">get_order (Đọc trạng thái đơn hàng)</option><option value="list_orders">list_orders (Danh sách đơn của khách)</option></select><label for="inspector-args-input">Tham số JSON (Arguments):</label><textarea id="inspector-args-input" rows="3">{"order_id": "O-101"}</textarea><div class="inspector-actions-row"><button class="primary" id="inspector-run-btn">⚡ Chạy Tool Trực Tiếp</button><span id="inspector-latency-badge"></span></div><label for="inspector-output">Kết quả thực thi từ Backend (Live Output):</label><pre id="inspector-output">// Bấm 'Chạy Tool Trực Tiếp' để xem kết quả...</pre></div><div class="dialog-actions"><button class="secondary" id="close-inspector">Đóng bảng Inspector</button></div></div></dialog>
   <dialog id="confirm-dialog" aria-labelledby="confirm-title"><div class="dialog-inner"><span class="small-tag">XÁC NHẬN THAO TÁC MẪU</span><h2 id="confirm-title">Hủy đơn O-101?</h2><p id="confirm-description"></p><div class="confirm-detail"><span>Lý do</span><strong id="confirm-reason"></strong></div><p class="dialog-note">Thao tác sẽ cập nhật đơn giả lập tại backend và lưu nhật ký. Không có giao dịch cửa hàng thật.</p><div class="dialog-actions"><button class="secondary" id="dismiss-confirm">Giữ đơn hàng</button><button class="primary" id="approve-confirm">Xác nhận hủy đơn mẫu</button></div></div></dialog>
+  <dialog id="end-session-dialog" aria-labelledby="end-session-title"><div class="dialog-inner"><span class="small-tag">KẾT THÚC PHIÊN HỖ TRỢ</span><h2 id="end-session-title">Xác nhận kết thúc phiên?</h2><p>Bạn có thể đánh giá mức độ hài lòng về chất lượng hỗ trợ của chuyên viên / trợ lý trước khi kết thúc.</p><div class="csat-rating-group"><label>Đánh giá chất lượng phục vụ:</label><div class="csat-stars" id="csat-stars"><span class="star selected" data-star="1">★</span><span class="star selected" data-star="2">★</span><span class="star selected" data-star="3">★</span><span class="star selected" data-star="4">★</span><span class="star selected" data-star="5">★</span></div><small id="csat-feedback-label">Rất hài lòng (5/5 sao)</small></div><div class="dialog-actions"><button class="secondary" id="cancel-end-session">Tiếp tục trò chuyện</button><button class="primary" id="confirm-end-session">Kết thúc phiên</button></div></div></dialog>
   <dialog id="about-dialog" aria-labelledby="about-title"><div class="dialog-inner"><span class="small-tag">RETAILOPS DEMO</span><h2 id="about-title">Luồng nghiệp vụ có lưu dữ liệu</h2><p>Bạn có thể tra đơn mẫu của mình, chọn lý do hủy, xác nhận hoặc giữ đơn. Trạng thái đơn và nhật ký được lưu tại backend.</p><p>Model bạn chọn đọc lịch sử gần đây, chọn công cụ tra dữ liệu rồi viết câu trả lời. Nguồn chưa cấu hình không thể chọn. Đổi nguồn tạo cuộc trò chuyện mới để tách lịch sử; chỉ gửi tin mới gọi model. Nút Quá trình xử lý cho phép hiện hoặc ẩn phần công cụ và thời gian của từng lượt. Các nút tra đơn đọc trực tiếp từ backend. Hủy đơn luôn cần bạn chọn lý do và bấm xác nhận riêng.</p><p>Mỗi lần đăng nhập tạo một cuộc trò chuyện riêng. Lịch sử gửi cho model được giới hạn theo độ dài và tối đa 6 lượt gần đây. Ngữ cảnh hết hạn sau 30 phút không sử dụng. Chỉ nhập dữ liệu giả lập, không nhập thông tin cá nhân hoặc mã bí mật. Bấm Cuộc trò chuyện mới để bỏ ngữ cảnh; trạng thái đơn và nhật ký vẫn được giữ.</p><button class="primary" id="close-about">Bắt đầu thử</button></div></dialog>
 </body>
 </html>

@@ -9,6 +9,14 @@ const money = value => new Intl.NumberFormat('vi-VN', {style: 'currency', curren
 let token = '', orders = [], selected = 'O-101', pending = null, busy = false, conversationId = null;
 let providerId = 'custom', providerOptions = [];
 let canCancel = true;
+let isHumanMode = false, currentRating = 5;
+const ratingLabels = {
+  1: 'Rất không hài lòng (1/5 sao)',
+  2: 'Không hài lòng (2/5 sao)',
+  3: 'Bình thường (3/5 sao)',
+  4: 'Hài lòng (4/5 sao)',
+  5: 'Rất hài lòng (5/5 sao)'
+};
 const cookieAuth = document.body?.dataset.auth === 'cookie';
 const persistentAccount = document.body?.dataset.dataMode === 'persistent-demo';
 const sourceLabels = {interface: 'Hướng dẫn giao diện', store_data: 'Dữ liệu đơn hàng', llm_agent: 'Hội thoại model'};
@@ -47,6 +55,7 @@ async function newConversation(nextProvider = providerId) {
   }
   const result = await api('/api/conversations', {provider_id: nextProvider});
   conversationId = result.conversation_id; providerId = result.provider_id;
+  setHumanMode(false);
   renderProvider(); showContext(result.context); byId('messages').replaceChildren();
   message('Phiên mới dùng ' + (selectedProvider()?.model || 'model đã chọn') +
     '. Gửi câu hỏi hoặc chọn đơn bên phải. Khi đổi nguồn, lịch sử bắt đầu lại; trạng thái đơn được giữ.', 'assistant', 'interface');
@@ -80,6 +89,98 @@ function message(text, role = 'assistant', source = null, model = null) {
   row.append(label, el('div', 'bubble', text)); byId('messages').append(row);
   requestAnimationFrame(() => { byId('messages').scrollTop = byId('messages').scrollHeight; });
   return row;
+}
+
+function humanMessage(text, repName = 'Mai Anh (Chuyên viên CSKH)') {
+  const row = el('div', 'message assistant human-message'), label = el('div', 'message-label');
+  label.append(el('span', 'human-badge-mini', 'NV'));
+  label.append(document.createTextNode(' ' + repName + ' · Trực tuyến'));
+  row.append(label, el('div', 'bubble', text));
+  byId('messages').append(row);
+  requestAnimationFrame(() => { byId('messages').scrollTop = byId('messages').scrollHeight; });
+  return row;
+}
+
+function setHumanMode(active, repName = 'Chuyên viên CSKH (Mai Anh)') {
+  isHumanMode = active;
+  const avatar = byId('chat-agent-avatar');
+  const title = byId('chat-title');
+  const subtitle = byId('chat-subtitle');
+  const btnMeet = byId('btn-meet-human');
+  const badge = byId('session-badge');
+
+  if (active) {
+    if (avatar) { avatar.textContent = 'NV'; avatar.classList.add('human'); }
+    if (title) title.textContent = repName;
+    if (subtitle) subtitle.textContent = '🟢 Đang trực tuyến · Tư vấn trực tiếp';
+    if (badge) { badge.textContent = 'Nhân viên'; badge.classList.add('human'); }
+    if (btnMeet) {
+      btnMeet.classList.add('active');
+      btnMeet.innerHTML = '🤖 Chuyển lại Bot AI';
+      btnMeet.title = 'Chuyển về trợ lý AI tự động';
+    }
+  } else {
+    if (avatar) { avatar.textContent = 'R'; avatar.classList.remove('human'); }
+    if (title) title.textContent = 'Trợ lý RetailOps';
+    if (subtitle) subtitle.textContent = 'Tra đơn · Thông tin sản phẩm · Yêu cầu hủy';
+    if (badge) { badge.textContent = 'Phiên AI'; badge.classList.remove('human'); }
+    if (btnMeet) {
+      btnMeet.classList.remove('active');
+      btnMeet.innerHTML = '🙋 Gặp nhân viên';
+      btnMeet.title = 'Yêu cầu gặp nhân viên tư vấn';
+    }
+  }
+}
+
+function toggleHumanMode() {
+  if (!isHumanMode) {
+    setHumanMode(true);
+    message('Hệ thống đã kết nối bạn trực tiếp với Chuyên viên CSKH RetailOps.', 'assistant', 'interface');
+    humanMessage('Xin chào anh/chị! Em là Mai Anh - Chuyên viên hỗ trợ khách hàng RetailOps. Em đã tiếp nhận phiên trao đổi này. Em có thể hỗ trợ trực tiếp gì cho mình về đơn hàng hoặc sản phẩm ạ?');
+  } else {
+    setHumanMode(false);
+    message('Đã chuyển lại quyền hỗ trợ cho Trợ lý ảo AI RetailOps. Quý khách có thể tiếp tục tra cứu đơn hàng hoặc hỏi đáp chính sách.', 'assistant', 'interface');
+  }
+}
+
+function renderCsatStars(rating) {
+  currentRating = rating;
+  const starsContainer = byId('csat-stars');
+  if (!starsContainer) return;
+  const stars = starsContainer.querySelectorAll('.star');
+  stars.forEach(s => {
+    const val = parseInt(s.dataset.star, 10);
+    if (val <= rating) s.classList.add('selected');
+    else s.classList.remove('selected');
+  });
+  const label = byId('csat-feedback-label');
+  if (label) label.textContent = ratingLabels[rating] || (rating + '/5 sao');
+}
+
+function openEndSessionDialog() {
+  renderCsatStars(5);
+  const dlg = byId('end-session-dialog');
+  if (dlg) dlg.showModal();
+}
+
+function confirmEndSession() {
+  const dlg = byId('end-session-dialog');
+  if (dlg) dlg.close();
+  
+  const row = el('div', 'message system');
+  const card = el('div', 'session-ended-card');
+  card.innerHTML = `
+    <h4>🏁 Phiên làm việc đã kết thúc thành công</h4>
+    <p>⭐ <strong>Đánh giá dịch vụ:</strong> ${ratingLabels[currentRating] || currentRating + '/5 sao'}</p>
+    <p>⏰ <strong>Thời gian hoàn tất:</strong> ${new Date().toLocaleTimeString('vi-VN')} · ${new Date().toLocaleDateString('vi-VN')}</p>
+    <p>Cảm ơn quý khách đã tin tưởng và sử dụng dịch vụ CSKH của RetailOps. Trân trọng cảm ơn!</p>
+  `;
+  row.append(card);
+  byId('messages').append(row);
+  requestAnimationFrame(() => { byId('messages').scrollTop = byId('messages').scrollHeight; });
+
+  setHumanMode(false);
+  setModelStatus('Phiên đã kết thúc', 'Đã lưu đánh giá ' + currentRating + '/5 sao');
 }
 
 async function act(callback) {
@@ -286,6 +387,45 @@ function showTrace(row, trace, replayed = false) {
 
 async function send(text, requestId = crypto.randomUUID(), retry = false) {
   text = text.trim(); if (!text) return;
+
+  const endKeywords = ['kết thúc phiên', 'kết thúc hỗ trợ', 'dừng hỗ trợ', 'kết thúc làm việc', 'đóng phiên'];
+  if (endKeywords.some(kw => text.toLowerCase().includes(kw))) {
+    byId('message').value = '';
+    openEndSessionDialog();
+    return;
+  }
+
+  const meetKeywords = ['gặp nhân viên', 'nói chuyện với nhân viên', 'cần gặp người thật', 'gặp tư vấn viên', 'chuyển nhân viên'];
+  if (meetKeywords.some(kw => text.toLowerCase().includes(kw)) && !isHumanMode) {
+    byId('message').value = '';
+    toggleHumanMode();
+    return;
+  }
+
+  if (isHumanMode) {
+    message(text, 'user');
+    byId('message').value = '';
+    byId('messages').setAttribute('aria-busy', 'true');
+    setModelStatus('Chuyên viên đang phản hồi…', 'Đang kết nối Mai Anh');
+    setTimeout(() => {
+      byId('messages').removeAttribute('aria-busy');
+      setModelStatus('Đang kết nối', 'Chuyên viên CSKH Mai Anh');
+      let reply = 'Dạ em chào anh/chị, em là Mai Anh. Em đã nhận được thông tin: "' + text + '". Em đang xử lý trực tiếp trên hệ thống kho cho mình đây ạ!';
+      const lower = text.toLowerCase();
+      if (lower.includes('hủy') || lower.includes('đơn')) {
+        reply = 'Dạ về đơn hàng, anh/chị có thể bấm trực tiếp "Yêu cầu hủy đơn" ở cột bên phải, hoặc chọn lý do hủy để em hỗ trợ xác nhận trên hệ thống cho mình ngay nhé ạ!';
+      } else if (lower.includes('size') || lower.includes('màu') || lower.includes('áo') || lower.includes('quần') || lower.includes('kho')) {
+        reply = 'Dạ sản phẩm này bên em đang có sẵn đủ kích cỡ và màu sắc tại kho hàng. Em có thể ghi chú giữ hàng sẵn trong giỏ cho anh/chị ngay nhé!';
+      } else if (lower.includes('ship') || lower.includes('giao') || lower.includes('vận chuyển') || lower.includes('đâu')) {
+        reply = 'Dạ đơn hàng đang được bên vận chuyển phân tuyến giao hàng. Bưu tá sẽ liên hệ với số điện thoại của anh/chị trước khi giao từ 15-30 phút ạ!';
+      } else if (lower.includes('cảm ơn') || lower.includes('thanks') || lower.includes('xong') || lower.includes('ok')) {
+        reply = 'Dạ rất hân hạnh được hỗ trợ anh/chị! Nếu cần kết thúc phiên làm việc, anh/chị có thể bấm nút "🛑 Kết thúc phiên" ở góc trên bên phải để hoàn tất và chấm điểm hỗ trợ giúp em nhé ạ!';
+      }
+      humanMessage(reply, 'Mai Anh (Chuyên viên CSKH)');
+    }, 500);
+    return;
+  }
+
   if (!retry) message(text, 'user');
   byId('message').value = '';
   setModelStatus('Model đang xử lý…', 'Đang đọc hội thoại và gọi công cụ khi cần');
@@ -308,7 +448,10 @@ async function send(text, requestId = crypto.randomUUID(), retry = false) {
   } finally { byId('messages').removeAttribute('aria-busy'); }
   const row = message(result.message, 'assistant', result.source, result.trace?.model);
   if (result.shipment) showShipment(row, result.shipment);
-  if (result.human_support) showHumanSupport(row, result.human_support);
+  if (result.human_support) {
+    showHumanSupport(row, result.human_support);
+    setHumanMode(true, result.human_support.support_rep || 'Chuyên viên CSKH');
+  }
   showSources(row, result.sources);
   showTrace(row, result.trace, result.replayed);
   if (result.replayed) {
@@ -429,3 +572,32 @@ if (runInspectorBtn && inspectorOutput) {
     }
   };
 }
+
+// In-Chat Human Handoff & End Session Listeners
+const btnMeetHuman = byId('btn-meet-human');
+if (btnMeetHuman) btnMeetHuman.onclick = () => act(async () => { toggleHumanMode(); });
+
+const btnEndSession = byId('btn-end-session');
+if (btnEndSession) btnEndSession.onclick = () => openEndSessionDialog();
+
+const cancelEndSession = byId('cancel-end-session');
+if (cancelEndSession) cancelEndSession.onclick = () => byId('end-session-dialog').close();
+
+const confirmEndSessionBtn = byId('confirm-end-session');
+if (confirmEndSessionBtn) confirmEndSessionBtn.onclick = () => confirmEndSession();
+
+document.querySelectorAll('#csat-stars .star').forEach(star => {
+  star.onclick = () => {
+    const val = parseInt(star.dataset.star, 10);
+    renderCsatStars(val);
+  };
+  star.onmouseenter = () => {
+    const val = parseInt(star.dataset.star, 10);
+    const label = byId('csat-feedback-label');
+    if (label) label.textContent = ratingLabels[val] || (val + '/5 sao');
+  };
+  star.onmouseleave = () => {
+    const label = byId('csat-feedback-label');
+    if (label) label.textContent = ratingLabels[currentRating] || (currentRating + '/5 sao');
+  };
+});
