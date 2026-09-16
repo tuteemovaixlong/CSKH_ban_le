@@ -64,7 +64,7 @@ IDENTITY_DDL = [
     'CREATE TABLE principals (id TEXT PRIMARY KEY, name TEXT NOT NULL)',
     '''CREATE TABLE memberships (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
         principal_id TEXT NOT NULL REFERENCES principals(id), customer_id TEXT NOT NULL,
-        role TEXT NOT NULL CHECK(role IN ('customer','viewer')), active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+        role TEXT NOT NULL CHECK(role IN ('customer','viewer','staff','manager')), active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
         auth_version INTEGER NOT NULL DEFAULT 1, UNIQUE(tenant_id,principal_id))''',
     '''CREATE TABLE credentials (hash TEXT PRIMARY KEY, membership_id TEXT NOT NULL REFERENCES memberships(id),
         created_at DOUBLE PRECISION NOT NULL)''',

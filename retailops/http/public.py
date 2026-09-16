@@ -54,7 +54,7 @@ class PublicWeb:
         loopback_health = method == 'GET' and path == '/healthz' and env.get('REMOTE_ADDR') in ('127.0.0.1', '::1') and host in ('127.0.0.1:8000', 'localhost:8000')
         require(host == self.host or loopback_health, 403, 'invalid_host', 'Địa chỉ web không hợp lệ.')
         require(method in ('GET', 'POST'), 405, 'method_not_allowed', 'Phương thức không được hỗ trợ.')
-        require(not env.get('QUERY_STRING'), 400, 'unexpected_query', 'Đường dẫn không nhận tham số truy vấn.')
+        require(not env.get('QUERY_STRING') or path == '/auth/google/callback', 400, 'unexpected_query', 'Đường dẫn không nhận tham số truy vấn.')
         if path == '/healthz' and method == 'GET':
             self.sessions.check_health()
             return 200, {'status': 'ok', 'scope': 'synthetic-demo', 'version': VERSION,
@@ -69,6 +69,43 @@ class PublicWeb:
                 mode = b' data-data-mode="persistent-demo"' if self.sessions.data_mode == 'persistent-demo' else b''
                 data = data.replace(b'<body>', b'<body data-auth="cookie"' + mode + b'>')
             return 200, data, mime, headers
+
+        if path == '/auth/google/config' and method == 'GET':
+            from retailops.http.auth_google import is_google_auth_configured
+            return 200, {'configured': is_google_auth_configured()}, mime, headers
+
+        if path == '/auth/google/login' and method == 'GET':
+            from retailops.http.auth_google import is_google_auth_configured, create_state, get_google_auth_url
+            require(is_google_auth_configured(), 503, 'google_auth_not_configured', 'Đăng nhập Google chưa được cấu hình trên máy chủ.')
+            state = create_state()
+            redirect_url = get_google_auth_url(self.origin, state)
+            headers.append(('Location', redirect_url))
+            return 302, b'', 'text/html; charset=utf-8', headers
+
+        if path == '/auth/google/callback' and method == 'GET':
+            import urllib.parse
+            from retailops.http.auth_google import (
+                verify_and_consume_state, exchange_code_for_user_info, resolve_role_from_email
+            )
+            query_str = env.get('QUERY_STRING', '')
+            query_params = urllib.parse.parse_qs(query_str)
+            code = query_params.get('code', [''])[0]
+            state = query_params.get('state', [''])[0]
+
+            require(code and state, 400, 'missing_oauth_params', 'Thiếu thông tin xác thực từ Google.')
+            require(verify_and_consume_state(state), 403, 'invalid_oauth_state', 'Phiên xác thực đã hết hạn hoặc không hợp lệ.')
+
+            try:
+                user_info = exchange_code_for_user_info(code, self.origin)
+            except ValueError as e:
+                require(False, 400, 'oauth_exchange_failed', str(e))
+
+            role = resolve_role_from_email(user_info['email'])
+            secret = self.sessions.login_google(user_info['email'], user_info['name'], role=role)
+            headers.append(('Set-Cookie', f'{self.sessions.cookie_name}={secret}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age={self.sessions.session_seconds}'))
+            headers.append(('Location', '/'))
+            return 302, b'', 'text/html; charset=utf-8', headers
+
         require(path.startswith('/api/'), 404, 'not_found', 'Không tìm thấy đường dẫn.')
         body = None
         if method == 'POST':

@@ -21,7 +21,7 @@ def initialize(db):
         'CREATE TABLE principals (id TEXT PRIMARY KEY, name TEXT NOT NULL)',
         '''CREATE TABLE memberships (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
             principal_id TEXT NOT NULL REFERENCES principals(id), customer_id TEXT NOT NULL,
-            role TEXT NOT NULL CHECK(role IN ('customer','viewer')), active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+            role TEXT NOT NULL CHECK(role IN ('customer','viewer','staff','manager')), active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
             auth_version INTEGER NOT NULL DEFAULT 1, UNIQUE(tenant_id,principal_id))''',
         '''CREATE TABLE credentials (hash TEXT PRIMARY KEY, membership_id TEXT NOT NULL REFERENCES memberships(id),
             created_at REAL NOT NULL)''',
@@ -175,6 +175,49 @@ class IdentityStore:
                        row['id'], row['auth_version'], time.time()+lifetime))
             self.event(db, 'login', row['tenant_id'], row['id'])
         return secret
+
+    def create_session_for_membership(self, membership_id, lifetime, capacity):
+        with self.connection(write=True) as db:
+            row = db.execute('''SELECT m.* FROM memberships m
+                JOIN tenants t ON t.id=m.tenant_id WHERE m.id=? AND m.active=1 AND t.active=1''',
+                (membership_id,)).fetchone()
+            require(row is not None, 401, 'unauthorized', 'Tài khoản chưa được kích hoạt hoặc không tồn tại.')
+            db.execute('DELETE FROM sessions WHERE expires_at<=?', (time.time(),))
+            require(db.execute('SELECT count(*) AS total FROM sessions').fetchone()['total'] < capacity,
+                    429, 'session_capacity', 'Hệ thống đã đủ phiên đăng nhập. Vui lòng thử lại sau.')
+            secret = secrets.token_urlsafe(32)
+            db.execute('INSERT INTO sessions VALUES (?,?,?,?)', (hashlib.sha256(secret.encode()).hexdigest(),
+                       row['id'], row['auth_version'], time.time()+lifetime))
+            self.event(db, 'login', row['tenant_id'], row['id'])
+        return secret
+
+    def get_or_create_google_member(self, tenant_id, email, name, role='customer', customer_id=None):
+        email_clean = email.strip().lower()
+        require(role in ROLE_PERMISSIONS, 400, 'invalid_role', 'Quyền không hợp lệ.')
+        name_clean = name.strip() if (name and isinstance(name, str) and name.strip()) else email_clean.split('@')[0]
+        prefix = re.sub(r'[^a-zA-Z0-9_-]', '_', email_clean.split('@')[0])[:25]
+        hash_suffix = hashlib.sha256(email_clean.encode()).hexdigest()[:10]
+        principal_id = f"g_{prefix}_{hash_suffix}"
+        
+        self.tenant(tenant_id)
+        with self.connection(write=True) as db:
+            db.execute('INSERT INTO principals VALUES (?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name',
+                       (principal_id, name_clean))
+            existing = db.execute('SELECT * FROM memberships WHERE tenant_id=? AND principal_id=?',
+                                  (tenant_id, principal_id)).fetchone()
+            if existing:
+                mid = existing['id']
+                if existing['role'] != role:
+                    db.execute('UPDATE memberships SET role=?, auth_version=auth_version+1 WHERE id=?', (role, mid))
+                    self.event(db, 'role_changed', tenant_id, mid)
+                return mid, existing['customer_id']
+            
+            mid = str(uuid.uuid4())
+            cid = customer_id or f"CG-{hash_suffix[:8]}"
+            db.execute('INSERT INTO memberships(id,tenant_id,principal_id,customer_id,role) VALUES (?,?,?,?,?)',
+                       (mid, tenant_id, principal_id, cid, role))
+            self.event(db, 'membership_created', tenant_id, mid)
+            return mid, cid
 
     def resolve(self, sid):
         with self.connection() as db:

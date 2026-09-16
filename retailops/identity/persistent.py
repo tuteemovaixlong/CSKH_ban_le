@@ -55,6 +55,20 @@ class PersistentSessions:
     def login(self, token):
         return self.control.login(token, self.session_seconds, self.capacity)
 
+    def login_google(self, email, name, role='customer'):
+        with self.control.connection() as db:
+            row = db.execute('SELECT id FROM tenants WHERE active=1 ORDER BY id LIMIT 1').fetchone()
+        require(row is not None, 503, 'no_active_tenant', 'Chưa có cửa hàng nào hoạt động trên hệ thống.')
+        tenant_id = row['id']
+        mid, cid = self.control.get_or_create_google_member(tenant_id, email, name, role=role)
+        try:
+            bstore = self.business_store(tenant_id)
+            with bstore.connection(write=True) as bdb:
+                bdb.execute("INSERT INTO customers VALUES (?,?) ON CONFLICT DO NOTHING", (cid, name or email))
+        except Exception:
+            pass
+        return self.control.create_session_for_membership(mid, self.session_seconds, self.capacity)
+
     def cookie_id(self, header):
         cookies = SimpleCookie()
         try:

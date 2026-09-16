@@ -627,10 +627,18 @@ async function send(text, requestId = crypto.randomUUID(), retry = false) {
 
 async function openSession() {
   const session = await api('/api/session');
+  document.body.dataset.role = session.role || 'customer';
   canCancel = Array.isArray(session.permissions) ? session.permissions.includes('orders:cancel') : true;
   byId('profile-name').textContent = session.name || 'Khách hàng';
   byId('profile-avatar').textContent = (session.name || 'KH').slice(0, 2).toUpperCase();
-  byId('profile-role').textContent = canCancel ? 'Khách hàng giả lập' : 'Chỉ xem dữ liệu mẫu';
+  const roleNames = {
+    customer: 'Khách hàng',
+    viewer: 'Chỉ xem dữ liệu mẫu',
+    staff: 'Chuyên viên CSKH',
+    manager: 'Quản lý cửa hàng',
+    admin: 'Quản trị viên'
+  };
+  byId('profile-role').textContent = roleNames[session.role] || (canCancel ? 'Khách hàng giả lập' : 'Chỉ xem dữ liệu mẫu');
   byId('greeting').textContent = 'XIN CHÀO, ' + (session.name || 'BẠN').toUpperCase();
   document.querySelectorAll('[data-prompt]').forEach(button => { button.hidden = persistentAccount; });
   byId('message').placeholder = persistentAccount ? 'Hỏi về đơn hàng hoặc sản phẩm của bạn…' : 'Ví dụ: Tôi muốn hủy đơn O-101…';
@@ -641,6 +649,9 @@ async function openSession() {
   byId('demo-token').value = ''; lockPage(false); byId('messages').replaceChildren();
   await newConversation();
   await restoreProposals();
+  if (session.role === 'staff') {
+    openStaffDesk();
+  }
 }
 byId('login-form').onsubmit = async event => {
   event.preventDefault(); token = byId('demo-token').value.trim(); byId('login-error').textContent = '';
