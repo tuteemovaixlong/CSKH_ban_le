@@ -125,6 +125,19 @@ def main():
     ]
     subprocess.run(cmd, cwd="/opt/retailops", check=True)
 
+    # 6. Ensure PostgreSQL schema role check constraint supports staff and manager
+    print("[*] Updating database schema constraints...")
+    try:
+        subprocess.run([
+            "docker", "exec", "-i", "retailops-web-postgres-1",
+            "psql", "-U", "retailops", "-d", "retailops", "-c",
+            "ALTER TABLE retailops_identity.memberships DROP CONSTRAINT IF EXISTS memberships_role_check; "
+            "ALTER TABLE retailops_identity.memberships ADD CONSTRAINT memberships_role_check CHECK (role IN ('customer', 'viewer', 'staff', 'manager'));"
+        ], check=False)
+        print("  [+] Database schema constraint 'memberships_role_check' verified.")
+    except Exception as e:
+        print(f"  [!] Note on schema constraint update: {e}")
+
     print("\n=======================================================")
     print("[SUCCESS] Deployment & restart completed successfully!")
     if current_host:

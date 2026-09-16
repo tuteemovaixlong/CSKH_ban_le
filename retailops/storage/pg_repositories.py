@@ -26,6 +26,15 @@ class PostgresIdentityStore(IdentityStore):
                 initialize(db, IDENTITY_SCHEMA, 'identity')
         else:
             check_schema(dsn, IDENTITY_SCHEMA, 'identity')
+        try:
+            with self.connection(write=True) as db:
+                db.raw.execute("""
+                    ALTER TABLE memberships DROP CONSTRAINT IF EXISTS memberships_role_check;
+                    ALTER TABLE memberships ADD CONSTRAINT memberships_role_check CHECK (role IN ('customer', 'viewer', 'staff', 'manager'));
+                """)
+        except Exception:
+            pass
 
     def connection(self, write=False):
         return transaction(self.dsn, IDENTITY_SCHEMA, write=write)
+

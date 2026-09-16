@@ -70,9 +70,8 @@ def transaction(dsn, schema=IDENTITY_SCHEMA, *, write=False):
             connection.execute(sql.SQL('SET LOCAL search_path TO {}, pg_catalog').format(sql.Identifier(schema)))
             if write:
                 connection.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))', (schema,))
-            yield Queries(connection)
-    except pg.Error:
-        raise ApiError(503, 'database_unavailable', 'Kho dữ liệu chưa sẵn sàng. Vui lòng thử lại hoặc liên hệ quản trị viên.') from None
+    except pg.Error as exc:
+        raise ApiError(503, 'database_unavailable', f'Kho dữ liệu chưa sẵn sàng ({exc.__class__.__name__}: {exc}). Vui lòng thử lại hoặc liên hệ quản trị viên.') from None
 
 
 def assert_schema(db, schema, component):
