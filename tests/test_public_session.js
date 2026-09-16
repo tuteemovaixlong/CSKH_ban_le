@@ -15,6 +15,7 @@ class Element {
   setAttribute(k,v) { this[k]=v; }
   removeAttribute(k) { delete this[k]; }
   remove() {}
+  addEventListener() {}
 }
 const nodes=new Map(), get=id=>{if(!nodes.has(id)) nodes.set(id,new Element()); return nodes.get(id);};
 const document={body:{dataset:{auth:'cookie'}},getElementById:get,createElement:()=>new Element(),

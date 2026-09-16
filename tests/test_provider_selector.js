@@ -14,6 +14,7 @@ class Element {
   setAttribute(name, value) { this[name] = value; }
   removeAttribute(name) { delete this[name]; }
   remove() {}
+  addEventListener() {}
 }
 const nodes = new Map();
 const get = id => { if (!nodes.has(id)) nodes.set(id, new Element(id)); return nodes.get(id); };

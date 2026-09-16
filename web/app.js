@@ -982,9 +982,10 @@ if (closeStaffDesk) closeStaffDesk.onclick = () => closeStaffDeskDialog();
 
 const staffDeskDialog = byId('staff-desk-dialog');
 if (staffDeskDialog) {
-  staffDeskDialog.addEventListener('close', () => {
-    stopStaffDeskPolling();
-  });
+  if (typeof staffDeskDialog.addEventListener === 'function') {
+    staffDeskDialog.addEventListener('close', () => stopStaffDeskPolling());
+  }
+  staffDeskDialog.onclose = () => stopStaffDeskPolling();
 }
 
 const refreshStaffQueue = byId('refresh-staff-queue');

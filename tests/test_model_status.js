@@ -18,6 +18,7 @@ class Element {
   remove() {}
   showModal() { this.open = true; }
   close() { this.open = false; }
+  addEventListener() {}
 }
 const get = id => {
   if (!nodes.has(id)) nodes.set(id, new Element());
