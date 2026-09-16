@@ -12,13 +12,20 @@ def main():
     data_mode = "persistent-demo"
     invite_token = None
 
+    content = ""
     if public_env.exists():
-        for line in public_env.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line.startswith("RETAILOPS_DATA_MODE="):
-                data_mode = line.split("=", 1)[1].strip()
-            elif line.startswith("RETAILOPS_PUBLIC_INVITE_TOKEN="):
-                invite_token = line.split("=", 1)[1].strip()
+        try:
+            content = public_env.read_text(encoding="utf-8")
+        except PermissionError:
+            res = subprocess.run(["sudo", "cat", str(public_env)], capture_output=True, text=True)
+            content = res.stdout if res.returncode == 0 else ""
+
+    for line in content.splitlines():
+        line = line.strip()
+        if line.startswith("RETAILOPS_DATA_MODE="):
+            data_mode = line.split("=", 1)[1].strip()
+        elif line.startswith("RETAILOPS_PUBLIC_INVITE_TOKEN="):
+            invite_token = line.split("=", 1)[1].strip()
 
     print(f"[*] Che do RetailOps: {data_mode}")
 
@@ -70,8 +77,9 @@ print(token)
 print('=' * 55 + '\\n')
 """
 
-    cmd = [
-        "docker", "compose",
+    docker_bin = ["sudo", "docker"] if (hasattr(os, "geteuid") and os.geteuid() != 0) else ["docker"]
+    cmd = docker_bin + [
+        "compose",
         "--project-name", "retailops-web",
         "--env-file", "deployed.env",
         "--env-file", "public.env",
