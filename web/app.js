@@ -201,7 +201,7 @@ function message(text, role = 'assistant', source = null, model = null, attachme
       card.append(img);
     } else {
       const doc = el('div', 'chat-attachment-doc');
-      doc.innerHTML = '📄 <strong>' + (attachment.name || 'Tài liệu') + '</strong>';
+      doc.append(document.createTextNode('📄 '), el('strong', '', attachment.name || 'Tài liệu'));
       card.append(doc);
     }
     card.append(el('div', 'chat-attachment-caption', attachment.name || 'Tệp đính kèm'));
@@ -1083,7 +1083,7 @@ async function refreshStaffTranscript(cid, forceScroll = false) {
               card.append(img);
             } else {
               const doc = el('div', 'chat-attachment-doc');
-              doc.innerHTML = '📄 <strong>' + (m.attachment.name || 'Tài liệu') + '</strong>';
+              doc.append(document.createTextNode('📄 '), el('strong', '', m.attachment.name || 'Tài liệu'));
               card.append(doc);
             }
             card.append(el('div', 'chat-attachment-caption', m.attachment.name || 'Tệp đính kèm'));
@@ -1248,35 +1248,37 @@ if (btnAttach && chatFileInput) {
   };
 }
 
-document.addEventListener('paste', (e) => {
-  const items = e.clipboardData?.items;
-  if (!items) return;
-  for (let i = 0; i < items.length; i++) {
-    if (items[i].type && items[i].type.indexOf('image') !== -1) {
-      const blob = items[i].getAsFile();
-      if (blob) {
-        stageAttachment(new File([blob], 'screenshot_' + Date.now() + '.png', {type: blob.type}));
-        e.preventDefault();
-        break;
+if (typeof document.addEventListener === 'function') {
+  document.addEventListener('paste', (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type && items[i].type.indexOf('image') !== -1) {
+        const blob = items[i].getAsFile();
+        if (blob) {
+          stageAttachment(new File([blob], 'screenshot_' + Date.now() + '.png', {type: blob.type}));
+          e.preventDefault();
+          break;
+        }
       }
     }
-  }
-});
+  });
+}
 
 const chatPanelEl = document.querySelector('.chat-panel');
-if (chatPanelEl) {
+if (chatPanelEl && typeof chatPanelEl.addEventListener === 'function') {
   ['dragenter', 'dragover'].forEach(name => {
     chatPanelEl.addEventListener(name, (e) => {
       e.preventDefault();
       e.stopPropagation();
-      chatPanelEl.classList.add('drag-over');
+      chatPanelEl.classList?.add?.('drag-over');
     });
   });
   ['dragleave', 'drop'].forEach(name => {
     chatPanelEl.addEventListener(name, (e) => {
       e.preventDefault();
       e.stopPropagation();
-      chatPanelEl.classList.remove('drag-over');
+      chatPanelEl.classList?.remove?.('drag-over');
     });
   });
   chatPanelEl.addEventListener('drop', (e) => {
