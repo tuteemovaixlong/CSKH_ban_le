@@ -17,7 +17,7 @@ let orderScope = 'customer', managerFilter = 'all';
 
 function openLightbox(src, caption) {
   const dlg = byId('image-lightbox-dialog');
-  if (!dlg) return;
+  if (!dlg || typeof dlg.showModal !== 'function') return;
   const img = byId('lightbox-img');
   const cap = byId('lightbox-caption');
   if (img) img.src = src;
@@ -87,11 +87,13 @@ function renderAttachmentPreview() {
   const container = byId('attachment-preview');
   if (!container) return;
   if (!currentAttachment) {
-    container.style.display = 'none';
+    if (container.style) container.style.display = 'none';
+    container.hidden = true;
     container.replaceChildren();
     return;
   }
-  container.style.display = 'flex';
+  if (container.style) container.style.display = 'flex';
+  container.hidden = false;
   container.replaceChildren();
   if (currentAttachment.type === 'image') {
     const thumb = el('img', 'attachment-preview-thumb');
@@ -462,9 +464,6 @@ async function act(callback) {
 
 function renderOrder() {
   const isManager = orderScope === 'store_all';
-  const existingFilterBar = document.querySelector('.manager-filter-bar');
-  if (existingFilterBar) existingFilterBar.remove();
-
   const filteredOrders = (isManager && managerFilter !== 'all')
     ? orders.filter(o => o.status === managerFilter)
     : orders;
@@ -486,7 +485,7 @@ function renderOrder() {
       btn.onclick = () => { managerFilter = f.id; renderOrder(); };
       filterBar.append(btn);
     });
-    tabs.before(filterBar);
+    area.append(filterBar);
   }
 
   for (const item of filteredOrders) {
@@ -496,7 +495,7 @@ function renderOrder() {
   }
   byId('order-count').textContent = isManager ? (orders.length + ' đơn toàn shop') : (orders.length + ' đơn mẫu');
   if (isManager) {
-    const headerTitle = document.querySelector('.order-panel .section-header h2');
+    const headerTitle = byId('order-panel-title');
     if (headerTitle) headerTitle.textContent = 'Toàn bộ đơn hàng Shop';
   }
   if (!order) { area.append(el('p', 'order-empty', 'Chưa có thông tin đơn. Hãy kết nối hoặc tải lại dữ liệu.')); return; }
