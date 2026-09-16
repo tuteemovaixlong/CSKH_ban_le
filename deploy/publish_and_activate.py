@@ -105,7 +105,15 @@ install -o root -g root -m 0755 "$staging/live-e2e.py" /opt/retailops/live-e2e.p
 docker cp "$container:/app/deploy/admin-console.py" "$staging/admin-console.py"
 python3 -m py_compile "$staging/admin-console.py"
 install -o root -g root -m 0755 "$staging/admin-console.py" /opt/retailops/admin-console.py
-/opt/retailops/rollout-public-web.sh "$image_ref"
+if ! /opt/retailops/rollout-public-web.sh "$image_ref"; then
+  echo "=== DOCKER PS ==="
+  docker ps -a
+  echo "=== WEB CONTAINER LOGS ==="
+  docker logs --tail 80 retailops-web-web-1 || true
+  echo "=== POSTGRES CONTAINER LOGS ==="
+  docker logs --tail 40 retailops-web-postgres-1 || true
+  exit 1
+fi
 """.strip()
     ssm_run(region, instance, "/bin/bash -lc " + shlex.quote(rollout))
     print("Public web rollout checked for the activated image")
