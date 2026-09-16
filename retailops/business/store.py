@@ -145,12 +145,13 @@ class BusinessStore:
 
     def replay(self, customer, cid, request_id, digest):
         with self.connection() as db:
-            row = db.execute('''SELECT input_hash,result FROM agent_turns
+            row = db.execute('''SELECT id,input_hash,result FROM agent_turns
                 WHERE conversation_id=? AND customer_id=? AND request_id=?''',
                 (cid, customer, request_id)).fetchone()
         if row:
             require(row['input_hash'] == digest, 409, 'request_conflict', 'Mã yêu cầu đã dùng cho nội dung khác.')
             result = json.loads(row['result'])
+            result['turn_id'] = row['id'] if 'id' in row else row[0]
             # The answer is explicitly an old result. Never reopen a stale cancel card.
             return {**result, 'replayed': True, 'action': 'reply'}
         return None
@@ -179,14 +180,82 @@ class BusinessStore:
                 (context['order_id'], context['product_id'], time.time()+1800, snapshot['id'], customer,
                  snapshot['revision'], time.time())).rowcount
             require(updated == 1, 409, 'conversation_changed', 'Ngữ cảnh đã thay đổi hoặc hết hạn. Hãy gửi lại trong cuộc trò chuyện hiện tại.')
-            db.execute('''INSERT INTO agent_turns(conversation_id,customer_id,request_id,input_hash,messages,result,created_at)
-                VALUES (?,?,?,?,?,?,?)''', (snapshot['id'], customer, request_id, digest,
+            cursor = db.execute('''INSERT INTO agent_turns(conversation_id,customer_id,request_id,input_hash,messages,result,created_at)
+                VALUES (?,?,?,?,?,?,?) RETURNING id''', (snapshot['id'], customer, request_id, digest,
                 json.dumps(messages, ensure_ascii=False), json.dumps(result, ensure_ascii=False), time.time()))
+            row = cursor.fetchone()
+            turn_id = row['id'] if row and 'id' in row else (row[0] if row else getattr(cursor, 'lastrowid', None))
+            result['turn_id'] = turn_id
             # Transcript retention is bounded; expired conversations are removed on next creation.
             db.execute('''DELETE FROM agent_turns WHERE conversation_id=? AND id NOT IN
                 (SELECT id FROM agent_turns WHERE conversation_id=? ORDER BY id DESC LIMIT 6)''',
                 (snapshot['id'], snapshot['id']))
             self.log(db, customer, 'agent_replied', context['order_id'], trace=result['trace'])
+            return turn_id
+
+    def record_feedback(self, customer, body):
+        require(isinstance(body, dict), 400, 'invalid_payload', 'Dữ liệu phản hồi không hợp lệ.')
+        cid = body.get('conversation_id')
+        require(isinstance(cid, str) and len(cid) <= 64, 400, 'invalid_conversation', 'Thiếu hoặc sai conversation_id.')
+        fb_type = body.get('feedback_type')
+        require(fb_type in ('turn_rating', 'session_csat', 'human_handoff'), 400, 'invalid_feedback_type', 'Loại phản hồi không hợp lệ.')
+
+        turn_id = body.get('turn_id')
+        if turn_id is not None:
+            require(type(turn_id) is int and turn_id > 0, 400, 'invalid_turn_id', 'Mã lượt thoại không hợp lệ.')
+
+        rating = body.get('rating')
+        if rating is not None:
+            require(type(rating) is int and 1 <= rating <= 5, 400, 'invalid_rating', 'Đánh giá phải từ 1 đến 5 sao.')
+
+        sentiment = body.get('sentiment_flag')
+        if sentiment is not None:
+            require(sentiment in ('positive', 'negative', 'neutral'), 400, 'invalid_sentiment', 'Cờ cảm xúc không hợp lệ.')
+
+        reason_code = body.get('reason_code')
+        if reason_code is not None:
+            require(isinstance(reason_code, str) and len(reason_code) <= 64, 400, 'invalid_reason_code', 'Mã lý do không hợp lệ.')
+
+        comment = body.get('comment')
+        if comment is not None:
+            require(isinstance(comment, str) and len(comment) <= 1000, 400, 'comment_too_long', 'Nhận xét tối đa 1000 ký tự.')
+
+        now = time.time()
+        with self.connection(write=True) as db:
+            conv = db.execute('SELECT id FROM conversations WHERE id=? AND customer_id=?', (cid, customer)).fetchone()
+            require(conv is not None, 404, 'conversation_not_found', 'Không tìm thấy cuộc trò chuyện của khách hàng.')
+
+            cursor = db.execute('''INSERT INTO conversation_feedback
+                (conversation_id, turn_id, customer_id, feedback_type, rating, sentiment_flag, reason_code, comment, created_at)
+                VALUES (?,?,?,?,?,?,?,?,?) RETURNING id''',
+                (cid, turn_id, customer, fb_type, rating, sentiment, reason_code, comment, now))
+            row = cursor.fetchone()
+            feedback_id = row['id'] if row and 'id' in row else (row[0] if row else getattr(cursor, 'lastrowid', None))
+            self.log(db, customer, 'feedback_received', None,
+                     feedback_id=feedback_id, feedback_type=fb_type, rating=rating, sentiment_flag=sentiment)
+        return {
+            'status': 'ok',
+            'feedback_id': feedback_id,
+            'feedback_type': fb_type,
+            'created_at': now
+        }
+
+    def feedbacks(self, customer=None, conversation_id=None):
+        with self.connection() as db:
+            query = 'SELECT * FROM conversation_feedback'
+            params = []
+            clauses = []
+            if customer:
+                clauses.append('customer_id=?')
+                params.append(customer)
+            if conversation_id:
+                clauses.append('conversation_id=?')
+                params.append(conversation_id)
+            if clauses:
+                query += ' WHERE ' + ' AND '.join(clauses)
+            query += ' ORDER BY id DESC'
+            return [dict(r) for r in db.execute(query, tuple(params))]
+
 
     def propose(self, customer, body):
         fields(body, {"order_id", "order_version", "cancel_reason"})

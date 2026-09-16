@@ -79,4 +79,16 @@
 .human-badge-mini { background: linear-gradient(135deg, #f59e0b, #d97706); color: white; font-weight: 700; font-size: 10px; padding: 2px 6px; border-radius: 4px; display: inline-block; margin-right: 4px; }
 .message.human-message .bubble { border-left: 3px solid #f59e0b; background: #fffdf5; color: #451a03; }
 
-
+/* Message Feedback (Like / Dislike & Reasons) */
+.message-feedback-bar { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.feedback-btn { background: none; border: 1px solid #e2e8f0; border-radius: 6px; padding: 3px 8px; font-size: 11px; color: #64748b; cursor: pointer; transition: all 0.15s ease; display: inline-flex; align-items: center; gap: 4px; }
+.feedback-btn:hover { background: #f1f5f9; color: #1e293b; border-color: #cbd5e1; }
+.feedback-btn.active.positive { background: #dcfce7; border-color: #86efac; color: #15803d; }
+.feedback-btn.active.negative { background: #fee2e2; border-color: #fca5a5; color: #b91c1c; }
+.feedback-btn:disabled { cursor: default; opacity: 0.75; }
+.feedback-note { font-size: 11px; color: #16a34a; font-weight: 500; }
+.feedback-reason-popover { margin-top: 6px; padding: 8px 12px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.06); display: flex; flex-direction: column; gap: 6px; max-width: 320px; }
+.feedback-reason-popover span { font-size: 11px; font-weight: 600; color: #475569; }
+.feedback-reason-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.reason-chip { font-size: 10.5px; padding: 3px 8px; border-radius: 12px; border: 1px solid #cbd5e1; background: #f8fafc; color: #334155; cursor: pointer; }
+.reason-chip:hover { background: #fee2e2; border-color: #f87171; color: #991b1b; }

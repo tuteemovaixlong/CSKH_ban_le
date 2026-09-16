@@ -70,6 +70,9 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
                 raise
             _record_chat_usage(app, customer, body, result, True)
             return (200, result)
+        if path == "/api/feedback":
+            res = app.store.record_feedback(customer, body)
+            return (200, res)
         if path == "/api/cancellation-proposals":
             app.require_permission(CANCEL)
             result = app.store.propose(customer, body)

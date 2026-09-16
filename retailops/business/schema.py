@@ -33,6 +33,20 @@ def initialize(db):
                   messages TEXT NOT NULL, result TEXT NOT NULL, created_at REAL NOT NULL,
                   UNIQUE(conversation_id, request_id)
                 )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS conversation_feedback (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                  turn_id INTEGER REFERENCES agent_turns(id) ON DELETE SET NULL,
+                  customer_id TEXT NOT NULL,
+                  feedback_type TEXT NOT NULL CHECK(feedback_type IN ('turn_rating', 'session_csat', 'human_handoff')),
+                  rating INTEGER CHECK(rating BETWEEN 1 AND 5),
+                  sentiment_flag TEXT CHECK(sentiment_flag IN ('positive', 'negative', 'neutral')),
+                  reason_code TEXT,
+                  comment TEXT,
+                  created_at REAL NOT NULL
+                )""")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_feedback_conv ON conversation_feedback(conversation_id)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_feedback_type ON conversation_feedback(feedback_type)")
     db.execute("""CREATE TABLE IF NOT EXISTS provider_daily_usage (
                   day TEXT NOT NULL, provider_id TEXT NOT NULL, attempts INTEGER NOT NULL,
                   PRIMARY KEY(day,provider_id)

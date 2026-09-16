@@ -162,15 +162,31 @@ function openEndSessionDialog() {
   if (dlg) dlg.showModal();
 }
 
-function confirmEndSession() {
+async function confirmEndSession() {
   const dlg = byId('end-session-dialog');
   if (dlg) dlg.close();
-  
+
+  const ratingVal = currentRating;
+  const ratingText = ratingLabels[ratingVal] || (ratingVal + '/5 sao');
+
+  if (conversationId) {
+    try {
+      await api('/api/feedback', {
+        conversation_id: conversationId,
+        feedback_type: 'session_csat',
+        rating: ratingVal,
+        comment: ratingText
+      });
+    } catch (e) {
+      console.warn('Lưu CSAT lỗi:', e);
+    }
+  }
+
   const row = el('div', 'message system');
   const card = el('div', 'session-ended-card');
   card.innerHTML = `
     <h4>🏁 Phiên làm việc đã kết thúc thành công</h4>
-    <p>⭐ <strong>Đánh giá dịch vụ:</strong> ${ratingLabels[currentRating] || currentRating + '/5 sao'}</p>
+    <p>⭐ <strong>Đánh giá dịch vụ:</strong> ${ratingText}</p>
     <p>⏰ <strong>Thời gian hoàn tất:</strong> ${new Date().toLocaleTimeString('vi-VN')} · ${new Date().toLocaleDateString('vi-VN')}</p>
     <p>Cảm ơn quý khách đã tin tưởng và sử dụng dịch vụ CSKH của RetailOps. Trân trọng cảm ơn!</p>
   `;
@@ -179,7 +195,77 @@ function confirmEndSession() {
   requestAnimationFrame(() => { byId('messages').scrollTop = byId('messages').scrollHeight; });
 
   setHumanMode(false);
-  setModelStatus('Phiên đã kết thúc', 'Đã lưu đánh giá ' + currentRating + '/5 sao');
+  setModelStatus('Phiên đã kết thúc', 'Đã lưu đánh giá ' + ratingVal + '/5 sao');
+}
+
+function showFeedbackBar(row, cid, turnId) {
+  const bar = el('div', 'message-feedback-bar');
+  const btnLike = el('button', 'feedback-btn', '👍 Hữu ích');
+  const btnDislike = el('button', 'feedback-btn', '👎 Chưa hài lòng');
+  const note = el('span', 'feedback-note');
+
+  btnLike.onclick = async () => {
+    btnLike.disabled = true;
+    btnDislike.disabled = true;
+    btnLike.classList?.add?.('active');
+    btnLike.classList?.add?.('positive');
+    note.textContent = '✓ Cảm ơn đánh giá!';
+    bar.append(note);
+    try {
+      await api('/api/feedback', {
+        conversation_id: cid,
+        turn_id: turnId || null,
+        feedback_type: 'turn_rating',
+        sentiment_flag: 'positive'
+      });
+    } catch (e) {
+      console.warn('Gửi like lỗi:', e);
+    }
+  };
+
+  btnDislike.onclick = () => {
+    let popover = row.querySelector('.feedback-reason-popover');
+    if (popover) { popover.remove(); return; }
+    popover = el('div', 'feedback-reason-popover');
+    popover.append(el('span', '', 'Lý do chưa hài lòng:'));
+    const chips = el('div', 'feedback-reason-chips');
+    const reasons = [
+      { code: 'wrong_info', label: 'Sai thông tin' },
+      { code: 'misunderstood', label: 'Chưa hiểu ý' },
+      { code: 'tone_issue', label: 'Cách trả lời chưa tốt' },
+      { code: 'other', label: 'Khác' }
+    ];
+    for (const r of reasons) {
+      const chip = el('button', 'reason-chip', r.label);
+      chip.onclick = async () => {
+        popover.remove();
+        btnLike.disabled = true;
+        btnDislike.disabled = true;
+        btnDislike.classList?.add?.('active');
+        btnDislike.classList?.add?.('negative');
+        note.textContent = '✓ Đã ghi nhận phản hồi!';
+        bar.append(note);
+        try {
+          await api('/api/feedback', {
+            conversation_id: cid,
+            turn_id: turnId || null,
+            feedback_type: 'turn_rating',
+            sentiment_flag: 'negative',
+            reason_code: r.code,
+            comment: r.label
+          });
+        } catch (e) {
+          console.warn('Gửi dislike lỗi:', e);
+        }
+      };
+      chips.append(chip);
+    }
+    popover.append(chips);
+    bar.after(popover);
+  };
+
+  bar.append(btnLike, btnDislike);
+  row.append(bar);
 }
 
 async function act(callback) {
@@ -452,9 +538,20 @@ async function send(text, requestId = crypto.randomUUID(), retry = false) {
   if (result.human_support) {
     showHumanSupport(row, result.human_support);
     setHumanMode(true, result.human_support.support_rep || 'Chuyên viên CSKH');
+    if (conversationId) {
+      api('/api/feedback', {
+        conversation_id: conversationId,
+        turn_id: result.turn_id || null,
+        feedback_type: 'human_handoff',
+        reason_code: result.human_support.reason || 'user_requested'
+      }).catch(e => console.warn('Ghi log handoff lỗi:', e));
+    }
   }
   showSources(row, result.sources);
   showTrace(row, result.trace, result.replayed);
+  if (conversationId && result.source !== 'interface') {
+    showFeedbackBar(row, conversationId, result.turn_id);
+  }
   if (result.replayed) {
     row.append(el('small', 'replay-note', 'Đây là câu trả lời đã lưu của lần gửi trước. Bảng đơn bên phải hiển thị trạng thái hiện tại.'));
   } else { showContext(result.context); }
