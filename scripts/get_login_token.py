@@ -49,25 +49,24 @@ else:
     from retailops.identity.persistent import PersistentSessions
     sessions = PersistentSessions('/data/persistent')
 
-try:
-    sessions.provision_tenant('retailops-demo', 'RetailOps Demo', seed_demo=True)
-except Exception:
-    pass
+mid = None
+with sessions.control.connection() as db:
+    row = db.execute("SELECT id FROM memberships WHERE tenant_id=? AND principal_id=?", ("retailops-demo", "mai-anh")).fetchone()
+    if row:
+        mid = row["id"] if isinstance(row, dict) else row[0]
 
-try:
-    mid = sessions.create_member('retailops-demo', 'mai-anh', 'Mai Anh', 'C-001', 'customer')
-except Exception:
-    if backend == 'postgresql':
-        from retailops.storage.postgres import connection
-        with connection(dsn) as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT id FROM memberships WHERE tenant_id='retailops-demo' AND principal_id='mai-anh'")
-                row = cur.fetchone()
-                mid = row['id'] if isinstance(row, dict) else row[0]
-    else:
+if not mid:
+    try:
+        sessions.provision_tenant("retailops-demo", "RetailOps Demo", seed_demo=True)
+    except Exception:
+        pass
+    try:
+        mid = sessions.create_member("retailops-demo", "mai-anh", "Mai Anh", "C-001", "customer")
+    except Exception:
         with sessions.control.connection() as db:
-            row = db.execute("SELECT id FROM memberships WHERE tenant_id='retailops-demo' AND principal_id='mai-anh'").fetchone()
-            mid = row['id']
+            row = db.execute("SELECT id FROM memberships WHERE active=1 LIMIT 1").fetchone()
+            if row:
+                mid = row["id"] if isinstance(row, dict) else row[0]
 
 token = secrets.token_urlsafe(32)
 sessions.control.register_credential(mid, token)
