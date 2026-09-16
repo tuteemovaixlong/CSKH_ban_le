@@ -75,8 +75,9 @@ body:not(.trace-visible) .agent-trace { display: none !important; }
 }
 
 .sidebar[hidden], .context-panel[hidden], .workspace-toggle[hidden] { display: none !important; }
+body.topbar-collapsed .topbar { display: none !important; }
+body.topbar-collapsed .workspace { padding-top: 6px !important; }
 
-@media (min-width: 981px) {
   html, body { height: 100%; }
   body { height: 100vh; height: 100dvh; overflow: hidden; }
 
@@ -111,9 +112,28 @@ body:not(.trace-visible) .agent-trace { display: none !important; }
     min-height: 58px;
     gap: 12px;
     justify-content: flex-start;
+    transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
   }
   .breadcrumb { min-width: 0; margin-right: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .topbar-meta { display: flex; align-items: center; gap: 9px; min-width: 0; }
+
+  body.topbar-collapsed .topbar {
+    height: 0 !important;
+    min-height: 0 !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    margin: 0 !important;
+    border-bottom: none !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+    overflow: hidden !important;
+  }
+  body.topbar-collapsed .workspace {
+    padding-top: 6px !important;
+  }
+  body.topbar-collapsed footer {
+    display: none !important;
+  }
 
   .workspace {
     flex: 1 1 auto;
@@ -123,6 +143,7 @@ body:not(.trace-visible) .agent-trace { display: none !important; }
     gap: clamp(12px, 1.1vw, 18px);
     align-items: stretch;
     padding-top: 12px;
+    transition: padding-top 0.22s ease;
   }
   body.context-collapsed .workspace { grid-template-columns: minmax(0, 1fr); }
 
@@ -132,6 +153,13 @@ body:not(.trace-visible) .agent-trace { display: none !important; }
     min-height: 0;
     max-height: none;
     border-radius: 13px;
+    transition: all 0.22s ease;
+  }
+  body.topbar-collapsed .panel-heading {
+    padding: 10px 18px;
+  }
+  body.topbar-collapsed .provider-controls {
+    padding: 6px 18px;
   }
   .panel-heading { padding: 13px 18px; }
   .provider-controls {

@@ -58,6 +58,7 @@
 .header-action-btn { display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px; font-size: 12px; font-weight: 550; border-radius: 8px; border: 1px solid #e2e5ee; background: #ffffff; color: #475569; cursor: pointer; transition: all 0.18s ease; }
 .header-action-btn:hover { background: #f8fafc; border-color: #cbd5e1; color: #1e293b; transform: translateY(-1px); }
 .header-action-btn.active { border-color: #f59e0b; background: #fffbeb; color: #b45309; box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.15); }
+#btn-toggle-topbar.active { border-color: #6366f1; background: #eef2ff; color: #4f46e5; box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.18); }
 .header-action-btn.danger { border-color: #fee2e2; background: #fff5f5; color: #dc2626; }
 .header-action-btn.danger:hover { background: #fee2e2; border-color: #fca5a5; }
 

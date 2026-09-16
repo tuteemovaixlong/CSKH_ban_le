@@ -735,7 +735,25 @@ if (runInspectorBtn && inspectorOutput) {
   };
 }
 
-// In-Chat Human Handoff & End Session Listeners
+// In-Chat Layout Controls, Human Handoff & End Session Listeners
+const btnToggleTopbar = byId('btn-toggle-topbar');
+if (btnToggleTopbar) {
+  const isCollapsed = () => document.body.classList?.contains?.('topbar-collapsed') || false;
+  const updateExpandState = (collapsed) => {
+    document.body.classList?.toggle?.('topbar-collapsed', collapsed);
+    btnToggleTopbar.classList?.toggle?.('active', collapsed);
+    btnToggleTopbar.textContent = collapsed ? '⤡ Thu nhỏ' : '⤢ Mở rộng';
+    btnToggleTopbar.title = collapsed ? 'Hiện lại thanh tiêu đề' : 'Ẩn thanh menu trên cùng để mở rộng khung chat';
+    try { localStorage.setItem('retailops.ui.topbarCollapsed', String(collapsed)); } catch (_) {}
+  };
+  try {
+    if (localStorage.getItem('retailops.ui.topbarCollapsed') === 'true') {
+      updateExpandState(true);
+    }
+  } catch (_) {}
+  btnToggleTopbar.onclick = () => updateExpandState(!isCollapsed());
+}
+
 const btnMeetHuman = byId('btn-meet-human');
 if (btnMeetHuman) btnMeetHuman.onclick = () => act(async () => { toggleHumanMode(); });
 
