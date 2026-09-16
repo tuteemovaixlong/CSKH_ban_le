@@ -47,6 +47,12 @@ def ssm_run(region, instance, command, execution_timeout=600):
                     print(output)
                 return
             if status not in ("Pending", "InProgress", "Delayed"):
+                stdout_content = details.get("StandardOutputContent", "").strip()
+                stderr_content = details.get("StandardErrorContent", "").strip()
+                if stdout_content:
+                    print(f"=== SSM STDOUT ({status}) ===\n{stdout_content}")
+                if stderr_content:
+                    print(f"=== SSM STDERR ({status}) ===\n{stderr_content}")
                 raise SystemExit(f"SSM deployment step ended with {status}; inspect command {command_id} in AWS")
         time.sleep(10)
     raise SystemExit(f"SSM polling deadline exceeded for command {command_id}; inspect the invocation before retrying")
