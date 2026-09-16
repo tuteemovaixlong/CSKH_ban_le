@@ -16,11 +16,22 @@ _STATES: Dict[str, float] = {}
 STATE_TTL_SECONDS = 900  # 15 minutes
 
 
+def _clean_env(name: str) -> str:
+    """Read env var, stripping whitespace, surrounding quotes or template brackets."""
+    val = os.getenv(name, "").strip()
+    if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+        val = val[1:-1].strip()
+    if val.startswith('<') and val.endswith('>'):
+        val = val[1:-1].strip()
+    return val
+
+
 def is_google_auth_configured() -> bool:
     """Check if Google OAuth 2.0 credentials are present in the environment."""
-    client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip()
-    client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
+    client_id = _clean_env("GOOGLE_CLIENT_ID")
+    client_secret = _clean_env("GOOGLE_CLIENT_SECRET")
     return bool(client_id and client_secret)
+
 
 
 def create_state() -> str:
@@ -49,7 +60,7 @@ def verify_and_consume_state(state: Optional[str]) -> bool:
 
 def get_google_auth_url(origin: str, state: str) -> str:
     """Construct Google OAuth 2.0 authorization URL."""
-    client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+    client_id = _clean_env("GOOGLE_CLIENT_ID")
     redirect_uri = f"{origin.rstrip('/')}/auth/google/callback"
     params = urllib.parse.urlencode({
         "client_id": client_id,
@@ -64,8 +75,8 @@ def get_google_auth_url(origin: str, state: str) -> str:
 
 def exchange_code_for_user_info(code: str, origin: str) -> Dict[str, str]:
     """Exchange authorization code with Google and retrieve user profile info."""
-    client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip()
-    client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
+    client_id = _clean_env("GOOGLE_CLIENT_ID")
+    client_secret = _clean_env("GOOGLE_CLIENT_SECRET")
     redirect_uri = f"{origin.rstrip('/')}/auth/google/callback"
 
     token_url = "https://oauth2.googleapis.com/token"
@@ -124,11 +135,14 @@ def exchange_code_for_user_info(code: str, origin: str) -> Dict[str, str]:
 def resolve_role_from_email(email: str) -> str:
     """Smart Role Mapping: Map email to 'manager', 'staff', or 'customer'."""
     clean = email.strip().lower()
-    staff_emails = [e.strip().lower() for e in os.getenv("STAFF_EMAILS", "").split(",") if e.strip()]
-    manager_emails = [e.strip().lower() for e in os.getenv("MANAGER_EMAILS", "").split(",") if e.strip()]
+    staff_str = _clean_env("STAFF_EMAILS")
+    manager_str = _clean_env("MANAGER_EMAILS")
+    staff_emails = [e.strip().lower() for e in staff_str.split(",") if e.strip()]
+    manager_emails = [e.strip().lower() for e in manager_str.split(",") if e.strip()]
 
     if clean in manager_emails:
         return "manager"
     if clean in staff_emails:
         return "staff"
-    return os.getenv("DEFAULT_ROLE", "customer")
+    return _clean_env("DEFAULT_ROLE") or "customer"
+
