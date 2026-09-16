@@ -11,7 +11,7 @@ from retailops.core import ApiError
 from retailops.business.store import BusinessStore
 from retailops.business.schema import initialize as initialize_schema
 from retailops.http.routes import api_result
-from scripts.export_tuning_dataset import export_datasets
+from retailops.business.export import export_datasets
 
 
 class FeedbackStoreTests(unittest.TestCase):
