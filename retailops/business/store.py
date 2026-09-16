@@ -162,12 +162,58 @@ class BusinessStore:
                 ORDER BY id DESC LIMIT 6''', (cid, customer)).fetchall()
         turns, characters, count = [], 0, 0
         for row in rows:
-            messages = json.loads(row['messages'])
-            size = sum(len(m.get('content', '')) + len(json.dumps(m.get('tool_calls', []), ensure_ascii=False)) for m in messages)
-            if characters + size > 4500 or count + len(messages) > 16:
+            raw = json.loads(row['messages'])
+            clean_turn = []
+            for m in raw:
+                role = m.get('role')
+                content = m.get('content', '')
+                if not isinstance(content, str):
+                    content = str(content)
+                if role == 'user':
+                    clean_turn.append({'role': 'user', 'content': content})
+                elif role == 'assistant':
+                    entry = {'role': 'assistant', 'content': content}
+                    if 'tool_calls' in m and m['tool_calls']:
+                        entry['tool_calls'] = m['tool_calls']
+                    clean_turn.append(entry)
+                elif role == 'tool':
+                    clean_turn.append({'role': 'tool', 'tool_name': m.get('tool_name', ''), 'content': content})
+            if not clean_turn:
+                continue
+            size = sum(len(m.get('content', '')) + len(json.dumps(m.get('tool_calls', []), ensure_ascii=False)) for m in clean_turn)
+            if characters + size > 4500 or count + len(clean_turn) > 16:
                 break  # Keep whole contiguous turns, never orphan tool calls/results.
-            characters += size; count += len(messages); turns.append(messages)
-        return [m for turn in reversed(turns) for m in turn]
+            characters += size; count += len(clean_turn); turns.append(clean_turn)
+
+        flat = [m for turn in reversed(turns) for m in turn]
+        if not flat:
+            return []
+
+        # Normalize message sequence for LLM agent protocol:
+        # Merge adjacent turns of the same role so user->assistant alternation is strictly preserved
+        normalized = []
+        for m in flat:
+            if not normalized:
+                if m['role'] == 'user':
+                    normalized.append(dict(m))
+                continue
+            prev = normalized[-1]
+            if m['role'] == 'user' and prev['role'] == 'user':
+                prev['content'] = (prev['content'] + '\n' + m['content'])[:2000]
+            elif m['role'] == 'assistant' and prev['role'] == 'assistant' and 'tool_calls' not in m and 'tool_calls' not in prev:
+                prev['content'] = (prev['content'] + '\n' + m['content'])
+            else:
+                normalized.append(dict(m))
+
+        # Because `run_agent()` will append `+ [user]`, history MUST end with an assistant turn.
+        # If the last turn was user (e.g. from an unreplied human message), drop it so the new question takes its place.
+        while normalized and normalized[-1]['role'] != 'assistant':
+            normalized.pop()
+
+        if not normalized or normalized[0]['role'] != 'user':
+            return []
+
+        return normalized
 
     def finish_turn(self, customer, snapshot, request_id, digest, messages, result, versions):
         with self.connection(write=True) as db:
@@ -302,7 +348,7 @@ class BusinessStore:
             require(conv is not None, 404, 'conversation_not_found', 'Cuộc trò chuyện không tồn tại hoặc đã bị xóa.')
             
             turn_messages = [
-                {"role": "assistant", "content": message, "author": "staff", "staff_name": staff_name}
+                {"role": "assistant", "content": message}
             ]
             turn_result = {
                 "message": message,

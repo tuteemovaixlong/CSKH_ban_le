@@ -189,9 +189,17 @@ class StaffDeskTests(unittest.TestCase):
         self.assertEqual(staff_turn[0]["role"], "assistant")
         self.assertEqual(staff_turn[0]["content"], "Dạ chào bạn, Mai Anh CSKH nghe đây ạ!")
         self.assertEqual(staff_res["author"], "staff")
-        self.assertEqual(staff_res["staff_name"], "Nguyễn Mai Anh (Chuyên viên CSKH)")
+        # 5. Verify conversation history handed back to Bot AI passes validate_messages
+        from agent_protocol import validate_messages
+        history = self.store.history("C-001", self.cid)
+        self.assertGreaterEqual(len(history), 2)
+        # Check that appending a new user question to history is 100% valid under agent_protocol!
+        new_messages = history + [{"role": "user", "content": "áo thun của tôi sao rồi"}]
+        validated = validate_messages(new_messages)
+        self.assertEqual(len(validated), len(new_messages))
 
 
 if __name__ == "__main__":
     unittest.main()
+
 
