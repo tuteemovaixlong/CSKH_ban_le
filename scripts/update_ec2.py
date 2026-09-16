@@ -87,7 +87,7 @@ def main():
         shutil.copytree(repo_dir / folder, dst)
         print(f"  [+] Copied {folder} -> {dst}")
 
-    for filename in ["retailops_providers.py", "agent_protocol.py"]:
+    for filename in ["retailops_providers.py", "agent_protocol.py", "retailops_agent.py"]:
         src = repo_dir / filename
         if src.exists():
             shutil.copy2(src, patches_dir / filename)
@@ -108,6 +108,7 @@ def main():
             output.append("      - /opt/retailops/patches/retailops:/app/retailops:ro")
             output.append("      - /opt/retailops/patches/retailops_providers.py:/app/retailops_providers.py:ro")
             output.append("      - /opt/retailops/patches/agent_protocol.py:/app/agent_protocol.py:ro")
+            output.append("      - /opt/retailops/patches/retailops_agent.py:/app/retailops_agent.py:ro")
 
     compose_path.write_text("\n".join(output) + "\n", encoding="utf-8")
     print(f"  [+] Written {compose_path}")

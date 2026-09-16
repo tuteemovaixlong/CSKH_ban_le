@@ -115,6 +115,18 @@ class OpenRouterAgent:
                 if not pending:
                     raise ProtocolError('Missing API tool call ID')
                 entry = {'role': 'tool', 'tool_call_id': pending.pop(0), 'content': message['content']}
+            elif message['role'] == 'user' and message.get('attachment'):
+                att = message['attachment']
+                content_list = [{'type': 'text', 'text': message['content']}]
+                if att.get('type') == 'image' and att.get('data'):
+                    data_url = att['data']
+                    if not data_url.startswith('data:'):
+                        mime = att.get('mime_type', 'image/jpeg')
+                        data_url = f"data:{mime};base64,{data_url}"
+                    content_list.append({'type': 'image_url', 'image_url': {'url': data_url}})
+                elif att.get('type') == 'document':
+                    content_list.append({'type': 'text', 'text': f"[Tệp đính kèm: {att.get('name', 'tài liệu')}]"})
+                entry = {'role': 'user', 'content': content_list}
             else:
                 entry = dict(message)
             translated.append(entry)
@@ -173,7 +185,21 @@ class OpenRouterAgent:
         while i < len(messages):
             m = messages[i]
             if m['role'] == 'user':
-                anthropic_messages.append({'role': 'user', 'content': m['content']})
+                if m.get('attachment') and m['attachment'].get('type') == 'image' and m['attachment'].get('data'):
+                    att = m['attachment']
+                    data = att.get('data', '')
+                    if ',' in data:
+                        data = data.split(',', 1)[1]
+                    mime = att.get('mime_type', 'image/jpeg')
+                    anthropic_messages.append({
+                        'role': 'user',
+                        'content': [
+                            {'type': 'text', 'text': m['content']},
+                            {'type': 'image', 'source': {'type': 'base64', 'media_type': mime, 'data': data}}
+                        ]
+                    })
+                else:
+                    anthropic_messages.append({'role': 'user', 'content': m['content']})
                 i += 1
             elif m['role'] == 'assistant':
                 saved = self._messages.get(i)

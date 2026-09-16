@@ -73,21 +73,32 @@ class Application:
         require(permission in self.permissions, 403, 'permission_denied', 'Tài khoản này không có quyền thực hiện thao tác.')
 
     def chat(self, customer, body):
-        fields(body, {'text', 'conversation_id', 'request_id'})
+        require(isinstance(body, dict) and {'text', 'conversation_id', 'request_id'}.issubset(set(body))
+                and set(body).issubset({'text', 'conversation_id', 'request_id', 'attachment'}),
+                400, "invalid_fields", "Các trường của yêu cầu không hợp lệ.")
         text, request_id = body['text'], body['request_id']
         require(isinstance(text, str) and 0 < len(text.strip()) <= 2000,
                 400, 'invalid_text', 'Nhập yêu cầu tối đa 2.000 ký tự.')
         require(isinstance(request_id, str) and re.fullmatch(r'[A-Za-z0-9_-]{16,128}', request_id),
                 400, 'invalid_request_id', 'Thiếu mã yêu cầu hội thoại.')
+        attachment = body.get('attachment')
+        if attachment is not None:
+            require(isinstance(attachment, dict) and 'data' in attachment and 'type' in attachment,
+                    400, 'invalid_attachment', 'Định dạng tệp đính kèm không hợp lệ.')
+            require(attachment.get('type') in ('image', 'document'),
+                    400, 'unsupported_attachment_type', 'Chỉ hỗ trợ tệp hình ảnh hoặc tài liệu.')
+            require(isinstance(attachment.get('data'), str) and len(attachment['data']) <= 6_000_000,
+                    400, 'attachment_too_large', 'Kích thước tệp đính kèm vượt quá 4MB.')
         snapshot = self.store.conversation(customer, body['conversation_id'])
         provider_id = snapshot['provider_id']
-        digest = hashlib.sha256(text.encode()).hexdigest()
+        att_token = attachment.get('name', '') if attachment else ''
+        digest = hashlib.sha256((text + att_token).encode()).hexdigest()
         replay = self.store.replay(customer, snapshot['id'], request_id, digest)
         if replay:
             return replay
 
-        # Tier 1: Check Semantic / Exact Cache (for custom production model or when cache_api enabled)
-        cached = self.semantic_cache.lookup(text) if (provider_id != 'api' or getattr(self, 'cache_api', False)) else None
+        # Tier 1: Check Semantic / Exact Cache (for custom production model or when cache_api enabled; bypass if attachment)
+        cached = self.semantic_cache.lookup(text) if (not attachment and (provider_id != 'api' or getattr(self, 'cache_api', False))) else None
         if cached:
             cache_trace = {
                 'turn_id': str(uuid.uuid4()),
@@ -185,7 +196,7 @@ class Application:
                 bound.human_support = state.get('human_support')
 
             answer = run_agent(gateway, text, self.store.history(customer, snapshot['id']), execute, identity,
-                               saver=saver, capture=capture, restore=restore, before_model=before_model)
+                               saver=saver, capture=capture, restore=restore, before_model=before_model, attachment=attachment)
             result = {'action': 'choose_cancel_reason' if bound.cancel_order else 'reply',
                       'message': answer['message'], 'source': 'llm_agent', 'model_used': True,
                       'context': bound.context, 'trace': answer['trace'], 'provider_id': provider_id, 'replayed': False}

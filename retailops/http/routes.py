@@ -45,7 +45,11 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
         if path == "/api/providers":
             return (200, app.providers())
         if path == "/api/orders":
-            return (200, {"orders": app.store.orders(customer)})
+            if getattr(app, 'role', '') == 'manager':
+                with app.store.connection() as db:
+                    all_orders = [dict(r) for r in db.execute("SELECT * FROM orders ORDER BY id DESC LIMIT 50")]
+                return (200, {"orders": all_orders, "scope": "store_all"})
+            return (200, {"orders": app.store.orders(customer), "scope": "customer"})
         if path == '/api/cancellation-proposals':
             app.require_permission(CANCEL)
             with app.store.connection() as db:

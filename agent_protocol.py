@@ -260,7 +260,7 @@ def validate_messages(messages):
         if characters > MAX_CHARACTERS:
             raise ProtocolError('Conversation exceeds context budget')
         if role == 'user':
-            if expected != 'user' or set(m) != {'role', 'content'} or not 1 <= len(content.strip()) <= 2000:
+            if expected != 'user' or set(m) - {'role', 'content', 'attachment'} or not 1 <= len(content.strip()) <= 2000:
                 raise ProtocolError('Invalid user turn')
             expected = 'assistant'
         elif role == 'assistant':
@@ -287,7 +287,14 @@ def build_request(model, messages, allow_tools=True):
     mode = request_mode(messages)
     system = GENERAL_SYSTEM if mode == 'general' else SYSTEM
     tools = [] if mode == 'general' else (TOOLS if allow_tools else [])
-    return {'model': model, 'messages': [{'role': 'system', 'content': system}] + messages,
+    formatted_messages = []
+    for m in messages:
+        if m.get('role') == 'user' and m.get('attachment'):
+            att_name = m['attachment'].get('name', 'ảnh/tệp')
+            formatted_messages.append({'role': 'user', 'content': f"{m['content']}\n[Tệp đính kèm: {att_name}]"})
+        else:
+            formatted_messages.append(m)
+    return {'model': model, 'messages': [{'role': 'system', 'content': system}] + formatted_messages,
             'tools': tools, 'stream': False, 'think': False, 'keep_alive': '10m',
             'options': {'num_ctx': 8192, 'num_predict': generation_budget(messages, mode),
                         'temperature': 0.2, 'seed': 42}}

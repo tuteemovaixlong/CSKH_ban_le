@@ -12,6 +12,107 @@ let canCancel = true;
 let isHumanMode = false, currentRating = 5;
 let humanPollingTimer = null;
 const renderedStaffTurnIds = new Set();
+let currentAttachment = null;
+let orderScope = 'customer', managerFilter = 'all';
+
+function openLightbox(src, caption) {
+  const dlg = byId('image-lightbox-dialog');
+  if (!dlg) return;
+  const img = byId('lightbox-img');
+  const cap = byId('lightbox-caption');
+  if (img) img.src = src;
+  if (cap) cap.textContent = caption || '';
+  dlg.showModal();
+}
+
+function stageAttachment(file) {
+  if (!file) return;
+  const isImg = file.type.startsWith('image/');
+  const isPdf = file.type === 'application/pdf';
+  if (!isImg && !isPdf) {
+    message('Chỉ hỗ trợ file ảnh (JPG, PNG, WEBP, GIF) hoặc tài liệu PDF.', 'assistant', 'interface');
+    return;
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    message('Dung lượng tệp tối đa là 10MB.', 'assistant', 'interface');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    let dataUrl = e.target.result;
+    if (isImg && file.type !== 'image/gif') {
+      const img = new Image();
+      img.onload = function() {
+        const maxDim = 1920;
+        let w = img.width, h = img.height;
+        if (w > maxDim || h > maxDim) {
+          if (w > h) { h = Math.round((h * maxDim) / w); w = maxDim; }
+          else { w = Math.round((w * maxDim) / h); h = maxDim; }
+          const canvas = document.createElement('canvas');
+          canvas.width = w; canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, w, h);
+          dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        }
+        currentAttachment = {
+          type: 'image',
+          name: file.name,
+          mime_type: 'image/jpeg',
+          data: dataUrl
+        };
+        renderAttachmentPreview();
+      };
+      img.src = dataUrl;
+    } else {
+      currentAttachment = {
+        type: isImg ? 'image' : 'document',
+        name: file.name,
+        mime_type: file.type || (isPdf ? 'application/pdf' : 'image/jpeg'),
+        data: dataUrl
+      };
+      renderAttachmentPreview();
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearAttachment() {
+  currentAttachment = null;
+  const input = byId('chat-file-input');
+  if (input) input.value = '';
+  renderAttachmentPreview();
+}
+
+function renderAttachmentPreview() {
+  const container = byId('attachment-preview');
+  if (!container) return;
+  if (!currentAttachment) {
+    container.style.display = 'none';
+    container.replaceChildren();
+    return;
+  }
+  container.style.display = 'flex';
+  container.replaceChildren();
+  if (currentAttachment.type === 'image') {
+    const thumb = el('img', 'attachment-preview-thumb');
+    thumb.src = currentAttachment.data;
+    thumb.alt = currentAttachment.name;
+    container.append(thumb);
+  } else {
+    container.append(el('div', 'attachment-preview-icon', '📄'));
+  }
+  const info = el('div', 'attachment-preview-info');
+  info.append(
+    el('div', 'attachment-preview-name', currentAttachment.name),
+    el('div', 'attachment-preview-size', currentAttachment.type === 'image' ? 'Ảnh đính kèm · Sẵn sàng gửi' : 'Tài liệu PDF · Sẵn sàng gửi')
+  );
+  container.append(info);
+  const removeBtn = el('button', 'attachment-preview-remove', '✕');
+  removeBtn.type = 'button';
+  removeBtn.title = 'Bỏ đính kèm';
+  removeBtn.onclick = () => clearAttachment();
+  container.append(removeBtn);
+}
 const ratingLabels = {
   1: 'Rất không hài lòng (1/5 sao)',
   2: 'Không hài lòng (2/5 sao)',
@@ -85,11 +186,32 @@ async function api(path, body, extra = {}) {
   return result;
 }
 
-function message(text, role = 'assistant', source = null, model = null) {
+function message(text, role = 'assistant', source = null, model = null, attachment = null) {
   const row = el('div', 'message ' + role), label = el('div', 'message-label');
   label.append(el('span', role === 'assistant' ? 'mini-r' : '', role === 'assistant' ? 'R' : ''));
   label.append(document.createTextNode(role === 'user' ? 'Bạn' : 'RetailOps' + (source ? ' · ' + sourceLabels[source] : '') + (model ? ' · ' + model : '')));
-  row.append(label, el('div', 'bubble', text)); byId('messages').append(row);
+  const bubble = el('div', 'bubble');
+  if (attachment) {
+    const card = el('div', 'chat-attachment-card');
+    if (attachment.type === 'image') {
+      const img = el('img', 'chat-attachment-img');
+      img.src = attachment.data.startsWith('data:') ? attachment.data : `data:${attachment.mime_type || 'image/jpeg'};base64,${attachment.data}`;
+      img.alt = attachment.name || 'Ảnh đính kèm';
+      img.onclick = (e) => { e.stopPropagation(); openLightbox(img.src, attachment.name); };
+      card.append(img);
+    } else {
+      const doc = el('div', 'chat-attachment-doc');
+      doc.innerHTML = '📄 <strong>' + (attachment.name || 'Tài liệu') + '</strong>';
+      card.append(doc);
+    }
+    card.append(el('div', 'chat-attachment-caption', attachment.name || 'Tệp đính kèm'));
+    bubble.append(card);
+  }
+  if (text) {
+    bubble.append(document.createTextNode(text));
+  }
+  row.append(label, bubble);
+  byId('messages').append(row);
   requestAnimationFrame(() => { byId('messages').scrollTop = byId('messages').scrollHeight; });
   return row;
 }
@@ -339,19 +461,49 @@ async function act(callback) {
 }
 
 function renderOrder() {
-  const order = orders.find(o => o.id === selected), area = byId('order-details'); area.replaceChildren();
+  const isManager = orderScope === 'store_all';
+  const existingFilterBar = document.querySelector('.manager-filter-bar');
+  if (existingFilterBar) existingFilterBar.remove();
+
+  const filteredOrders = (isManager && managerFilter !== 'all')
+    ? orders.filter(o => o.status === managerFilter)
+    : orders;
+  const order = orders.find(o => o.id === selected) || filteredOrders[0], area = byId('order-details');
+  area.replaceChildren();
   const tabs = byId('order-tabs'); tabs.replaceChildren();
-  for (const item of orders) {
-    const active = item.id === selected, button = el('button', active ? 'selected' : '', item.id);
+
+  if (isManager) {
+    const filterBar = el('div', 'manager-filter-bar');
+    const filters = [
+      {id: 'all', label: 'Tất cả (' + orders.length + ')'},
+      {id: 'pending', label: 'Chờ (' + orders.filter(o => o.status === 'pending').length + ')'},
+      {id: 'delivered', label: 'Giao (' + orders.filter(o => o.status === 'delivered').length + ')'},
+      {id: 'cancelled', label: 'Hủy (' + orders.filter(o => o.status === 'cancelled').length + ')'}
+    ];
+    filters.forEach(f => {
+      const btn = el('button', 'manager-filter-btn' + (managerFilter === f.id ? ' active' : ''), f.label);
+      btn.type = 'button';
+      btn.onclick = () => { managerFilter = f.id; renderOrder(); };
+      filterBar.append(btn);
+    });
+    tabs.before(filterBar);
+  }
+
+  for (const item of filteredOrders) {
+    const active = item.id === (order ? order.id : selected), button = el('button', active ? 'selected' : '', item.id);
     button.dataset.order = item.id; button.setAttribute('aria-pressed', String(active));
     button.onclick = () => act(() => lookupOrder(item.id)); tabs.append(button);
   }
-  byId('order-count').textContent = orders.length + ' đơn mẫu';
+  byId('order-count').textContent = isManager ? (orders.length + ' đơn toàn shop') : (orders.length + ' đơn mẫu');
+  if (isManager) {
+    const headerTitle = document.querySelector('.order-panel .section-header h2');
+    if (headerTitle) headerTitle.textContent = 'Toàn bộ đơn hàng Shop';
+  }
   if (!order) { area.append(el('p', 'order-empty', 'Chưa có thông tin đơn. Hãy kết nối hoặc tải lại dữ liệu.')); return; }
   const top = el('div', 'order-line'); top.append(el('h3', '', order.id), el('span', 'badge ' + order.status, statuses[order.status]));
   const item = el('div', 'item'), copy = el('div'); copy.append(el('strong', '', order.name), el('p', '', order.variant)); item.append(copy);
   const total = el('div', 'detail-row total'); total.append(el('span', '', 'Tổng cộng'), el('strong', '', money(order.amount)));
-  area.append(top, el('p', 'order-date', 'Đơn giả lập · Phiên bản ' + order.version), item, total);
+  area.append(top, el('p', 'order-date', 'Đơn ' + (order.customer_id ? ('khách ' + order.customer_id + ' · ') : '') + 'Phiên bản ' + order.version), item, total);
   area.append(el('p', 'order-policy', order.status === 'pending' ? 'Có thể yêu cầu hủy. Cần chọn lý do và xác nhận.' : order.status === 'delivered' ? 'Đơn đã giao không đủ điều kiện hủy.' : 'Đơn đã hủy. Trạng thái được lưu trên máy chủ.'));
   const lookup = el('button', 'order-action', 'Tra cứu đơn này'); lookup.onclick = () => act(() => lookupOrder(order.id)); area.append(lookup);
   if (canCancel) {
@@ -361,7 +513,9 @@ function renderOrder() {
 
 const eventLabels = {order_viewed: 'Tra cứu đơn', cancellation_proposed: 'Tạo đề xuất hủy', order_cancelled: 'Đã xác nhận hủy', proposal_dismissed: 'Bỏ đề xuất', model_extraction: 'Model phân tích yêu cầu', model_unavailable: 'Không kết nối được model', chat_replied: 'Trả lời hội thoại', agent_replied: 'Model trả lời', agent_failed: 'Lượt chat chưa hoàn tất'};
 async function refresh() {
-  const [data, history] = await Promise.all([api('/api/orders'), api('/api/events')]); orders = data.orders;
+  const [data, history] = await Promise.all([api('/api/orders'), api('/api/events')]);
+  orders = data.orders || [];
+  orderScope = data.scope || 'customer';
   if (!orders.some(o => o.id === selected)) selected = orders[0]?.id;
   renderOrder(); const area = byId('activity'); area.replaceChildren();
   for (const event of history.events.slice(0, 8)) {
@@ -530,8 +684,12 @@ function showTrace(row, trace, replayed = false) {
   row.append(details);
 }
 
-async function send(text, requestId = crypto.randomUUID(), retry = false) {
-  text = text.trim(); if (!text) return;
+async function send(text, requestId = crypto.randomUUID(), retry = false, attachment = null) {
+  text = text ? text.trim() : '';
+  if (!text && !attachment) return;
+  if (!text && attachment) {
+    text = 'Nhờ bot kiểm tra hình ảnh/tài liệu đính kèm này giúp tôi.';
+  }
 
   const endKeywords = ['kết thúc phiên', 'kết thúc hỗ trợ', 'dừng hỗ trợ', 'kết thúc làm việc', 'đóng phiên'];
   if (endKeywords.some(kw => text.toLowerCase().includes(kw))) {
@@ -548,15 +706,17 @@ async function send(text, requestId = crypto.randomUUID(), retry = false) {
   }
 
   if (isHumanMode) {
-    message(text, 'user');
+    message(text, 'user', null, null, attachment);
     byId('message').value = '';
     byId('messages').setAttribute('aria-busy', 'true');
     setModelStatus('Đang gửi tin…', 'Đã chuyển tin nhắn đến Chuyên viên CSKH');
     try {
-      const res = await api('/api/staff/customer-message', {
+      const payload = {
         conversation_id: conversationId,
         message: text
-      });
+      };
+      if (attachment) payload.attachment = attachment;
+      const res = await api('/api/staff/customer-message', payload);
       if (res && res.turn_id) {
         renderedStaffTurnIds.add(res.turn_id);
       }
@@ -577,13 +737,15 @@ async function send(text, requestId = crypto.randomUUID(), retry = false) {
     return;
   }
 
-  if (!retry) message(text, 'user');
+  if (!retry) message(text, 'user', null, null, attachment);
   byId('message').value = '';
   setModelStatus('Model đang xử lý…', 'Đang đọc hội thoại và gọi công cụ khi cần');
   byId('messages').setAttribute('aria-busy', 'true');
   let result;
   try {
-    result = await api('/api/chat', {text, conversation_id: conversationId, request_id: requestId});
+    const payload = {text, conversation_id: conversationId, request_id: requestId};
+    if (attachment) payload.attachment = attachment;
+    result = await api('/api/chat', payload);
   } catch (error) {
     const row = message(error.message || 'Mất kết nối trong lúc chờ model.', 'assistant', 'interface');
     showTrace(row, error.trace);
@@ -591,7 +753,7 @@ async function send(text, requestId = crypto.randomUUID(), retry = false) {
     const originalConversation = conversationId;
     retryButton.onclick = () => act(async () => {
       if (conversationId !== originalConversation) return;
-      retryButton.remove(); await send(text, requestId, true);
+      retryButton.remove(); await send(text, requestId, true, attachment);
     });
     row.append(retryButton);
     setModelStatus('Chat chưa hoàn tất', 'Có thể thử lại hoặc dùng các nút thao tác');
@@ -666,8 +828,19 @@ byId('logout').onclick = () => act(async () => {
   if (cookieAuth) await api('/api/logout', {});
   token = ''; location.reload();
 });
-byId('chat-form').onsubmit = event => { event.preventDefault(); act(() => send(byId('message').value)); };
-byId('message').onkeydown = event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); act(() => send(event.target.value)); } };
+function submitChat() {
+  const input = byId('message');
+  let text = input.value.trim();
+  const att = currentAttachment;
+  if (!text && !att) return;
+  if (!text && att) {
+    text = 'Nhờ bot kiểm tra hình ảnh/tài liệu đính kèm này giúp tôi.';
+  }
+  clearAttachment();
+  act(() => send(text, crypto.randomUUID(), false, att));
+}
+byId('chat-form').onsubmit = event => { event.preventDefault(); submitChat(); };
+byId('message').onkeydown = event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); submitChat(); } };
 document.querySelectorAll('[data-prompt]').forEach(b => { b.onclick = () => act(() => send(b.dataset.prompt)); });
 byId('reset').onclick = () => act(async () => { await refresh(); message('Đã tải lại dữ liệu từ máy chủ.'); });
 byId('new-conversation').onclick = () => act(() => newConversation());
@@ -899,9 +1072,27 @@ async function refreshStaffTranscript(cid, forceScroll = false) {
       raw.forEach(m => {
         if (m.role === 'user') {
           const row = el('div', 'message user');
+          const bubble = el('div', 'bubble bubble-user');
+          if (m.attachment) {
+            const card = el('div', 'chat-attachment-card');
+            if (m.attachment.type === 'image') {
+              const img = el('img', 'chat-attachment-img');
+              img.src = m.attachment.data.startsWith('data:') ? m.attachment.data : `data:${m.attachment.mime_type || 'image/jpeg'};base64,${m.attachment.data}`;
+              img.alt = m.attachment.name || 'Ảnh đính kèm';
+              img.onclick = (e) => { e.stopPropagation(); openLightbox(img.src, m.attachment.name); };
+              card.append(img);
+            } else {
+              const doc = el('div', 'chat-attachment-doc');
+              doc.innerHTML = '📄 <strong>' + (m.attachment.name || 'Tài liệu') + '</strong>';
+              card.append(doc);
+            }
+            card.append(el('div', 'chat-attachment-caption', m.attachment.name || 'Tệp đính kèm'));
+            bubble.append(card);
+          }
+          if (m.content) bubble.append(document.createTextNode(m.content));
           row.append(
             el('div', 'message-label', 'Khách hàng' + (activeStaffTicket?.customer_name ? ' (' + activeStaffTicket.customer_name + ')' : '')),
-            el('div', 'bubble bubble-user', m.content)
+            bubble
           );
           transcriptEl.append(row);
         } else if (m.role === 'assistant') {
@@ -1035,5 +1226,66 @@ if (staffReplyInput) {
 
 const btnResolveTicket = byId('btn-resolve-ticket');
 if (btnResolveTicket) btnResolveTicket.onclick = () => resolveStaffTicket();
+
+// Multimodal Attachment Wiring & Drag-and-Drop & Lightbox
+const closeLightbox = byId('close-lightbox');
+if (closeLightbox) closeLightbox.onclick = () => byId('image-lightbox-dialog')?.close();
+const lightboxDialog = byId('image-lightbox-dialog');
+if (lightboxDialog) {
+  lightboxDialog.onclick = (e) => {
+    if (e.target === lightboxDialog) lightboxDialog.close();
+  };
+}
+
+const btnAttach = byId('btn-attach');
+const chatFileInput = byId('chat-file-input');
+if (btnAttach && chatFileInput) {
+  btnAttach.onclick = () => chatFileInput.click();
+  chatFileInput.onchange = () => {
+    if (chatFileInput.files && chatFileInput.files[0]) {
+      stageAttachment(chatFileInput.files[0]);
+    }
+  };
+}
+
+document.addEventListener('paste', (e) => {
+  const items = e.clipboardData?.items;
+  if (!items) return;
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].type && items[i].type.indexOf('image') !== -1) {
+      const blob = items[i].getAsFile();
+      if (blob) {
+        stageAttachment(new File([blob], 'screenshot_' + Date.now() + '.png', {type: blob.type}));
+        e.preventDefault();
+        break;
+      }
+    }
+  }
+});
+
+const chatPanelEl = document.querySelector('.chat-panel');
+if (chatPanelEl) {
+  ['dragenter', 'dragover'].forEach(name => {
+    chatPanelEl.addEventListener(name, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      chatPanelEl.classList.add('drag-over');
+    });
+  });
+  ['dragleave', 'drop'].forEach(name => {
+    chatPanelEl.addEventListener(name, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      chatPanelEl.classList.remove('drag-over');
+    });
+  });
+  chatPanelEl.addEventListener('drop', (e) => {
+    const files = e.dataTransfer?.files;
+    if (files && files.length > 0) {
+      stageAttachment(files[0]);
+    }
+  });
+}
+
 
 

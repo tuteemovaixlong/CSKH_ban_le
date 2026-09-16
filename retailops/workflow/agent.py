@@ -23,7 +23,7 @@ class AgentState(TypedDict):
 
 
 def run(gateway, text, history, execute, identity, timeout=110, *, saver=None,
-        capture=lambda: {}, restore=lambda state: None, before_model=lambda: None):
+        capture=lambda: {}, restore=lambda state: None, before_model=lambda: None, attachment=None):
     started, deadline = time.monotonic(), time.monotonic()+timeout
 
     def model(state):
@@ -123,6 +123,8 @@ def run(gateway, text, history, execute, identity, timeout=110, *, saver=None,
         state = graph.invoke(None, config, durability='sync') if checkpoint.next else checkpoint.values
     else:
         user = {'role': 'user', 'content': text}
+        if attachment:
+            user['attachment'] = attachment
         initial = {'messages': list(history)+[user], 'fresh': [user], 'tool_count': 0,
                    'bound': capture(), 'complete': False,
                    'trace': {'turn_id': str(uuid.uuid4()), 'protocol': PROTOCOL, 'model': identity['name'],

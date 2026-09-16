@@ -65,6 +65,18 @@ class PersistentSessions:
             bstore = self.business_store(tenant_id)
             with bstore.connection(write=True) as bdb:
                 bdb.execute("INSERT INTO customers VALUES (?,?) ON CONFLICT DO NOTHING", (cid, name or email))
+                existing = bdb.execute("SELECT 1 FROM orders WHERE customer_id=? LIMIT 1", (cid,)).fetchone()
+                if not existing:
+                    # Seed 3 representative orders with valid IDs (e.g. O-700101, O-700102, O-700103)
+                    seed_base = 700000 + (abs(hash(cid)) % 200000)
+                    sample_orders = [
+                        (f"O-{seed_base + 1}", cid, "Áo sơ mi lụa công sở", "Trắng / M", 450000, "pending", 1, None),
+                        (f"O-{seed_base + 2}", cid, "Quần tây ống đứng tôn dáng", "Đen / L", 520000, "delivered", 1, None),
+                        (f"O-{seed_base + 3}", cid, "Giày lười da bò cao cấp", "Nâu / 41", 890000, "delivered", 1, None),
+                    ]
+                    for ord_row in sample_orders:
+                        bdb.execute("""INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason)
+                                       VALUES (?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING""", ord_row)
         except Exception:
             pass
         return self.control.create_session_for_membership(mid, self.session_seconds, self.capacity)
