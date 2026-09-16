@@ -135,6 +135,22 @@ def initialize(db, schema, component):
                 row = {'component': 'business', 'version': BUSINESS_SCHEMA_CURRENT}
             if row['version'] != BUSINESS_SCHEMA_CURRENT:
                 raise ValueError('Unsupported PostgreSQL schema version or component.')
+            for statement in (
+                '''CREATE TABLE IF NOT EXISTS conversation_feedback (
+                    id BIGSERIAL PRIMARY KEY,
+                    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                    turn_id BIGINT REFERENCES agent_turns(id) ON DELETE SET NULL,
+                    customer_id TEXT NOT NULL REFERENCES customers(id),
+                    feedback_type TEXT NOT NULL CHECK(feedback_type IN ('turn_rating', 'session_csat', 'human_handoff')),
+                    rating INTEGER CHECK(rating BETWEEN 1 AND 5),
+                    sentiment_flag TEXT CHECK(sentiment_flag IN ('positive', 'negative', 'neutral')),
+                    reason_code TEXT,
+                    comment TEXT,
+                    created_at DOUBLE PRECISION NOT NULL)''',
+                'CREATE INDEX IF NOT EXISTS idx_feedback_conv ON conversation_feedback(conversation_id)',
+                'CREATE INDEX IF NOT EXISTS idx_feedback_type ON conversation_feedback(feedback_type)',
+            ):
+                db.raw.execute(statement)
         assert_schema(db, schema, component)
         return False
     if component == 'business':
