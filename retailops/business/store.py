@@ -256,6 +256,103 @@ class BusinessStore:
             query += ' ORDER BY id DESC'
             return [dict(r) for r in db.execute(query, tuple(params))]
 
+    def escalations(self, limit=20):
+        with self.connection() as db:
+            rows = db.execute('''
+                SELECT f.id, f.conversation_id, f.customer_id, f.reason_code, f.comment,
+                       f.sentiment_flag, f.created_at, c.name as customer_name, conv.order_id
+                FROM conversation_feedback f
+                JOIN customers c ON f.customer_id = c.id
+                LEFT JOIN conversations conv ON f.conversation_id = conv.id
+                WHERE f.feedback_type = 'human_handoff'
+                ORDER BY f.id DESC LIMIT ?
+            ''', (limit,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def conversation_transcript(self, cid):
+        with self.connection() as db:
+            conv = db.execute('''
+                SELECT conv.*, c.name as customer_name
+                FROM conversations conv
+                JOIN customers c ON conv.customer_id = c.id
+                WHERE conv.id=?
+            ''', (cid,)).fetchone()
+            turns = db.execute('''
+                SELECT id, customer_id, request_id, messages, result, created_at
+                FROM agent_turns WHERE conversation_id=?
+                ORDER BY id ASC
+            ''', (cid,)).fetchall()
+            feedbacks = db.execute('''
+                SELECT * FROM conversation_feedback WHERE conversation_id=?
+                ORDER BY id ASC
+            ''', (cid,)).fetchall()
+        return {
+            'conversation': dict(conv) if conv else None,
+            'turns': [dict(t) for t in turns],
+            'feedbacks': [dict(f) for f in feedbacks]
+        }
+
+    def staff_reply(self, customer_id, cid, staff_name, message):
+        require(isinstance(message, str) and message.strip(), 400, 'invalid_message', 'Tin nhắn không được để trống.')
+        staff_name = staff_name.strip() if (staff_name and isinstance(staff_name, str)) else "Mai Anh (Chuyên viên CSKH)"
+        now = time.time()
+        req_id = f"staff-{uuid.uuid4().hex[:12]}"
+        with self.connection(write=True) as db:
+            conv = db.execute('SELECT * FROM conversations WHERE id=?', (cid,)).fetchone()
+            require(conv is not None, 404, 'conversation_not_found', 'Cuộc trò chuyện không tồn tại hoặc đã bị xóa.')
+            
+            turn_messages = [
+                {"role": "user", "content": "(Yêu cầu tư vấn trực tiếp)"},
+                {"role": "assistant", "content": message, "author": "staff", "staff_name": staff_name}
+            ]
+            turn_result = {
+                "message": message,
+                "author": "staff",
+                "staff_name": staff_name,
+                "context": {"order_id": conv["order_id"], "product_id": conv["product_id"]},
+                "trace": {"staff": True, "staff_name": staff_name}
+            }
+            
+            cursor = db.execute('''
+                INSERT INTO agent_turns(conversation_id, customer_id, request_id, input_hash, messages, result, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id
+            ''', (cid, customer_id, req_id, "staff-reply",
+                  json.dumps(turn_messages, ensure_ascii=False),
+                  json.dumps(turn_result, ensure_ascii=False), now))
+            row = cursor.fetchone()
+            turn_id = row['id'] if row and 'id' in row else (row[0] if row else getattr(cursor, 'lastrowid', None))
+            
+            db.execute('UPDATE conversations SET revision=revision+1, expires_at=? WHERE id=?', (now + 1800, cid))
+            db.execute('''
+                UPDATE conversation_feedback
+                SET reason_code='resolved', comment=?
+                WHERE conversation_id=? AND feedback_type='human_handoff'
+            ''', (f"Đã xử lý bởi {staff_name}: {message[:120]}", cid))
+            
+            self.log(db, customer_id, 'staff_replied', conv['order_id'], staff_name=staff_name, message=message)
+            
+        return {
+            'status': 'ok',
+            'turn_id': turn_id,
+            'request_id': req_id,
+            'staff_name': staff_name,
+            'message': message,
+            'created_at': now
+        }
+
+    def resolve_escalation(self, cid, staff_name=None):
+        staff_name = staff_name or "Mai Anh (Chuyên viên CSKH)"
+        with self.connection(write=True) as db:
+            conv = db.execute('SELECT customer_id, order_id FROM conversations WHERE id=?', (cid,)).fetchone()
+            if conv:
+                db.execute('''
+                    UPDATE conversation_feedback
+                    SET reason_code='resolved'
+                    WHERE conversation_id=? AND feedback_type='human_handoff'
+                ''', (cid,))
+                self.log(db, conv['customer_id'], 'escalation_resolved', conv['order_id'], staff_name=staff_name)
+        return {'status': 'ok', 'resolved': True}
+
 
     def propose(self, customer, body):
         fields(body, {"order_id", "order_version", "cancel_reason"})

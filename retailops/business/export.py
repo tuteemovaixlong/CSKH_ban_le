@@ -79,6 +79,16 @@ def export_datasets(conn: Any, output_dir: Optional[str] = None, min_rating: int
     sft_records = []
     dpo_records = []
 
+    # Map staff replies by conversation for high-quality DPO chosen pairs
+    staff_replies_by_conv = {}
+    for t in turns:
+        try:
+            r = json.loads(t["result"])
+            if r.get("author") == "staff" and r.get("message"):
+                staff_replies_by_conv[t["conversation_id"]] = r["message"]
+        except Exception:
+            pass
+
     for t in turns:
         tid = t["id"]
         cid = t["conversation_id"]
@@ -120,13 +130,17 @@ def export_datasets(conn: Any, output_dir: Optional[str] = None, min_rating: int
                 reason = fb.get("reason_code") or "general_dissatisfaction"
                 comment = fb.get("comment") or ""
                 
-                # Standardized high-quality fallback/rephrasing for chosen response
-                chosen_content = (
-                    f"Dạ em xin lỗi vì trải nghiệm chưa hoàn hảo. Về yêu cầu '{last_prompt}', "
-                    "em đã ghi nhận phản hồi và đang kiểm tra kỹ lưỡng lại dữ liệu trên hệ thống để gửi thông tin chính xác nhất cho mình ngay ạ."
-                )
-                if comment and len(comment) > 10:
-                    chosen_content += f" (Ghi chú tư vấn: {comment})"
+                # If staff provided a real live response, use it as the gold chosen label!
+                if cid in staff_replies_by_conv:
+                    chosen_content = staff_replies_by_conv[cid]
+                else:
+                    # Standardized high-quality fallback/rephrasing for chosen response
+                    chosen_content = (
+                        f"Dạ em xin lỗi vì trải nghiệm chưa hoàn hảo. Về yêu cầu '{last_prompt}', "
+                        "em đã ghi nhận phản hồi và đang kiểm tra kỹ lưỡng lại dữ liệu trên hệ thống để gửi thông tin chính xác nhất cho mình ngay ạ."
+                    )
+                    if comment and len(comment) > 10 and not comment.startswith("Đã xử lý bởi"):
+                        chosen_content += f" (Ghi chú tư vấn: {comment})"
 
                 dpo_records.append({
                     "prompt": last_prompt,

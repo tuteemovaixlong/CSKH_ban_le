@@ -92,3 +92,39 @@
 .feedback-reason-chips { display: flex; flex-wrap: wrap; gap: 5px; }
 .reason-chip { font-size: 10.5px; padding: 3px 8px; border-radius: 12px; border: 1px solid #cbd5e1; background: #f8fafc; color: #334155; cursor: pointer; }
 .reason-chip:hover { background: #fee2e2; border-color: #f87171; color: #991b1b; }
+
+/* Staff Live Chat Console (Human-in-the-Loop Desk) */
+.staff-desk-container { max-width: 1080px; width: 95vw; height: 82vh; display: flex; flex-direction: column; overflow: hidden; padding: 0; border-radius: 12px; background: #ffffff; box-shadow: 0 20px 40px rgba(0,0,0,0.18); }
+.staff-desk-header { padding: 14px 20px; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; background: #f8fafc; }
+.staff-header-info h2 { margin: 2px 0 4px; font-size: 17px; color: #0f172a; }
+.staff-header-info p { margin: 0; font-size: 12px; color: #64748b; }
+.staff-header-actions { display: flex; gap: 8px; }
+.staff-desk-workspace { display: flex; flex: 1; min-height: 0; }
+.staff-queue-panel { width: 320px; border-right: 1px solid #e2e8f0; display: flex; flex-direction: column; background: #fcfcfd; }
+.queue-panel-header { padding: 12px 16px; border-bottom: 1px solid #e2e8f0; font-size: 12.5px; color: #475569; background: #ffffff; }
+.staff-queue-list { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.ticket-card { padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 8px; background: #ffffff; cursor: pointer; transition: all 0.15s ease; text-align: left; }
+.ticket-card:hover { border-color: #3b82f6; box-shadow: 0 2px 8px rgba(59, 130, 246, 0.1); }
+.ticket-card.active { border-color: #2563eb; background: #eff6ff; box-shadow: 0 2px 8px rgba(37, 99, 235, 0.15); }
+.ticket-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+.ticket-user { font-weight: 600; font-size: 13px; color: #1e293b; }
+.ticket-badge { font-size: 10px; padding: 2px 6px; border-radius: 10px; font-weight: 600; }
+.ticket-badge.pending { background: #fee2e2; color: #dc2626; }
+.ticket-badge.resolved { background: #dcfce7; color: #16a34a; }
+.ticket-reason { font-size: 11.5px; color: #475569; margin: 0 0 6px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ticket-meta { font-size: 10.5px; color: #94a3b8; display: flex; justify-content: space-between; }
+.staff-active-chat-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; background: #ffffff; }
+.staff-chat-header { padding: 12px 20px; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; background: #ffffff; }
+.chat-header-user strong { display: block; font-size: 14px; color: #0f172a; }
+.chat-header-user span { font-size: 11.5px; color: #64748b; }
+.staff-chat-transcript { flex: 1; overflow-y: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 10px; background: #f8fafc; }
+.transcript-placeholder { margin: auto; color: #94a3b8; font-size: 13px; text-align: center; }
+.staff-chat-composer { padding: 12px 20px; border-top: 1px solid #e2e8f0; background: #ffffff; display: flex; flex-direction: column; gap: 8px; }
+.staff-chat-composer textarea { width: 100%; border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px 12px; font-size: 13px; font-family: inherit; resize: none; outline: none; box-sizing: border-box; }
+.staff-chat-composer textarea:focus { border-color: #2563eb; box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15); }
+.composer-actions { display: flex; justify-content: space-between; align-items: center; }
+.staff-rep-badge { font-size: 11.5px; color: #64748b; }
+.btn-sm { padding: 4px 10px; font-size: 11.5px; border-radius: 6px; }
+.bubble-staff { background: #ede9fe !important; border: 1px solid #c4b5fd !important; color: #4c1d95 !important; }
+.bubble-user { background: #0284c7 !important; color: #ffffff !important; align-self: flex-end; }
+

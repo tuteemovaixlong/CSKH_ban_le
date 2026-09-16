@@ -2,7 +2,7 @@
 import re
 import time
 from retailops.workflow import approval
-from retailops.core import ApiError, fields
+from retailops.core import ApiError, fields, require
 from retailops.business.permissions import CANCEL
 
 
@@ -56,6 +56,11 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
         m = re.fullmatch(r"/api/orders/([A-Z]{1,6}-[0-9]{1,8})", path)
         if m:
             return (200, {"order": app.store.lookup(customer, m[1])})
+        if path == "/api/staff/escalations":
+            return (200, {"escalations": app.store.escalations()})
+        m_trans = re.fullmatch(r"/api/staff/conversations/([a-f0-9-]{36})/messages", path)
+        if m_trans:
+            return (200, app.store.conversation_transcript(m_trans[1]))
     if method == "POST":
         if path == '/api/conversations':
             return (201, app.new_conversation(customer, body))
@@ -72,6 +77,21 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
             return (200, result)
         if path == "/api/feedback":
             res = app.store.record_feedback(customer, body)
+            return (200, res)
+        if path == "/api/staff/reply":
+            require(isinstance(body, dict) and {"conversation_id", "message"}.issubset(set(body)) and set(body).issubset({"conversation_id", "message", "staff_name"}), 400, "invalid_fields", "Các trường của yêu cầu không hợp lệ.")
+            cid, msg = body["conversation_id"], body["message"]
+            staff_name = body.get("staff_name", "Mai Anh (Chuyên viên CSKH)")
+            with app.store.connection() as db:
+                row = db.execute("SELECT customer_id FROM conversations WHERE id=?", (cid,)).fetchone()
+            require(row is not None, 404, "conversation_not_found", "Không tìm thấy cuộc trò chuyện.")
+            res = app.store.staff_reply(row["customer_id"], cid, staff_name, msg)
+            return (200, res)
+        if path == "/api/staff/resolve":
+            require(isinstance(body, dict) and {"conversation_id"}.issubset(set(body)) and set(body).issubset({"conversation_id", "staff_name"}), 400, "invalid_fields", "Các trường của yêu cầu không hợp lệ.")
+            cid = body["conversation_id"]
+            staff_name = body.get("staff_name", "Mai Anh (Chuyên viên CSKH)")
+            res = app.store.resolve_escalation(cid, staff_name)
             return (200, res)
         if path == "/api/cancellation-proposals":
             app.require_permission(CANCEL)

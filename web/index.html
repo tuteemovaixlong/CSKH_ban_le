@@ -35,6 +35,7 @@
     <div class="nav-current"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8z"/></svg>Hỗ trợ đơn hàng</div>
     <button class="nav-button" id="reset"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10a9 9 0 1 1 2 8M3 4v6h6"/></svg>Tải lại dữ liệu</button>
     <button class="nav-button" id="toggle-inspector"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>🛠️ Tool Inspector</button>
+    <button class="nav-button" id="toggle-staff-desk"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>🎧 Bàn làm việc CSKH</button>
     <div class="side-note"><span class="small-tag">DEMO NGHIỆP VỤ</span><h2>Thử một yêu cầu.<br>Xem từng thay đổi.</h2><p>Tra đơn, chọn lý do và xác nhận. Thay đổi được lưu lại.</p><button id="about">Bản demo hoạt động thế nào? <span aria-hidden="true">↗</span></button></div>
     <button class="nav-button" id="new-conversation">Cuộc trò chuyện mới</button><button class="nav-button" id="logout">Đóng phiên</button><div class="profile"><span class="avatar" id="profile-avatar">KH</span><div><strong id="profile-name">Khách hàng</strong><span id="profile-role">Khách hàng giả lập</span></div><span class="profile-check" aria-hidden="true">✓</span></div>
   </aside>
@@ -83,6 +84,53 @@
     </div>
     <footer>RetailOps <span>Phiên bản hội thoại 0.9</span></footer>
   </main>
+
+  <dialog id="staff-desk-dialog" aria-labelledby="staff-desk-title">
+    <div class="dialog-inner staff-desk-container">
+      <div class="staff-desk-header">
+        <div class="staff-header-info">
+          <span class="small-tag">LIVE AGENT CONSOLE</span>
+          <h2 id="staff-desk-title">🎧 Bàn làm việc Chuyên viên CSKH (Staff Portal)</h2>
+          <p>Tiếp nhận các ca khiếu nại hoặc chuyển giao từ AI Agent, trò chuyện trực tiếp 2 chiều với khách hàng.</p>
+        </div>
+        <div class="staff-header-actions">
+          <button class="secondary" id="refresh-staff-queue">🔄 Làm mới hàng đợi</button>
+          <button class="secondary" id="close-staff-desk">Đóng bàn làm việc</button>
+        </div>
+      </div>
+      <div class="staff-desk-workspace">
+        <div class="staff-queue-panel">
+          <div class="queue-panel-header">
+            <strong>Hàng đợi chờ hỗ trợ (<span id="staff-queue-count">0</span>)</strong>
+          </div>
+          <div class="staff-queue-list" id="staff-queue-list">
+            <p class="staff-empty-hint">Đang tải danh sách ca chờ...</p>
+          </div>
+        </div>
+        <div class="staff-active-chat-panel">
+          <div class="staff-chat-header" id="staff-chat-header">
+            <div class="chat-header-user">
+              <strong id="staff-active-customer">Chọn một ca từ hàng đợi</strong>
+              <span id="staff-active-meta">Lịch sử chat và ngữ cảnh sẽ hiển thị tại đây</span>
+            </div>
+            <div class="chat-header-tools" id="staff-chat-actions" style="display:none;">
+              <button class="secondary btn-sm" id="btn-resolve-ticket">✓ Hoàn tất ca & Đóng</button>
+            </div>
+          </div>
+          <div class="staff-chat-transcript" id="staff-chat-transcript">
+            <p class="transcript-placeholder">Vui lòng chọn một ca cần hỗ trợ ở cột bên trái để bắt đầu tiếp nhận.</p>
+          </div>
+          <div class="staff-chat-composer" id="staff-chat-composer" style="display:none;">
+            <textarea id="staff-reply-input" rows="2" placeholder="Nhập câu trả lời của chuyên viên CSKH gửi trực tiếp cho khách hàng..."></textarea>
+            <div class="composer-actions">
+              <span class="staff-rep-badge">Chuyên viên: <strong>Nguyễn Mai Anh</strong></span>
+              <button class="primary" id="btn-send-staff-reply">⚡ Gửi phản hồi trực tiếp</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </dialog>
 
   <dialog id="inspector-dialog" aria-labelledby="inspector-title"><div class="dialog-inner inspector-modal"><span class="small-tag">ENTERPRISE DEV & QA HARNESS</span><h2 id="inspector-title">🛠️ Tool Execution Inspector</h2><p>Cắm và kiểm thử trực tiếp các công cụ nghiệp vụ (Retail Tools) với phản hồi thời gian thực.</p><div class="inspector-form"><label for="inspector-tool-select">Chọn công cụ nghiệp vụ:</label><select id="inspector-tool-select"><option value="track_shipment">track_shipment (Hành trình bưu cục GHTK/GHN)</option><option value="check_inventory">check_inventory (Kiểm tra tồn kho theo size/màu)</option><option value="request_human_support">request_human_support (Chuyển giao người thật)</option><option value="search_knowledge">search_knowledge (Tìm kiếm RAG pgvector)</option><option value="get_order">get_order (Đọc trạng thái đơn hàng)</option><option value="list_orders">list_orders (Danh sách đơn của khách)</option></select><label for="inspector-args-input">Tham số JSON (Arguments):</label><textarea id="inspector-args-input" rows="3">{"order_id": "O-101"}</textarea><div class="inspector-actions-row"><button class="primary" id="inspector-run-btn">⚡ Chạy Tool Trực Tiếp</button><span id="inspector-latency-badge"></span></div><label for="inspector-output">Kết quả thực thi từ Backend (Live Output):</label><pre id="inspector-output">// Bấm 'Chạy Tool Trực Tiếp' để xem kết quả...</pre></div><div class="dialog-actions"><button class="secondary" id="close-inspector">Đóng bảng Inspector</button></div></div></dialog>
   <dialog id="confirm-dialog" aria-labelledby="confirm-title"><div class="dialog-inner"><span class="small-tag">XÁC NHẬN THAO TÁC MẪU</span><h2 id="confirm-title">Hủy đơn O-101?</h2><p id="confirm-description"></p><div class="confirm-detail"><span>Lý do</span><strong id="confirm-reason"></strong></div><p class="dialog-note">Thao tác sẽ cập nhật đơn giả lập tại backend và lưu nhật ký. Không có giao dịch cửa hàng thật.</p><div class="dialog-actions"><button class="secondary" id="dismiss-confirm">Giữ đơn hàng</button><button class="primary" id="approve-confirm">Xác nhận hủy đơn mẫu</button></div></div></dialog>

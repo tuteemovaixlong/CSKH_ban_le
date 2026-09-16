@@ -137,6 +137,14 @@ function toggleHumanMode() {
     setHumanMode(true);
     message('Hệ thống đã kết nối bạn trực tiếp với Chuyên viên CSKH RetailOps.', 'assistant', 'interface');
     humanMessage('Xin chào anh/chị! Em là Mai Anh - Chuyên viên hỗ trợ khách hàng RetailOps. Em đã tiếp nhận phiên trao đổi này. Em có thể hỗ trợ trực tiếp gì cho mình về đơn hàng hoặc sản phẩm ạ?');
+    if (conversationId) {
+      api('/api/feedback', {
+        conversation_id: conversationId,
+        feedback_type: 'human_handoff',
+        reason_code: 'customer_requested_human',
+        comment: 'Khách hàng yêu cầu kết nối chuyên viên tư vấn trực tiếp'
+      }).catch(() => {});
+    }
   } else {
     setHumanMode(false);
     message('Đã chuyển lại quyền hỗ trợ cho Trợ lý ảo AI RetailOps. Quý khách có thể tiếp tục tra cứu đơn hàng hoặc hỏi đáp chính sách.', 'assistant', 'interface');
@@ -699,3 +707,169 @@ document.querySelectorAll('#csat-stars .star').forEach(star => {
     if (label) label.textContent = ratingLabels[currentRating] || (currentRating + '/5 sao');
   };
 });
+
+// Staff Live Chat Console (Human-in-the-loop Desk)
+let activeStaffTicket = null;
+
+function openStaffDesk() {
+  const dlg = byId('staff-desk-dialog');
+  if (dlg) {
+    dlg.showModal();
+    loadStaffQueue();
+  }
+}
+
+async function loadStaffQueue() {
+  const listEl = byId('staff-queue-list');
+  const countEl = byId('staff-queue-count');
+  if (!listEl) return;
+  listEl.innerHTML = '<p class="staff-empty-hint" style="padding:15px 10px;text-align:center;color:#94a3b8;">Đang tải danh sách ca chờ...</p>';
+  try {
+    const res = await api('/api/staff/escalations');
+    const items = res.escalations || [];
+    if (countEl) countEl.textContent = items.length;
+    if (!items.length) {
+      listEl.innerHTML = '<p class="staff-empty-hint" style="padding:20px 10px;text-align:center;color:#94a3b8;">Không có ca khiếu nại hoặc chuyển giao nào đang chờ.</p>';
+      return;
+    }
+    listEl.innerHTML = '';
+    items.forEach(item => {
+      const isResolved = item.sentiment_flag === 'resolved';
+      const card = el('div', 'ticket-card' + (activeStaffTicket && activeStaffTicket.id === item.id ? ' active' : ''));
+      const header = el('div', 'ticket-header');
+      header.append(
+        el('span', 'ticket-user', (item.customer_name || item.customer_id) + (item.order_id ? ' (' + item.order_id + ')' : '')),
+        el('span', 'ticket-badge ' + (isResolved ? 'resolved' : 'pending'), isResolved ? '✓ Đã xử lý' : '🔴 Chờ hỗ trợ')
+      );
+      const reason = el('p', 'ticket-reason', item.comment || item.reason_code || 'Yêu cầu hỗ trợ từ khách hàng');
+      const timeStr = new Date((item.created_at || Date.now() / 1000) * 1000).toLocaleTimeString('vi-VN', {hour: '2-digit', minute:'2-digit'});
+      const meta = el('div', 'ticket-meta');
+      meta.append(el('span', '', 'Mã ca: #' + item.id), el('span', '', timeStr));
+      card.append(header, reason, meta);
+      card.onclick = () => selectStaffTicket(item);
+      listEl.append(card);
+    });
+  } catch (err) {
+    listEl.innerHTML = '<p class="staff-empty-hint" style="color:#ef4444;padding:15px;">Lỗi tải hàng đợi: ' + err.message + '</p>';
+  }
+}
+
+async function selectStaffTicket(ticket) {
+  activeStaffTicket = ticket;
+  document.querySelectorAll('.ticket-card').forEach(c => c.classList.remove('active'));
+  
+  byId('staff-active-customer').textContent = (ticket.customer_name || ticket.customer_id) + (ticket.order_id ? ' · Đơn hàng: ' + ticket.order_id : '');
+  byId('staff-active-meta').textContent = 'Mã phiên: ' + ticket.conversation_id + ' · Lý do: ' + (ticket.comment || ticket.reason_code || 'Yêu cầu gặp nhân viên');
+  byId('staff-chat-actions').style.display = 'block';
+  byId('staff-chat-composer').style.display = 'flex';
+  
+  const transcriptEl = byId('staff-chat-transcript');
+  transcriptEl.innerHTML = '<p class="transcript-placeholder">Đang tải lịch sử hội thoại...</p>';
+
+  try {
+    const data = await api('/api/staff/conversations/' + ticket.conversation_id + '/messages');
+    const turns = data.turns || [];
+    transcriptEl.innerHTML = '';
+    if (!turns.length) {
+      transcriptEl.innerHTML = '<p class="transcript-placeholder">Chưa có tin nhắn trong phiên này.</p>';
+      return;
+    }
+    turns.forEach(t => {
+      let raw = [];
+      try { raw = JSON.parse(t.messages); } catch(e) {}
+      let res = {};
+      try { res = JSON.parse(t.result); } catch(e) {}
+      
+      raw.forEach(m => {
+        if (m.role === 'user') {
+          const row = el('div', 'message user');
+          row.append(el('div', 'message-label', 'Khách hàng (' + (ticket.customer_name || ticket.customer_id) + ')'), el('div', 'bubble bubble-user', m.content));
+          transcriptEl.append(row);
+        } else if (m.role === 'assistant') {
+          const isStaff = m.author === 'staff' || res.author === 'staff';
+          const row = el('div', 'message assistant' + (isStaff ? ' human-message' : ''));
+          const label = el('div', 'message-label');
+          label.append(el('span', isStaff ? 'human-badge-mini' : 'mini-r', isStaff ? 'NV' : 'R'));
+          label.append(document.createTextNode(' ' + (isStaff ? (m.staff_name || res.staff_name || 'Chuyên viên CSKH') : 'Trợ lý AI')));
+          row.append(label, el('div', 'bubble' + (isStaff ? ' bubble-staff' : ''), m.content));
+          transcriptEl.append(row);
+        }
+      });
+    });
+    transcriptEl.scrollTop = transcriptEl.scrollHeight;
+  } catch (err) {
+    transcriptEl.innerHTML = '<p class="transcript-placeholder" style="color:#ef4444;">Lỗi tải lịch sử: ' + err.message + '</p>';
+  }
+}
+
+async function sendStaffReply() {
+  if (!activeStaffTicket) return;
+  const input = byId('staff-reply-input');
+  const text = (input?.value || '').trim();
+  if (!text) return;
+
+  const btn = byId('btn-send-staff-reply');
+  if (btn) btn.disabled = true;
+
+  try {
+    await api('/api/staff/reply', {
+      conversation_id: activeStaffTicket.conversation_id,
+      message: text,
+      staff_name: 'Nguyễn Mai Anh (Chuyên viên CSKH)'
+    });
+    input.value = '';
+    // Append to transcript
+    const transcriptEl = byId('staff-chat-transcript');
+    const row = el('div', 'message assistant human-message');
+    const label = el('div', 'message-label');
+    label.append(el('span', 'human-badge-mini', 'NV'));
+    label.append(document.createTextNode(' Nguyễn Mai Anh (Chuyên viên CSKH)'));
+    row.append(label, el('div', 'bubble bubble-staff', text));
+    transcriptEl.append(row);
+    transcriptEl.scrollTop = transcriptEl.scrollHeight;
+    loadStaffQueue();
+  } catch (err) {
+    alert('Lỗi gửi phản hồi: ' + err.message);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function resolveStaffTicket() {
+  if (!activeStaffTicket) return;
+  try {
+    await api('/api/staff/resolve', {
+      conversation_id: activeStaffTicket.conversation_id,
+      staff_name: 'Nguyễn Mai Anh (Chuyên viên CSKH)'
+    });
+    loadStaffQueue();
+  } catch (err) {
+    alert('Lỗi hoàn tất: ' + err.message);
+  }
+}
+
+const toggleStaffDesk = byId('toggle-staff-desk');
+if (toggleStaffDesk) toggleStaffDesk.onclick = () => openStaffDesk();
+
+const closeStaffDesk = byId('close-staff-desk');
+if (closeStaffDesk) closeStaffDesk.onclick = () => byId('staff-desk-dialog').close();
+
+const refreshStaffQueue = byId('refresh-staff-queue');
+if (refreshStaffQueue) refreshStaffQueue.onclick = () => loadStaffQueue();
+
+const btnSendStaffReply = byId('btn-send-staff-reply');
+if (btnSendStaffReply) btnSendStaffReply.onclick = () => sendStaffReply();
+
+const staffReplyInput = byId('staff-reply-input');
+if (staffReplyInput) {
+  staffReplyInput.onkeydown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendStaffReply();
+    }
+  };
+}
+
+const btnResolveTicket = byId('btn-resolve-ticket');
+if (btnResolveTicket) btnResolveTicket.onclick = () => resolveStaffTicket();
+
