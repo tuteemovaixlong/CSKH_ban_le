@@ -302,7 +302,6 @@ class BusinessStore:
             require(conv is not None, 404, 'conversation_not_found', 'Cuộc trò chuyện không tồn tại hoặc đã bị xóa.')
             
             turn_messages = [
-                {"role": "user", "content": "(Yêu cầu tư vấn trực tiếp)"},
                 {"role": "assistant", "content": message, "author": "staff", "staff_name": staff_name}
             ]
             turn_result = {
@@ -336,6 +335,60 @@ class BusinessStore:
             'turn_id': turn_id,
             'request_id': req_id,
             'staff_name': staff_name,
+            'message': message,
+            'created_at': now
+        }
+
+    def customer_message(self, customer_id, cid, message):
+        require(isinstance(message, str) and message.strip(), 400, 'invalid_message', 'Tin nhắn không được để trống.')
+        now = time.time()
+        req_id = f"cust-{uuid.uuid4().hex[:12]}"
+        with self.connection(write=True) as db:
+            conv = db.execute('SELECT * FROM conversations WHERE id=?', (cid,)).fetchone()
+            require(conv is not None, 404, 'conversation_not_found', 'Cuộc trò chuyện không tồn tại hoặc đã bị xóa.')
+            require(conv['customer_id'] == customer_id, 403, 'forbidden', 'Không có quyền gửi tin nhắn trong cuộc trò chuyện này.')
+            
+            turn_messages = [
+                {"role": "user", "content": message}
+            ]
+            turn_result = {
+                "message": "",
+                "author": "customer",
+                "status": "waiting_staff",
+                "context": {"order_id": conv["order_id"], "product_id": conv["product_id"]},
+                "trace": {"waiting_staff": True}
+            }
+            
+            cursor = db.execute('''
+                INSERT INTO agent_turns(conversation_id, customer_id, request_id, input_hash, messages, result, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id
+            ''', (cid, customer_id, req_id, "customer-msg",
+                  json.dumps(turn_messages, ensure_ascii=False),
+                  json.dumps(turn_result, ensure_ascii=False), now))
+            row = cursor.fetchone()
+            turn_id = row['id'] if row and 'id' in row else (row[0] if row else getattr(cursor, 'lastrowid', None))
+            
+            db.execute('UPDATE conversations SET revision=revision+1, expires_at=? WHERE id=?', (now + 1800, cid))
+            
+            existing_fb = db.execute('''
+                SELECT id FROM conversation_feedback
+                WHERE conversation_id=? AND feedback_type='human_handoff' AND reason_code!='resolved'
+                ORDER BY id DESC LIMIT 1
+            ''', (cid,)).fetchone()
+            if existing_fb:
+                db.execute('UPDATE conversation_feedback SET comment=? WHERE id=?', (message[:200], existing_fb['id']))
+            else:
+                db.execute('''
+                    INSERT INTO conversation_feedback(conversation_id, turn_id, customer_id, feedback_type, reason_code, comment, created_at)
+                    VALUES (?, ?, ?, 'human_handoff', 'customer_message', ?, ?)
+                ''', (cid, turn_id, customer_id, message[:200], now))
+            
+            self.log(db, customer_id, 'customer_messaged_staff', conv['order_id'], message=message)
+            
+        return {
+            'status': 'ok',
+            'turn_id': turn_id,
+            'request_id': req_id,
             'message': message,
             'created_at': now
         }

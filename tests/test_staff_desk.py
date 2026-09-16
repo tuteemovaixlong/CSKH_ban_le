@@ -148,6 +148,50 @@ class StaffDeskTests(unittest.TestCase):
             self.assertEqual(record["chosen"], "Dạ em là Mai Anh, em hỗ trợ giữ ngay 1 áo size L cho đơn O-101 của mình ạ.")
             self.assertEqual(record["rejected"], "Đang chuyển máy cho nhân viên...")
 
+    def test_customer_message_and_two_way_chat(self):
+        # 1. Customer sends message in live human mode via HTTP POST /api/staff/customer-message
+        status, res = api_result(self.app, "C-001", "POST", "/api/staff/customer-message", {
+            "conversation_id": self.cid,
+            "message": "hello shop ơi hỗ trợ em"
+        })
+        self.assertEqual(status, 200)
+        self.assertEqual(res["status"], "ok")
+        self.assertEqual(res["message"], "hello shop ơi hỗ trợ em")
+
+        # 2. Check escalation feedback comment is updated with customer's latest message
+        escalations = self.store.escalations()
+        self.assertEqual(len(escalations), 1)
+        self.assertEqual(escalations[0]["comment"], "hello shop ơi hỗ trợ em")
+
+        # 3. Staff replies via POST /api/staff/reply
+        status, res = api_result(self.app, "C-001", "POST", "/api/staff/reply", {
+            "conversation_id": self.cid,
+            "message": "Dạ chào bạn, Mai Anh CSKH nghe đây ạ!",
+            "staff_name": "Nguyễn Mai Anh (Chuyên viên CSKH)"
+        })
+        self.assertEqual(status, 200)
+        self.assertEqual(res["status"], "ok")
+
+        # 4. Check transcript has both customer message and staff reply
+        status, transcript = api_result(self.app, "C-001", "GET", f"/api/staff/conversations/{self.cid}/messages")
+        self.assertEqual(status, 200)
+        turns = transcript["turns"]
+        self.assertGreaterEqual(len(turns), 3)  # initial turn + customer msg + staff reply
+
+        # Check customer turn
+        cust_turn = json.loads(turns[1]["messages"])
+        self.assertEqual(cust_turn[0]["role"], "user")
+        self.assertEqual(cust_turn[0]["content"], "hello shop ơi hỗ trợ em")
+
+        # Check staff turn
+        staff_turn = json.loads(turns[2]["messages"])
+        staff_res = json.loads(turns[2]["result"])
+        self.assertEqual(staff_turn[0]["role"], "assistant")
+        self.assertEqual(staff_turn[0]["content"], "Dạ chào bạn, Mai Anh CSKH nghe đây ạ!")
+        self.assertEqual(staff_res["author"], "staff")
+        self.assertEqual(staff_res["staff_name"], "Nguyễn Mai Anh (Chuyên viên CSKH)")
+
 
 if __name__ == "__main__":
     unittest.main()
+

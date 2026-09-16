@@ -58,7 +58,7 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
             return (200, {"order": app.store.lookup(customer, m[1])})
         if path == "/api/staff/escalations":
             return (200, {"escalations": app.store.escalations()})
-        m_trans = re.fullmatch(r"/api/staff/conversations/([a-f0-9-]{36})/messages", path)
+        m_trans = re.fullmatch(r"/api/(?:staff/)?conversations/([a-f0-9-]{36})/messages", path)
         if m_trans:
             return (200, app.store.conversation_transcript(m_trans[1]))
     if method == "POST":
@@ -77,6 +77,11 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
             return (200, result)
         if path == "/api/feedback":
             res = app.store.record_feedback(customer, body)
+            return (200, res)
+        if path == "/api/staff/customer-message":
+            require(isinstance(body, dict) and {"conversation_id", "message"}.issubset(set(body)) and set(body).issubset({"conversation_id", "message"}), 400, "invalid_fields", "Các trường của yêu cầu không hợp lệ.")
+            cid, msg = body["conversation_id"], body["message"]
+            res = app.store.customer_message(customer, cid, msg)
             return (200, res)
         if path == "/api/staff/reply":
             require(isinstance(body, dict) and {"conversation_id", "message"}.issubset(set(body)) and set(body).issubset({"conversation_id", "message", "staff_name"}), 400, "invalid_fields", "Các trường của yêu cầu không hợp lệ.")
