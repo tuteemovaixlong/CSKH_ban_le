@@ -28,6 +28,7 @@ Luồng nghiệp vụ: tra đơn → chọn lý do hủy → xem lại → xác 
 | Evaluation dataset và scoreboard | [evals](evals/README.md) |
 | Thiết lập CI/CD | [deploy/SETUP](deploy/SETUP.md) |
 | Lộ trình & Kế hoạch phát triển tổng thể | [PLAN_ROADMAP_INDEX](docs/PLAN_ROADMAP_INDEX.md) |
+| Đăng nhập Google SSO & Phân quyền vai trò | [PLAN_RBAC_GOOGLE_AUTH](docs/PLAN_RBAC_GOOGLE_AUTH.md) |
 | Tích hợp đa kênh mạng xã hội (Facebook / Zalo OA) | [PLAN_OMNICHANNEL_INTEGRATION](docs/PLAN_OMNICHANNEL_INTEGRATION.md) |
 
 RAG hiện dùng PostgreSQL/pgvector schema v3 và feature-hash baseline. Kiểm tra provenance của trích dẫn không đồng nghĩa đã chấm semantic faithfulness. Evaluation Runner & Dashboard là bước phát triển tiếp theo, chưa được coi là hoàn thành chỉ nhờ dataset validator hoặc smoke PASS.

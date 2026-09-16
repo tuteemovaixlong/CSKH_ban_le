@@ -104,6 +104,21 @@ flowchart TD
      }
      ```
 
+#### C. Tích hợp Meta Handover Protocol (Chuyển quyền cho Meta Business Suite)
+* Khi AI phát hiện khách cần gặp người thật (escalation) hoặc công cụ `request_human_support` được gọi:
+  1. Backend RetailOps gọi API bàn giao luồng (`pass_thread_control`) của Meta:
+     ```bash
+     POST https://graph.facebook.com/v19.0/me/pass_thread_control
+     Authorization: Bearer <FB_PAGE_ACCESS_TOKEN>
+     {
+       "recipient": {"id": sender_id},
+       "target_app_id": "263902037430900",  # Page Inbox app ID mặc định của Meta
+       "metadata": "Khách hàng yêu cầu hỗ trợ người thật từ RetailOps"
+     }
+     ```
+  2. **Trải nghiệm Nhân viên**: Ứng dụng **Meta Business Suite** trên điện thoại nhân viên rung chuông báo tin nhắn mới $\to$ Nhân viên có thể chat trực tiếp với khách bằng app di động mà không cần bật máy tính.
+  3. Khi nhân viên xử lý xong và bấm Hoàn tất trên Meta Business Suite (hoặc trên RetailOps Staff Desk), quyền điều khiển được thu hồi lại cho AI (`take_thread_control`).
+
 ---
 
 ### 3.2. Kênh Zalo Official Account (Zalo OA)
