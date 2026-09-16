@@ -17,13 +17,21 @@ STATE_TTL_SECONDS = 900  # 15 minutes
 
 
 def _clean_env(name: str) -> str:
-    """Read env var, stripping whitespace, surrounding quotes or template brackets."""
+    """Read env var, stripping whitespace, surrounding quotes, brackets, and accidental duplicate prefixes/suffixes."""
     val = os.getenv(name, "").strip()
     if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
         val = val[1:-1].strip()
     if val.startswith('<') and val.endswith('>'):
         val = val[1:-1].strip()
+    # Auto-clean accidental duplicate Google OAuth suffixes or prefixes
+    if name == "GOOGLE_CLIENT_ID":
+        while val.endswith(".apps.googleusercontent.com.apps.googleusercontent.com"):
+            val = val[:-len(".apps.googleusercontent.com")].strip()
+    elif name == "GOOGLE_CLIENT_SECRET":
+        while val.startswith("GOCSPX-GOCSPX-"):
+            val = "GOCSPX-" + val[len("GOCSPX-GOCSPX-"):].strip()
     return val
+
 
 
 def is_google_auth_configured() -> bool:
