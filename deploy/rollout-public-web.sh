@@ -36,6 +36,24 @@ if [[ ! -f public.env || ! -f compose.public.yaml ]]; then
   exit 0
 fi
 
+# Refresh auto-generated sslip.io hostname if EC2 public IPv4 changed after stop/start
+existing_host=$(sed -n 's/^RETAILOPS_PUBLIC_HOST=//p' public.env 2>/dev/null || true)
+auto_host=""
+if [[ "$existing_host" =~ ^retailops\.([0-9]{1,3}-){3}[0-9]{1,3}\.sslip\.io$ ]]; then
+  metadata_token=$(curl --noproxy '*' --fail --silent --show-error --max-time 3 -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token 2>/dev/null || true)
+  if [[ -n "$metadata_token" ]]; then
+    current_ip=$(curl --noproxy '*' --fail --silent --show-error --max-time 3 -H "X-aws-ec2-metadata-token: $metadata_token" http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || true)
+    if [[ -n "$current_ip" ]]; then
+      auto_host="retailops.${current_ip//./-}.sslip.io"
+      if [[ "$existing_host" != "$auto_host" ]]; then
+        echo "EC2 public IPv4 changed; refreshing hostname in public.env: $existing_host -> $auto_host"
+        sed -i "s/^RETAILOPS_PUBLIC_HOST=.*/RETAILOPS_PUBLIC_HOST=$auto_host/" public.env
+        sed -i "s|^RETAILOPS_PUBLIC_ORIGIN=.*|RETAILOPS_PUBLIC_ORIGIN=https://$auto_host|" public.env
+      fi
+    fi
+  fi
+fi
+
 test -f inference.env
 test -f api.env
 compose=(docker compose --project-name retailops-web --env-file deployed.env --env-file public.env -f compose.public.yaml)
@@ -44,6 +62,11 @@ if [[ -d postgres-secrets ]]; then
   compose+=(-f compose.postgres.yaml)
 fi
 "${compose[@]}" config --quiet
+
+if [[ -n "$auto_host" && "$existing_host" != "$auto_host" ]]; then
+  "${compose[@]}" up -d --no-deps --no-build --pull never --force-recreate caddy >/dev/null || true
+  sleep 3
+fi
 
 web_container=$("${compose[@]}" ps -q web 2>/dev/null || true)
 previous_image=""
