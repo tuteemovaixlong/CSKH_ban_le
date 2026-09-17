@@ -1,64 +1,105 @@
-# Tổng hợp Kế hoạch Chiến lược: Lộ trình Khóa luận Tốt nghiệp & Mở rộng RetailOps
+# TỔNG HỢP KẾ HOẠCH CHIẾN LƯỢC: LỘ TRÌNH KHÓA LUẬN TỐT NGHIỆP & HỆ THỐNG RETAILOPS 2026
 
-Tài liệu này là chỉ mục tổng hợp (Master Roadmap) được điều chỉnh theo chiến lược: **Ưu tiên hoàn thiện hệ thống, chuẩn hóa kiến trúc, thu thập dữ liệu và báo cáo thực nghiệm phục vụ Khóa luận Tốt nghiệp trước; sau khi bảo vệ hoàn tất mới tiến hành chưng cất dữ liệu quy mô lớn và Fine-tuning mô hình chuyên biệt.**
+> **Master Roadmap Index 2026**  
+> **Chiến lược cốt lõi**: Phân chia theo 6 Module phát triển mạch lạc từ **Hệ thống Lõi TMĐT 2026** ➔ **Đo Benchmark Cơ sở** ➔ **Webhook Facebook Messenger** ➔ **Quét mã QR Demo Live** ➔ **Sinh dữ liệu DeepSeek & LoRA Fine-tune Qwen (nếu kịp)** ➔ **Đo lường So sánh Đối chứng Luận văn**.
 
 ---
 
-## 1. Sơ đồ Phân kỳ 2 Giai đoạn (Phased Roadmap)
+## 1. Sơ Đồ Phân Kỳ 6 Module Phát Triển Toàn Diện
 
 ```mermaid
 flowchart TD
-    subgraph GIAI ĐOẠN 1: PHỤC VỤ KHÓA LUẬN TỐT NGHIỆP (Hiện tại - Ưu tiên hàng đầu)
-        P1["1. Data Flywheel UI/API\n(Thu thập CSAT, Like/Dislike, DPO log)"]
-        P8["2. Google OAuth 2.0 & Role-Based UI\n(Đăng nhập Gmail một chạm & Phân quyền Khách/Staff/Manager/Admin)"]
-        P6["3. MCP Server Integration\n(Chuẩn hóa Tools FastMCP :8002)"]
-        P5["4. Model Benchmarking & Evals\n(Đo đạc số liệu thực nghiệm 30+ cases)"]
-        P7["5. Omnichannel Social Gateways\n(Facebook Messenger, Meta Handover & Zalo OA)"]
-        Thesis["6. Hoàn thiện Báo cáo Luận văn & Bảo vệ Khóa luận\n(Viết chương 3-4, chuẩn bị Slide & Demo live QR Code EC2)"]
-        
-        P1 --> P8
-        P8 --> P6
-        P6 --> P5
-        P5 --> P7
-        P7 --> Thesis
+    subgraph PHASE_1["GIAI ĐOẠN 1: HỆ THỐNG LÕI & ĐO ĐẠC CƠ SỞ (THỰC THI NGAY)"]
+        M1["MODULE 1: Hệ Thống Lõi TMĐT 2026<br/>• Kiến trúc DB/UI khớp nối 100%<br/>• Dữ liệu chuẩn P-103..P-402, C-003, O-103..O-106<br/>• 6 SOPs Vận hành Thực chiến<br/>• Staff Desk 1-Click UI & 260+ Tests Xanh"]
+        M2["MODULE 2: Đo Baseline Benchmark<br/>• Latency p50/p95, Tool Accuracy<br/>• Scenario Success Rate (30+ cases)<br/>• Chi phí Token & Bảng số liệu gốc"]
+        M1 --> M2
     end
 
-    subgraph GIAI ĐOẠN 2: POST-THESIS & PRODUCTION (Sau khi bảo vệ xong)
-        P2["7. DeepSeek Distillation\n(Sinh 3.000–5.000 mẫu synthetic data)"]
-        P3["8. LoRA Fine-Tuning & vLLM\n(Huấn luyện Qwen2.5-7B / Muse Glimmer)"]
-        P4["9. Production Cloud Scaling\n(AWS ALB + RDS Multi-AZ + GPU Cluster)"]
-        
-        Thesis --> P2
-        Thesis --> P3
-        P2 --> P3
-        P3 --> P4
+    subgraph PHASE_2["GIAI ĐOẠN 2: MỞ RỘNG KÊNH TƯƠNG TÁC & TRÌNH DIỄN THỰC TẾ"]
+        M3["MODULE 3: Webhook Facebook Messenger<br/>• Tích hợp Fanpage Messenger Chatbot<br/>• Meta Handover Protocol chuyển quyền nhân viên<br/>• Đồng bộ 2 chiều với Staff Desk"]
+        M4["MODULE 4: Cổng Quét Mã QR Demo Live<br/>• Sinh QR Code động dẫn vào chat<br/>• Hội đồng chấm thi mở camera quét chat trực tiếp<br/>• Thuyết phục thị giác tuyệt đối"]
+        M2 --> M3
+        M3 --> M4
+    end
+
+    subgraph PHASE_3["GIAI ĐOẠN 3: NGHIÊN CỨU SÂU & ĐỐI CHỨNG LUẬN VĂN (NẾU KỊP TIẾN ĐỘ)"]
+        M5["MODULE 5: DeepSeek Data & LoRA Qwen<br/>• Sinh 3.000–5.000 mẫu hội thoại TMĐT qua DeepSeek<br/>• Huấn luyện LoRA Fine-tune Qwen2.5-7B<br/>• Đóng gói serving nội bộ qua vLLM/GGUF"]
+        M6["MODULE 6: Đo lường Evaluation So Sánh<br/>• Chạy benchmark đối chiếu Model gốc vs LoRA Model<br/>• Bảng biểu, đồ thị thực nghiệm cho Chương 4 Luận văn"]
+        M4 -.->|Nếu kịp tiến độ| M5
+        M5 --> M6
     end
 ```
 
 ---
 
-## 2. Chi tiết Thứ tự Triển khai Mới
+## 2. Chi Tiết Từng Module & Phân Bổ Giá Trị
 
-### 🎓 GIAI ĐOẠN 1: HOÀN THIỆN HỆ THỐNG & BÁO CÁO KHÓA LUẬN (PRE-DEFENSE)
-
-| Thứ tự | Kế hoạch liên quan | Mục tiêu cụ thể cho Khóa luận | Giá trị học thuật & Bảo vệ |
-| :---: | :--- | :--- | :--- |
-| **Bước 1** | **[Kế hoạch 1: Data Flywheel](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/docs/PLAN_DATA_COLLECTION_FLYWHEEL.md)** | • Bổ sung bảng DB `conversation_feedback`.<br>• Gắn nút 👍/👎 trên từng tin nhắn AI và popup CSAT kết thúc phiên.<br>• Viết script trích xuất dataset mẫu. | Minh chứng hệ thống có cơ chế **Human-in-the-loop** và vòng lặp cải tiến dữ liệu tự động (Data Flywheel) trong Chương 3. *(Đã hoàn thành)* |
-| **Bước 2** | **[Kế hoạch 8: RBAC & Google SSO](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/docs/PLAN_RBAC_GOOGLE_AUTH.md)** | • Tích hợp **Google OAuth 2.0 / SSO** (Đăng nhập 1 chạm bằng Gmail, bỏ mã token thủ công).<br>• Phân tách UI theo vai trò: **Khách hàng** (Chat & Đơn riêng), **Nhân viên CSKH** (mở thẳng Bàn làm việc toàn màn hình), **Quản lý** (Dashboard CSAT & Audit Trail), **Admin** (Ops Console). | Nâng tầm hệ thống lên chuẩn **Enterprise SaaS**; tạo kịch bản demo phân quyền thực tế 100% cho Hội đồng chấm thi. |
-| **Bước 3** | **[Kế hoạch 6: MCP Integration](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/docs/PLAN_MCP_INTEGRATION.md)** | • Tách 5 công cụ hiện tại thành **RetailOps FastMCP Server** (port 8002 SSE).<br>• Cho phép LangGraph kết nối linh hoạt và các client ngoài (Claude/Cursor) kết nối dùng chung tools. | Điểm nhấn công nghệ tiên tiến (**Model Context Protocol**) giúp đồ án vượt trội về tính module hóa và khả năng tích hợp ERP/bưu cục thực tế. |
-| **Bước 4** | **[Kế hoạch 5: Model Evaluation](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/docs/PLAN_MODEL_SELECTION_STRATEGY.md)** | • Chạy bộ benchmark 30+ ca kiểm thử chuẩn trong `evals/`.<br>• Đo đạc và lập bảng so sánh: **Tool Accuracy (100%), Latency, Cache Hit Rate 3-Tier, Chi phí** giữa các mô hình (Gemini Flash vs Claude Haiku vs Qwen). | Cung cấp toàn bộ **số liệu thực nghiệm, biểu đồ và bảng so sánh khoa học** làm cốt lõi cho Chương 4 (Đánh giá kết quả thực nghiệm). |
-| **Bước 5** | **[Kế hoạch 7: Omnichannel Integration](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/docs/PLAN_OMNICHANNEL_INTEGRATION.md)** | • Xây dựng Webhook tiếp nhận tin nhắn từ **Facebook Fanpage (Messenger)** và **Zalo Official Account (Zalo OA)**.<br>• Hỗ trợ **Meta Handover Protocol** để chuyển quyền chat sang ứng dụng Meta Business Suite trên điện thoại cho nhân viên.<br>• Đồng bộ 2 chiều với bàn làm việc nhân viên tư vấn (**Staff Desk**). | Minh chứng năng lực triển khai thương mại đa kênh (**Omnichannel Architecture**) trong Chương 3; tạo kịch bản demo live độc đáo cho Hội đồng. |
-| **Bước 6** | **Báo cáo Luận văn & Kịch bản Demo Live** | • Viết hoàn thiện các chương luận văn (Tổng quan, Cơ sở lý thuyết Agentic AI/RAG/MCP, Thiết kế kiến trúc, Thực nghiệm & Kết luận).<br>• Đóng gói kịch bản demo live: Chiếu mã QR để Hội đồng quét chat trực tiếp qua Messenger / Zalo hoặc đăng nhập Gmail trải nghiệm ngay. | Đảm bảo buổi bảo vệ trước Hội đồng diễn ra mượt mà, trực quan, thuyết phục và tạo ấn tượng mạnh mẽ nhất. |
+### 🟢 MODULE 1: Hệ Thống Lõi TMĐT 2026 (Khung Kiến Trúc, Dữ Liệu Chuẩn, 6 SOPs, Staff Desk 1-Click)
+- **Tài liệu chi tiết**: [PLAN_ECOMMERCE_OPS_COPILOT.md](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/docs/PLAN_ECOMMERCE_OPS_COPILOT.md)
+- **Mục tiêu**:
+  - Khớp nối toàn vẹn ràng buộc Database (`orders.status IN ('pending', 'delivered', 'cancelled')`) và Giao diện UI (`renderOrder` với 5 trường bắt buộc).
+  - Bảo toàn 100% dữ liệu hồi quy (`C-001`, `P-101`, `P-102`) để 260+ bài kiểm thử hiện có luôn xanh.
+  - Nạp dữ liệu sản phẩm mới (`P-103` đến `P-402`), khách mới (`C-003`, `C-004`), đơn hàng mới (`O-103` đến `O-106`).
+  - Xử lý 6 SOPs thực chiến:
+    1. **SOP 1**: Bưu tá ảo SPX không giao -> Tra cứu bưu tá Nguyễn Văn Tuấn (0934112233), khiếu nại giao lại trong ngày.
+    2. **SOP 2**: Hàng lỗi bung chỉ / kẹt khóa -> Nhận ảnh unboxing, kiểm tra hạn bảo hành 90 ngày, tạo đề xuất đổi mới 1-1 tận nhà.
+    3. **SOP 3**: Đổi size nhanh -> Kiểm kho `check_inventory`, tạo đơn thu hồi đổi trả 2 chiều.
+    4. **SOP 4**: Nghẽn kho phân loại Mega Sale (>48h) -> Giải thích và tự động cấp Voucher 50K / Freeship.
+    5. **SOP 5**: Khách giận dữ cực độ -> Strict Mode xoa dịu, cảnh báo đỏ quản lý, xếp hàng đợi VIP.
+    6. **SOP 6**: Bấm nút `[🙋 Gặp nhân viên tư vấn]` -> Chuyển giao tiếp quản trực tiếp hoặc xếp hàng đợi (Queue).
+  - Bổ sung nút bấm 1-Click trên Staff Desk: `[✅ Duyệt Đổi Mới 1-1 Tận Nhà]`, `[✅ Duyệt Đổi Size 2 Chiều]`.
 
 ---
 
-### 🚀 GIAI ĐOẠN 2: CHƯNG CẤT, HUẤN LUYỆN MODEL & MỞ RỘNG (POST-DEFENSE)
+### 🔵 MODULE 2: Đo Baseline Benchmark & Đánh Giá Mô Hình Nền (Model Evaluation Baseline)
+- **Tài liệu chi tiết**: [PLAN_MODEL_SELECTION_STRATEGY.md](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/docs/PLAN_MODEL_SELECTION_STRATEGY.md)
+- **Mục tiêu**:
+  - Chạy bộ benchmark 30+ ca kiểm thử chuẩn trong `evals/`.
+  - Đo đạc thông số gốc: **Tool Accuracy, Latency p50/p95, Tỷ lệ hoàn thành nghiệp vụ, Chi phí Token**.
+  - Lập bảng số liệu thực nghiệm cơ sở (Baseline) phục vụ Chương 4 của Khóa luận.
 
-Sau khi hoàn thành và bảo vệ thành công khóa luận tốt nghiệp, hệ thống chuyển sang giai đoạn tối ưu hóa mô hình nội bộ và mở rộng thương mại:
+---
 
-| Thứ tự | Kế hoạch liên quan | Mục tiêu cụ thể |
-| :---: | :--- | :--- |
-| **Bước 7** | **[Kế hoạch 2: DeepSeek Distillation](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/docs/PLAN_DEEPSEEK_DISTILLATION.md)** | Khởi chạy script DeepSeek API sinh 3.000–5.000 cuộc hội thoại đa lượt chuẩn nghiệp vụ, kết hợp với các logs thu được từ Bước 1. |
-| **Bước 8** | **[Kế hoạch 3: Fine-Tuning & Serving](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/docs/PLAN_FINE_TUNING_SERVING.md)** | Sử dụng Unsloth huấn luyện LoRA cho mô hình nền Qwen2.5-7B hoặc Muse Glimmer 30B AWQ; benchmark đối chiếu với kết quả ở Bước 3; đóng gói vLLM/GGUF. |
-| **Bước 9** | **[Kế hoạch 4: Production Scaling](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/docs/PLAN_PRODUCTION_SCALING.md)** | Tách cơ sở dữ liệu sang Amazon RDS PostgreSQL Multi-AZ, phân tải qua AWS ALB và triển khai cụm GPU vLLM phục vụ hàng trăm ngàn lượt chat. |
+### 🟣 MODULE 3: Tích Hợp Webhook Facebook Messenger (Omnichannel Social Gateway)
+- **Tài liệu chi tiết**: [PLAN_OMNICHANNEL_INTEGRATION.md](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/docs/PLAN_OMNICHANNEL_INTEGRATION.md)
+- **Mục tiêu**:
+  - Xây dựng Webhook endpoint nhận và gửi tin nhắn từ Facebook Fanpage (Messenger).
+  - Tích hợp **Meta Handover Protocol** để chuyển quyền chat sang ứng dụng Meta Business Suite trên điện thoại cho nhân viên.
+  - Đồng bộ 2 chiều lịch sử chat và ảnh khách gửi về bàn làm việc **Staff Desk**.
 
+---
+
+### 🟡 MODULE 4: Cổng Quét Mã QR Trải Nghiệm Trực Tiếp (Mobile QR Demo Gateway)
+- **Mục tiêu**:
+  - Sinh mã **QR Code động** dẫn thẳng tới hệ thống Web App hoặc Messenger Chatbot.
+  - Phục vụ buổi bảo vệ Khóa luận: Thầy cô trong Hội đồng chỉ cần mở camera điện thoại quét mã là trải nghiệm live trực tiếp.
+  - Thuyết phục tuyệt đối về tính ứng dụng thực tế và mức độ hoàn thiện của sản phẩm.
+
+---
+
+### 🟠 MODULE 5: Sinh Dữ Liệu DeepSeek (3.000–5.000 Mẫu) & LoRA Fine-Tune Qwen (Nếu kịp tiến độ)
+- **Tài liệu chi tiết**: [PLAN_DEEPSEEK_DISTILLATION.md](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/docs/PLAN_DEEPSEEK_DISTILLATION.md) & [PLAN_FINE_TUNING_SERVING.md](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/docs/PLAN_FINE_TUNING_SERVING.md)
+- **Mục tiêu**:
+  - Gọi DeepSeek API tự động sinh 3.000–5.000 mẫu hội thoại đa lượt chuẩn nghiệp vụ TMĐT Việt Nam.
+  - Huấn luyện LoRA Fine-tuning cho mô hình nền `Qwen2.5-7B` bằng Unsloth trên Colab / Server riêng.
+  - Đóng gói serving qua vLLM / GGUF.
+
+---
+
+### 🔴 MODULE 6: Đo Lường Evaluation So Sánh (Comparative Evaluation & Thesis Metrics)
+- **Mục tiêu**:
+  - Chạy lại bộ benchmark chuẩn ở Module 2 trên mô hình sau khi Fine-tune.
+  - Lập bảng so sánh đối chứng (Ablation Study): **Model Gốc vs. Model LoRA Fine-tuned**.
+  - Đưa ra đồ thị so sánh độ chính xác công cụ, tốc độ sinh phản hồi và tỷ lệ tiết kiệm chi phí làm trọng tâm cho Chương 4 Khóa luận.
+
+---
+
+## 3. Khớp Nối 6 Module Vào 5 Chương Luận Văn Tốt Nghiệp
+
+| Chương Luận Văn | Nội dung Học thuật | Module Đảm Nhiệm & Minh Chứng |
+| :--- | :--- | :--- |
+| **Chương 1: Mở đầu & Bối cảnh** | Thực trạng quá tải TMĐT 2026, áp lực FRR < 15 phút, tỷ lệ hủy đơn do bưu cục. | Phân tích bài toán thực tiễn của ngành TMĐT. |
+| **Chương 2: Cơ sở Lý thuyết** | Kiến trúc Multi-Agent, RAG đa tầng, Meta Handover, DeepSeek Distillation, LoRA. | Khung lý thuyết hỗ trợ toàn bộ 6 module. |
+| **Chương 3: Phân tích & Thiết kế** | Kiến trúc 3 tầng, sơ đồ LangGraph StateGraph, quy trình 6 SOPs, Webhook Messenger. | **Module 1, Module 3, Module 4**. |
+| **Chương 4: Thực nghiệm & Đánh giá** | Bảng số liệu Benchmark cơ sở, kết quả sinh dữ liệu, đồ thị so sánh trước & sau Fine-tune. | **Module 2, Module 5, Module 6**. |
+| **Chương 5: Kết luận & Hướng phát triển** | Tổng kết hiệu quả tiết kiệm 75% chi phí CSKH, khả năng triển khai thương mại quy mô lớn. | Đánh giá tổng thể hệ thống. |

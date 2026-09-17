@@ -48,11 +48,20 @@ class BusinessStore:
     def seed(self):
         # Conflict handling preserves cancelled orders across process/container restarts.
         with self.connection(write=True) as db:
-            db.executemany("INSERT INTO customers VALUES (?,?) ON CONFLICT DO NOTHING", [('C-001','Mai Anh'),('C-002','Khách mẫu')])
+            db.executemany("INSERT INTO customers VALUES (?,?) ON CONFLICT DO NOTHING", [
+                ('C-001', 'Mai Anh'),
+                ('C-002', 'Khách mẫu'),
+                ('C-003', 'Trần Thị Mai'),
+                ('C-004', 'Lê Hoàng Nam')
+            ])
             db.executemany("INSERT INTO orders(id, customer_id, name, variant, amount, status) VALUES (?,?,?,?,?,?) ON CONFLICT DO NOTHING", [
                 ("O-101", "C-001", "Áo thun Essential", "Trắng · Size M · Số lượng 1", 299000, "pending"),
                 ("O-102", "C-001", "Áo khoác Everyday", "Đen · Size L · Số lượng 1", 799000, "delivered"),
                 ("O-202", "C-002", "Áo polo", "Xanh · Size M · Số lượng 1", 399000, "pending"),
+                ("O-301", "C-003", "Áo Sơ Mi Oxford Dài Tay", "Trắng · Size M · Số lượng 1", 350000, "pending"),
+                ("O-302", "C-003", "Áo Khoác Gió Bomber 2 Lớp", "Đen · Size L · Số lượng 1", 550000, "delivered"),
+                ("O-303", "C-004", "Áo Polo Nam Phối Bo Cổ Co Giãn", "Xanh Navy · Size M · Số lượng 1", 399000, "delivered"),
+                ("O-304", "C-004", "Bộ Nồi Inox 3 Đáy Cao Cấp", "Bạc · Bộ 3 món · Số lượng 1", 1250000, "pending"),
             ])
 
     def add_customer(self, customer_id, name):

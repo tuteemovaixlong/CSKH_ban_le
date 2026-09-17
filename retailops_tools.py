@@ -108,6 +108,70 @@ class BoundTools:
                         {'time': '10:15 hôm qua', 'event': 'Giao hàng thành công - Khách hàng đã ký nhận'},
                         {'time': '08:00 hôm qua', 'event': 'Shipper đang trên đường giao tới bạn'}
                     ]
+                },
+                'O-301': {
+                    'carrier': 'SPX Express',
+                    'tracking_code': 'SPX.VN.9928110',
+                    'status': 'delivery_failed_virtual',
+                    'status_text': 'Bưu tá báo không liên lạc được (Ảo)',
+                    'current_location': 'Bưu cục Cầu Giấy 2, Hà Nội',
+                    'shipper': 'Nguyễn Văn Tuấn (0934.112.233)',
+                    'system_note': 'Tổng đài kiểm tra bưu cục ghi nhận không có lịch sử cuộc gọi ra lúc cập nhật.',
+                    'can_reassign_today': True,
+                    'estimated_delivery': 'Hôm nay trước 18:00 (khiếu nại giao lại ngay trong ca)',
+                    'steps': [
+                        {'time': '14:30 hôm nay', 'event': 'Bưu tá báo không liên lạc được (Hệ thống ghi nhận nghi vấn báo ảo)'},
+                        {'time': '08:15 hôm nay', 'event': 'Bưu tá Nguyễn Văn Tuấn (0934.112.233) xuất kho giao hàng'},
+                        {'time': '05:00 hôm nay', 'event': 'Nhập bưu cục Cầu Giấy 2'}
+                    ]
+                },
+                'O-302': {
+                    'carrier': 'Giao Hàng Tiết Kiệm (GHTK)',
+                    'tracking_code': 'GHTK.VN.4419201',
+                    'status': 'delivered',
+                    'status_text': 'Đã giao thành công',
+                    'current_location': 'Khách hàng đã ký nhận',
+                    'shipper': 'Lê Quốc Bảo (0912.883.991)',
+                    'delivery_date': '5 ngày trước',
+                    'product_id': 'P-104',
+                    'warranty_eligible': True,
+                    'warranty_days_left': 85,
+                    'steps': [
+                        {'time': '11:00 5 ngày trước', 'event': 'Giao hàng thành công - Người nhận ký nhận'},
+                        {'time': '08:30 5 ngày trước', 'event': 'Shipper đang giao hàng'}
+                    ]
+                },
+                'O-303': {
+                    'carrier': 'Giao Hàng Nhanh (GHN)',
+                    'tracking_code': 'GHN.VN.7721890',
+                    'status': 'delivered',
+                    'status_text': 'Đã giao thành công',
+                    'current_location': 'Khách hàng đã ký nhận',
+                    'shipper': 'Hoàng Minh Đức (0977.441.229)',
+                    'delivery_date': '2 ngày trước',
+                    'product_id': 'P-203',
+                    'exchange_eligible': True,
+                    'steps': [
+                        {'time': '15:20 2 ngày trước', 'event': 'Giao hàng thành công - Người nhận ký nhận'},
+                        {'time': '09:00 2 ngày trước', 'event': 'Shipper đang giao hàng'}
+                    ]
+                },
+                'O-304': {
+                    'carrier': 'Giao Hàng Nhanh (GHN)',
+                    'tracking_code': 'GHN.VN.8821990',
+                    'status': 'sorting_delayed',
+                    'status_text': 'Nghẽn trạm phân loại Mega Sale > 48h',
+                    'current_location': 'Kho Tổng BN Mega SOC (Bắc Ninh)',
+                    'delayed_hours': 54,
+                    'reason': 'Quá tải phân loại hàng hóa đợt Mega Sale sàn TMĐT',
+                    'shipper': 'Chưa điều phối (Đang chờ phân tuyến trung chuyển)',
+                    'estimated_delivery': 'Dự kiến 20/09/2026',
+                    'eligible_voucher': 'VOUCHER_50K_COMPENSATION',
+                    'voucher_code': 'SALE50K-BN-SOC',
+                    'steps': [
+                        {'time': '54 giờ trước', 'event': 'Đã nhập Kho Tổng BN Mega SOC - Đang chờ phân loại'},
+                        {'time': '60 giờ trước', 'event': 'Rời kho lấy hàng Shop RetailOps'}
+                    ]
                 }
             }
             shipment = carriers.get(oid, {
@@ -133,6 +197,9 @@ class BoundTools:
                 'P-101': {'S': 5, 'M': 12, 'L': 8, 'XL': 0},
                 'P-102': {'S': 0, 'M': 4, 'L': 15, 'XL': 3},
                 'P-202': {'S': 20, 'M': 18, 'L': 25, 'XL': 10},
+                'P-104': {'S': 10, 'M': 15, 'L': 0, 'XL': 8},
+                'P-203': {'S': 12, 'M': 0, 'L': 18, 'XL': 5},
+                'P-301': {'39': 4, '40': 8, '41': 0, '42': 6, '43': 2},
             }
             available = stock_map.get(pid, {}).get(size, 6)
             return {

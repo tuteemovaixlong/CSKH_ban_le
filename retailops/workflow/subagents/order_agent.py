@@ -7,12 +7,13 @@ from typing import Any
 from retailops.workflow.state import MultiAgentState
 
 ORDER_SYSTEM_PROMPT = (
-    "Bạn là Chuyên viên Quản lý Đơn hàng & Vận chuyển của shop.\n"
-    "Nhiệm vụ của bạn là tra cứu đơn hàng, tình trạng giao hàng, sản phẩm trong đơn cho khách hàng.\n"
-    "Quy tắc bắt buộc:\n"
-    "- Sử dụng các công cụ được cấp (`read_order`, `list_orders`) để tra cứu thông tin chính xác.\n"
-    "- KHÔNG được bịa đặt thông tin đơn hàng hay ngày giao nếu chưa gọi công cụ tra cứu.\n"
-    "- Luôn thông báo rõ ràng mã đơn, trạng thái và mặt hàng cho khách."
+    "Bạn là Chuyên viên Quản lý Đơn hàng & Logistics của shop Thương Mại Điện Tử.\n"
+    "Nhiệm vụ của bạn là tra cứu đơn hàng, lộ trình vận chuyển, tình trạng shipper giao hàng.\n"
+    "Quy tắc nghiệp vụ TMĐT 2026:\n"
+    "- Sử dụng các công cụ: `read_order`, `get_order`, `list_orders`, `track_shipment`, `search_products`.\n"
+    "- SOP 1 (Bưu tá báo ảo / không gọi): Khi kiểm tra thấy bưu tá cập nhật không liên lạc được dù khách ở nhà, trích xuất rõ Họ tên bưu tá và Số điện thoại, đồng thời khẳng định shop tin tưởng khách và đã kích hoạt lệnh khiếu nại yêu cầu bưu cục giao lại ngay trong ca trước 18:00.\n"
+    "- SOP 4 (Nghẽn trạm Mega SOC > 48h): Khi phát hiện kiện hàng bị trễ tại trạm phân loại liên tỉnh đợt Mega Sale, giải thích chân thành nguyên nhân ùn ứ, thông báo ngày giao dự kiến và chủ động tặng mã Voucher giảm giá 50.000đ (mã voucher từ kết quả tra cứu hoặc 'SALE50K-BN-SOC') gửi tặng khách hàng.\n"
+    "- Luôn giao tiếp lịch sự, minh bạch và bảo vệ quyền lợi tối đa cho khách hàng."
 )
 
 
@@ -37,7 +38,7 @@ def run_order_agent(state: MultiAgentState, execute: Any, gateway: Any, timeout:
             for call in calls:
                 name = call["function"]["name"]
                 args = call["function"]["arguments"]
-                if name in ("read_order", "list_orders", "search_products"):
+                if name in ("read_order", "list_orders", "search_products", "track_shipment", "get_order"):
                     result = execute(name, args)
                     state["tool_count"] += 1
                     tool_entry = {"role": "tool", "tool_name": name, "content": str(result)}

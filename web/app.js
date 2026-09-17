@@ -1122,6 +1122,8 @@ async function selectStaffTicket(ticket) {
   byId('staff-active-meta').textContent = 'Mã phiên: ' + ticket.conversation_id + ' · Lý do: ' + (ticket.comment || ticket.reason_code || 'Yêu cầu gặp nhân viên');
   byId('staff-chat-actions').style.display = 'block';
   byId('staff-chat-composer').style.display = 'flex';
+  const actionBar = byId('staff-action-bar');
+  if (actionBar) actionBar.style.display = 'flex';
 
   const transcriptEl = byId('staff-chat-transcript');
   transcriptEl.dataset.turnsCount = '-1';
@@ -1193,6 +1195,44 @@ async function resolveStaffTicket() {
   }
 }
 
+async function approveExchange1to1() {
+  if (!activeStaffTicket) return;
+  const replyMsg = "Dạ chuyên viên CSKH đã phê duyệt Lệnh Đổi Mới 1-1 tận nhà cho đơn hàng! Hệ thống đã kết nối bưu cục tạo vận đơn thu hồi đổi trả 2 chiều. Shipper sẽ mang sản phẩm mới tinh đến đổi tận nơi cho anh/chị và miễn phí hoàn toàn ạ.";
+  try {
+    await api('/api/staff/reply', {
+      conversation_id: activeStaffTicket.conversation_id,
+      message: replyMsg,
+      staff_name: 'Nguyễn Mai Anh (Chuyên viên CSKH)'
+    });
+    alert('✅ Đã duyệt Đổi mới 1-1 thành công! Đã gửi thông báo xác nhận sang cho khách hàng.');
+    refreshStaffTranscript(activeStaffTicket.conversation_id, true);
+    if (conversationId && activeStaffTicket.conversation_id === conversationId) {
+      humanMessage(replyMsg, 'Nguyễn Mai Anh (Chuyên viên CSKH)');
+    }
+  } catch (err) {
+    alert('Lỗi phê duyệt: ' + err.message);
+  }
+}
+
+async function approveExchangeSize() {
+  if (!activeStaffTicket) return;
+  const replyMsg = "Dạ chuyên viên CSKH đã phê duyệt Lệnh Đổi Size 2 Chiều tận nhà cho đơn hàng! Kho tổng đã xuất giữ sản phẩm size mới chuẩn kích cỡ cho anh/chị. Bưu tá sẽ mang hàng mới đến cho anh/chị thử vừa vặn rồi mới nhận lại hàng cũ nhé ạ.";
+  try {
+    await api('/api/staff/reply', {
+      conversation_id: activeStaffTicket.conversation_id,
+      message: replyMsg,
+      staff_name: 'Nguyễn Mai Anh (Chuyên viên CSKH)'
+    });
+    alert('✅ Đã duyệt Đổi size 2 chiều thành công! Kho tổng đã ghi nhận giữ hàng.');
+    refreshStaffTranscript(activeStaffTicket.conversation_id, true);
+    if (conversationId && activeStaffTicket.conversation_id === conversationId) {
+      humanMessage(replyMsg, 'Nguyễn Mai Anh (Chuyên viên CSKH)');
+    }
+  } catch (err) {
+    alert('Lỗi phê duyệt: ' + err.message);
+  }
+}
+
 const toggleStaffDesk = byId('toggle-staff-desk');
 if (toggleStaffDesk) toggleStaffDesk.onclick = () => openStaffDesk();
 
@@ -1212,6 +1252,12 @@ if (refreshStaffQueue) refreshStaffQueue.onclick = () => loadStaffQueue();
 
 const btnSendStaffReply = byId('btn-send-staff-reply');
 if (btnSendStaffReply) btnSendStaffReply.onclick = () => sendStaffReply();
+
+const btnApprove1to1 = byId('btn-approve-exchange-1to1');
+if (btnApprove1to1) btnApprove1to1.onclick = () => approveExchange1to1();
+
+const btnApproveSize = byId('btn-approve-exchange-size');
+if (btnApproveSize) btnApproveSize.onclick = () => approveExchangeSize();
 
 const staffReplyInput = byId('staff-reply-input');
 if (staffReplyInput) {

@@ -33,6 +33,68 @@
       "material": null,
       "care": null,
       "stock": null
+    },
+    {
+      "id": "P-103",
+      "name": "Áo Sơ Mi Oxford Dài Tay",
+      "aliases": ["áo sơ mi oxford", "áo sơ mi", "sơ mi oxford", "sơ mi"],
+      "category": "Áo sơ mi",
+      "description": "Áo sơ mi Oxford chất liệu 100% cotton cao cấp, phom dáng slim-fit trẻ trung, chống nhăn nhẹ.",
+      "variants": ["Trắng · Size M", "Trắng · Size L", "Xanh Nhạt · Size M", "Xanh Nhạt · Size L"],
+      "material": "100% Cotton Oxford",
+      "care": "Giặt máy chế độ nhẹ, nhiệt độ dưới 30 độ C, ủi ở nhiệt độ trung bình.",
+      "stock": 45
+    },
+    {
+      "id": "P-104",
+      "name": "Áo Khoác Gió Bomber 2 Lớp",
+      "aliases": ["áo khoác gió bomber", "áo khoác gió", "áo bomber", "bomber", "áo khoác"],
+      "category": "Áo khoác",
+      "description": "Áo khoác gió bomber 2 lớp chống nước và cản gió chuyên dụng, khóa kéo YKK kim loại cao cấp.",
+      "variants": ["Đen · Size M", "Đen · Size L", "Xanh Rêu · Size L", "Đen · Size XL"],
+      "material": "Polyeste tráng PU chống thấm nước, lót lụa mềm thoáng khí",
+      "care": "Không giặt sấy nhiệt cao, giặt tay hoặc giặt máy túi giặt.",
+      "warranty_policy": "Bảo hành 1 đổi 1 tận nhà trong 90 ngày đối với lỗi bung chỉ, kẹt khóa kéo YKK do vận chuyển hoặc sản xuất.",
+      "stock": 33
+    },
+    {
+      "id": "P-203",
+      "name": "Áo Polo Nam Phối Bo Cổ Co Giãn",
+      "aliases": ["áo polo nam", "polo nam", "áo polo phối bo", "polo"],
+      "category": "Áo polo",
+      "description": "Áo polo nam chất cá sấu CVC co giãn 4 chiều, thấm hút mồ hôi, cổ dệt bo viền chống bai dão.",
+      "variants": ["Trắng · Size M", "Trắng · Size L", "Xanh Navy · Size M", "Xanh Navy · Size L", "Xanh Navy · Size XL"],
+      "size_chart": {
+        "S": "Chiều cao 1m55-1m65, cân nặng 50-58kg",
+        "M": "Chiều cao 1m65-1m72, cân nặng 59-67kg",
+        "L": "Chiều cao 1m70-1m78, cân nặng 68-76kg",
+        "XL": "Chiều cao 1m75-1m85, cân nặng 77-85kg"
+      },
+      "material": "95% Cotton CVC, 5% Spandex",
+      "care": "Lộn trái khi phơi, giặt chung với quần áo cùng màu.",
+      "stock": 55
+    },
+    {
+      "id": "P-301",
+      "name": "Giày Sneaker Running Ultra Light",
+      "aliases": ["giày sneaker running", "giày chạy bộ", "giày sneaker", "sneaker"],
+      "category": "Giày dép",
+      "description": "Giày chạy bộ đế đệm khí siêu êm, thân dệt flyknit thông thoáng chân, trợ lực chạy bộ.",
+      "variants": ["Xám · Size 40", "Xám · Size 41", "Xám · Size 42", "Đen · Size 41", "Đen · Size 42"],
+      "material": "Đế EVA bọc cao su non, vải dệt Flyknit kháng khuẩn",
+      "care": "Lau bằng khăn ẩm, không phơi trực tiếp dưới nắng gắt.",
+      "stock": 20
+    },
+    {
+      "id": "P-401",
+      "name": "Bộ Nồi Inox 3 Đáy Cao Cấp",
+      "aliases": ["bộ nồi inox 3 đáy", "bộ nồi inox", "nồi inox 3 đáy", "nồi inox"],
+      "category": "Gia dụng",
+      "description": "Bộ nồi inox 3 đáy liền khối truyền nhiệt đều, sử dụng được trên mọi loại bếp kể cả bếp từ.",
+      "variants": ["Bạc · Bộ 3 món (16cm-20cm-24cm)"],
+      "material": "Inox 304 tiêu chuẩn an toàn thực phẩm",
+      "care": "Vệ sinh bằng giẻ mềm, không dùng búi sắt cọ xát mạnh.",
+      "stock": 15
     }
   ]
 }
