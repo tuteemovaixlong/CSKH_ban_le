@@ -467,9 +467,9 @@ function renderOrder() {
 
   // Toggle manager buttons visibility
   const btnHeaderMgr = byId('btn-open-manager-console');
-  if (btnHeaderMgr) btnHeaderMgr.style.display = isManager ? 'inline-flex' : 'none';
+  if (btnHeaderMgr && btnHeaderMgr.style) btnHeaderMgr.style.display = isManager ? 'inline-flex' : 'none';
   const btnSidebarMgr = byId('btn-sidebar-manager-console');
-  if (btnSidebarMgr) btnSidebarMgr.style.display = isManager ? 'flex' : 'none';
+  if (btnSidebarMgr && btnSidebarMgr.style) btnSidebarMgr.style.display = isManager ? 'flex' : 'none';
 
   let filtered = orders;
   if (managerFilter !== 'all') {
@@ -1176,10 +1176,12 @@ async function selectStaffTicket(ticket) {
 
   byId('staff-active-customer').textContent = (ticket.customer_name || ticket.customer_id) + (ticket.order_id ? ' · Đơn hàng: ' + ticket.order_id : '');
   byId('staff-active-meta').textContent = 'Mã phiên: ' + ticket.conversation_id + ' · Lý do: ' + (ticket.comment || ticket.reason_code || 'Yêu cầu gặp nhân viên');
-  byId('staff-chat-actions').style.display = 'block';
-  byId('staff-chat-composer').style.display = 'flex';
+  const chatActions = byId('staff-chat-actions');
+  if (chatActions && chatActions.style) chatActions.style.display = 'block';
+  const chatComposer = byId('staff-chat-composer');
+  if (chatComposer && chatComposer.style) chatComposer.style.display = 'flex';
   const actionBar = byId('staff-action-bar');
-  if (actionBar) actionBar.style.display = 'flex';
+  if (actionBar && actionBar.style) actionBar.style.display = 'flex';
 
   const transcriptEl = byId('staff-chat-transcript');
   transcriptEl.dataset.turnsCount = '-1';
@@ -1776,7 +1778,7 @@ if (sideClearSearchBtn) {
   sideClearSearchBtn.onclick = () => {
     sideSearchInput.value = '';
     orderSearchQuery = '';
-    sideClearSearchBtn.style.display = 'none';
+    if (sideClearSearchBtn.style) sideClearSearchBtn.style.display = 'none';
     renderOrder();
   };
 }
