@@ -1,0 +1,210 @@
+{
+  "O-305": {
+    "carrier": "SPX Express",
+    "tracking_code": "SPX.VN.8899123",
+    "status": "delivery_failed_virtual",
+    "status_text": "Bưu tá báo không liên lạc được (nghi vấn báo ảo)",
+    "current_location": "Bưu cục Cầu Giấy 2, Hà Nội",
+    "shipper": "Phạm Văn Hùng (0941.882.331)",
+    "can_reassign_today": true,
+    "estimated_delivery": "Hôm nay trước 18:30 (khiếu nại giao lại ngay)",
+    "steps": [
+      {
+        "time": "15:10 hôm nay",
+        "event": "Bưu tá báo không liên lạc được (hệ thống ghi nhận nghi vấn báo ảo — khách hàng xác nhận không có cuộc gọi nhỡ)"
+      },
+      {
+        "time": "08:30 hôm nay",
+        "event": "Bưu tá Phạm Văn Hùng xuất kho giao hàng"
+      },
+      {
+        "time": "07:15 hôm nay",
+        "event": "Đơn hàng đã đến bưu cục Cầu Giấy 2, Hà Nội"
+      }
+    ]
+  },
+  "O-306": {
+    "carrier": "GHN (Giao Hàng Nhanh)",
+    "tracking_code": "GHN.VN.202630612",
+    "status": "congested_at_soc",
+    "status_text": "Nghẽn trạm phân loại >48h do quá tải Mega Sale",
+    "current_location": "Kho HCM Mega SOC, Khu công nghiệp Tân Phú Trung, Củ Chi, TP.HCM",
+    "shipper": "Chưa phân bổ bưu tá (đang chờ xử lý tại SOC)",
+    "can_reassign_today": false,
+    "estimated_delivery": "Dự kiến giao trong 1-2 ngày tới (đã quá hạn 48h)",
+    "compensation_voucher": "Voucher đền bù 50.000đ đã được gửi vào tài khoản Shopee của khách",
+    "steps": [
+      {
+        "time": "10:20 hôm nay",
+        "event": "Đơn hàng đang xử lý tại Kho HCM Mega SOC — tồn đọng 52 giờ do quá tải đợt Mega Sale"
+      },
+      {
+        "time": "06:30 hôm qua",
+        "event": "Đơn hàng đã đến Kho HCM Mega SOC (Củ Chi, TP.HCM)"
+      },
+      {
+        "time": "22:15 2 ngày trước",
+        "event": "Đơn hàng rời kho bán — đang trung chuyển đến HCM Mega SOC"
+      }
+    ]
+  },
+  "O-307": {
+    "carrier": "GHTK (Giao Hàng Tiết Kiệm)",
+    "tracking_code": "GHTK.VN.8845221",
+    "status": "delivered_defective",
+    "status_text": "Giao thành công 4 ngày trước — sản phẩm bị lỗi (bung chỉ / kẹt khóa)",
+    "current_location": "Đã giao đến khách hàng tại Đà Nẵng",
+    "shipper": "Nguyễn Đức Long (0905.667.788)",
+    "can_reassign_today": true,
+    "estimated_delivery": "Đổi 1-1 trong 3 ngày làm việc (còn hạn bảo hành 90 ngày)",
+    "warranty_status": "Còn hạn bảo hành 90 ngày — đủ điều kiện đổi 1-1 sản phẩm mới",
+    "steps": [
+      {
+        "time": "14:30 4 ngày trước",
+        "event": "Giao hàng thành công — khách đã nhận và thanh toán"
+      },
+      {
+        "time": "09:00 4 ngày trước",
+        "event": "Bưu tá Nguyễn Đức Long xuất phát giao hàng tại Đà Nẵng"
+      },
+      {
+        "time": "20:45 5 ngày trước",
+        "event": "Đơn hàng đến bưu cục Hải Châu, Đà Nẵng"
+      }
+    ],
+    "return_request": {
+      "reason": "Sản phẩm bị bung chỉ đường may vai và kẹt khóa kéo túi bên hông",
+      "request_type": "Đổi 1-1 sản phẩm mới cùng loại",
+      "warranty_remaining": "86/90 ngày",
+      "evidence": "Ảnh chụp lỗi đã upload lên hệ thống khiếu nại Shopee"
+    }
+  },
+  "O-308": {
+    "carrier": "ViettelPost",
+    "tracking_code": "VTP.VN.5566778",
+    "status": "delivered_size_issue",
+    "status_text": "Giao thành công 2 ngày trước — khách mặc chật cần đổi size",
+    "current_location": "Đã giao đến khách hàng tại Hà Nội",
+    "shipper": "Trần Minh Quân (0912.334.455)",
+    "can_reassign_today": true,
+    "estimated_delivery": "Đổi size 2 chiều trong 3-5 ngày làm việc",
+    "exchange_details": {
+      "old_size": "Size 30 (56-62kg, cao 1m65-1m70)",
+      "new_size": "Size 31 (63-70kg, cao 1m70-1m75)",
+      "reason": "Khách mặc chật phần đùi và bụng, cần tăng 1 size",
+      "shipping_type": "Đổi 2 chiều — ViettelPost thu hồi sản phẩm cũ và giao sản phẩm mới",
+      "exchange_fee": "Miễn phí đổi size lần đầu (chính sách Shopee Mall)"
+    },
+    "steps": [
+      {
+        "time": "16:00 2 ngày trước",
+        "event": "Giao hàng thành công — khách đã nhận và thử mặc"
+      },
+      {
+        "time": "10:30 2 ngày trước",
+        "event": "Bưu tá Trần Minh Quân xuất phát giao hàng tại Hà Nội"
+      },
+      {
+        "time": "19:20 3 ngày trước",
+        "event": "Đơn hàng đến bưu cục Hai Bà Trưng, Hà Nội"
+      }
+    ]
+  },
+  "O-309": {
+    "carrier": "SPX Express",
+    "tracking_code": "SPX.VN.8899456",
+    "status": "delivered",
+    "status_text": "Giao hàng thành công",
+    "current_location": "Đã giao đến khách hàng tại TP.HCM",
+    "shipper": "Lê Hoàng Nam (0977.556.677)",
+    "can_reassign_today": false,
+    "estimated_delivery": "Đã giao",
+    "steps": [
+      {
+        "time": "11:30 hôm qua",
+        "event": "Giao hàng thành công — khách đã nhận"
+      },
+      {
+        "time": "07:45 hôm qua",
+        "event": "Bưu tá Lê Hoàng Nam xuất kho giao hàng"
+      },
+      {
+        "time": "22:10 3 ngày trước",
+        "event": "Đơn hàng đến kho HCM Mega SOC"
+      }
+    ]
+  },
+  "O-310": {
+    "carrier": "GHN (Giao Hàng Nhanh)",
+    "tracking_code": "GHN.VN.202630688",
+    "status": "congested_at_soc",
+    "status_text": "Đang xử lý tại Kho BN Mega SOC do quá tải Mega Sale",
+    "current_location": "Kho BN Mega SOC, Khu công nghiệp VSIP, Từ Sơn, Bắc Ninh",
+    "shipper": "Chưa phân bổ bưu tá (đang chờ xử lý tại SOC)",
+    "can_reassign_today": false,
+    "estimated_delivery": "Dự kiến giao trong 2-3 ngày tới (tồn đọng 50 giờ)",
+    "compensation_voucher": "Voucher đền bù 50.000đ đã được gửi vào tài khoản Shopee của khách",
+    "steps": [
+      {
+        "time": "08:00 hôm nay",
+        "event": "Đơn hàng tồn đọng 50 giờ tại Kho BN Mega SOC — đang chờ phân loại"
+      },
+      {
+        "time": "23:30 2 ngày trước",
+        "event": "Đơn hàng đã đến Kho BN Mega SOC (Bắc Ninh)"
+      },
+      {
+        "time": "15:40 3 ngày trước",
+        "event": "Đơn hàng rời kho bán — trung chuyển đến BN Mega SOC"
+      }
+    ]
+  },
+  "O-311": {
+    "carrier": "GHTK (Giao Hàng Tiết Kiệm)",
+    "tracking_code": "GHTK.VN.8845789",
+    "status": "delivered",
+    "status_text": "Giao hàng thành công",
+    "current_location": "Đã giao đến khách hàng tại Hà Nội",
+    "shipper": "Đỗ Văn Tuấn (0983.112.244)",
+    "can_reassign_today": false,
+    "estimated_delivery": "Đã giao",
+    "steps": [
+      {
+        "time": "15:20 5 ngày trước",
+        "event": "Giao hàng thành công — khách đã nhận"
+      },
+      {
+        "time": "09:00 5 ngày trước",
+        "event": "Bưu tá Đỗ Văn Tuấn xuất phát giao hàng"
+      },
+      {
+        "time": "18:30 6 ngày trước",
+        "event": "Đơn hàng đến bưu cục Cầu Giấy, Hà Nội"
+      }
+    ]
+  },
+  "O-312": {
+    "carrier": "ViettelPost",
+    "tracking_code": "VTP.VN.5566990",
+    "status": "in_transit",
+    "status_text": "Đang vận chuyển đến bưu cục phát",
+    "current_location": "Bưu cục Tân Hưng, Quận 7, TP.HCM",
+    "shipper": "Chưa phân bổ (đang trung chuyển nội thành)",
+    "can_reassign_today": false,
+    "estimated_delivery": "Ngày mai trước 17:00",
+    "steps": [
+      {
+        "time": "06:00 hôm nay",
+        "event": "Đơn hàng đang trung chuyển đến bưu cục Tân Hưng, Quận 7"
+      },
+      {
+        "time": "21:15 hôm qua",
+        "event": "Đơn hàng đến kho trung chuyển ViettelPost Bình Tân, TP.HCM"
+      },
+      {
+        "time": "14:00 2 ngày trước",
+        "event": "Đơn hàng đã được lấy từ kho bán"
+      }
+    ]
+  }
+}

@@ -4,10 +4,15 @@
     {
       "id": "P-101",
       "name": "Áo thun Essential",
-      "aliases": ["áo thun essential", "essential"],
+      "aliases": [
+        "áo thun essential",
+        "essential"
+      ],
       "category": "Áo thun",
       "description": "Sản phẩm áo thun trong danh mục thử nghiệm RetailOps.",
-      "variants": ["Trắng · Size M"],
+      "variants": [
+        "Trắng · Size M"
+      ],
       "material": null,
       "care": null,
       "stock": null
@@ -15,10 +20,15 @@
     {
       "id": "P-102",
       "name": "Áo khoác Everyday",
-      "aliases": ["áo khoác everyday", "everyday"],
+      "aliases": [
+        "áo khoác everyday",
+        "everyday"
+      ],
       "category": "Áo khoác",
       "description": "Sản phẩm áo khoác trong danh mục thử nghiệm RetailOps.",
-      "variants": ["Đen · Size L"],
+      "variants": [
+        "Đen · Size L"
+      ],
       "material": null,
       "care": null,
       "stock": null
@@ -26,10 +36,14 @@
     {
       "id": "P-202",
       "name": "Áo polo",
-      "aliases": ["áo polo"],
+      "aliases": [
+        "áo polo"
+      ],
       "category": "Áo polo",
       "description": "Sản phẩm áo polo trong danh mục thử nghiệm RetailOps.",
-      "variants": ["Xanh · Size M"],
+      "variants": [
+        "Xanh · Size M"
+      ],
       "material": null,
       "care": null,
       "stock": null
@@ -37,10 +51,20 @@
     {
       "id": "P-103",
       "name": "Áo Sơ Mi Oxford Dài Tay",
-      "aliases": ["áo sơ mi oxford", "áo sơ mi", "sơ mi oxford", "sơ mi"],
+      "aliases": [
+        "áo sơ mi oxford",
+        "áo sơ mi",
+        "sơ mi oxford",
+        "sơ mi"
+      ],
       "category": "Áo sơ mi",
       "description": "Áo sơ mi Oxford chất liệu 100% cotton cao cấp, phom dáng slim-fit trẻ trung, chống nhăn nhẹ.",
-      "variants": ["Trắng · Size M", "Trắng · Size L", "Xanh Nhạt · Size M", "Xanh Nhạt · Size L"],
+      "variants": [
+        "Trắng · Size M",
+        "Trắng · Size L",
+        "Xanh Nhạt · Size M",
+        "Xanh Nhạt · Size L"
+      ],
       "material": "100% Cotton Oxford",
       "care": "Giặt máy chế độ nhẹ, nhiệt độ dưới 30 độ C, ủi ở nhiệt độ trung bình.",
       "stock": 45
@@ -48,10 +72,21 @@
     {
       "id": "P-104",
       "name": "Áo Khoác Gió Bomber 2 Lớp",
-      "aliases": ["áo khoác gió bomber", "áo khoác gió", "áo bomber", "bomber", "áo khoác"],
+      "aliases": [
+        "áo khoác gió bomber",
+        "áo khoác gió",
+        "áo bomber",
+        "bomber",
+        "áo khoác"
+      ],
       "category": "Áo khoác",
       "description": "Áo khoác gió bomber 2 lớp chống nước và cản gió chuyên dụng, khóa kéo YKK kim loại cao cấp.",
-      "variants": ["Đen · Size M", "Đen · Size L", "Xanh Rêu · Size L", "Đen · Size XL"],
+      "variants": [
+        "Đen · Size M",
+        "Đen · Size L",
+        "Xanh Rêu · Size L",
+        "Đen · Size XL"
+      ],
       "material": "Polyeste tráng PU chống thấm nước, lót lụa mềm thoáng khí",
       "care": "Không giặt sấy nhiệt cao, giặt tay hoặc giặt máy túi giặt.",
       "warranty_policy": "Bảo hành 1 đổi 1 tận nhà trong 90 ngày đối với lỗi bung chỉ, kẹt khóa kéo YKK do vận chuyển hoặc sản xuất.",
@@ -60,10 +95,21 @@
     {
       "id": "P-203",
       "name": "Áo Polo Nam Phối Bo Cổ Co Giãn",
-      "aliases": ["áo polo nam", "polo nam", "áo polo phối bo", "polo"],
+      "aliases": [
+        "áo polo nam",
+        "polo nam",
+        "áo polo phối bo",
+        "polo"
+      ],
       "category": "Áo polo",
       "description": "Áo polo nam chất cá sấu CVC co giãn 4 chiều, thấm hút mồ hôi, cổ dệt bo viền chống bai dão.",
-      "variants": ["Trắng · Size M", "Trắng · Size L", "Xanh Navy · Size M", "Xanh Navy · Size L", "Xanh Navy · Size XL"],
+      "variants": [
+        "Trắng · Size M",
+        "Trắng · Size L",
+        "Xanh Navy · Size M",
+        "Xanh Navy · Size L",
+        "Xanh Navy · Size XL"
+      ],
       "size_chart": {
         "S": "Chiều cao 1m55-1m65, cân nặng 50-58kg",
         "M": "Chiều cao 1m65-1m72, cân nặng 59-67kg",
@@ -77,10 +123,21 @@
     {
       "id": "P-301",
       "name": "Giày Sneaker Running Ultra Light",
-      "aliases": ["giày sneaker running", "giày chạy bộ", "giày sneaker", "sneaker"],
+      "aliases": [
+        "giày sneaker running",
+        "giày chạy bộ",
+        "giày sneaker",
+        "sneaker"
+      ],
       "category": "Giày dép",
       "description": "Giày chạy bộ đế đệm khí siêu êm, thân dệt flyknit thông thoáng chân, trợ lực chạy bộ.",
-      "variants": ["Xám · Size 40", "Xám · Size 41", "Xám · Size 42", "Đen · Size 41", "Đen · Size 42"],
+      "variants": [
+        "Xám · Size 40",
+        "Xám · Size 41",
+        "Xám · Size 42",
+        "Đen · Size 41",
+        "Đen · Size 42"
+      ],
       "material": "Đế EVA bọc cao su non, vải dệt Flyknit kháng khuẩn",
       "care": "Lau bằng khăn ẩm, không phơi trực tiếp dưới nắng gắt.",
       "stock": 20
@@ -88,13 +145,167 @@
     {
       "id": "P-401",
       "name": "Bộ Nồi Inox 3 Đáy Cao Cấp",
-      "aliases": ["bộ nồi inox 3 đáy", "bộ nồi inox", "nồi inox 3 đáy", "nồi inox"],
+      "aliases": [
+        "bộ nồi inox 3 đáy",
+        "bộ nồi inox",
+        "nồi inox 3 đáy",
+        "nồi inox"
+      ],
       "category": "Gia dụng",
       "description": "Bộ nồi inox 3 đáy liền khối truyền nhiệt đều, sử dụng được trên mọi loại bếp kể cả bếp từ.",
-      "variants": ["Bạc · Bộ 3 món (16cm-20cm-24cm)"],
+      "variants": [
+        "Bạc · Bộ 3 món (16cm-20cm-24cm)"
+      ],
       "material": "Inox 304 tiêu chuẩn an toàn thực phẩm",
       "care": "Vệ sinh bằng giẻ mềm, không dùng búi sắt cọ xát mạnh.",
       "stock": 15
+    },
+    {
+      "id": "P-501",
+      "name": "Áo Polo Nam Oversize Form Rộng Cotton Compact",
+      "category": "Thời trang Nam",
+      "price": 350000,
+      "description": "Áo Polo nam phong cách Hàn Quốc, chất liệu Cotton Compact 100% co giãn 4 chiều, thấm hút mồ hôi tốt. Form rộng Oversize thoải mái, phù hợp mặc hàng ngày và đi làm. Đường may tỉ mỉ, cổ áo dệt kim không bai dão sau nhiều lần giặt.",
+      "attributes": {
+        "material": "Cotton Compact 100%",
+        "warranty": "Bảo hành 90 ngày lỗi đường may, sợi vải",
+        "size_chart": {
+          "Size M": "55-64kg, cao 1m60-1m69",
+          "Size L": "65-72kg, cao 1m70-1m75",
+          "Size XL": "73-82kg, cao 1m76-1m82"
+        }
+      },
+      "aliases": [
+        "áo polo nam oversize form rộng cotton compact"
+      ]
+    },
+    {
+      "id": "P-502",
+      "name": "Quần Cargo Nam Kaki Túi Hộp Phong Cách Streetwear",
+      "category": "Thời trang Nam",
+      "price": 420000,
+      "description": "Quần cargo nam chất liệu kaki dày dặn, túi hộp hai bên tiện dụng. Phong cách streetwear trẻ trung, dây rút gấu quần linh hoạt. Phù hợp phối với áo thun, sơ mi và giày sneaker. Được ưa chuộng bởi giới trẻ TP.HCM với mức tăng trưởng 300% trong phân khúc oversized工装裤.",
+      "attributes": {
+        "material": "Kaki Cotton 98% + Spandex 2%",
+        "warranty": "Bảo hành 60 ngày lỗi khóa kéo và đường may",
+        "size_chart": {
+          "Size 29": "50-55kg, cao 1m60-1m65 (tương đương M)",
+          "Size 30": "56-62kg, cao 1m65-1m70 (tương đương L)",
+          "Size 31": "63-70kg, cao 1m70-1m75 (tương đương XL)",
+          "Size 32": "71-78kg, cao 1m75-1m80 (tương đương 2XL)"
+        }
+      },
+      "aliases": [
+        "quần cargo nam kaki túi hộp phong cách streetwear"
+      ]
+    },
+    {
+      "id": "P-503",
+      "name": "Đầm Nữ Tay Bồng Phong Cách Hàn Quốc Dáng Suông",
+      "category": "Thời trang Nữ",
+      "price": 385000,
+      "description": "Đầm nữ tay bồng nhẹ nhàng, chất liệu voan lụa cao cấp mát mẻ. Thiết kế dáng suông che khuyết điểm tốt, phù hợp đi làm và dạo phố. Họa tiết chấm bi thanh lịch theo xu hướng thịnh hành tại thị trường Việt Nam 2026.",
+      "attributes": {
+        "material": "Voan lụa polyester cao cấp",
+        "warranty": "Bảo hành 30 ngày lỗi đường may, khóa kéo",
+        "size_chart": {
+          "Size S": "43-48kg, cao 1m50-1m55",
+          "Size M": "48-55kg, cao 1m55-1m60",
+          "Size L": "55-62kg, cao 1m58-1m65",
+          "Size XL": "62-68kg, cao 1m62-1m70"
+        }
+      },
+      "aliases": [
+        "đầm nữ tay bồng phong cách hàn quốc dáng suông"
+      ]
+    },
+    {
+      "id": "P-504",
+      "name": "Áo Thun Nữ Cotton Basic Cổ Tròn Form Vừa",
+      "category": "Thời trang Nữ",
+      "price": 180000,
+      "description": "Áo thun nữ cotton basic, form vừa vặn tôn dáng. Chất liệu cotton 100% mềm mại, thoáng mát. Có sẵn 8 màu cơ bản dễ phối đồ. Sản phẩm bán chạy hàng đầu trong phân khúc thời trang nữ giá rẻ trên Shopee Mall với hơn 50.000 lượt bán mỗi tháng.",
+      "attributes": {
+        "material": "Cotton 100%",
+        "warranty": "Bảo hành 30 ngày lỗi đường may, sợi vải",
+        "size_chart": {
+          "Size S": "43-47kg, cao 1m48-1m55",
+          "Size M": "48-53kg, cao 1m53-1m58",
+          "Size L": "54-58kg, cao 1m55-1m62",
+          "Size XL": "58-63kg, cao 1m55-1m70"
+        }
+      },
+      "aliases": [
+        "áo thun nữ cotton basic cổ tròn form vừa"
+      ]
+    },
+    {
+      "id": "P-505",
+      "name": "Túi Đeo Chéo Nam Nữ Da PU Chống Nước",
+      "category": "Phụ kiện",
+      "price": 290000,
+      "description": "Túi đeo chéo unisex chất liệu da PU cao cấp chống nước nhẹ. Nhiều ngăn tiện dụng, khóa kéo kim loại bền bỉ. Kích thước 22x15x7cm phù hợp đựng điện thoại, ví và vật dụng cá nhân. Thiết kế tối giản phong cách Hàn Quốc.",
+      "attributes": {
+        "material": "Da PU chống nước",
+        "warranty": "Bảo hành 90 ngày lỗi khóa kéo, bong tróc da",
+        "size_chart": {
+          "Free Size": "22x15x7cm, phù hợp mọi đối tượng"
+        }
+      },
+      "aliases": [
+        "túi đeo chéo nam nữ da pu chống nước"
+      ]
+    },
+    {
+      "id": "P-506",
+      "name": "Máy Hút Bụi Cầm Tay Không Dây Thông Minh 3in1",
+      "category": "Đồ gia dụng thông minh",
+      "price": 1290000,
+      "description": "Máy hút bụi cầm tay không dây 3in1 thông minh, lực hút mạnh mẽ 15.000Pa. Pin sạc lithium 2500mAh, thời gian hoạt động liên tục 30 phút. Trang bị bộ lọc HEPA 3 lớp, hộp chứa bụi 0.4L dễ vệ sinh. Thiết kế đa năng: hút bụi sàn, hút giường nệm và hút khe hẹp.",
+      "attributes": {
+        "material": "Nhựa ABS + Hợp kim nhôm",
+        "warranty": "Bảo hành 12 tháng chính hãng động cơ và pin",
+        "size_chart": {
+          "Free Size": "Nặng 1.2kg, dài 40cm, đường kính đầu hút 20cm"
+        }
+      },
+      "aliases": [
+        "máy hút bụi cầm tay không dây thông minh 3in1"
+      ]
+    },
+    {
+      "id": "P-507",
+      "name": "Nồi Chiên Không Dầu Thông Minh 6L Điều Khiển Cảm Ứng",
+      "category": "Đồ gia dụng thông minh",
+      "price": 1890000,
+      "description": "Nồi chiên không dầu thông minh dung tích 6 lít, công suất 1700W. Màn hình cảm ứng LED với 8 chế độ nấu tự động. Công nghệ Rapid Air giảm 80% dầu mỡ, khay chiên chống dính có thể tháo rời. Hẹn giờ 60 phút, nhiệt độ điều chỉnh 80-200°C.",
+      "attributes": {
+        "material": "Thép không gỉ + Nhựa ABS chịu nhiệt",
+        "warranty": "Bảo hành 12 tháng chính hãng",
+        "size_chart": {
+          "Free Size": "Dung tích 6L, kích thước 35x30x32cm, nặng 4.5kg"
+        }
+      },
+      "aliases": [
+        "nồi chiên không dầu thông minh 6l điều khiển cảm ứng"
+      ]
+    },
+    {
+      "id": "P-508",
+      "name": "Đèn LED Thông Minh Cảm Biến Chuyển Động Sạc USB",
+      "category": "Đồ gia dụng thông minh",
+      "price": 159000,
+      "description": "Đèn LED thông minh cảm biến chuyển động hồng ngoại, tự động bật khi phát hiện chuyển động trong phạm vi 3m. Sạc USB tiện lợi, pin 1200mAh dùng liên tục 6-8 giờ. Đèn ấm 3000K không chói mắt, dán tường hoặc gắn nam châm. Phù hợp tủ quần áo, cầu thang, nhà vệ sinh.",
+      "attributes": {
+        "material": "Nhựa ABS + Đèn LED",
+        "warranty": "Bảo hành 6 tháng lỗi cảm biến và pin",
+        "size_chart": {
+          "Free Size": "Dài 20cm, rộng 3cm, nặng 150g"
+        }
+      },
+      "aliases": [
+        "đèn led thông minh cảm biến chuyển động sạc usb"
+      ]
     }
   ]
 }

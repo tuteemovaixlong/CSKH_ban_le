@@ -1,0 +1,406 @@
+{
+  "products": [
+    {
+      "id": "P-501",
+      "name": "Áo Polo Nam Oversize Form Rộng Cotton Compact",
+      "category": "Thời trang Nam",
+      "price": 350000,
+      "description": "Áo Polo nam phong cách Hàn Quốc, chất liệu Cotton Compact 100% co giãn 4 chiều, thấm hút mồ hôi tốt. Form rộng Oversize thoải mái, phù hợp mặc hàng ngày và đi làm. Đường may tỉ mỉ, cổ áo dệt kim không bai dão sau nhiều lần giặt.",
+      "attributes": {
+        "material": "Cotton Compact 100%",
+        "warranty": "Bảo hành 90 ngày lỗi đường may, sợi vải",
+        "size_chart": {
+          "Size M": "55-64kg, cao 1m60-1m69",
+          "Size L": "65-72kg, cao 1m70-1m75",
+          "Size XL": "73-82kg, cao 1m76-1m82"
+        }
+      }
+    },
+    {
+      "id": "P-502",
+      "name": "Quần Cargo Nam Kaki Túi Hộp Phong Cách Streetwear",
+      "category": "Thời trang Nam",
+      "price": 420000,
+      "description": "Quần cargo nam chất liệu kaki dày dặn, túi hộp hai bên tiện dụng. Phong cách streetwear trẻ trung, dây rút gấu quần linh hoạt. Phù hợp phối với áo thun, sơ mi và giày sneaker. Được ưa chuộng bởi giới trẻ TP.HCM với mức tăng trưởng 300% trong phân khúc oversized工装裤.",
+      "attributes": {
+        "material": "Kaki Cotton 98% + Spandex 2%",
+        "warranty": "Bảo hành 60 ngày lỗi khóa kéo và đường may",
+        "size_chart": {
+          "Size 29": "50-55kg, cao 1m60-1m65 (tương đương M)",
+          "Size 30": "56-62kg, cao 1m65-1m70 (tương đương L)",
+          "Size 31": "63-70kg, cao 1m70-1m75 (tương đương XL)",
+          "Size 32": "71-78kg, cao 1m75-1m80 (tương đương 2XL)"
+        }
+      }
+    },
+    {
+      "id": "P-503",
+      "name": "Đầm Nữ Tay Bồng Phong Cách Hàn Quốc Dáng Suông",
+      "category": "Thời trang Nữ",
+      "price": 385000,
+      "description": "Đầm nữ tay bồng nhẹ nhàng, chất liệu voan lụa cao cấp mát mẻ. Thiết kế dáng suông che khuyết điểm tốt, phù hợp đi làm và dạo phố. Họa tiết chấm bi thanh lịch theo xu hướng thịnh hành tại thị trường Việt Nam 2026.",
+      "attributes": {
+        "material": "Voan lụa polyester cao cấp",
+        "warranty": "Bảo hành 30 ngày lỗi đường may, khóa kéo",
+        "size_chart": {
+          "Size S": "43-48kg, cao 1m50-1m55",
+          "Size M": "48-55kg, cao 1m55-1m60",
+          "Size L": "55-62kg, cao 1m58-1m65",
+          "Size XL": "62-68kg, cao 1m62-1m70"
+        }
+      }
+    },
+    {
+      "id": "P-504",
+      "name": "Áo Thun Nữ Cotton Basic Cổ Tròn Form Vừa",
+      "category": "Thời trang Nữ",
+      "price": 180000,
+      "description": "Áo thun nữ cotton basic, form vừa vặn tôn dáng. Chất liệu cotton 100% mềm mại, thoáng mát. Có sẵn 8 màu cơ bản dễ phối đồ. Sản phẩm bán chạy hàng đầu trong phân khúc thời trang nữ giá rẻ trên Shopee Mall với hơn 50.000 lượt bán mỗi tháng.",
+      "attributes": {
+        "material": "Cotton 100%",
+        "warranty": "Bảo hành 30 ngày lỗi đường may, sợi vải",
+        "size_chart": {
+          "Size S": "43-47kg, cao 1m48-1m55",
+          "Size M": "48-53kg, cao 1m53-1m58",
+          "Size L": "54-58kg, cao 1m55-1m62",
+          "Size XL": "58-63kg, cao 1m55-1m70"
+        }
+      }
+    },
+    {
+      "id": "P-505",
+      "name": "Túi Đeo Chéo Nam Nữ Da PU Chống Nước",
+      "category": "Phụ kiện",
+      "price": 290000,
+      "description": "Túi đeo chéo unisex chất liệu da PU cao cấp chống nước nhẹ. Nhiều ngăn tiện dụng, khóa kéo kim loại bền bỉ. Kích thước 22x15x7cm phù hợp đựng điện thoại, ví và vật dụng cá nhân. Thiết kế tối giản phong cách Hàn Quốc.",
+      "attributes": {
+        "material": "Da PU chống nước",
+        "warranty": "Bảo hành 90 ngày lỗi khóa kéo, bong tróc da",
+        "size_chart": {
+          "Free Size": "22x15x7cm, phù hợp mọi đối tượng"
+        }
+      }
+    },
+    {
+      "id": "P-506",
+      "name": "Máy Hút Bụi Cầm Tay Không Dây Thông Minh 3in1",
+      "category": "Đồ gia dụng thông minh",
+      "price": 1290000,
+      "description": "Máy hút bụi cầm tay không dây 3in1 thông minh, lực hút mạnh mẽ 15.000Pa. Pin sạc lithium 2500mAh, thời gian hoạt động liên tục 30 phút. Trang bị bộ lọc HEPA 3 lớp, hộp chứa bụi 0.4L dễ vệ sinh. Thiết kế đa năng: hút bụi sàn, hút giường nệm và hút khe hẹp.",
+      "attributes": {
+        "material": "Nhựa ABS + Hợp kim nhôm",
+        "warranty": "Bảo hành 12 tháng chính hãng động cơ và pin",
+        "size_chart": {
+          "Free Size": "Nặng 1.2kg, dài 40cm, đường kính đầu hút 20cm"
+        }
+      }
+    },
+    {
+      "id": "P-507",
+      "name": "Nồi Chiên Không Dầu Thông Minh 6L Điều Khiển Cảm Ứng",
+      "category": "Đồ gia dụng thông minh",
+      "price": 1890000,
+      "description": "Nồi chiên không dầu thông minh dung tích 6 lít, công suất 1700W. Màn hình cảm ứng LED với 8 chế độ nấu tự động. Công nghệ Rapid Air giảm 80% dầu mỡ, khay chiên chống dính có thể tháo rời. Hẹn giờ 60 phút, nhiệt độ điều chỉnh 80-200°C.",
+      "attributes": {
+        "material": "Thép không gỉ + Nhựa ABS chịu nhiệt",
+        "warranty": "Bảo hành 12 tháng chính hãng",
+        "size_chart": {
+          "Free Size": "Dung tích 6L, kích thước 35x30x32cm, nặng 4.5kg"
+        }
+      }
+    },
+    {
+      "id": "P-508",
+      "name": "Đèn LED Thông Minh Cảm Biến Chuyển Động Sạc USB",
+      "category": "Đồ gia dụng thông minh",
+      "price": 159000,
+      "description": "Đèn LED thông minh cảm biến chuyển động hồng ngoại, tự động bật khi phát hiện chuyển động trong phạm vi 3m. Sạc USB tiện lợi, pin 1200mAh dùng liên tục 6-8 giờ. Đèn ấm 3000K không chói mắt, dán tường hoặc gắn nam châm. Phù hợp tủ quần áo, cầu thang, nhà vệ sinh.",
+      "attributes": {
+        "material": "Nhựa ABS + Đèn LED",
+        "warranty": "Bảo hành 6 tháng lỗi cảm biến và pin",
+        "size_chart": {
+          "Free Size": "Dài 20cm, rộng 3cm, nặng 150g"
+        }
+      }
+    }
+  ],
+  "customers": [
+    {
+      "id": "C-005",
+      "name": "Nguyễn Văn Minh",
+      "phone": "0912.345.678",
+      "address": "Số 25 ngõ 165 phố Cầu Giấy, phường Quan Hoa, quận Cầu Giấy, Hà Nội"
+    },
+    {
+      "id": "C-006",
+      "name": "Trần Thị Thu Hương",
+      "phone": "0987.654.321",
+      "address": "Căn hộ 1205, Block B, Chung cư Sunrise City, 27 Nguyễn Hữu Thọ, phường Tân Hưng, Quận 7, TP. Hồ Chí Minh"
+    },
+    {
+      "id": "C-007",
+      "name": "Lê Quang Đạt",
+      "phone": "0905.112.233",
+      "address": "Số 78 đường Nguyễn Văn Linh, phường Nam Dương, quận Hải Châu, Đà Nẵng"
+    },
+    {
+      "id": "C-008",
+      "name": "Phạm Thị Ngọc Mai",
+      "phone": "0933.445.566",
+      "address": "Số 12 ngách 48/15 phố Kim Ngưu, phường Vĩnh Tuy, quận Hai Bà Trưng, Hà Nội"
+    },
+    {
+      "id": "C-009",
+      "name": "Hoàng Văn Thắng",
+      "phone": "0977.889.900",
+      "address": "Số 456 đường Võ Văn Kiệt, phường Cầu Kho, Quận 1, TP. Hồ Chí Minh"
+    },
+    {
+      "id": "C-010",
+      "name": "Vũ Thị Bích Ngọc",
+      "phone": "0968.223.344",
+      "address": "Số 89 đường Hoàng Diệu, phường Phước Ninh, quận Hải Châu, Đà Nẵng"
+    }
+  ],
+  "orders": [
+    {
+      "id": "O-305",
+      "customer_id": "C-005",
+      "name": "Áo Polo Nam Oversize Form Rộng Cotton Compact",
+      "variant": "Màu Đen · Size L · Số lượng 1",
+      "amount": 350000,
+      "status": "pending"
+    },
+    {
+      "id": "O-306",
+      "customer_id": "C-006",
+      "name": "Đầm Nữ Tay Bồng Phong Cách Hàn Quốc Dáng Suông",
+      "variant": "Màu Trắng Chấm Bi · Size M · Số lượng 1",
+      "amount": 385000,
+      "status": "pending"
+    },
+    {
+      "id": "O-307",
+      "customer_id": "C-007",
+      "name": "Máy Hút Bụi Cầm Tay Không Dây Thông Minh 3in1",
+      "variant": "Màu Xám Than · Free Size · Số lượng 1",
+      "amount": 1290000,
+      "status": "pending"
+    },
+    {
+      "id": "O-308",
+      "customer_id": "C-008",
+      "name": "Quần Cargo Nam Kaki Túi Hộp Phong Cách Streetwear",
+      "variant": "Màu Be · Size 30 · Số lượng 1",
+      "amount": 420000,
+      "status": "delivered"
+    },
+    {
+      "id": "O-309",
+      "customer_id": "C-009",
+      "name": "Áo Thun Nữ Cotton Basic Cổ Tròn Form Vừa",
+      "variant": "Màu Trắng · Size S · Số lượng 2",
+      "amount": 360000,
+      "status": "delivered"
+    },
+    {
+      "id": "O-310",
+      "customer_id": "C-010",
+      "name": "Nồi Chiên Không Dầu Thông Minh 6L Điều Khiển Cảm Ứng",
+      "variant": "Màu Đen · Free Size · Số lượng 1",
+      "amount": 1890000,
+      "status": "pending"
+    },
+    {
+      "id": "O-311",
+      "customer_id": "C-005",
+      "name": "Túi Đeo Chéo Nam Nữ Da PU Chống Nước",
+      "variant": "Màu Nâu Đất · Free Size · Số lượng 1",
+      "amount": 290000,
+      "status": "delivered"
+    },
+    {
+      "id": "O-312",
+      "customer_id": "C-006",
+      "name": "Đèn LED Thông Minh Cảm Biến Chuyển Động Sạc USB",
+      "variant": "Màu Trắng · Free Size · Số lượng 3",
+      "amount": 477000,
+      "status": "pending"
+    }
+  ],
+  "shipments": {
+    "O-305": {
+      "carrier": "SPX Express",
+      "tracking_code": "SPX.VN.8899123",
+      "status": "delivery_failed_virtual",
+      "status_text": "Bưu tá báo không liên lạc được (nghi vấn báo ảo)",
+      "current_location": "Bưu cục Cầu Giấy 2, Hà Nội",
+      "shipper": "Phạm Văn Hùng (0941.882.331)",
+      "can_reassign_today": true,
+      "estimated_delivery": "Hôm nay trước 18:30 (khiếu nại giao lại ngay)",
+      "steps": [
+        {"time": "15:10 hôm nay", "event": "Bưu tá báo không liên lạc được (hệ thống ghi nhận nghi vấn báo ảo — khách hàng xác nhận không có cuộc gọi nhỡ)"},
+        {"time": "08:30 hôm nay", "event": "Bưu tá Phạm Văn Hùng xuất kho giao hàng"},
+        {"time": "07:15 hôm nay", "event": "Đơn hàng đã đến bưu cục Cầu Giấy 2, Hà Nội"}
+      ]
+    },
+    "O-306": {
+      "carrier": "GHN (Giao Hàng Nhanh)",
+      "tracking_code": "GHN.VN.202630612",
+      "status": "congested_at_soc",
+      "status_text": "Nghẽn trạm phân loại >48h do quá tải Mega Sale",
+      "current_location": "Kho HCM Mega SOC, Khu công nghiệp Tân Phú Trung, Củ Chi, TP.HCM",
+      "shipper": "Chưa phân bổ bưu tá (đang chờ xử lý tại SOC)",
+      "can_reassign_today": false,
+      "estimated_delivery": "Dự kiến giao trong 1-2 ngày tới (đã quá hạn 48h)",
+      "compensation_voucher": "Voucher đền bù 50.000đ đã được gửi vào tài khoản Shopee của khách",
+      "steps": [
+        {"time": "10:20 hôm nay", "event": "Đơn hàng đang xử lý tại Kho HCM Mega SOC — tồn đọng 52 giờ do quá tải đợt Mega Sale"},
+        {"time": "06:30 hôm qua", "event": "Đơn hàng đã đến Kho HCM Mega SOC (Củ Chi, TP.HCM)"},
+        {"time": "22:15 2 ngày trước", "event": "Đơn hàng rời kho bán — đang trung chuyển đến HCM Mega SOC"}
+      ]
+    },
+    "O-307": {
+      "carrier": "GHTK (Giao Hàng Tiết Kiệm)",
+      "tracking_code": "GHTK.VN.8845221",
+      "status": "delivered_defective",
+      "status_text": "Giao thành công 4 ngày trước — sản phẩm bị lỗi (bung chỉ / kẹt khóa)",
+      "current_location": "Đã giao đến khách hàng tại Đà Nẵng",
+      "shipper": "Nguyễn Đức Long (0905.667.788)",
+      "can_reassign_today": true,
+      "estimated_delivery": "Đổi 1-1 trong 3 ngày làm việc (còn hạn bảo hành 90 ngày)",
+      "warranty_status": "Còn hạn bảo hành 90 ngày — đủ điều kiện đổi 1-1 sản phẩm mới",
+      "steps": [
+        {"time": "14:30 4 ngày trước", "event": "Giao hàng thành công — khách đã nhận và thanh toán"},
+        {"time": "09:00 4 ngày trước", "event": "Bưu tá Nguyễn Đức Long xuất phát giao hàng tại Đà Nẵng"},
+        {"time": "20:45 5 ngày trước", "event": "Đơn hàng đến bưu cục Hải Châu, Đà Nẵng"}
+      ],
+      "return_request": {
+        "reason": "Sản phẩm bị bung chỉ đường may vai và kẹt khóa kéo túi bên hông",
+        "request_type": "Đổi 1-1 sản phẩm mới cùng loại",
+        "warranty_remaining": "86/90 ngày",
+        "evidence": "Ảnh chụp lỗi đã upload lên hệ thống khiếu nại Shopee"
+      }
+    },
+    "O-308": {
+      "carrier": "ViettelPost",
+      "tracking_code": "VTP.VN.5566778",
+      "status": "delivered_size_issue",
+      "status_text": "Giao thành công 2 ngày trước — khách mặc chật cần đổi size",
+      "current_location": "Đã giao đến khách hàng tại Hà Nội",
+      "shipper": "Trần Minh Quân (0912.334.455)",
+      "can_reassign_today": true,
+      "estimated_delivery": "Đổi size 2 chiều trong 3-5 ngày làm việc",
+      "exchange_details": {
+        "old_size": "Size 30 (56-62kg, cao 1m65-1m70)",
+        "new_size": "Size 31 (63-70kg, cao 1m70-1m75)",
+        "reason": "Khách mặc chật phần đùi và bụng, cần tăng 1 size",
+        "shipping_type": "Đổi 2 chiều — ViettelPost thu hồi sản phẩm cũ và giao sản phẩm mới",
+        "exchange_fee": "Miễn phí đổi size lần đầu (chính sách Shopee Mall)"
+      },
+      "steps": [
+        {"time": "16:00 2 ngày trước", "event": "Giao hàng thành công — khách đã nhận và thử mặc"},
+        {"time": "10:30 2 ngày trước", "event": "Bưu tá Trần Minh Quân xuất phát giao hàng tại Hà Nội"},
+        {"time": "19:20 3 ngày trước", "event": "Đơn hàng đến bưu cục Hai Bà Trưng, Hà Nội"}
+      ]
+    },
+    "O-309": {
+      "carrier": "SPX Express",
+      "tracking_code": "SPX.VN.8899456",
+      "status": "delivered",
+      "status_text": "Giao hàng thành công",
+      "current_location": "Đã giao đến khách hàng tại TP.HCM",
+      "shipper": "Lê Hoàng Nam (0977.556.677)",
+      "can_reassign_today": false,
+      "estimated_delivery": "Đã giao",
+      "steps": [
+        {"time": "11:30 hôm qua", "event": "Giao hàng thành công — khách đã nhận"},
+        {"time": "07:45 hôm qua", "event": "Bưu tá Lê Hoàng Nam xuất kho giao hàng"},
+        {"time": "22:10 3 ngày trước", "event": "Đơn hàng đến kho HCM Mega SOC"}
+      ]
+    },
+    "O-310": {
+      "carrier": "GHN (Giao Hàng Nhanh)",
+      "tracking_code": "GHN.VN.202630688",
+      "status": "congested_at_soc",
+      "status_text": "Đang xử lý tại Kho BN Mega SOC do quá tải Mega Sale",
+      "current_location": "Kho BN Mega SOC, Khu công nghiệp VSIP, Từ Sơn, Bắc Ninh",
+      "shipper": "Chưa phân bổ bưu tá (đang chờ xử lý tại SOC)",
+      "can_reassign_today": false,
+      "estimated_delivery": "Dự kiến giao trong 2-3 ngày tới (tồn đọng 50 giờ)",
+      "compensation_voucher": "Voucher đền bù 50.000đ đã được gửi vào tài khoản Shopee của khách",
+      "steps": [
+        {"time": "08:00 hôm nay", "event": "Đơn hàng tồn đọng 50 giờ tại Kho BN Mega SOC — đang chờ phân loại"},
+        {"time": "23:30 2 ngày trước", "event": "Đơn hàng đã đến Kho BN Mega SOC (Bắc Ninh)"},
+        {"time": "15:40 3 ngày trước", "event": "Đơn hàng rời kho bán — trung chuyển đến BN Mega SOC"}
+      ]
+    },
+    "O-311": {
+      "carrier": "GHTK (Giao Hàng Tiết Kiệm)",
+      "tracking_code": "GHTK.VN.8845789",
+      "status": "delivered",
+      "status_text": "Giao hàng thành công",
+      "current_location": "Đã giao đến khách hàng tại Hà Nội",
+      "shipper": "Đỗ Văn Tuấn (0983.112.244)",
+      "can_reassign_today": false,
+      "estimated_delivery": "Đã giao",
+      "steps": [
+        {"time": "15:20 5 ngày trước", "event": "Giao hàng thành công — khách đã nhận"},
+        {"time": "09:00 5 ngày trước", "event": "Bưu tá Đỗ Văn Tuấn xuất phát giao hàng"},
+        {"time": "18:30 6 ngày trước", "event": "Đơn hàng đến bưu cục Cầu Giấy, Hà Nội"}
+      ]
+    },
+    "O-312": {
+      "carrier": "ViettelPost",
+      "tracking_code": "VTP.VN.5566990",
+      "status": "in_transit",
+      "status_text": "Đang vận chuyển đến bưu cục phát",
+      "current_location": "Bưu cục Tân Hưng, Quận 7, TP.HCM",
+      "shipper": "Chưa phân bổ (đang trung chuyển nội thành)",
+      "can_reassign_today": false,
+      "estimated_delivery": "Ngày mai trước 17:00",
+      "steps": [
+        {"time": "06:00 hôm nay", "event": "Đơn hàng đang trung chuyển đến bưu cục Tân Hưng, Quận 7"},
+        {"time": "21:15 hôm qua", "event": "Đơn hàng đến kho trung chuyển ViettelPost Bình Tân, TP.HCM"},
+        {"time": "14:00 2 ngày trước", "event": "Đơn hàng đã được lấy từ kho bán"}
+      ]
+    }
+  },
+  "inventory": {
+    "P-501": {
+      "Size M": 25,
+      "Size L": 18,
+      "Size XL": 0
+    },
+    "P-502": {
+      "Size 29": 32,
+      "Size 30": 15,
+      "Size 31": 27,
+      "Size 32": 8
+    },
+    "P-503": {
+      "Size S": 20,
+      "Size M": 35,
+      "Size L": 22,
+      "Size XL": 10
+    },
+    "P-504": {
+      "Size S": 45,
+      "Size M": 60,
+      "Size L": 38,
+      "Size XL": 25
+    },
+    "P-505": {
+      "Free Size": 120
+    },
+    "P-506": {
+      "Free Size": 42
+    },
+    "P-507": {
+      "Free Size": 28
+    },
+    "P-508": {
+      "Free Size": 200
+    }
+  }
+}
