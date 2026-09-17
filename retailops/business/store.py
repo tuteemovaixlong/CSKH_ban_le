@@ -17,6 +17,8 @@ from retailops.core import REASONS, fields, require
 from retailops.schema import migrate
 from retailops.business.schema import initialize as initialize_schema
 
+ROOT = Path(__file__).resolve().parents[2]
+
 class BusinessStore:
     def __init__(self, path, *, create=True):
         self.path = Path(path)
@@ -48,13 +50,13 @@ class BusinessStore:
     def seed(self):
         # Conflict handling preserves cancelled orders across process/container restarts.
         with self.connection(write=True) as db:
-            db.executemany("INSERT INTO customers VALUES (?,?) ON CONFLICT DO NOTHING", [
+            customers = [
                 ('C-001', 'Mai Anh'),
                 ('C-002', 'Khách mẫu'),
                 ('C-003', 'Trần Thị Mai'),
                 ('C-004', 'Lê Hoàng Nam')
-            ])
-            db.executemany("INSERT INTO orders(id, customer_id, name, variant, amount, status) VALUES (?,?,?,?,?,?) ON CONFLICT DO NOTHING", [
+            ]
+            orders = [
                 ("O-101", "C-001", "Áo thun Essential", "Trắng · Size M · Số lượng 1", 299000, "pending"),
                 ("O-102", "C-001", "Áo khoác Everyday", "Đen · Size L · Số lượng 1", 799000, "delivered"),
                 ("O-202", "C-002", "Áo polo", "Xanh · Size M · Số lượng 1", 399000, "pending"),
@@ -62,7 +64,26 @@ class BusinessStore:
                 ("O-302", "C-003", "Áo Khoác Gió Bomber 2 Lớp", "Đen · Size L · Số lượng 1", 550000, "delivered"),
                 ("O-303", "C-004", "Áo Polo Nam Phối Bo Cổ Co Giãn", "Xanh Navy · Size M · Số lượng 1", 399000, "delivered"),
                 ("O-304", "C-004", "Bộ Nồi Inox 3 Đáy Cao Cấp", "Bạc · Bộ 3 món · Số lượng 1", 1250000, "pending"),
-            ])
+            ]
+            seed_file = ROOT / "data" / "deepseek_seed_data.json"
+            if seed_file.exists():
+                try:
+                    with open(seed_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    known_cids = {x[0] for x in customers}
+                    for c in data.get("customers", []):
+                        if c["id"] not in known_cids:
+                            customers.append((c["id"], c["name"]))
+                            known_cids.add(c["id"])
+                    known_oids = {x[0] for x in orders}
+                    for o in data.get("orders", []):
+                        if o["id"] not in known_oids:
+                            orders.append((o["id"], o["customer_id"], o["name"], o["variant"], o["amount"], o["status"]))
+                            known_oids.add(o["id"])
+                except Exception:
+                    pass
+            db.executemany("INSERT INTO customers VALUES (?,?) ON CONFLICT DO NOTHING", customers)
+            db.executemany("INSERT INTO orders(id, customer_id, name, variant, amount, status) VALUES (?,?,?,?,?,?) ON CONFLICT DO NOTHING", orders)
 
     def add_customer(self, customer_id, name):
         require(isinstance(customer_id, str) and re.fullmatch(r'[A-Za-z0-9_-]{1,64}', customer_id)
