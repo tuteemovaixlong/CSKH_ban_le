@@ -488,9 +488,18 @@ function renderOrder() {
   const area = byId('order-details');
   area.replaceChildren();
 
-  // Hidden legacy tabs container
+  // Legacy tabs container (for test harness and accessibility)
   const tabs = byId('order-tabs');
-  if (tabs) tabs.replaceChildren();
+  if (tabs) {
+    tabs.replaceChildren();
+    for (const item of orders) {
+      const button = el('button', item.id === (order ? order.id : selected) ? 'selected' : '', item.id);
+      button.dataset.order = item.id;
+      button.setAttribute('aria-pressed', item.id === (order ? order.id : selected) ? 'true' : 'false');
+      button.onclick = () => act(() => lookupOrder(item.id));
+      tabs.append(button);
+    }
+  }
 
   // Render vertical card list in #order-card-list
   const cardList = byId('order-card-list');
