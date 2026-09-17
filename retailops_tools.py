@@ -1,8 +1,12 @@
 """Read-only tools bound to the authenticated customer by the application."""
 from datetime import datetime, timedelta, timezone
+import json
+from pathlib import Path
 
 from retailops_conversation import normalize
 from retailops.knowledge.tool import KnowledgeTool
+
+ROOT = Path(__file__).resolve().parent
 
 
 class BoundTools:
@@ -174,6 +178,13 @@ class BoundTools:
                     ]
                 }
             }
+            extra_shipments_file = ROOT / "data" / "mock_shipments.json"
+            if extra_shipments_file.exists():
+                try:
+                    with open(extra_shipments_file, "r", encoding="utf-8") as f:
+                        carriers.update(json.load(f))
+                except Exception:
+                    pass
             shipment = carriers.get(oid, {
                 'carrier': 'Giao Hàng Tiết Kiệm (GHTK)',
                 'tracking_code': f'GHTK.VN.{oid.replace("-", "")}99',
