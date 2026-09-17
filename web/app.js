@@ -13,7 +13,7 @@ let isHumanMode = false, currentRating = 5;
 let humanPollingTimer = null;
 const renderedStaffTurnIds = new Set();
 let currentAttachment = null;
-let orderScope = 'customer', managerFilter = 'all';
+let orderScope = 'customer', managerFilter = 'all', orderSearchQuery = '';
 
 function openLightbox(src, caption) {
   const dlg = byId('image-lightbox-dialog');
@@ -464,50 +464,97 @@ async function act(callback) {
 
 function renderOrder() {
   const isManager = orderScope === 'store_all';
-  const filteredOrders = (isManager && managerFilter !== 'all')
-    ? orders.filter(o => o.status === managerFilter)
-    : orders;
-  const order = orders.find(o => o.id === selected) || filteredOrders[0], area = byId('order-details');
+
+  // Toggle manager buttons visibility
+  const btnHeaderMgr = byId('btn-open-manager-console');
+  if (btnHeaderMgr) btnHeaderMgr.style.display = isManager ? 'inline-flex' : 'none';
+  const btnSidebarMgr = byId('btn-sidebar-manager-console');
+  if (btnSidebarMgr) btnSidebarMgr.style.display = isManager ? 'flex' : 'none';
+
+  let filtered = orders;
+  if (managerFilter !== 'all') {
+    filtered = filtered.filter(o => o.status === managerFilter);
+  }
+  if (orderSearchQuery) {
+    const q = orderSearchQuery.toLowerCase();
+    filtered = filtered.filter(o =>
+      o.id.toLowerCase().includes(q) ||
+      (o.name && o.name.toLowerCase().includes(q)) ||
+      (o.customer_id && o.customer_id.toLowerCase().includes(q))
+    );
+  }
+
+  const order = orders.find(o => o.id === selected) || filtered[0];
+  const area = byId('order-details');
   area.replaceChildren();
-  const tabs = byId('order-tabs'); tabs.replaceChildren();
 
-  if (isManager) {
-    const filterBar = el('div', 'manager-filter-bar');
-    const filters = [
-      {id: 'all', label: 'Tất cả (' + orders.length + ')'},
-      {id: 'pending', label: 'Chờ (' + orders.filter(o => o.status === 'pending').length + ')'},
-      {id: 'delivered', label: 'Giao (' + orders.filter(o => o.status === 'delivered').length + ')'},
-      {id: 'cancelled', label: 'Hủy (' + orders.filter(o => o.status === 'cancelled').length + ')'}
-    ];
-    filters.forEach(f => {
-      const btn = el('button', 'manager-filter-btn' + (managerFilter === f.id ? ' active' : ''), f.label);
-      btn.type = 'button';
-      btn.onclick = () => { managerFilter = f.id; renderOrder(); };
-      filterBar.append(btn);
-    });
-    area.append(filterBar);
+  // Hidden legacy tabs container
+  const tabs = byId('order-tabs');
+  if (tabs) tabs.replaceChildren();
+
+  // Render vertical card list in #order-card-list
+  const cardList = byId('order-card-list');
+  if (cardList) {
+    cardList.replaceChildren();
+    if (!filtered.length) {
+      cardList.append(el('p', 'order-empty', 'Không tìm thấy đơn hàng phù hợp.'));
+    } else {
+      for (const item of filtered) {
+        const active = item.id === (order ? order.id : selected);
+        const card = el('div', 'order-card-item' + (active ? ' selected' : ''));
+        card.dataset.order = item.id;
+
+        const header = el('div', 'order-card-header');
+        header.append(
+          el('span', 'order-card-oid', item.id),
+          el('span', 'order-card-badge ' + item.status, statuses[item.status] || item.status)
+        );
+
+        const title = el('div', 'order-card-title', item.name || 'Sản phẩm');
+
+        const footer = el('div', 'order-card-footer');
+        footer.append(el('span', 'order-card-price', money(item.amount)));
+        if (item.customer_id) {
+          footer.append(el('span', 'order-card-cust', 'Khách ' + item.customer_id));
+        }
+
+        card.append(header, title, footer);
+        card.onclick = () => act(() => lookupOrder(item.id));
+        cardList.append(card);
+      }
+    }
   }
 
-  for (const item of filteredOrders) {
-    const active = item.id === (order ? order.id : selected), button = el('button', active ? 'selected' : '', item.id);
-    button.dataset.order = item.id; button.setAttribute('aria-pressed', String(active));
-    button.onclick = () => act(() => lookupOrder(item.id)); tabs.append(button);
-  }
   byId('order-count').textContent = isManager ? (orders.length + ' đơn toàn shop') : (orders.length + ' đơn mẫu');
-  if (isManager) {
-    const headerTitle = byId('order-panel-title');
-    if (headerTitle) headerTitle.textContent = 'Toàn bộ đơn hàng Shop';
+  const headerTitle = byId('order-panel-title');
+  if (headerTitle) headerTitle.textContent = isManager ? 'Toàn bộ đơn hàng Shop' : 'Đơn hàng của bạn';
+
+  if (!order) {
+    area.append(el('p', 'order-empty', 'Chưa có thông tin đơn. Hãy kết nối hoặc tải lại dữ liệu.'));
+    return;
   }
-  if (!order) { area.append(el('p', 'order-empty', 'Chưa có thông tin đơn. Hãy kết nối hoặc tải lại dữ liệu.')); return; }
-  const top = el('div', 'order-line'); top.append(el('h3', '', order.id), el('span', 'badge ' + order.status, statuses[order.status]));
-  const item = el('div', 'item'), copy = el('div'); copy.append(el('strong', '', order.name), el('p', '', order.variant)); item.append(copy);
-  const total = el('div', 'detail-row total'); total.append(el('span', '', 'Tổng cộng'), el('strong', '', money(order.amount)));
+
+  const top = el('div', 'order-line');
+  top.append(el('h3', '', order.id), el('span', 'badge ' + order.status, statuses[order.status]));
+  const item = el('div', 'item'), copy = el('div');
+  copy.append(el('strong', '', order.name), el('p', '', order.variant));
+  item.append(copy);
+  const total = el('div', 'detail-row total');
+  total.append(el('span', '', 'Tổng cộng'), el('strong', '', money(order.amount)));
   area.append(top, el('p', 'order-date', 'Đơn ' + (order.customer_id ? ('khách ' + order.customer_id + ' · ') : '') + 'Phiên bản ' + order.version), item, total);
   area.append(el('p', 'order-policy', order.status === 'pending' ? 'Có thể yêu cầu hủy. Cần chọn lý do và xác nhận.' : order.status === 'delivered' ? 'Đơn đã giao không đủ điều kiện hủy.' : 'Đơn đã hủy. Trạng thái được lưu trên máy chủ.'));
-  const lookup = el('button', 'order-action', 'Tra cứu đơn này'); lookup.onclick = () => act(() => lookupOrder(order.id)); area.append(lookup);
+
+  const lookup = el('button', 'order-action', 'Tra cứu đơn này');
+  lookup.onclick = () => act(() => lookupOrder(order.id));
+  area.append(lookup);
+
   if (canCancel) {
-    const cancel = el('button', 'order-action', 'Yêu cầu hủy đơn này'); cancel.onclick = () => act(() => chooseReason(order.id)); area.append(cancel);
-  } else { area.append(el('p', 'order-policy', 'Tài khoản của bạn có quyền xem; không được tạo yêu cầu hủy.')); }
+    const cancel = el('button', 'order-action', 'Yêu cầu hủy đơn này');
+    cancel.onclick = () => act(() => chooseReason(order.id));
+    area.append(cancel);
+  } else {
+    area.append(el('p', 'order-policy', 'Tài khoản của bạn có quyền xem; không được tạo yêu cầu hủy.'));
+  }
 }
 
 const eventLabels = {order_viewed: 'Tra cứu đơn', cancellation_proposed: 'Tạo đề xuất hủy', order_cancelled: 'Đã xác nhận hủy', proposal_dismissed: 'Bỏ đề xuất', model_extraction: 'Model phân tích yêu cầu', model_unavailable: 'Không kết nối được model', chat_replied: 'Trả lời hội thoại', agent_replied: 'Model trả lời', agent_failed: 'Lượt chat chưa hoàn tất'};
@@ -1334,5 +1381,402 @@ if (chatPanelEl && typeof chatPanelEl.addEventListener === 'function') {
   });
 }
 
+// ==========================================================================
+// Store Manager Console Controller & CRUD Logic (RetailOps 2026)
+// ==========================================================================
+let managerProducts = [];
+let editingProductId = null;
+let currentManagerTab = 'kpis';
 
+const mgrDialog = byId('manager-console-dialog');
+const btnOpenMgrHeader = byId('btn-open-manager-console');
+const btnOpenMgrSidebar = byId('btn-sidebar-manager-console');
+const btnCloseMgr = byId('close-manager-console');
+const btnRefreshMgr = byId('refresh-manager-data');
 
+function openManagerConsole() {
+  if (!mgrDialog || typeof mgrDialog.showModal !== 'function') return;
+  mgrDialog.showModal();
+  loadManagerData();
+}
+
+if (btnOpenMgrHeader) btnOpenMgrHeader.onclick = openManagerConsole;
+if (btnOpenMgrSidebar) btnOpenMgrSidebar.onclick = openManagerConsole;
+if (btnCloseMgr && mgrDialog) btnCloseMgr.onclick = () => mgrDialog.close();
+if (btnRefreshMgr) btnRefreshMgr.onclick = () => loadManagerData();
+
+// Tabs switcher
+document.querySelectorAll('.manager-nav-tab').forEach(tab => {
+  tab.onclick = () => {
+    document.querySelectorAll('.manager-nav-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.manager-tab-content').forEach(c => c.classList.remove('active'));
+    tab.classList.add('active');
+    const target = tab.dataset.tab;
+    currentManagerTab = target;
+    const content = byId('tab-content-' + target);
+    if (content) content.classList.add('active');
+  };
+});
+
+async function loadManagerData() {
+  await Promise.all([
+    loadManagerKPIs(),
+    loadManagerProducts(),
+    loadManagerOrdersTable(),
+    loadManagerAuditTrail()
+  ]);
+}
+
+async function loadManagerKPIs() {
+  try {
+    const kpis = await api('/api/manager/kpis');
+    if (byId('kpi-ai-res')) byId('kpi-ai-res').textContent = kpis.ai_resolution_rate + '%';
+    if (byId('kpi-human-esc')) byId('kpi-human-esc').textContent = kpis.escalation_rate + '%';
+    if (byId('kpi-csat')) byId('kpi-csat').textContent = kpis.avg_csat + ' / 5.0';
+    if (byId('kpi-revenue')) byId('kpi-revenue').textContent = money(kpis.total_revenue);
+    if (byId('kpi-orders-count')) byId('kpi-orders-count').textContent = kpis.total_orders + ' đơn hàng ghi nhận';
+
+    if (byId('stat-pending-val')) byId('stat-pending-val').textContent = kpis.pending_orders;
+    if (byId('stat-delivered-val')) byId('stat-delivered-val').textContent = kpis.delivered_orders;
+    if (byId('stat-cancelled-val')) byId('stat-cancelled-val').textContent = kpis.cancelled_orders;
+    if (byId('stat-products-val')) byId('stat-products-val').textContent = kpis.active_products;
+  } catch (e) {
+    console.warn('Lỗi tải KPIs:', e);
+  }
+}
+
+async function loadManagerProducts() {
+  try {
+    const res = await api('/api/manager/products');
+    managerProducts = res.products || [];
+    renderManagerProductsTable();
+  } catch (e) {
+    console.warn('Lỗi tải danh mục sản phẩm:', e);
+  }
+}
+
+function renderManagerProductsTable() {
+  const tbody = byId('manager-products-tbody');
+  if (!tbody) return;
+  tbody.replaceChildren();
+
+  const searchQ = (byId('product-search-input')?.value || '').toLowerCase().trim();
+  const filtered = managerProducts.filter(p =>
+    p.id.toLowerCase().includes(searchQ) ||
+    p.name.toLowerCase().includes(searchQ) ||
+    (p.category && p.category.toLowerCase().includes(searchQ))
+  );
+
+  if (!filtered.length) {
+    const tr = el('tr');
+    tr.innerHTML = '<td colspan="8" style="text-align:center; padding:24px; color:#64748b;">Không tìm thấy sản phẩm nào.</td>';
+    tbody.append(tr);
+    return;
+  }
+
+  for (const p of filtered) {
+    const tr = el('tr');
+    const isImmutable = ['P-101', 'P-102', 'P-202'].includes(p.id);
+
+    const tdId = el('td');
+    tdId.innerHTML = `<strong>${p.id}</strong>` + (isImmutable ? '<br><small style="color:#0284c7; font-size:10px;">[Cơ sở]</small>' : '');
+
+    const tdName = el('td');
+    tdName.innerHTML = `<strong>${p.name}</strong><br><small style="color:#64748b;">${p.description ? p.description.slice(0, 45) + '...' : ''}</small>`;
+
+    const tdCat = el('td', '', p.category || 'Chưa phân loại');
+    const tdPrice = el('td', '', money(p.price || 299000));
+    const tdVar = el('td', '', (p.variants || []).join(', ') || 'Tiêu chuẩn');
+    const tdStock = el('td', '', String(p.stock !== null && p.stock !== undefined ? p.stock : '25'));
+    const tdWarranty = el('td', '', (p.warranty_days || 30) + ' ngày');
+
+    const tdActions = el('td');
+    const btnEdit = el('button', 'btn-action-sm', '✏ Sửa');
+    btnEdit.onclick = () => openEditProductModal(p);
+
+    const btnDelete = el('button', 'btn-action-sm danger', '🗑 Xóa');
+    btnDelete.onclick = () => deleteProduct(p.id);
+
+    tdActions.append(btnEdit, btnDelete);
+    tr.append(tdId, tdName, tdCat, tdPrice, tdVar, tdStock, tdWarranty, tdActions);
+    tbody.append(tr);
+  }
+}
+
+const prodSearchInput = byId('product-search-input');
+if (prodSearchInput) {
+  prodSearchInput.oninput = () => renderManagerProductsTable();
+}
+
+// Product Form Modal (Add / Edit)
+const prodModal = byId('product-modal');
+const btnOpenAddProd = byId('btn-open-add-product');
+const btnCancelProdModal = byId('btn-cancel-product-modal');
+const prodForm = byId('product-form');
+
+if (btnOpenAddProd) {
+  btnOpenAddProd.onclick = () => {
+    editingProductId = null;
+    byId('product-modal-title').textContent = '➕ Thêm Sản Phẩm Mới';
+    byId('prod-id').value = 'P-' + Math.floor(500 + Math.random() * 400);
+    byId('prod-id').readOnly = false;
+    byId('prod-name').value = '';
+    byId('prod-category').value = 'Thời trang';
+    byId('prod-price').value = '299000';
+    byId('prod-stock').value = '30';
+    byId('prod-warranty').value = '30';
+    byId('prod-variants').value = 'Trắng · Size M, Đen · Size L';
+    byId('prod-desc').value = '';
+    if (prodModal && typeof prodModal.showModal === 'function') prodModal.showModal();
+  };
+}
+
+function openEditProductModal(p) {
+  editingProductId = p.id;
+  byId('product-modal-title').textContent = '✏ Chỉnh Sửa Sản Phẩm ' + p.id;
+  byId('prod-id').value = p.id;
+  byId('prod-id').readOnly = true;
+  byId('prod-name').value = p.name;
+  byId('prod-category').value = p.category || '';
+  byId('prod-price').value = p.price || 299000;
+  byId('prod-stock').value = p.stock !== null && p.stock !== undefined ? p.stock : 25;
+  byId('prod-warranty').value = p.warranty_days || 30;
+  byId('prod-variants').value = (p.variants || []).join(', ');
+  byId('prod-desc').value = p.description || '';
+  if (prodModal && typeof prodModal.showModal === 'function') prodModal.showModal();
+}
+
+if (btnCancelProdModal && prodModal) {
+  btnCancelProdModal.onclick = () => prodModal.close();
+}
+
+if (prodForm) {
+  prodForm.onsubmit = async (e) => {
+    e.preventDefault();
+    const pid = byId('prod-id').value.trim();
+    const payload = {
+      id: pid,
+      name: byId('prod-name').value.trim(),
+      category: byId('prod-category').value.trim(),
+      price: parseInt(byId('prod-price').value, 10),
+      stock: parseInt(byId('prod-stock').value, 10),
+      warranty_days: parseInt(byId('prod-warranty').value, 10),
+      variants: byId('prod-variants').value.split(',').map(s => s.trim()).filter(Boolean),
+      description: byId('prod-desc').value.trim()
+    };
+
+    try {
+      if (editingProductId) {
+        await api('/api/manager/products/update', payload);
+      } else {
+        await api('/api/manager/products', payload);
+      }
+      if (prodModal) prodModal.close();
+      await loadManagerProducts();
+      await loadManagerKPIs();
+      message(`Đã ${editingProductId ? 'cập nhật' : 'thêm'} thành công sản phẩm ${payload.name} (${pid}).`, 'assistant', 'store_data');
+    } catch (err) {
+      alert('Lỗi lưu sản phẩm: ' + (err.message || 'Không thể lưu.'));
+    }
+  };
+}
+
+async function deleteProduct(pid) {
+  if (['P-101', 'P-102', 'P-202'].includes(pid)) {
+    alert(`⚠️ Sản phẩm ${pid} là sản phẩm cơ sở của hệ thống phục vụ kiểm thử hồi quy (Regression Test). Bạn không được xóa, chỉ có thể sửa giá hoặc tồn kho!`);
+    return;
+  }
+  if (!confirm(`Bạn có chắc chắn muốn xóa sản phẩm ${pid} khỏi danh mục cửa hàng?`)) return;
+
+  try {
+    await api('/api/manager/products/delete', { id: pid });
+    await loadManagerProducts();
+    await loadManagerKPIs();
+    message(`Đã xóa sản phẩm ${pid} khỏi danh mục hàng hóa.`, 'assistant', 'store_data');
+  } catch (err) {
+    alert('Lỗi xóa sản phẩm: ' + (err.message || 'Không thể xóa.'));
+  }
+}
+
+// Tab 3: SOP Actions
+document.querySelectorAll('.sop-action-btn').forEach(btn => {
+  btn.onclick = async () => {
+    const sop = btn.dataset.sop;
+    const oid = btn.dataset.order;
+    if (sop === '1') {
+      await lookupOrder(oid || 'O-301');
+      mgrDialog?.close?.();
+      message(`⚡ SOP 1 ĐÃ KÍCH HOẠT: Đã gửi lệnh khiếu nại bưu cục yêu cầu bưu tá giao lại ngay trong ca trước 18:00 cho đơn ${oid || 'O-301'}.`, 'assistant', 'store_data');
+    } else if (sop === '2') {
+      await lookupOrder(oid || 'O-302');
+      mgrDialog?.close?.();
+      message(`✅ SOP 2 ĐÃ PHÊ DUYỆT: Lệnh Đổi mới 1-1 tận nhà đã được duyệt. Shipper GHTK sẽ mang sản phẩm mới tới đổi cho đơn ${oid || 'O-302'}.`, 'assistant', 'store_data');
+    } else if (sop === '3') {
+      await lookupOrder(oid || 'O-303');
+      mgrDialog?.close?.();
+      message(`✅ SOP 3 ĐÃ PHÊ DUYỆT: Lệnh Đổi size L 2 chiều tận nơi đã được kích hoạt thành công cho đơn ${oid || 'O-303'}.`, 'assistant', 'store_data');
+    } else if (sop === '4') {
+      await lookupOrder(oid || 'O-304');
+      mgrDialog?.close?.();
+      message(`🎁 SOP 4 ĐÃ XỬ LÝ: Đã cấp mã voucher đền bù 50.000đ [SALE50K-BN-SOC] cho đơn hàng ${oid || 'O-304'}.`, 'assistant', 'store_data');
+    } else if (sop === '5') {
+      mgrDialog?.close?.();
+      message(`🚨 SOP 5 CẢNH BÁO ĐỎ: Chế độ Strict Mode đã bật. Chuyên viên quản lý ca sẽ liên hệ khách hàng trong vòng 15 phút.`, 'assistant', 'store_data');
+    } else if (sop === '6') {
+      mgrDialog?.close?.();
+      const staffDialog = byId('staff-desk-dialog');
+      if (staffDialog && typeof staffDialog.showModal === 'function') {
+        staffDialog.showModal();
+        if (typeof refreshStaffQueue === 'function') refreshStaffQueue();
+      }
+    }
+  };
+});
+
+const btnMgrOpenStaffDesk = byId('btn-manager-open-staff-desk');
+if (btnMgrOpenStaffDesk) {
+  btnMgrOpenStaffDesk.onclick = () => {
+    mgrDialog?.close?.();
+    const staffDialog = byId('staff-desk-dialog');
+    if (staffDialog && typeof staffDialog.showModal === 'function') {
+      staffDialog.showModal();
+      if (typeof refreshStaffQueue === 'function') refreshStaffQueue();
+    }
+  };
+}
+
+// Tab 4: Master Orders Table
+async function loadManagerOrdersTable() {
+  const tbody = byId('manager-orders-tbody');
+  if (!tbody) return;
+  tbody.replaceChildren();
+
+  const searchQ = (byId('manager-order-search-input')?.value || '').toLowerCase().trim();
+  const statusFilter = byId('manager-order-status-filter')?.value || 'all';
+
+  let filtered = orders;
+  if (statusFilter !== 'all') {
+    filtered = filtered.filter(o => o.status === statusFilter);
+  }
+  if (searchQ) {
+    filtered = filtered.filter(o =>
+      o.id.toLowerCase().includes(searchQ) ||
+      (o.name && o.name.toLowerCase().includes(searchQ)) ||
+      (o.customer_id && o.customer_id.toLowerCase().includes(searchQ))
+    );
+  }
+
+  if (!filtered.length) {
+    const tr = el('tr');
+    tr.innerHTML = '<td colspan="8" style="text-align:center; padding:24px; color:#64748b;">Không tìm thấy đơn hàng nào.</td>';
+    tbody.append(tr);
+    return;
+  }
+
+  for (const o of filtered) {
+    const tr = el('tr');
+    const tdId = el('td'); tdId.innerHTML = `<strong>${o.id}</strong>`;
+    const tdCust = el('td', '', o.customer_id || 'Khách');
+    const tdName = el('td', '', o.name);
+    const tdVar = el('td', '', o.variant);
+    const tdAmount = el('td', '', money(o.amount));
+    const tdStatus = el('td');
+    tdStatus.innerHTML = `<span class="order-card-badge ${o.status}">${statuses[o.status] || o.status}</span>`;
+    const tdVer = el('td', '', 'v' + o.version);
+
+    const tdAction = el('td');
+    if (o.status === 'pending') {
+      const btnDeliver = el('button', 'btn-action-sm', '✓ Đã giao');
+      btnDeliver.onclick = () => updateOrderStatus(o.id, 'delivered');
+      const btnCancel = el('button', 'btn-action-sm danger', '✕ Hủy');
+      btnCancel.onclick = () => updateOrderStatus(o.id, 'cancelled');
+      tdAction.append(btnDeliver, btnCancel);
+    } else {
+      const btnView = el('button', 'btn-action-sm', '👁 Xem');
+      btnView.onclick = () => { mgrDialog?.close?.(); lookupOrder(o.id); };
+      tdAction.append(btnView);
+    }
+
+    tr.append(tdId, tdCust, tdName, tdVar, tdAmount, tdStatus, tdVer, tdAction);
+    tbody.append(tr);
+  }
+}
+
+const mgrOrderSearch = byId('manager-order-search-input');
+const mgrOrderStatus = byId('manager-order-status-filter');
+if (mgrOrderSearch) mgrOrderSearch.oninput = () => loadManagerOrdersTable();
+if (mgrOrderStatus) mgrOrderStatus.onchange = () => loadManagerOrdersTable();
+
+async function updateOrderStatus(oid, newStatus) {
+  if (!confirm(`Xác nhận cập nhật đơn ${oid} sang trạng thái "${statuses[newStatus]}"?`)) return;
+  try {
+    await api('/api/manager/orders/update-status', { order_id: oid, status: newStatus });
+    await refresh();
+    await loadManagerOrdersTable();
+    await loadManagerKPIs();
+    message(`Quản lý đã cập nhật đơn ${oid} sang "${statuses[newStatus]}".`, 'assistant', 'store_data');
+  } catch (err) {
+    alert('Lỗi cập nhật trạng thái đơn: ' + (err.message || 'Thất bại.'));
+  }
+}
+
+// Tab 5: Audit Trail
+async function loadManagerAuditTrail() {
+  const tbody = byId('manager-audit-tbody');
+  if (!tbody) return;
+  tbody.replaceChildren();
+
+  try {
+    const hist = await api('/api/events');
+    const events = hist.events || [];
+    if (!events.length) {
+      const tr = el('tr');
+      tr.innerHTML = '<td colspan="5" style="text-align:center; padding:24px; color:#64748b;">Chưa có sự kiện nào.</td>';
+      tbody.append(tr);
+      return;
+    }
+
+    for (const ev of events) {
+      const tr = el('tr');
+      const tdTime = el('td', '', new Date(ev.created_at * 1000).toLocaleString('vi-VN'));
+      const tdCust = el('td', '', ev.customer_id || 'Hệ thống');
+      const tdKind = el('td');
+      tdKind.innerHTML = `<strong>${eventLabels[ev.kind] || ev.kind}</strong>`;
+      const tdOrder = el('td', '', ev.order_id || '—');
+      const tdPayload = el('td', '', JSON.stringify(ev.payload || {}).slice(0, 60));
+
+      tr.append(tdTime, tdCust, tdKind, tdOrder, tdPayload);
+      tbody.append(tr);
+    }
+  } catch (e) {
+    console.warn('Lỗi tải Audit Trail:', e);
+  }
+}
+
+// Search and filter chips in right sidebar
+const sideSearchInput = byId('order-search-input');
+const sideClearSearchBtn = byId('btn-clear-order-search');
+if (sideSearchInput) {
+  sideSearchInput.oninput = () => {
+    orderSearchQuery = sideSearchInput.value.trim();
+    if (sideClearSearchBtn) sideClearSearchBtn.style.display = orderSearchQuery ? 'inline' : 'none';
+    renderOrder();
+  };
+}
+if (sideClearSearchBtn) {
+  sideClearSearchBtn.onclick = () => {
+    sideSearchInput.value = '';
+    orderSearchQuery = '';
+    sideClearSearchBtn.style.display = 'none';
+    renderOrder();
+  };
+}
+
+document.querySelectorAll('.filter-chip').forEach(chip => {
+  chip.onclick = () => {
+    document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+    chip.classList.add('active');
+    managerFilter = chip.dataset.filter;
+    renderOrder();
+  };
+});

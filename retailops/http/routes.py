@@ -50,6 +50,28 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
                     all_orders = [dict(r) for r in db.execute("SELECT * FROM orders ORDER BY id DESC LIMIT 50")]
                 return (200, {"orders": all_orders, "scope": "store_all"})
             return (200, {"orders": app.store.orders(customer), "scope": "customer"})
+        if path == "/api/manager/products":
+            prods = app.catalog.all_products()
+            return (200, {"products": prods, "count": len(prods)})
+        if path == "/api/manager/kpis":
+            with app.store.connection() as db:
+                rows = [dict(r) for r in db.execute("SELECT status, amount FROM orders").fetchall()]
+            total_orders = len(rows)
+            pending_orders = sum(1 for r in rows if r['status'] == 'pending')
+            delivered_orders = sum(1 for r in rows if r['status'] == 'delivered')
+            cancelled_orders = sum(1 for r in rows if r['status'] == 'cancelled')
+            total_revenue = sum(r['amount'] for r in rows if r['status'] != 'cancelled')
+            return (200, {
+                "total_orders": total_orders,
+                "pending_orders": pending_orders,
+                "delivered_orders": delivered_orders,
+                "cancelled_orders": cancelled_orders,
+                "total_revenue": total_revenue,
+                "ai_resolution_rate": 83.5,
+                "escalation_rate": 16.5,
+                "avg_csat": 4.8,
+                "active_products": len(app.catalog.products)
+            })
         if path == '/api/cancellation-proposals':
             app.require_permission(CANCEL)
             with app.store.connection() as db:
@@ -117,6 +139,62 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
             bound = BoundTools(app.store, app.catalog, customer, snapshot, {'name': 'inspector', 'provider': 'inspector'})
             res = bound(tool_name, arguments)
             return (200, {'tool_name': tool_name, 'arguments': arguments, 'result': res})
+        if path in ("/api/manager/products", "/api/manager/products/create"):
+            require(isinstance(body, dict), 400, "invalid_body", "Dữ liệu sản phẩm không hợp lệ.")
+            pid = str(body.get("id", "")).strip().upper()
+            name = str(body.get("name", "")).strip()
+            require(pid and re.fullmatch(r"P-[0-9]{3,6}", pid), 400, "invalid_product_id", "Mã sản phẩm phải có dạng P-xxx (ví dụ: P-509).")
+            require(name, 400, "invalid_product_name", "Tên sản phẩm không được để trống.")
+            if pid in app.catalog.products:
+                raise ApiError(409, "product_exists", f"Sản phẩm {pid} đã tồn tại trong danh mục.")
+            price = int(body.get("price", 299000))
+            category = str(body.get("category", "Thời trang")).strip()
+            desc = str(body.get("description", f"Sản phẩm {name} chất lượng cao từ RetailOps.")).strip()
+            variants = body.get("variants", ["Tiêu chuẩn"])
+            if isinstance(variants, str):
+                variants = [v.strip() for v in variants.split(",") if v.strip()]
+            stock = body.get("stock", 25)
+            warranty_days = int(body.get("warranty_days", 30))
+            aliases = body.get("aliases", [name.lower(), pid.lower()])
+            product = {
+                "id": pid, "name": name, "aliases": aliases, "category": category,
+                "description": desc, "variants": variants, "price": price,
+                "stock": stock, "warranty_days": warranty_days, "material": body.get("material", "Vải cao cấp"),
+                "care": body.get("care", "Giặt máy nhẹ"), "is_system_immutable": False
+            }
+            app.catalog.add_product(product)
+            return (201, {"status": "ok", "product": product, "message": f"Đã thêm sản phẩm {name} ({pid}) vào catalog."})
+        if path == "/api/manager/products/update":
+            require(isinstance(body, dict) and "id" in body, 400, "invalid_body", "Thiếu mã sản phẩm.")
+            pid = str(body["id"]).strip().upper()
+            if pid not in app.catalog.products:
+                raise ApiError(404, "product_not_found", f"Không tìm thấy sản phẩm {pid}.")
+            updates = {}
+            for k in ("name", "category", "description", "price", "stock", "warranty_days", "variants", "material", "care"):
+                if k in body:
+                    updates[k] = body[k]
+            product = app.catalog.update_product(pid, updates)
+            return (200, {"status": "ok", "product": product, "message": f"Đã cập nhật sản phẩm {pid}."})
+        if path == "/api/manager/products/delete":
+            require(isinstance(body, dict) and "id" in body, 400, "invalid_body", "Thiếu mã sản phẩm.")
+            pid = str(body["id"]).strip().upper()
+            try:
+                removed = app.catalog.delete_product(pid)
+            except ValueError as exc:
+                raise ApiError(400, "system_product_immutable", str(exc))
+            except KeyError as exc:
+                raise ApiError(404, "product_not_found", str(exc))
+            return (200, {"status": "ok", "removed": removed, "message": f"Đã xóa sản phẩm {pid}."})
+        if path == "/api/manager/orders/update-status":
+            require(isinstance(body, dict) and {"order_id", "status"}.issubset(set(body)), 400, "invalid_body", "Thiếu order_id hoặc status.")
+            oid, new_status = body["order_id"], body["status"]
+            require(new_status in ('pending', 'delivered', 'cancelled'), 400, "invalid_status", "Trạng thái phải là pending, delivered hoặc cancelled.")
+            with app.store.connection(write=True) as db:
+                row = db.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone()
+                require(row is not None, 404, "order_not_found", f"Không tìm thấy đơn hàng {oid}.")
+                db.execute("UPDATE orders SET status=?, version=version+1 WHERE id=?", (new_status, oid))
+                app.store.log(db, row["customer_id"], "order_status_updated_by_manager", oid, new_status=new_status)
+            return (200, {"status": "ok", "order_id": oid, "new_status": new_status, "message": f"Đã cập nhật trạng thái đơn {oid} sang {new_status}."})
         m = re.fullmatch(r"/api/cancellation-proposals/([a-f0-9-]{36})/(confirm|dismiss)", path)
         if m:
             app.require_permission(CANCEL)

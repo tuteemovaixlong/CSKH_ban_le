@@ -19,15 +19,50 @@ def matches(pattern, text):
 
 class Catalog:
     def __init__(self, path=None):
-        data = json.loads((path or Path(__file__).resolve().parent / 'data/products.json').read_text(encoding='utf-8'))
+        self.path = Path(path or Path(__file__).resolve().parent / 'data/products.json')
+        data = json.loads(self.path.read_text(encoding='utf-8'))
         self.source = data['source']
         self.products = {p['id']: p for p in data['products']}
+
+    def save(self):
+        try:
+            data = {'source': self.source, 'products': list(self.products.values())}
+            self.path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+        except Exception:
+            pass
+
+    def add_product(self, p):
+        pid = p.get('id')
+        if not pid:
+            raise ValueError("Thiếu mã sản phẩm (id).")
+        self.products[pid] = p
+        self.save()
+        return p
+
+    def update_product(self, pid, updates):
+        if pid not in self.products:
+            raise KeyError(f"Không tìm thấy sản phẩm {pid}.")
+        self.products[pid].update(updates)
+        self.save()
+        return self.products[pid]
+
+    def delete_product(self, pid):
+        if pid in ('P-101', 'P-102', 'P-202'):
+            raise ValueError(f"Sản phẩm {pid} là sản phẩm cơ sở hệ thống phục vụ kiểm thử, không được phép xóa.")
+        if pid not in self.products:
+            raise KeyError(f"Không tìm thấy sản phẩm {pid}.")
+        removed = self.products.pop(pid)
+        self.save()
+        return removed
+
+    def all_products(self):
+        return list(self.products.values())
 
     def find(self, text):
         normalized = normalize(text)
         found = []
         for product in self.products.values():
-            names = [product['id'], product['name']] + product['aliases']
+            names = [product['id'], product['name']] + product.get('aliases', [])
             if any(matches(r'(?<![a-z0-9_-])' + re.escape(normalize(name)) + r'(?![a-z0-9_-])', normalized) for name in names):
                 found.append(product)
         return found

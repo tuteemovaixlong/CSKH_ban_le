@@ -66,6 +66,7 @@
           <div class="agent-avatar" id="chat-agent-avatar" aria-hidden="true">R</div>
           <div><h2 id="chat-title">Trợ lý RetailOps</h2><span id="chat-subtitle">Tra đơn · Thông tin sản phẩm · Yêu cầu hủy</span></div>
           <div class="chat-header-actions" style="margin-left:auto; display:flex; gap:8px; align-items:center;">
+            <button class="header-action-btn manager-highlight-btn" id="btn-open-manager-console" style="display:none;" title="Mở Bảng Quản Trị Cửa Hàng">🏪 Bảng Quản Trị</button>
             <button class="header-action-btn" id="btn-toggle-topbar" title="Ẩn/hiện thanh menu trên cùng để mở rộng khung chat">⤢ Mở rộng</button>
             <button class="header-action-btn" id="btn-meet-human" title="Yêu cầu gặp nhân viên tư vấn">🙋 Gặp nhân viên</button>
             <button class="header-action-btn danger" id="btn-end-session" title="Kết thúc phiên hỗ trợ">🛑 Kết thúc phiên</button>
@@ -88,7 +89,31 @@
       </section>
 
       <aside class="context-panel" id="right-context-panel" aria-label="Thông tin và lịch sử đơn hàng">
-        <section class="order-panel"><div class="section-header"><h2 id="order-panel-title">Đơn hàng của bạn</h2><span id="order-count">0 đơn mẫu</span></div><div class="order-tabs" id="order-tabs" role="group" aria-label="Chọn đơn hàng"><button class="selected" data-order="O-101" aria-pressed="true">O-101</button><button data-order="O-102" aria-pressed="false">O-102</button></div><div id="order-details" aria-live="polite"></div></section>
+        <section class="order-panel">
+          <div class="section-header">
+            <h2 id="order-panel-title">Đơn hàng</h2>
+            <span id="order-count">0 đơn</span>
+          </div>
+          <button class="manager-banner-btn" id="btn-sidebar-manager-console" style="display:none;" title="Mở Bảng Quản Trị Toàn Shop">
+            <span>🏪 Bảng Quản Trị Cửa Hàng</span>
+            <span class="banner-badge">5 Mục Vận Hành ⛶</span>
+          </button>
+          <div class="order-search-filter-box" id="order-search-filter-box">
+            <div class="order-search-wrapper">
+              <input type="text" id="order-search-input" placeholder="🔍 Tìm mã đơn, tên hàng..." aria-label="Tìm kiếm đơn hàng">
+              <button type="button" id="btn-clear-order-search" class="search-clear-btn" style="display:none;" title="Xóa tìm kiếm">✕</button>
+            </div>
+            <div class="order-filter-chips" id="order-filter-chips">
+              <button type="button" class="filter-chip active" data-filter="all">Tất cả</button>
+              <button type="button" class="filter-chip" data-filter="pending">Chờ</button>
+              <button type="button" class="filter-chip" data-filter="delivered">Giao</button>
+              <button type="button" class="filter-chip" data-filter="cancelled">Hủy</button>
+            </div>
+          </div>
+          <div class="order-card-list" id="order-card-list" role="listbox" aria-label="Danh sách đơn hàng"></div>
+          <div class="order-tabs" id="order-tabs" style="display:none;"></div>
+          <div id="order-details" aria-live="polite"></div>
+        </section>
         <section class="activity-panel"><div class="section-header"><h2>Nhật ký xử lý</h2><span id="event-count">0 sự kiện</span></div><div id="activity" aria-live="polite"><p class="activity-empty">Các thao tác của bạn sẽ xuất hiện ở đây.</p></div></section>
         <div class="scope-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4v5c0 5-8 9-8 9s-8-4-8-9V7l8-4Z"/><path d="m8 12 3 3 5-6"/></svg><p id="session-note">Trạng thái và nhật ký được lưu tại backend. Tải lại trang không khôi phục đơn đã hủy.</p></div>
       </aside>
@@ -149,6 +174,289 @@
           </div>
         </div>
       </div>
+    </div>
+  </dialog>
+
+  <dialog id="manager-console-dialog" class="manager-console-dialog" aria-labelledby="manager-console-title">
+    <div class="dialog-inner manager-console-container">
+      <div class="manager-console-header">
+        <div class="manager-header-info">
+          <span class="small-tag">STORE OPERATIONS CONSOLE · ENTERPRISE</span>
+          <h2 id="manager-console-title">🏪 Bảng Quản Trị Cửa Hàng (Store Manager)</h2>
+          <p>Điều hành toàn diện: Chỉ số KPI vận hành, Quản lý danh mục hàng hóa & kho, Xử lý khiếu nại 6 SOPs, Bảng đơn hàng shop.</p>
+        </div>
+        <div class="manager-header-actions">
+          <button class="secondary" id="refresh-manager-data">🔄 Làm mới dữ liệu</button>
+          <button class="secondary" id="close-manager-console">✕ Đóng Bảng Quản Trị</button>
+        </div>
+      </div>
+
+      <div class="manager-nav-tabs" role="tablist">
+        <button class="manager-nav-tab active" data-tab="kpis" id="tab-btn-kpis">📊 Tổng quan & KPIs</button>
+        <button class="manager-nav-tab" data-tab="products" id="tab-btn-products">📦 Hàng hóa & Kho (CRUD)</button>
+        <button class="manager-nav-tab" data-tab="sops" id="tab-btn-sops">⚖️ Trung tâm 6 SOPs</button>
+        <button class="manager-nav-tab" data-tab="orders" id="tab-btn-orders">📋 Đơn hàng Shop</button>
+        <button class="manager-nav-tab" data-tab="audit" id="tab-btn-audit">📜 Nhật ký Kiểm toán</button>
+      </div>
+
+      <div class="manager-tab-content active" id="tab-content-kpis">
+        <div class="manager-kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-icon">🤖</div>
+            <div class="kpi-body">
+              <span class="kpi-title">Tỷ lệ AI Giải Quyết</span>
+              <strong class="kpi-val" id="kpi-ai-res">83.5%</strong>
+              <small class="kpi-sub">Tự động hóa không cần người</small>
+            </div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-icon">🎧</div>
+            <div class="kpi-body">
+              <span class="kpi-title">Tỷ lệ Chuyển Giao</span>
+              <strong class="kpi-val" id="kpi-human-esc">16.5%</strong>
+              <small class="kpi-sub">Chuyển sang chuyên viên CSKH</small>
+            </div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-icon">⭐</div>
+            <div class="kpi-body">
+              <span class="kpi-title">Điểm Đánh Giá CSAT</span>
+              <strong class="kpi-val" id="kpi-csat">4.8 / 5.0</strong>
+              <small class="kpi-sub">Rất hài lòng (Dịch vụ TMĐT)</small>
+            </div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-icon">💰</div>
+            <div class="kpi-body">
+              <span class="kpi-title">Tổng Doanh Thu</span>
+              <strong class="kpi-val" id="kpi-revenue">0 ₫</strong>
+              <small class="kpi-sub" id="kpi-orders-count">0 đơn hàng ghi nhận</small>
+            </div>
+          </div>
+        </div>
+
+        <div class="manager-stats-row">
+          <div class="stat-mini-pill pending">
+            <span>Chờ xử lý (Pending)</span>
+            <strong id="stat-pending-val">0</strong>
+          </div>
+          <div class="stat-mini-pill delivered">
+            <span>Đã giao (Delivered)</span>
+            <strong id="stat-delivered-val">0</strong>
+          </div>
+          <div class="stat-mini-pill cancelled">
+            <span>Đã hủy (Cancelled)</span>
+            <strong id="stat-cancelled-val">0</strong>
+          </div>
+          <div class="stat-mini-pill products">
+            <span>Mặt hàng active</span>
+            <strong id="stat-products-val">0</strong>
+          </div>
+        </div>
+      </div>
+
+      <div class="manager-tab-content" id="tab-content-products">
+        <div class="manager-products-toolbar">
+          <input type="text" id="product-search-input" placeholder="🔍 Tìm kiếm sản phẩm theo tên, mã SKU, danh mục..." aria-label="Tìm kiếm sản phẩm">
+          <button class="primary" id="btn-open-add-product">➕ Thêm Món Mới</button>
+        </div>
+        <div class="manager-table-responsive">
+          <table class="manager-data-table" id="manager-products-table">
+            <thead>
+              <tr>
+                <th>Mã SKU</th>
+                <th>Tên Sản Phẩm</th>
+                <th>Danh Mục</th>
+                <th>Giá Bán</th>
+                <th>Bảng Size & Biến Thể</th>
+                <th>Tồn Kho</th>
+                <th>Bảo Hành</th>
+                <th>Thao Tác</th>
+              </tr>
+            </thead>
+            <tbody id="manager-products-tbody">
+              <tr><td colspan="8" style="text-align:center; padding:24px;">Đang tải danh mục hàng hóa...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="manager-tab-content" id="tab-content-sops">
+        <div class="sop-grid">
+          <div class="sop-card">
+            <div class="sop-header">
+              <span class="sop-badge sop-1">SOP 1</span>
+              <h4>Bưu tá báo ảo / Không gọi khách</h4>
+            </div>
+            <p>Phát hiện khi bưu cục cập nhật không liên lạc được dù không có lịch sử cuộc gọi ra lúc cập nhật.</p>
+            <div class="sop-case">
+              <strong>Ca điển hình:</strong> Đơn O-301 (SPX Express · Bưu tá Nguyễn Văn Tuấn)
+            </div>
+            <button class="sop-action-btn" data-sop="1" data-order="O-301">⚡ Kích hoạt lệnh giao lại trong ca</button>
+          </div>
+
+          <div class="sop-card">
+            <div class="sop-header">
+              <span class="sop-badge sop-2">SOP 2</span>
+              <h4>Hàng lỗi / Kẹt khóa / Bung chỉ</h4>
+            </div>
+            <p>Khách khiếu nại sản phẩm lỗi do vận chuyển, kiểm tra hạn bảo hành 90 ngày và tạo lệnh đổi mới.</p>
+            <div class="sop-case">
+              <strong>Ca điển hình:</strong> Đơn O-302 (GHTK · Kẹt khóa bomber · Còn 85 ngày bảo hành)
+            </div>
+            <button class="sop-action-btn success" data-sop="2" data-order="O-302">✅ Duyệt Đổi Mới 1-1 Tận Nhà</button>
+          </div>
+
+          <div class="sop-card">
+            <div class="sop-header">
+              <span class="sop-badge sop-3">SOP 3</span>
+              <h4>Mặc không vừa / Đổi size nhanh</h4>
+            </div>
+            <p>Khách mặc chật hoặc rộng, kiểm tra tồn kho kho tổng và đổi size 2 chiều tận nơi miễn phí.</p>
+            <div class="sop-case">
+              <strong>Ca điển hình:</strong> Đơn O-303 (GHN · Đổi sang size L · Kho còn 18 cái)
+            </div>
+            <button class="sop-action-btn primary" data-sop="3" data-order="O-303">✅ Duyệt Đổi Size 2 Chiều Freeship</button>
+          </div>
+
+          <div class="sop-card">
+            <div class="sop-header">
+              <span class="sop-badge sop-4">SOP 4</span>
+              <h4>Nghẽn trạm liên tỉnh Mega SOC > 48h</h4>
+            </div>
+            <p>Kiện hàng chậm trễ tại trạm trung chuyển đợt Sale lớn, thông báo ngày giao và tặng voucher đền bù.</p>
+            <div class="sop-case">
+              <strong>Ca điển hình:</strong> Đơn O-304 (GHN · Kho Bắc Ninh Mega SOC trễ 54h)
+            </div>
+            <button class="sop-action-btn warning" data-sop="4" data-order="O-304">🎁 Tặng Voucher Đền Bù 50.000đ</button>
+          </div>
+
+          <div class="sop-card">
+            <div class="sop-header">
+              <span class="sop-badge sop-5">SOP 5</span>
+              <h4>Khách giận dữ / Strict Mode</h4>
+            </div>
+            <p>Khách hàng bức xúc cực độ hoặc đe dọa bóc phốt mạng xã hội, kích hoạt tiếp nhận khẩn cấp.</p>
+            <div class="sop-case">
+              <strong>Quy trình:</strong> Cam kết chịu trách nhiệm 100% và gọi điện thoại trực tiếp trong 15 phút.
+            </div>
+            <button class="sop-action-btn danger" data-sop="5">🚨 Tiếp nhận khẩn cấp & Gọi hỗ trợ</button>
+          </div>
+
+          <div class="sop-card">
+            <div class="sop-header">
+              <span class="sop-badge sop-6">SOP 6</span>
+              <h4>Khách yêu cầu gặp người thật</h4>
+            </div>
+            <p>Bấm nút gặp nhân viên hoặc phát hiện từ khóa handoff, kết nối tức thì sang Bàn làm việc CSKH.</p>
+            <div class="sop-case">
+              <strong>Quy trình:</strong> Chuyển cuộc trò chuyện sang phòng chat 2 chiều với chuyên viên trực ca.
+            </div>
+            <button class="sop-action-btn secondary" data-sop="6" id="btn-manager-open-staff-desk">🎧 Mở Bàn Làm Việc CSKH</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="manager-tab-content" id="tab-content-orders">
+        <div class="manager-products-toolbar">
+          <input type="text" id="manager-order-search-input" placeholder="🔍 Tìm mã đơn, tên khách, sản phẩm..." aria-label="Tìm kiếm đơn hàng shop">
+          <select id="manager-order-status-filter" aria-label="Lọc trạng thái">
+            <option value="all">Tất cả trạng thái</option>
+            <option value="pending">Chờ xử lý (Pending)</option>
+            <option value="delivered">Đã giao (Delivered)</option>
+            <option value="cancelled">Đã hủy (Cancelled)</option>
+          </select>
+        </div>
+        <div class="manager-table-responsive">
+          <table class="manager-data-table" id="manager-orders-table">
+            <thead>
+              <tr>
+                <th>Mã Đơn</th>
+                <th>Khách Hàng</th>
+                <th>Tên Mặt Hàng</th>
+                <th>Biến Thể</th>
+                <th>Giá Tiền</th>
+                <th>Trạng Thái</th>
+                <th>Phiên Bản</th>
+                <th>Thao Tác Nhanh</th>
+              </tr>
+            </thead>
+            <tbody id="manager-orders-tbody">
+              <tr><td colspan="8" style="text-align:center; padding:24px;">Đang tải danh sách đơn hàng...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="manager-tab-content" id="tab-content-audit">
+        <div class="manager-table-responsive">
+          <table class="manager-data-table" id="manager-audit-table">
+            <thead>
+              <tr>
+                <th>Thời Gian</th>
+                <th>Khách Hàng</th>
+                <th>Loại Sự Kiện</th>
+                <th>Mã Đơn</th>
+                <th>Chi Tiết Dữ Liệu</th>
+              </tr>
+            </thead>
+            <tbody id="manager-audit-tbody">
+              <tr><td colspan="5" style="text-align:center; padding:24px;">Đang tải nhật ký kiểm toán...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  </dialog>
+
+  <dialog id="product-modal" class="product-modal" aria-labelledby="product-modal-title">
+    <div class="dialog-inner">
+      <span class="small-tag">PRODUCT MANAGEMENT</span>
+      <h2 id="product-modal-title">Thêm Sản Phẩm Mới</h2>
+      <form id="product-form" class="product-form">
+        <div class="form-row-2">
+          <div>
+            <label for="prod-id">Mã SKU (ID):</label>
+            <input type="text" id="prod-id" placeholder="Ví dụ: P-509" required pattern="^P-[0-9]{3,6}$">
+            <small>Định dạng: P-xxx (P-101..P-999)</small>
+          </div>
+          <div>
+            <label for="prod-category">Danh mục:</label>
+            <input type="text" id="prod-category" placeholder="Ví dụ: Áo khoác / Áo thun / Phụ kiện" required>
+          </div>
+        </div>
+        <div class="form-row">
+          <label for="prod-name">Tên sản phẩm:</label>
+          <input type="text" id="prod-name" placeholder="Ví dụ: Áo Khoác Phao Dáng Ngắn Chống Nước" required>
+        </div>
+        <div class="form-row-3">
+          <div>
+            <label for="prod-price">Giá niêm yết (VNĐ):</label>
+            <input type="number" id="prod-price" placeholder="450000" min="1000" step="1000" required>
+          </div>
+          <div>
+            <label for="prod-stock">Tồn kho ban đầu:</label>
+            <input type="number" id="prod-stock" placeholder="30" min="0" required>
+          </div>
+          <div>
+            <label for="prod-warranty">Bảo hành (ngày):</label>
+            <input type="number" id="prod-warranty" placeholder="60" min="0" required>
+          </div>
+        </div>
+        <div class="form-row">
+          <label for="prod-variants">Bảng Size / Biến thể (ngăn cách bằng dấu phẩy):</label>
+          <input type="text" id="prod-variants" placeholder="Đen · Size S, Đen · Size M, Đen · Size L" required>
+        </div>
+        <div class="form-row">
+          <label for="prod-desc">Mô tả sản phẩm:</label>
+          <textarea id="prod-desc" rows="2" placeholder="Chất liệu cao cấp, bảo hành chính hãng..."></textarea>
+        </div>
+        <div class="dialog-actions">
+          <button type="button" class="secondary" id="btn-cancel-product-modal">Hủy bỏ</button>
+          <button type="submit" class="primary" id="btn-save-product">💾 Lưu Sản Phẩm</button>
+        </div>
+      </form>
     </div>
   </dialog>
 
