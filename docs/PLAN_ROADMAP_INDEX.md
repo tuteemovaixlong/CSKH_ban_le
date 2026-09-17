@@ -1,7 +1,7 @@
 # TỔNG HỢP KẾ HOẠCH CHIẾN LƯỢC: LỘ TRÌNH KHÓA LUẬN TỐT NGHIỆP & HỆ THỐNG RETAILOPS 2026
 
 > **Master Roadmap Index 2026**  
-> **Chiến lược cốt lõi**: Phân chia theo 6 Module phát triển mạch lạc từ **Hệ thống Lõi TMĐT 2026** ➔ **Đo Benchmark Cơ sở** ➔ **Webhook Facebook Messenger** ➔ **Quét mã QR Demo Live** ➔ **Sinh dữ liệu DeepSeek & LoRA Fine-tune Qwen (nếu kịp)** ➔ **Đo lường So sánh Đối chứng Luận văn**.
+> **Báo cáo tiến độ mới nhất**: Xem tại [CURRENT_PROJECT_STATUS.md](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/docs/CURRENT_PROJECT_STATUS.md) (Cập nhật ngày 2026-09-17 23:15)
 
 ---
 
