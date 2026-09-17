@@ -1,10 +1,15 @@
-# Kế hoạch Chưng cất Tri thức & Sinh Dữ liệu Tổng hợp bằng DeepSeek API (Distillation Plan)
+# Kế hoạch Sử Dụng DeepSeek API: 2 Giai Đoạn Sinh Dữ Liệu Cho Hệ Thống RetailOps 2026
 
-> [!NOTE]
-> **Lịch trình Triển khai: GIAI ĐOẠN 2 (Post-Thesis / Huấn luyện Chuyên biệt)**  
-> Quy trình sinh 3.000–5.000 mẫu synthetic data quy mô lớn bằng DeepSeek API sẽ được kích hoạt song song với Giai đoạn Fine-tuning sau khi hoàn tất báo cáo và bảo vệ khóa luận. Ở giai đoạn khóa luận, hệ thống tập trung vào cơ chế thu thập dữ liệu tự động (Data Flywheel) và kiểm thử trên 30+ ca benchmark tiêu chuẩn.
+> [!IMPORTANT]
+> **CHIẾN LƯỢC 2 LẦN SINH DỮ LIỆU TỪ DEEPSEEK**:
+> 1. **LẦN 1 (Thực thi ngay - Module 1)**: **Sinh dữ liệu nghiệp vụ thực tế (Operational Business Mock Data)**.
+>    - Sử dụng DeepSeek sinh danh mục sản phẩm phong phú, tập khách hàng, đơn hàng với đầy đủ trạng thái logistics thực tế (SPX bưu tá ảo, GHN chậm kho BN Mega SOC, GHTK đã giao cần bảo hành, ViettelPost...) để **nạp vào database hệ thống**.
+>    - **Mục đích**: Hệ thống có kho dữ liệu kinh doanh chân thực, phong phú để chạy thử nghiệm toàn diện (Web App, Staff Desk, 6 SOPs) và làm ngân hàng dữ liệu cho Module 2 (Benchmark cơ sở).
+> 2. **LẦN 2 (Thực thi ở Module 5 & Module 6 - Nếu kịp tiến độ)**: **Sinh 3.000–5.000 mẫu hội thoại đa lượt (Multi-turn SFT Dataset)**.
+>    - Sử dụng DeepSeek làm Teacher Model sinh các cuộc trò chuyện đa lượt chuẩn ChatML kèm Tool Calling & CoT reasoning.
+>    - **Mục đích**: Huấn luyện LoRA Fine-tuning mô hình cục bộ `Qwen2.5-7B` và đo lường đối chứng cho Chương 4 Luận văn tốt nghiệp.
 
-Tài liệu này xác định phương pháp sử dụng DeepSeek API (DeepSeek-V3 / R1 / V4 Flash) làm **Teacher Model** để chưng cất tri thức (Knowledge Distillation) và sinh dữ liệu tổng hợp (Synthetic Data) chất lượng cao, phục vụ huấn luyện các mô hình cục bộ chuyên biệt cho RetailOps.
+Tài liệu này xác định phương pháp sử dụng DeepSeek API (DeepSeek-V3 / R1) cho cả 2 giai đoạn trên, tuân thủ nghiêm ngặt định dạng schema của RetailOps.
 
 ---
 

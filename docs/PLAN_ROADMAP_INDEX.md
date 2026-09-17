@@ -10,7 +10,7 @@
 ```mermaid
 flowchart TD
     subgraph PHASE_1["GIAI ĐOẠN 1: HỆ THỐNG LÕI & ĐO ĐẠC CƠ SỞ (THỰC THI NGAY)"]
-        M1["MODULE 1: Hệ Thống Lõi TMĐT 2026<br/>• Kiến trúc DB/UI khớp nối 100%<br/>• Dữ liệu chuẩn P-103..P-402, C-003, O-103..O-106<br/>• 6 SOPs Vận hành Thực chiến<br/>• Staff Desk 1-Click UI & 260+ Tests Xanh"]
+        M1["MODULE 1: Hệ Thống Lõi TMĐT 2026<br/>• Kiến trúc DB/UI khớp nối 100%<br/>• Dữ liệu chuẩn P-103..P-401, C-003, C-004, O-301..O-304<br/>• 6 SOPs Vận hành Thực chiến & Staff Desk 1-Click UI<br/>• [DeepSeek Sinh Dữ Liệu Lần 1]: Nạp DB nghiệp vụ thực tế<br/>• 260+ Tests Xanh Toàn Bộ"]
         M2["MODULE 2: Đo Baseline Benchmark<br/>• Latency p50/p95, Tool Accuracy<br/>• Scenario Success Rate (30+ cases)<br/>• Chi phí Token & Bảng số liệu gốc"]
         M1 --> M2
     end
@@ -23,7 +23,7 @@ flowchart TD
     end
 
     subgraph PHASE_3["GIAI ĐOẠN 3: NGHIÊN CỨU SÂU & ĐỐI CHỨNG LUẬN VĂN (NẾU KỊP TIẾN ĐỘ)"]
-        M5["MODULE 5: DeepSeek Data & LoRA Qwen<br/>• Sinh 3.000–5.000 mẫu hội thoại TMĐT qua DeepSeek<br/>• Huấn luyện LoRA Fine-tune Qwen2.5-7B<br/>• Đóng gói serving nội bộ qua vLLM/GGUF"]
+        M5["MODULE 5: DeepSeek Data & LoRA Qwen<br/>• [DeepSeek Sinh Dữ Liệu Lần 2]: 3.000–5.000 mẫu hội thoại Multi-turn<br/>• Huấn luyện LoRA Fine-tune Qwen2.5-7B<br/>• Đóng gói serving nội bộ qua vLLM/GGUF"]
         M6["MODULE 6: Đo lường Evaluation So Sánh<br/>• Chạy benchmark đối chiếu Model gốc vs LoRA Model<br/>• Bảng biểu, đồ thị thực nghiệm cho Chương 4 Luận văn"]
         M4 -.->|Nếu kịp tiến độ| M5
         M5 --> M6
@@ -39,7 +39,8 @@ flowchart TD
 - **Mục tiêu**:
   - Khớp nối toàn vẹn ràng buộc Database (`orders.status IN ('pending', 'delivered', 'cancelled')`) và Giao diện UI (`renderOrder` với 5 trường bắt buộc).
   - Bảo toàn 100% dữ liệu hồi quy (`C-001`, `P-101`, `P-102`) để 260+ bài kiểm thử hiện có luôn xanh.
-  - Nạp dữ liệu sản phẩm mới (`P-103` đến `P-402`), khách mới (`C-003`, `C-004`), đơn hàng mới (`O-103` đến `O-106`).
+  - Nạp dữ liệu sản phẩm mới (`P-103` đến `P-401`), khách mới (`C-003`, `C-004`), đơn hàng mới (`O-301` đến `O-304`).
+  - **Sinh Dữ Liệu Thực Tế Lần 1 (DeepSeek Operational Business Seed Data)**: Dùng DeepSeek API sinh kho dữ liệu kinh doanh TMĐT thực tế (sản phẩm, đơn hàng, khách hàng, bưu tá vận chuyển, kho bãi) nạp thẳng vào database/store để hệ thống có dữ liệu sống động chạy thử nghiệm thực tế trên Web App/EC2 và chuẩn bị cho Module 2.
   - Xử lý 6 SOPs thực chiến:
     1. **SOP 1**: Bưu tá ảo SPX không giao -> Tra cứu bưu tá Nguyễn Văn Tuấn (0934112233), khiếu nại giao lại trong ngày.
     2. **SOP 2**: Hàng lỗi bung chỉ / kẹt khóa -> Nhận ảnh unboxing, kiểm tra hạn bảo hành 90 ngày, tạo đề xuất đổi mới 1-1 tận nhà.
@@ -77,10 +78,10 @@ flowchart TD
 
 ---
 
-### 🟠 MODULE 5: Sinh Dữ Liệu DeepSeek (3.000–5.000 Mẫu) & LoRA Fine-Tune Qwen (Nếu kịp tiến độ)
+### 🟠 MODULE 5: Sinh Dữ Liệu Hội Thoại Lần 2 Bằng DeepSeek (3.000–5.000 Mẫu SFT) & LoRA Fine-Tune Qwen (Nếu kịp tiến độ)
 - **Tài liệu chi tiết**: [PLAN_DEEPSEEK_DISTILLATION.md](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/docs/PLAN_DEEPSEEK_DISTILLATION.md) & [PLAN_FINE_TUNING_SERVING.md](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/docs/PLAN_FINE_TUNING_SERVING.md)
 - **Mục tiêu**:
-  - Gọi DeepSeek API tự động sinh 3.000–5.000 mẫu hội thoại đa lượt chuẩn nghiệp vụ TMĐT Việt Nam.
+  - **Sinh Dữ Liệu Lần 2**: Gọi DeepSeek API tự động sinh 3.000–5.000 mẫu hội thoại đa lượt (ChatML format kèm Tool Calling & CoT reasoning) chuẩn nghiệp vụ TMĐT Việt Nam.
   - Huấn luyện LoRA Fine-tuning cho mô hình nền `Qwen2.5-7B` bằng Unsloth trên Colab / Server riêng.
   - Đóng gói serving qua vLLM / GGUF.
 
