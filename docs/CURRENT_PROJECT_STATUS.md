@@ -47,6 +47,7 @@
 ### 3.1. Tài Liệu Kế Hoạch Chiến Lược (Docs)
 - [PLAN_ROADMAP_INDEX.md](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/docs/PLAN_ROADMAP_INDEX.md): Kế hoạch Master Roadmap phân bổ 6 Module và khớp nối 5 Chương Luận văn.
 - [PLAN_ECOMMERCE_OPS_COPILOT.md](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/docs/PLAN_ECOMMERCE_OPS_COPILOT.md): Kế hoạch chi tiết Module 1 (Kiến trúc 3 lớp, 6 SOPs, Data blueprints).
+- [PLAN_MCP_INTEGRATION.md](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/docs/PLAN_MCP_INTEGRATION.md): Kế hoạch chuẩn hóa công cụ sang MCP Server (FastMCP, tương thích 2 chiều Claude/Cursor/LangGraph).
 - [PLAN_DEEPSEEK_DISTILLATION.md](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/docs/PLAN_DEEPSEEK_DISTILLATION.md): Chiến lược 2 giai đoạn sử dụng DeepSeek API sinh dữ liệu.
 - [PLAN_OMNICHANNEL_INTEGRATION.md](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/docs/PLAN_OMNICHANNEL_INTEGRATION.md): Kế hoạch Module 3 tích hợp Facebook Messenger Webhook & Meta Handover.
 - [PLAN_MODEL_SELECTION_STRATEGY.md](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/docs/PLAN_MODEL_SELECTION_STRATEGY.md): Chiến lược đánh giá và đo đạc Benchmark cơ sở cho Module 2.

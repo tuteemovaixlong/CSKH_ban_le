@@ -34,12 +34,13 @@ flowchart TD
 
 ## 2. Chi Tiết Từng Module & Phân Bổ Giá Trị
 
-### 🟢 MODULE 1: Hệ Thống Lõi TMĐT 2026 (Khung Kiến Trúc, Dữ Liệu Chuẩn, 6 SOPs, Staff Desk 1-Click)
-- **Tài liệu chi tiết**: [PLAN_ECOMMERCE_OPS_COPILOT.md](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/docs/PLAN_ECOMMERCE_OPS_COPILOT.md)
+### 🟢 MODULE 1: Hệ Thống Lõi TMĐT 2026 (Khung Kiến Trúc, Dữ Liệu Chuẩn, 6 SOPs, Staff Desk 1-Click & Tích Hợp MCP)
+- **Tài liệu chi tiết**: [PLAN_ECOMMERCE_OPS_COPILOT.md](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/docs/PLAN_ECOMMERCE_OPS_COPILOT.md) & [PLAN_MCP_INTEGRATION.md](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/docs/PLAN_MCP_INTEGRATION.md)
 - **Mục tiêu**:
   - Khớp nối toàn vẹn ràng buộc Database (`orders.status IN ('pending', 'delivered', 'cancelled')`) và Giao diện UI (`renderOrder` với 5 trường bắt buộc).
   - Bảo toàn 100% dữ liệu hồi quy (`C-001`, `P-101`, `P-102`) để 260+ bài kiểm thử hiện có luôn xanh.
   - Nạp dữ liệu sản phẩm mới (`P-103` đến `P-401`), khách mới (`C-003`, `C-004`), đơn hàng mới (`O-301` đến `O-304`).
+  - **Chuẩn hóa Giao thức MCP (Model Context Protocol)**: Triển khai `RetailOps MCP Server` (FastMCP trên port 8002 qua SSE) tách rời các công cụ nghiệp vụ (`track_shipment`, `check_inventory`, `search_knowledge`, `cancel_order`, `request_human_support`) thành các microservices độc lập, tương thích 2 chiều với Claude Desktop, Cursor, n8n và LangGraph.
   - **Sinh Dữ Liệu Thực Tế Lần 1 (DeepSeek Operational Business Seed Data)**: Dùng DeepSeek API sinh kho dữ liệu kinh doanh TMĐT thực tế (sản phẩm, đơn hàng, khách hàng, bưu tá vận chuyển, kho bãi) nạp thẳng vào database/store để hệ thống có dữ liệu sống động chạy thử nghiệm thực tế trên Web App/EC2 và chuẩn bị cho Module 2.
   - Xử lý 6 SOPs thực chiến:
     1. **SOP 1**: Bưu tá ảo SPX không giao -> Tra cứu bưu tá Nguyễn Văn Tuấn (0934112233), khiếu nại giao lại trong ngày.

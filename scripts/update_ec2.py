@@ -72,6 +72,19 @@ def main():
                 new_lines.append(f"RETAILOPS_PUBLIC_ORIGIN={new_origin}")
             public_env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
             print(f"  [+] public.env successfully updated with {new_origin}")
+
+        # Update admin.env and console.caddy if installed
+        admin_env_path = Path("/opt/retailops/admin.env")
+        if admin_env_path.exists():
+            new_admin_host = f"admin-{new_host}"
+            admin_env_path.write_text(f"RETAILOPS_ADMIN_HOST={new_admin_host}\n", encoding="utf-8")
+            print(f"  [+] admin.env successfully updated with {new_admin_host}")
+            console_caddy_path = Path("/opt/retailops/admin-caddy/console.caddy")
+            if console_caddy_path.exists():
+                caddy_text = console_caddy_path.read_text(encoding="utf-8")
+                caddy_text = re.sub(r"admin-retailops\.[0-9.-]+\.sslip\.io", new_admin_host, caddy_text)
+                console_caddy_path.write_text(caddy_text, encoding="utf-8")
+                print(f"  [+] admin-caddy/console.caddy updated with {new_admin_host}")
     elif public_env_path.exists():
         for line in public_env_path.read_text(encoding="utf-8").splitlines():
             if line.startswith("RETAILOPS_PUBLIC_HOST="):
@@ -80,14 +93,22 @@ def main():
     # 2. Clean and copy directories and files
     patches_dir.mkdir(parents=True, exist_ok=True)
 
-    for folder in ["web", "retailops"]:
+    for folder in ["web", "retailops", "data"]:
         dst = patches_dir / folder
-        if dst.exists():
-            shutil.rmtree(dst)
-        shutil.copytree(repo_dir / folder, dst)
-        print(f"  [+] Copied {folder} -> {dst}")
+        src = repo_dir / folder
+        if src.exists():
+            if dst.exists():
+                shutil.rmtree(dst)
+            shutil.copytree(src, dst)
+            print(f"  [+] Copied {folder} -> {dst}")
 
-    for filename in ["retailops_providers.py", "agent_protocol.py", "retailops_agent.py"]:
+    for filename in [
+        "retailops_providers.py",
+        "agent_protocol.py",
+        "retailops_agent.py",
+        "retailops_tools.py",
+        "retailops_conversation.py"
+    ]:
         src = repo_dir / filename
         if src.exists():
             shutil.copy2(src, patches_dir / filename)
@@ -106,9 +127,12 @@ def main():
         if "artifacts}:/data" in line:
             output.append("      - /opt/retailops/patches/web:/app/web:ro")
             output.append("      - /opt/retailops/patches/retailops:/app/retailops:ro")
+            output.append("      - /opt/retailops/patches/data:/app/data:ro")
             output.append("      - /opt/retailops/patches/retailops_providers.py:/app/retailops_providers.py:ro")
             output.append("      - /opt/retailops/patches/agent_protocol.py:/app/agent_protocol.py:ro")
             output.append("      - /opt/retailops/patches/retailops_agent.py:/app/retailops_agent.py:ro")
+            output.append("      - /opt/retailops/patches/retailops_tools.py:/app/retailops_tools.py:ro")
+            output.append("      - /opt/retailops/patches/retailops_conversation.py:/app/retailops_conversation.py:ro")
 
     compose_path.write_text("\n".join(output) + "\n", encoding="utf-8")
     print(f"  [+] Written {compose_path}")
@@ -121,9 +145,12 @@ def main():
         "--env-file", "deployed.env",
         "--env-file", "public.env",
         "-f", "compose.public.yaml",
-        "-f", "compose.postgres.yaml",
-        "up", "-d", "--no-build", "--pull", "never", "--force-recreate"
     ]
+    if Path("/opt/retailops/compose.postgres.yaml").exists():
+        cmd += ["-f", "compose.postgres.yaml"]
+    if Path("/opt/retailops/compose.admin.yaml").exists() and Path("/opt/retailops/admin.env").exists():
+        cmd += ["--env-file", "admin.env", "-f", "compose.admin.yaml"]
+    cmd += ["up", "-d", "--no-build", "--pull", "never", "--force-recreate"]
     subprocess.run(cmd, cwd="/opt/retailops", check=True)
 
     # 6. Ensure PostgreSQL schema role check constraint supports staff and manager
@@ -143,6 +170,9 @@ def main():
     print("[SUCCESS] Deployment & restart completed successfully!")
     if current_host:
         print(f"[*] Access Web at: https://{current_host}")
+        if Path("/opt/retailops/admin.env").exists():
+            print(f"[*] Access Admin at: https://admin-{current_host}")
+    print("=======================================================")
     print("=======================================================")
 
 

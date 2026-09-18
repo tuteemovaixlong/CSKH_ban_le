@@ -24,8 +24,11 @@ FORBIDDEN_FRAGMENTS = (
 )
 
 
-def load_cases():
-    text = DATASET.read_text(encoding='utf-8')
+import sys
+
+def load_cases(target_path=None):
+    target = Path(target_path) if target_path else DATASET
+    text = target.read_text(encoding='utf-8')
     assert not any(fragment in text for fragment in FORBIDDEN_FRAGMENTS), 'dataset contains secret-like material'
     cases = []
     for line_no, line in enumerate(text.splitlines(), start=1):
@@ -70,9 +73,11 @@ def validate(cases):
 
 
 def main():
-    cases = load_cases()
+    target = sys.argv[1] if len(sys.argv) > 1 else None
+    cases = load_cases(target)
     counts = validate(cases)
-    print('EVAL_DATASET_OK', 'cases=' + str(len(cases)), 'categories=' + json.dumps(dict(sorted(counts.items())), sort_keys=True))
+    target_name = Path(target).name if target else DATASET.name
+    print('EVAL_DATASET_OK', target_name, 'cases=' + str(len(cases)), 'categories=' + json.dumps(dict(sorted(counts.items())), sort_keys=True))
 
 
 if __name__ == '__main__':
