@@ -184,21 +184,14 @@ async function api(path, body, extra = {}) {
     credentials: cookieAuth ? 'same-origin' : 'omit', cache: 'no-store', signal: AbortSignal.timeout(150000),
   });
   let result;
-  const contentType = response.headers.get('content-type') || '';
-  if (contentType.includes('application/json')) {
-    try {
-      result = await response.json();
-    } catch (e) {
-      result = { message: `Lỗi phân tích cú pháp JSON từ máy chủ (HTTP ${response.status}).` };
-    }
-  } else {
-    const rawText = await response.text();
+  try {
+    result = await response.json();
+  } catch (e) {
     if (response.status === 413) {
       result = { message: 'Dung lượng tệp hoặc tin nhắn vượt quá giới hạn cho phép của máy chủ (HTTP 413: Tệp quá lớn).' };
-    } else if (response.status >= 500) {
-      result = { message: `Máy chủ tạm thời không thể xử lý (${response.status}: ${response.statusText || 'Lỗi hệ thống'}). Vui lòng thử lại sau ít phút.` };
     } else {
-      result = { message: rawText || `Lỗi máy chủ HTTP ${response.status}` };
+      const rawText = typeof response.text === 'function' ? await response.text().catch(() => '') : '';
+      result = { message: rawText || (response.status >= 500 ? `Máy chủ tạm thời không thể xử lý (${response.status}). Vui lòng thử lại sau ít phút.` : `Lỗi máy chủ HTTP ${response.status}`) };
     }
   }
   if (!response.ok) {
