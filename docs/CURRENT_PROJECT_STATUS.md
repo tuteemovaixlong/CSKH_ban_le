@@ -1,7 +1,7 @@
 # BÁO CÁO TIẾN ĐỘ & TRẠNG THÁI HỆ THỐNG RETAILOPS 2026
 
-> **Snapshot Ngày Ghi Nhận**: 2026-09-18 14:30:00 (GMT+7)  
-> **Commit Hiện Tại**: [`36367e0`](https://github.com/tuteemovaixlong/CSKH_ban_le/commit/36367e0) trên nhánh `main`  
+> **Snapshot Ngày Ghi Nhận**: 2026-09-18 20:30:00 (GMT+7)  
+> **Commit Hiện Tại**: [`a82ea97`](https://github.com/tuteemovaixlong/CSKH_ban_le/commit/a82ea97) trên nhánh `main`  
 > **Trạng thái Triển khai EC2**: 🟢 **Hoạt động ổn định (Live & Healthy)**  
 > **URL Web Khách hàng & Quản lý**: [https://retailops.54-144-244-233.sslip.io](https://retailops.54-144-244-233.sslip.io)  
 > **URL Cổng Admin Kỹ thuật**: [https://admin-retailops.54-144-244-233.sslip.io](https://admin-retailops.54-144-244-233.sslip.io)  
@@ -65,6 +65,9 @@
 ### 2.3. Chất Lượng Mã Nguồn & Hạ Tầng
 - **Kiểm thử tự động**: **279 / 279 bài tests PASS 100%** (0 failure, 0 error).
 - **CI/CD GitHub Actions**: Cả 3 workflow (`CI`, `Deploy baseline runner to EC2`, `Ops Console`) đều đạt trạng thái XANH 100%.
+- **Sửa lỗi Multimodal & File Upload (2026-09-18)**:
+  - Khắc phục triệt để lỗi tràn layout ảnh ở Zoom 100% (giới hạn max-width 380px, max-height 240px, overflow-x hidden, hỗ trợ Lightbox xem ảnh to).
+  - Khắc phục lỗi `413 Request Entity Too Large` / `Unexpected token 'R'` khi gửi ảnh hoặc PDF bằng cách nâng trần Caddy & WSGI lên 10MB và tối ưu nén ảnh client-side 1280px.
 - **Script vận hành EC2**: [scripts/update_ec2.py](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/scripts/update_ec2.py) hỗ trợ `--auto-ip` tự động khôi phục cấu hình và khởi động lại toàn bộ hệ thống sau khi bật máy.
 
 ---
