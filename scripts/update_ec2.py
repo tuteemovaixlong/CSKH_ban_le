@@ -122,6 +122,27 @@ def main():
         shutil.copy2(caddy_src, caddy_dst)
         print(f"  [+] Copied deploy/Caddyfile -> {caddy_dst}")
 
+    # Preserve admin console configuration and import if admin is installed
+    admin_env_path = Path("/opt/retailops/admin.env")
+    admin_caddy_dir = Path("/opt/retailops/admin-caddy")
+    admin_caddy_file = admin_caddy_dir / "console.caddy"
+    if admin_env_path.exists() or admin_caddy_dir.exists():
+        caddy_text = caddy_dst.read_text(encoding="utf-8") if caddy_dst.exists() else ""
+        marker = "import /etc/caddy/admin/*.caddy"
+        if marker not in caddy_text:
+            caddy_dst.write_text(caddy_text.rstrip() + "\n\n" + marker + "\n", encoding="utf-8")
+            print("  [+] Preserved admin caddy import in /opt/retailops/Caddyfile")
+
+        if current_host:
+            new_admin_host = f"admin-{current_host}"
+            admin_env_path.write_text(f"RETAILOPS_ADMIN_HOST={new_admin_host}\n", encoding="utf-8")
+            print(f"  [+] admin.env synchronized with {new_admin_host}")
+            if admin_caddy_file.exists():
+                console_text = admin_caddy_file.read_text(encoding="utf-8")
+                console_text = re.sub(r"^[a-zA-Z0-9.-]+\s*\{", f"{new_admin_host} {{", console_text, count=1)
+                admin_caddy_file.write_text(console_text, encoding="utf-8")
+                print(f"  [+] admin-caddy/console.caddy synchronized with {new_admin_host}")
+
     # 3. Fix permissions so container user 10001 can read all files
     print("[*] Setting read/execute permissions (chmod -R a+rX)...")
     subprocess.run(["chmod", "-R", "a+rX", str(patches_dir)], check=True)
