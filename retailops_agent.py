@@ -45,7 +45,15 @@ class RemoteAgent:
         return identity
 
     def chat(self, messages, allow_tools, timeout):
-        return self.gateway(timeout).request('/agent/chat', {'protocol': PROTOCOL, 'messages': messages, 'allow_tools': allow_tools})
+        clean_messages = []
+        for m in messages:
+            if m.get('role') == 'user' and m.get('attachment'):
+                att = m['attachment']
+                clean_att = {'type': att.get('type', 'image'), 'name': att.get('name', 'ảnh/tệp')}
+                clean_messages.append({**m, 'attachment': clean_att})
+            else:
+                clean_messages.append(m)
+        return self.gateway(timeout).request('/agent/chat', {'protocol': PROTOCOL, 'messages': clean_messages, 'allow_tools': allow_tools})
 
 
 def run_agent(gateway, text, history, execute, identity, timeout=110, **options):
