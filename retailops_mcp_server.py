@@ -20,7 +20,8 @@ import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+import inspect
+from typing import Any, Callable, Dict, List, Optional
 
 ROOT = Path(__file__).resolve().parent
 
@@ -31,6 +32,130 @@ if not logger.handlers:
     handler.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s %(name)s: %(message)s"))
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
+
+
+# ---------------------------------------------------------------------------
+# MCP Server Implementation & Fallback Provider
+# ---------------------------------------------------------------------------
+
+class ToolMeta:
+    def __init__(self, name: str, description: str, fn: Any):
+        self.name = name
+        self.description = description
+        self.fn = fn
+        self.inputSchema: Dict[str, Any] = {}
+
+
+class TextContent:
+    def __init__(self, text: str):
+        self.type = "text"
+        self.text = text
+
+
+class CallToolResult:
+    def __init__(self, content: List[TextContent]):
+        self.content = content
+
+
+class ResourceMeta:
+    def __init__(self, uri: str, description: str, fn: Any):
+        self.uri = uri
+        self.description = description
+        self.fn = fn
+
+
+class ReadResourceContents:
+    def __init__(self, content: str):
+        self.content = content
+
+
+class PromptMeta:
+    def __init__(self, name: str, description: str, fn: Any):
+        self.name = name
+        self.description = description
+        self.fn = fn
+
+
+class FallbackMCPServer:
+    """Self-contained Model Context Protocol Server for testing & environments without mcp installed."""
+
+    def __init__(self, name: str):
+        self.name = name
+        self._tools: Dict[str, ToolMeta] = {}
+        self._resources: Dict[str, ResourceMeta] = {}
+        self._prompts: Dict[str, PromptMeta] = {}
+
+    def tool(self):
+        def decorator(fn):
+            desc = inspect.getdoc(fn) or ""
+            self._tools[fn.__name__] = ToolMeta(fn.__name__, desc, fn)
+            return fn
+        return decorator
+
+    def resource(self, uri: str):
+        def decorator(fn):
+            desc = inspect.getdoc(fn) or ""
+            self._resources[uri] = ResourceMeta(uri, desc, fn)
+            return fn
+        return decorator
+
+    def prompt(self):
+        def decorator(fn):
+            desc = inspect.getdoc(fn) or ""
+            self._prompts[fn.__name__] = PromptMeta(fn.__name__, desc, fn)
+            return fn
+        return decorator
+
+    async def list_tools(self) -> List[ToolMeta]:
+        return list(self._tools.values())
+
+    async def call_tool(self, name: str, arguments: Optional[Dict[str, Any]] = None) -> CallToolResult:
+        if name not in self._tools:
+            raise KeyError(f"Tool '{name}' not found")
+        args = arguments or {}
+        fn = self._tools[name].fn
+        res = fn(**args)
+        if asyncio.iscoroutine(res):
+            res = await res
+        if isinstance(res, (dict, list)):
+            text = json.dumps(res, ensure_ascii=False, indent=2)
+        else:
+            text = str(res)
+        return CallToolResult([TextContent(text)])
+
+    async def list_resources(self) -> List[ResourceMeta]:
+        return list(self._resources.values())
+
+    async def read_resource(self, uri: str) -> List[ReadResourceContents]:
+        if uri not in self._resources:
+            raise KeyError(f"Resource '{uri}' not found")
+        res = self._resources[uri].fn()
+        if asyncio.iscoroutine(res):
+            res = await res
+        return [ReadResourceContents(str(res))]
+
+    async def list_prompts(self) -> List[PromptMeta]:
+        return list(self._prompts.values())
+
+    async def get_prompt(self, name: str, arguments: Optional[Dict[str, Any]] = None) -> Any:
+        if name not in self._prompts:
+            raise KeyError(f"Prompt '{name}' not found")
+        args = arguments or {}
+        res = self._prompts[name].fn(**args)
+        if asyncio.iscoroutine(res):
+            res = await res
+        return res
+
+    def run(self, transport: str = "stdio", **kwargs: Any) -> None:
+        raise NotImplementedError("Install 'mcp' package to run server over network transports.")
+
+
+try:
+    from mcp.server.mcpserver import MCPServer
+    app = MCPServer("RetailOps-Enterprise-Tools")
+except ImportError:
+    app = FallbackMCPServer("RetailOps-Enterprise-Tools")
+
 
 
 # ---------------------------------------------------------------------------
@@ -264,46 +389,6 @@ def _get_shipment_data() -> Dict[str, Dict[str, Any]]:
     extra = _load_json_file("data/mock_shipments.json", {})
     shipments.update(extra)
     return shipments
-
-
-# ---------------------------------------------------------------------------
-# MCP Server Implementation
-# ---------------------------------------------------------------------------
-
-try:
-    from mcp.server.mcpserver import MCPServer
-except ImportError:
-    # Graceful fallback dummy class if mcp package not installed in a minimal environment
-    class MCPServer:  # type: ignore
-        def __init__(self, name: str):
-            self.name = name
-            self._tools = {}
-            self._resources = {}
-            self._prompts = {}
-
-        def tool(self):
-            def decorator(fn):
-                self._tools[fn.__name__] = fn
-                return fn
-            return decorator
-
-        def resource(self, uri: str):
-            def decorator(fn):
-                self._resources[uri] = fn
-                return fn
-            return decorator
-
-        def prompt(self):
-            def decorator(fn):
-                self._prompts[fn.__name__] = fn
-                return fn
-            return decorator
-
-        def run(self, transport: str = "stdio", **kwargs):
-            raise NotImplementedError("Install 'mcp' package to run server.")
-
-
-app = MCPServer("RetailOps-Enterprise-Tools")
 
 
 # ---------------------------------------------------------------------------
