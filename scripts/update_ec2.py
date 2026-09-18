@@ -107,7 +107,9 @@ def main():
         "agent_protocol.py",
         "retailops_agent.py",
         "retailops_tools.py",
-        "retailops_conversation.py"
+        "retailops_conversation.py",
+        "retailops_mcp_server.py",
+        "mcp_config.json"
     ]:
         src = repo_dir / filename
         if src.exists():
@@ -134,6 +136,8 @@ def main():
             output.append("      - /opt/retailops/patches/retailops_agent.py:/app/retailops_agent.py:ro")
             output.append("      - /opt/retailops/patches/retailops_tools.py:/app/retailops_tools.py:ro")
             output.append("      - /opt/retailops/patches/retailops_conversation.py:/app/retailops_conversation.py:ro")
+            output.append("      - /opt/retailops/patches/retailops_mcp_server.py:/app/retailops_mcp_server.py:ro")
+            output.append("      - /opt/retailops/patches/mcp_config.json:/app/mcp_config.json:ro")
 
     compose_path.write_text("\n".join(output) + "\n", encoding="utf-8")
     print(f"  [+] Written {compose_path}")

@@ -129,7 +129,8 @@ Trong kiến trúc [retailops/workflow/graph.py](file:///d:/year_2026/Work_2026/
 
 ## 6. Kế hoạch Triển khai (Checklist 4 Bước)
 
-- [ ] **Bước 1**: Cài đặt thư viện `mcp` và tạo file [retailops_mcp_server.py](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/retailops_mcp_server.py).
-- [ ] **Bước 2**: Đóng gói 5 công cụ hiện tại vào MCP Server và viết test kiểm định SSE transport.
-- [ ] **Bước 3**: Thêm container `retailops-mcp` vào [deploy/compose.public.yaml](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/deploy/compose.public.yaml) để chạy độc lập trên EC2 (port 8002).
-- [ ] **Bước 4**: Thêm adapter MCP Client trong `retailops/workflow/` để LangGraph kết nối mượt mà với MCP Server.
+- [x] **Bước 1**: Cài đặt thư viện `mcp 2.2.0` và xây dựng máy chủ độc lập [retailops_mcp_server.py](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/retailops_mcp_server.py).
+- [x] **Bước 2**: Đóng gói đầy đủ 10 công cụ nghiệp vụ TMĐT, 3 resources RAG policies/catalog, 1 prompt template và tính năng tra cứu thông số kỹ thuật bên ngoài có rào chắn an toàn (`search_product_specs`).
+- [x] **Bước 3**: Hỗ trợ truyền tải kép: `stdio` (cho Claude Desktop, Cursor, Antigravity IDE) và `sse` (port 8002 cho microservices/n8n), kèm cấu hình [mcp_config.json](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/mcp_config.json).
+- [x] **Bước 4**: Xây dựng adapter [retailops/workflow/mcp_client.py](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/retailops/workflow/mcp_client.py) cho LangGraph và bộ kiểm thử tự động toàn diện [tests/test_mcp_protocol.py](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/tests/test_mcp_protocol.py) đạt 100% test pass.
+

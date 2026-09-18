@@ -1,0 +1,78 @@
+{
+  "$schema": "https://modelcontextprotocol.io/schema/mcp-config.json",
+  "version": "2026.1.0",
+  "description": "RetailOps Enterprise Model Context Protocol (MCP) Multi-Platform Configuration",
+  "mcpServers": {
+    "retailops": {
+      "command": "python",
+      "args": [
+        "retailops_mcp_server.py",
+        "--transport",
+        "stdio"
+      ],
+      "env": {
+        "PYTHONIOENCODING": "utf-8"
+      },
+      "description": "RetailOps Enterprise CSKH & E-Commerce Operations Tools (10 tools, 3 resources, 1 prompt)"
+    }
+  },
+  "sse_service": {
+    "url": "http://127.0.0.1:8002/sse",
+    "port": 8002,
+    "description": "HTTP Server-Sent Events endpoint for n8n, LangGraph, and Docker Microservices"
+  },
+  "client_setup_instructions": {
+    "claude_desktop": {
+      "config_file_locations": {
+        "windows": "%APPDATA%\\Claude\\claude_desktop_config.json",
+        "macos": "~/Library/Application Support/Claude/claude_desktop_config.json",
+        "linux": "~/.config/Claude/claude_desktop_config.json"
+      },
+      "json_snippet": {
+        "mcpServers": {
+          "retailops": {
+            "command": "python",
+            "args": [
+              "d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/retailops_mcp_server.py",
+              "--transport",
+              "stdio"
+            ],
+            "env": {
+              "PYTHONIOENCODING": "utf-8"
+            }
+          }
+        }
+      }
+    },
+    "cursor_ide": {
+      "settings_path": ".cursor/mcp.json",
+      "json_snippet": {
+        "mcpServers": {
+          "retailops": {
+            "command": "python",
+            "args": [
+              "${workspaceFolder}/retailops_mcp_server.py",
+              "--transport",
+              "stdio"
+            ]
+          }
+        }
+      }
+    },
+    "antigravity_ide": {
+      "settings_path": ".gemini/config/mcp_config.json",
+      "json_snippet": {
+        "mcpServers": {
+          "retailops": {
+            "command": "python",
+            "args": [
+              "${workspaceFolder}/retailops_mcp_server.py",
+              "--transport",
+              "stdio"
+            ]
+          }
+        }
+      }
+    }
+  }
+}
