@@ -145,7 +145,7 @@ def create_server(config: ModelConfig, token: str, port: int = 8001) -> Threadin
                 return
             try:
                 if self.path == '/agent/chat':
-                    worker = LocalOllama(replace(config, timeout_s=30))
+                    worker = LocalOllama(replace(config, timeout_s=max(config.timeout_s, 180)))
                     self.reply(200, worker.request('/api/chat', build_request(config.model, messages, allow_tools)))
                 else:
                     worker = LocalOllama(replace(config, **options))
