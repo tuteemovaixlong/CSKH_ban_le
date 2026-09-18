@@ -186,6 +186,116 @@ class RetailOpsMCPProtocolTests(unittest.TestCase):
         policy_text = client.read_resource_sync("retailops://policies/warranty-90d")
         self.assertIn("bảo hành", policy_text.lower())
 
+    def test_fallback_mcp_server_jsonrpc_protocol(self):
+        from retailops_mcp_server import FallbackMCPServer
+        server = FallbackMCPServer("Test-RetailOps-Engine")
+
+        @server.tool()
+        def sample_tool(order_id: str, count: int = 1) -> dict:
+            """Sample tool doc."""
+            return {"received_order": order_id, "count": count}
+
+        @server.resource("retailops://test/resource")
+        def sample_res():
+            """Sample resource doc."""
+            return json.dumps({"status": "ok"})
+
+        @server.prompt()
+        def sample_prompt(topic: str = "general"):
+            """Sample prompt doc."""
+            return f"Prompt for {topic}"
+
+        # 1. initialize
+        init_res = asyncio.run(server.handle_jsonrpc({"jsonrpc": "2.0", "id": 1, "method": "initialize"}))
+        self.assertEqual(init_res["id"], 1)
+        self.assertEqual(init_res["result"]["serverInfo"]["name"], "Test-RetailOps-Engine")
+
+        # 2. ping
+        ping_res = asyncio.run(server.handle_jsonrpc({"jsonrpc": "2.0", "id": 2, "method": "ping"}))
+        self.assertEqual(ping_res["result"], {})
+
+        # 3. tools/list
+        tools_res = asyncio.run(server.handle_jsonrpc({"jsonrpc": "2.0", "id": 3, "method": "tools/list"}))
+        tools = tools_res["result"]["tools"]
+        self.assertEqual(len(tools), 1)
+        self.assertEqual(tools[0]["name"], "sample_tool")
+        self.assertIn("order_id", tools[0]["inputSchema"]["properties"])
+
+        # 4. tools/call
+        call_res = asyncio.run(server.handle_jsonrpc({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {"name": "sample_tool", "arguments": {"order_id": "O-999", "count": 3}}
+        }))
+        call_payload = json.loads(call_res["result"]["content"][0]["text"])
+        self.assertEqual(call_payload["received_order"], "O-999")
+        self.assertEqual(call_payload["count"], 3)
+
+        # 5. resources/list & read
+        res_list = asyncio.run(server.handle_jsonrpc({"jsonrpc": "2.0", "id": 5, "method": "resources/list"}))
+        self.assertEqual(len(res_list["result"]["resources"]), 1)
+
+        res_read = asyncio.run(server.handle_jsonrpc({
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "resources/read",
+            "params": {"uri": "retailops://test/resource"}
+        }))
+        self.assertIn("ok", res_read["result"]["contents"][0]["text"])
+
+        # 6. prompts/list & get
+        p_list = asyncio.run(server.handle_jsonrpc({"jsonrpc": "2.0", "id": 7, "method": "prompts/list"}))
+        self.assertEqual(len(p_list["result"]["prompts"]), 1)
+
+        p_get = asyncio.run(server.handle_jsonrpc({
+            "jsonrpc": "2.0",
+            "id": 8,
+            "method": "prompts/get",
+            "params": {"name": "sample_prompt", "arguments": {"topic": "returns"}}
+        }))
+        self.assertIn("returns", p_get["result"]["messages"][0]["content"]["text"])
+
+    def test_fallback_mcp_sse_http_server(self):
+        from retailops_mcp_server import FallbackMCPServer
+        import threading, time, urllib.request
+
+        server = FallbackMCPServer("HTTP-Test-Server")
+        @server.tool()
+        def ping_tool(msg: str = "pong") -> dict:
+            return {"echo": msg}
+
+        test_port = 18099
+        t = threading.Thread(target=lambda: server.run(transport="sse", host="127.0.0.1", port=test_port), daemon=True)
+        t.start()
+        time.sleep(0.3)
+
+        try:
+            # 1. GET /health
+            with urllib.request.urlopen(f"http://127.0.0.1:{test_port}/health") as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                self.assertEqual(data["status"], "healthy")
+                self.assertEqual(data["server"], "HTTP-Test-Server")
+
+            # 2. POST /messages/
+            req_bytes = json.dumps({
+                "jsonrpc": "2.0",
+                "id": 10,
+                "method": "tools/call",
+                "params": {"name": "ping_tool", "arguments": {"msg": "hello-mcp"}}
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{test_port}/messages/",
+                data=req_bytes,
+                headers={"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(req) as resp:
+                call_res = json.loads(resp.read().decode("utf-8"))
+                echo_text = json.loads(call_res["result"]["content"][0]["text"])
+                self.assertEqual(echo_text["echo"], "hello-mcp")
+        finally:
+            pass
+
 
 if __name__ == "__main__":
     unittest.main()

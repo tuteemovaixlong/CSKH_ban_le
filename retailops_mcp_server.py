@@ -12,15 +12,19 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import inspect
 import json
 import logging
 import os
+import queue
 import re
 import sys
+import threading
+import urllib.parse
 import uuid
 from datetime import datetime, timedelta, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-import inspect
 from typing import Any, Callable, Dict, List, Optional
 
 ROOT = Path(__file__).resolve().parent
@@ -35,15 +39,62 @@ if not logger.handlers:
 
 
 # ---------------------------------------------------------------------------
-# MCP Server Implementation & Fallback Provider
+# MCP Server Implementation & Fallback Provider (Pure Python JSON-RPC Engine)
 # ---------------------------------------------------------------------------
 
+def _build_input_schema(fn: Callable) -> Dict[str, Any]:
+    """Derive standard JSON Schema from Python function signature & type hints."""
+    try:
+        sig = inspect.signature(fn)
+    except Exception:
+        return {"type": "object", "properties": {}}
+
+    properties: Dict[str, Any] = {}
+    required: List[str] = []
+    type_map = {
+        str: "string",
+        int: "integer",
+        float: "number",
+        bool: "boolean",
+        list: "array",
+        dict: "object",
+    }
+
+    for param_name, param in sig.parameters.items():
+        if param_name in ("self", "cls"):
+            continue
+        p_type = "string"
+        ann = param.annotation
+        if ann in type_map:
+            p_type = type_map[ann]
+        elif hasattr(ann, "__origin__"):
+            if ann.__origin__ in (list, List):
+                p_type = "array"
+            elif ann.__origin__ in (dict, Dict):
+                p_type = "object"
+
+        prop: Dict[str, Any] = {"type": p_type}
+        if param.default is not inspect.Parameter.empty:
+            prop["default"] = param.default
+        else:
+            required.append(param_name)
+        properties[param_name] = prop
+
+    schema: Dict[str, Any] = {
+        "type": "object",
+        "properties": properties,
+    }
+    if required:
+        schema["required"] = required
+    return schema
+
+
 class ToolMeta:
-    def __init__(self, name: str, description: str, fn: Any):
+    def __init__(self, name: str, description: str, fn: Any, input_schema: Optional[Dict[str, Any]] = None):
         self.name = name
         self.description = description
         self.fn = fn
-        self.inputSchema: Dict[str, Any] = {}
+        self.inputSchema = input_schema or {"type": "object", "properties": {}}
 
 
 class TextContent:
@@ -76,19 +127,144 @@ class PromptMeta:
         self.fn = fn
 
 
+class DualStackServer(ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+
+class MCPSSEHandler(BaseHTTPRequestHandler):
+    """HTTP Request Handler implementing Server-Sent Events (SSE) & JSON-RPC for MCP."""
+    mcp_server: Any = None
+
+    def log_message(self, format: str, *args: Any) -> None:
+        logger.debug("%s - - [%s] %s", self.client_address[0], self.log_date_time_string(), format % args)
+
+    def do_OPTIONS(self) -> None:
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.end_headers()
+
+    def do_GET(self) -> None:
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path.rstrip("/")
+
+        if path == "/sse":
+            session_id = uuid.uuid4().hex
+            q: queue.Queue = queue.Queue()
+            self.mcp_server._active_sse_sessions[session_id] = q
+
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "keep-alive")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+
+            # Initial endpoint event per Model Context Protocol SSE specification
+            endpoint_msg = f"event: endpoint\r\ndata: /messages/?session_id={session_id}\r\n\r\n"
+            try:
+                self.wfile.write(endpoint_msg.encode("utf-8"))
+                self.wfile.flush()
+                logger.info("MCP SSE client connected [session=%s]", session_id)
+
+                while True:
+                    try:
+                        msg = q.get(timeout=15.0)
+                        msg_str = json.dumps(msg, ensure_ascii=False) if isinstance(msg, dict) else str(msg)
+                        self.wfile.write(f"event: message\r\ndata: {msg_str}\r\n\r\n".encode("utf-8"))
+                        self.wfile.flush()
+                    except queue.Empty:
+                        self.wfile.write(b": ping\r\n\r\n")
+                        self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, Exception) as exc:
+                logger.info("MCP SSE client disconnected [session=%s]: %s", session_id, exc)
+            finally:
+                self.mcp_server._active_sse_sessions.pop(session_id, None)
+            return
+
+        # Discovery & Health endpoint (/ or /health)
+        tools = [t.name for t in self.mcp_server._tools.values()]
+        resources = [r.uri for r in self.mcp_server._resources.values()]
+        prompts = [p.name for p in self.mcp_server._prompts.values()]
+        info = {
+            "status": "healthy",
+            "server": self.mcp_server.name,
+            "version": "1.0.0",
+            "transport": "sse",
+            "tools_count": len(tools),
+            "tools": tools,
+            "resources_count": len(resources),
+            "resources": resources,
+            "prompts_count": len(prompts),
+            "prompts": prompts,
+            "endpoints": {
+                "sse": "/sse",
+                "messages": "/messages/?session_id={session_id}",
+                "health": "/health"
+            }
+        }
+        body = json.dumps(info, ensure_ascii=False, indent=2).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self) -> None:
+        parsed = urllib.parse.urlparse(self.path)
+        qs = urllib.parse.parse_qs(parsed.query)
+        session_id = qs.get("session_id", [None])[0]
+
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length).decode("utf-8")
+            req = json.loads(body)
+        except Exception as e:
+            err_body = json.dumps({
+                "jsonrpc": "2.0",
+                "id": None,
+                "error": {"code": -32700, "message": f"Parse error: {e}"}
+            }).encode("utf-8")
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Content-Length", str(len(err_body)))
+            self.end_headers()
+            self.wfile.write(err_body)
+            return
+
+        resp = asyncio.run(self.mcp_server.handle_jsonrpc(req))
+
+        if session_id and session_id in self.mcp_server._active_sse_sessions and resp is not None:
+            self.mcp_server._active_sse_sessions[session_id].put(resp)
+
+        resp_bytes = json.dumps(resp, ensure_ascii=False).encode("utf-8") if resp is not None else b'{"status":"accepted"}'
+        self.send_response(200 if resp is not None else 202)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Length", str(len(resp_bytes)))
+        self.end_headers()
+        self.wfile.write(resp_bytes)
+
+
 class FallbackMCPServer:
-    """Self-contained Model Context Protocol Server for testing & environments without mcp installed."""
+    """Production-grade Pure Python MCP Server supporting JSON-RPC 2.0 stdio and SSE network transports."""
 
     def __init__(self, name: str):
         self.name = name
         self._tools: Dict[str, ToolMeta] = {}
         self._resources: Dict[str, ResourceMeta] = {}
         self._prompts: Dict[str, PromptMeta] = {}
+        self._active_sse_sessions: Dict[str, queue.Queue] = {}
 
     def tool(self):
         def decorator(fn):
             desc = inspect.getdoc(fn) or ""
-            self._tools[fn.__name__] = ToolMeta(fn.__name__, desc, fn)
+            schema = _build_input_schema(fn)
+            self._tools[fn.__name__] = ToolMeta(fn.__name__, desc, fn, schema)
             return fn
         return decorator
 
@@ -146,14 +322,233 @@ class FallbackMCPServer:
             res = await res
         return res
 
-    def run(self, transport: str = "stdio", **kwargs: Any) -> None:
-        raise NotImplementedError("Install 'mcp' package to run server over network transports.")
+    async def handle_jsonrpc(self, req: Any) -> Optional[Dict[str, Any]]:
+        """Process incoming MCP JSON-RPC 2.0 messages."""
+        if not isinstance(req, dict):
+            return {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "Invalid Request"}}
+
+        req_id = req.get("id")
+        method = req.get("method")
+        params = req.get("params") or {}
+
+        if method == "initialize":
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {
+                        "tools": {"listChanged": False},
+                        "resources": {"subscribe": False, "listChanged": False},
+                        "prompts": {"listChanged": False}
+                    },
+                    "serverInfo": {
+                        "name": self.name,
+                        "version": "1.0.0"
+                    }
+                }
+            }
+
+        if method == "notifications/initialized":
+            return None if req_id is None else {"jsonrpc": "2.0", "id": req_id, "result": {}}
+
+        if method == "ping":
+            return {"jsonrpc": "2.0", "id": req_id, "result": {}}
+
+        if method == "tools/list":
+            tools_list = []
+            for t in self._tools.values():
+                tools_list.append({
+                    "name": t.name,
+                    "description": t.description,
+                    "inputSchema": getattr(t, "inputSchema", {"type": "object", "properties": {}})
+                })
+            return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": tools_list}}
+
+        if method == "tools/call":
+            tool_name = params.get("name")
+            tool_args = params.get("arguments") or {}
+            if not tool_name or tool_name not in self._tools:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "content": [{"type": "text", "text": f"Error: Tool '{tool_name}' not found"}],
+                        "isError": True
+                    }
+                }
+            try:
+                res = await self.call_tool(tool_name, tool_args)
+                content = []
+                for c in res.content:
+                    content.append({"type": getattr(c, "type", "text"), "text": getattr(c, "text", str(c))})
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "content": content,
+                        "isError": False
+                    }
+                }
+            except Exception as exc:
+                logger.warning("Error executing tool '%s': %s", tool_name, exc)
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "content": [{"type": "text", "text": f"Error executing tool '{tool_name}': {exc}"}],
+                        "isError": True
+                    }
+                }
+
+        if method == "resources/list":
+            res_list = []
+            for r in self._resources.values():
+                res_list.append({
+                    "uri": r.uri,
+                    "name": r.uri.split("/")[-1] or r.uri,
+                    "description": r.description,
+                    "mimeType": "application/json"
+                })
+            return {"jsonrpc": "2.0", "id": req_id, "result": {"resources": res_list}}
+
+        if method == "resources/read":
+            uri = params.get("uri")
+            if not uri or uri not in self._resources:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {"code": -32002, "message": f"Resource '{uri}' not found"}
+                }
+            try:
+                contents = await self.read_resource(uri)
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "contents": [
+                            {
+                                "uri": uri,
+                                "mimeType": "application/json",
+                                "text": getattr(c, "content", str(c))
+                            }
+                            for c in contents
+                        ]
+                    }
+                }
+            except Exception as exc:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {"code": -32002, "message": str(exc)}
+                }
+
+        if method == "prompts/list":
+            prompts_list = []
+            for p in self._prompts.values():
+                prompts_list.append({
+                    "name": p.name,
+                    "description": p.description,
+                    "arguments": []
+                })
+            return {"jsonrpc": "2.0", "id": req_id, "result": {"prompts": prompts_list}}
+
+        if method == "prompts/get":
+            prompt_name = params.get("name")
+            p_args = params.get("arguments") or {}
+            if not prompt_name or prompt_name not in self._prompts:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {"code": -32002, "message": f"Prompt '{prompt_name}' not found"}
+                }
+            try:
+                text = await self.get_prompt(prompt_name, p_args)
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "description": self._prompts[prompt_name].description,
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": {"type": "text", "text": str(text)}
+                            }
+                        ]
+                    }
+                }
+            except Exception as exc:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {"code": -32002, "message": str(exc)}
+                }
+
+        if req_id is None:
+            return None
+
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "error": {"code": -32601, "message": f"Method '{method}' not found"}
+        }
+
+    def _run_stdio(self) -> None:
+        logger.info("RetailOps MCP Server stdio engine started. Ready for JSON-RPC 2.0 messages.")
+        while True:
+            try:
+                line_bytes = sys.stdin.buffer.readline()
+                if not line_bytes:
+                    break
+                line = line_bytes.decode("utf-8", errors="replace").strip()
+                if not line:
+                    continue
+                try:
+                    req = json.loads(line)
+                except Exception as e:
+                    err_resp = {
+                        "jsonrpc": "2.0",
+                        "id": None,
+                        "error": {"code": -32700, "message": f"Parse error: {e}"}
+                    }
+                    sys.stdout.buffer.write((json.dumps(err_resp) + "\n").encode("utf-8"))
+                    sys.stdout.buffer.flush()
+                    continue
+
+                resp = asyncio.run(self.handle_jsonrpc(req))
+                if resp is not None:
+                    out = (json.dumps(resp, ensure_ascii=False) + "\n").encode("utf-8")
+                    sys.stdout.buffer.write(out)
+                    sys.stdout.buffer.flush()
+            except (KeyboardInterrupt, SystemExit):
+                break
+            except Exception as ex:
+                logger.error("Error in stdio loop: %s", ex)
+
+    def _run_sse(self, host: str = "0.0.0.0", port: int = 8002) -> None:
+        MCPSSEHandler.mcp_server = self
+        server = DualStackServer((host, port), MCPSSEHandler)
+        logger.info("RetailOps MCP SSE Server listening on http://%s:%d (SSE: /sse, Messages: /messages/, Health: /health)", host, port)
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            logger.info("MCP SSE server shutting down...")
+        finally:
+            server.server_close()
+
+    def run(self, transport: str = "stdio", host: str = "0.0.0.0", port: int = 8002, **kwargs: Any) -> None:
+        if transport == "stdio":
+            self._run_stdio()
+        elif transport == "sse":
+            self._run_sse(host=host, port=port)
+        else:
+            raise ValueError(f"Unsupported transport '{transport}'. Supported: 'stdio', 'sse'")
 
 
 try:
     from mcp.server.mcpserver import MCPServer
     app = MCPServer("RetailOps-Enterprise-Tools")
-except ImportError:
+except (ImportError, ModuleNotFoundError, Exception):
     app = FallbackMCPServer("RetailOps-Enterprise-Tools")
 
 
@@ -974,11 +1369,21 @@ def main():
     if args.transport == "stdio":
         try:
             app.run(transport="stdio")
+        except NotImplementedError:
+            if hasattr(app, "_run_stdio"):
+                app._run_stdio()
+            else:
+                raise
         except KeyboardInterrupt:
             logger.info("MCP stdio server terminated by user.")
     elif args.transport == "sse":
         try:
             app.run(transport="sse", host=args.host, port=args.port)
+        except NotImplementedError:
+            if hasattr(app, "_run_sse"):
+                app._run_sse(host=args.host, port=args.port)
+            else:
+                raise
         except KeyboardInterrupt:
             logger.info("MCP SSE server terminated by user.")
 
