@@ -12,12 +12,17 @@
 !data/
 !data/smoke.jsonl
 !data/products.json
+!data/knowledge/
+!data/knowledge/*
+!data/mock_shipments.json
 !Dockerfile
 !retailops_agent.py
 !retailops_tools.py
 !agent_protocol.py
 !retailops_providers.py
 !retailops_public.py
+!retailops_mcp_server.py
+!mcp_config.json
 !retailops/
 !retailops/**/*.py
 !retailops/*.py
