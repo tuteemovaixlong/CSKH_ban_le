@@ -33,6 +33,10 @@ function stageAttachment(file) {
     message('Chỉ hỗ trợ file ảnh (JPG, PNG, WEBP, GIF) hoặc tài liệu PDF.', 'assistant', 'interface');
     return;
   }
+  if (isPdf && file.size > 4 * 1024 * 1024) {
+    message('Dung lượng tài liệu PDF tối đa là 4MB để đảm bảo tốc độ truyền tải.', 'assistant', 'interface');
+    return;
+  }
   if (file.size > 10 * 1024 * 1024) {
     message('Dung lượng tệp tối đa là 10MB.', 'assistant', 'interface');
     return;
@@ -43,17 +47,17 @@ function stageAttachment(file) {
     if (isImg && file.type !== 'image/gif') {
       const img = new Image();
       img.onload = function() {
-        const maxDim = 1920;
+        const maxDim = 1280;
         let w = img.width, h = img.height;
         if (w > maxDim || h > maxDim) {
           if (w > h) { h = Math.round((h * maxDim) / w); w = maxDim; }
           else { w = Math.round((w * maxDim) / h); h = maxDim; }
-          const canvas = document.createElement('canvas');
-          canvas.width = w; canvas.height = h;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0, w, h);
-          dataUrl = canvas.toDataURL('image/jpeg', 0.85);
         }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+        dataUrl = canvas.toDataURL('image/jpeg', 0.82);
         currentAttachment = {
           type: 'image',
           name: file.name,
@@ -179,7 +183,24 @@ async function api(path, body, extra = {}) {
     body: body === undefined ? undefined : JSON.stringify(body),
     credentials: cookieAuth ? 'same-origin' : 'omit', cache: 'no-store', signal: AbortSignal.timeout(150000),
   });
-  const result = await response.json();
+  let result;
+  const contentType = response.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    try {
+      result = await response.json();
+    } catch (e) {
+      result = { message: `Lỗi phân tích cú pháp JSON từ máy chủ (HTTP ${response.status}).` };
+    }
+  } else {
+    const rawText = await response.text();
+    if (response.status === 413) {
+      result = { message: 'Dung lượng tệp hoặc tin nhắn vượt quá giới hạn cho phép của máy chủ (HTTP 413: Tệp quá lớn).' };
+    } else if (response.status >= 500) {
+      result = { message: `Máy chủ tạm thời không thể xử lý (${response.status}: ${response.statusText || 'Lỗi hệ thống'}). Vui lòng thử lại sau ít phút.` };
+    } else {
+      result = { message: rawText || `Lỗi máy chủ HTTP ${response.status}` };
+    }
+  }
   if (!response.ok) {
     if (response.status === 401) lockPage(true);
     const error = new Error(result.message || 'Không hoàn tất yêu cầu.');

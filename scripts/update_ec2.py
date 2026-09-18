@@ -116,6 +116,12 @@ def main():
             shutil.copy2(src, patches_dir / filename)
             print(f"  [+] Copied {filename} -> {patches_dir / filename}")
 
+    caddy_src = repo_dir / "deploy" / "Caddyfile"
+    caddy_dst = Path("/opt/retailops/Caddyfile")
+    if caddy_src.exists():
+        shutil.copy2(caddy_src, caddy_dst)
+        print(f"  [+] Copied deploy/Caddyfile -> {caddy_dst}")
+
     # 3. Fix permissions so container user 10001 can read all files
     print("[*] Setting read/execute permissions (chmod -R a+rX)...")
     subprocess.run(["chmod", "-R", "a+rX", str(patches_dir)], check=True)

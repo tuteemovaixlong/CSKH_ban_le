@@ -6,7 +6,7 @@
 	# Only this exact DNS name receives a certificate. No on-demand TLS.
 	encode zstd gzip
 	request_body {
-		max_size 16KB
+		max_size 10MB
 	}
 	header {
 		-Server

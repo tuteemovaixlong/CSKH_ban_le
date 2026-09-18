@@ -36,13 +36,13 @@ class PublicWeb:
         return [payload]
 
     @staticmethod
-    def json_body(environ):
+    def json_body(environ, max_size=16384):
         require(environ.get('CONTENT_TYPE', '').split(';')[0].strip().lower() == 'application/json',
                 415, 'json_required', 'Yêu cầu phải là JSON.')
         length = environ.get('CONTENT_LENGTH', '')
         require(length.isascii() and length.isdecimal(), 400, 'invalid_length', 'Độ dài yêu cầu không hợp lệ.')
         size = int(length)
-        require(0 < size <= 16384, 413, 'body_too_large', 'Yêu cầu quá lớn hoặc rỗng.')
+        require(0 < size <= max_size, 413, 'body_too_large', 'Yêu cầu quá lớn hoặc rỗng.')
         raw = environ['wsgi.input'].read(size)
         require(len(raw) == size, 400, 'invalid_length', 'Nội dung yêu cầu chưa đầy đủ.')
         return json.loads(raw)
@@ -110,7 +110,8 @@ class PublicWeb:
         body = None
         if method == 'POST':
             require(env.get('HTTP_ORIGIN') == self.origin, 403, 'invalid_origin', 'Nguồn yêu cầu không hợp lệ.')
-            body = self.json_body(env)
+            max_size = 10_485_760 if path in ('/api/chat', '/api/staff/customer-message') else 16384
+            body = self.json_body(env, max_size=max_size)
         if method == 'POST' and path == '/api/login':
             fields(body, {'token'})
             secret = self.sessions.login(body['token'])
