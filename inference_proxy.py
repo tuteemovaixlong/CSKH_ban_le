@@ -124,7 +124,7 @@ def create_server(config: ModelConfig, token: str, port: int = 8001) -> Threadin
                 return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
-                if not 0 < length <= (65536 if self.path == '/agent/chat' else MAX_BODY):
+                if not 0 < length <= (10_485_760 if self.path == '/agent/chat' else MAX_BODY):
                     self.reply(413, {"error": "body_size_out_of_range"})
                     return
                 if self.headers.get_content_type() != "application/json":

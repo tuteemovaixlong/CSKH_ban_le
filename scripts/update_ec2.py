@@ -109,6 +109,7 @@ def main():
         "retailops_tools.py",
         "retailops_conversation.py",
         "retailops_mcp_server.py",
+        "inference_proxy.py",
         "mcp_config.json"
     ]:
         src = repo_dir / filename
