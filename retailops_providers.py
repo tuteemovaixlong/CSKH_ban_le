@@ -45,6 +45,14 @@ API_MODELS = {
     'claude-3-5-haiku-20241022',
     'claude-3-5-sonnet-20241022',
     'claude-3-haiku-20240307',
+    'Qwen/Qwen2-VL-7B-Instruct',
+    'Qwen/Qwen2.5-VL-7B-Instruct',
+    'Qwen/Qwen2.5-VL-7B-Instruct-AWQ',
+    'Qwen/Qwen2.5-VL-27B-Instruct-AWQ',
+    'Qwen/Qwen2.5-VL-32B-Instruct-AWQ',
+    'qwen2-vl:7b',
+    'qwen2.5-vl:7b',
+    'vllm/qwen2.5-vl',
 }
 
 
@@ -54,27 +62,34 @@ class OpenRouterAgent:
     def __init__(self, key, model=API_MODEL):
         if not isinstance(key, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{32,256}', key):
             raise ValueError('Set a valid API key on the server')
-        if model not in API_MODELS:
+        custom_endpoint = os.getenv('RETAILOPS_API_ENDPOINT', '').strip()
+        if not custom_endpoint and model not in API_MODELS:
             raise ValueError('API model must be an approved model')
         self.key, self.model = key, model
-        self.is_anthropic = (
-            key.startswith('sk-ant-')
-            or model.startswith('claude-')
-            or os.getenv('RETAILOPS_API_PROVIDER', '').lower() == 'anthropic'
-        )
-        self.is_google = not self.is_anthropic and (
-            model.startswith('gemini-')
-            or key.startswith('AIza')
-            or key.startswith('AQ.')
-            or os.getenv('RETAILOPS_API_PROVIDER', '').lower() == 'google'
-        )
-        if self.is_anthropic:
-            self.endpoint = ANTHROPIC_ENDPOINT
-        elif self.is_google:
-            self.endpoint = GOOGLE_ENDPOINT
+        if custom_endpoint:
+            self.endpoint = custom_endpoint
+            self.ENDPOINT = custom_endpoint
+            self.is_anthropic = False
+            self.is_google = False
         else:
-            self.endpoint = OPENROUTER_ENDPOINT
-        self.ENDPOINT = self.endpoint
+            self.is_anthropic = (
+                key.startswith('sk-ant-')
+                or model.startswith('claude-')
+                or os.getenv('RETAILOPS_API_PROVIDER', '').lower() == 'anthropic'
+            )
+            self.is_google = not self.is_anthropic and (
+                model.startswith('gemini-')
+                or key.startswith('AIza')
+                or key.startswith('AQ.')
+                or os.getenv('RETAILOPS_API_PROVIDER', '').lower() == 'google'
+            )
+            if self.is_anthropic:
+                self.endpoint = ANTHROPIC_ENDPOINT
+            elif self.is_google:
+                self.endpoint = GOOGLE_ENDPOINT
+            else:
+                self.endpoint = OPENROUTER_ENDPOINT
+            self.ENDPOINT = self.endpoint
         self._messages = {}
         self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirects())
 

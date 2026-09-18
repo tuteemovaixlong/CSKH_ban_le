@@ -290,8 +290,15 @@ def build_request(model, messages, allow_tools=True):
     formatted_messages = []
     for m in messages:
         if m.get('role') == 'user' and m.get('attachment'):
-            att_name = m['attachment'].get('name', 'ảnh/tệp')
-            formatted_messages.append({'role': 'user', 'content': f"{m['content']}\n[Tệp đính kèm: {att_name}]"})
+            att = m['attachment']
+            att_name = att.get('name', 'ảnh/tệp')
+            entry = {'role': 'user', 'content': f"{m['content']}\n[Tệp đính kèm: {att_name}]"}
+            if att.get('type') == 'image' and att.get('data'):
+                b64 = att['data']
+                if ',' in b64:
+                    b64 = b64.split(',', 1)[1]
+                entry['images'] = [b64]
+            formatted_messages.append(entry)
         else:
             formatted_messages.append(m)
     return {'model': model, 'messages': [{'role': 'system', 'content': system}] + formatted_messages,
