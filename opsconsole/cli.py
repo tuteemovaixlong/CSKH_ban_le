@@ -2,12 +2,12 @@
 import argparse
 import sys
 from pathlib import Path
-from opsconsole.evaluation import router_report, import_live, save_report
+from opsconsole.evaluation import router_report, import_live, import_benchmark, save_report
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode', choices=('router', 'import-live'))
+    parser.add_argument('mode', choices=('router', 'import-live', 'import-benchmark'))
     parser.add_argument('--source', required=True)
     parser.add_argument('--out', required=True)
     parser.add_argument('--commit', default='unknown')
@@ -15,6 +15,8 @@ def main():
     if args.mode == 'router':
         from agent_protocol import request_mode
         result = router_report(args.source, request_mode, args.commit)
+    elif args.mode == 'import-benchmark':
+        result = import_benchmark(args.source)
     else:
         result = import_live(args.source)
     target = save_report(result, args.out)

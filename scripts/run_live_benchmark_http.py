@@ -188,7 +188,7 @@ print(f"RETAILOPS_AUTO_TOKEN={token}")
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
-def evaluate_single_case(client: LiveClient, c: dict, provider: str, max_retries: int = 2) -> dict:
+def evaluate_single_case(client: LiveClient, c: dict, provider: str, max_retries: int = 3) -> dict:
     cid = c["id"]
     text = c["user_text"]
     cat = c["category"]
@@ -227,10 +227,11 @@ def evaluate_single_case(client: LiveClient, c: dict, provider: str, max_retries
                     "sources": sources,
                     "retries": attempt
                 }
-            elif status in (502, 503, 504) or status == 0:
+            elif status in (429, 502, 503, 504) or status == 0:
                 last_error = err or body
                 if attempt < max_retries:
-                    time.sleep(2.0 * (attempt + 1))
+                    # Model busy (429) or network glitch (503/0): wait and retry
+                    time.sleep(3.0 * (attempt + 1))
                     continue
             else:
                 last_error = err or body
@@ -238,7 +239,7 @@ def evaluate_single_case(client: LiveClient, c: dict, provider: str, max_retries
         except Exception as exc:
             last_error = str(exc)
             if attempt < max_retries:
-                time.sleep(2.0 * (attempt + 1))
+                time.sleep(3.0 * (attempt + 1))
                 continue
 
     return {
@@ -376,7 +377,7 @@ def main():
     parser.add_argument("--token", "-t", default="auto", help="Invite token or login access code (default 'auto' on EC2)")
     parser.add_argument("--dataset", "-d", type=Path, default=DEFAULT_DATASET, help="Benchmark JSONL dataset")
     parser.add_argument("--count", "-n", type=int, default=0, help="Number of scenarios to test (default 0: all)")
-    parser.add_argument("--concurrency", "-c", type=int, default=3, help="Concurrent workers for batch testing (default 3)")
+    parser.add_argument("--concurrency", "-c", type=int, default=1, help="Concurrent workers (default 1 to respect model lock)")
     parser.add_argument("--provider", "-p", choices=("custom", "api"), default="custom", help="Model provider")
     args = parser.parse_args()
 

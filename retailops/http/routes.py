@@ -1,4 +1,6 @@
 """Business route dispatch for both HTTP adapters; identity comes from the server."""
+import json
+from pathlib import Path
 import re
 import time
 from retailops.workflow import approval
@@ -72,6 +74,23 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
                 "avg_csat": 4.8,
                 "active_products": len(app.catalog.products)
             })
+        if path == "/api/manager/benchmark":
+            report_data = None
+            for candidate in [
+                Path("evals/reports/live_benchmark_report_latest.json"),
+                Path("/app/evals/reports/live_benchmark_report_latest.json"),
+                Path("evals/reports/live_benchmark_report_20260918_042301.json"),
+                Path("/app/evals/reports/live_benchmark_report_20260918_042301.json")
+            ]:
+                if candidate.exists():
+                    try:
+                        report_data = json.loads(candidate.read_text(encoding="utf-8"))
+                        break
+                    except Exception:
+                        pass
+            if not report_data:
+                return (404, {"error": "benchmark_report_not_found"})
+            return (200, report_data)
         if path == '/api/cancellation-proposals':
             app.require_permission(CANCEL)
             with app.store.connection() as db:

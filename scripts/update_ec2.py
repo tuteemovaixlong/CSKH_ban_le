@@ -93,7 +93,7 @@ def main():
     # 2. Clean and copy directories and files
     patches_dir.mkdir(parents=True, exist_ok=True)
 
-    for folder in ["web", "retailops", "data"]:
+    for folder in ["web", "retailops", "data", "evals", "opsconsole"]:
         dst = patches_dir / folder
         src = repo_dir / folder
         if src.exists():
@@ -128,6 +128,7 @@ def main():
             output.append("      - /opt/retailops/patches/web:/app/web:ro")
             output.append("      - /opt/retailops/patches/retailops:/app/retailops:ro")
             output.append("      - /opt/retailops/patches/data:/app/data:ro")
+            output.append("      - /opt/retailops/patches/evals:/app/evals:ro")
             output.append("      - /opt/retailops/patches/retailops_providers.py:/app/retailops_providers.py:ro")
             output.append("      - /opt/retailops/patches/agent_protocol.py:/app/agent_protocol.py:ro")
             output.append("      - /opt/retailops/patches/retailops_agent.py:/app/retailops_agent.py:ro")
@@ -136,6 +137,41 @@ def main():
 
     compose_path.write_text("\n".join(output) + "\n", encoding="utf-8")
     print(f"  [+] Written {compose_path}")
+
+    # Update compose.admin.yaml with opsconsole patch mount
+    admin_compose_path = Path("/opt/retailops/compose.admin.yaml")
+    base_admin_compose_path = repo_dir / "deploy" / "compose.admin.yaml"
+    if base_admin_compose_path.exists() and admin_compose_path.exists():
+        admin_lines = base_admin_compose_path.read_text(encoding="utf-8").splitlines()
+        admin_output = []
+        for line in admin_lines:
+            admin_output.append(line)
+            if "console-data:/console-data:ro" in line:
+                admin_output.append("      - /opt/retailops/patches/opsconsole:/app/opsconsole:ro")
+        admin_compose_path.write_text("\n".join(admin_output) + "\n", encoding="utf-8")
+        print(f"  [+] Written {admin_compose_path} with opsconsole patch mount")
+
+    # Clean up old smoke run and import 240 benchmark to admin console-data
+    console_runs = Path("/opt/retailops/console-data/runs")
+    if console_runs.exists():
+        old_smoke = console_runs / "live-737df05117fb6af44042ae67"
+        if old_smoke.exists():
+            shutil.rmtree(old_smoke, ignore_errors=True)
+            print("  [+] Removed old live-smoke run from console-data/runs")
+        latest_json = repo_dir / "evals" / "reports" / "live_benchmark_report_latest.json"
+        if latest_json.exists():
+            print("[*] Importing live benchmark (240 cases) to admin console data...")
+            try:
+                import sys
+                if str(repo_dir) not in sys.path:
+                    sys.path.insert(0, str(repo_dir))
+                from opsconsole.evaluation import import_benchmark, save_report
+                report_obj = import_benchmark(latest_json)
+                saved_target = save_report(report_obj, console_runs)
+                print(f"  [+] Imported benchmark report: {saved_target.name}")
+            except Exception as ex:
+                print(f"  [!] Note on benchmark import: {ex}")
+            subprocess.run(["chmod", "-R", "a+rX", str(console_runs)], check=False)
 
     # 5. Restart containers
     print("[*] Restarting docker containers...")
