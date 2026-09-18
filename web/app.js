@@ -239,27 +239,33 @@ async function api(path, body, extra = {}) {
 function showErrorDetails(row, error) {
   if (!error || !row) return;
   const details = el('details', 'agent-trace error-trace');
-  details.style.borderColor = 'rgba(239, 68, 68, 0.5)';
-  details.style.marginTop = '8px';
-  details.style.background = 'rgba(239, 68, 68, 0.06)';
-  details.style.borderRadius = '8px';
-  details.style.border = '1px solid rgba(239, 68, 68, 0.4)';
+  if (details.style) {
+    details.style.borderColor = 'rgba(239, 68, 68, 0.5)';
+    details.style.marginTop = '8px';
+    details.style.background = 'rgba(239, 68, 68, 0.06)';
+    details.style.borderRadius = '8px';
+    details.style.border = '1px solid rgba(239, 68, 68, 0.4)';
+  }
   const summary = el('summary', '', '🛠️ Chi tiết lỗi kỹ thuật (Debug Info)');
-  summary.style.color = '#ef4444';
-  summary.style.cursor = 'pointer';
-  summary.style.fontWeight = '600';
-  summary.style.padding = '6px 10px';
+  if (summary.style) {
+    summary.style.color = '#ef4444';
+    summary.style.cursor = 'pointer';
+    summary.style.fontWeight = '600';
+    summary.style.padding = '6px 10px';
+  }
   details.append(summary);
 
   const box = el('pre', 'debug-error-box');
-  box.style.padding = '8px 12px';
-  box.style.margin = '4px 0 0';
-  box.style.fontSize = '12px';
-  box.style.fontFamily = 'monospace';
-  box.style.color = '#f87171';
-  box.style.lineHeight = '1.6';
-  box.style.whiteSpace = 'pre-wrap';
-  box.style.wordBreak = 'break-word';
+  if (box.style) {
+    box.style.padding = '8px 12px';
+    box.style.margin = '4px 0 0';
+    box.style.fontSize = '12px';
+    box.style.fontFamily = 'monospace';
+    box.style.color = '#f87171';
+    box.style.lineHeight = '1.6';
+    box.style.whiteSpace = 'pre-wrap';
+    box.style.wordBreak = 'break-word';
+  }
 
   const lines = [];
   if (error.status) lines.push(`• HTTP Status: ${error.status} ${error.debugInfo?.statusText || ''}`);
