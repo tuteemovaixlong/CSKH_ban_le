@@ -38,7 +38,11 @@ class Application:
         api_model = getattr(self.api_infer, 'model', API_MODEL)
         is_anthropic = getattr(self.api_infer, 'is_anthropic', False) or 'claude' in str(api_model).lower()
         is_google = not is_anthropic and (getattr(self.api_infer, 'is_google', False) or 'gemini' in str(api_model).lower())
-        if is_anthropic:
+        custom_endpoint = getattr(self.api_infer, 'endpoint', '')
+        if custom_endpoint and ('ngrok' in custom_endpoint or 'vllm' in custom_endpoint or 'qwen' in str(api_model).lower()):
+            api_label = f'vLLM (Colab GPU) · {api_model}'
+            api_notice = f'vLLM Self-Hosted GPU ({api_model}) kết nối qua ngrok.'
+        elif is_anthropic:
             api_label = 'API · Anthropic Claude'
             api_notice = f'API Anthropic Claude ({api_model}), giới hạn {self.api_daily_limit} lượt/ngày UTC cho demo.'
         elif is_google:
