@@ -179,29 +179,99 @@ const lockPage = locked => {
 lockPage(true);
 
 async function api(path, body, extra = {}) {
+  const bodyStr = body === undefined ? undefined : JSON.stringify(body);
   const response = await fetch(path, {
     method: body === undefined ? 'GET' : 'POST',
     headers: {...(cookieAuth ? {} : {Authorization: 'Bearer ' + token}), ...(body === undefined ? {} : {'Content-Type': 'application/json'}), ...extra},
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: bodyStr,
     credentials: cookieAuth ? 'same-origin' : 'omit', cache: 'no-store', signal: AbortSignal.timeout(150000),
   });
   let result;
+  let rawText = '';
   try {
-    result = await response.json();
+    if (typeof response.json === 'function') {
+      result = await response.json();
+    }
   } catch (e) {
-    if (response.status === 413) {
-      result = { message: 'Dung lượng tệp hoặc tin nhắn vượt quá giới hạn cho phép của máy chủ (HTTP 413: Tệp quá lớn).' };
-    } else {
-      const rawText = typeof response.text === 'function' ? await response.text().catch(() => '') : '';
-      result = { message: rawText || (response.status >= 500 ? `Máy chủ tạm thời không thể xử lý (${response.status}). Vui lòng thử lại sau ít phút.` : `Lỗi máy chủ HTTP ${response.status}`) };
+    if (typeof response.text === 'function') {
+      rawText = await response.text().catch(() => '');
     }
   }
   if (!response.ok) {
     if (response.status === 401) lockPage(true);
-    const error = new Error(result.message || 'Không hoàn tất yêu cầu.');
-    error.trace = result.trace; throw error;
+    const bodySizeKb = bodyStr ? (bodyStr.length / 1024).toFixed(1) + ' KB' : '0 KB';
+    const serverHeader = (response.headers && typeof response.headers.get === 'function')
+      ? (response.headers.get('server') || 'unknown') : 'unknown';
+    console.error('RetailOps API Error:', {
+      status: response.status,
+      statusText: response.statusText,
+      server: serverHeader,
+      path,
+      payloadSize: bodySizeKb,
+      responseBody: (result && result.message) || rawText || '(empty)'
+    });
+    let messageText;
+    if (result && result.message) {
+      messageText = result.message;
+    } else if (response.status === 413) {
+      messageText = `Dung lượng tệp hoặc tin nhắn vượt quá giới hạn máy chủ (HTTP 413: Payload ${bodySizeKb}).`;
+    } else if (rawText && rawText.length < 300) {
+      messageText = rawText.trim();
+    } else {
+      messageText = `Lỗi máy chủ HTTP ${response.status} (${response.statusText || 'Lỗi không xác định'}).`;
+    }
+    const error = new Error(messageText);
+    error.status = response.status;
+    error.trace = result ? result.trace : null;
+    error.debugInfo = {
+      status: response.status,
+      statusText: response.statusText || '',
+      server: serverHeader,
+      path,
+      payloadSize: bodySizeKb,
+      snippet: rawText ? rawText.slice(0, 300) : (result ? JSON.stringify(result) : '(empty)')
+    };
+    throw error;
   }
   return result;
+}
+
+function showErrorDetails(row, error) {
+  if (!error || !row) return;
+  const details = el('details', 'agent-trace error-trace');
+  details.style.borderColor = 'rgba(239, 68, 68, 0.5)';
+  details.style.marginTop = '8px';
+  details.style.background = 'rgba(239, 68, 68, 0.06)';
+  details.style.borderRadius = '8px';
+  details.style.border = '1px solid rgba(239, 68, 68, 0.4)';
+  const summary = el('summary', '', '🛠️ Chi tiết lỗi kỹ thuật (Debug Info)');
+  summary.style.color = '#ef4444';
+  summary.style.cursor = 'pointer';
+  summary.style.fontWeight = '600';
+  summary.style.padding = '6px 10px';
+  details.append(summary);
+
+  const box = el('pre', 'debug-error-box');
+  box.style.padding = '8px 12px';
+  box.style.margin = '4px 0 0';
+  box.style.fontSize = '12px';
+  box.style.fontFamily = 'monospace';
+  box.style.color = '#f87171';
+  box.style.lineHeight = '1.6';
+  box.style.whiteSpace = 'pre-wrap';
+  box.style.wordBreak = 'break-word';
+
+  const lines = [];
+  if (error.status) lines.push(`• HTTP Status: ${error.status} ${error.debugInfo?.statusText || ''}`);
+  if (error.debugInfo?.server) lines.push(`• Máy chủ phản hồi (Server Header): ${error.debugInfo.server}`);
+  if (error.debugInfo?.path) lines.push(`• Đường dẫn gọi: ${error.debugInfo.path}`);
+  if (error.debugInfo?.payloadSize) lines.push(`• Kích thước payload gửi: ${error.debugInfo.payloadSize}`);
+  if (error.debugInfo?.snippet && error.debugInfo.snippet !== '(empty)') {
+    lines.push(`• Phản hồi thô từ server:\n  ${error.debugInfo.snippet}`);
+  }
+  box.textContent = lines.join('\n') || (error.message || 'Không có thêm thông tin.');
+  details.append(box);
+  row.append(details);
 }
 
 function message(text, role = 'assistant', source = null, model = null, attachment = null) {
@@ -471,7 +541,10 @@ async function act(callback) {
   busy = true;
   document.querySelectorAll('button, #model-provider').forEach(b => { if (!b.disabled && !b.dataset.layoutControl) { b.dataset.busyDisabled = 'true'; b.disabled = true; } });
   try { await callback(); }
-  catch (error) { message(error.message || 'Mất kết nối. Tải lại trạng thái trước khi thử tiếp.'); }
+  catch (error) {
+    const row = message(error.message || 'Mất kết nối. Tải lại trạng thái trước khi thử tiếp.', 'assistant', 'interface');
+    if (error.debugInfo) showErrorDetails(row, error);
+  }
   finally {
     busy = false;
     document.querySelectorAll('[data-busy-disabled]').forEach(b => { b.disabled = false; delete b.dataset.busyDisabled; });
@@ -800,7 +873,8 @@ async function send(text, requestId = crypto.randomUUID(), retry = false, attach
       }
     } catch (err) {
       console.error('Lỗi gửi tin nhắn cho chuyên viên:', err);
-      message('Không thể gửi tin nhắn đến chuyên viên: ' + (err.message || 'Lỗi mạng'), 'assistant', 'interface');
+      const row = message('Không thể gửi tin nhắn đến chuyên viên: ' + (err.message || 'Lỗi mạng'), 'assistant', 'interface');
+      if (err.debugInfo) showErrorDetails(row, err);
       setModelStatus('Lỗi gửi tin', 'Vui lòng thử lại');
     } finally {
       byId('messages').removeAttribute('aria-busy');
@@ -820,6 +894,7 @@ async function send(text, requestId = crypto.randomUUID(), retry = false, attach
   } catch (error) {
     const row = message(error.message || 'Mất kết nối trong lúc chờ model.', 'assistant', 'interface');
     showTrace(row, error.trace);
+    showErrorDetails(row, error);
     const retryButton = el('button', 'order-action', 'Thử lại tin nhắn này');
     const originalConversation = conversationId;
     retryButton.onclick = () => act(async () => {
