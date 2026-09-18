@@ -124,7 +124,8 @@ class Settings:
             inference_token=env.get('RETAILOPS_INFERENCE_TOKEN', ''),
             api_enabled=flag(env, 'RETAILOPS_API_ENABLED'),
             api_key=(
-                env.get('ANTHROPIC_API_KEY')
+                env.get('RETAILOPS_API_KEY')
+                or env.get('ANTHROPIC_API_KEY')
                 or env.get('GEMINI_API_KEY')
                 or env.get('OPENROUTER_API_KEY', '')
             ),

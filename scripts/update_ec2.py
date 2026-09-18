@@ -34,6 +34,9 @@ def main():
     parser = argparse.ArgumentParser(description="Update EC2 deployment patches and optional public IP.")
     parser.add_argument("--ip", help="New Public IPv4 of the EC2 instance (e.g. 18.206.237.32)")
     parser.add_argument("--auto-ip", action="store_true", help="Auto-detect public IPv4 via AWS metadata/checkip")
+    parser.add_argument("--api-endpoint", help="Custom OpenAI/vLLM API endpoint (e.g. https://.../v1/chat/completions)")
+    parser.add_argument("--api-model", help="Model name for API endpoint (e.g. Qwen/Qwen2.5-VL-7B-Instruct-AWQ)")
+    parser.add_argument("--api-key", help="API key for endpoint (defaults to 32-char token if omitted)")
     args = parser.parse_args()
 
     repo_dir = Path(__file__).resolve().parents[1]
@@ -41,8 +44,32 @@ def main():
     compose_path = Path("/opt/retailops/compose.public.yaml")
     base_compose_path = repo_dir / "deploy" / "compose.public.yaml"
     public_env_path = Path("/opt/retailops/public.env")
+    api_env_path = Path("/opt/retailops/api.env")
 
     print(f"[*] Updating EC2 patches from repository at: {repo_dir}")
+
+    # 0. Configure api.env if custom API/vLLM endpoint is passed
+    if args.api_endpoint:
+        print(f"[*] Configuring API/vLLM endpoint in {api_env_path}...")
+        api_lines = []
+        if api_env_path.exists():
+            for line in api_env_path.read_text(encoding="utf-8").splitlines():
+                k = line.split("=", 1)[0].strip()
+                if k not in ("RETAILOPS_API_ENABLED", "RETAILOPS_API_PROVIDER", "RETAILOPS_API_MODEL", "RETAILOPS_API_ENDPOINT", "RETAILOPS_API_KEY", "OPENROUTER_API_KEY"):
+                    api_lines.append(line)
+        api_key = args.api_key or "vllm-key-retailops-32-chars-token-123456"
+        model = args.api_model or "Qwen/Qwen2.5-VL-7B-Instruct-AWQ"
+        api_lines.extend([
+            "RETAILOPS_API_ENABLED=true",
+            "RETAILOPS_API_PROVIDER=custom",
+            f"RETAILOPS_API_MODEL={model}",
+            f"RETAILOPS_API_KEY={api_key}",
+            f"OPENROUTER_API_KEY={api_key}",
+            f"RETAILOPS_API_ENDPOINT={args.api_endpoint.strip()}",
+        ])
+        api_env_path.write_text("\n".join(api_lines) + "\n", encoding="utf-8")
+        subprocess.run(["chmod", "0600", str(api_env_path)], check=False)
+        print(f"  [+] Configured api.env with endpoint: {args.api_endpoint} (model: {model})")
 
     # 1. Update public.env if IP has changed
     target_ip = args.ip or (get_public_ip() if args.auto_ip else None)
