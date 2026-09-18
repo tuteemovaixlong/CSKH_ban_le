@@ -295,7 +295,12 @@ class OpenRouterAgent:
         tool_choice = 'none' if mode == 'general' or not allow_tools else 'auto'
         payload = {'model': self.model, 'messages': [{'role': 'system', 'content': system_prompt}] + self.translate(messages),
                    'stream': False, 'max_tokens': 2048, 'temperature': 0.2}
-        if not self.is_google:
+        custom_endpoint = os.getenv('RETAILOPS_API_ENDPOINT', '').strip()
+        if custom_endpoint:
+            if tools:
+                payload['tools'] = tools
+                payload['tool_choice'] = tool_choice
+        elif not self.is_google:
             payload['tools'] = tools
             payload['tool_choice'] = tool_choice
             provider_options = {'allow_fallbacks': False}
