@@ -11,8 +11,10 @@ Performs:
 import argparse
 import http.cookiejar
 import json
+import os
 import re
 import statistics
+import subprocess
 import sys
 import time
 import urllib.parse
