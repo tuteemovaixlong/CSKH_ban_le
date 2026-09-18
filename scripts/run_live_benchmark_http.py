@@ -185,10 +185,78 @@ print(f"RETAILOPS_AUTO_TOKEN={token}")
     )
 
 
-def run_live_eval(origin: str, token: str, dataset_path: Path, max_cases: int = 10, provider: str = "custom"):
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+
+def evaluate_single_case(client: LiveClient, c: dict, provider: str, max_retries: int = 2) -> dict:
+    cid = c["id"]
+    text = c["user_text"]
+    cat = c["category"]
+
+    last_error = None
+    last_status = 0
+    elapsed_ms = 0.0
+
+    for attempt in range(max_retries + 1):
+        try:
+            conv_id = client.new_conversation(provider=provider)
+            req_id = f"bench_{uuid.uuid4().hex[:16]}_{cid}"
+            status, body, elapsed_ms, err = client.chat(conv_id, text, req_id=req_id, timeout=120)
+            last_status = status
+            if status == 200:
+                trace = body.get("trace", {}) if isinstance(body, dict) else {}
+                msg = body.get("message", "") if isinstance(body, dict) else ""
+                tools_called = [t.get("name") for t in trace.get("tools", [])] if isinstance(trace, dict) else []
+                sources = body.get("sources", []) if isinstance(body, dict) else []
+
+                exp_tools = set(c.get("expected_tools", []))
+                forb_tools = set(c.get("forbidden_tools", []))
+
+                tool_pass = True
+                if forb_tools and (set(tools_called) & forb_tools):
+                    tool_pass = False
+
+                return {
+                    "id": cid,
+                    "category": cat,
+                    "passed": tool_pass,
+                    "status": 200,
+                    "latency_ms": elapsed_ms,
+                    "tools_called": tools_called,
+                    "response": msg,
+                    "sources": sources,
+                    "retries": attempt
+                }
+            elif status in (502, 503, 504) or status == 0:
+                last_error = err or body
+                if attempt < max_retries:
+                    time.sleep(2.0 * (attempt + 1))
+                    continue
+            else:
+                last_error = err or body
+                break
+        except Exception as exc:
+            last_error = str(exc)
+            if attempt < max_retries:
+                time.sleep(2.0 * (attempt + 1))
+                continue
+
+    return {
+        "id": cid,
+        "category": cat,
+        "passed": False,
+        "status": last_status,
+        "error": last_error,
+        "latency_ms": elapsed_ms,
+        "retries": max_retries
+    }
+
+
+def run_live_eval(origin: str, token: str, dataset_path: Path, max_cases: int = 10,
+                  provider: str = "custom", concurrency: int = 3):
     token = resolve_token(token)
     print(f"[*] Bắt đầu kiểm thử Live trên: {origin}")
-    print(f"[*] Nguồn Model: {provider.upper()} (Colab / Ollama)")
+    print(f"[*] Nguồn Model: {provider.upper()} (Colab / Ollama) | Luồng song song (Concurrency): {concurrency}")
 
     client = LiveClient(origin, token)
     print("[*] Đang đăng nhập tài khoản...")
@@ -204,66 +272,38 @@ def run_live_eval(origin: str, token: str, dataset_path: Path, max_cases: int = 
             except Exception:
                 pass
 
-    if max_cases and len(cases) > max_cases:
+    if max_cases > 0 and len(cases) > max_cases:
         print(f"[*] Giới hạn kiểm thử {max_cases} ca mẫu (trong tổng số {len(cases)} ca)...")
         cases = cases[:max_cases]
+    else:
+        print(f"[*] Chạy toàn bộ tập dữ liệu: {len(cases)} ca kiểm thử...")
 
     results = []
-    for idx, c in enumerate(cases, start=1):
-        cid = c["id"]
-        text = c["user_text"]
-        cat = c["category"]
-        print(f"\n[{idx}/{len(cases)}] [ID: {cid}] ({cat}): \"{text[:60]}...\"")
+    total = len(cases)
+    completed = 0
 
-        # Tạo conversation mới cho mỗi kịch bản để độc lập ngữ cảnh
-        try:
-            conv_id = client.new_conversation(provider=provider)
-        except Exception as e:
-            print(f"  [!] Lỗi tạo conversation: {e}")
-            results.append({
-                "id": cid, "category": cat, "passed": False,
-                "error": f"New conversation error: {e}", "latency_ms": 0
-            })
-            continue
-
-        req_id = f"bench_{uuid.uuid4().hex[:16]}_{cid}"
-        status, body, elapsed_ms, err = client.chat(conv_id, text, req_id=req_id, timeout=120)
-        if status != 200:
-            print(f"  [X] HTTP {status}: {err or body}")
-            results.append({
-                "id": cid, "category": cat, "passed": False,
-                "status": status, "error": err or body, "latency_ms": elapsed_ms
-            })
-            continue
-
-        trace = body.get("trace", {}) if isinstance(body, dict) else {}
-        msg = body.get("message", "") if isinstance(body, dict) else ""
-        tools_called = [t.get("name") for t in trace.get("tools", [])] if isinstance(trace, dict) else []
-        sources = body.get("sources", []) if isinstance(body, dict) else []
-
-        # Đánh giá tiêu chuẩn
-        exp_tools = set(c.get("expected_tools", []))
-        forb_tools = set(c.get("forbidden_tools", []))
-
-        tool_pass = True
-        if forb_tools and (set(tools_called) & forb_tools):
-            tool_pass = False
-
-        print(f"  [+] HTTP 200 OK | Trễ: {elapsed_ms:.1f}ms")
-        print(f"      AI: \"{msg[:75]}...\"")
-        if tools_called:
-            print(f"      Tools: {tools_called}")
-
-        results.append({
-            "id": cid,
-            "category": cat,
-            "passed": tool_pass,
-            "status": 200,
-            "latency_ms": elapsed_ms,
-            "tools_called": tools_called,
-            "response": msg,
-            "sources": sources
-        })
+    if concurrency <= 1:
+        for idx, c in enumerate(cases, start=1):
+            cid = c["id"]
+            cat = c["category"]
+            print(f"\n[{idx}/{total}] [ID: {cid}] ({cat}): \"{c['user_text'][:60]}...\"")
+            res = evaluate_single_case(client, c, provider)
+            results.append(res)
+            if res.get("passed"):
+                print(f"  [+] HTTP 200 OK | Trễ: {res['latency_ms']:.1f}ms")
+                print(f"      AI: \"{res.get('response', '')[:75]}...\"")
+            else:
+                print(f"  [X] Thất bại HTTP {res.get('status')}: {res.get('error')}")
+    else:
+        print(f"[*] Đang thực thi theo Batch song song ({concurrency} workers)...")
+        with ThreadPoolExecutor(max_workers=concurrency) as pool:
+            futures = {pool.submit(evaluate_single_case, client, c, provider): c for c in cases}
+            for fut in as_completed(futures):
+                res = fut.result()
+                results.append(res)
+                completed += 1
+                status_symbol = "✅ PASS" if res.get("passed") else f"❌ HTTP {res.get('status')}"
+                print(f"[{completed}/{total}] [ID: {res['id']}] {status_symbol} ({res['latency_ms']:.1f}ms) | AI: \"{res.get('response', '')[:50]}...\"")
 
     # Tổng kết
     total = len(results)
@@ -335,11 +375,12 @@ def main():
     parser.add_argument("--origin", "-u", default=DEFAULT_ORIGIN, help="Base URL of RetailOps service")
     parser.add_argument("--token", "-t", default="auto", help="Invite token or login access code (default 'auto' on EC2)")
     parser.add_argument("--dataset", "-d", type=Path, default=DEFAULT_DATASET, help="Benchmark JSONL dataset")
-    parser.add_argument("--count", "-n", type=int, default=10, help="Number of scenarios to test (default 10)")
+    parser.add_argument("--count", "-n", type=int, default=0, help="Number of scenarios to test (default 0: all)")
+    parser.add_argument("--concurrency", "-c", type=int, default=3, help="Concurrent workers for batch testing (default 3)")
     parser.add_argument("--provider", "-p", choices=("custom", "api"), default="custom", help="Model provider")
     args = parser.parse_args()
 
-    run_live_eval(args.origin, args.token, args.dataset, args.count, args.provider)
+    run_live_eval(args.origin, args.token, args.dataset, args.count, args.provider, args.concurrency)
 
 
 if __name__ == "__main__":
