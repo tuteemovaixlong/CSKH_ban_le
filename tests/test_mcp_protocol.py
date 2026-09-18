@@ -1,10 +1,22 @@
-"""Automated verification suite for RetailOps Model Context Protocol (MCP) Server & Client."""
 import asyncio
 import json
+from pathlib import Path
+import sys
 import unittest
 
-from retailops_mcp_server import app
-from retailops.workflow.mcp_client import RetailOpsMCPClient
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+
+try:
+    from retailops_mcp_server import app
+    from retailops.workflow.mcp_client import RetailOpsMCPClient
+except ImportError:
+    import os
+    sys.path.insert(0, os.getcwd())
+    from retailops_mcp_server import app
+    from retailops.workflow.mcp_client import RetailOpsMCPClient
 
 
 class RetailOpsMCPProtocolTests(unittest.TestCase):
