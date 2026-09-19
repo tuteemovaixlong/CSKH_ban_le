@@ -12,7 +12,12 @@ ORDER_SYSTEM_PROMPT = (
     'do not claim the order is absent globally or owned by somebody else. '
     'Missing carrier information is unknown, not a delivery ETA. '
     'These tools do not file complaints, issue vouchers, cancel orders or promise redelivery. '
-    'Do not claim any of those actions have occurred. Answer naturally in Vietnamese.'
+    'Do not claim any of those actions have occurred. For a status-only question get_order is enough. '
+    'Track shipment only for a delivery question; missing tracking remains unknown. '
+    'Use catalog tools only for requested product details. Catalog matches are not proof of an order link. '
+    'Do not search store policy to fill missing order fields or call tools outside the supplied schema. '
+    'Once the requested facts are available, answer; do not keep making speculative calls. '
+    'Answer naturally in Vietnamese.'
 )
 _ALLOWED = frozenset(('get_order', 'list_orders', 'get_context', 'track_shipment',
                       'get_product', 'search_products'))
@@ -35,18 +40,30 @@ def _order(order):
             lines.append(_text(order[key]))
     amount = order.get('amount')
     if type(amount) in (int, float) and math.isfinite(amount) and amount >= 0:
-        lines.append(f"Gi\u00e1 tr\u1ecb: {amount:,.0f} VND")
+        lines.append("Gi\u00e1 tr\u1ecb: " + f"{amount:,.0f}".replace(",", ".") + " VND")
+    return '\n'.join(lines)
+
+
+def _product(product):
+    if not isinstance(product, dict) or not _text(product.get('id')) or not _text(product.get('name')):
+        return None
+    lines = [f"{_text(product['id'])}: {_text(product['name'])}"]
+    for key, label in (('description', 'M\u00f4 t\u1ea3'), ('material', 'Ch\u1ea5t li\u1ec7u'),
+                       ('care', 'B\u1ea3o qu\u1ea3n')):
+        if _text(product.get(key)):
+            lines.append(label + ': ' + _text(product[key], 300))
     return '\n'.join(lines)
 
 
 def _synthesize_order_response(tool_results):
-    """Only show returned facts. None means that safe synthesis is impossible."""
-    parts = []
+    """Only show returned facts; supplemental misses cannot erase verified orders."""
+    parts, supplemental = [], []
     for tr in tool_results:
         result = tr.get('result')
         if not isinstance(result, dict):
             return None
         code = result.get('error')
+        name = tr.get('name')
         if code:
             raw_id = tr.get('args', {}).get('order_id', '')
             oid = raw_id if isinstance(raw_id, str) and re.fullmatch(r'[A-Z]{1,6}-[0-9]{1,8}', raw_id) else ''
@@ -55,8 +72,10 @@ def _synthesize_order_response(tool_results):
                              'Vui l\u00f2ng ki\u1ec3m tra m\u00e3 ho\u1eb7c ch\u1ecdn m\u1ed9t \u0111\u01a1n trong danh s\u00e1ch b\u00ean ph\u1ea3i.')
             elif code in ('permission_denied', 'forbidden'):
                 parts.append('T\u00e0i kho\u1ea3n hi\u1ec7n t\u1ea1i kh\u00f4ng c\u00f3 quy\u1ec1n th\u1ef1c hi\u1ec7n tra c\u1ee9u n\u00e0y.')
-            elif code in ('tool_not_allowed', 'product_not_found'):
-                parts.append('Ch\u01b0a tra c\u1ee9u \u0111\u01b0\u1ee3c th\u00f4ng tin ph\u00f9 h\u1ee3p. Vui l\u00f2ng x\u00e1c nh\u1eadn m\u00e3 \u0111\u01a1n/s\u1ea3n ph\u1ea9m.')
+            elif code == 'product_not_found':
+                supplemental.append('Danh m\u1ee5c ch\u01b0a c\u00f3 s\u1ea3n ph\u1ea9m kh\u1edbp m\u00e3 tra c\u1ee9u.')
+            elif code in ('tool_not_allowed', 'invalid_tool_arguments'):
+                supplemental.append('M\u1ed9t ph\u1ea7n tra c\u1ee9u b\u1ed5 sung kh\u00f4ng th\u1ef1c hi\u1ec7n \u0111\u01b0\u1ee3c; ch\u1ec9 th\u00f4ng tin \u0111\u00e3 x\u00e1c minh \u0111\u01b0\u1ee3c hi\u1ec3n th\u1ecb.')
             else:
                 return None
         elif isinstance(result.get('shipment'), dict) and result['shipment']:
@@ -71,22 +90,46 @@ def _synthesize_order_response(tool_results):
             if len(lines) == 1:
                 return None
             parts.append('\n'.join(lines))
-        elif isinstance(result.get('order'), dict):
-            rendered = _order(result['order'])
-            if not rendered:
-                return None
-            parts.append(rendered)
         elif isinstance(result.get('orders'), list):
-            orders = result['orders']
-            rendered = [_order(order) for order in orders]
+            rendered = [_order(order) for order in result['orders']]
             if any(item is None for item in rendered):
                 return None
             parts.append('\n\n'.join(rendered) if rendered else 'T\u00e0i kho\u1ea3n hi\u1ec7n ch\u01b0a c\u00f3 \u0111\u01a1n h\u00e0ng.')
             if result.get('truncated'):
                 parts.append('Danh s\u00e1ch \u0111\u00e3 r\u00fat g\u1ecdn; c\u00f2n c\u00e1c \u0111\u01a1n kh\u00e1c ch\u01b0a hi\u1ec3n th\u1ecb.')
+        elif isinstance(result.get('products'), list):
+            rendered = [_product(product) for product in result['products']]
+            if any(item is None for item in rendered):
+                return None
+            if rendered:
+                parts.append('S\u1ea3n ph\u1ea9m kh\u1edbp trong danh m\u1ee5c (ch\u01b0a x\u00e1c nh\u1eadn li\u00ean k\u1ebft v\u1edbi \u0111\u01a1n):\n' + '\n\n'.join(rendered))
+            else:
+                parts.append('Ch\u01b0a t\u00ecm th\u1ea5y s\u1ea3n ph\u1ea9m kh\u1edbp trong danh m\u1ee5c. Th\u00f4ng tin b\u1ed5 sung ch\u01b0a c\u00f3.')
+        elif 'order' in result or 'product' in result:
+            rendered = []
+            if result.get('order') is not None:
+                item = _order(result['order'])
+                if item is None:
+                    return None
+                rendered.append(item)
+            if result.get('product') is not None:
+                item = _product(result['product'])
+                if item is None:
+                    return None
+                rendered.append('Th\u00f4ng tin danh m\u1ee5c:\n' + item)
+            if rendered:
+                parts.extend(rendered)
+            elif name == 'get_context':
+                parts.append('Ch\u01b0a c\u00f3 \u0111\u01a1n ho\u1eb7c s\u1ea3n ph\u1ea9m \u0111\u01b0\u1ee3c ch\u1ecdn. Vui l\u00f2ng ch\u1ecdn \u0111\u01a1n ho\u1eb7c cung c\u1ea5p m\u00e3.')
+            else:
+                return None
         else:
             return None
-    return '\n\n'.join(parts) if parts else None
+    if parts:
+        return '\n\n'.join(dict.fromkeys(parts + supplemental))
+    if supplemental:
+        return '\n\n'.join(dict.fromkeys(supplemental))
+    return None
 
 
 def run_order_agent(state, execute, gateway, timeout=30):

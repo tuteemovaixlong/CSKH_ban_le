@@ -27,7 +27,7 @@ def worker_messages(state, prompt):
     return messages
 
 
-def call_model(gateway, messages, allow_tools, deadline, trace):
+def call_model(gateway, messages, allow_tools, deadline, trace, *, allowed_tools=None):
     from retailops_agent import AgentError
     remaining = deadline - time.monotonic()
     if remaining <= 0:
@@ -37,7 +37,13 @@ def call_model(gateway, messages, allow_tools, deadline, trace):
     trace['model_calls'] = trace.get('model_calls', 0) + 1
     trace.setdefault('model_responses', 0)
     try:
-        response = gateway.chat(messages, allow_tools, max(1, min(30, math.ceil(remaining))))
+        seconds = max(1, min(30, math.ceil(remaining)))
+        scoped = getattr(gateway, 'chat_scoped', None)
+        if allowed_tools is not None and callable(scoped):
+            response = scoped(messages, allow_tools, seconds, allowed_tools)
+        else:
+            # Legacy/test gateways still face the execution-time allowlist below.
+            response = gateway.chat(messages, allow_tools, seconds)
         message = assistant_message(response)
     except (AgentError, RuntimeError, ValueError, OSError, KeyError, TypeError) as exc:
         code = exc.code if isinstance(exc, AgentError) else 'agent_response_failed'
@@ -71,7 +77,7 @@ def run_read_worker(state, execute, gateway, *, prompt, allowed_tools, render,
     for step in range(MAX_MODEL_CALLS):
         allow = step < MAX_MODEL_CALLS - 1 and state['tool_count'] < MAX_TOOL_CALLS
         try:
-            message = call_model(gateway, messages, allow, deadline, trace)
+            message = call_model(gateway, messages, allow, deadline, trace, allowed_tools=allowed_tools)
         except AgentError as exc:
             final = render(records) if records else None
             if not final:
@@ -93,12 +99,16 @@ def run_read_worker(state, execute, gateway, *, prompt, allowed_tools, render,
             name = call['function']['name']
             args = call['function']['arguments']
             state['tool_count'] += 1
-            try:
-                if name not in allowed_tools:
-                    raise ProtocolError('Tool outside worker scope')
-                validate_tool(name, args)
-            except ProtocolError:
-                result = {'error': 'tool_not_allowed'}
+            invalid = None
+            if name not in allowed_tools:
+                invalid = 'tool_not_allowed'
+            else:
+                try:
+                    validate_tool(name, args)
+                except ProtocolError:
+                    invalid = 'invalid_tool_arguments'
+            if invalid:
+                result = {'error': invalid}
             else:
                 try:
                     result = execute(name, args)
@@ -126,7 +136,12 @@ def run_read_worker(state, execute, gateway, *, prompt, allowed_tools, render,
             final = render(records)
             if not final:
                 raise AgentError('tool_response_failed', 'Ch\u01b0a th\u1ec3 x\u00e1c minh k\u1ebft qu\u1ea3 tra c\u1ee9u.', trace)
-            trace.update(answer_source='tool_result', outcome='business_error')
+            codes = sorted({r['result']['error'] for r in records if r['result'].get('error')})
+            hard_denial = any(code in ('order_not_found', 'permission_denied', 'forbidden') for code in codes)
+            partial = any(not r['result'].get('error') for r in records) and not hard_denial
+            trace.update(answer_source='tool_result', outcome='partial' if partial else 'business_error')
+            if partial:
+                trace.update(degraded=True, warning_codes=codes)
             break
     if not final:
         raise AgentError('agent_response_failed', 'Model ch\u01b0a tr\u1ea3 l\u1eddi h\u1ee3p l\u1ec7.', trace)

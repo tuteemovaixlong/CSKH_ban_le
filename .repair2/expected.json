@@ -1,0 +1,13 @@
+{
+  ".github/workflows/ci.yml": "0d2af9e1138bb9f913ee84265cc27c3406c7b3024c7fdffbcddde7edb5baa066",
+  "agent_protocol.py": "30098d707de0574e1baa74bd0bad5fd6ace157a0162c120786a6b701c2ed82ec",
+  "inference_proxy.py": "72070d2e289d59b5ea3bb23f80154e591d427969e8620a2b51cd90db3375669c",
+  "retailops/business/application.py": "1501d9e8b83a608991666237522a37ae407e155141f39d5909214482a8ba0217",
+  "retailops/workflow/subagents/order_agent.py": "e2cb4007c4aa5e0e1bee12d6299b993e47332763c15fccbf23b8ddc10df12a57",
+  "retailops/workflow/subagents/read_worker.py": "0cd8af228afde719005a4bd4e9b22399948728a4b8ea87dc000291a537980689",
+  "retailops_agent.py": "22e5c568ec3efbe40bea099982c83dfb68620053c6b7c7895aa5c1842250abc7",
+  "retailops_providers.py": "c5c9ac8431b140aed644a5b429ea9599b3d993e2da361a7f589fb34b7e9159ff",
+  "tests/test_shipment_ui.js": "38c829b344af1487c643c202122676c52cbf15dd714168ee47367c038aa4dc4a",
+  "tests/test_worker_scope_results.py": "da49d0dda0ed6e2047178761bacbf0619a3438fe781f8052a2dd261e65895278",
+  "web/app.js": "3cd1a5107024406cc8505d1cd83c9bd2b76454d29020f4e1df5f8405e1f5281e"
+}
