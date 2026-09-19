@@ -11,7 +11,7 @@ import re
 import urllib.error
 import urllib.request
 
-from agent_protocol import GENERAL_SYSTEM, PROTOCOL, SYSTEM, TOOLS, ProtocolError, assistant_message, request_mode, validate_messages
+from agent_protocol import GENERAL_SYSTEM, PROTOCOL, SYSTEM, TOOLS, ProtocolError, assistant_message, request_mode, validate_messages, scoped_tools
 from retailops_agent import AgentError
 from retailops_baseline import NoRedirects
 
@@ -200,13 +200,13 @@ class OpenRouterAgent:
             # Strip URLs, upstream bodies and credentials from exceptions.
             raise AgentError('api_unavailable', 'Không nhận được phản hồi API hợp lệ. Bạn có thể thử lại sau.') from None
 
-    def _chat_anthropic(self, messages, allow_tools, timeout):
+    def _chat_anthropic(self, messages, allow_tools, timeout, *, allowed_tools=None):
         validate_messages(messages)
         mode = request_mode(messages)
         system_prompt = GENERAL_SYSTEM if mode == 'general' else SYSTEM
         anthropic_tools = []
         if mode != 'general' and allow_tools:
-            for t in TOOLS:
+            for t in scoped_tools(allowed_tools):
                 fn = t['function']
                 anthropic_tools.append({
                     'name': fn['name'],
@@ -310,13 +310,17 @@ class OpenRouterAgent:
                 'prompt_eval_count': prompt_tokens, 'eval_count': completion_tokens,
                 'reported_cost_usd': None, 'reasoning': None}
 
-    def chat(self, messages, allow_tools, timeout):
+    def chat_scoped(self, messages, allow_tools, timeout, allowed_tools):
+        return self.chat(messages, allow_tools, timeout, allowed_tools=allowed_tools)
+
+    def chat(self, messages, allow_tools, timeout, *, allowed_tools=None):
+        available = scoped_tools(allowed_tools)
         if self.is_anthropic:
-            return self._chat_anthropic(messages, allow_tools, timeout)
+            return self._chat_anthropic(messages, allow_tools, timeout, allowed_tools=allowed_tools)
         mode = request_mode(messages)
         system_prompt = GENERAL_SYSTEM if mode == 'general' else SYSTEM
-        tools = [] if mode == 'general' else TOOLS
-        tool_choice = 'none' if mode == 'general' or not allow_tools else 'auto'
+        tools = [] if mode == 'general' else available
+        tool_choice = 'none' if not tools or not allow_tools else 'auto'
         payload = {'model': self.model, 'messages': self.payload_messages(messages, system_prompt),
                    'stream': False, 'max_tokens': 2048, 'temperature': 0.2}
         custom_endpoint = os.getenv('RETAILOPS_API_ENDPOINT', '').strip()

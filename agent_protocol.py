@@ -290,7 +290,21 @@ def validate_messages(messages):
     return messages
 
 
-def build_request(model, messages, allow_tools=True):
+def scoped_tools(allowed_tools=None):
+    """Return a validated subset of server-owned schemas; never add client schemas."""
+    if allowed_tools is None:
+        return TOOLS
+    if not isinstance(allowed_tools, (list, tuple, frozenset)):
+        raise ProtocolError('Invalid tool scope')
+    if len(allowed_tools) > len(TOOLS) or any(not isinstance(n, str) for n in allowed_tools):
+        raise ProtocolError('Invalid tool scope')
+    names = set(allowed_tools)
+    if len(names) != len(allowed_tools) or not names.issubset(TOOL_ARGUMENTS):
+        raise ProtocolError('Invalid tool scope')
+    return [tool for tool in TOOLS if tool['function']['name'] in names]
+
+
+def build_request(model, messages, allow_tools=True, *, allowed_tools=None):
     validate_messages(messages)
     if type(allow_tools) is not bool:
         raise ProtocolError('Invalid tool switch')
@@ -303,7 +317,8 @@ def build_request(model, messages, allow_tools=True):
         system = GENERAL_SYSTEM if mode == 'general' else SYSTEM
         actual_messages = messages
 
-    tools = [] if mode == 'general' else (TOOLS if allow_tools else [])
+    available = scoped_tools(allowed_tools)
+    tools = [] if mode == 'general' else (available if allow_tools else [])
     formatted_messages = []
     for m in actual_messages:
         if m.get('role') == 'user' and m.get('attachment'):
@@ -325,8 +340,14 @@ def build_request(model, messages, allow_tools=True):
 
 
 def validate_envelope(body):
-    if not isinstance(body, dict) or set(body) != {'protocol', 'messages', 'allow_tools'} or body['protocol'] != PROTOCOL:
+    required = {'protocol', 'messages', 'allow_tools'}
+    if (not isinstance(body, dict) or not required.issubset(body)
+            or set(body) - required - {'allowed_tools'} or body['protocol'] != PROTOCOL):
         raise ProtocolError('Agent protocol mismatch')
     if type(body['allow_tools']) is not bool:
         raise ProtocolError('Invalid tool switch')
+    if 'allowed_tools' in body:
+        if not isinstance(body['allowed_tools'], list):
+            raise ProtocolError('Invalid tool scope')
+        scoped_tools(body['allowed_tools'])
     return validate_messages(body['messages']), body['allow_tools']

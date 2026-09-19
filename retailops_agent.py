@@ -1,7 +1,7 @@
 """Model gateway adapters and compatibility entrypoint for the bounded graph."""
 from dataclasses import replace
 
-from agent_protocol import PROTOCOL, build_request
+from agent_protocol import PROTOCOL, build_request, scoped_tools
 from retailops_baseline import LocalOllama, RemoteOllama
 
 
@@ -22,6 +22,11 @@ class LocalAgent:
     def chat(self, messages, allow_tools, timeout):
         gateway = LocalOllama(replace(self.config, timeout_s=timeout))
         return gateway.request('/api/chat', build_request(self.config.model, messages, allow_tools))
+
+    def chat_scoped(self, messages, allow_tools, timeout, allowed_tools):
+        gateway = LocalOllama(replace(self.config, timeout_s=timeout))
+        return gateway.request('/api/chat', build_request(self.config.model, messages, allow_tools,
+                                                          allowed_tools=allowed_tools))
 
 
 class RemoteAgent:
@@ -46,6 +51,11 @@ class RemoteAgent:
 
     def chat(self, messages, allow_tools, timeout):
         return self.gateway(timeout).request('/agent/chat', {'protocol': PROTOCOL, 'messages': messages, 'allow_tools': allow_tools})
+
+    def chat_scoped(self, messages, allow_tools, timeout, allowed_tools):
+        names = [t['function']['name'] for t in scoped_tools(allowed_tools)]
+        return self.gateway(timeout).request('/agent/chat', {'protocol': PROTOCOL, 'messages': messages,
+                                                            'allow_tools': allow_tools, 'allowed_tools': names})
 
 
 def run_agent(gateway, text, history, execute, identity, timeout=110, **options):
