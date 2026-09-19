@@ -745,29 +745,41 @@ async function dismiss() {
   } catch (error) { byId('confirm-error').textContent = error.message; }
 }
 
+function shipmentText(value) {
+  if (typeof value !== 'string') return '';
+  const clean = value.trim();
+  return /^(null|undefined|none)$/i.test(clean) ? '' : clean.slice(0, 400);
+}
+
 function showShipment(row, shipment) {
-  if (!shipment) return;
+  if (!shipment || typeof shipment !== 'object' || Array.isArray(shipment)) return;
   const card = el('div', 'shipment-card');
   const header = el('div', 'shipment-header');
+  const status = typeof shipment.status === 'string' && /^[a-z_]{1,40}$/.test(shipment.status) ? shipment.status : 'unknown';
   header.append(
-    el('strong', '', '🚚 ' + (shipment.carrier || 'Đơn vị vận chuyển')),
-    el('span', 'tracking-pill ' + (shipment.status || ''), shipment.status_text || 'Đang giao')
+    el('strong', '', '\ud83d\ude9a ' + (shipmentText(shipment.carrier) || 'Th\u00f4ng tin v\u1eadn chuy\u1ec3n')),
+    el('span', 'tracking-pill ' + status, shipmentText(shipment.status_text) || 'Ch\u01b0a c\u00f3 d\u1eef li\u1ec7u h\u00e0nh tr\u00ecnh')
   );
   const body = el('div', 'shipment-body');
-  body.append(
-    el('p', '', 'Mã vận đơn: ' + shipment.tracking_code),
-    el('p', '', 'Vị trí hiện tại: ' + shipment.current_location),
-    el('p', '', 'Shipper: ' + (shipment.shipper || 'Đang phân công')),
-    el('p', 'delivery-eta', '⏰ Dự kiến nhận: ' + shipment.estimated_delivery)
-  );
-  if (Array.isArray(shipment.steps) && shipment.steps.length) {
+  for (const [key, label] of [
+    ['tracking_code', 'M\u00e3 v\u1eadn \u0111\u01a1n: '], ['current_location', 'V\u1ecb tr\u00ed hi\u1ec7n t\u1ea1i: '],
+    ['shipper', 'Shipper: '], ['estimated_delivery', '\u23f0 D\u1ef1 ki\u1ebfn nh\u1eadn: ']
+  ]) {
+    const value = shipmentText(shipment[key]);
+    if (value) body.append(el('p', key === 'estimated_delivery' ? 'delivery-eta' : '', label + value));
+  }
+  const steps = Array.isArray(shipment.steps) ? shipment.steps.filter(step => step && shipmentText(step.event)).slice(0, 20) : [];
+  if (steps.length) {
     const timeline = el('div', 'shipment-timeline');
-    for (const step of shipment.steps) {
+    for (const step of steps) {
       const item = el('div', 'timeline-item');
-      item.append(el('span', 'timeline-time', step.time), el('span', 'timeline-event', step.event));
+      item.append(el('span', 'timeline-time', shipmentText(step.time)), el('span', 'timeline-event', shipmentText(step.event)));
       timeline.append(item);
     }
     body.append(timeline);
+  }
+  if (!body.children.length) {
+    body.append(el('p', '', 'H\u1ec7 th\u1ed1ng ch\u01b0a c\u00f3 m\u00e3 v\u1eadn \u0111\u01a1n, v\u1ecb tr\u00ed ho\u1eb7c ng\u00e0y giao d\u1ef1 ki\u1ebfn cho \u0111\u01a1n n\u00e0y.'));
   }
   card.append(header, body);
   row.append(card);
@@ -819,9 +831,18 @@ function showTrace(row, trace, replayed = false) {
       details.append(el('small', '', `Khớp với câu hỏi gốc: "${trace.matched_query}"`));
     }
   }
-  const names = (trace.tools || []).map(t => t.name + (t.status === 'error' ? ' (bị từ chối / lỗi)' : ''));
+  const toolErrors = {
+    order_not_found: 'kh\u00f4ng t\u00ecm th\u1ea5y trong t\u00e0i kho\u1ea3n',
+    tool_not_allowed: 'ngo\u00e0i ph\u1ea1m vi worker; kh\u00f4ng th\u1ef1c thi',
+    invalid_tool_arguments: 'tham s\u1ed1 kh\u00f4ng h\u1ee3p l\u1ec7',
+    product_not_found: 'ch\u01b0a t\u00ecm th\u1ea5y trong danh m\u1ee5c',
+    permission_denied: 'kh\u00f4ng \u0111\u1ee7 quy\u1ec1n',
+    tool_unavailable: 'ngu\u1ed3n d\u1eef li\u1ec7u ch\u01b0a s\u1eb5n s\u00e0ng'
+  };
+  const names = (trace.tools || []).map(t => t.name + (t.status === 'error'
+    ? ' (' + (toolErrors[t.error_code] || 'b\u1ecb t\u1eeb ch\u1ed1i / l\u1ed7i') + ')' : ''));
   details.append(el('p', '', (trace.model || 'model') + ' · ' + (trace.model_calls || 0) + ' lượt gọi model' +
-    (trace.latency_ms !== undefined ? ' · ' + (trace.latency_ms / 1000).toFixed(2) + ' giây' : '')),
+    (typeof trace.latency_ms === 'number' && Number.isFinite(trace.latency_ms) && trace.latency_ms >= 0 ? ' · ' + (trace.latency_ms / 1000).toFixed(2) + ' giây' : '')),
     el('p', '', 'Công cụ: ' + (names.join(' → ') || 'Không dùng công cụ ở lượt này')),
     el('small', '', 'Mã lượt: ' + trace.turn_id + (trace.model_digest ? ' · Digest: ' + trace.model_digest : ' · API không cung cấp digest trọng số')));
   if (trace.provider) details.append(el('small', '', 'Nguồn: ' + trace.provider));

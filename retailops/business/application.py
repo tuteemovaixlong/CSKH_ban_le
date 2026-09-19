@@ -5,6 +5,7 @@ import os
 from contextlib import ExitStack
 import re
 import threading
+import time
 import uuid
 from retailops.core import ApiError, REASONS, STATUSES, fields, require
 from retailops.identity.bearer import authenticate_bearer
@@ -88,6 +89,7 @@ class Application:
         require(permission in self.permissions, 403, 'permission_denied', 'Tài khoản này không có quyền thực hiện thao tác.')
 
     def chat(self, customer, body):
+        started = time.monotonic()
         require(isinstance(body, dict) and {'text', 'conversation_id', 'request_id'}.issubset(set(body))
                 and set(body).issubset({'text', 'conversation_id', 'request_id', 'attachment'}),
                 400, "invalid_fields", "Các trường của yêu cầu không hợp lệ.")
@@ -190,7 +192,12 @@ class Application:
                         order_obj = cached_res['order']
                         if isinstance(order_obj, dict) and 'id' in order_obj and 'version' in order_obj:
                             bound.versions[order_obj['id']] = order_obj['version']
-                            bound.context['order_id'] = order_obj['id']
+                            bound.context = {'order_id': order_obj['id'], 'product_id': order_obj.get('product_id')}
+                    elif name == 'get_product' and isinstance(cached_res, dict) and isinstance(cached_res.get('product'), dict):
+                        pid = cached_res['product'].get('id')
+                        if bound.context['product_id'] != pid:
+                            bound.context['order_id'] = None
+                        bound.context['product_id'] = pid
                     elif name == 'search_knowledge' and isinstance(cached_res, dict) and 'results' in cached_res:
                         known = {s['citation_id'] for s in bound.knowledge.sources if isinstance(s, dict) and 'citation_id' in s}
                         for s in cached_res.get('results', []):
@@ -260,6 +267,7 @@ class Application:
                 self.semantic_cache.store(text, answer['message'], action=result['action'])
             return result
         except AgentError as exc:
+            exc.trace['latency_ms'] = round((time.monotonic() - started) * 1000, 2)
             self.store.event(customer, 'agent_failed', code=exc.code, trace=exc.trace)
             raise ApiError(503, exc.code, str(exc), exc.trace) from None
         except (RuntimeError, ValueError, OSError):

@@ -134,7 +134,8 @@ def create_server(config: ModelConfig, token: str, port: int = 8001) -> Threadin
                 if len(raw) != length:
                     raise ValueError("Incomplete body")
                 if self.path == '/agent/chat':
-                    messages, allow_tools = validate_envelope(json.loads(raw))
+                    body = json.loads(raw)
+                    messages, allow_tools = validate_envelope(body)
                 else:
                     text, options = validate_request(json.loads(raw), config.model)
             except (ValueError, UnicodeError, OSError):
@@ -146,7 +147,8 @@ def create_server(config: ModelConfig, token: str, port: int = 8001) -> Threadin
             try:
                 if self.path == '/agent/chat':
                     worker = LocalOllama(replace(config, timeout_s=max(config.timeout_s, 180)))
-                    self.reply(200, worker.request('/api/chat', build_request(config.model, messages, allow_tools)))
+                    self.reply(200, worker.request('/api/chat', build_request(config.model, messages, allow_tools,
+                                                                          allowed_tools=body.get('allowed_tools'))))
                 else:
                     worker = LocalOllama(replace(config, **options))
                     self.reply(200, worker.generate(text))
