@@ -71,13 +71,18 @@ if QUANT_MODE == "fp8":
 else:
     quant_flags = ["--quantization", "bitsandbytes", "--load-format", "bitsandbytes"]
 
+# Tắt FlashInfer JIT ninja build và bật eager mode để khởi động nhanh trong 20 giây (không bị timeout)
+os.environ["VLLM_USE_FLASHINFER_SAMPLER"] = "0"
+os.environ["VLLM_USE_FLASHINFER"] = "0"
+
 vllm_cmd = [
     sys.executable, "-m", "vllm.entrypoints.openai.api_server",
     "--model", MODEL,
     *quant_flags,
     "--port", "8001",
-    "--gpu-memory-utilization", "0.85",    # Dành 85% VRAM
+    "--gpu-memory-utilization", "0.80",    # Dành 80% VRAM (chừa 5GB trống an toàn tuyệt đối)
     "--max-model-len", "8192",             # Context 8k tokens cho chuỗi hội thoại CSKH dài
+    "--enforce-eager",                     # BỎ QUA torch.compile & CUDA Graph JIT (khởi động tức thì)
     "--trust-remote-code",
     "--enable-auto-tool-choice",           # BẮT BUỘC: Tự động kích hoạt function calling
     "--tool-call-parser", "gemma4"         # BẮT BUỘC: Parser tool-calling native cho Gemma 4
