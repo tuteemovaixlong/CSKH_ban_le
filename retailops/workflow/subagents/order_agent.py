@@ -1,202 +1,95 @@
-"""Order & Logistics Subagent.
-Handles order status, order listing, item tracking, and shipping estimates using read-only tools.
-"""
-import copy
-import json
-import logging
-from typing import Any
+"""Order worker with ownership-safe results and evidence-only degraded replies."""
+import math
+import re
 
-from retailops.workflow.state import MultiAgentState
-
-log = logging.getLogger("retailops.order_agent")
+from retailops.workflow.subagents.read_worker import run_read_worker
 
 ORDER_SYSTEM_PROMPT = (
-    "Bạn là Chuyên viên Quản lý Đơn hàng & Logistics của shop Thương Mại Điện Tử.\n"
-    "Nhiệm vụ của bạn là tra cứu đơn hàng, lộ trình vận chuyển, tình trạng shipper giao hàng.\n"
-    "Quy tắc nghiệp vụ TMĐT 2026:\n"
-    "- Sử dụng các công cụ: `read_order`, `get_order`, `list_orders`, `track_shipment`, `search_products`.\n"
-    "- SOP 1 (Bưu tá báo ảo / không gọi): Khi kiểm tra thấy bưu tá cập nhật không liên lạc được dù khách ở nhà, trích xuất rõ Họ tên bưu tá và Số điện thoại, đồng thời khẳng định shop tin tưởng khách và đã kích hoạt lệnh khiếu nại yêu cầu bưu cục giao lại ngay trong ca trước 18:00.\n"
-    "- SOP 4 (Nghẽn trạm Mega SOC > 48h): Khi phát hiện kiện hàng bị trễ tại trạm phân loại liên tỉnh đợt Mega Sale, giải thích chân thành nguyên nhân ùn ứ, thông báo ngày giao dự kiến và chủ động tặng mã Voucher giảm giá 50.000đ (mã voucher từ kết quả tra cứu hoặc 'SALE50K-BN-SOC') gửi tặng khách hàng.\n"
-    "- Luôn giao tiếp lịch sự, minh bạch và bảo vệ quyền lợi tối đa cho khách hàng."
+    'You support a Vietnamese retail customer using server-bound read-only tools. '
+    'Use list_orders for all orders, get_order/get_context for current order facts, '
+    'and track_shipment for carrier information. Never invent identifiers or facts. '
+    'An order_not_found result means no matching order is visible to this account; '
+    'do not claim the order is absent globally or owned by somebody else. '
+    'Missing carrier information is unknown, not a delivery ETA. '
+    'These tools do not file complaints, issue vouchers, cancel orders or promise redelivery. '
+    'Do not claim any of those actions have occurred. Answer naturally in Vietnamese.'
 )
+_ALLOWED = frozenset(('get_order', 'list_orders', 'get_context', 'track_shipment',
+                      'get_product', 'search_products'))
+_STATUS_MAP = {'pending': 'Ch\u1edd x\u1eed l\u00fd', 'delivered': '\u0110\u00e3 giao',
+               'cancelled': '\u0110\u00e3 h\u1ee7y', 'processing': '\u0110ang chu\u1ea9n b\u1ecb h\u00e0ng',
+               'shipping': '\u0110ang v\u1eadn chuy\u1ec3n'}
 
-_STATUS_MAP = {
-    "pending": "Đang xử lý",
-    "delivered": "Đã giao thành công",
-    "cancelled": "Đã hủy",
-    "processing": "Đang chuẩn bị hàng",
-    "shipping": "Đang vận chuyển",
-}
+
+def _text(value, limit=180):
+    return value.strip()[:limit] if isinstance(value, str) else ''
+
+
+def _order(order):
+    if not isinstance(order, dict) or not _text(order.get('id')):
+        return None
+    status = _STATUS_MAP.get(order.get('status'), 'Ch\u01b0a r\u00f5 tr\u1ea1ng th\u00e1i')
+    lines = [f"{_text(order['id'])}: {status}"]
+    for key in ('name', 'variant'):
+        if _text(order.get(key)):
+            lines.append(_text(order[key]))
+    amount = order.get('amount')
+    if type(amount) in (int, float) and math.isfinite(amount) and amount >= 0:
+        lines.append(f"Gi\u00e1 tr\u1ecb: {amount:,.0f} VND")
+    return '\n'.join(lines)
 
 
 def _synthesize_order_response(tool_results):
-    """Build a customer-facing answer from tool results when the model returns empty content.
-
-    This handles the case where certain vLLM model backends (e.g. Gemma-4 with
-    ``--tool-call-parser gemma4``) emit follow-up text as internal *thought*
-    tokens that are not surfaced in the OpenAI-compatible ``content`` field,
-    causing ``assistant_message()`` to raise ``ProtocolError('Empty assistant
-    answer')``.  Instead of falling through to a generic "hệ thống bận" fallback
-    the agent now synthesises a helpful response from the actual tool output.
-    """
+    """Only show returned facts. None means that safe synthesis is impossible."""
+    parts = []
     for tr in tool_results:
-        name, args, result = tr["name"], tr["args"], tr["result"]
-
-        # --- Error responses ---
-        if isinstance(result, dict) and result.get("error"):
-            error_code = result["error"]
-            if error_code == "order_not_found":
-                oid = args.get("order_id", "")
-                return (
-                    f"Dạ em đã kiểm tra nhưng không tìm thấy đơn hàng {oid} "
-                    "trong hệ thống của shop. Anh/chị vui lòng kiểm tra lại mã đơn hàng "
-                    "(ví dụ: O-101, O-102) giúp em nhé ạ!"
-                )
-            return (
-                f"Dạ em gặp trục trặc khi tra cứu: {result.get('message', 'Lỗi không xác định')}. "
-                "Anh/chị vui lòng thử lại hoặc cung cấp thêm thông tin giúp em nhé ạ!"
-            )
-
-        # --- Shipment tracking (track_shipment) ---
-        if isinstance(result, dict) and "shipment" in result:
-            shipment = result["shipment"]
-            oid = result.get("order_id", args.get("order_id", ""))
-            carrier = shipment.get("carrier", "GHTK")
-            status_text = shipment.get("status_text", "Đang xử lý")
-            location = shipment.get("current_location", "Đang cập nhật")
-            eta = shipment.get("estimated_delivery", "Đang cập nhật")
-            shipper = shipment.get("shipper", "")
-            lines = [
-                f"Dạ em đã tra cứu hành trình đơn hàng {oid} qua {carrier} ạ:",
-                f"📦 Trạng thái: **{status_text}**",
-                f"📍 Vị trí hiện tại: {location}",
-                f"🚚 Dự kiến giao: {eta}",
-            ]
-            if shipper and shipper != "Chưa phân công":
-                lines.append(f"👤 Shipper: {shipper}")
-            # SOP 1: virtual delivery
-            if shipment.get("status") == "delivery_failed_virtual":
-                lines.append(
-                    "\n⚠️ Shop đã ghi nhận nghi vấn bưu tá **báo ảo không liên lạc được**. "
-                    "Shop tin tưởng anh/chị và đã kích hoạt lệnh khiếu nại yêu cầu bưu cục giao lại ngay trong ca trước 18:00 ạ!"
-                )
-            # SOP 4: mega sale delay
-            if shipment.get("status") == "sorting_delayed":
-                voucher = shipment.get("voucher_code", "SALE50K-BN-SOC")
-                lines.append(
-                    f"\n😔 Shop chân thành xin lỗi vì sự chậm trễ do ùn ứ đợt Mega Sale. "
-                    f"Shop xin tặng anh/chị mã Voucher giảm **50.000đ**: `{voucher}` để bù đắp nhé ạ!"
-                )
-            steps = shipment.get("steps", [])
-            if steps:
-                lines.append("\n📋 Lịch trình chi tiết:")
-                for step in steps[:4]:
-                    lines.append(f"  • {step.get('time', '')}: {step.get('event', '')}")
-            return "\n".join(lines)
-
-        # --- Order info (get_order / read_order) ---
-        if isinstance(result, dict) and "order" in result:
-            order = result["order"]
-            oid = order.get("id", args.get("order_id", ""))
-            status_text = _STATUS_MAP.get(order.get("status"), order.get("status", "Không rõ"))
-            name_product = order.get("name", "")
-            variant = order.get("variant", "")
-            amount = order.get("amount")
-            parts = [f"Dạ đơn hàng **{oid}**"]
-            if name_product:
-                parts[0] += f" – {name_product}"
-            if variant:
-                parts[0] += f" ({variant})"
-            parts.append(f"📦 Trạng thái: **{status_text}**")
-            if amount:
-                parts.append(f"💰 Giá trị: {amount:,.0f}đ")
-            parts.append("Anh/chị cần em hỗ trợ thêm gì không ạ?")
-            return "\n".join(parts)
-
-        # --- Order list (list_orders) ---
-        if isinstance(result, dict) and "orders" in result:
-            orders = result["orders"]
-            if not orders:
-                return "Dạ tài khoản của anh/chị hiện chưa có đơn hàng nào trong hệ thống ạ."
-            lines = ["Dạ đây là danh sách đơn hàng của anh/chị:"]
-            for o in orders[:5]:
-                st = _STATUS_MAP.get(o.get("status"), o.get("status", ""))
-                lines.append(f"  • **{o.get('id')}** – {o.get('name', '')} → {st}")
-            if result.get("truncated"):
-                lines.append("  _(và còn thêm đơn hàng khác)_")
-            lines.append("Anh/chị muốn em kiểm tra chi tiết đơn nào ạ?")
-            return "\n".join(lines)
-
-    return "Dạ em đã kiểm tra thông tin đơn hàng cho anh/chị rồi ạ. Anh/chị cần hỗ trợ thêm gì không ạ?"
-
-
-def run_order_agent(state: MultiAgentState, execute: Any, gateway: Any, timeout: int = 30) -> MultiAgentState:
-    """Execute order and logistics subagent with read-only tools."""
-    state = copy.deepcopy(state)
-    state["consecutive_ood_count"] = 0  # Reset OOD counter on retail domain inquiry
-    trace = state.setdefault("trace", {})
-
-    last_user_msg = next((m["content"] for m in reversed(state["messages"]) if m["role"] == "user"), "")
-    prompt_messages = [
-        {"role": "system", "content": ORDER_SYSTEM_PROMPT},
-        {"role": "user", "content": last_user_msg}
-    ]
-
-    # Let model inspect orders with tool permission
-    try:
-        response = gateway.chat(prompt_messages, True, timeout)
-        trace["model_calls"] = trace.get("model_calls", 0) + 1
-        trace["prompt_tokens"] = trace.get("prompt_tokens", 0) + (response.get("prompt_eval_count") or 0)
-        trace["generated_tokens"] = trace.get("generated_tokens", 0) + (response.get("eval_count") or 0)
-        message = response.get("message", {})
-        calls = message.get("tool_calls", [])
-
-        if calls:
-            tool_results = []
-            for call in calls:
-                name = call["function"]["name"]
-                args = call["function"]["arguments"]
-                if isinstance(args, str):
-                    try:
-                        args = json.loads(args)
-                    except Exception:
-                        args = {}
-                if name in ("read_order", "list_orders", "search_products", "track_shipment", "get_order", "get_context"):
-                    result = execute(name, args)
-                    state["tool_count"] += 1
-                    trace.setdefault("tools", []).append({"name": name, "status": "error" if isinstance(result, dict) and result.get("error") else "ok"})
-                    tool_results.append({"name": name, "args": args, "result": result})
-                    tool_content = json.dumps(result, ensure_ascii=False) if isinstance(result, (dict, list)) else str(result)
-                    tool_entry = {"role": "tool", "tool_name": name, "content": tool_content}
-                    prompt_messages.append(message)
-                    prompt_messages.append(tool_entry)
-
-            # Follow-up completion after tool results.
-            # Some vLLM backends (Gemma-4 with --tool-call-parser gemma4) return
-            # content:null on the follow-up turn, causing ProtocolError.  In that
-            # case we synthesise a response from the tool results directly.
-            try:
-                final_res = gateway.chat(prompt_messages, False, timeout)
-                trace["model_calls"] = trace.get("model_calls", 0) + 1
-                trace["prompt_tokens"] = trace.get("prompt_tokens", 0) + (final_res.get("prompt_eval_count") or 0)
-                trace["generated_tokens"] = trace.get("generated_tokens", 0) + (final_res.get("eval_count") or 0)
-                final_content = (final_res.get("message", {}).get("content") or "").strip()
-            except Exception as follow_exc:
-                log.info("Follow-up model call returned empty/error (%s), synthesising from tool results", follow_exc)
-                final_content = ""
-
-            if not final_content:
-                final_content = _synthesize_order_response(tool_results)
+        result = tr.get('result')
+        if not isinstance(result, dict):
+            return None
+        code = result.get('error')
+        if code:
+            raw_id = tr.get('args', {}).get('order_id', '')
+            oid = raw_id if isinstance(raw_id, str) and re.fullmatch(r'[A-Z]{1,6}-[0-9]{1,8}', raw_id) else ''
+            if code == 'order_not_found':
+                parts.append(f'Kh\u00f4ng t\u00ecm th\u1ea5y \u0111\u01a1n h\u00e0ng {oid} trong c\u00e1c \u0111\u01a1n thu\u1ed9c t\u00e0i kho\u1ea3n c\u1ee7a anh/ch\u1ecb. '
+                             'Vui l\u00f2ng ki\u1ec3m tra m\u00e3 ho\u1eb7c ch\u1ecdn m\u1ed9t \u0111\u01a1n trong danh s\u00e1ch b\u00ean ph\u1ea3i.')
+            elif code in ('permission_denied', 'forbidden'):
+                parts.append('T\u00e0i kho\u1ea3n hi\u1ec7n t\u1ea1i kh\u00f4ng c\u00f3 quy\u1ec1n th\u1ef1c hi\u1ec7n tra c\u1ee9u n\u00e0y.')
+            elif code in ('tool_not_allowed', 'product_not_found'):
+                parts.append('Ch\u01b0a tra c\u1ee9u \u0111\u01b0\u1ee3c th\u00f4ng tin ph\u00f9 h\u1ee3p. Vui l\u00f2ng x\u00e1c nh\u1eadn m\u00e3 \u0111\u01a1n/s\u1ea3n ph\u1ea9m.')
+            else:
+                return None
+        elif isinstance(result.get('shipment'), dict) and result['shipment']:
+            shipment = result['shipment']
+            lines = [f"Th\u00f4ng tin v\u1eadn chuy\u1ec3n \u0111\u01a1n {_text(result.get('order_id'))}:"]
+            for key, label in (('carrier', 'H\u00e3ng'), ('status_text', 'Tr\u1ea1ng th\u00e1i'),
+                               ('current_location', 'V\u1ecb tr\u00ed'), ('estimated_delivery', 'D\u1ef1 ki\u1ebfn giao')):
+                if _text(shipment.get(key)):
+                    lines.append(f'{label}: {_text(shipment[key])}')
+            if result.get('order_status') in _STATUS_MAP:
+                lines.append('Tr\u1ea1ng th\u00e1i \u0111\u01a1n: ' + _STATUS_MAP[result['order_status']])
+            if len(lines) == 1:
+                return None
+            parts.append('\n'.join(lines))
+        elif isinstance(result.get('order'), dict):
+            rendered = _order(result['order'])
+            if not rendered:
+                return None
+            parts.append(rendered)
+        elif isinstance(result.get('orders'), list):
+            orders = result['orders']
+            rendered = [_order(order) for order in orders]
+            if any(item is None for item in rendered):
+                return None
+            parts.append('\n\n'.join(rendered) if rendered else 'T\u00e0i kho\u1ea3n hi\u1ec7n ch\u01b0a c\u00f3 \u0111\u01a1n h\u00e0ng.')
+            if result.get('truncated'):
+                parts.append('Danh s\u00e1ch \u0111\u00e3 r\u00fat g\u1ecdn; c\u00f2n c\u00e1c \u0111\u01a1n kh\u00e1c ch\u01b0a hi\u1ec3n th\u1ecb.')
         else:
-            final_content = message.get("content", "Dạ anh/chị cung cấp giúp em mã đơn hàng để em kiểm tra ngay nhé ạ!")
+            return None
+    return '\n\n'.join(parts) if parts else None
 
-    except Exception as exc:
-        log.warning("Order agent execution fallback: %s", exc)
-        final_content = "Dạ hệ thống tra cứu đơn hàng đang bận một chút, anh/chị vui lòng để lại mã đơn hàng để em kiểm tra lại nhé ạ!"
 
-    msg = {"role": "assistant", "content": final_content}
-    state["messages"].append(msg)
-    state["fresh"].append(msg)
-    state["complete"] = True
-    state["subagent_history"].append("order_agent:done")
-    return state
+def run_order_agent(state, execute, gateway, timeout=30):
+    return run_read_worker(state, execute, gateway, prompt=ORDER_SYSTEM_PROMPT,
+                           allowed_tools=_ALLOWED, render=_synthesize_order_response,
+                           worker='order_agent', timeout=timeout)

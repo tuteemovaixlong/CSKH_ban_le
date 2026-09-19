@@ -1,43 +1,44 @@
-name: Repair review bundle
+name: Validate isolated order repair
 on:
   push:
     branches: [fix/order-tool-errors-20260920]
 permissions:
-  contents: read
+  contents: write
+concurrency:
+  group: isolated-order-repair
+  cancel-in-progress: false
 jobs:
-  bundle:
+  validate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 8
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
-          python-version: '3.13'
-      - name: Archive tracked source and exact dependency versions
+          python-version: '3.11'
+      - name: Apply exact reviewed source transformations
+        run: python scripts/apply_repair_transforms.py
+      - name: Verify Python, provider and browser regression tests
         run: |
-          mkdir -p /tmp/repair-review
-          git archive --format=zip --output=/tmp/repair-review/source.zip HEAD
-          git rev-parse HEAD > /tmp/repair-review/source-sha.txt
-          python - <<'PY'
-          import re
-          from pathlib import Path
-          lines = []
-          for line in Path('requirements-graph.txt').read_text().splitlines():
-              line = line.strip()
-              if not line or line.startswith('#'):
-                  continue
-              line = re.sub(r'\s+--hash=sha256:[0-9a-f]{64}', '', line).strip()
-              assert re.fullmatch(r'[A-Za-z0-9_.-]+==[^\s]+', line), line
-              lines.append(line)
-          Path('/tmp/repair-review/requirements.txt').write_text('\n'.join(lines) + '\n')
-          PY
-          python -m pip download --only-binary=:all: -r /tmp/repair-review/requirements.txt -d /tmp/repair-review/wheels
-          sha256sum /tmp/repair-review/wheels/* > /tmp/repair-review/wheel-sha256.txt
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: always()
-        with:
-          name: repair-review-py313
-          path: /tmp/repair-review
-          retention-days: 1
+          python -m pip install --only-binary=:all: --require-hashes -r requirements-web.txt -r requirements-postgres.txt -r requirements-graph.txt
+          python -m unittest discover -s tests -v
+          for file in web/*.js; do node --check "$file"; done
+          node tests/test_chat_focus.js
+          node tests/test_model_status.js
+          node tests/test_knowledge_sources.js
+          node tests/test_provider_selector.js
+          node tests/test_public_session.js
+          RETAILOPS_UI_TEST_MODE=persistent node tests/test_public_session.js
+          bash -n deploy/rollout-public-web.sh
+          python scripts/check_deployment_contract.py
+      - name: Rebuild embedded source and remove temporary repair helpers
+        run: |
+          python scripts/build_agent_notebook.py
+          python scripts/build_agent_notebook.py --check
+          rm scripts/apply_repair_transforms.py .github/workflows/repair-review-bundle.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add agent_protocol.py retailops/business/application.py retailops/workflow/subagents/witty_agent.py retailops/workflow/supervisor.py retailops_providers.py retailops_tools.py web/app.js Dockerfile deploy/rollout-public-web.sh notebooks/colab_agent.ipynb scripts/apply_repair_transforms.py .github/workflows/repair-review-bundle.yml
+          git diff --cached --check
+          git commit -m 'fix: apply verified order recovery and synchronize embedded notebook'
+          git push origin HEAD:refs/heads/fix/order-tool-errors-20260920
