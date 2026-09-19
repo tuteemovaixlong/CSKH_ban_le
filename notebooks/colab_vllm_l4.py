@@ -46,6 +46,17 @@ print("CELL 1 HOÀN TẤT: Môi trường vLLM đã sẵn sàng.")
 subprocess.run(["pkill", "-9", "-f", "vllm.entrypoints.openai.api_server"], stderr=subprocess.DEVNULL)
 time.sleep(2)
 
+# Nạp HF_TOKEN từ Secrets nếu có (để HuggingFace Hub không bị giới hạn tải trọng số)
+try:
+    from google.colab import userdata
+    hf_tok = userdata.get('HF_TOKEN')
+    if hf_tok:
+        os.environ['HF_TOKEN'] = hf_tok
+        os.environ['HUGGING_FACE_HUB_TOKEN'] = hf_tok
+        print("✅ Đã nạp HF_TOKEN từ Secrets.")
+except Exception:
+    pass
+
 MODEL = "yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2"
 print(f"Khởi động vLLM Server cho model: {MODEL} trên GPU L4...")
 
