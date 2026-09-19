@@ -3,6 +3,7 @@ Handles cancellations, complaints, and refunds with strict human-in-the-loop pro
 Never executes mutations directly!
 """
 import copy
+import json
 import re
 from typing import Any
 
@@ -38,8 +39,12 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
     ]
 
     action_proposal = None
+    trace = state.setdefault("trace", {})
     try:
         response = gateway.chat(prompt_messages, True, timeout)
+        trace["model_calls"] = trace.get("model_calls", 0) + 1
+        trace["prompt_tokens"] = trace.get("prompt_tokens", 0) + (response.get("prompt_eval_count") or 0)
+        trace["generated_tokens"] = trace.get("generated_tokens", 0) + (response.get("eval_count") or 0)
         message = response.get("message", {})
         calls = message.get("tool_calls", [])
 
@@ -47,10 +52,17 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
             for call in calls:
                 name = call["function"]["name"]
                 args = call["function"]["arguments"]
-                if name in ("prepare_cancellation", "check_inventory", "read_order", "get_product", "track_shipment"):
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except Exception:
+                        args = {}
+                if name in ("prepare_cancellation", "check_inventory", "read_order", "get_product", "track_shipment", "search_knowledge", "request_human_support"):
                     result = execute(name, args)
                     state["tool_count"] += 1
-                    tool_entry = {"role": "tool", "tool_name": name, "content": str(result)}
+                    trace.setdefault("tools", []).append({"name": name, "status": "error" if isinstance(result, dict) and result.get("error") else "ok"})
+                    tool_content = json.dumps(result, ensure_ascii=False) if isinstance(result, (dict, list)) else str(result)
+                    tool_entry = {"role": "tool", "tool_name": name, "content": tool_content}
                     prompt_messages.append(message)
                     prompt_messages.append(tool_entry)
 
@@ -83,6 +95,8 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
             oid = extracted_oid if extracted_oid else "O-303"
             # Fast check inventory
             stock_res = execute("check_inventory", {"product_id": "P-203", "size": "L", "color": "Xanh Navy"})
+            state["tool_count"] += 1
+            trace.setdefault("tools", []).append({"name": "check_inventory", "status": "ok"})
             in_stock = stock_res.get("in_stock", True)
             stock_qty = stock_res.get("stock", 18)
             action_proposal = {

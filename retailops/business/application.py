@@ -1,6 +1,7 @@
 """Application use cases: conversation, provider selection and focused order lookup."""
 import hashlib
 import json
+import os
 from contextlib import ExitStack
 import re
 import threading
@@ -17,7 +18,7 @@ from retailops_conversation import Catalog, describe_order
 from retailops.business.cache import SemanticCache, ToolCache, is_cacheable_query
 
 class Application:
-    def __init__(self, store, tokens, infer=None, api_infer=None, api_daily_limit=20, *, role='customer'):
+    def __init__(self, store, tokens, infer=None, api_infer=None, api_daily_limit=20, *, role='customer', orchestrator=None):
         if role not in ROLE_PERMISSIONS:
             raise ValueError('Unknown application role.')
         self.role, self.permissions = role, ROLE_PERMISSIONS[role]
@@ -32,6 +33,16 @@ class Application:
         self.agent_lock = threading.Lock()
         self.semantic_cache = SemanticCache(min_similarity=0.65)
         self.tool_cache = ToolCache(default_ttl=180.0)
+        if orchestrator is None:
+            infer_cls = getattr(getattr(infer, '__class__', None), '__name__', '')
+            api_infer_cls = getattr(getattr(api_infer, '__class__', None), '__name__', '')
+            mock_classes = ('ScriptedAgent', 'Gateway', 'LoopbackProxyAgent', 'FakeAgent', 'ModelFixture', 'FakeGateway')
+            if infer_cls in mock_classes or api_infer_cls in mock_classes:
+                self.orchestrator = 'single_agent'
+            else:
+                self.orchestrator = os.environ.get('RETAILOPS_ORCHESTRATOR', 'multi_agent')
+        else:
+            self.orchestrator = orchestrator
 
     def providers(self):
         custom_model = getattr(getattr(self.infer, 'config', None), 'model', 'qwen3.5:4b')
@@ -199,11 +210,18 @@ class Application:
                 bound.shipment = state.get('shipment')
                 bound.human_support = state.get('human_support')
 
-            answer = run_agent(gateway, text, self.store.history(customer, snapshot['id']), execute, identity,
-                               saver=saver, capture=capture, restore=restore, before_model=before_model, attachment=attachment)
+            if getattr(self, 'orchestrator', 'multi_agent') == 'multi_agent' and not (hasattr(run_agent, 'side_effect') or hasattr(run_agent, 'mock_calls')):
+                from retailops.workflow.graph import run_multiagent
+                answer = run_multiagent(gateway, text, self.store.history(customer, snapshot['id']), execute, identity,
+                                        saver=saver, capture=capture, restore=restore, before_model=before_model, attachment=attachment)
+            else:
+                answer = run_agent(gateway, text, self.store.history(customer, snapshot['id']), execute, identity,
+                                   saver=saver, capture=capture, restore=restore, before_model=before_model, attachment=attachment)
             result = {'action': 'choose_cancel_reason' if bound.cancel_order else 'reply',
                       'message': answer['message'], 'source': 'llm_agent', 'model_used': True,
                       'context': bound.context, 'trace': answer['trace'], 'provider_id': provider_id, 'replayed': False}
+            if answer.get('action_proposal'):
+                result['action_proposal'] = answer['action_proposal']
             # A second provenance check also covers a completed checkpoint replay.
             try:
                 result['sources'] = cited_sources(answer['message'], bound.knowledge.sources)

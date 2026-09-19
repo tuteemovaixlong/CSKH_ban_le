@@ -64,7 +64,7 @@ fi
 "${compose[@]}" config --quiet
 
 if [[ -n "$auto_host" && "$existing_host" != "$auto_host" ]]; then
-  "${compose[@]}" up -d --no-deps --no-build --pull never --force-recreate caddy >/dev/null || true
+  "${compose[@]}" up -d --no-deps --no-build --pull never --force-recreate web caddy >/dev/null || true
   sleep 3
 fi
 

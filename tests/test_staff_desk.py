@@ -15,16 +15,18 @@ from retailops.http.routes import api_result
 
 
 class DummyApp:
-    def __init__(self, store):
+    def __init__(self, store, role="staff"):
         self.store = store
-        self.role = "customer"
-        self.permissions = {"orders:read", "orders:cancel"}
+        self.role = role
+        from retailops.business.permissions import ROLE_PERMISSIONS
+        self.permissions = set(ROLE_PERMISSIONS.get(role, set()))
         self.infer = None
         self.api_infer = None
         self.catalog = {"products": []}
 
     def require_permission(self, perm):
-        pass
+        if perm not in self.permissions:
+            raise ApiError(403, 'permission_denied', 'Tài khoản này không có quyền thực hiện thao tác.')
 
 
 class StaffDeskTests(unittest.TestCase):
@@ -126,6 +128,36 @@ class StaffDeskTests(unittest.TestCase):
         })
         self.assertEqual(status, 200)
         self.assertTrue(res["resolved"])
+
+        # 5. RBAC: Customer without staff permission is rejected with 403
+        customer_app = DummyApp(self.store, role="customer")
+        with self.assertRaises(ApiError) as ctx:
+            api_result(customer_app, "C-001", "GET", "/api/staff/escalations")
+        self.assertEqual(ctx.exception.status, 403)
+        self.assertEqual(ctx.exception.code, "permission_denied")
+
+        with self.assertRaises(ApiError) as ctx:
+            api_result(customer_app, "C-001", "POST", "/api/staff/reply", {
+                "conversation_id": self.cid,
+                "message": "Trái phép",
+                "staff_name": "Hacker"
+            })
+        self.assertEqual(ctx.exception.status, 403)
+
+        with self.assertRaises(ApiError) as ctx:
+            api_result(customer_app, "C-001", "POST", "/api/staff/resolve", {
+                "conversation_id": self.cid,
+                "staff_name": "Hacker"
+            })
+        self.assertEqual(ctx.exception.status, 403)
+
+        # 6. Customer can access their OWN conversation messages, stranger gets 403
+        status, res = api_result(customer_app, "C-001", "GET", f"/api/staff/conversations/{self.cid}/messages")
+        self.assertEqual(status, 200)
+
+        with self.assertRaises(ApiError) as ctx:
+            api_result(customer_app, "C-999", "GET", f"/api/staff/conversations/{self.cid}/messages")
+        self.assertEqual(ctx.exception.status, 403)
 
     def test_dpo_export_uses_staff_reply_as_gold_chosen(self):
         # Staff replies

@@ -98,6 +98,23 @@ class TestManagerCRUD(unittest.TestCase):
             row = db.execute("SELECT status FROM orders WHERE id='O-101'").fetchone()
             self.assertEqual(row['status'], 'delivered')
 
+    def test_manager_rbac_rejection(self):
+        customer_app = Application(self.store, {}, role='customer')
+        for method, path, body in [
+            ('GET', '/api/manager/products', None),
+            ('GET', '/api/manager/kpis', None),
+            ('GET', '/api/manager/benchmark', None),
+            ('POST', '/api/manager/products', {'id': 'P-888', 'name': 'Áo Lậu'}),
+            ('POST', '/api/manager/products/update', {'id': 'P-101', 'price': 1000}),
+            ('POST', '/api/manager/products/delete', {'id': 'P-101'}),
+            ('POST', '/api/manager/orders/update-status', {'order_id': 'O-101', 'status': 'delivered'}),
+        ]:
+            with self.subTest(method=method, path=path):
+                with self.assertRaises(ApiError) as ctx:
+                    api_result(customer_app, 'C-001', method, path, body)
+                self.assertEqual(ctx.exception.status, 403)
+                self.assertEqual(ctx.exception.code, 'permission_denied')
+
 
 if __name__ == '__main__':
     unittest.main()

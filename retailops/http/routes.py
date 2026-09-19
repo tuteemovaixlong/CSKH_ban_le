@@ -3,9 +3,9 @@ import json
 from pathlib import Path
 import re
 import time
-from retailops.workflow import approval
 from retailops.core import ApiError, fields, require
-from retailops.business.permissions import CANCEL
+from retailops.workflow import approval
+from retailops.business.permissions import CANCEL, STAFF, MANAGER
 
 
 def _account_usage(app):
@@ -53,9 +53,11 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
                 return (200, {"orders": all_orders, "scope": "store_all"})
             return (200, {"orders": app.store.orders(customer), "scope": "customer"})
         if path == "/api/manager/products":
+            app.require_permission(MANAGER)
             prods = app.catalog.all_products()
             return (200, {"products": prods, "count": len(prods)})
         if path == "/api/manager/kpis":
+            app.require_permission(MANAGER)
             with app.store.connection() as db:
                 rows = [dict(r) for r in db.execute("SELECT status, amount FROM orders").fetchall()]
             total_orders = len(rows)
@@ -75,6 +77,7 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
                 "active_products": len(app.catalog.products)
             })
         if path == "/api/manager/benchmark":
+            app.require_permission(MANAGER)
             report_data = None
             for candidate in [
                 Path("evals/reports/live_benchmark_report_latest.json"),
@@ -102,10 +105,16 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
         if m:
             return (200, {"order": app.store.lookup(customer, m[1])})
         if path == "/api/staff/escalations":
+            app.require_permission(STAFF)
             return (200, {"escalations": app.store.escalations()})
         m_trans = re.fullmatch(r"/api/(?:staff/)?conversations/([a-f0-9-]{36})/messages", path)
         if m_trans:
-            return (200, app.store.conversation_transcript(m_trans[1]))
+            cid = m_trans[1]
+            if STAFF not in app.permissions:
+                with app.store.connection() as db:
+                    row = db.execute("SELECT customer_id FROM conversations WHERE id=?", (cid,)).fetchone()
+                require(row is not None and row["customer_id"] == customer, 403, "permission_denied", "Tài khoản này không có quyền thực hiện thao tác.")
+            return (200, app.store.conversation_transcript(cid))
     if method == "POST":
         if path == '/api/conversations':
             return (201, app.new_conversation(customer, body))
@@ -129,6 +138,7 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
             res = app.store.customer_message(customer, cid, msg)
             return (200, res)
         if path == "/api/staff/reply":
+            app.require_permission(STAFF)
             require(isinstance(body, dict) and {"conversation_id", "message"}.issubset(set(body)) and set(body).issubset({"conversation_id", "message", "staff_name"}), 400, "invalid_fields", "Các trường của yêu cầu không hợp lệ.")
             cid, msg = body["conversation_id"], body["message"]
             staff_name = body.get("staff_name", "Mai Anh (Chuyên viên CSKH)")
@@ -138,6 +148,7 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
             res = app.store.staff_reply(row["customer_id"], cid, staff_name, msg)
             return (200, res)
         if path == "/api/staff/resolve":
+            app.require_permission(STAFF)
             require(isinstance(body, dict) and {"conversation_id"}.issubset(set(body)) and set(body).issubset({"conversation_id", "staff_name"}), 400, "invalid_fields", "Các trường của yêu cầu không hợp lệ.")
             cid = body["conversation_id"]
             staff_name = body.get("staff_name", "Mai Anh (Chuyên viên CSKH)")
@@ -159,6 +170,7 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
             res = bound(tool_name, arguments)
             return (200, {'tool_name': tool_name, 'arguments': arguments, 'result': res})
         if path in ("/api/manager/products", "/api/manager/products/create"):
+            app.require_permission(MANAGER)
             require(isinstance(body, dict), 400, "invalid_body", "Dữ liệu sản phẩm không hợp lệ.")
             pid = str(body.get("id", "")).strip().upper()
             name = str(body.get("name", "")).strip()
@@ -184,6 +196,7 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
             app.catalog.add_product(product)
             return (201, {"status": "ok", "product": product, "message": f"Đã thêm sản phẩm {name} ({pid}) vào catalog."})
         if path == "/api/manager/products/update":
+            app.require_permission(MANAGER)
             require(isinstance(body, dict) and "id" in body, 400, "invalid_body", "Thiếu mã sản phẩm.")
             pid = str(body["id"]).strip().upper()
             if pid not in app.catalog.products:
@@ -195,6 +208,7 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
             product = app.catalog.update_product(pid, updates)
             return (200, {"status": "ok", "product": product, "message": f"Đã cập nhật sản phẩm {pid}."})
         if path == "/api/manager/products/delete":
+            app.require_permission(MANAGER)
             require(isinstance(body, dict) and "id" in body, 400, "invalid_body", "Thiếu mã sản phẩm.")
             pid = str(body["id"]).strip().upper()
             try:
@@ -205,6 +219,7 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
                 raise ApiError(404, "product_not_found", str(exc))
             return (200, {"status": "ok", "removed": removed, "message": f"Đã xóa sản phẩm {pid}."})
         if path == "/api/manager/orders/update-status":
+            app.require_permission(MANAGER)
             require(isinstance(body, dict) and {"order_id", "status"}.issubset(set(body)), 400, "invalid_body", "Thiếu order_id hoặc status.")
             oid, new_status = body["order_id"], body["status"]
             require(new_status in ('pending', 'delivered', 'cancelled'), 400, "invalid_status", "Trạng thái phải là pending, delivered hoặc cancelled.")
