@@ -23,6 +23,8 @@ API_MODEL = 'meta/muse-spark-1.3-contributor'
 API_MODELS = {
     API_MODEL,
     'meta/muse-spark-1.2-contributor',
+    'yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2',
+    'yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2-GGUF',
     'google/gemma-4-26b-a4b-it:free',
     'google/gemma-4-26b-a4b-it',
     'google/gemma-4-31b-it:free',
@@ -316,9 +318,12 @@ class OpenRouterAgent:
         if result.get('error'):
             raise AgentError('api_unavailable', 'API báo lỗi xử lý. Không tự chuyển model hoặc gửi lại yêu cầu.')
         returned_model = result.get('model') or ''
-        if returned_model != self.model and not (
-            self.is_google and (returned_model.startswith(self.model) or returned_model.startswith('models/' + self.model) or self.model in returned_model)
-        ):
+        model_matches = (
+            returned_model == self.model
+            or (self.is_google and (returned_model.startswith(self.model) or returned_model.startswith('models/' + self.model) or self.model in returned_model))
+            or (custom_endpoint and (self.model in returned_model or returned_model in self.model or not returned_model))
+        )
+        if not model_matches:
             raise AgentError('api_model_mismatch', 'API trả về model khác cấu hình; lượt chat chưa được chấp nhận.')
         choices = result.get('choices')
         if not isinstance(choices, list) or len(choices) != 1 or not isinstance(choices[0], dict):

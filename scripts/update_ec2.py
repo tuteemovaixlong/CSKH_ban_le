@@ -35,7 +35,7 @@ def main():
     parser.add_argument("--ip", help="New Public IPv4 of the EC2 instance (e.g. 18.206.237.32)")
     parser.add_argument("--auto-ip", action="store_true", help="Auto-detect public IPv4 via AWS metadata/checkip")
     parser.add_argument("--api-endpoint", help="Custom OpenAI/vLLM API endpoint (e.g. https://.../v1/chat/completions)")
-    parser.add_argument("--api-model", help="Model name for API endpoint (e.g. Qwen/Qwen2.5-VL-7B-Instruct-AWQ)")
+    parser.add_argument("--api-model", help="Model name for API endpoint (e.g. yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2)")
     parser.add_argument("--api-key", help="API key for endpoint (defaults to 32-char token if omitted)")
     args = parser.parse_args()
 
@@ -58,7 +58,7 @@ def main():
                 if k not in ("RETAILOPS_API_ENABLED", "RETAILOPS_API_PROVIDER", "RETAILOPS_API_MODEL", "RETAILOPS_API_ENDPOINT", "RETAILOPS_API_KEY", "OPENROUTER_API_KEY"):
                     api_lines.append(line)
         api_key = args.api_key or "vllm-key-retailops-32-chars-token-123456"
-        model = args.api_model or "Qwen/Qwen2.5-VL-7B-Instruct-AWQ"
+        model = args.api_model or "yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2"
         api_lines.extend([
             "RETAILOPS_API_ENABLED=true",
             "RETAILOPS_API_PROVIDER=custom",

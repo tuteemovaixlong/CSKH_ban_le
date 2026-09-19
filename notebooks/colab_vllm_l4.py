@@ -1,14 +1,15 @@
 # ==============================================================================
-# RETAILOPS 2026 — vLLM + Qwen2.5-VL-7B-Instruct-AWQ trên GPU L4 (Google Colab)
-# Đã kích hoạt đầy đủ Tool Calling / Function Calling và ngrok HTTPS Tunnel
+# RETAILOPS 2026 — Gemma-4-12B-Agentic 4-bit trên Google Colab (GPU L4 / T4)
+# Model: yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2
+# Đã nén 4-bit (BitsAndBytes / GGUF Q4), kích hoạt Tool Calling và ngrok HTTPS Tunnel
 # ==============================================================================
 # Hướng dẫn sử dụng:
-# 1. Chọn Runtime -> Change runtime type -> L4 GPU (hoặc A100/V100).
-# 2. Điền Colab Secrets: NGROK_AUTHTOKEN và RETAILOPS_INFERENCE_TOKEN.
+# 1. Chọn Runtime -> Change runtime type -> L4 GPU (hoặc T4 GPU / A100).
+# 2. Điền Colab Secrets: NGROK_AUTHTOKEN (lấy miễn phí từ dashboard.ngrok.com).
 # 3. Chạy từng CELL theo thứ tự bên dưới.
 # ==============================================================================
 
-# %% [CELL 1] Cài đặt dependencies vLLM & pyngrok
+# %% [CELL 1] Cài đặt dependencies vLLM 4-bit & pyngrok
 import glob
 import json
 import os
@@ -18,9 +19,15 @@ import sys
 import time
 import urllib.request
 
-print("Đang cài đặt vLLM và pyngrok...", flush=True)
+print("Đang cài đặt vLLM, bitsandbytes (4-bit) và pyngrok...", flush=True)
 subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", "pip"], check=False)
-subprocess.run([sys.executable, "-m", "pip", "install", "vllm>=0.6.0", "pyngrok>=7,<8"], check=True)
+subprocess.run([
+    sys.executable, "-m", "pip", "install",
+    "vllm>=0.6.0",
+    "bitsandbytes>=0.43.0",
+    "accelerate",
+    "pyngrok>=7,<8"
+], check=True)
 
 # Dọn dẹp xung đột torchaudio nếu có
 for path in glob.glob('/usr/local/lib/python*/dist-packages/torchaudio*'):
@@ -32,32 +39,35 @@ for path in glob.glob('/usr/local/lib/python*/dist-packages/torchaudio*'):
     except Exception:
         pass
 
-print("CELL 1 HOÀN TẤT: Môi trường đã sẵn sàng.")
+print("CELL 1 HOÀN TẤT: Môi trường vLLM 4-bit đã sẵn sàng.")
 
-# %% [CELL 2] Khởi động vLLM Server với Tool Calling và Warmup Test
+# %% [CELL 2] Khởi động vLLM Server 4-bit với Gemma-4 Tool Calling
 subprocess.run(["pkill", "-9", "-f", "vllm.entrypoints.openai.api_server"], stderr=subprocess.DEVNULL)
 time.sleep(2)
 
-MODEL = "Qwen/Qwen2.5-VL-7B-Instruct-AWQ"
-print(f"Khởi động vLLM Server cho model: {MODEL} trên GPU L4...")
+MODEL = "yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2"
+print(f"Khởi động vLLM Server 4-bit cho model: {MODEL} trên GPU...")
 
+# Lượng tử hóa 4-bit bằng bitsandbytes giúp model 12B chỉ tốn ~5.8GB VRAM (vừa vặn T4 16GB và L4 24GB)
 vllm_cmd = [
     sys.executable, "-m", "vllm.entrypoints.openai.api_server",
     "--model", MODEL,
+    "--quantization", "bitsandbytes",      # BẬT LƯỢNG TỬ HÓA 4-BIT
+    "--load-format", "bitsandbytes",       # Nạp trọng số 4-bit NF4
     "--port", "8001",
-    "--gpu-memory-utilization", "0.85",    # Chiếm ~5.5GB, chừa 18GB trống cho KV Cache
-    "--max-model-len", "8192",             # Context 8k tokens cho cả ảnh và text
-    "--trust-remote-code",                 # Hỗ trợ kiến trúc Vision của Qwen
+    "--gpu-memory-utilization", "0.85",    # Dành 85% VRAM cho weights + KV cache
+    "--max-model-len", "8192",             # Context 8k tokens cho tác vụ multi-turn agentic
+    "--trust-remote-code",
     "--enable-auto-tool-choice",           # BẮT BUỘC: Cho phép tự động kích hoạt function calling
-    "--tool-call-parser", "hermes"         # BẮT BUỘC: Parser tool-calling chuẩn của Qwen2.5
+    "--tool-call-parser", "gemma4"         # BẮT BUỘC: Parser tool-calling native cho Gemma 4
 ]
 
 log_file = open("/tmp/vllm.log", "w")
 vllm_proc = subprocess.Popen(vllm_cmd, stdout=log_file, stderr=subprocess.STDOUT)
 globals()["_vllm_process"] = vllm_proc
 
-print("Đang nạp model 7B AWQ vào GPU (khoảng 1 - 2 phút)...", flush=True)
-deadline = time.monotonic() + 300
+print("Đang nạp model 12B 4-bit vào GPU (khoảng 1.5 - 3 phút)...", flush=True)
+deadline = time.monotonic() + 450
 ready = False
 
 while time.monotonic() < deadline:
@@ -75,7 +85,7 @@ while time.monotonic() < deadline:
 if not ready:
     raise RuntimeError("Quá thời gian chờ vLLM khởi động. Xem log: /tmp/vllm.log")
 
-print("✅ vLLM QWEN 2.5-VL INSTRUCT ĐÃ SẴN SÀNG TRÊN CỔNG 8001 (TOOL CALLING ON)!")
+print("✅ vLLM GEMMA-4-12B AGENTIC (4-BIT) ĐÃ SẴN SÀNG TRÊN CỔNG 8001 (TOOL CALLING ON)!")
 
 # Warmup test trực tiếp với allow_tools=True
 test_payload = {
