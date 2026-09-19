@@ -21,7 +21,8 @@ jobs:
           git archive --format=zip --output=/tmp/repair-review/source.zip HEAD
           git rev-parse HEAD > /tmp/repair-review/source-sha.txt
       - name: Download pinned dependencies for isolated tests
-        run: python -m pip download --only-binary=:all: --require-hashes -r requirements-graph.txt -d /tmp/repair-review/wheels
+        run: |
+          python -m pip download --only-binary=:all: --require-hashes -r requirements-graph.txt -d /tmp/repair-review/wheels
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
