@@ -1,0 +1,24 @@
+name: Isolated repair source
+on:
+  push:
+    branches: [fix/worker-tools-shipment-ui-20260920]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Archive tracked source
+        run: |
+          mkdir -p /tmp/repair-source
+          git archive --format=zip --output=/tmp/repair-source/source.zip HEAD
+          git rev-parse HEAD > /tmp/repair-source/source-sha.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: repair-source
+          path: /tmp/repair-source
+          retention-days: 1
