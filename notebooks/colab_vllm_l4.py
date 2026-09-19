@@ -1,15 +1,15 @@
 # ==============================================================================
-# RETAILOPS 2026 — Gemma-4-12B-Agentic 4-bit trên Google Colab (GPU L4 / T4)
+# RETAILOPS 2026 — Gemma-4-12B-Agentic trên Google Colab (GPU L4)
 # Model: yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2
-# Đã nén 4-bit (BitsAndBytes / GGUF Q4), kích hoạt Tool Calling và ngrok HTTPS Tunnel
+# Hỗ trợ: FP8 Native (Khuyên dùng cho L4 Ada Lovelace) hoặc BitsAndBytes 4-bit
 # ==============================================================================
 # Hướng dẫn sử dụng:
-# 1. Chọn Runtime -> Change runtime type -> L4 GPU (hoặc T4 GPU / A100).
-# 2. Điền Colab Secrets: NGROK_AUTHTOKEN (lấy miễn phí từ dashboard.ngrok.com).
+# 1. Chọn Runtime -> Change runtime type -> L4 GPU.
+# 2. Điền Colab Secrets: NGROK_AUTHTOKEN.
 # 3. Chạy từng CELL theo thứ tự bên dưới.
 # ==============================================================================
 
-# %% [CELL 1] Cài đặt dependencies vLLM 4-bit & pyngrok
+# %% [CELL 1] Cài đặt dependencies vLLM, vllm-bnb-plugin & pyngrok
 import glob
 import json
 import os
@@ -19,12 +19,13 @@ import sys
 import time
 import urllib.request
 
-print("Đang cài đặt vLLM, bitsandbytes (4-bit) và pyngrok...", flush=True)
+print("Đang cài đặt vLLM, plugin lượng tử hóa và pyngrok...", flush=True)
 subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", "pip"], check=False)
 subprocess.run([
     sys.executable, "-m", "pip", "install",
     "vllm>=0.6.0",
-    "bitsandbytes>=0.43.0",
+    "vllm-bnb-plugin",          # BẮT BUỘC nếu dùng bitsandbytes 4-bit
+    "bitsandbytes>=0.45.0",      # Hỗ trợ 4-bit NF4
     "accelerate",
     "pyngrok>=7,<8"
 ], check=True)
@@ -39,26 +40,35 @@ for path in glob.glob('/usr/local/lib/python*/dist-packages/torchaudio*'):
     except Exception:
         pass
 
-print("CELL 1 HOÀN TẤT: Môi trường vLLM 4-bit đã sẵn sàng.")
+print("CELL 1 HOÀN TẤT: Môi trường vLLM đã sẵn sàng.")
 
-# %% [CELL 2] Khởi động vLLM Server 4-bit với Gemma-4 Tool Calling
+# %% [CELL 2] Khởi động vLLM Server với Tool Calling
 subprocess.run(["pkill", "-9", "-f", "vllm.entrypoints.openai.api_server"], stderr=subprocess.DEVNULL)
 time.sleep(2)
 
 MODEL = "yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2"
-print(f"Khởi động vLLM Server 4-bit cho model: {MODEL} trên GPU...")
+print(f"Khởi động vLLM Server cho model: {MODEL} trên GPU L4...")
 
-# Lượng tử hóa 4-bit bằng bitsandbytes giúp model 12B chỉ tốn ~5.8GB VRAM (vừa vặn T4 16GB và L4 24GB)
+# CHỌN 1 TRONG 2 CÁCH QUANTIZATION DƯỚI ĐÂY:
+# -----------------------------------------------------------------------------------------------------
+# CÁCH 1 (KHUYÊN DÙNG CHO L4): Dùng FP8 Native (Ada Lovelace Tensor Core).
+# Model 12B chiếm ~12GB/24GB VRAM, còn dư 12GB cho KV cache, tốc độ cực nhanh, không giảm độ chính xác.
+QUANT_MODE = "fp8"  # Hoặc đổi thành "bitsandbytes" nếu muốn ép về 4-bit (~6GB VRAM)
+
+if QUANT_MODE == "fp8":
+    quant_flags = ["--quantization", "fp8"]
+else:
+    quant_flags = ["--quantization", "bitsandbytes", "--load-format", "bitsandbytes"]
+
 vllm_cmd = [
     sys.executable, "-m", "vllm.entrypoints.openai.api_server",
     "--model", MODEL,
-    "--quantization", "bitsandbytes",      # BẬT LƯỢNG TỬ HÓA 4-BIT
-    "--load-format", "bitsandbytes",       # Nạp trọng số 4-bit NF4
+    *quant_flags,
     "--port", "8001",
-    "--gpu-memory-utilization", "0.85",    # Dành 85% VRAM cho weights + KV cache
-    "--max-model-len", "8192",             # Context 8k tokens cho tác vụ multi-turn agentic
+    "--gpu-memory-utilization", "0.85",    # Dành 85% VRAM
+    "--max-model-len", "8192",             # Context 8k tokens cho chuỗi hội thoại CSKH dài
     "--trust-remote-code",
-    "--enable-auto-tool-choice",           # BẮT BUỘC: Cho phép tự động kích hoạt function calling
+    "--enable-auto-tool-choice",           # BẮT BUỘC: Tự động kích hoạt function calling
     "--tool-call-parser", "gemma4"         # BẮT BUỘC: Parser tool-calling native cho Gemma 4
 ]
 
@@ -66,7 +76,7 @@ log_file = open("/tmp/vllm.log", "w")
 vllm_proc = subprocess.Popen(vllm_cmd, stdout=log_file, stderr=subprocess.STDOUT)
 globals()["_vllm_process"] = vllm_proc
 
-print("Đang nạp model 12B 4-bit vào GPU (khoảng 1.5 - 3 phút)...", flush=True)
+print(f"Đang nạp model ({QUANT_MODE}) vào GPU L4 (khoảng 1.5 - 2 phút)...", flush=True)
 deadline = time.monotonic() + 450
 ready = False
 
@@ -85,7 +95,7 @@ while time.monotonic() < deadline:
 if not ready:
     raise RuntimeError("Quá thời gian chờ vLLM khởi động. Xem log: /tmp/vllm.log")
 
-print("✅ vLLM GEMMA-4-12B AGENTIC (4-BIT) ĐÃ SẴN SÀNG TRÊN CỔNG 8001 (TOOL CALLING ON)!")
+print("✅ vLLM GEMMA-4-12B AGENTIC ĐÃ SẴN SÀNG TRÊN CỔNG 8001 (TOOL CALLING ON)!")
 
 # Warmup test trực tiếp với allow_tools=True
 test_payload = {
@@ -127,7 +137,6 @@ except Exception:
 
 ngrok.set_auth_token(ngrok_token)
 
-# Dọn tunnel cũ nếu có
 try:
     for t in ngrok.get_tunnels():
         ngrok.disconnect(t.public_url)
