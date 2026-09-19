@@ -77,8 +77,14 @@ if [[ -n "$web_container" ]]; then
 fi
 target_image_id=$(docker image inspect --format '{{.Id}}' "$image_ref")
 
+overlay_changed=false
+compose_backup=""
+
 restore_previous() {
-  if [[ -z "$previous_image" || "$previous_image" == "$image_ref" ]]; then
+  if [[ "$overlay_changed" == true && -f "$compose_backup" ]]; then
+    cp -p "$compose_backup" compose.public.yaml
+  fi
+  if [[ -z "$previous_image" || ( "$previous_image" == "$image_ref" && "$overlay_changed" != true ) ]]; then
     echo 'No distinct previous live image is available for automatic rollback' >&2
     return 1
   fi
@@ -103,7 +109,7 @@ restore_previous() {
 }
 
 verify_live() {
-  local host target_hash live_hash health
+  local host target_hash live_hash health target_source live_source active_container
   host=$(sed -n 's/^RETAILOPS_PUBLIC_HOST=//p' public.env)
   [[ -n "$host" ]] || return 1
   # index.html is intentionally modified by the public adapter with auth/data-mode
@@ -116,10 +122,38 @@ payload=json.loads(sys.argv[1])
 assert payload.get('status') == 'ok', payload
 PY
   live_hash=$(curl --noproxy '*' --fail --silent --show-error --max-time 15 --retry 5 --retry-delay 2 --retry-all-errors -H 'Accept-Encoding: identity' -H 'Cache-Control: no-cache' "https://$host/chat-focus.js" | sha256sum | awk '{print $1}') || return 1
-  [[ "$live_hash" == "$target_hash" ]]
+  [[ "$live_hash" == "$target_hash" ]] || return 1
+  # An image ID is insufficient when a host code directory is mounted over /app.
+  target_source=$(docker run --rm --pull never --network none --entrypoint python "$image_ref" /app/deploy/source_consistency.py digest) || return 1
+  active_container=$("${compose[@]}" ps -q web) || return 1
+  live_source=$(docker exec "$active_container" python /app/deploy/source_consistency.py digest) || return 1
+  [[ "$live_source" == "$target_source" ]] || { echo 'PUBLIC_WEB_SOURCE_MISMATCH' >&2; return 1; }
+  echo "PUBLIC_WEB_SOURCE_MATCH=$live_source"
 }
 
-if [[ "$running_image_id" != "$target_image_id" ]]; then
+# Retire ONLY the old script's exact read-only code mounts. Keep /data,
+# catalog/knowledge fixtures, secrets, custom configuration and DB mounts intact.
+# Back up the original compose file so rollback restores code AND its mounts.
+compose_candidate=$(mktemp /opt/retailops/compose.image-code.XXXXXX)
+if ! docker run --rm -i --pull never --network none --entrypoint python "$image_ref" /app/deploy/source_consistency.py strip < compose.public.yaml > "$compose_candidate"; then
+  rm -f "$compose_candidate"
+  exit 1
+fi
+if ! cmp -s compose.public.yaml "$compose_candidate"; then
+  compose_backup=$(mktemp /opt/retailops/compose.pre-image-code.XXXXXX)
+  cp -p compose.public.yaml "$compose_backup"
+  mv "$compose_candidate" compose.public.yaml
+  overlay_changed=true
+  if ! "${compose[@]}" config --quiet; then
+    cp -p "$compose_backup" compose.public.yaml
+    exit 1
+  fi
+  echo "PUBLIC_WEB_LEGACY_CODE_MOUNTS_REMOVED backup=$compose_backup"
+else
+  rm -f "$compose_candidate"
+fi
+
+if [[ "$running_image_id" != "$target_image_id" || "$overlay_changed" == true ]]; then
   echo "PUBLIC_WEB_ROLLOUT: ${previous_image:-none} -> $image_ref"
   if ! "${compose[@]}" up -d --no-deps --no-build --pull never --force-recreate --wait --wait-timeout 90 web; then
     echo 'PUBLIC_WEB_ROLLOUT_FAILED; attempting rollback' >&2

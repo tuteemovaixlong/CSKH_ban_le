@@ -72,6 +72,7 @@ class OpenRouterAgent:
         if not custom_endpoint and model not in API_MODELS:
             raise ValueError('API model must be an approved model')
         self.key, self.model = key, model
+        self.is_custom = bool(custom_endpoint)
         if custom_endpoint:
             self.endpoint = custom_endpoint
             self.ENDPOINT = custom_endpoint
@@ -103,7 +104,9 @@ class OpenRouterAgent:
         return type(self)(self.key, self.model)
 
     def inspect(self):
-        if self.is_anthropic:
+        if self.is_custom:
+            provider_name = 'custom_api'
+        elif self.is_anthropic:
             provider_name = 'anthropic'
         elif self.is_google:
             provider_name = 'google'
@@ -152,6 +155,16 @@ class OpenRouterAgent:
                 entry = dict(message)
             translated.append(entry)
         return translated
+
+    def payload_messages(self, messages, system_prompt):
+        """Exactly one system turn; preserve transport indices/tool IDs."""
+        translated = self.translate(messages)
+        if translated and translated[0].get('role') == 'system':
+            worker_prompt = translated[0]['content']
+            content = system_prompt if worker_prompt == system_prompt else system_prompt + '\n\n' + worker_prompt
+            translated[0] = {'role': 'system', 'content': content}
+            return translated
+        return [{'role': 'system', 'content': system_prompt}, *translated]
 
     def request(self, payload, timeout):
         headers = {'Content-Type': 'application/json'}
@@ -202,10 +215,14 @@ class OpenRouterAgent:
                 })
 
         anthropic_messages = []
+        pending_ids = []
         i = 0
         while i < len(messages):
             m = messages[i]
-            if m['role'] == 'user':
+            if m['role'] == 'system':
+                system_prompt += '\n\n' + m['content']
+                i += 1
+            elif m['role'] == 'user':
                 if m.get('attachment') and m['attachment'].get('type') == 'image' and m['attachment'].get('data'):
                     att = m['attachment']
                     data = att.get('data', '')
@@ -228,18 +245,23 @@ class OpenRouterAgent:
                 content = []
                 if text:
                     content.append({'type': 'text', 'text': text})
-                tool_calls = m.get('tool_calls') or (saved.get('tool_calls') if saved else None) or []
-                for call in tool_calls:
+                tool_calls = (saved.get('tool_calls') if saved else None) or m.get('tool_calls') or []
+                pending_ids = []
+                for j, call in enumerate(tool_calls):
                     fn = call['function']
                     args = json.loads(fn['arguments']) if isinstance(fn['arguments'], str) else fn['arguments']
-                    content.append({'type': 'tool_use', 'id': call['id'], 'name': fn['name'], 'input': args})
+                    cid = call.get('id') or f'history_{i}_{j}'
+                    pending_ids.append(cid)
+                    content.append({'type': 'tool_use', 'id': cid, 'name': fn['name'], 'input': args})
                 anthropic_messages.append({'role': 'assistant', 'content': content or ''})
                 i += 1
             elif m['role'] == 'tool':
                 tool_results = []
                 while i < len(messages) and messages[i]['role'] == 'tool':
                     tm = messages[i]
-                    cid = tm.get('tool_call_id') or f'toolu_{i}'
+                    if not pending_ids:
+                        raise ProtocolError('Missing Anthropic tool call ID')
+                    cid = pending_ids.pop(0)
                     tool_results.append({'type': 'tool_result', 'tool_use_id': cid, 'content': tm['content']})
                     i += 1
                 anthropic_messages.append({'role': 'user', 'content': tool_results})
@@ -295,7 +317,7 @@ class OpenRouterAgent:
         system_prompt = GENERAL_SYSTEM if mode == 'general' else SYSTEM
         tools = [] if mode == 'general' else TOOLS
         tool_choice = 'none' if mode == 'general' or not allow_tools else 'auto'
-        payload = {'model': self.model, 'messages': [{'role': 'system', 'content': system_prompt}] + self.translate(messages),
+        payload = {'model': self.model, 'messages': self.payload_messages(messages, system_prompt),
                    'stream': False, 'max_tokens': 2048, 'temperature': 0.2}
         custom_endpoint = os.getenv('RETAILOPS_API_ENDPOINT', '').strip()
         if custom_endpoint:

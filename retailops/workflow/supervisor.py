@@ -4,6 +4,7 @@ Performs fast guardrails triage, sentiment detection, and routes queries to spec
 import copy
 import re
 from typing import Any
+from retailops_conversation import normalize
 
 from retailops.guardrails.sentiment import analyze_sentiment
 from retailops.guardrails.topic_filter import check_topic_safety
@@ -40,6 +41,8 @@ def run_supervisor(state: MultiAgentState) -> MultiAgentState:
     state = copy.deepcopy(state)
     last_user_msg = next((m["content"] for m in reversed(state["messages"]) if m["role"] == "user"), "")
     lower_msg = last_user_msg.lower()
+    folded = normalize(last_user_msg)
+    plural_orders = bool(re.search(r'\b(cac don|tat ca (cac )?don|liet ke don|kiem tra don)\b', folded))
 
     # 1. Guardrail: Topic Safety (Forbidden domains)
     topic_result = check_topic_safety(last_user_msg)
@@ -105,7 +108,7 @@ def run_supervisor(state: MultiAgentState) -> MultiAgentState:
         state["intent"] = "dispute_complaint"
         state["next_worker"] = "dispute_agent"
     # Check order inquiry / shipper / delay (SOP 1, SOP 4)
-    elif any(kw in lower_msg for kw in ORDER_KEYWORDS) or re.search(r'\b(o-\d+|dh\d+)\b', lower_msg):
+    elif plural_orders or any(kw in lower_msg for kw in ORDER_KEYWORDS) or re.search(r'\b(o-\d+|dh\d+)\b', lower_msg):
         state["intent"] = "order_inquiry"
         state["next_worker"] = "order_agent"
     # Fallback to Witty Pivot Agent (Chitchat / OOD / General)
