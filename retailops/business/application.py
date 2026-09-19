@@ -201,9 +201,10 @@ class Application:
                 try:
                     res = bound(name, arguments)
                 except ApiError as exc:
-                    if name in ('get_order', 'prepare_cancellation'):
+                    if name in ('get_order', 'get_context', 'track_shipment', 'prepare_cancellation'):
                         bound.context = {'order_id': None, 'product_id': None}
                         bound.cancel_order = None
+                        bound.shipment = None
                     return {'error': exc.code, 'message': exc.message}
                 if name in ('cancel_order', 'confirm_cancellation', 'update_shipping_address'):
                     self.tool_cache.invalidate(customer)
@@ -231,7 +232,8 @@ class Application:
                 answer = run_agent(gateway, text, self.store.history(customer, snapshot['id']), execute, identity,
                                    saver=saver, capture=capture, restore=restore, before_model=before_model, attachment=attachment)
             result = {'action': 'choose_cancel_reason' if bound.cancel_order else 'reply',
-                      'message': answer['message'], 'source': 'llm_agent', 'model_used': True,
+                      'message': answer['message'], 'source': answer['trace'].get('answer_source', 'llm_agent'),
+                      'model_used': answer['trace'].get('model_responses', answer['trace'].get('model_calls', 0)) > 0,
                       'context': bound.context, 'trace': answer['trace'], 'provider_id': provider_id, 'replayed': False}
             if answer.get('action_proposal'):
                 result['action_proposal'] = answer['action_proposal']
@@ -251,7 +253,8 @@ class Application:
             if getattr(bound, 'human_support', None):
                 result['human_support'] = bound.human_support
             self.store.finish_turn(customer, snapshot, request_id, digest, answer['messages'], result, bound.versions)
-            if (is_cacheable_query(text) and not bound.cancel_order
+            if (not attachment and result['source'] == 'llm_agent'
+                    and not result['trace'].get('degraded') and is_cacheable_query(text) and not bound.cancel_order
                     and not bound.context.get('order_id') and result.get('action') == 'reply'
                     and (provider_id != 'api' or getattr(self, 'cache_api', False))):
                 self.semantic_cache.store(text, answer['message'], action=result['action'])

@@ -130,7 +130,7 @@ const ratingLabels = {
 };
 const cookieAuth = document.body?.dataset.auth === 'cookie';
 const persistentAccount = document.body?.dataset.dataMode === 'persistent-demo';
-const sourceLabels = {interface: 'Hướng dẫn giao diện', store_data: 'Dữ liệu đơn hàng', llm_agent: 'Hội thoại model'};
+const sourceLabels = {tool_result: 'Kết quả công cụ đã xác minh', interface: 'Hướng dẫn giao diện', store_data: 'Dữ liệu đơn hàng', llm_agent: 'Hội thoại model'};
 function showContext(context) {
   byId('conversation-context').textContent = context?.order_id ? 'Đang trao đổi: ' + context.order_id
     : context?.product_id ? 'Đang trao đổi: sản phẩm ' + context.product_id : 'Chưa chọn đơn hoặc sản phẩm';
@@ -661,7 +661,7 @@ function renderOrder() {
   }
 }
 
-const eventLabels = {order_viewed: 'Tra cứu đơn', cancellation_proposed: 'Tạo đề xuất hủy', order_cancelled: 'Đã xác nhận hủy', proposal_dismissed: 'Bỏ đề xuất', model_extraction: 'Model phân tích yêu cầu', model_unavailable: 'Không kết nối được model', chat_replied: 'Trả lời hội thoại', agent_replied: 'Model trả lời', agent_failed: 'Lượt chat chưa hoàn tất'};
+const eventLabels = {order_viewed: 'Tra cứu đơn', cancellation_proposed: 'Tạo đề xuất hủy', order_cancelled: 'Đã xác nhận hủy', proposal_dismissed: 'Bỏ đề xuất', model_extraction: 'Model phân tích yêu cầu', model_unavailable: 'Không kết nối được model', chat_replied: 'Trả lời hội thoại', agent_replied: 'Phản hồi hội thoại', agent_failed: 'Lượt chat chưa hoàn tất'};
 async function refresh() {
   const [data, history] = await Promise.all([api('/api/orders'), api('/api/events')]);
   orders = data.orders || [];

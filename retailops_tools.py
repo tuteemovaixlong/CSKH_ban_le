@@ -186,18 +186,17 @@ class BoundTools:
                         carriers.update(json.load(f))
                 except Exception:
                     pass
-            shipment = carriers.get(oid, {
-                'carrier': 'Giao Hàng Tiết Kiệm (GHTK)',
-                'tracking_code': f'GHTK.VN.{oid.replace("-", "")}99',
-                'status': 'processing',
-                'status_text': 'Đang chuẩn bị kiện hàng',
-                'current_location': 'Kho tổng RetailOps',
-                'shipper': 'Chưa phân công',
-                'estimated_delivery': '2-3 ngày làm việc',
-                'steps': [{'time': 'Vừa xong', 'event': 'Đơn hàng đang được kiểm đếm và đóng gói'}]
-            })
+            # Unknown per-account synthetic orders have no carrier record. Do not
+            # fabricate a tracking code, carrier, location or delivery promise.
+            shipment = carriers.get(oid) or {
+                'carrier': None, 'tracking_code': None, 'status': 'unknown',
+                'status_text': 'Ch\u01b0a c\u00f3 d\u1eef li\u1ec7u h\u00e0nh tr\u00ecnh v\u1eadn chuy\u1ec3n',
+                'current_location': None, 'shipper': None,
+                'estimated_delivery': None, 'steps': []
+            }
             self.shipment = shipment
-            return {'order_id': oid, 'shipment': shipment, 'order_status': order['status']}
+            return {'order_id': oid, 'shipment': shipment, 'order_status': order['status'],
+                    'source': 'synthetic-demo/shipments'}
         if name == 'check_inventory':
             pid = args['product_id']
             size = args['size'].upper().strip()

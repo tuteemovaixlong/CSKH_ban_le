@@ -2,7 +2,9 @@
 Adheres strictly to sentiment, topic, and token guardrails.
 """
 import copy
+import time
 from typing import Any
+from retailops.workflow.subagents.read_worker import worker_messages, call_model
 
 from retailops.guardrails.rate_limiter import check_ood_limit
 from retailops.workflow.state import MultiAgentState
@@ -49,29 +51,19 @@ def run_witty_agent(state: MultiAgentState, gateway: Any, timeout: int = 15) -> 
         state["subagent_history"].append("witty_agent:strict_redirect")
         return state
 
-    # 3. Call Model with Witty Pivot Prompt & Hard Token Limit
-    prompt_messages = [
-        {"role": "system", "content": WITTY_SYSTEM_PROMPT},
-        {"role": "user", "content": last_user_msg}
-    ]
-
-    try:
-        # Request short completion
-        response = gateway.chat(prompt_messages, False, timeout)
-        content = response.get("message", {}).get("content", "").strip()
-        if not content:
-            content = (
-                "Dạ câu hỏi thú vị quá! Nhưng mà dù nghiên cứu gì đi nữa thì tinh thần sảng khoái vẫn là nhất ạ. "
-                "Shop đang có nhiều món đồ giúp nâng cao năng suất và giải trí, anh/chị ghé xem thử nhé!"
-            )
-    except Exception as exc:
-        import logging
-        logging.getLogger("retailops.witty_agent").warning("Witty agent execution fallback: %s", exc)
-        # Safe fallback
-        content = (
-            "Dạ kiến thức này rộng lớn quá em chỉ biết chút ít thôi ạ! "
-            "Nhưng về đồ mua sắm của shop thì em nắm rõ trong lòng bàn tay, anh/chị cần tư vấn món gì không ạ?"
-        )
+    # Preserve the attached image/history. Infrastructure errors must propagate.
+    prompt = WITTY_SYSTEM_PROMPT + (
+        "\nIf an image is attached, describe the visible image directly in Vietnamese. "
+        "Do not pretend to see an absent/unavailable image or turn image questions into sales copy."
+    )
+    prompt_messages = worker_messages(state, prompt)
+    response = call_model(gateway, prompt_messages, False, time.monotonic() + timeout,
+                          state.setdefault('trace', {}))
+    if response.get('tool_calls'):
+        from retailops_agent import AgentError
+        raise AgentError('agent_response_failed', 'Tools are disabled for this response.', state['trace'])
+    content = response['content']
+    state['trace']['answer_source'] = 'llm_agent'
 
     msg = {"role": "assistant", "content": content}
     state["messages"].append(msg)
