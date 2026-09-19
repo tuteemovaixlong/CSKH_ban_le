@@ -179,7 +179,7 @@ class ToolCache:
     Automatically invalidates customer orders when a mutation tool runs.
     """
 
-    CACHEABLE_TOOLS = {'get_order', 'get_product', 'list_products'}
+    CACHEABLE_TOOLS = {'get_order', 'get_product', 'list_products', 'search_knowledge'}
     MUTATING_TOOLS = {'cancel_order', 'confirm_cancellation', 'update_shipping_address'}
 
     def __init__(self, default_ttl: float = 180.0):

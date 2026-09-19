@@ -350,7 +350,7 @@ async function pollHumanChat() {
     }
 
     const feedbacks = data.feedbacks || [];
-    const isResolved = feedbacks.some(f => f.feedback_type === 'human_handoff' && f.reason_code === 'resolved' && f.sentiment_flag === 'resolved');
+    const isResolved = feedbacks.some(f => f.feedback_type === 'human_handoff' && f.reason_code === 'resolved');
     if (isResolved && isHumanMode) {
       if (!pollHumanChat.resolvedNotified) {
         pollHumanChat.resolvedNotified = true;
@@ -1178,7 +1178,7 @@ async function loadStaffQueue(silent = false) {
     }
     listEl.innerHTML = '';
     items.forEach(item => {
-      const isResolved = item.sentiment_flag === 'resolved';
+      const isResolved = item.reason_code === 'resolved';
       const card = el('div', 'ticket-card' + (activeStaffTicket && activeStaffTicket.id === item.id ? ' active' : ''));
       const header = el('div', 'ticket-header');
       header.append(

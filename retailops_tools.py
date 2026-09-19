@@ -11,7 +11,8 @@ ROOT = Path(__file__).resolve().parent
 
 class BoundTools:
     def __init__(self, store, catalog, customer, snapshot, identity, *, can_cancel=True):
-        self.store, self.catalog, self.customer = store, catalog, customer
+        self.store, self.catalog, self.customer, self.snapshot = store, catalog, customer, snapshot
+        self.conversation_id = snapshot.get('id') if isinstance(snapshot, dict) else None
         self.context = {k: snapshot[k] for k in ('order_id', 'product_id')}
         self.identity = identity
         self.versions = {}
@@ -231,5 +232,21 @@ class BoundTools:
                 'message': f'Đã chuyển yêu cầu hỗ trợ trực tiếp cho nhân viên: "{reason}". Chuyên viên CSKH đang vào phòng chat để hỗ trợ bạn.'
             }
             self.human_support = res
+            if hasattr(self, 'store') and (hasattr(self.store, 'record_feedback') or hasattr(self.store, 'save_feedback')):
+                cid = self.snapshot.get('id') if hasattr(self, 'snapshot') and isinstance(self.snapshot, dict) else None
+                if cid:
+                    try:
+                        fn = getattr(self.store, 'record_feedback', getattr(self.store, 'save_feedback', None))
+                        if fn:
+                            fn(self.customer, {
+                                'conversation_id': cid,
+                                'feedback_type': 'human_handoff',
+                                'sentiment_flag': 'neutral',
+                                'reason_code': 'customer_requested_human',
+                                'comment': reason
+                            })
+                    except Exception as e:
+                        import logging
+                        logging.getLogger('retailops.tools').warning("Failed to record handoff feedback: %s", e)
             return res
         return {'error': 'tool_not_allowed', 'message': 'No action performed.'}

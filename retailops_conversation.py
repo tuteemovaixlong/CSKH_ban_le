@@ -25,11 +25,15 @@ class Catalog:
         self.products = {p['id']: p for p in data['products']}
 
     def save(self):
+        data = {'source': self.source, 'products': list(self.products.values())}
         try:
-            data = {'source': self.source, 'products': list(self.products.values())}
             self.path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
-        except Exception:
-            pass
+        except (OSError, PermissionError) as exc:
+            import logging
+            logging.getLogger('retailops.catalog').warning(
+                "Catalog file %s cannot be written (read-only filesystem); mutation kept in-memory: %s",
+                self.path, exc
+            )
 
     def add_product(self, p):
         pid = p.get('id')

@@ -106,7 +106,8 @@ class Application:
                     400, 'attachment_too_large', 'Kích thước tệp đính kèm vượt quá 4MB.')
         snapshot = self.store.conversation(customer, body['conversation_id'])
         provider_id = snapshot['provider_id']
-        att_token = attachment.get('name', '') if attachment else ''
+        att_data_hash = hashlib.sha256(attachment['data'].encode()).hexdigest()[:16] if (attachment and 'data' in attachment) else ''
+        att_token = f"{attachment.get('name', '')}:{att_data_hash}" if attachment else ''
         digest = hashlib.sha256((text + att_token).encode()).hexdigest()
         replay = self.store.replay(customer, snapshot['id'], request_id, digest)
         if replay:
@@ -184,6 +185,18 @@ class Application:
             def execute(name, arguments):
                 cached_res = self.tool_cache.get(customer, name, arguments)
                 if cached_res is not None:
+                    # F04: Maintain freshness and evidence registration on cache hit
+                    if name in ('get_order', 'read_order') and isinstance(cached_res, dict) and 'order' in cached_res:
+                        order_obj = cached_res['order']
+                        if isinstance(order_obj, dict) and 'id' in order_obj and 'version' in order_obj:
+                            bound.versions[order_obj['id']] = order_obj['version']
+                            bound.context['order_id'] = order_obj['id']
+                    elif name == 'search_knowledge' and isinstance(cached_res, dict) and 'results' in cached_res:
+                        known = {s['citation_id'] for s in bound.knowledge.sources if isinstance(s, dict) and 'citation_id' in s}
+                        for s in cached_res.get('results', []):
+                            if isinstance(s, dict) and 'citation_id' in s and s['citation_id'] not in known:
+                                bound.knowledge.sources.append(dict(s))
+                                known.add(s['citation_id'])
                     return cached_res
                 try:
                     res = bound(name, arguments)
@@ -194,7 +207,7 @@ class Application:
                     return {'error': exc.code, 'message': exc.message}
                 if name in ('cancel_order', 'confirm_cancellation', 'update_shipping_address'):
                     self.tool_cache.invalidate(customer)
-                elif name != 'request_human_support':
+                elif name not in ('request_human_support', 'prepare_cancellation'):
                     self.tool_cache.set(customer, name, arguments, res)
                 return res
 

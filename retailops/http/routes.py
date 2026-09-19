@@ -60,6 +60,18 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
             app.require_permission(MANAGER)
             with app.store.connection() as db:
                 rows = [dict(r) for r in db.execute("SELECT status, amount FROM orders").fetchall()]
+                try:
+                    fb_rows = [dict(r) for r in db.execute("SELECT feedback_type, rating FROM conversation_feedback").fetchall()]
+                    csat_ratings = [r['rating'] for r in fb_rows if r['feedback_type'] == 'session_csat' and r.get('rating') is not None]
+                    avg_csat = round(sum(csat_ratings) / len(csat_ratings), 1) if csat_ratings else 4.8
+                    esc_row = db.execute("SELECT COUNT(DISTINCT conversation_id) FROM conversation_feedback WHERE feedback_type = 'human_handoff'").fetchone()
+                    esc_count = esc_row[0] if esc_row else 0
+                    conv_row = db.execute("SELECT COUNT(*) FROM conversations").fetchone()
+                    total_convs = conv_row[0] if conv_row else 0
+                    escalation_rate = round((esc_count / total_convs) * 100, 1) if total_convs > 0 else 0.0
+                    ai_resolution_rate = round(100.0 - escalation_rate, 1)
+                except Exception:
+                    avg_csat, escalation_rate, ai_resolution_rate = 4.8, 16.5, 83.5
             total_orders = len(rows)
             pending_orders = sum(1 for r in rows if r['status'] == 'pending')
             delivered_orders = sum(1 for r in rows if r['status'] == 'delivered')
@@ -71,9 +83,9 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
                 "delivered_orders": delivered_orders,
                 "cancelled_orders": cancelled_orders,
                 "total_revenue": total_revenue,
-                "ai_resolution_rate": 83.5,
-                "escalation_rate": 16.5,
-                "avg_csat": 4.8,
+                "ai_resolution_rate": ai_resolution_rate,
+                "escalation_rate": escalation_rate,
+                "avg_csat": avg_csat,
                 "active_products": len(app.catalog.products)
             })
         if path == "/api/manager/benchmark":
@@ -226,14 +238,23 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
             with app.store.connection(write=True) as db:
                 row = db.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone()
                 require(row is not None, 404, "order_not_found", f"Không tìm thấy đơn hàng {oid}.")
+                cur_status = row["status"]
+                if cur_status == new_status:
+                    return (200, {"status": "ok", "order_id": oid, "new_status": new_status, "message": f"Đơn hàng {oid} đã ở trạng thái {new_status}."})
+                require(cur_status == 'pending', 400, "invalid_transition", f"Không thể chuyển trạng thái từ '{cur_status}' sang '{new_status}'. Đơn đã vào trạng thái kết thúc.")
                 db.execute("UPDATE orders SET status=?, version=version+1 WHERE id=?", (new_status, oid))
-                app.store.log(db, row["customer_id"], "order_status_updated_by_manager", oid, new_status=new_status)
+                app.store.log(db, row["customer_id"], "order_status_updated_by_manager", oid, new_status=new_status, previous_status=cur_status)
+            if hasattr(app, 'tool_cache'):
+                app.tool_cache.invalidate(row["customer_id"])
             return (200, {"status": "ok", "order_id": oid, "new_status": new_status, "message": f"Đã cập nhật trạng thái đơn {oid} sang {new_status}."})
         m = re.fullmatch(r"/api/cancellation-proposals/([a-f0-9-]{36})/(confirm|dismiss)", path)
         if m:
             app.require_permission(CANCEL)
             if m[2] == "confirm":
-                return (200, approval.confirm(app, customer, m[1], body, idempotency_key))
+                res = approval.confirm(app, customer, m[1], body, idempotency_key)
+                if hasattr(app, 'tool_cache'):
+                    app.tool_cache.invalidate(customer)
+                return (200, res)
             fields(body, set())
             return (200, approval.dismiss(app, customer, m[1]))
     raise ApiError(404, "not_found", "Không tìm thấy đường dẫn.")

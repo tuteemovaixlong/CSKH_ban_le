@@ -98,6 +98,23 @@ class TestManagerCRUD(unittest.TestCase):
             row = db.execute("SELECT status FROM orders WHERE id='O-101'").fetchone()
             self.assertEqual(row['status'], 'delivered')
 
+    def test_manager_order_invalid_state_transitions(self):
+        # O-101 is pending initially. Transition to delivered is valid.
+        status, res = api_result(self.app, 'C-001', 'POST', '/api/manager/orders/update-status', {'order_id': 'O-101', 'status': 'delivered'})
+        self.assertEqual(status, 200)
+
+        # Transitioning from terminal state 'delivered' to 'pending' must fail
+        with self.assertRaises(ApiError) as ctx:
+            api_result(self.app, 'C-001', 'POST', '/api/manager/orders/update-status', {'order_id': 'O-101', 'status': 'pending'})
+        self.assertEqual(ctx.exception.status, 400)
+        self.assertEqual(ctx.exception.code, 'invalid_transition')
+
+        # Transitioning from terminal state 'delivered' to 'cancelled' must fail
+        with self.assertRaises(ApiError) as ctx:
+            api_result(self.app, 'C-001', 'POST', '/api/manager/orders/update-status', {'order_id': 'O-101', 'status': 'cancelled'})
+        self.assertEqual(ctx.exception.status, 400)
+        self.assertEqual(ctx.exception.code, 'invalid_transition')
+
     def test_manager_rbac_rejection(self):
         customer_app = Application(self.store, {}, role='customer')
         for method, path, body in [
