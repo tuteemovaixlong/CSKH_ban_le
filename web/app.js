@@ -916,14 +916,6 @@ async function send(text, requestId = crypto.randomUUID(), retry = false, attach
   if (result.human_support) {
     showHumanSupport(row, result.human_support);
     setHumanMode(true, result.human_support.support_rep || 'Chuyên viên CSKH');
-    if (conversationId) {
-      api('/api/feedback', {
-        conversation_id: conversationId,
-        turn_id: result.turn_id || null,
-        feedback_type: 'human_handoff',
-        reason_code: result.human_support.reason || 'user_requested'
-      }).catch(e => console.warn('Ghi log handoff lỗi:', e));
-    }
   }
   showSources(row, result.sources);
   showTrace(row, result.trace, result.replayed);

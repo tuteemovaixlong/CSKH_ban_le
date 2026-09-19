@@ -91,14 +91,18 @@ class StaffDeskTests(unittest.TestCase):
         self.assertEqual(res["author"], "staff")
         self.assertEqual(res["staff_name"], "Nguyễn Mai Anh")
 
-        # Verify feedback updated to resolved
+        # Verify feedback updated with staff in-progress comment, but NOT resolved yet
         feedbacks = transcript["feedbacks"]
         handoff = [f for f in feedbacks if f["feedback_type"] == "human_handoff"][0]
-        self.assertEqual(handoff["reason_code"], "resolved")
+        self.assertNotEqual(handoff["reason_code"], "resolved")
+        self.assertIn("Đang xử lý bởi", handoff["comment"])
 
         # Resolve escalation explicitly
         resolve_res = self.store.resolve_escalation(self.cid, "Nguyễn Mai Anh")
         self.assertTrue(resolve_res["resolved"])
+        transcript_after = self.store.conversation_transcript(self.cid)
+        handoff_resolved = [f for f in transcript_after["feedbacks"] if f["feedback_type"] == "human_handoff"][0]
+        self.assertEqual(handoff_resolved["reason_code"], "resolved")
 
     def test_http_staff_routes(self):
         # 1. GET /api/staff/escalations

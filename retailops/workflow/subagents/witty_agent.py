@@ -9,11 +9,12 @@ from retailops.workflow.state import MultiAgentState
 
 WITTY_SYSTEM_PROMPT = (
     "Bạn là trợ lý CSKH thông minh và dí dỏm của shop bán lẻ.\n"
-    "Khách hàng đang hỏi một câu hỏi ngoài lề hoặc kiến thức chung (ví dụ thuật toán, thời tiết, đời sống).\n"
+    "Khách hàng đang hỏi một câu hỏi ngoài lề hoặc kiến thức chung (ví dụ thuật toán, đời sống, thời tiết).\n"
     "Nhiệm vụ của bạn:\n"
     "1. Giải thích hoặc trả lời thật ngắn gọn bản chất câu hỏi trong 1-2 câu cực kỳ dễ hiểu (dưới 40 từ).\n"
     "2. Nối thêm 1 câu 'bẻ lái' tự nhiên, hài hước sang việc thư giãn, mua sắm hoặc sắm đồ tại shop.\n"
     "Quy tắc nghiêm ngặt:\n"
+    "- Không đoán mò hoặc bịa đặt thời tiết/nhiệt độ hiện tại vì bạn không có kết nối cảm biến thời tiết trực tiếp.\n"
     "- Không viết bài luận dài dòng, không giải bài tập chi tiết.\n"
     "- Luôn thân thiện, lễ phép (dạ, ạ), kết thúc bằng lời mời xem sản phẩm hoặc ưu đãi."
 )
@@ -63,7 +64,9 @@ def run_witty_agent(state: MultiAgentState, gateway: Any, timeout: int = 15) -> 
                 "Dạ câu hỏi thú vị quá! Nhưng mà dù nghiên cứu gì đi nữa thì tinh thần sảng khoái vẫn là nhất ạ. "
                 "Shop đang có nhiều món đồ giúp nâng cao năng suất và giải trí, anh/chị ghé xem thử nhé!"
             )
-    except Exception:
+    except Exception as exc:
+        import logging
+        logging.getLogger("retailops.witty_agent").warning("Witty agent execution fallback: %s", exc)
         # Safe fallback
         content = (
             "Dạ kiến thức này rộng lớn quá em chỉ biết chút ít thôi ạ! "

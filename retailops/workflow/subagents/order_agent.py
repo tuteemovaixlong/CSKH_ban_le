@@ -66,7 +66,9 @@ def run_order_agent(state: MultiAgentState, execute: Any, gateway: Any, timeout:
         else:
             final_content = message.get("content", "Dạ anh/chị cung cấp giúp em mã đơn hàng để em kiểm tra ngay nhé ạ!")
 
-    except Exception:
+    except Exception as exc:
+        import logging
+        logging.getLogger("retailops.order_agent").warning("Order agent execution fallback: %s", exc)
         final_content = "Dạ hệ thống tra cứu đơn hàng đang bận một chút, anh/chị vui lòng để lại mã đơn hàng để em kiểm tra lại nhé ạ!"
 
     msg = {"role": "assistant", "content": final_content}

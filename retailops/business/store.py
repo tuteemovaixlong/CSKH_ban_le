@@ -400,9 +400,9 @@ class BusinessStore:
             db.execute('UPDATE conversations SET revision=revision+1, expires_at=? WHERE id=?', (now + 1800, cid))
             db.execute('''
                 UPDATE conversation_feedback
-                SET reason_code='resolved', comment=?
-                WHERE conversation_id=? AND feedback_type='human_handoff'
-            ''', (f"Đã xử lý bởi {staff_name}: {message[:120]}", cid))
+                SET comment=?
+                WHERE conversation_id=? AND feedback_type='human_handoff' AND reason_code!='resolved'
+            ''', (f"Đang xử lý bởi {staff_name}: {message[:120]}", cid))
             
             self.log(db, customer_id, 'staff_replied', conv['order_id'], staff_name=staff_name, message=message)
             

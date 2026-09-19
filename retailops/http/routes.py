@@ -63,7 +63,8 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
                 try:
                     fb_rows = [dict(r) for r in db.execute("SELECT feedback_type, rating FROM conversation_feedback").fetchall()]
                     csat_ratings = [r['rating'] for r in fb_rows if r['feedback_type'] == 'session_csat' and r.get('rating') is not None]
-                    avg_csat = round(sum(csat_ratings) / len(csat_ratings), 1) if csat_ratings else 4.8
+                    avg_csat = round(sum(csat_ratings) / len(csat_ratings), 1) if csat_ratings else None
+                    csat_sample_size = len(csat_ratings)
                     esc_row = db.execute("SELECT COUNT(DISTINCT conversation_id) FROM conversation_feedback WHERE feedback_type = 'human_handoff'").fetchone()
                     esc_count = esc_row[0] if esc_row else 0
                     conv_row = db.execute("SELECT COUNT(*) FROM conversations").fetchone()
@@ -71,7 +72,7 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
                     escalation_rate = round((esc_count / total_convs) * 100, 1) if total_convs > 0 else 0.0
                     ai_resolution_rate = round(100.0 - escalation_rate, 1)
                 except Exception:
-                    avg_csat, escalation_rate, ai_resolution_rate = 4.8, 16.5, 83.5
+                    avg_csat, csat_sample_size, escalation_rate, ai_resolution_rate = None, 0, 0.0, 100.0
             total_orders = len(rows)
             pending_orders = sum(1 for r in rows if r['status'] == 'pending')
             delivered_orders = sum(1 for r in rows if r['status'] == 'delivered')
@@ -86,6 +87,7 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
                 "ai_resolution_rate": ai_resolution_rate,
                 "escalation_rate": escalation_rate,
                 "avg_csat": avg_csat,
+                "csat_sample_size": csat_sample_size,
                 "active_products": len(app.catalog.products)
             })
         if path == "/api/manager/benchmark":

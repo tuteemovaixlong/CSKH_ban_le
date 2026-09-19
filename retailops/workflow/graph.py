@@ -136,11 +136,19 @@ def run_multiagent(gateway: Any, text: str, history: list, execute: Any, identit
         }
         final_state = graph.invoke(initial_state, config, **({"durability": "sync"} if saver else {}))
 
-    final_state = copy.deepcopy(final_state)
     final_state["trace"]["latency_ms"] = round((time.monotonic() - started) * 1000, 2)
     final_state["trace"]["orchestrator"] = "multiagent_langgraph"
     final_state["trace"]["supervisor_intent"] = final_state.get("intent")
     final_state["trace"]["subagent_history"] = final_state.get("subagent_history")
+
+    if final_state.get("requires_human"):
+        human_reason = final_state.get("human_reason") or "Khách hàng yêu cầu hỗ trợ trực tiếp từ nhân viên"
+        try:
+            execute("request_human_support", {"reason": human_reason})
+            final_state["bound"] = capture()
+        except Exception:
+            pass
+
     restore(final_state.get("bound", {}))
 
     return {

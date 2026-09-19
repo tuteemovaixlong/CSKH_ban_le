@@ -63,7 +63,9 @@ def run_policy_agent(state: MultiAgentState, execute: Any, gateway: Any, timeout
         else:
             final_content = message.get("content", "Dạ anh/chị cần em hỗ trợ giải đáp về chính sách đổi trả, bảo hành hay ưu đãi nào ạ?")
 
-    except Exception:
+    except Exception as exc:
+        import logging
+        logging.getLogger("retailops.policy_agent").warning("Policy agent execution fallback: %s", exc)
         final_content = "Dạ hệ thống tra cứu chính sách đang được cập nhật, anh/chị vui lòng để lại câu hỏi cụ thể để shop giải đáp nhé ạ!"
 
     msg = {"role": "assistant", "content": final_content}

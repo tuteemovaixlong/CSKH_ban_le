@@ -186,6 +186,135 @@ class TestAuditRemediation(unittest.TestCase):
                 except Exception as e:
                     self.fail(f"Catalog.save() raised unexpected exception: {e}")
 
+    def test_multiagent_protocol_compatibility_with_system_message(self):
+        """Protocol must accept system message at index 0 and build_request must use it."""
+        from agent_protocol import validate_messages, build_request, ProtocolError
+        # Valid worker messages
+        messages = [
+            {"role": "system", "content": "You are a specialized order agent."},
+            {"role": "user", "content": "Kiểm tra đơn hàng của tôi."}
+        ]
+        validated = validate_messages(messages)
+        self.assertEqual(len(validated), 2)
+        
+        req = build_request("test_model", messages, allow_tools=True)
+        self.assertEqual(req["messages"][0]["content"], "You are a specialized order agent.")
+        self.assertEqual(req["messages"][1]["content"], "Kiểm tra đơn hàng của tôi.")
+
+        # Invalid: system not at index 0
+        with self.assertRaises(ProtocolError):
+            validate_messages([
+                {"role": "user", "content": "A"},
+                {"role": "system", "content": "B"}
+            ])
+
+    def test_dispute_agent_does_not_hallucinate_order_or_product_id(self):
+        """Dispute agent must not invent O-302 or hardcode inventory if no order is provided."""
+        from retailops.workflow.subagents.dispute_agent import run_dispute_agent
+        state = {
+            "messages": [{"role": "user", "content": "Áo bị kẹt khóa rồi em ơi!"}],
+            "fresh": [],
+            "trace": {"model_calls": 0},
+            "tool_count": 0,
+            "bound": {"context": {"order_id": None, "product_id": None}},
+            "complete": False,
+            "subagent_history": []
+        }
+        res_state = run_dispute_agent(state, lambda name, args: {}, self.agent)
+        reply = res_state["fresh"][-1]["content"]
+        # Must not fabricate O-302 or O-303
+        self.assertNotIn("O-302", reply)
+        self.assertNotIn("O-303", reply)
+        self.assertIn("Mã đơn", reply)
+
+    def test_staff_reply_does_not_prematurely_resolve_handoff(self):
+        """Staff replying must keep ticket active in human mode; only staff_resolve should resolve it."""
+        cid = self.store.new_conversation("C-001", "custom")["conversation_id"]
+        # Customer escalates
+        self.store.record_feedback("C-001", {
+            "conversation_id": cid,
+            "feedback_type": "human_handoff",
+            "sentiment_flag": "neutral",
+            "reason_code": "customer_requested_human",
+            "comment": "Cần gặp người thật"
+        })
+
+        # Staff sends first reply
+        self.store.staff_reply("C-001", cid, "Mai Anh", "Dạ shop chào bạn, mình cần hỗ trợ gì ạ?")
+        with self.store.connection() as db:
+            row = db.execute("SELECT reason_code FROM conversation_feedback WHERE conversation_id=?", (cid,)).fetchone()
+            self.assertEqual(row["reason_code"], "customer_requested_human")  # NOT 'resolved'!
+
+        # Staff sends second reply
+        self.store.staff_reply("C-001", cid, "Mai Anh", "Mình đang kiểm tra kho cho bạn nhé.")
+        with self.store.connection() as db:
+            row = db.execute("SELECT reason_code FROM conversation_feedback WHERE conversation_id=?", (cid,)).fetchone()
+            self.assertEqual(row["reason_code"], "customer_requested_human")  # STILL NOT 'resolved'!
+
+        # Staff explicitly resolves
+        self.store.resolve_escalation(cid, "Mai Anh")
+        with self.store.connection() as db:
+            row = db.execute("SELECT reason_code FROM conversation_feedback WHERE conversation_id=?", (cid,)).fetchone()
+            self.assertEqual(row["reason_code"], "resolved")  # NOW resolved!
+
+    def test_manager_kpis_real_data_without_dummy_fallback(self):
+        """When database has no feedback ratings, avg_csat must be None, not 4.8."""
+        from retailops.http.routes import api_result
+        mgr_app = Application(self.store, self.tokens, role='manager')
+        status, res = api_result(mgr_app, "C-001", "GET", "/api/manager/kpis")
+        self.assertEqual(status, 200)
+        self.assertIsNone(res["avg_csat"])
+        self.assertEqual(res["csat_sample_size"], 0)
+
+    def test_multiagent_through_real_proxy_pipeline(self):
+        """Multi-agent worker calls must pass strict RemoteAgent / inference_proxy validation pipeline."""
+        from agent_protocol import validate_envelope, build_request, PROTOCOL
+
+        class RealProxyGateway:
+            def __init__(self, model="qwen3.5:4b"):
+                self.model = model
+                self.call_count = 0
+
+            def inspect(self):
+                return {"name": self.model, "digest": "fixture_digest", "provider": "custom", "agent_protocol": PROTOCOL}
+
+            def chat(self, messages, allow_tools, timeout):
+                self.call_count += 1
+                # Exact validation path executed by inference_proxy.py /agent/chat
+                body = {"protocol": PROTOCOL, "messages": messages, "allow_tools": allow_tools}
+                valid_msgs, valid_tools = validate_envelope(body)
+                request_payload = build_request(self.model, valid_msgs, valid_tools)
+                # Verify downstream payload is ready for Ollama/vLLM backend
+                assert request_payload["messages"][0]["role"] == "system"
+                return {
+                    "message": {"role": "assistant", "content": "Dạ em đã kiểm tra qua proxy chuẩn protocol rồi nhé ạ!"},
+                    "prompt_eval_count": 35,
+                    "eval_count": 18,
+                    "reported_cost_usd": 0.0
+                }
+
+        real_proxy_agent = RealProxyGateway()
+        app = Application(self.store, self.tokens, infer=real_proxy_agent, role='customer')
+        cid = self.store.new_conversation("C-001", "custom")["conversation_id"]
+
+        # 1. Order inquiry through multi-agent with strict proxy
+        res1 = app.chat("C-001", {
+            "conversation_id": cid,
+            "text": "Kiểm tra đơn O-101 của tôi đã giao đến đâu?",
+            "request_id": "req_real_proxy_" + "1" * 20
+        })
+        self.assertEqual(res1["source"], "llm_agent")
+        self.assertGreaterEqual(real_proxy_agent.call_count, 1)
+
+        # 2. Chitchat through witty agent with strict proxy
+        res2 = app.chat("C-001", {
+            "conversation_id": cid,
+            "text": "Thuật toán Gradient Descent là gì?",
+            "request_id": "req_real_proxy_" + "2" * 20
+        })
+        self.assertEqual(res2["source"], "llm_agent")
+        self.assertGreaterEqual(real_proxy_agent.call_count, 2)
+
 
 if __name__ == '__main__':
     unittest.main()

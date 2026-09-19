@@ -245,11 +245,21 @@ def assistant_message(response):
 def validate_messages(messages):
     if not isinstance(messages, list) or not 1 <= len(messages) <= MAX_MESSAGES:
         raise ProtocolError('Message count outside budget')
-    if not isinstance(messages[0], dict) or messages[0].get('role') != 'user':
-        raise ProtocolError('History must start with a user turn')
+    if not isinstance(messages[0], dict) or messages[0].get('role') not in ('user', 'system'):
+        raise ProtocolError('History must start with a user or system turn')
+    
+    first_idx = 0
+    if messages[0].get('role') == 'system':
+        sys_content = messages[0].get('content', '')
+        if not isinstance(sys_content, str) or not 1 <= len(sys_content.strip()) <= 6000:
+            raise ProtocolError('Invalid system prompt')
+        if len(messages) < 2 or not isinstance(messages[1], dict) or messages[1].get('role') != 'user':
+            raise ProtocolError('History starting with system must be followed by a user turn')
+        first_idx = 1
+
     expected, pending = 'user', []
-    characters = 0
-    for m in messages:
+    characters = len(messages[0].get('content', '')) if first_idx == 1 else 0
+    for m in messages[first_idx:]:
         if not isinstance(m, dict):
             raise ProtocolError('Invalid message')
         role = m.get('role')
@@ -285,10 +295,17 @@ def build_request(model, messages, allow_tools=True):
     if type(allow_tools) is not bool:
         raise ProtocolError('Invalid tool switch')
     mode = request_mode(messages)
-    system = GENERAL_SYSTEM if mode == 'general' else SYSTEM
+    
+    if messages and messages[0].get('role') == 'system':
+        system = messages[0]['content']
+        actual_messages = messages[1:]
+    else:
+        system = GENERAL_SYSTEM if mode == 'general' else SYSTEM
+        actual_messages = messages
+
     tools = [] if mode == 'general' else (TOOLS if allow_tools else [])
     formatted_messages = []
-    for m in messages:
+    for m in actual_messages:
         if m.get('role') == 'user' and m.get('attachment'):
             att = m['attachment']
             att_name = att.get('name', 'ảnh/tệp')
