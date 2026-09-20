@@ -66,11 +66,15 @@ def ssm_run(region, instance, command, execution_timeout=600):
                         print(f"=== SSM STDERR ({status}) ===\n{stderr_content}")
                     response_code = details.get("ResponseCode")
                     status_details = details.get("StatusDetails", "")
+                    # A RunShellScript command that reaches the shell always emits
+                    # something in our deployment paths (the preflight starts with echo).
+                    # Empty stdout+stderr therefore means the SSM worker/plugin failed
+                    # before the remote shell could actually execute, regardless of the
+                    # agent-specific response code used by that SSM Agent version.
                     failed_before_shell = (
                         status == "Failed"
                         and not stdout_content
                         and not stderr_content
-                        and response_code in (-1, None)
                     )
                     is_transient_worker_failure = (
                         status == "Failed"
