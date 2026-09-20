@@ -47,6 +47,10 @@ def main():
     api_env_path = Path("/opt/retailops/api.env")
 
     print(f"[*] Updating EC2 patches from repository at: {repo_dir}")
+    try:
+        subprocess.run(["git", "pull", "origin", "main"], cwd=str(repo_dir), check=False)
+    except Exception:
+        pass
 
     # 0. Configure api.env if custom API/vLLM endpoint is passed
     if args.api_endpoint:

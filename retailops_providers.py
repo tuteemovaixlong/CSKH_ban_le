@@ -167,7 +167,7 @@ class OpenRouterAgent:
         return [{'role': 'system', 'content': system_prompt}, *translated]
 
     def request(self, payload, timeout):
-        headers = {'Content-Type': 'application/json'}
+        headers = {'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true'}
         if self.is_anthropic:
             headers['x-api-key'] = self.key
             headers['anthropic-version'] = '2023-06-01'
