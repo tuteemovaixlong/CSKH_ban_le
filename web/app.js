@@ -1305,25 +1305,15 @@ if (cookieAuth) {
     .finally(() => { loginButton.disabled = false; });
 }
 
-async function checkGoogleAuthConfig() {
-  try {
-    const res = await fetch('/auth/google/config', { cache: 'no-store' });
-    if (res.ok) {
-      const data = await res.json();
-      const container = byId('google-login-container');
-      if (container) {
-        container.style.display = data.configured ? '' : 'none';
-      }
-      if (data.configured) {
-        const desc = byId('login-description');
-        if (desc) desc.textContent = 'Đăng nhập nhanh bằng tài khoản Google hoặc sử dụng mã truy cập cá nhân.';
-      }
-    }
-  } catch (e) {
-    console.warn('Không thể kiểm tra cấu hình Google Auth:', e);
-  }
+const googleAuthConfigured = document.body?.dataset?.googleAuth === 'true';
+const googleContainer = byId('google-login-container');
+if (googleContainer) {
+  googleContainer.style.display = googleAuthConfigured ? '' : 'none';
 }
-checkGoogleAuthConfig();
+if (googleAuthConfigured) {
+  const desc = byId('login-description');
+  if (desc) desc.textContent = 'Đăng nhập nhanh bằng tài khoản Google hoặc sử dụng mã truy cập cá nhân.';
+}
 
 // Interactive Tool Inspector Harness
 const inspectorDialog = byId('inspector-dialog');

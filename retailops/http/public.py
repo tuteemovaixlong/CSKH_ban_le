@@ -66,8 +66,10 @@ class PublicWeb:
             # Fixed assets, no user-supplied file lookup. Public mode is a non-executable data attribute.
             data = (ROOT / 'web' / name).read_bytes()
             if path == '/':
-                mode = b' data-data-mode="persistent-demo"' if self.sessions.data_mode == 'persistent-demo' else b''
-                data = data.replace(b'<body>', b'<body data-auth="cookie"' + mode + b'>')
+                from retailops.http.auth_google import is_google_auth_configured
+                mode = b' data-data-mode="persistent-demo"' if getattr(self.sessions, 'data_mode', None) == 'persistent-demo' else b''
+                gauth = b' data-google-auth="true"' if is_google_auth_configured() else b''
+                data = data.replace(b'<body>', b'<body data-auth="cookie"' + mode + gauth + b'>')
             return 200, data, mime, headers
 
         if path == '/auth/google/config' and method == 'GET':
