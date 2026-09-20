@@ -93,6 +93,19 @@ class GuestSessions:
                            (sid, self.invite_hash, time.time() + SESSION_SECONDS))
             return secret
 
+    def login_google(self, email, name, role='customer'):
+        self.rate('login', 15)
+        with self.lock:
+            self.purge()
+            secret = secrets.token_urlsafe(32)
+            sid = hashlib.sha256(secret.encode()).hexdigest()
+            with self.control.connection(write=True) as db:
+                count = db.execute('SELECT count(*) FROM guest_sessions').fetchone()[0]
+                require(count < self.capacity, 429, 'demo_capacity', 'Demo đã đủ phiên. Vui lòng thử lại sau.')
+                db.execute('INSERT INTO guest_sessions VALUES (?,?,?)',
+                           (sid, self.invite_hash, time.time() + SESSION_SECONDS))
+            return secret
+
     @staticmethod
     def cookie_id(header):
         cookies = SimpleCookie()

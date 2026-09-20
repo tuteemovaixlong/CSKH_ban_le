@@ -1,4 +1,6 @@
 """Google OAuth 2.0 (SSO) authentication module for RetailOps."""
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -42,17 +44,30 @@ def is_google_auth_configured() -> bool:
 
 
 
+_SIGNING_KEY = os.getenv("RETAILOPS_STATE_KEY") or "retailops_oauth_csrf_secret_salt_2026"
+_CONSUMED_STATES = set()
+
+
+def _state_key() -> bytes:
+    val = _clean_env("GOOGLE_CLIENT_SECRET") or _SIGNING_KEY
+    return hashlib.sha256(val.encode()).digest()
+
+
 def create_state() -> str:
     """Generate and store a single-use random state token for CSRF protection."""
     now = time.time()
-    # Clean up expired states
+    # Clean up expired in-memory states
     expired = [k for k, exp in _STATES.items() if exp < now]
     for k in expired:
         _STATES.pop(k, None)
 
     token = secrets.token_urlsafe(24)
-    _STATES[token] = now + STATE_TTL_SECONDS
-    return token
+    exp = str(int(now + STATE_TTL_SECONDS))
+    msg = f"{token}:{exp}".encode("utf-8")
+    sig = hmac.new(_state_key(), msg, hashlib.sha256).hexdigest()[:24]
+    state = f"{token}.{exp}.{sig}"
+    _STATES[state] = now + STATE_TTL_SECONDS
+    return state
 
 
 def verify_and_consume_state(state: Optional[str]) -> bool:
@@ -60,6 +75,28 @@ def verify_and_consume_state(state: Optional[str]) -> bool:
     if not state or not isinstance(state, str):
         return False
     now = time.time()
+
+    # Check HMAC signed format: token.exp.sig
+    parts = state.split(".")
+    if len(parts) == 3:
+        token, exp_str, sig = parts
+        try:
+            exp = int(exp_str)
+        except ValueError:
+            return False
+        if now > exp:
+            return False
+        msg = f"{token}:{exp_str}".encode("utf-8")
+        expected_sig = hmac.new(_state_key(), msg, hashlib.sha256).hexdigest()[:24]
+        if not hmac.compare_digest(sig, expected_sig):
+            return False
+        if token in _CONSUMED_STATES:
+            return False
+        _CONSUMED_STATES.add(token)
+        _STATES.pop(state, None)
+        return True
+
+    # Fallback to in-memory check for plain tokens
     exp = _STATES.pop(state, None)
     if exp is None:
         return False

@@ -117,6 +117,12 @@ class PublicTests(unittest.TestCase):
         status, result, _ = self.request('/api/chat', {**body, 'conversation_id': second}, bob)
         self.assertEqual(status, 429); self.assertEqual(result['error'], 'api_daily_limit')
 
+    def test_guest_sessions_login_google(self):
+        secret = self.sessions.login_google('guest@gmail.com', 'Guest User')
+        self.assertTrue(isinstance(secret, str) and len(secret) == 43)
+        cookie_header = f"{self.sessions.cookie_name}={secret}"
+        self.assertEqual(self.request('/api/orders', cookie=cookie_header)[0], 200)
+
     def test_logout_expiry_rotation_and_capacity(self):
         alice = self.login()
         self.sessions.capacity = 1
