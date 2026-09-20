@@ -1,13 +1,18 @@
 # BÁO CÁO TIẾN ĐỘ & TRẠNG THÁI HỆ THỐNG RETAILOPS 2026
 
-> **Snapshot Ngày Ghi Nhận**: 2026-09-20 19:48:00 (GMT+7)  
-> **Commit Hiện Tại**: `813f137` trên nhánh `main`  
-> **Trạng thái Triển khai EC2**: 🟢 **Đang kích hoạt lại trên IP mới**  
-> **IP / URL Web Khách hàng**: [https://retailops.54-226-168-35.sslip.io](https://retailops.54-226-168-35.sslip.io)  
-> **URL Admin Console**: [https://admin-retailops.54-226-168-35.sslip.io](https://admin-retailops.54-226-168-35.sslip.io)  
-> **Backend Tự Host (Self-Hosted Inference)**: Google Colab vLLM (`yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2`) qua ngrok Tunnel  
-> **Bộ dữ liệu Benchmark Master**: 🟢 **250 / 250 kịch bản hợp nhất** (`benchmark_250.jsonl` - 150 dev, 100 held_out)  
-> **Kiểm thử tự động**: 🟢 **333 / 333 tests PASS** (43 skipped, 0 failure) | CI/CD GitHub Actions Xanh 100%
+> **Snapshot mới nhất:** 2026-09-21 (GMT+7)  
+> **Commit `main` hiện tại:** `d3ca3a6ff6fa106af973d4c44c6ee955bce20f13`  
+> **EC2:** `retailops-dev` / `i-0fd116d8927d0e412` / **t3.large** (2 vCPU, 8 GiB RAM)  
+> **Root storage:** 50 GiB EBS; ext4 `/` ~48 GiB usable, ~43 GiB free tại thời điểm kiểm tra  
+> **Public IPv4 hiện tại:** `98.84.139.124` (dynamic; không dùng Elastic IP)  
+> **Web khách hàng:** https://retailops.98-84-139-124.sslip.io  
+> **Admin Console:** https://admin-retailops.98-84-139-124.sslip.io  
+> **Runtime:** PostgreSQL + Web + Admin + Caddy đang chạy; SSM Agent Snap active  
+> **Deploy gần nhất:** EC2 Deploy #140 và #141 đã thành công sau incident recovery  
+> **CI:** lỗi stale Colab notebook đã được xử lý; full CI configuration đã được re-verify thành công trên snapshot `main` đồng bộ  
+> **Incident report chi tiết:** [INCIDENT_RECOVERY_2026-09-21.md](INCIDENT_RECOVERY_2026-09-21.md)
+
+> **Lưu ý:** Các phần benchmark/model phía dưới là snapshot nghiệp vụ trước incident nếu chưa có số liệu chạy lại mới hơn. Phần hạ tầng, IP, deploy và CI ở block trên là trạng thái vận hành mới nhất.
 
 ---
 
@@ -18,7 +23,7 @@
 | **Module 1** | **Hệ Thống Lõi TMĐT, 6 SOPs & Chuẩn Hóa MCP Server** | 🟢 **100%** | Khớp nối 100% DB Postgres và UI; 6 SOPs thực chiến; Staff Desk 1-Click; Store Manager Console 5 Tabs; Product CRUD; Phân quyền RBAC (Customer, Viewer, Staff, Manager) hoàn thiện. |
 | **Module 2** | **Đo Baseline Benchmark Cơ Sở & Ops Console** | 🟢 **100%** | Master Benchmark 250 kịch bản (`benchmark_250.jsonl`) bao phủ 6 SOPs; Đạt 100% Routing Accuracy offline; Admin Ops Console trực quan hóa số liệu. |
 | **Module 3** | **Webhook Facebook Messenger (Omnichannel)** | 🟣 **25%** | Đã hoàn thành tài liệu kiến trúc kỹ thuật (`docs/PLAN_OMNICHANNEL_INTEGRATION.md`), cơ chế Meta Handover Protocol, đồng bộ 2 chiều với Staff Desk. |
-| **Module 4** | **Cổng Quét Mã QR Demo Live** | 🟢 **85%** | Hạ tầng HTTPS tự động qua Caddy & sslip.io trên IP mới `54.226.168.35`; giao diện Web responsive mượt mà trên thiết bị di động. |
+| **Module 4** | **Cổng Quét Mã QR Demo Live** | 🟢 **85%** | Hạ tầng HTTPS tự động qua Caddy & sslip.io trên IP mới `98.84.139.124`; giao diện Web responsive mượt mà trên thiết bị di động. |
 | **Module 5** | **Self-Hosted vLLM & Serving Model Agentic** | 🟢 **95%** | Kết nối thành công Colab vLLM với EC2 qua ngrok; vượt qua chặn trang cảnh báo ngrok bằng header; xử lý Tool Calling tự động. |
 | **Module 6** | **Đo Lường Evaluation Đối Chứng Luận Văn** | 🟢 **90%** | Đã chạy thành công Live Benchmark trên Production thật: Smoke Test 10/10 PASS (100%), Batch 01 (25 ca) đạt 19/25 PASS (76%), p50 = 20.7s. Đã hoàn thành bản thiết kế đối kháng DeepSeek (`docs/PLAN_DEEPSEEK_EVAL_FRAMEWORK.md`). |
 
@@ -43,7 +48,7 @@
 
 ### 2.3. Triển khai & Khởi động EC2 Thành công
 - **Cập nhật IP mới & Restart Containers**:
-  - Chạy `scripts/update_ec2.py` trên EC2 với IP mới: `54.226.168.35`.
+  - Chạy `scripts/update_ec2.py` trên EC2 với IP mới: `98.84.139.124`.
   - Cả 4 container Docker (`postgres`, `admin`, `web`, `caddy`) đều chạy ổn định và đạt trạng thái Healthy.
   - Endpoint `healthz` trả về HTTP 200: `{"status": "ok", "scope": "synthetic-demo", "storage_backend": "postgresql", "agent_protocol": "retailops-agent-v2"}`.
 
