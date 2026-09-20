@@ -17,7 +17,12 @@ class Element {
   remove() {}
   addEventListener() {}
 }
-const nodes=new Map(), get=id=>{if(!nodes.has(id)) nodes.set(id,new Element()); return nodes.get(id);};
+const absentIds=new Set(['about-dialog','close-about']);
+const nodes=new Map(), get=id=>{
+  if(absentIds.has(id)) return null;
+  if(!nodes.has(id)) nodes.set(id,new Element());
+  return nodes.get(id);
+};
 const document={body:{dataset:{auth:'cookie'}},getElementById:get,createElement:()=>new Element(),
   createTextNode:text=>({textContent:text}),querySelector:get,querySelectorAll:()=>[]};
 const requests=[];
