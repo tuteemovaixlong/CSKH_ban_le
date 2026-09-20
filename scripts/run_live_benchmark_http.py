@@ -32,7 +32,7 @@ if hasattr(sys.stderr, "reconfigure"):
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DATASET = ROOT / "evals" / "scenarios" / "benchmark_250.jsonl"
-DEFAULT_ORIGIN = "https://retailops.54-144-244-233.sslip.io"
+DEFAULT_ORIGIN = "https://retailops.34-235-128-214.sslip.io"
 
 
 class LiveClient:
@@ -344,6 +344,8 @@ def run_live_eval(origin: str, token: str, dataset_path: Path, max_cases: int = 
         "cases": results
     }
     json_path.write_text(json.dumps(report_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    latest_json_path = reports_dir / "live_benchmark_report_latest.json"
+    latest_json_path.write_text(json.dumps(report_payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     md_lines = [
         f"# Báo Cáo Đánh Giá Live Benchmark: RetailOps Live Multi-Agent ({ts})",
@@ -365,10 +367,14 @@ def run_live_eval(origin: str, token: str, dataset_path: Path, max_cases: int = 
         tools_str = ", ".join(r.get("tools_called", [])) or "-"
         md_lines.append(f"| {r['id']} | {r['category']} | {'✅ PASS' if r.get('passed') else '❌ FAIL'} | {r.get('status', '-')} | {round(r.get('latency_ms', 0), 1)} | `{tools_str}` | {res_text}... |")
 
-    md_path.write_text("\n".join(md_lines), encoding="utf-8")
+    md_content = "\n".join(md_lines)
+    md_path.write_text(md_content, encoding="utf-8")
+    latest_md_path = reports_dir / "live_benchmark_report_latest.md"
+    latest_md_path.write_text(md_content, encoding="utf-8")
     print(f"\n[+] Đã lưu báo cáo Live Benchmark:")
     print(f"    - JSON: {json_path}")
     print(f"    - Markdown: {md_path}")
+    print(f"    - Latest: {latest_json_path}")
 
 
 def main():
@@ -378,7 +384,7 @@ def main():
     parser.add_argument("--dataset", "-d", type=Path, default=DEFAULT_DATASET, help="Benchmark JSONL dataset")
     parser.add_argument("--count", "-n", type=int, default=0, help="Number of scenarios to test (default 0: all)")
     parser.add_argument("--concurrency", "-c", type=int, default=1, help="Concurrent workers (default 1 to respect model lock)")
-    parser.add_argument("--provider", "-p", choices=("custom", "api"), default="custom", help="Model provider")
+    parser.add_argument("--provider", "-p", choices=("custom", "api"), default="api", help="Model provider (default: api)")
     args = parser.parse_args()
 
     run_live_eval(args.origin, args.token, args.dataset, args.count, args.provider, args.concurrency)
