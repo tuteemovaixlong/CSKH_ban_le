@@ -26,36 +26,63 @@ def value(key, pattern):
 
 def ssm_run(region, instance, command, execution_timeout=600):
     parameters = {"commands": [command], "executionTimeout": [str(execution_timeout)]}
-    command_id = run("aws", "ssm", "send-command", "--region", region,
-                     "--instance-ids", instance, "--document-name", "AWS-RunShellScript",
-                     "--parameters", json.dumps(parameters), "--timeout-seconds", "60",
-                     "--query", "Command.CommandId", "--output", "text").strip()
-    deadline = time.monotonic() + execution_timeout + 60
-    while time.monotonic() < deadline:
-        result = subprocess.run(["aws", "ssm", "get-command-invocation", "--region", region,
-                                 "--command-id", command_id, "--instance-id", instance, "--output", "json"],
-                                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        if result.returncode:
-            if "InvocationDoesNotExist" not in result.stderr:
-                raise SystemExit("Cannot query SSM invocation; inspect AWS permissions and command status")
+    transient_worker_errors = (
+        "document process failed unexpectedly",
+        "ipc messaging received timeout signal",
+    )
+
+    # SSM Agent occasionally loses its document worker IPC channel even though the
+    # instance itself is healthy. Retry that specific infrastructure failure once.
+    # The deployment commands are intentionally idempotent, while genuine script
+    # failures still fail immediately with their original stdout/stderr.
+    for attempt in range(1, 3):
+        command_id = run("aws", "ssm", "send-command", "--region", region,
+                         "--instance-ids", instance, "--document-name", "AWS-RunShellScript",
+                         "--parameters", json.dumps(parameters), "--timeout-seconds", "60",
+                         "--query", "Command.CommandId", "--output", "text").strip()
+        deadline = time.monotonic() + execution_timeout + 60
+        while time.monotonic() < deadline:
+            result = subprocess.run(["aws", "ssm", "get-command-invocation", "--region", region,
+                                     "--command-id", command_id, "--instance-id", instance, "--output", "json"],
+                                    text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if result.returncode:
+                if "InvocationDoesNotExist" not in result.stderr:
+                    raise SystemExit("Cannot query SSM invocation; inspect AWS permissions and command status")
+            else:
+                details = json.loads(result.stdout)
+                status = details["Status"]
+                if status == "Success":
+                    output = details.get("StandardOutputContent", "").strip()
+                    if output:
+                        print(output)
+                    return
+                if status not in ("Pending", "InProgress", "Delayed"):
+                    stdout_content = details.get("StandardOutputContent", "").strip()
+                    stderr_content = details.get("StandardErrorContent", "").strip()
+                    combined = f"{stdout_content}\n{stderr_content}".lower()
+                    if stdout_content:
+                        print(f"=== SSM STDOUT ({status}) ===\n{stdout_content}")
+                    if stderr_content:
+                        print(f"=== SSM STDERR ({status}) ===\n{stderr_content}")
+                    is_transient_worker_failure = (
+                        status == "Failed"
+                        and any(marker in combined for marker in transient_worker_errors)
+                    )
+                    if is_transient_worker_failure and attempt == 1:
+                        print(
+                            f"Transient SSM document-worker failure for command {command_id}; "
+                            "retrying once in 15 seconds"
+                        )
+                        time.sleep(15)
+                        break
+                    raise SystemExit(
+                        f"SSM deployment step ended with {status}; inspect command {command_id} in AWS"
+                    )
+            time.sleep(10)
         else:
-            details = json.loads(result.stdout)
-            status = details["Status"]
-            if status == "Success":
-                output = details.get("StandardOutputContent", "").strip()
-                if output:
-                    print(output)
-                return
-            if status not in ("Pending", "InProgress", "Delayed"):
-                stdout_content = details.get("StandardOutputContent", "").strip()
-                stderr_content = details.get("StandardErrorContent", "").strip()
-                if stdout_content:
-                    print(f"=== SSM STDOUT ({status}) ===\n{stdout_content}")
-                if stderr_content:
-                    print(f"=== SSM STDERR ({status}) ===\n{stderr_content}")
-                raise SystemExit(f"SSM deployment step ended with {status}; inspect command {command_id} in AWS")
-        time.sleep(10)
-    raise SystemExit(f"SSM polling deadline exceeded for command {command_id}; inspect the invocation before retrying")
+            raise SystemExit(
+                f"SSM polling deadline exceeded for command {command_id}; inspect the invocation before retrying"
+            )
 
 
 def main():
