@@ -1,7 +1,7 @@
 # BÁO CÁO TIẾN ĐỘ & TRẠNG THÁI HỆ THỐNG RETAILOPS 2026
 
 > **Snapshot mới nhất:** 2026-09-21 (GMT+7)  
-> **Commit `main` hiện tại:** `d3ca3a6ff6fa106af973d4c44c6ee955bce20f13`  
+> **Application/source snapshot tham chiếu:** `d3ca3a6ff6fa106af973d4c44c6ee955bce20f13` (sau đó chỉ có docs-only commit)  
 > **EC2:** `retailops-dev` / `i-0fd116d8927d0e412` / **t3.large** (2 vCPU, 8 GiB RAM)  
 > **Root storage:** 50 GiB EBS; ext4 `/` ~48 GiB usable, ~43 GiB free tại thời điểm kiểm tra  
 > **Public IPv4 hiện tại:** `98.84.139.124` (dynamic; không dùng Elastic IP)  

@@ -4,7 +4,7 @@
 > **Cửa sổ sự cố chính:** tối 2026-09-20 đến rạng sáng 2026-09-21  
 > **Repository:** `tuteemovaixlong/CSKH_ban_le`  
 > **Nhánh:** `main`  
-> **HEAD sau khi xử lý:** `d3ca3a6ff6fa106af973d4c44c6ee955bce20f13`  
+> **Application/source snapshot sau khi xử lý (trước docs-only commit):** `d3ca3a6ff6fa106af973d4c44c6ee955bce20f13`  
 > **EC2:** `retailops-dev` / `i-0fd116d8927d0e412`  
 > **Public IPv4 hiện tại:** `98.84.139.124` (dynamic, không dùng Elastic IP)  
 > **Web:** https://retailops.98-84-139-124.sslip.io  
