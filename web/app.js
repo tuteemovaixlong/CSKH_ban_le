@@ -1287,7 +1287,11 @@ byId('model-provider').onchange = () => {
     finally { byId('model-provider').value = providerId; }
   });
 };
-byId('about').onclick = () => byId('about-dialog').showModal(); byId('close-about').onclick = () => byId('about-dialog').close();
+const aboutButton = byId('about');
+const aboutDialog = byId('about-dialog');
+const closeAboutButton = byId('close-about');
+if (aboutButton && aboutDialog) aboutButton.onclick = () => aboutDialog.showModal();
+if (closeAboutButton && aboutDialog) closeAboutButton.onclick = () => aboutDialog.close();
 byId('approve-confirm').onclick = () => act(confirm); byId('dismiss-confirm').onclick = () => act(dismiss);
 byId('confirm-dialog').oncancel = event => { event.preventDefault(); act(dismiss); };
 const error = el('p', 'proposal-error'); error.id = 'confirm-error'; error.setAttribute('role', 'alert');
