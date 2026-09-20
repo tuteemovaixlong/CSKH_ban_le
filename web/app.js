@@ -174,7 +174,10 @@ async function newConversation(nextProvider = providerId) {
 }
 const lockPage = locked => {
   byId('login-shell').hidden = !locked;
-  document.querySelectorAll('main, .sidebar').forEach(node => { node.inert = locked; });
+  document.querySelectorAll('main, .sidebar').forEach(node => {
+    node.hidden = locked;
+    node.inert = locked;
+  });
 };
 lockPage(true);
 
@@ -1170,11 +1173,30 @@ async function openSession() {
   byId('greeting').textContent = 'XIN CHÀO, ' + (session.name || 'BẠN').toUpperCase();
   document.querySelectorAll('[data-prompt]').forEach(button => { button.hidden = persistentAccount; });
   byId('message').placeholder = persistentAccount ? 'Hỏi về đơn hàng hoặc sản phẩm của bạn…' : 'Ví dụ: Tôi muốn hủy đơn O-101…';
-  const choices = await api('/api/providers'); providerOptions = choices.providers; providerId = choices.default_provider;
-  await refresh();
-  pending = null; conversationId = null;
+  
+  // Unlock UI immediately upon verified identity
+  byId('demo-token').value = '';
+  lockPage(false);
   if (byId('confirm-dialog').open) byId('confirm-dialog').close();
-  byId('demo-token').value = ''; lockPage(false); byId('messages').replaceChildren();
+  byId('messages').replaceChildren();
+
+  try {
+    const choices = await api('/api/providers');
+    providerOptions = choices.providers;
+    providerId = choices.default_provider;
+    renderProvider();
+  } catch (e) {
+    console.warn('Lỗi tải providers:', e);
+  }
+
+  try {
+    await refresh();
+  } catch (e) {
+    console.warn('Lỗi tải dữ liệu đơn hàng:', e);
+  }
+
+  pending = null;
+  conversationId = null;
   
   let resumed = false;
   let cachedConvs = [];
@@ -1189,10 +1211,14 @@ async function openSession() {
     console.warn('Không thể tự động khôi phục hội thoại gần nhất:', e);
   }
   if (!resumed) {
-    await newConversation();
+    try {
+      await newConversation();
+    } catch (e) {
+      console.warn('Lỗi tạo hội thoại ban đầu:', e);
+    }
   }
   renderSidebarConversations(cachedConvs).catch(() => {});
-  await restoreProposals();
+  await restoreProposals().catch(() => {});
   if (session.role === 'staff') {
     openStaffDesk();
   }

@@ -85,7 +85,12 @@ button:disabled {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  z-index: 50;
+  z-index: 20;
+}
+
+.sidebar[hidden],
+main[hidden] {
+  display: none !important;
 }
 
 .sidebar-top {
@@ -1802,7 +1807,7 @@ textarea,
 .login-shell {
   position: fixed;
   inset: 0;
-  z-index: 20;
+  z-index: 9999;
   background: #181b29;
   display: grid;
   place-items: center;

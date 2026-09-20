@@ -125,6 +125,87 @@ class GoogleAuthHTTPRoutesTests(unittest.TestCase):
             self.assertIn('__Host-retailops_account=sec_', headers_dict['Set-Cookie'])
             self.mock_sessions.login_google.assert_called_once()
 
+    def test_google_oauth_end_to_end_persistent_sessions(self):
+        import tempfile
+        from retailops.identity.persistent import PersistentSessions
+        from retailops.http.public import PublicWeb
+
+        with tempfile.TemporaryDirectory() as td:
+            sessions = PersistentSessions(td)
+            sessions.provision_tenant('T-001', 'Test Tenant', seed_demo=True)
+            web = PublicWeb('https://retailops.example.com', sessions)
+
+            state = auth_google.create_state()
+            with patch('retailops.http.auth_google.exchange_code_for_user_info') as mock_exchange:
+                mock_exchange.return_value = {
+                    'email': 'teemo.gamer@gmail.com',
+                    'name': 'Teemo',
+                    'sub': 'g-99999'
+                }
+                callback_env = {
+                    'REQUEST_METHOD': 'GET',
+                    'PATH_INFO': '/auth/google/callback',
+                    'QUERY_STRING': f'code=code_xyz&state={state}',
+                    'HTTP_HOST': 'retailops.example.com',
+                }
+                status, body, mime, headers = web.route(callback_env)
+                self.assertEqual(status, 302)
+                headers_dict = dict(headers)
+                self.assertEqual(headers_dict.get('Location'), '/')
+                cookie_val = headers_dict.get('Set-Cookie', '').split(';')[0]
+                self.assertTrue(cookie_val.startswith('__Host-retailops_account='))
+
+                # Now verify /api/session succeeds with this cookie
+                session_env = {
+                    'REQUEST_METHOD': 'GET',
+                    'PATH_INFO': '/api/session',
+                    'HTTP_HOST': 'retailops.example.com',
+                    'HTTP_COOKIE': cookie_val,
+                }
+                s_status, s_body, s_mime, s_headers = web.route(session_env)
+                self.assertEqual(s_status, 200)
+                self.assertEqual(s_body.get('name'), 'Teemo')
+                self.assertEqual(s_body.get('role'), 'customer')
+
+    def test_google_oauth_end_to_end_guest_sessions(self):
+        import tempfile
+        from retailops.identity.demo import GuestSessions
+        from retailops.http.public import PublicWeb
+
+        with tempfile.TemporaryDirectory() as td:
+            sessions = GuestSessions(td, 'invite_fixture_123456789012345678901234567890')
+            web = PublicWeb('https://retailops.example.com', sessions)
+
+            state = auth_google.create_state()
+            with patch('retailops.http.auth_google.exchange_code_for_user_info') as mock_exchange:
+                mock_exchange.return_value = {
+                    'email': 'guest.user@gmail.com',
+                    'name': 'Guest User',
+                    'sub': 'g-88888'
+                }
+                callback_env = {
+                    'REQUEST_METHOD': 'GET',
+                    'PATH_INFO': '/auth/google/callback',
+                    'QUERY_STRING': f'code=code_abc&state={state}',
+                    'HTTP_HOST': 'retailops.example.com',
+                }
+                status, body, mime, headers = web.route(callback_env)
+                self.assertEqual(status, 302)
+                headers_dict = dict(headers)
+                self.assertEqual(headers_dict.get('Location'), '/')
+                cookie_val = headers_dict.get('Set-Cookie', '').split(';')[0]
+                self.assertTrue(cookie_val.startswith('__Host-retailops_session='))
+
+                session_env = {
+                    'REQUEST_METHOD': 'GET',
+                    'PATH_INFO': '/api/session',
+                    'HTTP_HOST': 'retailops.example.com',
+                    'HTTP_COOKIE': cookie_val,
+                }
+                s_status, s_body, s_mime, s_headers = web.route(session_env)
+                self.assertEqual(s_status, 200)
+                self.assertEqual(s_body.get('role'), 'customer')
+
 
 if __name__ == '__main__':
     unittest.main()
