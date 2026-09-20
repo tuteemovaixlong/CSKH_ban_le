@@ -952,6 +952,167 @@ async function send(text, requestId = crypto.randomUUID(), retry = false, attach
   else await refresh();
 }
 
+async function loadConversation(cid) {
+  if (!cid) return;
+  try {
+    byId('messages').setAttribute('aria-busy', 'true');
+    setModelStatus('Đang nạp lịch sử…', 'Đang tải lại hội thoại');
+    const data = await api('/api/conversations/' + cid + '/messages');
+    if (!data || !data.conversation) {
+      await newConversation();
+      return;
+    }
+    
+    conversationId = cid;
+    if (data.conversation.provider_id) {
+      providerId = data.conversation.provider_id;
+    }
+    renderedStaffTurnIds.clear();
+    setHumanMode(false);
+    renderProvider();
+    showContext({
+      order_id: data.conversation.order_id || null,
+      product_id: data.conversation.product_id || null
+    });
+    byId('messages').replaceChildren();
+
+    const turns = data.turns || [];
+    let hasHumanSupport = false;
+
+    if (turns.length === 0) {
+      message('Phiên mới dùng ' + (selectedProvider()?.model || 'model đã chọn') +
+        '. Gửi câu hỏi hoặc chọn đơn bên phải. Khi đổi nguồn, lịch sử bắt đầu lại; trạng thái đơn được giữ.', 'assistant', 'interface');
+      setModelStatus('Đã sẵn sàng', selectedProvider()?.label || 'Model đã chọn');
+      return;
+    }
+
+    for (const t of turns) {
+      renderedStaffTurnIds.add(t.id);
+      let msgs = [];
+      try { msgs = typeof t.messages === 'string' ? JSON.parse(t.messages) : t.messages; } catch (e) {}
+      let res = {};
+      try { res = typeof t.result === 'string' ? JSON.parse(t.result) : t.result; } catch (e) {}
+
+      if (res.author === 'staff') {
+        humanMessage(res.message || '', res.staff_name || 'Nguyễn Mai Anh (Chuyên viên CSKH)');
+        hasHumanSupport = true;
+      } else if (res.author === 'customer') {
+        const userText = msgs[0]?.content || '';
+        message(userText, 'user');
+        hasHumanSupport = true;
+      } else {
+        // Standard AI turn
+        let userMsg = null;
+        if (Array.isArray(msgs)) {
+          for (let i = msgs.length - 1; i >= 0; i--) {
+            if (msgs[i].role === 'user') {
+              userMsg = msgs[i];
+              break;
+            }
+          }
+        }
+        if (userMsg && userMsg.content) {
+          message(userMsg.content, 'user', null, null, userMsg.attachment || null);
+        }
+
+        const asstContent = res.message || '';
+        const row = message(asstContent, 'assistant', res.source || null, res.trace?.model || null);
+        if (res.shipment) showShipment(row, res.shipment);
+        if (res.human_support) {
+          showHumanSupport(row, res.human_support);
+          hasHumanSupport = true;
+        }
+        if (res.sources) showSources(row, res.sources);
+        if (res.trace) showTrace(row, res.trace, true);
+        if (res.source !== 'interface') {
+          showFeedbackBar(row, cid, t.id);
+        }
+      }
+    }
+
+    const feedbacks = data.feedbacks || [];
+    const activeHandoff = feedbacks.find(f => f.feedback_type === 'human_handoff' && f.reason_code !== 'resolved');
+    if (activeHandoff || hasHumanSupport) {
+      if (activeHandoff) {
+        setHumanMode(true, 'Chuyên viên CSKH');
+        startHumanModePolling();
+      }
+    }
+
+    setModelStatus('Đã khôi phục hội thoại', `${turns.length} lượt tin nhắn · Sẵn sàng`);
+  } catch (err) {
+    console.error('Lỗi khi nạp lịch sử cuộc trò chuyện:', err);
+    message('Không thể nạp lại cuộc trò chuyện cũ: ' + (err.message || 'Lỗi mạng'), 'assistant', 'interface');
+    await newConversation();
+  } finally {
+    byId('messages').removeAttribute('aria-busy');
+  }
+}
+
+async function openConversationHistoryDialog() {
+  const dialog = byId('conversation-history-dialog');
+  if (!dialog) return;
+  const listEl = byId('conversation-history-list');
+  if (listEl) {
+    listEl.innerHTML = '<div class="history-empty-state">Đang tải danh sách cuộc trò chuyện…</div>';
+  }
+  dialog.showModal();
+
+  try {
+    const data = await api('/api/conversations');
+    const convs = data.conversations || [];
+    if (!listEl) return;
+    listEl.replaceChildren();
+
+    if (convs.length === 0) {
+      listEl.innerHTML = '<div class="history-empty-state">Chưa có cuộc trò chuyện nào trước đây.<br>Hãy bắt đầu nhắn tin với trợ lý!</div>';
+      return;
+    }
+
+    for (const c of convs) {
+      const item = el('div', 'history-item' + (c.id === conversationId ? ' active' : ''));
+      item.onclick = async () => {
+        dialog.close();
+        if (c.id !== conversationId) {
+          await act(() => loadConversation(c.id));
+        }
+      };
+
+      const top = el('div', 'history-item-top');
+      const title = el('div', 'history-item-title', c.snippet || ('Cuộc trò chuyện ' + c.id.slice(0, 8)));
+      if (c.id === conversationId) {
+        title.title = 'Cuộc trò chuyện đang mở';
+      }
+      top.append(title);
+
+      const meta = el('div', 'history-item-meta');
+      const turnsBadge = el('span', 'history-pill', `💬 ${c.turns_count || 0} lượt`);
+      meta.append(turnsBadge);
+
+      if (c.has_human_handoff) {
+        const humanBadge = el('span', 'history-pill human', '🎧 Có chuyên viên');
+        meta.append(humanBadge);
+      }
+
+      if (c.last_activity) {
+        const d = new Date(c.last_activity * 1000);
+        const timeStr = d.toLocaleTimeString('vi-VN', {hour: '2-digit', minute: '2-digit'});
+        const dateStr = d.toLocaleDateString('vi-VN', {day: '2-digit', month: '2-digit'});
+        const timeSpan = el('span', '', `${timeStr} ${dateStr}`);
+        meta.append(timeSpan);
+      }
+
+      item.append(top, meta);
+      listEl.append(item);
+    }
+  } catch (err) {
+    console.error('Lỗi lấy danh sách cuộc trò chuyện:', err);
+    if (listEl) {
+      listEl.innerHTML = '<div class="history-empty-state">Không thể tải danh sách. Vui lòng thử lại.</div>';
+    }
+  }
+}
+
 async function openSession() {
   const session = await api('/api/session');
   document.body.dataset.role = session.role || 'customer';
@@ -974,7 +1135,21 @@ async function openSession() {
   pending = null; conversationId = null;
   if (byId('confirm-dialog').open) byId('confirm-dialog').close();
   byId('demo-token').value = ''; lockPage(false); byId('messages').replaceChildren();
-  await newConversation();
+  
+  let resumed = false;
+  try {
+    const listRes = await api('/api/conversations');
+    const convs = listRes?.conversations || [];
+    if (convs.length > 0 && convs[0].turns_count > 0) {
+      await loadConversation(convs[0].id);
+      resumed = true;
+    }
+  } catch (e) {
+    console.warn('Không thể tự động khôi phục hội thoại gần nhất:', e);
+  }
+  if (!resumed) {
+    await newConversation();
+  }
   await restoreProposals();
   if (session.role === 'staff') {
     openStaffDesk();
@@ -1009,6 +1184,24 @@ byId('message').onkeydown = event => { if (event.key === 'Enter' && !event.shift
 document.querySelectorAll('[data-prompt]').forEach(b => { b.onclick = () => act(() => send(b.dataset.prompt)); });
 byId('reset').onclick = () => act(async () => { await refresh(); message('Đã tải lại dữ liệu từ máy chủ.'); });
 byId('new-conversation').onclick = () => act(() => newConversation());
+
+const btnHistoryHeader = byId('btn-chat-history');
+if (btnHistoryHeader) btnHistoryHeader.onclick = () => openConversationHistoryDialog();
+
+const btnHistorySidebar = byId('btn-conversation-history');
+if (btnHistorySidebar) btnHistorySidebar.onclick = () => openConversationHistoryDialog();
+
+const btnHeaderNewConv = byId('btn-header-new-conv');
+if (btnHeaderNewConv) btnHeaderNewConv.onclick = () => act(() => newConversation());
+
+const closeHistoryDialog = byId('close-history-dialog');
+if (closeHistoryDialog) closeHistoryDialog.onclick = () => byId('conversation-history-dialog').close();
+
+const btnModalNewConv = byId('btn-modal-new-conv');
+if (btnModalNewConv) btnModalNewConv.onclick = () => {
+  byId('conversation-history-dialog').close();
+  act(() => newConversation());
+};
 byId('model-provider').onchange = () => {
   const requested = byId('model-provider').value;
   if (busy) { byId('model-provider').value = providerId; return; }

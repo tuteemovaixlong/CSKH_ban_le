@@ -20,6 +20,8 @@ from retailops.business.schema import initialize as initialize_schema
 ROOT = Path(__file__).resolve().parents[2]
 
 class BusinessStore:
+    CONVERSATION_TTL = 7 * 86400  # 7 days persistent chat history
+
     def __init__(self, path, *, create=True):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -138,7 +140,7 @@ class BusinessStore:
         with self.connection(write=True) as db:
             db.execute('DELETE FROM conversations WHERE expires_at < ?', (time.time(),))
             db.execute('INSERT INTO conversations(id,customer_id,expires_at,provider_id) VALUES (?,?,?,?)',
-                       (cid, customer, time.time() + 1800, provider_id))
+                       (cid, customer, time.time() + self.CONVERSATION_TTL, provider_id))
         return {'conversation_id': cid, 'provider_id': provider_id, 'context': {'order_id': None, 'product_id': None}}
 
     def reserve_api_attempt(self, limit):
@@ -170,7 +172,7 @@ class BusinessStore:
                 self.owned(db, customer, oid)
             updated = db.execute('''UPDATE conversations SET order_id=?,product_id=?,revision=revision+1,expires_at=?
                 WHERE id=? AND customer_id=? AND revision=? AND expires_at>?''',
-                (oid, pid, time.time()+1800, snapshot['id'], customer, snapshot['revision'], time.time())).rowcount
+                (oid, pid, time.time() + self.CONVERSATION_TTL, snapshot['id'], customer, snapshot['revision'], time.time())).rowcount
             require(updated == 1, 409, 'conversation_changed', 'Ngữ cảnh đã thay đổi hoặc hết hạn. Hãy gửi lại yêu cầu trong cuộc trò chuyện hiện tại.')
 
     def replay(self, customer, cid, request_id, digest):
@@ -253,7 +255,7 @@ class BusinessStore:
             context = result['context']
             updated = db.execute('''UPDATE conversations SET order_id=?,product_id=?,revision=revision+1,expires_at=?
                 WHERE id=? AND customer_id=? AND revision=? AND expires_at>?''',
-                (context['order_id'], context['product_id'], time.time()+1800, snapshot['id'], customer,
+                (context['order_id'], context['product_id'], time.time() + self.CONVERSATION_TTL, snapshot['id'], customer,
                  snapshot['revision'], time.time())).rowcount
             require(updated == 1, 409, 'conversation_changed', 'Ngữ cảnh đã thay đổi hoặc hết hạn. Hãy gửi lại trong cuộc trò chuyện hiện tại.')
             cursor = db.execute('''INSERT INTO agent_turns(conversation_id,customer_id,request_id,input_hash,messages,result,created_at)
@@ -262,7 +264,7 @@ class BusinessStore:
             row = cursor.fetchone()
             turn_id = row['id'] if row and 'id' in row else (row[0] if row else getattr(cursor, 'lastrowid', None))
             result['turn_id'] = turn_id
-            # Transcript retention is bounded; expired conversations are removed on next creation.
+            # Prune turns beyond 6 to satisfy bounded conversation history contract
             db.execute('''DELETE FROM agent_turns WHERE conversation_id=? AND id NOT IN
                 (SELECT id FROM agent_turns WHERE conversation_id=? ORDER BY id DESC LIMIT 6)''',
                 (snapshot['id'], snapshot['id']))
@@ -345,6 +347,60 @@ class BusinessStore:
             ''', (limit,)).fetchall()
         return [dict(r) for r in rows]
 
+    def list_conversations(self, customer, limit=20):
+        with self.connection() as db:
+            rows = db.execute('''
+                SELECT c.id, c.customer_id, c.order_id, c.product_id, c.provider_id, c.expires_at,
+                       COUNT(t.id) as turns_count,
+                       MAX(t.created_at) as last_activity,
+                       MIN(t.created_at) as first_activity
+                FROM conversations c
+                LEFT JOIN agent_turns t ON c.id = t.conversation_id
+                WHERE c.customer_id = ? AND c.expires_at > ?
+                GROUP BY c.id, c.customer_id, c.order_id, c.product_id, c.provider_id, c.expires_at
+                ORDER BY COALESCE(MAX(t.created_at), c.expires_at) DESC
+                LIMIT ?
+            ''', (customer, time.time(), limit)).fetchall()
+
+            conversations = []
+            for r in rows:
+                item = dict(r)
+                cid = item['id']
+                first_turn = db.execute('''
+                    SELECT messages, result FROM agent_turns
+                    WHERE conversation_id=?
+                    ORDER BY id ASC LIMIT 1
+                ''', (cid,)).fetchone()
+
+                snippet = ""
+                if first_turn:
+                    try:
+                        msgs = json.loads(first_turn['messages'])
+                        for m in msgs:
+                            if m.get('role') == 'user' and m.get('content'):
+                                snippet = m['content'].strip()[:80]
+                                break
+                    except Exception:
+                        pass
+                    if not snippet:
+                        try:
+                            res = json.loads(first_turn['result'])
+                            if res.get('message'):
+                                snippet = res['message'].strip()[:80]
+                        except Exception:
+                            pass
+
+                handoff = db.execute('''
+                    SELECT reason_code FROM conversation_feedback
+                    WHERE conversation_id=? AND feedback_type='human_handoff'
+                    ORDER BY id DESC LIMIT 1
+                ''', (cid,)).fetchone()
+
+                item['snippet'] = snippet or f"Cuộc trò chuyện {cid[:8]}"
+                item['has_human_handoff'] = bool(handoff and handoff['reason_code'] != 'resolved')
+                conversations.append(item)
+            return conversations
+
     def conversation_transcript(self, cid):
         with self.connection() as db:
             conv = db.execute('''
@@ -397,7 +453,7 @@ class BusinessStore:
             row = cursor.fetchone()
             turn_id = row['id'] if row and 'id' in row else (row[0] if row else getattr(cursor, 'lastrowid', None))
             
-            db.execute('UPDATE conversations SET revision=revision+1, expires_at=? WHERE id=?', (now + 1800, cid))
+            db.execute('UPDATE conversations SET revision=revision+1, expires_at=? WHERE id=?', (now + self.CONVERSATION_TTL, cid))
             db.execute('''
                 UPDATE conversation_feedback
                 SET comment=?
@@ -444,7 +500,7 @@ class BusinessStore:
             row = cursor.fetchone()
             turn_id = row['id'] if row and 'id' in row else (row[0] if row else getattr(cursor, 'lastrowid', None))
             
-            db.execute('UPDATE conversations SET revision=revision+1, expires_at=? WHERE id=?', (now + 1800, cid))
+            db.execute('UPDATE conversations SET revision=revision+1, expires_at=? WHERE id=?', (now + self.CONVERSATION_TTL, cid))
             
             existing_fb = db.execute('''
                 SELECT id FROM conversation_feedback

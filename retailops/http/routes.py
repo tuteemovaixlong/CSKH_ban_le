@@ -121,6 +121,8 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
         if path == "/api/staff/escalations":
             app.require_permission(STAFF)
             return (200, {"escalations": app.store.escalations()})
+        if path == "/api/conversations":
+            return (200, {"conversations": app.store.list_conversations(customer)})
         m_trans = re.fullmatch(r"/api/(?:staff/)?conversations/([a-f0-9-]{36})/messages", path)
         if m_trans:
             cid = m_trans[1]
