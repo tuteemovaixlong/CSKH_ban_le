@@ -23,7 +23,9 @@ def main():
     require("Dockerfile", "deploy/rollout-public-web.sh", "deploy/cutover-postgres.sh",
             "deploy/enable-pgvector.sh", "data/knowledge")
     publish = require("deploy/publish_and_activate.py", "rollout-public-web.sh", "docker cp",
-                      "Public web rollout checked for the activated image", "ssm_run")
+                      "Public web rollout checked for the activated image", "ssm_run",
+                      "docker image prune -af", "docker builder prune -af",
+                      "EC2 DISK AFTER DOCKER CLEANUP")
     ast.parse(publish, filename="deploy/publish_and_activate.py")
     require("deploy/compose.postgres.yaml", PGVECTOR)
     require("deploy/init-postgres.sh", "CREATE EXTENSION vector WITH SCHEMA retailops_extensions",

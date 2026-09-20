@@ -106,7 +106,21 @@ def main():
         raise SystemExit("ECR returned an invalid image digest")
     pinned = f"{registry}/{repo}@{digest}"
 
-    ssm_run(region, instance, shlex.join(["/opt/retailops/deploy-runner.sh", pinned, region]))
+    # Keep the EC2 Docker store from filling up with old release layers. The live
+    # image is referenced by its running container and is therefore preserved by
+    # image prune. Builder cache is safe to discard on this runtime-only host.
+    activation = f"""
+set -euo pipefail
+echo "=== EC2 DISK BEFORE DOCKER CLEANUP ==="
+df -h / /var/lib/docker /var/lib/containerd 2>/dev/null || df -h /
+docker system df || true
+docker image prune -af
+docker builder prune -af || true
+echo "=== EC2 DISK AFTER DOCKER CLEANUP ==="
+df -h / /var/lib/docker /var/lib/containerd 2>/dev/null || df -h /
+/opt/retailops/deploy-runner.sh {shlex.quote(pinned)} {shlex.quote(region)}
+""".strip()
+    ssm_run(region, instance, "/bin/bash -lc " + shlex.quote(activation))
     print(f"Activated baseline image: {pinned}")
 
     # Install attended helpers from the exact tested release image. Only the public
