@@ -48,9 +48,18 @@ def main():
 
     print(f"[*] Updating EC2 patches from repository at: {repo_dir}")
     try:
-        subprocess.run(["git", "pull", "origin", "main"], cwd=str(repo_dir), check=False)
-    except Exception:
-        pass
+        remote_check = subprocess.run(["git", "remote", "get-url", "origin"], cwd=str(repo_dir), capture_output=True, text=True)
+        if "git@github.com:" in (remote_check.stdout or ""):
+            https_url = remote_check.stdout.strip().replace("git@github.com:", "https://github.com/")
+            print(f"[*] Switching remote from SSH to HTTPS: {https_url}")
+            subprocess.run(["git", "remote", "set-url", "origin", https_url], cwd=str(repo_dir), check=False)
+        pull_res = subprocess.run(["git", "pull", "origin", "main"], cwd=str(repo_dir), capture_output=True, text=True)
+        if pull_res.returncode != 0:
+            print(f"[!] Warning: git pull returned non-zero code:\n{pull_res.stderr}")
+        else:
+            print(f"[+] git pull success: {pull_res.stdout.strip()}")
+    except Exception as e:
+        print(f"[!] Warning: git pull failed: {e}")
 
     # 0. Configure api.env if custom API/vLLM endpoint is passed
     if args.api_endpoint:
