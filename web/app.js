@@ -1308,7 +1308,8 @@ if (cookieAuth) {
 const googleAuthConfigured = document.body?.dataset?.googleAuth === 'true';
 const googleContainer = byId('google-login-container');
 if (googleContainer) {
-  googleContainer.style.display = googleAuthConfigured ? '' : 'none';
+  googleContainer.hidden = !googleAuthConfigured;
+  if (googleContainer.style) googleContainer.style.display = googleAuthConfigured ? '' : 'none';
 }
 if (googleAuthConfigured) {
   const desc = byId('login-description');
@@ -2171,7 +2172,7 @@ const sideClearSearchBtn = byId('btn-clear-order-search');
 if (sideSearchInput) {
   sideSearchInput.oninput = () => {
     orderSearchQuery = sideSearchInput.value.trim();
-    if (sideClearSearchBtn) sideClearSearchBtn.style.display = orderSearchQuery ? 'inline' : 'none';
+    if (sideClearSearchBtn && sideClearSearchBtn.style) sideClearSearchBtn.style.display = orderSearchQuery ? 'inline' : 'none';
     renderOrder();
   };
 }
