@@ -64,17 +64,37 @@ def ssm_run(region, instance, command, execution_timeout=600):
                         print(f"=== SSM STDOUT ({status}) ===\n{stdout_content}")
                     if stderr_content:
                         print(f"=== SSM STDERR ({status}) ===\n{stderr_content}")
+                    response_code = details.get("ResponseCode")
+                    status_details = details.get("StatusDetails", "")
+                    failed_before_shell = (
+                        status == "Failed"
+                        and not stdout_content
+                        and not stderr_content
+                        and response_code in (-1, None)
+                    )
                     is_transient_worker_failure = (
                         status == "Failed"
-                        and any(marker in combined for marker in transient_worker_errors)
+                        and (
+                            any(marker in combined for marker in transient_worker_errors)
+                            or failed_before_shell
+                        )
                     )
                     if is_transient_worker_failure and attempt == 1:
                         print(
-                            f"Transient SSM document-worker failure for command {command_id}; "
-                            "retrying once in 15 seconds"
+                            f"Transient SSM worker failure for command {command_id} "
+                            f"(response_code={response_code}, status_details={status_details!r}); "
+                            "retrying once in 20 seconds"
                         )
-                        time.sleep(15)
+                        time.sleep(20)
                         break
+                    if failed_before_shell:
+                        raise SystemExit(
+                            "SSM failed before the remote shell started. On this host the previous "
+                            "deployment also reported root-disk exhaustion; free root disk space or "
+                            "expand the root volume, then retry. "
+                            f"Command={command_id} response_code={response_code} "
+                            f"status_details={status_details!r}"
+                        )
                     raise SystemExit(
                         f"SSM deployment step ended with {status}; inspect command {command_id} in AWS"
                     )
@@ -96,6 +116,28 @@ def main():
     registry = f"{account}.dkr.ecr.{region}.amazonaws.com"
     tag = f"{sha}-{run_id}-{attempt}"
     image = f"{registry}/{repo}:{tag}"
+
+    # Fail fast before publishing another release when the target host is unhealthy.
+    # The previous incident filled the root filesystem with Docker/containerd data,
+    # which can also prevent SSM from starting its document worker at all.
+    preflight = """
+set -euo pipefail
+echo "=== EC2 DEPLOY PREFLIGHT ==="
+df -h / || true
+docker system df || true
+journalctl --vacuum-size=128M >/dev/null 2>&1 || true
+docker image prune -af
+docker builder prune -af || true
+echo "=== EC2 DISK AFTER PREFLIGHT CLEANUP ==="
+df -h / || true
+available_kb=$(df -Pk / | awk 'NR==2 {print $4}')
+if [[ -z "$available_kb" || "$available_kb" -lt 1048576 ]]; then
+  echo "EC2_ROOT_DISK_LOW: less than 1 GiB free after safe cleanup" >&2
+  exit 75
+fi
+""".strip()
+    ssm_run(region, instance, "/bin/bash -lc " + shlex.quote(preflight), execution_timeout=180)
+
     password = run("aws", "ecr", "get-login-password", "--region", region)
     run("docker", "login", "--username", "AWS", "--password-stdin", registry, input=password, capture=False)
     run("docker", "tag", "retailops:deploy", image, capture=False)
@@ -106,21 +148,7 @@ def main():
         raise SystemExit("ECR returned an invalid image digest")
     pinned = f"{registry}/{repo}@{digest}"
 
-    # Keep the EC2 Docker store from filling up with old release layers. The live
-    # image is referenced by its running container and is therefore preserved by
-    # image prune. Builder cache is safe to discard on this runtime-only host.
-    activation = f"""
-set -euo pipefail
-echo "=== EC2 DISK BEFORE DOCKER CLEANUP ==="
-df -h / /var/lib/docker /var/lib/containerd 2>/dev/null || df -h /
-docker system df || true
-docker image prune -af
-docker builder prune -af || true
-echo "=== EC2 DISK AFTER DOCKER CLEANUP ==="
-df -h / /var/lib/docker /var/lib/containerd 2>/dev/null || df -h /
-/opt/retailops/deploy-runner.sh {shlex.quote(pinned)} {shlex.quote(region)}
-""".strip()
-    ssm_run(region, instance, "/bin/bash -lc " + shlex.quote(activation))
+    ssm_run(region, instance, shlex.join(["/opt/retailops/deploy-runner.sh", pinned, region]))
     print(f"Activated baseline image: {pinned}")
 
     # Install attended helpers from the exact tested release image. Only the public
@@ -185,6 +213,18 @@ else
 fi
 """.strip()
     ssm_run(region, instance, "/bin/bash -lc " + shlex.quote(admin), execution_timeout=600)
+
+    # The previous web image becomes unused only after a successful rollout. Prune it
+    # here so each deploy does not permanently consume another copy of large layers.
+    post_cleanup = """
+set -euo pipefail
+docker image prune -af
+docker builder prune -af || true
+journalctl --vacuum-size=128M >/dev/null 2>&1 || true
+echo "=== EC2 DISK AFTER RELEASE CLEANUP ==="
+df -h / || true
+""".strip()
+    ssm_run(region, instance, "/bin/bash -lc " + shlex.quote(post_cleanup), execution_timeout=180)
 
 
 if __name__ == "__main__":
