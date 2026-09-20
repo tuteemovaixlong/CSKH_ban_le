@@ -950,6 +950,7 @@ async function send(text, requestId = crypto.randomUUID(), retry = false, attach
     selectedProvider()?.label || 'Model đã chọn');
   if (result.action === 'choose_cancel_reason') await chooseReason(result.order.id);
   else await refresh();
+  renderSidebarConversations().catch(() => {});
 }
 
 async function loadConversation(cid) {
@@ -1040,12 +1041,51 @@ async function loadConversation(cid) {
     }
 
     setModelStatus('Đã khôi phục hội thoại', `${turns.length} lượt tin nhắn · Sẵn sàng`);
+    renderSidebarConversations().catch(() => {});
   } catch (err) {
     console.error('Lỗi khi nạp lịch sử cuộc trò chuyện:', err);
     message('Không thể nạp lại cuộc trò chuyện cũ: ' + (err.message || 'Lỗi mạng'), 'assistant', 'interface');
     await newConversation();
   } finally {
     byId('messages').removeAttribute('aria-busy');
+  }
+}
+
+async function renderSidebarConversations(convs = null) {
+  const container = byId('sidebar-conversation-history');
+  if (!container) return;
+  try {
+    if (!convs) {
+      const data = await api('/api/conversations');
+      convs = data?.conversations || [];
+    }
+    container.replaceChildren();
+    if (!convs || !convs.length) {
+      container.innerHTML = '<div class="sidebar-history-empty">Chưa có hội thoại nào</div>';
+      return;
+    }
+    for (const c of convs.slice(0, 10)) {
+      const item = el('button', 'sidebar-history-item' + (c.id === conversationId ? ' active' : ''));
+      item.type = 'button';
+      item.title = c.snippet || ('Cuộc trò chuyện ' + c.id.slice(0, 8));
+
+      const icon = el('span', 'sidebar-history-icon', '💬');
+      const title = el('span', 'sidebar-history-title', c.snippet || ('Hội thoại ' + c.id.slice(0, 6)));
+      const badge = el('span', 'sidebar-history-badge', (c.turns_count || 0) + ' lượt');
+
+      item.append(icon, title, badge);
+      item.onclick = () => {
+        if (c.id !== conversationId) {
+          act(async () => {
+            await loadConversation(c.id);
+            await renderSidebarConversations();
+          });
+        }
+      };
+      container.append(item);
+    }
+  } catch (err) {
+    console.warn('Lỗi hiển thị lịch sử ở sidebar:', err);
   }
 }
 
@@ -1137,11 +1177,12 @@ async function openSession() {
   byId('demo-token').value = ''; lockPage(false); byId('messages').replaceChildren();
   
   let resumed = false;
+  let cachedConvs = [];
   try {
     const listRes = await api('/api/conversations');
-    const convs = listRes?.conversations || [];
-    if (convs.length > 0 && convs[0].turns_count > 0) {
-      await loadConversation(convs[0].id);
+    cachedConvs = listRes?.conversations || [];
+    if (cachedConvs.length > 0 && cachedConvs[0].turns_count > 0) {
+      await loadConversation(cachedConvs[0].id);
       resumed = true;
     }
   } catch (e) {
@@ -1150,6 +1191,7 @@ async function openSession() {
   if (!resumed) {
     await newConversation();
   }
+  renderSidebarConversations(cachedConvs).catch(() => {});
   await restoreProposals();
   if (session.role === 'staff') {
     openStaffDesk();
@@ -1183,7 +1225,10 @@ byId('chat-form').onsubmit = event => { event.preventDefault(); submitChat(); };
 byId('message').onkeydown = event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); submitChat(); } };
 document.querySelectorAll('[data-prompt]').forEach(b => { b.onclick = () => act(() => send(b.dataset.prompt)); });
 byId('reset').onclick = () => act(async () => { await refresh(); message('Đã tải lại dữ liệu từ máy chủ.'); });
-byId('new-conversation').onclick = () => act(() => newConversation());
+byId('new-conversation').onclick = () => act(async () => {
+  await newConversation();
+  await renderSidebarConversations();
+});
 
 const btnHistoryHeader = byId('btn-chat-history');
 if (btnHistoryHeader) btnHistoryHeader.onclick = () => openConversationHistoryDialog();
@@ -1192,7 +1237,10 @@ const btnHistorySidebar = byId('btn-conversation-history');
 if (btnHistorySidebar) btnHistorySidebar.onclick = () => openConversationHistoryDialog();
 
 const btnHeaderNewConv = byId('btn-header-new-conv');
-if (btnHeaderNewConv) btnHeaderNewConv.onclick = () => act(() => newConversation());
+if (btnHeaderNewConv) btnHeaderNewConv.onclick = () => act(async () => {
+  await newConversation();
+  await renderSidebarConversations();
+});
 
 const closeHistoryDialog = byId('close-history-dialog');
 if (closeHistoryDialog) closeHistoryDialog.onclick = () => byId('conversation-history-dialog').close();
@@ -1200,7 +1248,10 @@ if (closeHistoryDialog) closeHistoryDialog.onclick = () => byId('conversation-hi
 const btnModalNewConv = byId('btn-modal-new-conv');
 if (btnModalNewConv) btnModalNewConv.onclick = () => {
   byId('conversation-history-dialog').close();
-  act(() => newConversation());
+  act(async () => {
+    await newConversation();
+    await renderSidebarConversations();
+  });
 };
 byId('model-provider').onchange = () => {
   const requested = byId('model-provider').value;
