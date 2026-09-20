@@ -2516,7 +2516,9 @@ button:disabled {
 
 /* Role-Based Access Control UI Isolation */
 body[data-role="customer"] #toggle-staff-desk,
-body[data-role="viewer"] #toggle-staff-desk {
+body[data-role="viewer"] #toggle-staff-desk,
+body[data-role="customer"] #toggle-inspector,
+body[data-role="viewer"] #toggle-inspector {
   display: none !important;
 }
 

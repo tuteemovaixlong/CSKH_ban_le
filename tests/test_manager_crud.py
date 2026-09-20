@@ -132,6 +132,18 @@ class TestManagerCRUD(unittest.TestCase):
                 self.assertEqual(ctx.exception.status, 403)
                 self.assertEqual(ctx.exception.code, 'permission_denied')
 
+    def test_tools_execute_rbac(self):
+        customer_app = Application(self.store, {}, role='customer')
+        with self.assertRaises(ApiError) as ctx:
+            api_result(customer_app, 'C-001', 'POST', '/api/tools/execute', {'tool_name': 'list_orders', 'arguments': {}})
+        self.assertEqual(ctx.exception.status, 403)
+        self.assertEqual(ctx.exception.code, 'permission_denied')
+
+        staff_app = Application(self.store, {}, role='staff')
+        status, res = api_result(staff_app, 'C-001', 'POST', '/api/tools/execute', {'tool_name': 'list_orders', 'arguments': {}})
+        self.assertEqual(status, 200)
+        self.assertIn('result', res)
+
 
 if __name__ == '__main__':
     unittest.main()

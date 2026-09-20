@@ -72,7 +72,7 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
                     escalation_rate = round((esc_count / total_convs) * 100, 1) if total_convs > 0 else 0.0
                     ai_resolution_rate = round(100.0 - escalation_rate, 1)
                 except Exception:
-                    avg_csat, csat_sample_size, escalation_rate, ai_resolution_rate = None, 0, 0.0, 100.0
+                    avg_csat, csat_sample_size, escalation_rate, ai_resolution_rate = None, 0, None, None
             total_orders = len(rows)
             pending_orders = sum(1 for r in rows if r['status'] == 'pending')
             delivered_orders = sum(1 for r in rows if r['status'] == 'delivered')
@@ -174,6 +174,7 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
             approval.drive(app, customer, result['proposal_id'])
             return (201, {**result, 'workflow_status': 'awaiting_confirmation'})
         if path == "/api/tools/execute":
+            app.require_permission(STAFF)
             fields(body, {'tool_name', 'arguments'})
             from agent_protocol import validate_tool
             from retailops_tools import BoundTools

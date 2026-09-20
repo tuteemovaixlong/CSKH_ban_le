@@ -1551,18 +1551,29 @@ async function loadManagerData() {
 async function loadManagerKPIs() {
   try {
     const kpis = await api('/api/manager/kpis');
-    if (byId('kpi-ai-res')) byId('kpi-ai-res').textContent = kpis.ai_resolution_rate + '%';
-    if (byId('kpi-human-esc')) byId('kpi-human-esc').textContent = kpis.escalation_rate + '%';
-    if (byId('kpi-csat')) byId('kpi-csat').textContent = kpis.avg_csat + ' / 5.0';
-    if (byId('kpi-revenue')) byId('kpi-revenue').textContent = money(kpis.total_revenue);
-    if (byId('kpi-orders-count')) byId('kpi-orders-count').textContent = kpis.total_orders + ' đơn hàng ghi nhận';
+    if (byId('kpi-ai-res')) byId('kpi-ai-res').textContent = (kpis.ai_resolution_rate !== null && kpis.ai_resolution_rate !== undefined) ? (kpis.ai_resolution_rate + '%') : '—';
+    if (byId('kpi-human-esc')) byId('kpi-human-esc').textContent = (kpis.escalation_rate !== null && kpis.escalation_rate !== undefined) ? (kpis.escalation_rate + '%') : '—';
+    if (byId('kpi-csat')) {
+      if (kpis.avg_csat !== null && kpis.avg_csat !== undefined) {
+        byId('kpi-csat').textContent = kpis.avg_csat + ' / 5.0';
+        if (byId('kpi-csat-sub')) byId('kpi-csat-sub').textContent = `${kpis.csat_sample_size || 0} lượt đánh giá thực tế`;
+      } else {
+        byId('kpi-csat').textContent = 'Chưa có';
+        if (byId('kpi-csat-sub')) byId('kpi-csat-sub').textContent = 'Chưa có lượt đánh giá (0 lượt)';
+      }
+    }
+    if (byId('kpi-revenue')) byId('kpi-revenue').textContent = money(kpis.total_revenue || 0);
+    if (byId('kpi-orders-count')) byId('kpi-orders-count').textContent = (kpis.total_orders || 0) + ' đơn hàng ghi nhận';
 
-    if (byId('stat-pending-val')) byId('stat-pending-val').textContent = kpis.pending_orders;
-    if (byId('stat-delivered-val')) byId('stat-delivered-val').textContent = kpis.delivered_orders;
-    if (byId('stat-cancelled-val')) byId('stat-cancelled-val').textContent = kpis.cancelled_orders;
-    if (byId('stat-products-val')) byId('stat-products-val').textContent = kpis.active_products;
+    if (byId('stat-pending-val')) byId('stat-pending-val').textContent = kpis.pending_orders ?? 0;
+    if (byId('stat-delivered-val')) byId('stat-delivered-val').textContent = kpis.delivered_orders ?? 0;
+    if (byId('stat-cancelled-val')) byId('stat-cancelled-val').textContent = kpis.cancelled_orders ?? 0;
+    if (byId('stat-products-val')) byId('stat-products-val').textContent = kpis.active_products ?? 0;
   } catch (e) {
     console.warn('Lỗi tải KPIs:', e);
+    if (byId('kpi-ai-res')) byId('kpi-ai-res').textContent = 'Lỗi';
+    if (byId('kpi-human-esc')) byId('kpi-human-esc').textContent = 'Lỗi';
+    if (byId('kpi-csat')) byId('kpi-csat').textContent = 'Lỗi';
   }
 }
 
@@ -1606,10 +1617,10 @@ function renderManagerProductsTable() {
     tdName.innerHTML = `<strong>${p.name}</strong><br><small style="color:#64748b;">${p.description ? p.description.slice(0, 45) + '...' : ''}</small>`;
 
     const tdCat = el('td', '', p.category || 'Chưa phân loại');
-    const tdPrice = el('td', '', money(p.price || 299000));
+    const tdPrice = el('td', '', (p.price !== null && p.price !== undefined) ? money(p.price) : 'Chưa có giá');
     const tdVar = el('td', '', (p.variants || []).join(', ') || 'Tiêu chuẩn');
-    const tdStock = el('td', '', String(p.stock !== null && p.stock !== undefined ? p.stock : '25'));
-    const tdWarranty = el('td', '', (p.warranty_days || 30) + ' ngày');
+    const tdStock = el('td', '', (p.stock !== null && p.stock !== undefined) ? String(p.stock) : 'Chưa kiểm kho');
+    const tdWarranty = el('td', '', p.warranty_days ? (p.warranty_days + ' ngày') : 'Chưa cập nhật');
 
     const tdActions = el('td');
     const btnEdit = el('button', 'btn-action-sm', '✏ Sửa');
