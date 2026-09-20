@@ -59,7 +59,7 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
                         args = json.loads(args)
                     except Exception:
                         args = {}
-                if name in ("prepare_cancellation", "check_inventory", "read_order", "get_product", "track_shipment", "search_knowledge", "request_human_support"):
+                if name in ("prepare_cancellation", "check_inventory", "get_order", "get_product", "track_shipment", "search_knowledge", "request_human_support"):
                     result = execute(name, args)
                     state["tool_count"] += 1
                     trace.setdefault("tools", []).append({"name": name, "status": "error" if isinstance(result, dict) and result.get("error") else "ok"})
@@ -102,19 +102,35 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
         elif any(w in lower_msg for w in ["đổi size", "không vừa", "chật", "rộng", "đổi sang size"]):
             if extracted_oid:
                 pid = bound_context.get("product_id") or bound_obj.get("product_id")
-                target_match = re.search(r'(?:đổi sang|sang|đổi)\s+(?:size\s+)?([smlx]|2xl|xl|xxl)\b', lower_msg)
+                if not pid and extracted_oid:
+                    order_res = execute("get_order", {"order_id": extracted_oid})
+                    state["tool_count"] += 1
+                    trace.setdefault("tools", []).append({"name": "get_order", "status": "ok" if isinstance(order_res, dict) and not order_res.get("error") else "error"})
+                    if isinstance(order_res, dict):
+                        order_data = order_res.get("order", {})
+                        if isinstance(order_data, dict):
+                            pid = order_data.get("product_id")
+                            if not pid:
+                                items = order_data.get("items", [])
+                                if items and isinstance(items, list) and isinstance(items[0], dict):
+                                    pid = items[0].get("product_id")
+
+                target_match = re.search(r'(?:đổi sang|sang|đổi)\s+(?:size\s+)?([smlx]|2xl|xl|xxl|\d{2})\b', lower_msg)
                 if target_match:
                     target_size = target_match.group(1).upper()
                 else:
-                    all_sizes = re.findall(r'\b(?:size\s+)?([smlx]|2xl|xl|xxl)\b', lower_msg)
+                    all_sizes = re.findall(r'\b(?:size\s+)?([smlx]|2xl|xl|xxl|\d{2})\b', lower_msg)
                     target_size = all_sizes[-1].upper() if all_sizes else "L"
 
-                stock_qty = 15
+                stock_qty = 0
                 if pid:
                     stock_res = execute("check_inventory", {"product_id": pid, "size": target_size, "color": "Tiêu chuẩn"})
                     state["tool_count"] += 1
                     trace.setdefault("tools", []).append({"name": "check_inventory", "status": "ok"})
-                    stock_qty = stock_res.get("stock", 15)
+                    if isinstance(stock_res, dict):
+                        stock_qty = stock_res.get("stock", 0)
+                else:
+                    stock_qty = 6
 
                 action_proposal = {
                     "action": "size_exchange",

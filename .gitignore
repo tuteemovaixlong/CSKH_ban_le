@@ -237,3 +237,4 @@ postgres-secrets/
 /admin.env
 /console-data/
 /eval-output/
+/scratch/

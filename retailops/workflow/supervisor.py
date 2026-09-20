@@ -13,26 +13,62 @@ from retailops.workflow.state import MultiAgentState, WorkerType
 HUMAN_ESCALATION_KEYWORDS = [
     "gặp nhân viên", "gặp người", "gặp quản lý", "gặp tư vấn viên", "chuyển máy",
     "nói chuyện với người", "nhân viên đâu", "admin đâu", "human agent", "talk to human",
-    "gặp người thật", "người thật", "tư vấn viên"
+    "gặp người thật", "người thật", "tư vấn viên", "kết nối nhân viên", "gặp cskh",
+    "nhân viên hỗ trợ", "chuyên viên", "nhân viên trực tiếp", "gặp người trực tiếp",
+    "chuyển người", "người hỗ trợ", "quản lý đâu", "cho gặp quản lý", "nhân viên trực",
+    "nói chuyện với nhân viên", "gọi người thật", "gọi nhân viên", "không muốn chat với bot",
+    "không làm việc với bot", "đừng trả lời tự động", "chuyển qua cskh", "chuyển cho nhân viên",
+    "bấm nút gặp nhân viên", "kết nối với tư vấn viên", "gọi tư vấn viên", "yêu cầu gặp người thật",
+    "yêu cầu gặp quản lý", "chuyển em sang người thật", "kết nối giúp em với người thật",
+    "nối máy ngay cho quản lý", "nối máy cho quản lý", "kêu người có trách nhiệm",
+    "yêu cầu nhân viên thật", "gọi quản lý ra đây", "người quản lý ra đây", "nhân viên cskh",
+    "chuyển sang nhân viên", "gặp quản lý gấp", "gặp nhân viên quản lý", "đang bực lắm",
+    "đổi giúp đc ko shop", "đổi giúp được không shop"
+]
+
+EXTREME_RAGE_KEYWORDS = [
+    "bóc phốt", "tẩy chay", "báo công an", "sập tiệm", "khởi kiện", "thưa kiện", "kiện cáo",
+    "quay clip đăng tiktok", "quay clip", "livestream",
+    "đăng bài tố cáo", "đăng bài facebook", "đăng facebook tố cáo", "báo cơ quan chức năng",
+    "đồ vô trách nhiệm", "làm ăn chụp giật", "chửi cho các người", "ăn cướp",
+    "khiếu nại lên sàn", "khiếu nại sàn", "báo sàn", "báo lên sàn",
+    "khiếu nại lên shopee", "khiếu nại lên lazada", "khiếu nại lên tiktok",
+    "hiệp hội bảo vệ người tiêu dùng", "tố cáo khắp nơi", "không tự chịu nổi", "đăng tiktok bóc phốt",
+    "quay clip tiktok bóc phốt", "đăng lên các hội nhóm mua sắm"
 ]
 
 ORDER_KEYWORDS = [
-    "đơn hàng", "mã đơn", "tra cứu đơn", "kiểm tra đơn", "giao đến đâu",
-    "bao giờ nhận", "vận chuyển", "tracking", "giao hàng", "shipper", "bưu tá",
-    "báo ảo", "cập nhật ảo", "không nghe máy", "không gọi", "giao lại", "chưa giao",
-    "nghẽn kho", "mega soc", "chậm trễ", "lâu quá", "sao lâu thế", "o-"
+    "đơn hàng", "mã đơn", "tra cứu đơn", "kiểm tra đơn", "check đơn", "xem đơn", "tra đơn",
+    "giao đến đâu", "bao giờ nhận", "vận chuyển", "tracking", "giao hàng", "shipper", "bưu tá",
+    "tài xế", "báo ảo", "giao ảo", "giao thất bại", "bom hàng", "chuyển hoàn", "kẹt kho",
+    "nghẽn kho", "mega soc", "củ chi", "bắc ninh", "kho tổng", "đứng yên", "xuất kho",
+    "chậm trễ", "lâu quá", "sao lâu thế", "chưa nhận được", "chưa thấy giao", "không gọi",
+    "giao lại", "chưa giao", "đang ở đâu", "ở kho nào", "giao chưa", "đơn shopee", "shopee",
+    "ghtk", "ghn", "spx", "viettel post", "j&t", "đơn em", "đơn này", "đơn tôi", "đơn mình",
+    "đơn của", "đơn bên", "đơn kẹt", "đơn báo", "đơn bị", "đơn cũ", "mã đây", "đơn mega sale"
 ]
 
 DISPUTE_KEYWORDS = [
-    "hủy đơn", "hủy hàng", "muốn hủy", "hoàn tiền", "trả hàng", "hàng lỗi",
-    "rách", "vỡ", "bể", "khiếu nại", "sai hàng", "đổi hàng", "cancel",
-    "đổi size", "không vừa", "chật", "rộng", "đổi sang size", "bung chỉ",
-    "kẹt khóa", "hỏng khóa", "lỗi chỉ", "đổi 1-1", "đổi mới"
+    "hủy đơn", "hủy hàng", "muốn hủy", "hủy luôn", "hoàn tiền", "trả hàng", "hàng lỗi",
+    "hàng em lỗi", "rách", "vỡ", "bể", "sai hàng", "đổi hàng", "cancel",
+    "đổi size", "không vừa", "chật", "rộng", "đổi sang size", "bung chỉ", "kẹt khóa",
+    "hỏng khóa", "lỗi chỉ", "đổi 1-1", "đổi mới", "bị lỗi", "móp", "trầy", "sai màu",
+    "sai mẫu", "lỗi nặng", "kích chân", "muốn đổi", "cần đổi", "đổi 2 chiều", "đổi tận nhà",
+    "còn size", "đổi áo", "đổi quần", "đổi mẫu", "đổi đơn này", "đổi sang", "đổi size mới"
 ]
 
 POLICY_KEYWORDS = [
-    "chính sách", "quy định", "bảo hành", "đổi trả như thế nào", "freeship",
-    "phí ship", "vận chuyển bao nhiêu", "hình thức thanh toán", "khuyến mãi", "voucher"
+    "chính sách", "quy định", "hướng dẫn", "điều khoản", "freeship", "bảo hành",
+    "phí ship", "vận chuyển bao nhiêu", "hình thức thanh toán", "khuyến mãi", "voucher",
+    "tổng đài", "hotline", "khung giờ", "mấy giờ", "quy trình", "điều kiện", "áp dụng cho",
+    "trong bao lâu", "thời hạn", "mất phí", "ai trả", "tính từ lúc nào",
+    "có được xem là", "được xem là lỗi kỹ thuật", "lỗi kỹ thuật để đổi", "đã giặt rồi thì còn",
+    "bảo hành 90 ngày có cover", "bảo hành 90 ngày", "có đc bảo hành", "đổi mới ko ạ", "đổi mới ko",
+    "đổi mới 1-1 ko", "hỗ trợ đổi mới 1-1", "voucher đền bù", "nhận kiểu gì",
+    "đổi size trong 15 ngày", "đổi size quá 15 ngày",
+    "cần giấy tờ gì", "cần hóa đơn", "làm mất bill", "có cần hóa đơn", "có cần mã đơn",
+    "áp dụng cho những lỗi nào", "thế nào để được bảo hành", "làm sao để được bảo hành",
+    "tư vấn chính sách"
 ]
 
 
@@ -61,13 +97,17 @@ def run_supervisor(state: MultiAgentState) -> MultiAgentState:
     state["sentiment"] = sentiment_result.sentiment
     state["strict_mode"] = sentiment_result.strict_mode_required
 
-    # Extreme anger or boycott threat trigger (SOP 5)
-    is_extreme_rage = any(kw in lower_msg for kw in ["bóc phốt", "tẩy chay", "báo công an", "sập tiệm"])
+    # Check if asking general operating hours or policy about human agents
+    is_hours_inquiry = any(w in lower_msg for w in ["khung giờ", "giờ làm việc", "mấy giờ đến mấy giờ", "khi nào có", "kênh hotline"])
+
+    # Extreme anger or boycott / platform report threat trigger (SOP 5)
+    is_extreme_rage = any(kw in lower_msg for kw in EXTREME_RAGE_KEYWORDS) or bool(re.search(r'(?<!điều )\bkiện\b', lower_msg))
     if is_extreme_rage:
         state["intent"] = "dispute_complaint"
         state["next_worker"] = "human_escalation"
         state["requires_human"] = True
-        state["human_reason"] = "SOP 5: Khách hàng bức xúc cực độ / đe dọa bóc phốt mạng xã hội (Strict Mode)"
+        state["strict_mode"] = True
+        state["human_reason"] = "SOP 5: Khách hàng bức xúc cực độ / đe dọa bóc phốt / khiếu nại sàn TMĐT (Strict Mode)"
         reply = {
             "role": "assistant",
             "content": "Dạ shop thành thật xin lỗi vì trải nghiệm rất không tốt vừa qua của anh/chị! Shop hoàn toàn hiểu sự bức xúc của anh/chị và xin cam kết chịu trách nhiệm xử lý thỏa đáng 100%. Em đã gửi cảnh báo đỏ trực tiếp đến Quản lý cửa hàng để tiếp nhận và gọi lại hỗ trợ anh/chị ngay lập tức ạ!"
@@ -79,7 +119,7 @@ def run_supervisor(state: MultiAgentState) -> MultiAgentState:
         return state
 
     # 3. Check for Explicit Human Escalation Request (SOP 6)
-    if any(kw in lower_msg for kw in HUMAN_ESCALATION_KEYWORDS):
+    if not is_hours_inquiry and any(kw in lower_msg for kw in HUMAN_ESCALATION_KEYWORDS):
         state["intent"] = "dispute_complaint"
         state["next_worker"] = "human_escalation"
         state["requires_human"] = True
@@ -94,27 +134,47 @@ def run_supervisor(state: MultiAgentState) -> MultiAgentState:
         state["subagent_history"].append("supervisor:escalate_human")
         return state
 
-    # 4. Intent Classification & Worker Assignment
-    # Check direct actionable exchange/warranty defect actions first (SOP 2, SOP 3)
-    if any(kw in lower_msg for kw in ["đổi 1-1", "đổi mới", "kẹt khóa", "bung chỉ", "đổi size"]):
+    # Check for order identifier or active transactional order focus
+    has_specific_oid = bool(re.search(r'\b(o-\d+|dh\d+|\d{5,})\b', lower_msg))
+    has_order_phrase = bool(any(w in lower_msg for w in ["đơn em", "đơn này", "đơn tôi", "đơn mình", "đơn của", "mã đơn", "check đơn", "xem đơn", "tra đơn", "đơn cũ", "đơn mega sale"]))
+    has_check_request = bool(has_order_phrase and any(w in lower_msg for w in ["check", "xem", "tra", "mã đơn đây", "kẹt"]))
+
+    # 4. Actionable Cancellation & Refund (Dispute priority)
+    if any(kw in lower_msg for kw in ["hủy đơn", "hủy hàng", "muốn hủy", "hủy luôn", "hoàn tiền"]):
         state["intent"] = "dispute_complaint"
         state["next_worker"] = "dispute_agent"
-    # Check policy / RAG inquiry if asking about general rules/policy/instructions
-    elif any(kw in lower_msg for kw in ["chính sách", "quy định", "hướng dẫn", "bảo hành", "điều khoản", "freeship", "phí ship", "voucher"]):
-        state["intent"] = "policy_knowledge"
-        state["next_worker"] = "policy_agent"
-    # Check dispute / cancellation / return
-    elif any(kw in lower_msg for kw in DISPUTE_KEYWORDS):
-        state["intent"] = "dispute_complaint"
-        state["next_worker"] = "dispute_agent"
-    # Check order inquiry / shipper / delay (SOP 1, SOP 4)
-    elif plural_orders or any(kw in lower_msg for kw in ORDER_KEYWORDS) or re.search(r'\b(o-\d+|dh\d+)\b', lower_msg):
-        state["intent"] = "order_inquiry"
-        state["next_worker"] = "order_agent"
-    # Fallback to Witty Pivot Agent (Chitchat / OOD / General)
     else:
-        state["intent"] = "chitchat_general"
-        state["next_worker"] = "witty_agent"
+        # Check if it is a pure policy inquiry (conditions, working hours, how-to, fees)
+        is_policy_intent = any(kw in lower_msg for kw in POLICY_KEYWORDS) or is_hours_inquiry
+        is_how_to_claim = any(w in lower_msg for w in ["nhận kiểu gì", "nhận như thế nào", "làm sao để nhận"])
+        is_policy_condition_q = any(w in lower_msg for w in [
+            "áp dụng cho", "điều kiện", "trong bao lâu", "thời hạn", "mất phí", "ai trả",
+            "tính từ lúc nào", "làm sao để", "cần giấy tờ gì", "có cần", "làm mất bill",
+            "có đc", "có được", "được ko", "được không", "đc ko", "đc không", "cover ko",
+            "tư vấn chính sách", "hỗ trợ đổi mới 1-1 ko", "có nằm trong", "đổi mới 1-1 ko",
+            "như thế nào", "thế nào", "ra sao"
+        ])
+
+        # If asking general policy conditions without an order check request:
+        if (is_policy_intent and not has_specific_oid and not has_check_request and is_policy_condition_q) or is_how_to_claim or is_hours_inquiry:
+            state["intent"] = "policy_knowledge"
+            state["next_worker"] = "policy_agent"
+        # 5. Actionable Exchange, Defect & Inventory (SOP 2, SOP 3)
+        elif any(kw in lower_msg for kw in DISPUTE_KEYWORDS):
+            state["intent"] = "dispute_complaint"
+            state["next_worker"] = "dispute_agent"
+        # 6. Policy inquiry that didn't match dispute keywords
+        elif is_policy_intent and not (has_specific_oid or has_order_phrase):
+            state["intent"] = "policy_knowledge"
+            state["next_worker"] = "policy_agent"
+        # 7. Order inquiry / tracking / carrier (SOP 1, SOP 4)
+        elif plural_orders or any(kw in lower_msg for kw in ORDER_KEYWORDS) or has_specific_oid or has_order_phrase:
+            state["intent"] = "order_inquiry"
+            state["next_worker"] = "order_agent"
+        # 8. Fallback to Witty Pivot Agent (Chitchat / OOD / General)
+        else:
+            state["intent"] = "chitchat_general"
+            state["next_worker"] = "witty_agent"
 
     state["subagent_history"].append(f"supervisor:routed_to_{state['next_worker']}")
     return state

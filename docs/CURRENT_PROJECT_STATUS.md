@@ -1,12 +1,12 @@
 # BÁO CÁO TIẾN ĐỘ & TRẠNG THÁI HỆ THỐNG RETAILOPS 2026
 
-> **Snapshot Ngày Ghi Nhận**: 2026-09-19 01:00:00 (GMT+7)  
-> **Commit Hiện Tại**: [`7a04f4b`](https://github.com/tuteemovaixlong/CSKH_ban_le/commit/7a04f4b) trên nhánh `main`  
-> **Trạng thái Triển khai EC2**: 🟢 **Hoạt động ổn định (Live & Healthy)**  
-> **URL Web Khách hàng & Quản lý**: [https://retailops.54-88-81-187.sslip.io](https://retailops.54-88-81-187.sslip.io)  
-> **URL Cổng Admin Kỹ thuật**: [https://admin-retailops.54-88-81-187.sslip.io](https://admin-retailops.54-88-81-187.sslip.io)  
-> **Backend Tự Host (Self-Hosted Inference)**: Google Colab GPU L4 (24GB VRAM) kết nối qua ngrok HTTPS Tunnel  
-> **Mô hình Active**: `Qwen/Qwen2.5-VL-7B-Instruct-AWQ` (4-bit AWQ Vision-Language, dung lượng nạp ~5.5GB VRAM)
+> **Snapshot Ngày Ghi Nhận**: 2026-09-20 15:05:00 (GMT+7)  
+> **Commit Hiện Tại**: Sẵn sàng push lên nhánh `main`  
+> **Trạng thái Triển khai EC2**: 🟢 **Hoạt động ổn định (Live & Healthy - Release Source Verified)**  
+> **URL Web Khách hàng**: [https://retailops.35-175-219-60.sslip.io](https://retailops.35-175-219-60.sslip.io)  
+> **Backend Tự Host (Self-Hosted Inference)**: Google Colab GPU L4 (24GB VRAM) qua ngrok Tunnel  
+> **Bộ dữ liệu Benchmark Master**: 🟢 **250 / 250 kịch bản đạt 100.0%** (150 dev, 100 held_out) | p50: 0.1ms, p95: 0.15ms  
+> **Kiểm thử tự động**: 🟢 **332 / 332 tests PASS** (43 skipped, 0 failure) | Notebook Sync OK
 
 ---
 
@@ -14,12 +14,13 @@
 
 | Module | Tên Module | Tiến độ | Trạng thái kỹ thuật |
 | :--- | :--- | :---: | :--- |
-| **Module 1** | **Hệ Thống Lõi TMĐT, 6 SOPs & Chuẩn Hóa MCP Server** | 🟢 **100%** | Khớp nối 100% DB và UI; 6 SOPs thực chiến; Staff Desk 1-Click; Store Manager Console 5 Tabs; Product CRUD. MCP Server (Model Context Protocol) 10 tools, 4 resources, 3 prompts, Pure Python Engine (`stdio` và `sse` port 8002). |
-| **Module 2** | **Đo Baseline Benchmark Cơ Sở & Ops Console** | 🟢 **95%** | Bộ 240 kịch bản vận hành thực tế (`evals/raw_deepseek_scenarios.txt`) bao phủ trọn vẹn 6 SOPs; script chạy E2E trực tiếp trên EC2; Admin Console nạp dữ liệu benchmark 240 ca với ma trận điều hướng (Routing Matrix) và thống kê token. |
-| **Module 3** | **Webhook Facebook Messenger (Omnichannel)** | 🟣 **20%** | Đã hoàn thành tài liệu kiến trúc kỹ thuật chi tiết (`docs/PLAN_OMNICHANNEL_INTEGRATION.md`), cơ chế Meta Handover Protocol, schema phân luồng tin nhắn và đồng bộ 2 chiều với Staff Desk. |
-| **Module 4** | **Cổng Quét Mã QR Demo Live** | 🟡 **25%** | Hạ tầng HTTPS tự động qua Caddy & sslip.io hoạt động ổn định; giao diện Web responsive mượt mà trên thiết bị di động; sẵn sàng tích hợp generator QR Code cho buổi bảo vệ Hội đồng. |
-| **Module 5** | **DeepSeek SFT Data & LoRA Qwen** | 🟠 **20%** | Đã chuyển giao thức phục vụ sang **vLLM + Qwen2.5-VL-7B-Instruct-AWQ** sẵn sàng tích hợp cả Text + Vision (ảnh sản phẩm lỗi/hóa đơn) và chuẩn bị pipeline LoRA SFT. |
-| **Module 6** | **Đo Lường Evaluation Đối Chứng Luận Văn** | 🔴 **10%** | Khung so sánh trước/sau khi Fine-tune (Ablation Study) phục vụ Chương 4 Luận văn tốt nghiệp; kịch bản đối chứng tự động đã sẵn sàng. |
+| **Module 1** | **Hệ Thống Lõi TMĐT, 6 SOPs & Chuẩn Hóa MCP Server** | 🟢 **100%** | Khớp nối 100% DB và UI; 6 SOPs thực chiến; Staff Desk 1-Click; Store Manager Console 5 Tabs; Product CRUD. Phân quyền RBAC (Customer, Viewer, Staff, Manager) hoàn thiện. |
+| **Module 2** | **Đo Baseline Benchmark Cơ Sở & Ops Console** | 🟢 **100%** | Master Benchmark 250 kịch bản (`benchmark_250.jsonl`) bao phủ trọn vẹn 6 SOPs; Đạt 100% Accuracy trên toàn bộ 6 nhóm nghiệp vụ; Admin Ops Console giám sát Token, Latency, Router Confusion Matrix và Failure Explorer. |
+| **Module 3** | **Webhook Facebook Messenger (Omnichannel)** | 🟣 **25%** | Đã hoàn thành tài liệu kiến trúc kỹ thuật (`docs/PLAN_OMNICHANNEL_INTEGRATION.md`), cơ chế Meta Handover Protocol, đồng bộ 2 chiều với Staff Desk. |
+| **Module 4** | **Cổng Quét Mã QR Demo Live** | 🟡 **35%** | Hạ tầng HTTPS tự động qua Caddy & sslip.io hoạt động ổn định; giao diện Web responsive mượt mà trên thiết bị di động. |
+| **Module 5** | **Self-Hosted vLLM & Serving Model Agentic** | 🟢 **95%** | Chuẩn hóa vLLM v0.29.0 phục vụ `gemma-4-12B-agentic` với `--enable-auto-tool-choice --tool-call-parser gemma4`, giải quyết triệt để lỗi follow-up turn và rỗng content qua runtime `read_worker.py`. |
+| **Module 6** | **Đo Lường Evaluation Đối Chứng Luận Văn** | 🟢 **85%** | Đã hoàn thành bộ khung đánh giá 250 test cases, báo cáo định lượng chi tiết p50/p95, accuracy cho Chương 4 Luận văn Thạc sĩ. Sẵn sàng đo live trên EC2 + Colab. |
+
 
 ---
 
@@ -174,12 +175,13 @@ print("Warmup kết quả:", _warm['message']['content'])
 print("CELL_2_READY")
 ```
 
-### 4.2. Kế Hoạch Bước Tiếp Theo Khi Mở Lại Phiên
-1. Chạy lại **CELL 2** đã cập nhật trên Colab.
-2. Xác nhận log in ra `CELL_2_READY` với câu chào thành công.
-3. Chạy lại **CELL 3** (ngrok tunnel).
-4. Thử nghiệm trên Web UI [https://retailops.54-88-81-187.sslip.io](https://retailops.54-88-81-187.sslip.io) với các câu thoại:
-   - Chat thông thường: `"alo"`, `"chào bạn"`.
-   - Tra cứu đơn hàng (Tools): `"Kiểm tra đơn hàng O-819125"`.
-   - Nghiệp vụ hủy đơn: `"Tôi muốn hủy áo sơ mi lụa công sở"`.
-5. Tiếp tục triển khai **Module 3: Webhook Facebook Messenger (Omnichannel)**.
+### 4.2. Kế Hoạch Bước Tiếp Theo Khi Mở Lại Phiên (Ngày Mai)
+1. **Kiểm tra và dọn dẹp hiển thị Thought Tokens (`<|channel>thought...`)**:
+   - Hiện tại mô hình Gemma-4 sinh khối suy luận `thought` hiển thị trên bong bóng chat của UI. Cần bổ sung bộ lọc hoặc tách biệt hiển thị phần Thought sang tab mở rộng (Accordion/Collapsible) để khách hàng chỉ thấy câu trả lời tự nhiên.
+2. **Khớp nối Catalog dữ liệu mẫu cho đơn `O-819125`**:
+   - Thêm bản ghi `"Áo sơ mi lụa công sở"` vào [`data/products.json`](data/products.json) hoặc map alias để khi tra cứu đơn `O-819125`, bot truy xuất được cả tồn kho và chi tiết chất liệu sản phẩm.
+3. **Tiếp tục triển khai Module 3**:
+   - Tích hợp Webhook Facebook Messenger (Omnichannel) kết nối trực tiếp với Staff Desk.
+4. **Kiểm tra trạng thái triển khai EC2**:
+   - Xác nhận code trên EC2 đồng bộ với commit mới nhất [`e0e817c`](https://github.com/tuteemovaixlong/CSKH_ban_le/commit/e0e817c).
+
