@@ -48,14 +48,11 @@ def main():
 
     print(f"[*] Updating EC2 patches from repository at: {repo_dir}")
     try:
-        remote_check = subprocess.run(["git", "remote", "get-url", "origin"], cwd=str(repo_dir), capture_output=True, text=True)
-        if "git@github.com:" in (remote_check.stdout or ""):
-            https_url = remote_check.stdout.strip().replace("git@github.com:", "https://github.com/")
-            print(f"[*] Switching remote from SSH to HTTPS: {https_url}")
-            subprocess.run(["git", "remote", "set-url", "origin", https_url], cwd=str(repo_dir), check=False)
-        pull_res = subprocess.run(["git", "pull", "origin", "main"], cwd=str(repo_dir), capture_output=True, text=True)
+        sudo_user = os.environ.get("SUDO_USER")
+        cmd = ["sudo", "-u", sudo_user, "git", "pull", "origin", "main"] if sudo_user else ["git", "pull", "origin", "main"]
+        pull_res = subprocess.run(cmd, cwd=str(repo_dir), capture_output=True, text=True)
         if pull_res.returncode != 0:
-            print(f"[!] Warning: git pull returned non-zero code:\n{pull_res.stderr}")
+            print(f"[!] Warning: git pull returned non-zero code:\n{pull_res.stderr.strip()}")
         else:
             print(f"[+] git pull success: {pull_res.stdout.strip()}")
     except Exception as e:
