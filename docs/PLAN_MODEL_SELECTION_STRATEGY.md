@@ -3,7 +3,7 @@ trạng_thái: PLANNED
 mã_kế_hoạch: PLAN_MODEL_SELECTION_STRATEGY
 nguồn_sự_thật:
   - retailops_providers.py
-  - evals/cases.jsonl
+  - evals/scenarios/benchmark_250.jsonl
 cập_nhật_cuối: 2026-09-21
 ---
 
@@ -11,13 +11,13 @@ cập_nhật_cuối: 2026-09-21
 
 > [!TIP]
 > **Vai trò trong Khóa luận: GIAI ĐOẠN 1 (Thực nghiệm & Đánh giá Benchmark — Bước 3)**  
-> Ma trận so sánh giữa các mô hình và cơ chế định tuyến hỗn hợp (Hybrid Routing) sẽ được kiểm thử trên bộ 30+ ca kiểm thử chuẩn trong `evals/`. Kết quả đo đạc thực tế về **Độ chính xác gọi tool (100%), Độ trễ phản hồi (TTFT), Tỷ lệ Hit Cache 3-Tier và Chi phí vận hành** sẽ là số liệu thực nghiệm cốt lõi của **Chương 4 (Thực nghiệm & Đánh giá)** trong Luận văn tốt nghiệp.
+> Ma trận so sánh giữa các mô hình và cơ chế định tuyến hỗn hợp (Hybrid Routing) được đối chiếu thực nghiệm trên bộ kịch bản kiểm thử chuẩn trong `evals/scenarios/benchmark_250.jsonl`. Kết quả đo đạc thực tế về **Độ chính xác gọi tool, Độ trễ phản hồi E2E, Tỷ lệ Hit Cache và Chi phí vận hành** sẽ là số liệu thực nghiệm cốt lõi của **Chương 4 (Thực nghiệm & Đánh giá)** trong Luận văn tốt nghiệp.
 
-Tài liệu này xác định các phương án mô hình ngôn ngữ (LLM/SLM) khả thi cho RetailOps, phân tích điểm đánh đổi (Trade-off) giữa **Trí tuệ, Tốc độ, Sức chịu tải đồng thời (Concurrency) và Chi phí phần cứng**, kèm kiến trúc định tuyến động (Hybrid Routing).
+Tài liệu này xác định các phương án mô hình ngôn ngữ (LLM/SLM) khả thi cho RetailOps, phân tích điểm đánh đổi (Trade-off) giữa **Trí tuệ, Tốc độ, Sức chịu tải đồng thời (Concurrency) và Chi phí phần cứng** (các số liệu mang tính ước lượng kế hoạch / Planning Estimates), kèm kiến trúc định tuyến động đề xuất.
 
 ---
 
-## 1. Ma trận So sánh Toàn diện các Phương án Mô hình
+## 1. Ma trận So sánh Toàn diện các Phương án Mô hình (Ước lượng Kế hoạch / Planning Estimates)
 
 | Tiêu chí | Phương án A: **Muse Glimmer 30B** *(4-bit AWQ)* | Phương án B: **Qwen2.5-7B** *(FP8 / BF16)* | Phương án C: **Qwen3-4B / 2.5-3B** *(Q4 / FP16)* | Phương án D: **Cloud API** *(DeepSeek-V3 / Gemini Flash)* |
 | :--- | :--- | :--- | :--- | :--- |
@@ -91,8 +91,8 @@ Hệ thống đã có sẵn module [retailops_providers.py](../retailops_provide
    ```
 2. **Cấu hình Endpoint vLLM nội bộ**:
    * Thiết lập biến môi trường `RETAILOPS_VLLM_ENDPOINT=http://127.0.0.1:8000/v1` trên EC2/Colab.
-3. **Kích hoạt Circuit Breaker (Chuyển mạch an toàn)**:
-   * Nếu vLLM không phản hồi trong vòng 5 giây, hệ thống tự động fallback chuyển tiếp sang DeepSeek-V3 API hoặc Gemini Flash.
+3. **Kích hoạt Circuit Breaker (Chuyển mạch an toàn - Đề xuất tương lai)**:
+   * *(Kế hoạch đề xuất, chưa triển khai runtime)*: Nếu vLLM không phản hồi trong vòng 5 giây, hệ thống có thể chuyển tiếp sang DeepSeek-V3 API hoặc Gemini Flash.
 
 ---
 

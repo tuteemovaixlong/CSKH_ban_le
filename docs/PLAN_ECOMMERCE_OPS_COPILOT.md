@@ -2,7 +2,7 @@
 
 > **Trạng thái:** PARTIALLY IMPLEMENTED (Core Agent, 6 SOPs & Staff Desk hoàn tất; DB SSOT cho Catalog/Inventory đang chờ theo FIX 02)  
 > **Mức độ minh chứng (Evidence):** L1 Automated Tests (`tests/test_ecommerce_ops.py`) · L3 Live Deployed  
-> **Snapshot tham chiếu:** `d3ca3a6` (Application Verified) · `0c9a7d4` (Git HEAD)  
+> **Audit basis / Documentation baseline reviewed:** `b93eb5a` · **Application verified:** `d3ca3a6`  
 > **Ngày rà soát:** 2026-09-21  
 > **Tồn đọng chính (Gaps):** Single Source of Truth cho Catalog và Inventory trong DB PostgreSQL; hành động nghiệp vụ thực tế cho các nút SOP 1..5 phía Store Manager.  
 > **Mục tiêu cốt lõi:** Tự động hóa tác vụ CSKH lặp lại, xử lý 6 kịch bản vận hành thực chiến (SOP 1 - 6), hỗ trợ nhân viên phê duyệt 1-Click và duy trì test suite xanh.
@@ -46,8 +46,8 @@ flowchart TD
     end
 
     subgraph DBLayer["3. TẦNG DATABASE & KHO DỮ LIỆU (schema.py & store.py)"]
-        DB_Orders["Bảng orders: (id, customer_id, name, variant, amount, status, version)"]
-        DB_Cust["Bảng customers: (id, name, phone, email)"]
+        DB_Orders["Bảng orders: (id, customer_id, name, variant, amount, status)"]
+        DB_Cust["Bảng customers: (id, name)"]
         DB_Prop["Bảng proposals: (id, order_id, type, details, reason, status)"]
         Data_Ship["MOCK_SHIPMENTS (Dữ liệu bưu tá, trạm Mega SOC, vận đơn)"]
         Data_Prod["data/products.json (Bảng size, quy chuẩn bảo hành)"]
@@ -71,8 +71,10 @@ flowchart TD
 2. **Ràng buộc Giao diện `web/app.js` (`renderOrder`)**:
    - Hàm `renderOrder(order)` yêu cầu đủ 5 trường: `order.id`, `order.name`, `order.variant`, `order.amount`, `order.status`.
 3. **Bảo toàn Dữ liệu Kiểm Thử Hồi Quy (Zero Regression Policy)**:
-   - Khách `C-001` (chỉ có 2 đơn `O-101`, `O-102`) và sản phẩm `P-101`, `P-102`, `P-202` (chứa `material: null, stock: null`) được giữ nguyên vẹn để 260+ tests có sẵn luôn luôn PASS.
-   - Các kịch bản TMĐT mới sẽ chạy trên khách `C-003`, `C-004`, đơn hàng `O-103` đến `O-106`, và sản phẩm `P-103` đến `P-402`.
+   - Khách `C-001` (chỉ có 2 đơn `O-101`, `O-102`) và sản phẩm `P-101`, `P-102`, `P-202` (chứa `material: null, stock: null`) được giữ nguyên vẹn để 340 tests có sẵn luôn luôn PASS.
+   - Các kịch bản TMĐT chuẩn chạy trên khách hàng `C-001..C-004`, các đơn hàng lõi `O-101`, `O-102`, `O-202`, `O-301..O-304` (cùng tập đơn DeepSeek mở rộng `O-305..O-312`), và danh mục sản phẩm `P-101..P-104`, `P-202`, `P-203`, `P-301`, `P-401`, `P-501..P-508`.
+4. **Phạm vi Phê Duyệt 1-Click tại Staff Desk**:
+   - Thao tác phê duyệt đề xuất của Nhân viên gửi phản hồi chat xác nhận đến khách hàng (`POST /api/staff/reply`); thao tác này là proposal-only về mặt vận hành, chưa thực hiện biến đổi trạng thái đơn hàng (order mutation) hay kích hoạt API tạo vận đơn đổi trả thực tế.
 
 ---
 
@@ -80,10 +82,10 @@ flowchart TD
 
 | SOP | Tên Quy Trình | Kịch Bản & Triggers | Cơ Chế Xử Lý Cốt Lõi | Thẩm Quyền |
 | :--- | :--- | :--- | :--- | :--- |
-| **SOP 1** | Bưu tá "Cập nhật ảo" không giao | Bưu tá báo "không liên lạc được" dù khách ở nhà | Tra cứu bưu tá phụ trách (Tên, SĐT), tự động kích hoạt khiếu nại bưu cục yêu cầu giao lại trong ngày | **AI Tự Động 100%** |
-| **SOP 2** | Hàng lỗi / Kẹt khóa / Bung chỉ | Khách nhận hàng lỗi do vận chuyển, gửi ảnh unboxing | Nhận ảnh, kiểm tra hạn bảo hành sản phẩm, tạo **Phiếu Đề Xuất Đổi Mới 1-1 Tận Nhà** đẩy sang Staff Desk | **Nhân viên 1-Click Duyệt** |
-| **SOP 3** | Đổi size nhanh tận nhà | Khách mặc không vừa, muốn đổi size | Gọi `check_inventory` kiểm kho, tạo **Phiếu Đổi Size 2 Chiều Tận Nhà** đẩy sang Staff Desk | **Nhân viên 1-Click Duyệt** |
-| **SOP 4** | Nghẽn kho phân loại Mega Sale (>48h) | Đơn hàng đứng yên tại trạm Mega SOC > 48h | Giải thích nguyên nhân ùn ứ, tự động cấp **Voucher 50K / Freeship** xoa dịu khách | **AI Tự Động 100%** |
+| **SOP 1** | Bưu tá "Cập nhật ảo" không giao | Bưu tá báo "không liên lạc được" dù khách ở nhà | Tra cứu bưu tá phụ trách (Tên, SĐT), phản hồi ghi nhận khiếu nại (read-only automated; chưa có API khiếu nại bưu cục) | **AI Tự Động (Read-only)** |
+| **SOP 2** | Hàng lỗi / Kẹt khóa / Bung chỉ | Khách nhận hàng lỗi do vận chuyển, gửi ảnh unboxing | Nhận ảnh, kiểm tra hạn bảo hành sản phẩm, tạo **Phiếu Đề Xuất Đổi Mới 1-1 Tận Nhà** đẩy sang Staff Desk | **Nhân viên Duyệt (Gửi tin nhắn)** |
+| **SOP 3** | Đổi size nhanh tận nhà | Khách mặc không vừa, muốn đổi size | Gọi `check_inventory` kiểm kho, tạo **Phiếu Đổi Size 2 Chiều Tận Nhà** đẩy sang Staff Desk | **Nhân viên Duyệt (Gửi tin nhắn)** |
+| **SOP 4** | Nghẽn kho phân loại Mega Sale (>48h) | Đơn hàng đứng yên tại trạm Mega SOC > 48h | Giải thích nguyên nhân ùn ứ, cung cấp **Voucher 50K** trong tin nhắn chat để xoa dịu khách | **AI Tự Động (Read-only)** |
 | **SOP 5** | Khách giận dữ cực độ, dọa bóc phốt | Khách chửi bới, dọa đăng TikTok / Facebook | Strict Mode (không đôi co), bắn cảnh báo đỏ, đưa vào hàng đợi ưu tiên cao nhất | **Quản lý / Người Thật Tiếp Quản** |
 | **SOP 6** | Khách bấm [🙋 Gặp nhân viên tư vấn] | Khách yêu cầu người thật hoặc click nút UI | Chuyển ngay cho nhân viên nếu rảnh hoặc xếp vào hàng đợi trực tuyến (Queue) | **Nhân viên Tiếp Quản** |
 
@@ -95,14 +97,14 @@ flowchart TD
 ```json
 {
   "customers": [
-    { "id": "C-003", "name": "Trần Thị Mai", "phone": "0912345678", "email": "mai.tran@gmail.com" },
-    { "id": "C-004", "name": "Lê Hoàng Nam", "phone": "0988776655", "email": "nam.le@gmail.com" }
+    { "id": "C-003", "name": "Trần Thị Mai" },
+    { "id": "C-004", "name": "Lê Hoàng Nam" }
   ],
   "orders": [
-    { "id": "O-103", "customer_id": "C-003", "name": "Áo Sơ Mi Oxford Dài Tay", "variant": "Trắng / Size M", "amount": 350000, "status": "pending", "version": 1 },
-    { "id": "O-104", "customer_id": "C-003", "name": "Áo Khoác Gió Bomber 2 Lớp", "variant": "Đen / Size L", "amount": 550000, "status": "delivered", "version": 1 },
-    { "id": "O-105", "customer_id": "C-004", "name": "Giày Sneaker Chạy Bộ Ultra", "variant": "Xám / Size 41", "amount": 890000, "status": "delivered", "version": 1 },
-    { "id": "O-106", "customer_id": "C-004", "name": "Bộ Nồi Inox 3 Đáy Cao Cấp", "variant": "Bạc / Bộ 3 món", "amount": 1250000, "status": "pending", "version": 1 }
+    { "id": "O-301", "customer_id": "C-003", "name": "Áo Sơ Mi Oxford Dài Tay", "variant": "Trắng · Size M · Số lượng 1", "amount": 350000, "status": "pending" },
+    { "id": "O-302", "customer_id": "C-003", "name": "Áo Khoác Gió Bomber 2 Lớp", "variant": "Đen · Size L · Số lượng 1", "amount": 550000, "status": "delivered" },
+    { "id": "O-303", "customer_id": "C-004", "name": "Áo Polo Nam Phối Bo Cổ Co Giãn", "variant": "Xanh Navy · Size M · Số lượng 1", "amount": 399000, "status": "delivered" },
+    { "id": "O-304", "customer_id": "C-004", "name": "Bộ Nồi Inox 3 Đáy Cao Cấp", "variant": "Bạc · Bộ 3 món · Số lượng 1", "amount": 1250000, "status": "pending" }
   ]
 }
 ```
@@ -110,7 +112,7 @@ flowchart TD
 ### 4.2. Dữ Liệu Vận Đơn Bưu Cục (`retailops_tools.py`)
 ```python
 MOCK_SHIPMENTS = {
-    "O-103": {
+    "O-301": {
         "tracking_code": "SPX-VN-992811",
         "carrier": "SPX Express",
         "status": "delivery_failed_virtual",
@@ -119,7 +121,7 @@ MOCK_SHIPMENTS = {
         "system_note": "Khách không nghe máy (Tổng đài ghi nhận không có lịch sử gọi ra)",
         "can_reassign_today": True
     },
-    "O-106": {
+    "O-304": {
         "tracking_code": "GHN-HCM-882199",
         "carrier": "GHN",
         "status": "sorting_delayed",
@@ -127,7 +129,7 @@ MOCK_SHIPMENTS = {
         "delayed_hours": 54,
         "reason": "Quá tải phân loại Mega Sale 9.9",
         "estimated_delivery": "20/09/2026",
-        "eligible_voucher": "VOUCHER_50K_COMPENSATION"
+        "eligible_voucher": "SALE50K-BN-SOC"
     }
 }
 ```
@@ -138,8 +140,8 @@ MOCK_SHIPMENTS = {
 
 ```
 [BƯỚC 1: NỀN TẢNG DỮ LIỆU & TOOL GROUNDING] (Ưu tiên số 1)
-  ├── 1.1. Bổ sung sản phẩm mới P-103 đến P-402 vào data/products.json (giữ nguyên P-101, P-102, P-202)
-  ├── 1.2. Mở rộng 6 kịch bản vận đơn bưu cục O-101 đến O-106 trong retailops_tools.py
+  ├── 1.1. Bổ sung sản phẩm mới P-103 đến P-508 vào data/products.json (giữ nguyên P-101, P-102, P-202)
+  ├── 1.2. Mở rộng kịch bản vận đơn bưu cục O-101, O-102, O-301..O-304 trong retailops_tools.py
   ├── 1.3. Cập nhật seed data khách hàng C-003, C-004 trong retailops/business/store.py
   └── 1.4. Đóng gói 4 văn bản chính sách RAG chuẩn TMĐT vào data/knowledge/
   => Kết quả: Dữ liệu chuẩn được nạp đầy đủ, Agent có thông tin để đọc, 100% test cũ vẫn PASS.
@@ -159,7 +161,7 @@ MOCK_SHIPMENTS = {
 
 [BƯỚC 4: BỘ KIỂM THỬ TOÀN DIỆN & KỊCH BẢN DEMO ĐỒ ÁN] (Ưu tiên số 4)
   ├── 4.1. Viết bộ kiểm thử tests/test_ecommerce_ops.py bao phủ 6 SOP
-  ├── 4.2. Chạy toàn bộ test suite (discover -s tests) bảo đảm 260+ tests xanh 100%
+  ├── 4.2. Chạy toàn bộ test suite (discover -s tests) bảo đảm 340 tests xanh 100%
   └── 4.3. Đóng gói kịch bản demo 6 bước chi tiết phục vụ báo cáo và bảo vệ đồ án
   => Kết quả: Hệ thống hoàn chỉnh, sẵn sàng đem đi demo và bảo vệ đạt điểm tối đa.
 ```

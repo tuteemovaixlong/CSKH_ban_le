@@ -3,7 +3,8 @@ trạng_thái: PLANNED (Sau Khóa luận)
 mã_kế_hoạch: PLAN_FINE_TUNING_SERVING
 nguồn_sự_thật:
   - scripts/check_eval_dataset.py
-  - evals/cases.jsonl
+  - evals/scenarios/benchmark_250.jsonl
+  - evals/scenarios/baseline_v1.jsonl
   - retailops_providers.py
 cập_nhật_cuối: 2026-09-21
 ---
@@ -18,9 +19,9 @@ Tài liệu này xác định quy trình kỹ thuật để huấn luyện (Fine
 
 ---
 
-## 1. Lựa chọn Mô hình Nền (Base Student Model)
+## 1. Lựa chọn Mô hình Nền (Candidate Student Models)
 
-Mục tiêu là chọn mô hình có kích thước vừa phải (từ 3B đến 8B parameters), có khả năng chạy mượt mà trên phần cứng khiêm tốn (GPU 16GB VRAM như NVIDIA T4 / L4 / RTX 4070/4090 hoặc chạy CPU qua quantization):
+Mục tiêu là chọn mô hình có kích thước vừa phải (từ 3B đến 8B parameters), có khả năng chạy mượt mà trên phần cứng khiêm tốn (GPU 16GB VRAM như NVIDIA T4 / L4 / RTX 4070/4090 hoặc chạy CPU qua quantization). Đây là danh sách các ứng viên có thể cấu hình linh hoạt:
 
 1. **`Qwen/Qwen2.5-7B-Instruct` (Khuyến nghị số 1)**:
    - Điểm mạnh: Khả năng gọi tool (function calling) và xử lý cú pháp JSON đứng đầu thế giới trong phân khúc mã nguồn mở.
@@ -53,7 +54,7 @@ Mục tiêu là chọn mô hình có kích thước vừa phải (từ 3B đến
 Trước khi đưa model vào phục vụ thực tế, model phải vượt qua bộ đánh giá tự động có sẵn trong kho mã nguồn RetailOps:
 
 1. **Bộ Test Dataset Contract ([scripts/check_eval_dataset.py](../scripts/check_eval_dataset.py))**:
-   - Chạy kiểm tra trên toàn bộ 30 ca kiểm thử tiêu chuẩn (`evals/cases.jsonl`):
+   - Chạy kiểm tra trên toàn bộ 30 ca kiểm thử tiêu chuẩn (`evals/scenarios/baseline_v1.jsonl`):
      - `order_lookup`: 5 ca tra cứu và trích xuất `order_id`.
      - `policy`: 5 ca hỏi đáp chính sách đổi trả.
      - `product`: 5 ca tra cứu hàng tồn kho.

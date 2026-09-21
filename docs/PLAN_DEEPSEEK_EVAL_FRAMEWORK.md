@@ -2,7 +2,7 @@
 
 > **Trạng thái:** PLANNING & DESIGN COMPLETE (Master Benchmark Dataset 250 ca đã hoàn tất)  
 > **Mức độ minh chứng (Evidence):** L1 Offline Benchmark (100% Routing Accuracy) · Live Benchmark L4 (Pending Full Run)  
-> **Snapshot tham chiếu:** `d3ca3a6` (Application Verified) · `0c9a7d4` (Git HEAD)  
+> **Audit basis / Documentation baseline reviewed:** `b93eb5a` · **Application verified:** `d3ca3a6`  
 > **Ngày rà soát:** 2026-09-21  
 > **Tồn đọng chính (Gaps):** Bộ kịch bản 250 ca đã được sinh và hợp nhất vào `evals/scenarios/benchmark_250.jsonl`; Full Live Benchmark 250 ca trên EC2 chưa chạy xong (mới có Smoke 10/10 và Batch 01 19/25 runtime note).  
 > **Đảm bảo tính tương thích:** Khớp 100% với trình kiểm định hợp đồng [`scripts/check_eval_dataset.py`](../scripts/check_eval_dataset.py) và cơ chế benchmark [`scripts/run_benchmark_eval.py`](../scripts/run_benchmark_eval.py).

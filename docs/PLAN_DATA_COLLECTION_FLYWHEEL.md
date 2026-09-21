@@ -1,8 +1,8 @@
 # Kế hoạch Thu thập Dữ liệu & Vòng lặp Phản hồi Người dùng (Data Flywheel)
 
 > **Trạng thái:** IMPLEMENTED (Core Complete)  
-> **Mức độ minh chứng (Evidence):** L1 Automated Tests (`tests/test_feedback.py` 10/10 PASS) · L3 Live Deployed  
-> **Snapshot tham chiếu:** `d3ca3a6` (Application Verified) · `0c9a7d4` (Git HEAD)  
+> **Mức độ minh chứng (Evidence):** L1 Automated Tests (`tests/test_feedback.py` 6/6 PASS) · L3 Live Deployed  
+> **Audit basis / Documentation baseline reviewed:** `b93eb5a` · **Application verified:** `d3ca3a6`  
 > **Ngày rà soát:** 2026-09-21  
 > **Kết luận:** Toàn bộ bảng DDL `conversation_feedback`, route `POST /api/feedback`, UI Like/Dislike, CSAT popup và script xuất dữ liệu `scripts/export_tuning_dataset.py` đã hoàn thành và được kiểm thử tự động.  
 > **Mục tiêu:** Thu thập dữ liệu hội thoại, phản hồi chất lượng (CSAT, Like/Dislike) và dữ liệu can thiệp của tư vấn viên để phục vụ quá trình tinh chỉnh (Fine-tuning) và tối ưu hóa theo sở thích (RLHF / DPO).

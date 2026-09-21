@@ -89,15 +89,15 @@ flowchart TD
 
 ---
 
-## 4. Dự toán Chi phí Vận hành (Cost Optimization)
+## 4. Dự toán Chi phí Vận hành Đề xuất (Ước lượng Kế hoạch / Planning Estimates)
 
-| Tầng | Cấu hình đề xuất | Chi phí ước tính/tháng |
+| Tầng | Cấu hình đề xuất | Chi phí ước lượng kế hoạch/tháng |
 | :--- | :--- | :--- |
 | **Web Tier** | 2x AWS ECS Fargate Tasks (0.5 vCPU, 1GB RAM) | ~$25 |
 | **Database Tier** | AWS RDS PostgreSQL `db.t4g.medium` (Multi-AZ) | ~$65 |
 | **Inference Tier** | AWS EC2 `g5.xlarge` (1x A10G 24GB VRAM) (khi tự host) HOẶC dùng Serverless vLLM | ~$200 - $350 (hoặc pay-as-you-go qua RunPod ~$100) |
 | **Network & Cache** | ALB, CloudFront, Semantic Cache | ~$20 |
-| **Tổng cộng** | Hệ thống phục vụ 500.000+ tin nhắn/tháng | **~$300 - $450/tháng** |
+| **Tổng cộng** | Hệ thống phục vụ 500.000+ tin nhắn/tháng | **~$300 - $450/tháng (Ước lượng kế hoạch)** |
 
 ---
 

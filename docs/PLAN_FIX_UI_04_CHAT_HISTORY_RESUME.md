@@ -2,7 +2,7 @@
 
 > **Trạng thái:** IMPLEMENTED & VERIFIED BY AUTOMATED TESTS  
 > **Mức độ minh chứng (Evidence):** L1 Automated Tests (`tests/test_conversation_resume.py` 4/4 PASS) · L3 Live Deployed  
-> **Snapshot tham chiếu:** `d3ca3a6` (Application Verified) · `0c9a7d4` (Git HEAD)  
+> **Audit basis / Documentation baseline reviewed:** `b93eb5a` · **Application verified:** `d3ca3a6`  
 > **Ngày rà soát:** 2026-09-21  
 > **Kết luận:** Tính năng đã hoàn thành 100% trên cả Backend API, Database Store, Frontend UI Drawer/Dialog và Test Suite tự động.  
 > **Mục tiêu:** Cho phép khách hàng và nhân viên khi tải lại trang (F5) hoặc mở lại phiên làm việc có thể tải lại toàn bộ lịch sử trò chuyện cũ, xem lại các bong bóng chat và gửi tin nhắn tiếp nối mạch suy nghĩ của Trợ lý AI (Multi-turn Persistent Memory).

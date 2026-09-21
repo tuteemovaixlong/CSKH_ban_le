@@ -1,4 +1,3 @@
-# Kế hoạch Sử Dụng DeepSeek API: 2 Giai Đoạn Sinh Dữ Liệu Cho Hệ Thống RetailOps 2026
 ---
 trạng_thái: PLANNED
 mã_kế_hoạch: PLAN_DEEPSEEK_DISTILLATION
@@ -37,7 +36,6 @@ Tài liệu này xác định phương pháp sinh tập dữ liệu tổng hợp
 flowchart TD
     A["Tập Kịch bản Nghiệp vụ (Scenario Bank)"] --> B["DeepSeek API (Teacher Model)"]
     B --> C["Sinh Cuộc trò chuyện Đa lượt (Multi-turn Turns)"]
-    C --> D["Pipeline Kiểm duyệt Tự động (Auto-Validator)"]
     D -->|Hợp lệ 100%| E["Dataset Chuẩn: data/distilled_sft.jsonl"]
     D -->|Lỗi JSON hoặc sai Tool| F["Tự động Bỏ qua / Ghi Log"]
     E --> G["Đưa vào Huấn luyện Student Model (Qwen2.5 / DeepSeek-Distill)"]
@@ -53,7 +51,7 @@ Dữ liệu sẽ được tạo theo tỷ lệ phân bổ cụ thể nhằm bao 
 | :--- | :--- | :--- | :--- |
 | **Tra cứu & Vận chuyển** | 25% | Khách hỏi vị trí đơn, hẹn giờ giao, thắc mắc đơn giao chậm, đổi địa chỉ nhận | `track_shipment` |
 | **Tồn kho & Mua sắm** | 20% | Khách hỏi size, màu, kiểm tra còn hàng tại kho, tư vấn thông số sản phẩm | `check_inventory` |
-| **Hủy đơn & Đổi trả** | 25% | Đơn chưa giao muốn hủy; đơn đã giao bị vỡ muốn đổi; quy trình bồi thường 2 bước | `cancel_order`, `search_knowledge` |
+| **Hủy đơn & Đổi trả** | 25% | Đơn chưa giao muốn hủy; đơn đã giao bị vỡ muốn đổi; quy trình bồi thường 2 bước | `prepare_cancellation`, `search_knowledge` |
 | **Bẻ lái Bán hàng (Witty)** | 15% | Khách tâm sự chuyện tình cảm, thời tiết, hỏi đùa -> Bot đối đáp duyên dáng và khéo léo giới thiệu sản phẩm | Không gọi tool, trả lời tự nhiên |
 | **Xử lý Xung đột & Cảm xúc** | 10% | Khách giận dữ, văng tục, đe dọa bóc phốt -> Bot xoa dịu và kích hoạt chuyển giao tư vấn viên | `request_human_support` |
 | **Phòng vệ Bảo mật (Jailbreak)** | 5% | Khách cố tình prompt injection, hỏi lộ system prompt, hỏi chính trị ngoài luồng -> Bot từ chối lịch sự | Guardrails / Refusal chuẩn |
@@ -64,12 +62,12 @@ Dữ liệu sẽ được tạo theo tỷ lệ phân bổ cụ thể nhằm bao 
 
 Mỗi mẫu hội thoại do DeepSeek sinh ra phải vượt qua bộ lọc nghiêm ngặt được viết sẵn trong mã nguồn RetailOps:
 
-1. **Kiểm tra Schema**: Chạy qua hàm `validate_messages()` trong [agent_protocol.py](../agent_protocol.py#L245) để đảm bảo:
+1. **Kiểm tra Schema**: Chạy qua hàm `validate_messages()` trong [agent_protocol.py](../agent_protocol.py) để đảm bảo:
    - Cuộc trò chuyện bắt đầu bằng role `user`.
    - Các lượt xen kẽ `user` -> `assistant`.
    - Tham số tool call hợp lệ chuẩn JSON (không bị cụt hoặc lỗi định dạng).
 2. **Kiểm tra Giới hạn Ngữ cảnh**: Tổng số ký tự và độ dài message nằm trong ngân sách cho phép.
-3. **Kiểm tra Trích xuất Tool**: Tên công cụ phải nằm trong danh mục `TOOLS` được định nghĩa trong [retailops_tools.py](../retailops_tools.py).
+3. **Kiểm tra Trích xuất Tool**: Tên công cụ phải nằm trong danh mục tools được định nghĩa trong [agent_protocol.py](../agent_protocol.py).
 
 ---
 
@@ -89,7 +87,7 @@ Mỗi mẫu hội thoại do DeepSeek sinh ra phải vượt qua bộ lọc nghi
 ## 6. Kế hoạch Thực hiện
 
 - [ ] Soạn thảo template prompt sinh dữ liệu chi tiết cho Teacher Model.
-- [ ] Xây dựng script thực thi [scripts/generate_synthetic_deepseek.py](../scripts/generate_synthetic_deepseek.py).
+- [ ] Xây dựng script thực thi `scripts/generate_synthetic_deepseek.py` *(kế hoạch triển khai, chưa tạo)*.
 - [ ] Chạy thử nghiệm sinh 20 mẫu pilot để đánh giá độ chuẩn xác cú pháp và ngôn ngữ.
 - [ ] Tích hợp kiểm duyệt tự động bằng hàm xác thực có sẵn trong dự án.
 - [ ] Sinh đầy đủ 3.000 mẫu và lưu vào thư mục `data/` phục vụ fine-tuning.

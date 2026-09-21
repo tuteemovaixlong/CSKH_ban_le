@@ -3,8 +3,9 @@ trạng_thái: PLANNED
 mã_kế_hoạch: PLAN_OMNICHANNEL_INTEGRATION
 nguồn_sự_thật:
   - retailops/http/routes.py
+  - web/index.html
   - web/app.js
-  - web/staff.html
+  - retailops/business/store.py
 cập_nhật_cuối: 2026-09-21
 ---
 
@@ -46,7 +47,7 @@ flowchart TD
         ZaloAPI["Zalo for Developers / Webhook"]
     end
 
-    subgraph EC2Server ["Máy chủ EC2 RetailOps (18.206.237.32)"]
+    subgraph EC2Server ["Máy chủ EC2 RetailOps (Caddy HTTPS)"]
         Caddy["Caddy Reverse Proxy (HTTPS)"]
         WebhookRouter["Webhook Dispatcher\n(/webhook/facebook & /webhook/zalo)"]
         

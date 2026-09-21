@@ -2,7 +2,7 @@
 
 > **Trạng thái:** ACTIVE STRATEGIC ROADMAP  
 > **Mức độ minh chứng (Evidence):** L3 Live System Architecture Reference  
-> **Snapshot tham chiếu:** `d3ca3a6` (Application Verified) · `0c9a7d4` (Git HEAD)  
+> **Audit basis / Documentation baseline reviewed:** `b93eb5a` · **Application verified:** `d3ca3a6`  
 > **Ngày rà soát:** 2026-09-21  
 > **Báo cáo tiến độ vận hành mới nhất:** Xem tại [CURRENT_PROJECT_STATUS.md](CURRENT_PROJECT_STATUS.md)
 

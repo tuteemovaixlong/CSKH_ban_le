@@ -1,10 +1,9 @@
 # BÁO CÁO TIẾN ĐỘ & TRẠNG THÁI HỆ THỐNG RETAILOPS 2026
 
 > **Trạng thái:** ACTIVE OPERATIONAL STATUS & EVIDENCE REPORT  
-> **Snapshot ngày kiểm tra:** 2026-09-21 (GMT+7)  
-> **Git HEAD:** `0c9a7d4abfb716ee3ed6a6d474f146ae293ec577` (Local == Origin/Main, Working tree clean)  
+> **Audit basis / Documentation baseline reviewed:** `b93eb5a`  
 > **Application snapshot đã xác minh:** `d3ca3a6ff6fa106af973d4c44c6ee955bce20f13` (Workflow Verify main CI #3: 340 Python tests OK)  
-> **Deploy EC2 gần nhất:** #141 tại snapshot `0b7256c` (Không có thay đổi runtime code giữa `0b7256c` và HEAD `0c9a7d4`)  
+> **Deploy EC2 gần nhất:** #141 tại snapshot `0b7256c` (Không có thay đổi runtime code giữa `0b7256c` và application snapshot)  
 > **EC2 Host:** `retailops-dev` / `i-0fd116d8927d0e412` / **t3.large** (2 vCPU, 8 GiB RAM, 50 GiB EBS, ~43 GiB free)  
 > **Public IPv4 hiện tại:** `98.84.139.124` (dynamic; không dùng Elastic IP)  
 > **Web khách hàng:** https://retailops.98-84-139-124.sslip.io  
@@ -39,7 +38,7 @@ Theo chuẩn phân cấp minh chứng của [`RELEASE_MANIFEST.md`](RELEASE_MANI
 ### 2.2. Khắc phục Toàn diện Phản hồi Kiểm toán từ GPT-6 Astra Pro
 - **Khắc phục Whitelist Tool Khiếu Nại (`dispute_agent.py`)**:
   - Loại bỏ hoàn toàn phương thức nội bộ `read_order`, chuyển sang công cụ đã đăng ký chuẩn `get_order`.
-  - Loại bỏ số lượng tồn kho fix cứng (`stock_qty = 15`), chuyển sang đọc dữ liệu động từ DB hoặc trả về 0 an toàn.
+  - Loại bỏ số lượng tồn kho fix cứng (`stock_qty = 15`), chuyển sang đọc dữ liệu từ thông tin sản phẩm hoặc trả về 0 an toàn (lưu ý: catalog sản phẩm Store Manager hiện vẫn lưu trong file JSON/RAM, chưa phải persistent DB inventory).
 - **Bổ sung Nhận diện Tiếng lóng TMĐT Việt Nam (`supervisor.py`)**:
   - Mở rộng regex nhận diện các từ lóng giao vận: *"tài xế", "bom hàng", "giao thất bại", "kẹt kho", "Củ Chi SOC", "Bắc Ninh Mega SOC", "SPX", "GHN", "GHTK"*... không bị định tuyến nhầm sang chế độ tổng quát (`general`).
   - Xử lý triệt để va chạm chuỗi con bằng regex lookbehind: `(?<!điều )\bkiện\b` (tránh hiểu nhầm *"điều kiện"* là khiếu nại *"kiện"*).
@@ -92,7 +91,7 @@ Theo chuẩn phân cấp minh chứng của [`RELEASE_MANIFEST.md`](RELEASE_MANI
   ```bash
   nohup python3 scripts/run_live_benchmark_http.py > live_bench_full.log 2>&1 &
   ```
-- **Mục tiêu**: Thu thập đầy đủ số liệu thực nghiệm p50, p95, accuracy cho toàn bộ 6 SOPs để lập bảng đối chứng đưa vào Chương 4 Luận văn Thạc sĩ.
+- **Mục tiêu**: Thu thập đầy đủ số liệu thực nghiệm p50, p95, accuracy cho toàn bộ 6 SOPs để lập bảng đối chứng đưa vào Chương 4 Báo cáo Khóa luận Tốt nghiệp.
 
 ### 3.4. Kế hoạch Kiểm thử Đối kháng với DeepSeek API
 - Giữ ở mức thiết kế trong `docs/PLAN_DEEPSEEK_EVAL_FRAMEWORK.md`. Khi cần triển khai, chỉ cần cấu hình API Key và chạy so sánh trực tiếp song song giữa Gemma-4-12B (Self-hosted) và DeepSeek (Cloud API).

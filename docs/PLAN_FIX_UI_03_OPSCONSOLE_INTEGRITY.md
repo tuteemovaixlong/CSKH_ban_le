@@ -2,7 +2,7 @@
 
 > **Trạng thái:** PENDING / P1 (Chưa triển khai)  
 > **Mức độ minh chứng (Evidence):** L1 Automated Test Baseline (`check_ops_console.py` 17 tests OK)  
-> **Snapshot tham chiếu:** `d3ca3a6` (Application Verified) · `0c9a7d4` (Git HEAD)  
+> **Audit basis / Documentation baseline reviewed:** `b93eb5a` · **Application verified:** `d3ca3a6`  
 > **Ngày rà soát:** 2026-09-21  
 > **Mục tiêu:** Chuẩn hóa toàn diện đường ống đo lường của Ops Console theo đúng tôn chỉ *"Kết quả đo được, không phải số minh họa"*; loại bỏ việc tự suy diễn/ước lượng token, loại bỏ số liệu hard-code cũ ngày 18/09, chuẩn hóa tên gọi E2E Latency và mở rộng phạm vi theo dõi Feedback.
 
@@ -30,9 +30,13 @@
      - Subtext mô hình: Đọc từ `activeRun.manifest?.model || activeRun.manifest?.provider || 'Mô hình phục vụ'`.
      - Thẻ An toàn: Hiển thị tỷ lệ đạt chuẩn của nhóm `safety` từ dữ liệu thật (`m.by_category?.safety?.pass_rate`).
 
-3. **Chuẩn hóa Failure Explorer**:
-   - Hiện tại: Phân loại nhầm `isJailbreak = (tools_called.length > 0) || ...` và gắn mô tả cố định về đơn hàng C-002.
-   - Khắc phục: Phân loại dựa trên cấu trúc lỗi thật của kịch bản (`c.category === 'safety'`, hoặc c.error chứa `forbidden_tool`), hiển thị lỗi thực tế do validator trả về.
+3. **Chuẩn hóa Failure Explorer & Quy Tắc Chấm Điểm (Grader Rules)**:
+   - Benchmark Producer: Script `scripts/run_live_benchmark_http.py` đóng vai trò sinh kết quả benchmark có cấu trúc chuẩn gửi tới Ops Console.
+   - Loại bỏ trường `expected_worker`: Hệ thống phân luồng linh hoạt (ví dụ `order_agent` hoặc `dispute_agent` cùng có thể xử lý tra cứu vận đơn); việc ép buộc so khớp 1-1 tên worker gây false negative không đáng có. Thay vào đó, trích xuất `actual_worker` từ `subagent_history` trong execution trace.
+   - Đổi tên `unexpected_tools` thành `extra_tools`: Các công cụ tra cứu bổ sung (như đọc thông tin đơn khi tư vấn) là thông tin ghi nhận phụ trợ (informational), không mặc định coi là lỗi trừ khi vi phạm ràng buộc an toàn (safety constraint).
+   - Cấu trúc kết quả từng ca (`Case Result Schema`):
+     `{case_id: str, category: str, success: bool, latency_ms: float, actual_worker: str, tools_called: list, extra_tools: list, error: str | null}`.
+   - Phân loại lỗi Failure Explorer: Dựa trên `c.category === 'safety'` hoặc `c.error` cụ thể từ grader thay vì gán mô tả cố định.
 
 4. **Bổ sung các sự kiện mới vào Allowlist của [`opsconsole/usage.py`](../opsconsole/usage.py)**:
    - Hiện tại: Chỉ ghi nhận các sự kiện cũ, bỏ sót `feedback_received` (CSAT, turn rating) và `order_status_updated_by_manager`, khiến chúng bị đẩy vào nhóm `other_event`.
@@ -47,13 +51,14 @@
   - Lấy `model = doc.get('model') or doc.get('provider_id') or 'custom'`
   - Lấy `provider = doc.get('provider') or 'custom'`
   - Đọc `prompt_tokens`, `generated_tokens`, `cost` nếu có trong trace, nếu không giữ `None`.
+  - Nhận diện cấu trúc kết quả từ `scripts/run_live_benchmark_http.py`: đọc `actual_worker`, `extra_tools`, bỏ phụ thuộc vào `expected_worker`.
   - Cập nhật định dạng `run_id`.
 
 ### [MODIFY] `opsconsole/web/admin.js`
 - Sửa hàm `showRun()`:
   - Thay thế toàn bộ chuỗi hard-code bằng dữ liệu động từ `activeRun`.
   - Cập nhật nhãn "Độ trễ E2E (p50)" thay cho "TTFT".
-  - Hiển thị Failure Explorer chính xác theo lỗi và category.
+  - Hiển thị Failure Explorer chính xác theo lỗi và category, hiển thị `extra_tools` dưới dạng thông tin tham khảo.
 
 ### [MODIFY] `opsconsole/usage.py`
 - Thêm `feedback_received`, `order_status_updated_by_manager` vào danh mục sự kiện được phân tích.
@@ -66,3 +71,5 @@
 - [ ] Mở Ops Console: Khi chọn bất kỳ run nào (240 ca hoặc 250 ca), thẻ hiển thị tự động lấy đúng số liệu của run đó (không còn chữ `94.6%` hay `Qwen 2.5 4B` cố định).
 - [ ] Không có token giả tạo hay cost giả tạo bằng $0 trong báo cáo import.
 - [ ] Nhãn độ trễ hiển thị đúng bản chất "E2E Latency".
+- [ ] Báo cáo benchmark phân tách rõ ràng giữa `actual_worker`, công cụ đã gọi và `extra_tools` (mang tính thông tin), không bắt buộc trường `expected_worker`.
+- [ ] CI/CD và 340 tests tự động tiếp tục pass 100%.

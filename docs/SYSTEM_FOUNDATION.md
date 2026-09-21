@@ -142,7 +142,7 @@ kiểm tra Docker/HTTPS như trước.
 
 Giai đoạn 3 đã có LangGraph, checkpoint bền vững, lease theo request và interrupt xác nhận.
 Hạn mức API kiểm soát theo quota phiên/ngày. Trong các bản cập nhật 2026 tiếp theo, các công nghệ mở rộng đã được tích hợp vào codebase:
-- **RAG / pgvector**: Tìm kiếm chính sách đổi trả và sản phẩm với vector embeddings ([retailops/rag/](../retailops/rag/)).
-- **Model Context Protocol (MCP)**: Triển khai standalone FastMCP server ([retailops_mcp_server.py](../retailops_mcp_server.py)) và adapter ([retailops/workflow/mcp_client.py](../retailops/workflow/mcp_client.py)); luồng runtime chính hiện sử dụng direct `BoundTools` tối ưu độ trễ.
-- **Multi-Agent Architecture**: Cấu trúc Supervisor và 3 Subagents chuyên trách (Policy, Order Ops, Product Specialist) trong [retailops/workflow/](../retailops/workflow/).
+- **RAG / pgvector**: Tìm kiếm chính sách đổi trả và sản phẩm với vector embeddings ([retailops/knowledge/](../retailops/knowledge/)).
+- **Model Context Protocol (MCP)**: Triển khai standalone server ([retailops_mcp_server.py](../retailops_mcp_server.py)) và adapter ([retailops/workflow/mcp_client.py](../retailops/workflow/mcp_client.py)); luồng runtime chính hiện sử dụng direct `BoundTools` tối ưu độ trễ.
+- **Multi-Agent Architecture**: Cấu trúc Supervisor và 4 Subagents chuyên trách (`order_agent`, `policy_agent`, `dispute_agent`, `witty_agent`) cùng worker hỗ trợ `read_worker` trong [retailops/workflow/subagents/](../retailops/workflow/subagents/).
 Chi tiết hiện trạng kiểm thử và triển khai xem tại [CURRENT_PROJECT_STATUS.md](CURRENT_PROJECT_STATUS.md).

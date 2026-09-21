@@ -4,10 +4,12 @@
 > **Cập nhật Kiến trúc RetailOps 2026 (SSO & Mở rộng RBAC):**  
 > Tài liệu này mô tả mô hình danh tính nền tảng ban đầu (v0.7). Trong phiên bản 2026:
 > 1. **Google OAuth 2.0 SSO**: Đã được tích hợp song song với mã credential cá nhân (xem chi tiết tại [PLAN_RBAC_GOOGLE_AUTH.md](PLAN_RBAC_GOOGLE_AUTH.md)).
-> 2. **Mở rộng Hệ thống Vai trò (RBAC)**: Ngoài `customer` và `viewer`, hệ thống đã hoàn thiện:
->    - `staff`: Truy cập Hàng đợi Nhân viên ([Staff Desk](../web/staff.html), [retailops/staff_desk.py](../retailops/staff_desk.py)) để tiếp quản các phiên khách hàng cần hỗ trợ (SOP 6).
->    - `manager`: Truy cập Cổng Quản lý Cửa hàng ([Store Manager Console](../web/manager.html), [retailops/manager_auth.py](../retailops/manager_auth.py)) để quản lý đơn, voucher và catalog.
->    - `admin`: Quản trị hạ tầng kỹ thuật và telemetry qua [Ops Console](../opsconsole/).
+> 2. **Mở rộng Hệ thống 4 Vai trò Ứng dụng (RBAC)**:
+>    - `customer`: Khách hàng xem đơn và gửi tin nhắn trong phạm vi tài khoản được cấp.
+>    - `viewer`: Chỉ đọc dữ liệu tài khoản, không có quyền hủy đơn hay tạo yêu cầu giao dịch.
+>    - `staff`: Truy cập Hàng đợi Nhân viên ([Staff Desk Dialog trong `web/index.html`](../web/index.html) & [`web/app.js`](../web/app.js)) để tiếp quản các ca khiếu nại (SOP 6) qua các endpoint [`retailops/http/routes.py`](../retailops/http/routes.py).
+>    - `manager`: Truy cập Bảng Quản trị Cửa hàng ([Store Manager Console trong `web/index.html`](../web/index.html)) để điều hành đơn hàng, quản lý danh mục sản phẩm và theo dõi KPIs qua [`retailops/business/store.py`](../retailops/business/store.py).
+>    - *Quản trị Hạ tầng Kỹ thuật (`opsadmin`)*: Được phân tách hoàn toàn trên subdomain riêng, xác thực độc lập bằng Caddy Basic Auth để truy cập [Ops Console](../opsconsole/).
 
 Từ 0.8 có thêm [PostgreSQL](POSTGRESQL.md). Các đường dẫn và backup SQLite trong tài liệu này áp dụng cho backend SQLite.
 
@@ -19,7 +21,7 @@ AWS, GPU hoặc gọi API model để cấp tài khoản và thử các luồng 
 | Khái niệm | Triển khai |
 |---|---|
 | Tenant | Một cửa hàng, mã do quản trị đặt; database có tên ngẫu nhiên do server tạo |
-| Principal | Người dùng do quản trị cấp; chưa có đăng ký công khai, password, SSO hoặc MFA |
+| Principal | Người dùng do quản trị cấp hoặc xác thực qua Google SSO (OAuth 2.0); hỗ trợ mã credential 256-bit |
 | Membership | Gắn principal với một tenant, một customer và role |
 | Customer | Chủ sở hữu đơn trong tenant; nhiều principal được cấp cùng customer sẽ cùng xem dữ liệu đó |
 | Credential | Mã cá nhân ngẫu nhiên 256 bit, gắn một membership; database chỉ lưu SHA-256 |

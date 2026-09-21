@@ -2,7 +2,7 @@
 
 > **Trạng thái:** IMPLEMENTED & ACTIVE SPECIFICATION  
 > **Mức độ minh chứng (Evidence):** L1 Automated Tests (`tests/test_ecommerce_ops.py`) · L3 Live Deployed  
-> **Snapshot tham chiếu:** `d3ca3a6` (Application Verified) · `0c9a7d4` (Git HEAD)  
+> **Audit basis / Documentation baseline reviewed:** `b93eb5a` · **Application verified:** `d3ca3a6`  
 > **Ngày rà soát:** 2026-09-21  
 > **Ghi chú phân loại:** Chuẩn hóa Canonical 6 SOPs theo mã nguồn kiểm thử tự động `tests/test_ecommerce_ops.py`. Hủy đơn hàng là luồng nghiệp vụ giao dịch lõi (Core Order Workflow CORE-01), không đánh số là SOP 4.  
 > **Đối tượng áp dụng:** Kiểm thử thủ công trên Giao diện Web EC2, Kiểm thử tự động E2E (`live-e2e.py`) và Đối chứng Benchmark Luận văn tốt nghiệp.
@@ -11,19 +11,19 @@
 
 ## PHẦN 1: MA TRẬN PHÂN LOẠI NGHIỆP VỤ (BUSINESS COVERAGE MATRIX)
 
-| Nhóm Nghiệp Vụ | Mã SOP | Tên Nghiệp Vụ / Kịch Bản | Phân Luồng Agent | Tools Thực Thi | Tỷ Lệ Giải Quyết Tự Động |
-| :--- | :---: | :--- | :--- | :--- | :---: |
-| **Logistics & Vận chuyển** | **SOP 1** | Bưu tá ảo SPX/GHN không giao, báo "không liên lạc được" | `dispute_agent` / `order_agent` | `track_shipment` | **100% (AI)** |
-| **Bảo hành & Lỗi sản phẩm** | **SOP 2** | Hàng lỗi, rách chỉ, kẹt khóa kéo, nhận ảnh unboxing | `dispute_agent` | `get_order`, `track_shipment`, `action_proposal: exchange_1to1` | **85% (AI + 1-Click Duyệt)** |
-| **Đổi Size / Đổi Mẫu** | **SOP 3** | Khách mặc không vừa, muốn đổi size/màu tận nhà | `dispute_agent` | `check_inventory`, `action_proposal: size_exchange` | **90% (AI + 1-Click Duyệt)** |
-| **Sự Cố Kẹt Kho Vận** | **SOP 4** | Đơn hàng kẹt kho trung chuyển Mega SOC > 48h | `order_agent` | `track_shipment` (Voucher 50K đền bù) | **100% (AI)** |
-| **Khủng Hoảng & Bóc Phốt** | **SOP 5** | Khách giận dữ cực độ, dọa bóc phốt / Khiếu nại gay gắt | `dispute_agent` | Strict Mode, Cảnh báo đỏ, `request_human_support` (Priority VIP) | **Chuyển Người Thật (Strict Handoff)** |
-| **Chuyển Giao Người Thật** | **SOP 6** | Khách chủ động bấm gặp nhân viên / Yêu cầu tư vấn viên | `dispute_agent` / `supervisor` | `request_human_support` | **Chuyển Nhân Viên CSKH (Staff Desk)** |
-| **Hủy Đơn Hàng An Toàn** | **CORE-01**| Khách muốn hủy đơn hàng trước khi xuất kho | `order_agent` | `prepare_cancellation` | **100% (Xác nhận 2 bước)** |
-| **Chính Sách & Tri Thức** | **RAG-01** | Tra cứu chính sách bảo hành, đổi trả, freeship, hoàn tiền | `policy_agent` | `search_knowledge` | **100% (RAG Trích dẫn)** |
-| **Tư Vấn Sản Phẩm** | **PROD-01** | Tư vấn chọn size, chất liệu, tìm kiếm danh mục | `policy_agent` / `order_agent` | `search_products`, `get_product` | **100% (AI)** |
-| **Giao Tiếp Tổng Quát** | **GEN-01** | Chào hỏi, cảm ơn, hỏi thăm ngoài lề, trò chuyện đời sống | `witty_agent` | Không cần tool | **100% (AI)** |
-| **Bảo Mật & Phân Quyền** | **RBAC-01** | Chặn đọc trộm đơn khác tài khoản, phân quyền Staff/Manager | `backend_guard` | Session Cookie, Role Enforcement | **100% (Chặn HTTP 403)** |
+| Nhóm Nghiệp Vụ | Mã SOP | Tên Nghiệp Vụ / Kịch Bản | Phân Luồng Agent | Tools Thực Thi | Trạng Thái Vận Hành & Khả Năng Tự Động |
+| :--- | :---: | :--- | :--- | :--- | :--- |
+| **Logistics & Vận chuyển** | **SOP 1** | Bưu tá ảo SPX/GHN không giao, báo "không liên lạc được" | `dispute_agent` / `order_agent` | `track_shipment` | **Read-only automated** (Tra cứu vận đơn, phản hồi đồng cảm; chưa có API gửi khiếu nại bưu tá) |
+| **Bảo hành & Lỗi sản phẩm** | **SOP 2** | Hàng lỗi, rách chỉ, kẹt khóa kéo, nhận ảnh unboxing | `dispute_agent` | `get_order`, `track_shipment`, `action_proposal: exchange_1to1` | **Proposal-only** (AI phân tích ảnh & tạo thẻ đề xuất, Nhân viên duyệt 1-Click tại Staff Desk) |
+| **Đổi Size / Đổi Mẫu** | **SOP 3** | Khách mặc không vừa, muốn đổi size/màu tận nhà | `dispute_agent` | `check_inventory`, `action_proposal: size_exchange` | **Proposal-only** (AI kiểm tra tồn kho & tạo thẻ đề xuất, Nhân viên duyệt 1-Click tại Staff Desk) |
+| **Sự Cố Kẹt Kho Vận** | **SOP 4** | Đơn hàng kẹt kho trung chuyển Mega SOC > 48h | `order_agent` | `track_shipment` (Voucher 50K đền bù) | **Read-only automated** (Tra cứu kẹt kho & hiển thị mã voucher trong chat; chưa có API giao dịch phát hành voucher) |
+| **Khủng Hoảng & Bóc Phốt** | **SOP 5** | Khách giận dữ cực độ, dọa bóc phốt / Khiếu nại gay gắt | `dispute_agent` | Strict Mode, Cảnh báo đỏ, `request_human_support` (Priority VIP) | **Human handoff** (Strict Mode, gán hàng đợi VIP) |
+| **Chuyển Giao Người Thật** | **SOP 6** | Khách chủ động bấm gặp nhân viên / Yêu cầu tư vấn viên | `dispute_agent` / `supervisor` | `request_human_support` | **Human handoff** (Chuyển sang Staff Desk tiếp quản) |
+| **Hủy Đơn Hàng An Toàn** | **CORE-01**| Khách muốn hủy đơn hàng trước khi xuất kho | `order_agent` | `prepare_cancellation` | **Backend transaction verified** (Xác nhận 2 bước, ghi nhận hủy đơn hợp lệ vào Store) |
+| **Chính Sách & Tri Thức** | **RAG-01** | Tra cứu chính sách bảo hành, đổi trả, freeship, hoàn tiền | `policy_agent` | `search_knowledge` | **Read-only automated** (RAG trích dẫn tài liệu tri thức) |
+| **Tư Vấn Sản Phẩm** | **PROD-01** | Tư vấn chọn size, chất liệu, tìm kiếm danh mục | `policy_agent` / `order_agent` | `search_products`, `get_product` | **Read-only automated** (Tra cứu danh mục sản phẩm) |
+| **Giao Tiếp Tổng Quát** | **GEN-01** | Chào hỏi, cảm ơn, hỏi thăm ngoài lề, trò chuyện đời sống | `witty_agent` | Không cần tool | **Read-only automated** (Hội thoại tự nhiên) |
+| **Bảo Mật & Phân Quyền** | **RBAC-01** | Chặn đọc trộm đơn khác tài khoản, phân quyền Staff/Manager | `backend_guard` | Session Cookie, Role Enforcement | **Backend transaction verified** (Chặn HTTP 403 / Kiểm tra quyền sở hữu đơn) |
 
 ---
 
@@ -49,6 +49,7 @@
   * AI giữ thái độ đồng cảm, xin lỗi về trải nghiệm bực mình của khách.
   * Cung cấp rõ ràng thông tin bưu tá: **Nguyễn Văn Tuấn (0934.112.233)**.
   * Thông báo: Hệ thống đã tự động ghi nhận khiếu nại bưu cục Cầu Giấy 2, yêu cầu bưu tá điều phối giao lại ngay trong ngày (trước 18:00).
+  * *Lưu ý phạm vi kỹ thuật:* Phản hồi ghi nhận khiếu nại và cam kết là luồng đàm thoại tự động (read-only automated dialog); hệ thống hiện chưa tích hợp API khiếu nại thực tế với cổng SPX/GHN.
 * **Tiêu chí Pass**: Có thông tin bưu tá Nguyễn Văn Tuấn + SĐT, không đổ lỗi cho khách, cam kết giao lại trong ngày.
 
 ---
@@ -68,16 +69,17 @@
 * **Kết quả kỳ vọng (Expected Output)**:
   * Giải thích minh bạch lý do chậm trễ: Do khối lượng hàng hóa đợt Sale quá tải cục bộ tại Tổng kho Bắc Ninh.
   * Cung cấp thời gian dự kiến giao: Ngày 20/09/2026.
-  * **Tự động gửi tặng mã giảm giá đền bù**: `SALE50K-BN-SOC` (Giảm 50.000đ cho đơn tiếp theo) để xoa dịu khách hàng.
+  * **Tự động gửi tặng mã giảm giá đền bù**: `SALE50K-BN-SOC` (Giảm 50.000đ cho đơn tiếp theo) hiển thị trong nội dung chat để xoa dịu khách hàng.
+  * *Lưu ý phạm vi kỹ thuật:* Mã voucher được sinh/hướng dẫn trong nội dung chat; hệ thống chưa có API giao dịch backend phát hành voucher tự động vào ví khách hàng.
 * **Tiêu chí Pass**: Nêu đúng địa điểm Kho BN Mega SOC, thông báo mã giảm giá đền bù 50K.
 
 ---
 
 ### NHÓM 2: BẢO HÀNH & HÀNG LỖI DO VẬN CHUYỂN (SOP 2)
 
-#### 📋 Kịch bản TC-WAR-01: Áo sơ mi bị rách chỉ / lỗi khóa kéo, gửi kèm ảnh Unboxing (SOP 2)
-* **Bối cảnh thực tế**: Khách nhận hàng khui hộp, phát hiện áo bị sứt chỉ đường nách hoặc kẹt khóa kéo. Khách tải ảnh bằng chứng lên khung chat.
-* **Tài khoản test**: Khách hàng `C-003` — Mã đơn: `O-302` (Đã giao thành công 5 ngày trước, sản phẩm `P-104`).
+#### 📋 Kịch bản TC-WAR-01: Áo khoác bomber bị rách chỉ / kẹt khóa kéo, gửi kèm ảnh Unboxing (SOP 2)
+* **Bối cảnh thực tế**: Khách nhận hàng khui hộp, phát hiện áo khoác bomber 2 lớp bị sứt chỉ đường nách hoặc kẹt khóa kéo YKK. Khách tải ảnh bằng chứng lên khung chat.
+* **Tài khoản test**: Khách hàng `C-003` — Mã đơn: `O-302` (Đã giao thành công 5 ngày trước, sản phẩm `P-104`: Áo Khoác Gió Bomber 2 Lớp).
 * **Câu nói của khách (Input Prompt)**:
   > *"Shop ơi đơn O-302 tôi vừa khui hàng thì thấy áo bị bung đường chỉ ở nách áo, tôi có gửi ảnh chụp kèm đây này, shop giải quyết đổi cái khác giúp tôi với!"*  
   > *(Đính kèm tệp ảnh: `anh_ao_rach_chi.jpg`)*
@@ -281,26 +283,33 @@
 Khi thực hiện kiểm thử trên giao diện Web hoặc qua API, sử dụng các mã định danh chuẩn sau:
 
 ### 1. Tài Khoản Khách Hàng (Customers)
-* `C-001`: Khách hàng mặc định hồi quy (chỉ có đơn `O-101`, `O-102` - Dành cho CI/CD Regression).
-* `C-003`: Trần Thị Mai (SĐT: `0912345678`) — Phục vụ test SOP 1 (Bưu tá ảo `O-301`) và SOP 2 (Hàng lỗi `O-302`).
-* `C-004`: Lê Hoàng Nam (SĐT: `0988776655`) — Phục vụ test SOP 3 (Đổi size `O-303`) và SOP 4 (Kẹt kho `O-304`).
+* `C-001`: Khách hàng mặc định hồi quy (`Mai Anh`, chỉ có đơn `O-101`, `O-102` - Dành cho CI/CD Regression).
+* `C-002`: Khách mẫu (có đơn `O-202`).
+* `C-003`: Trần Thị Mai (SĐT kịch bản: `0912345678` — Lưu ý: Số điện thoại là metadata minh họa trong kịch bản kiểm thử; schema bảng `customers` SQLite lưu `(id, name)`). Phục vụ test SOP 1 (Bưu tá ảo `O-301`) và SOP 2 (Hàng lỗi `O-302`).
+* `C-004`: Lê Hoàng Nam (SĐT kịch bản: `0988776655` — Lưu ý: Metadata minh họa kịch bản; schema bảng `customers` lưu `(id, name)`). Phục vụ test SOP 3 (Đổi size `O-303`) và SOP 4 (Kẹt kho `O-304`).
 
 ### 2. Danh Mục Đơn Hàng Kiểm Thử (Test Orders)
 | Mã Đơn | Khách Hàng | Tên Sản Phẩm | Trạng Thái Đơn | Kịch Bản Nghiệp Vụ Tương Ứng |
 | :--- | :---: | :--- | :---: | :--- |
-| `O-101` | `C-001` | Áo Polo Thể Thao Nam | `pending` | Đang trung chuyển GHTK Tân Bình, hủy đơn hợp lệ (CORE-01) |
-| `O-102` | `C-001` | Quần Kaki Công Sở | `delivered` | Giao thành công GHN, từ chối hủy đơn (CORE-01) |
-| `O-301` | `C-003` | Váy Hoa Nhí Vintage | `pending` | **SOP 1**: SPX báo ảo không liên lạc được (Shipper Tuấn) |
-| `O-302` | `C-003` | Túi Xách Da Đeo Chéo | `delivered` | **SOP 2**: Lỗi rách chỉ, còn bảo hành 85 ngày -> Đổi 1-1 |
-| `O-303` | `C-004` | Áo Polo Pique Cotton | `delivered` | **SOP 3**: Khách mặc chật -> Đổi sang size L (Kho còn 18) |
-| `O-304` | `C-004` | Giày Da Nam Oxford | `pending` | **SOP 4**: Kẹt kho Tổng BN Mega SOC 54h -> Cấp voucher 50K |
-| `O-819125`| Demo | Áo Sơ Mi Lụa Công Sở | `delivered` | Đơn hàng tra cứu live mẫu trên giao diện Web |
+| `O-101` | `C-001` | Áo thun Essential (`P-101`) | `pending` | Đang trung chuyển GHTK Tân Bình, hủy đơn hợp lệ (CORE-01) |
+| `O-102` | `C-001` | Áo khoác Everyday (`P-102`) | `delivered` | Giao thành công GHN, từ chối hủy đơn (CORE-01) |
+| `O-202` | `C-002` | Áo polo (`P-202`) | `pending` | Trạng thái pending, kiểm thử tra cứu / tư vấn |
+| `O-301` | `C-003` | Áo Sơ Mi Oxford Dài Tay (`P-103`) | `pending` | **SOP 1**: SPX báo ảo không liên lạc được (Shipper Tuấn) |
+| `O-302` | `C-003` | Áo Khoác Gió Bomber 2 Lớp (`P-104`) | `delivered` | **SOP 2**: Lỗi rách chỉ, còn bảo hành 85 ngày -> Đổi 1-1 |
+| `O-303` | `C-004` | Áo Polo Nam Phối Bo Cổ Co Giãn (`P-203`) | `delivered` | **SOP 3**: Khách mặc chật -> Đổi sang size L (Kho còn 18) |
+| `O-304` | `C-004` | Bộ Nồi Inox 3 Đáy Cao Cấp (`P-401`) | `pending` | **SOP 4**: Kẹt kho Tổng BN Mega SOC 54h -> Cấp voucher 50K |
 
-### 3. Tồn Kho Sản Phẩm Tra Cứu Đổi Size (`check_inventory`)
-* `P-101` (Áo Polo Thể Thao): `S: 5 | M: 12 | L: 8 | XL: 0` (Size XL hết hàng).
-* `P-104` (Túi Xách Da): `S: 10 | M: 15 | L: 0 | XL: 8` (Size L hết hàng).
-* `P-203` (Áo Polo Pique): `S: 12 | M: 0 | L: 18 | XL: 5` (Size M hết hàng, Size L còn 18).
-* `P-301` (Giày Oxford): `39: 4 | 40: 8 | 41: 0 | 42: 6 | 43: 2` (Size 41 hết hàng).
+*(Lưu ý về `O-819125`: Mã đơn này xuất hiện trong một số tài liệu demo UI hoặc mock test cũ như một ví dụ tra cứu ngoài catalog chuẩn; hiện tại không thuộc tập seed chuẩn của bảng `orders` trong `retailops/business/store.py`).*
+
+### 3. Tồn Kho Sản Phẩm Tra Cứu Đổi Size (`check_inventory`) & Danh Mục Sản Phẩm
+* `P-101` (Áo thun Essential): `S: 5 | M: 12 | L: 8 | XL: 0` (Size XL hết hàng).
+* `P-102` (Áo khoác Everyday): `S: 0 | M: 4 | L: 15 | XL: 3` (Size S hết hàng).
+* `P-202` (Áo polo): `S: 20 | M: 18 | L: 25 | XL: 10`.
+* `P-104` (Áo Khoác Gió Bomber 2 Lớp): `S: 10 | M: 15 | L: 0 | XL: 8` (Size L hết hàng, tổng tồn kho catalog: 33).
+* `P-203` (Áo Polo Nam Phối Bo Cổ Co Giãn): `S: 12 | M: 0 | L: 18 | XL: 5` (Size M hết hàng, Size L còn 18).
+* `P-301` (Giày Sneaker Running Ultra Light): `39: 4 | 40: 8 | 41: 0 | 42: 6 | 43: 2` (Size 41 hết hàng).
+* `P-401` (Bộ Nồi Inox 3 Đáy Cao Cấp): Tồn kho catalog 15 bộ.
+* `P-501` .. `P-508`: Danh mục sản phẩm mở rộng (Thời trang nam, Quần Cargo Kaki P-502, Áo Polo Oversize P-501...).
 
 ---
 

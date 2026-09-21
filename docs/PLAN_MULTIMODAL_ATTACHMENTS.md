@@ -2,7 +2,7 @@
 
 > **Trạng thái:** PARTIALLY IMPLEMENTED (Image Vision: Implemented; Document/PDF: UI Upload Only / Partial)  
 > **Mức độ minh chứng (Evidence):** L3 Live Deployed (Web upload, OpenAI/Anthropic/Ollama native translation)  
-> **Snapshot tham chiếu:** `d3ca3a6` (Application Verified) · `0c9a7d4` (Git HEAD)  
+> **Audit basis / Documentation baseline reviewed:** `b93eb5a` · **Application verified:** `d3ca3a6`  
 > **Ngày rà soát:** 2026-09-21  
 > **Tồn đọng kỹ thuật:** 
 > - *Image Vision*: Đã hoàn thành upload UI, thumbnail preview, băm sha256 chống trùng lặp, bypass cache và chuyển đổi format native cho OpenAI (`image_url`), Anthropic (`type: image`), Ollama (`images: [...]`). Tuy nhiên chưa có dedicated automated E2E test trong test suite.
@@ -33,7 +33,7 @@ flowchart TD
     UI -->|2. Preview thumbnail + Nén ảnh client-side| Encoder["Base64 Data URI (Mime: JPEG/PNG/WebP/PDF)"]
     Encoder -->|3. POST /api/chat kèm attachment| Router["Public Web API (/api/chat)"]
     
-    Router -->|4. Kiểm tra kích thước & mime type <= 4MB| Validation["Security & Size Guard"]
+    Router -->|4. Kiểm tra type in ('image', 'document') & len(data) <= 6_000_000 chars (~4.5MB)| Validation["Security & Size Guard (retailops/business/application.py)"]
     Validation --> Storage["Lưu vết đính kèm vào Database (conversations/turns)"]
     
     Validation --> Dispatcher{"Model Routing"}
@@ -45,6 +45,12 @@ flowchart TD
     Response --> UI
     Storage --> StaffDesk["🎧 Bàn làm việc Chuyên viên CSKH (Staff Desk) hiển thị ảnh bằng chứng"]
 ```
+
+> [!NOTE]
+> **Ràng buộc Kỹ thuật tại Backend (`retailops/business/application.py`)**:
+> - Kiểm tra trường `type` bắt buộc thuộc tập `('image', 'document')`.
+> - Kiểm tra độ dài chuỗi base64 `len(attachment['data']) <= 6_000_000` ký tự (tương đương ~4.5MB nhị phân).
+> - Backend không thực hiện lọc danh sách trắng (whitelist) MIME type phía server; việc giới hạn đuôi file `.jpg`, `.png`, `.webp`, `.pdf` được thực thi ở client-side qua thẻ `<input accept="...">`.
 
 ---
 

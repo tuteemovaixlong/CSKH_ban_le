@@ -2,7 +2,7 @@
 
 > **Trạng thái:** IMPLEMENTED & ACTIVE (Core Code & UI Hoàn Tất; Cấu hình Redirect URI phụ thuộc Runtime EC2)  
 > **Mức độ minh chứng (Evidence):** L1 Automated Tests (`test_public_session.js`, OAuth E2E) · L3 Live Deployed (Commit `281e5b6`)  
-> **Snapshot tham chiếu:** `d3ca3a6` (Application Verified) · `0c9a7d4` (Git HEAD)  
+> **Audit basis / Documentation baseline reviewed:** `b93eb5a` · **Application verified:** `d3ca3a6`  
 > **Ngày rà soát:** 2026-09-21  
 > **Ghi chú vận hành:** Bước 1 (Authorized Redirect URI) là cấu hình runtime trên Google Cloud Console, cần revalidate mỗi khi EC2 Stop/Start đổi IP (không dùng Elastic IP cố định).  
 > **Tổng quan:** Tích hợp Đăng nhập một chạm bằng Google (Sign in with Google) và phân tách giao diện độc lập theo đúng thẩm quyền: Khách hàng, Nhân viên CSKH, Quản lý Cửa hàng. Quản trị viên Kỹ thuật (Ops Admin) chạy trên subdomain riêng qua Caddy Basic Auth.
@@ -35,13 +35,13 @@ flowchart TD
     
     AuthEngine -->|role = 'manager'| ViewManager["3. GIAO DIỆN QUẢN LÝ CỬA HÀNG (Store Dashboard)\n• Bảng chỉ số CSAT & Tỷ lệ AI tự xử lý vs Escalation\n• Quản lý toàn bộ Đơn hàng & Duyệt hủy/đổi trả\n• Nhật ký Audit Trail (Ai duyệt, khi nào, lý do gì)\n• Quản lý phân ca & cấp quyền nhân viên"]
     
-    AuthEngine -->|role = 'admin'| ViewAdmin["4. GIAO DIỆN QUẢN TRỊ VIÊN KỸ THUẬT (Ops Console)\n• Chạy trên subdomain độc lập (:8100/admin)\n• Đo kiểm Model Router Accuracy, Confusion Matrix\n• Giám sát Latency p95/p99, Token Usage & Container"]
+    CaddyAuth["Xác thực Caddy Basic Auth (:8100/admin)"] -->|opsadmin| ViewAdmin["4. GIAO DIỆN QUẢN TRỊ VIÊN KỸ THUẬT (Ops Console)\n• Chạy trên subdomain độc lập (:8100/admin)\n• Đo kiểm Model Router Accuracy, Confusion Matrix\n• Giám sát Latency p95/p99, Token Usage & Container"]
 ```
 
 ### Bảng Ma trận Quyền hạn Chi tiết
 
-| Chức năng | Khách hàng (`customer`) | Nhân viên CSKH (`staff`) | Quản lý Shop (`manager`) | Quản trị viên (`admin`) |
-| :--- | :---: | :---: | :---: | :---: |
+| Chức năng | Khách hàng (`customer`) | Khách chỉ xem (`viewer`) | Nhân viên CSKH (`staff`) | Quản lý Shop (`manager`) | Quản trị viên Kỹ thuật (`opsadmin`)* |
+| :--- | :---: | :---: | :---: | :---: | :---: |
 | **Chat tư vấn với AI Agent** | ✅ | ❌ *(Ẩn)* | ❌ *(Ẩn)* | ❌ *(Ẩn)* |
 | **Xem đơn hàng cá nhân** | ✅ *(Chỉ đơn của mình)* | ❌ *(Ẩn)* | ❌ *(Ẩn)* | ❌ *(Ẩn)* |
 | **Đánh giá CSAT (👍/👎)** | ✅ | ❌ *(Ẩn)* | ❌ *(Ẩn)* | ❌ *(Ẩn)* |

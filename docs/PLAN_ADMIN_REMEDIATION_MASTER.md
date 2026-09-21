@@ -2,7 +2,7 @@
 
 > **Trạng thái:** PARTIALLY IMPLEMENTED (FIX 04 Hoàn tất 100%; FIX 01 Phần lớn; FIX 02 & FIX 03 Đang chờ)  
 > **Mức độ minh chứng (Evidence):** L1 Automated Tests (`test_conversation_resume.py`) · L3 Live Deployed  
-> **Snapshot tham chiếu:** `d3ca3a6` (Application Verified) · `0c9a7d4` (Git HEAD)  
+> **Snapshot tham chiếu:** Audit basis `b93eb5a` · Application verified `d3ca3a6`  
 > **Ngày rà soát:** 2026-09-21  
 > **Cơ sở xây dựng**: Tiếp thu toàn diện kết quả kiểm toán kỹ thuật từ chuyên gia (chuỗi kiểm tra UI → API → Application/Store → Persistence → Telemetry → Deployment).  
 > **Cam kết chất lượng**: Không dùng số liệu giả, không tự suy diễn token/cost, Single Source of Truth cho Catalog/Kho hàng, bảo vệ biên giới bảo mật của từng vai trò (RBAC).
