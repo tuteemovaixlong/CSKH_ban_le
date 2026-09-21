@@ -1,39 +1,39 @@
 # BÁO CÁO TIẾN ĐỘ & TRẠNG THÁI HỆ THỐNG RETAILOPS 2026
 
-> **Snapshot mới nhất:** 2026-09-21 (GMT+7)  
-> **Application/source snapshot tham chiếu:** `d3ca3a6ff6fa106af973d4c44c6ee955bce20f13` (sau đó chỉ có docs-only commit)  
-> **EC2:** `retailops-dev` / `i-0fd116d8927d0e412` / **t3.large** (2 vCPU, 8 GiB RAM)  
-> **Root storage:** 50 GiB EBS; ext4 `/` ~48 GiB usable, ~43 GiB free tại thời điểm kiểm tra  
+> **Trạng thái:** ACTIVE OPERATIONAL STATUS & EVIDENCE REPORT  
+> **Snapshot ngày kiểm tra:** 2026-09-21 (GMT+7)  
+> **Git HEAD:** `0c9a7d4abfb716ee3ed6a6d474f146ae293ec577` (Local == Origin/Main, Working tree clean)  
+> **Application snapshot đã xác minh:** `d3ca3a6ff6fa106af973d4c44c6ee955bce20f13` (Workflow Verify main CI #3: 340 Python tests OK)  
+> **Deploy EC2 gần nhất:** #141 tại snapshot `0b7256c` (Không có thay đổi runtime code giữa `0b7256c` và HEAD `0c9a7d4`)  
+> **EC2 Host:** `retailops-dev` / `i-0fd116d8927d0e412` / **t3.large** (2 vCPU, 8 GiB RAM, 50 GiB EBS, ~43 GiB free)  
 > **Public IPv4 hiện tại:** `98.84.139.124` (dynamic; không dùng Elastic IP)  
 > **Web khách hàng:** https://retailops.98-84-139-124.sslip.io  
 > **Admin Console:** https://admin-retailops.98-84-139-124.sslip.io  
-> **Runtime:** PostgreSQL + Web + Admin + Caddy đang chạy; SSM Agent Snap active  
-> **Deploy gần nhất:** EC2 Deploy #140 và #141 đã thành công sau incident recovery  
-> **CI:** lỗi stale Colab notebook đã được xử lý; full CI configuration đã được re-verify thành công trên snapshot `main` đồng bộ  
-> **Incident report chi tiết:** [INCIDENT_RECOVERY_2026-09-21.md](INCIDENT_RECOVERY_2026-09-21.md)
-
-> **Lưu ý:** Các phần benchmark/model phía dưới là snapshot nghiệp vụ trước incident nếu chưa có số liệu chạy lại mới hơn. Phần hạ tầng, IP, deploy và CI ở block trên là trạng thái vận hành mới nhất.
+> **Runtime containers:** PostgreSQL + Web + Admin + Caddy đang hoạt động (Healthy); SSM Agent Snap active  
+> **Báo cáo sự cố chi tiết:** [INCIDENT_RECOVERY_2026-09-21.md](INCIDENT_RECOVERY_2026-09-21.md)
 
 ---
 
-## 1. TỔNG QUAN TIẾN ĐỘ 6 MODULE TRỌNG TÂM
+## 1. BẢNG ĐỐI CHIẾU TIẾN ĐỘ 6 MODULE THEO KHUNG MINH CHỨNG (EVIDENCE RUBRIC)
 
-| Module | Tên Module | Tiến độ | Trạng thái kỹ thuật |
-| :--- | :--- | :---: | :--- |
-| **Module 1** | **Hệ Thống Lõi TMĐT, 6 SOPs & Chuẩn Hóa MCP Server** | 🟢 **100%** | Khớp nối 100% DB Postgres và UI; 6 SOPs thực chiến; Staff Desk 1-Click; Store Manager Console 5 Tabs; Product CRUD; Phân quyền RBAC (Customer, Viewer, Staff, Manager) hoàn thiện. |
-| **Module 2** | **Đo Baseline Benchmark Cơ Sở & Ops Console** | 🟢 **100%** | Master Benchmark 250 kịch bản (`benchmark_250.jsonl`) bao phủ 6 SOPs; Đạt 100% Routing Accuracy offline; Admin Ops Console trực quan hóa số liệu. |
-| **Module 3** | **Webhook Facebook Messenger (Omnichannel)** | 🟣 **25%** | Đã hoàn thành tài liệu kiến trúc kỹ thuật (`docs/PLAN_OMNICHANNEL_INTEGRATION.md`), cơ chế Meta Handover Protocol, đồng bộ 2 chiều với Staff Desk. |
-| **Module 4** | **Cổng Quét Mã QR Demo Live** | 🟢 **85%** | Hạ tầng HTTPS tự động qua Caddy & sslip.io trên IP mới `98.84.139.124`; giao diện Web responsive mượt mà trên thiết bị di động. |
-| **Module 5** | **Self-Hosted vLLM & Serving Model Agentic** | 🟢 **95%** | Kết nối thành công Colab vLLM với EC2 qua ngrok; vượt qua chặn trang cảnh báo ngrok bằng header; xử lý Tool Calling tự động. |
-| **Module 6** | **Đo Lường Evaluation Đối Chứng Luận Văn** | 🟢 **90%** | Đã chạy thành công Live Benchmark trên Production thật: Smoke Test 10/10 PASS (100%), Batch 01 (25 ca) đạt 19/25 PASS (76%), p50 = 20.7s. Đã hoàn thành bản thiết kế đối kháng DeepSeek (`docs/PLAN_DEEPSEEK_EVAL_FRAMEWORK.md`). |
+Theo chuẩn phân cấp minh chứng của [`RELEASE_MANIFEST.md`](RELEASE_MANIFEST.md) (`L1`: Automated tests; `L2`: Docker build/publish; `L3`: Live deployment; `L4`: Real-model E2E artifacts):
+
+| Module | Tên Module | Mức Triển Khai | Cấp Minh Chứng (Evidence) | Tồn Đọng Kỹ Thuật Chính (Gaps) |
+| :--- | :--- | :---: | :---: | :--- |
+| **Module 1** | **Hệ Thống Lõi TMĐT, 6 SOPs & MCP Server** | **PARTIAL** | **L3** *(PostgreSQL, Web, Staff Desk, Caddy healthy)* | Catalog vẫn lưu file JSON / in-memory fallback; `check_inventory` tra cứu `stock_map` tĩnh; Nút SOP 1..5 phía Store Manager mới dừng ở mô phỏng. |
+| **Module 2** | **Đo Baseline Benchmark Cơ Sở & Ops Console** | **PARTIAL** | **L1/L3 hỗn hợp** *(250 ca offline đạt 100% Routing)* | Importer Ops Console vẫn chia 3 ước tính token (`len // 3`) và gán cost $0.0; Tên chỉ số TTFT chưa đổi thành E2E Request Latency. |
+| **Module 3** | **Webhook Facebook Messenger (Omnichannel)** | **PLANNED** | **Design-only** *([PLAN_OMNICHANNEL_INTEGRATION.md](PLAN_OMNICHANNEL_INTEGRATION.md))* | Chưa có mã nguồn webhook endpoint, chưa tích hợp Meta App. |
+| **Module 4** | **Cổng Quét Mã QR Demo Live** | **PARTIAL** | **L3** *(HTTPS sslip.io, Web mobile responsive)* | Đã có hạ tầng web di động sẵn sàng cho demo; Chưa có module sinh mã QR động / thẻ QR demo. |
+| **Module 5** | **Self-Hosted vLLM & Serving Model Agentic** | **IMPLEMENTED / PARTIAL** | **Runtime-dependent** *(Colab L4 vLLM + ngrok)* | Tunnel ngrok và serving phụ thuộc runtime phiên làm việc; Chưa đóng gói serving cục bộ thường trực trên EC2. |
+| **Module 6** | **Đo Lường Evaluation Đối Chứng Luận Văn** | **PARTIAL** | **L1 offline (250 ca) + Runtime note EC2** | Smoke 10/10 và Batch 01 19/25 là ghi nhận runtime EC2 (chưa commit artifact vào Git); Full Live Benchmark 250 ca trên EC2 chưa chạy xong. |
 
 ---
 
-## 2. NHỮNG CÔNG VIỆC ĐÃ LÀM ĐƯỢC (COMPLETED)
+## 2. NHỮNG CÔNG VIỆC ĐÃ HOÀN THÀNH (COMPLETED EVIDENCE)
 
 ### 2.1. Hợp nhất Master Benchmark & Chuẩn hóa Hợp đồng Dữ liệu
-- **Gom 10 Batch thành Master Dataset**: Tổng hợp toàn bộ 250 kịch bản từ `B01.jsonl` đến `B10.jsonl` vào [`evals/scenarios/benchmark_250.jsonl`](evals/scenarios/benchmark_250.jsonl) (150 ca `dev`, 100 ca `held_out`).
-- **Xác thực Schema 9 trường nghiêm ngặt**: Vượt qua toàn bộ hợp đồng của [`scripts/check_eval_dataset.py`](scripts/check_eval_dataset.py) và `validate_retailops_jsonl.py`.
+- **Gom 10 Batch thành Master Dataset**: Tổng hợp toàn bộ 250 kịch bản từ `B01.jsonl` đến `B10.jsonl` vào [`evals/scenarios/benchmark_250.jsonl`](../evals/scenarios/benchmark_250.jsonl) (150 ca `dev`, 100 ca `held_out`).
+- **Xác thực Schema 9 trường nghiêm ngặt**: Vượt qua toàn bộ hợp đồng của [`scripts/check_eval_dataset.py`](../scripts/check_eval_dataset.py) và `validate_retailops_jsonl.py`.
 - **Đạt điểm tuyệt đối Offline Benchmark**: Đạt **250 / 250 PASS (100.0%)** trên bộ định tuyến giám sát (`run_benchmark_eval.py`), độ trễ p50 = 0.10 ms.
 
 ### 2.2. Khắc phục Toàn diện Phản hồi Kiểm toán từ GPT-6 Astra Pro
@@ -53,6 +53,7 @@
   - Endpoint `healthz` trả về HTTP 200: `{"status": "ok", "scope": "synthetic-demo", "storage_backend": "postgresql", "agent_protocol": "retailops-agent-v2"}`.
 
 ### 2.4. Thực thi Đo Đạc Live Benchmark Thực tế (Live HTTP Evaluation)
+> *Ghi chú quan trọng:* Kết quả đợt chạy live dưới đây là **ghi nhận runtime trực tiếp trên EC2** trong phiên kiểm thử. Các file artifact sinh ra không được commit vào Git để bảo đảm working tree sạch sau incident recovery; báo cáo reproducible đã commit trong repo hiện là [`evals/reports/live_benchmark_report_20260918_042301.md`](../evals/reports/live_benchmark_report_20260918_042301.md) (240 ca).
 - **Giai đoạn 1 (Smoke Test - 10 ca đầu)**:
   - **Tỷ lệ thành công**: **10 / 10 PASS (100.0%)**.
   - **Độ trễ**: p50 = 24.28s, p95 = 31.39s.
@@ -60,14 +61,14 @@
 - **Giai đoạn 2 (Batch 01 - 25 ca)**:
   - **Tỷ lệ thành công**: **19 / 25 PASS (76.0%)**.
   - **Độ trễ**: p50 = **20.75s**, p95 = **31.07s**.
-  - Tự động xuất báo cáo chi tiết tại:
+  - Báo cáo chi tiết runtime trên EC2:
     - `/home/ssm-user/CSKH_ban_le/evals/reports/live_benchmark_report_20260920_091714.json`
     - `/home/ssm-user/CSKH_ban_le/evals/reports/live_benchmark_report_20260920_091714.md`
     - `/home/ssm-user/CSKH_ban_le/evals/reports/live_benchmark_report_latest.json`
 
-### 2.5. Hoàn thiện CI/CD & Tài liệu Thiết kế Đối kháng
-- **CI/CD Xanh 100%**: Đồng bộ hóa file `notebooks/colab_agent.ipynb` bằng `scripts/build_agent_notebook.py`, khắc phục lỗi stale notebook trên GitHub Actions (Commit `e54802b`).
-- **Thiết kế Đối kháng DeepSeek**: Hoàn thành tài liệu kiến trúc [`docs/PLAN_DEEPSEEK_EVAL_FRAMEWORK.md`](docs/PLAN_DEEPSEEK_EVAL_FRAMEWORK.md) (lưu ở mức kế hoạch đối chứng cho Luận văn).
+### 2.5. Hoàn thiện CI/CD & Xác Minh Toàn Tuyến
+- **CI/CD Xanh 100%**: Snapshot application `d3ca3a6` đã được workflow **Verify main CI #3** kiểm thử vượt qua toàn bộ **340 Python tests OK**, bảo đảm các hợp đồng `PUBLIC_UI_ASSETS_OK`, `PUBLIC_HTTPS_PROXY_COOKIE_FLOW_OK`, `PERSISTENT_HTTPS_ACCOUNT_FLOW_OK`, `POSTGRES_HTTPS_IMPORT_RESTORE_OK`.
+- **Thiết kế Đối kháng DeepSeek**: Hoàn thành tài liệu kiến trúc [`PLAN_DEEPSEEK_EVAL_FRAMEWORK.md`](PLAN_DEEPSEEK_EVAL_FRAMEWORK.md).
 
 ---
 

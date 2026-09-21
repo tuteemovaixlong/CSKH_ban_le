@@ -1,5 +1,14 @@
 # RetailOps 0.7 — Tài khoản và dữ liệu độc lập với phiên
 
+> [!NOTE]
+> **Cập nhật Kiến trúc RetailOps 2026 (SSO & Mở rộng RBAC):**  
+> Tài liệu này mô tả mô hình danh tính nền tảng ban đầu (v0.7). Trong phiên bản 2026:
+> 1. **Google OAuth 2.0 SSO**: Đã được tích hợp song song với mã credential cá nhân (xem chi tiết tại [PLAN_RBAC_GOOGLE_AUTH.md](PLAN_RBAC_GOOGLE_AUTH.md)).
+> 2. **Mở rộng Hệ thống Vai trò (RBAC)**: Ngoài `customer` và `viewer`, hệ thống đã hoàn thiện:
+>    - `staff`: Truy cập Hàng đợi Nhân viên ([Staff Desk](../web/staff.html), [retailops/staff_desk.py](../retailops/staff_desk.py)) để tiếp quản các phiên khách hàng cần hỗ trợ (SOP 6).
+>    - `manager`: Truy cập Cổng Quản lý Cửa hàng ([Store Manager Console](../web/manager.html), [retailops/manager_auth.py](../retailops/manager_auth.py)) để quản lý đơn, voucher và catalog.
+>    - `admin`: Quản trị hạ tầng kỹ thuật và telemetry qua [Ops Console](../opsconsole/).
+
 Từ 0.8 có thêm [PostgreSQL](POSTGRESQL.md). Các đường dẫn và backup SQLite trong tài liệu này áp dụng cho backend SQLite.
 
 Đây là giai đoạn 2 của khung hệ thống, dùng **dữ liệu giả lập**. Không cần thêm dịch vụ

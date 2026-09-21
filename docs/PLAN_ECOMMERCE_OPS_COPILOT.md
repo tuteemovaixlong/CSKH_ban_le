@@ -1,15 +1,17 @@
 # KẾ HOẠCH CHIẾN LƯỢC TOÀN DIỆN: MODULE 1 — HỆ THỐNG AI ĐA TÁC TỬ CSKH, BẢO HÀNH & XỬ LÝ KHỦNG HOẢNG THƯƠNG MẠI ĐIỆN TỬ (E-COMMERCE OPS COPILOT 2026)
 
-> **Tài liệu Kế hoạch Kỹ thuật Chi tiết cho MODULE 1 trong Master Roadmap 2026**  
-> **Phiên bản**: 2.1 (Khớp nối 100% Database Constraints, Giao diện UI & 6 SOP Thực chiến)  
-> **Ngành mục tiêu**: Thương Mại Điện Tử (Shopee, TikTok Shop, D2C Brands)  
-> **Mục tiêu cốt lõi**: Tự động hóa 80% tác vụ CSKH lặp lại, xử lý 6 kịch bản vận hành thực chiến (SOP 1 - 6), hỗ trợ nhân viên phê duyệt 1-Click và duy trì 260+ tests xanh.
+> **Trạng thái:** PARTIALLY IMPLEMENTED (Core Agent, 6 SOPs & Staff Desk hoàn tất; DB SSOT cho Catalog/Inventory đang chờ theo FIX 02)  
+> **Mức độ minh chứng (Evidence):** L1 Automated Tests (`tests/test_ecommerce_ops.py`) · L3 Live Deployed  
+> **Snapshot tham chiếu:** `d3ca3a6` (Application Verified) · `0c9a7d4` (Git HEAD)  
+> **Ngày rà soát:** 2026-09-21  
+> **Tồn đọng chính (Gaps):** Single Source of Truth cho Catalog và Inventory trong DB PostgreSQL; hành động nghiệp vụ thực tế cho các nút SOP 1..5 phía Store Manager.  
+> **Mục tiêu cốt lõi:** Tự động hóa tác vụ CSKH lặp lại, xử lý 6 kịch bản vận hành thực chiến (SOP 1 - 6), hỗ trợ nhân viên phê duyệt 1-Click và duy trì test suite xanh.
 
 ---
 
 ## PHẦN 1: BỐI CẢNH NĂM 2026 & VỊ TRÍ TRONG MASTER ROADMAP
 
-Trong chiến lược tổng thể 6 Module của dự án (xem tại [PLAN_ROADMAP_INDEX.md](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/docs/PLAN_ROADMAP_INDEX.md)), **MODULE 1** là **Nền tảng Lõi Bắt Buộc** phải hoàn thiện trước tiên:
+Trong chiến lược tổng thể 6 Module của dự án (xem tại [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md)), **MODULE 1** là **Nền tảng Lõi Bắt Buộc** phải hoàn thiện trước tiên:
 
 ```
 [MODULE 1: HỆ THỐNG LÕI TMĐT 2026] (ĐANG TRIỂN KHAI)

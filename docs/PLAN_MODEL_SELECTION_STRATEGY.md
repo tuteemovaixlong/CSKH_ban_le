@@ -1,3 +1,12 @@
+---
+trạng_thái: PLANNED
+mã_kế_hoạch: PLAN_MODEL_SELECTION_STRATEGY
+nguồn_sự_thật:
+  - retailops_providers.py
+  - evals/cases.jsonl
+cập_nhật_cuối: 2026-09-21
+---
+
 # Kế hoạch Chiến lược Lựa chọn Mô hình (Model Selection Strategy)
 
 > [!TIP]
@@ -69,7 +78,7 @@ flowchart TD
 
 ## 4. Kế hoạch Tích hợp vào Mã nguồn RetailOps
 
-Hệ thống đã có sẵn module [retailops_providers.py](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/retailops_providers.py). Các bước tích hợp gồm:
+Hệ thống đã có sẵn module [retailops_providers.py](../retailops_providers.py). Các bước tích hợp gồm:
 
 1. **Thêm định danh Model vào `API_MODELS`**:
    ```python

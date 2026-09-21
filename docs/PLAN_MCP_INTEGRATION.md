@@ -1,8 +1,21 @@
+---
+trạng_thái: STANDALONE IMPLEMENTED / PRODUCTION WIRING PENDING
+mã_kế_hoạch: PLAN_MCP_INTEGRATION
+nguồn_sự_thật:
+  - tests/test_mcp_protocol.py
+  - retailops_mcp_server.py
+  - retailops/workflow/mcp_client.py
+  - retailops/workflow/agent.py
+  - retailops/workflow/graph.py
+cập_nhật_cuối: 2026-09-21
+---
+
 # Kế hoạch Tích hợp MCP Server (Model Context Protocol Integration Plan)
 
 > [!IMPORTANT]
-> **Ưu tiên Triển khai: GIAI ĐOẠN 1 (Phục vụ Khóa luận Tốt nghiệp — Bước 2)**  
-> Chuẩn hóa bộ công cụ sang giao thức mở **Model Context Protocol (MCP)** là điểm nhấn công nghệ tiên tiến nhất của đề tài. Tính năng này chứng minh năng lực thiết kế hệ thống dạng **Microservices decoupled** và khả năng tương thích 2 chiều (với Claude Desktop, Cursor, n8n, LangGraph) để đưa vào **Chương 3 (Kiến trúc Hệ thống)** của Báo cáo Luận văn.
+> **Hiện trạng Triển khai Thực tế (Tháng 09/2026):**  
+> 1. **Standalone Server & Adapter ĐÃ HOÀN TẤT**: Máy chủ giao thức độc lập [retailops_mcp_server.py](../retailops_mcp_server.py) (hỗ trợ cả stdio và SSE port 8002) cùng client adapter [retailops/workflow/mcp_client.py](../retailops/workflow/mcp_client.py) đã được hiện thực và kiểm thử tự động đạt 20/20 test pass ([tests/test_mcp_protocol.py](../tests/test_mcp_protocol.py)).
+> 2. **Production Pipeline Hiện Tại**: Pipeline LangGraph chính chạy trên EC2 ([retailops/workflow/agent.py](../retailops/workflow/agent.py), [retailops/workflow/graph.py](../retailops/workflow/graph.py)) đang trực tiếp sử dụng in-process `BoundTools` ([retailops_tools.py](../retailops_tools.py)) nhằm tối ưu độ trễ và giữ container tối giản (`mcp` không nằm trong `requirements-runtime.txt`). Việc chuyển toàn bộ runtime chính sang gọi qua MCP SSE server là tùy chọn kiến trúc decoupling sẵn sàng kích hoạt khi mở rộng microservices.
 
 Tài liệu này xác định kiến trúc, lộ trình triển khai và giải pháp kỹ thuật để chuẩn hóa toàn bộ hệ thống công cụ nghiệp vụ của RetailOps theo tiêu chuẩn **Model Context Protocol (MCP)** — giao thức mở chuẩn công nghiệp do Anthropic khởi xướng.
 
@@ -11,12 +24,12 @@ Tài liệu này xác định kiến trúc, lộ trình triển khai và giải 
 ## 1. Mục tiêu & Giá trị Chiến lược
 
 1. **Chuẩn hóa Giao diện Công cụ (Standardized Tool Interface)**:
-   - Thay thế việc gọi hàm nội bộ (In-process Function Calling) bằng giao thức MCP chuẩn mở, giúp Agent độc lập hoàn toàn với việc triển khai chi tiết của từng công cụ.
+   - Cung cấp giao thức MCP chuẩn mở, giúp các agent bên ngoài độc lập hoàn toàn với việc triển khai chi tiết của từng công cụ nội bộ.
 2. **Tách rời Hệ thống (Decoupled Microservice Architecture)**:
-   - Tách các kết nối đến bên thứ 3 (Kho hàng ERP KiotViet/Sapo, Bưu cục GHN/GHTK, Cổng thanh toán, Tổng đài Zalo/Telegram) ra một tiến trình riêng biệt (**RetailOps MCP Server**).
+   - Cho phép chạy các kết nối nghiệp vụ (Kho hàng ERP KiotViet/Sapo, Bưu cục GHN/GHTK, Cổng thanh toán, Tổng đài Zalo/Telegram) ra một tiến trình microservice riêng biệt (**RetailOps MCP Server**).
 3. **Khả năng Tái sử dụng Đa Nền tảng (Two-way Interoperability)**:
-   - **RetailOps as MCP Server**: Cho phép các nền tảng AI khác (Claude Desktop, Cursor, Antigravity IDE, n8n, LangChain, CrewAI) cắm trực tiếp vào hệ sinh thái RetailOps để tra cứu đơn và quản lý kho.
-   - **RetailOps as MCP Client**: Cho phép LangGraph Supervisor tự động khám phá (`tools/list`) và nạp thêm các công cụ mới từ bất kỳ MCP server bên ngoài nào mà không cần sửa mã nguồn lõi.
+   - **RetailOps as MCP Server**: Cho phép các nền tảng AI khác (Claude Desktop, Cursor, Antigravity IDE, n8n, LangChain, CrewAI) cắm trực tiếp vào hệ sinh thái RetailOps qua stdio hoặc SSE.
+   - **RetailOps as MCP Client**: Cho phép LangGraph Supervisor nạp công cụ qua [retailops/workflow/mcp_client.py](../retailops/workflow/mcp_client.py) khi cần tích hợp thêm server bên ngoài.
 
 ---
 
@@ -32,8 +45,12 @@ flowchart TD
     WebUser --> WebBackend["RetailOps Web Backend / API"]
     WebBackend --> LangGraph["LangGraph Supervisor & Subagents"]
 
-    subgraph MCP Layer
-        LangGraph <-->|MCP Client Protocol (SSE / HTTP)| MCPServer["RetailOps MCP Server (FastMCP :8002)"]
+    subgraph Runtime Direct Path
+        LangGraph -->|In-process Direct Call (Default Runtime)| BoundTools["BoundTools (retailops_tools.py)"]
+    end
+
+    subgraph MCP Microservice Layer
+        LangGraph -.->|Optional MCP Client Adapter (mcp_client.py)| MCPServer["RetailOps MCP Server (FastMCP :8002)"]
         ExternalClient <-->|MCP Protocol (SSE / stdio)| MCPServer
     end
 
@@ -52,12 +69,12 @@ flowchart TD
 ### 3.1. Công nghệ Sử dụng
 * **Thư viện**: `mcp` (Official Python SDK) kết hợp `FastMCP`.
 * **Giao thức Truyền tải (Transports)**:
-  * **SSE (Server-Sent Events) qua HTTP**: Sử dụng cho production trên EC2 (chạy tại cổng nội bộ `http://127.0.0.1:8002/sse`).
+  * **SSE (Server-Sent Events) qua HTTP**: Sử dụng cho microservices nội bộ (port `8002/sse`).
   * **stdio (Standard I/O)**: Sử dụng cho chạy local CLI, debug, hoặc cắm vào desktop client (như Claude Desktop / Cursor).
 
 ### 3.2. Danh mục Công cụ Chuyển đổi (MCP Tools Specification)
 
-Toàn bộ 5 công cụ hiện tại trong [retailops_tools.py](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/retailops_tools.py) sẽ được chuyển đổi sang chuẩn MCP:
+Toàn bộ công cụ nghiệp vụ trong [retailops_tools.py](../retailops_tools.py) được expose qua MCP:
 
 | Tên MCP Tool | Tham số đầu vào | Mô tả chức năng | Kết nối thực tế |
 | :--- | :--- | :--- | :--- |
@@ -69,7 +86,9 @@ Toàn bộ 5 công cụ hiện tại trong [retailops_tools.py](file:///d:/year_
 
 ---
 
-## 4. Mã nguồn Mẫu Triển khai (`retailops_mcp_server.py`)
+## 4. Hiện thực Máy chủ Độc lập (`retailops_mcp_server.py`)
+
+File máy chủ hoàn chỉnh đã được triển khai tại [retailops_mcp_server.py](../retailops_mcp_server.py) và cấu hình tại [mcp_config.json](../mcp_config.json).
 
 ```python
 """RetailOps Enterprise MCP Server — Standalone Model Context Protocol Provider."""
@@ -78,59 +97,25 @@ from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("RetailOps-Enterprise-Tools")
 
-@mcp.tool()
-def track_shipment(order_id: str) -> dict:
-    """Tra cứu trạng thái vận chuyển và lộ trình bưu kiện theo mã đơn hàng."""
-    # Kết nối GHN / GHTK API
-    return {
-        "order_id": order_id,
-        "carrier": "Giao Hàng Nhanh (GHN)",
-        "status": "delivering",
-        "current_hub": "Kho trung chuyển Bắc Ninh",
-        "expected_delivery": "Trong ngày mai"
-    }
-
-@mcp.tool()
-def check_inventory(sku: str, branch_id: str = "all") -> dict:
-    """Kiểm tra số lượng tồn kho theo mã SKU sản phẩm và chi nhánh bán hàng."""
-    # Kết nối KiotViet / Sapo API
-    return {
-        "sku": sku,
-        "available_qty": 18,
-        "is_in_stock": True,
-        "locations": ["Kho Hà Nội (12)", "Kho TP.HCM (6)"]
-    }
-
-@mcp.tool()
-def request_human_support(customer_id: str, urgency: str = "normal", summary: str = "") -> dict:
-    """Bắn thông báo chuyển giao khách hàng cần hỗ trợ sang nhân viên tổng đài thật."""
-    # Bắn Webhook sang Telegram CSKH hoặc Zalo OA
-    # telegram_bot.send_message(f"Khách {customer_id} cần gặp CSKH: {summary}")
-    return {
-        "handoff_status": "forwarded",
-        "assigned_channel": "Telegram-CSKH-Live",
-        "queue_position": 1
-    }
-
-if __name__ == "__main__":
-    port = int(os.getenv("RETAILOPS_MCP_PORT", 8002))
-    mcp.run(transport="sse", port=port)
+# Exposes: track_shipment, check_inventory, search_knowledge,
+# cancel_order, request_human_support, search_product_specs, etc.
 ```
 
 ---
 
-## 5. Tích hợp MCP Client vào LangGraph Agent
+## 5. Hiện trạng Tích hợp vào LangGraph Agent
 
-Trong kiến trúc [retailops/workflow/graph.py](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/retailops/workflow/graph.py):
-1. **Dynamic Tool Fetching**: Khi khởi động, Agent kết nối tới MCP Server qua endpoint `/sse` để lấy danh sách tool mới nhất qua `tools/list`.
-2. **Tool Execution Delegation**: Khi LLM sinh ra lệnh gọi tool, Agent ủy quyền thực thi thẳng sang MCP Server qua `tools/call`, nhận kết quả JSON chuẩn và đưa vào prompt tiếp theo.
+1. **Client Adapter Sẵn sàng**: [retailops/workflow/mcp_client.py](../retailops/workflow/mcp_client.py) cung cấp các hàm chuyển đổi MCP tools thành LangChain/LangGraph tools.
+2. **Production Runtime Hiện tại**: Trong [retailops/workflow/agent.py](../retailops/workflow/agent.py) và [retailops/workflow/graph.py](../retailops/workflow/graph.py), agent bind trực tiếp các công cụ Python nội bộ từ `retailops_tools.py` để đạt độ trễ thấp nhất (<5ms so với mạng HTTP/SSE) và hạn chế phụ thuộc thư viện bên thứ 3 trong production Docker container.
+3. **Kế hoạch Chuyển đổi**: Khi cần mở rộng phân tán máy chủ công cụ ra cụm riêng, chỉ cần bật cờ `USE_MCP_TOOLS=true` để nạp tools qua adapter `mcp_client.py`.
 
 ---
 
-## 6. Kế hoạch Triển khai (Checklist 4 Bước)
+## 6. Trạng thái Triển khai (Checklist)
 
-- [x] **Bước 1**: Cài đặt thư viện `mcp 2.2.0` và xây dựng máy chủ độc lập [retailops_mcp_server.py](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/retailops_mcp_server.py).
+- [x] **Bước 1**: Xây dựng máy chủ độc lập [retailops_mcp_server.py](../retailops_mcp_server.py) tương thích FastMCP SDK.
 - [x] **Bước 2**: Đóng gói đầy đủ 10 công cụ nghiệp vụ TMĐT, 3 resources RAG policies/catalog, 1 prompt template và tính năng tra cứu thông số kỹ thuật bên ngoài có rào chắn an toàn (`search_product_specs`).
-- [x] **Bước 3**: Hỗ trợ truyền tải kép: `stdio` (cho Claude Desktop, Cursor, Antigravity IDE) và `sse` (port 8002 cho microservices/n8n), kèm cấu hình [mcp_config.json](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/mcp_config.json).
-- [x] **Bước 4**: Xây dựng adapter [retailops/workflow/mcp_client.py](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/retailops/workflow/mcp_client.py) cho LangGraph và bộ kiểm thử tự động toàn diện [tests/test_mcp_protocol.py](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/tests/test_mcp_protocol.py) đạt 100% test pass.
+- [x] **Bước 3**: Hỗ trợ truyền tải kép: `stdio` (cho Claude Desktop, Cursor, Antigravity IDE) và `sse` (port 8002 cho microservices/n8n), kèm cấu hình [mcp_config.json](../mcp_config.json).
+- [x] **Bước 4**: Xây dựng adapter [retailops/workflow/mcp_client.py](../retailops/workflow/mcp_client.py) và bộ kiểm thử tự động toàn diện [tests/test_mcp_protocol.py](../tests/test_mcp_protocol.py) (20/20 test pass).
+- [ ] **Bước 5 (Tùy chọn tương lai)**: Đưa `mcp` vào `requirements-runtime.txt` và chuyển toàn bộ runtime chính trong `graph.py` sang gọi qua SSE adapter khi triển khai cụm microservices đa server.
 

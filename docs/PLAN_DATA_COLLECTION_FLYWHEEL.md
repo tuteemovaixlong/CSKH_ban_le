@@ -1,10 +1,11 @@
 # Kế hoạch Thu thập Dữ liệu & Vòng lặp Phản hồi Người dùng (Data Flywheel)
 
-> [!IMPORTANT]
-> **Ưu tiên Triển khai: GIAI ĐOẠN 1 (Phục vụ Khóa luận Tốt nghiệp — Bước 1)**  
-> Đây là hạng mục ưu tiên thực hiện ngay trước thềm bảo vệ khóa luận. Cơ chế thu thập phản hồi người dùng (CSAT, Like/Dislike) và lưu vết can thiệp của tư vấn viên (Human Handoff) sẽ là minh chứng quan trọng cho tính năng **Human-in-the-loop** và vòng lặp tự hoàn thiện hệ thống trong **Chương 3 (Thiết kế Kiến trúc Hệ thống)** của Luận văn tốt nghiệp.
-
-Tài liệu này xác định kiến trúc và lộ trình triển khai hệ thống thu thập dữ liệu hội thoại, phản hồi chất lượng (CSAT, Like/Dislike) và dữ liệu can thiệp của tư vấn viên để phục vụ quá trình tinh chỉnh (Fine-tuning) và tối ưu hóa theo sở thích (RLHF / DPO).
+> **Trạng thái:** IMPLEMENTED (Core Complete)  
+> **Mức độ minh chứng (Evidence):** L1 Automated Tests (`tests/test_feedback.py` 10/10 PASS) · L3 Live Deployed  
+> **Snapshot tham chiếu:** `d3ca3a6` (Application Verified) · `0c9a7d4` (Git HEAD)  
+> **Ngày rà soát:** 2026-09-21  
+> **Kết luận:** Toàn bộ bảng DDL `conversation_feedback`, route `POST /api/feedback`, UI Like/Dislike, CSAT popup và script xuất dữ liệu `scripts/export_tuning_dataset.py` đã hoàn thành và được kiểm thử tự động.  
+> **Mục tiêu:** Thu thập dữ liệu hội thoại, phản hồi chất lượng (CSAT, Like/Dislike) và dữ liệu can thiệp của tư vấn viên để phục vụ quá trình tinh chỉnh (Fine-tuning) và tối ưu hóa theo sở thích (RLHF / DPO).
 
 ---
 
@@ -117,9 +118,9 @@ Tạo script tự động phân loại và xuất 2 tập dữ liệu phục v�
 
 ## 6. Kế hoạch Triển khai (Checklist)
 
-- [ ] Cập nhật DDL migration trong [retailops/storage/pg_schema.py](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/retailops/storage/pg_schema.py).
-- [ ] Thêm phương thức `record_feedback()` vào [retailops/business/store.py](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/retailops/business/store.py).
-- [ ] Thêm route `/api/feedback` vào [retailops/http/routes.py](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/retailops/http/routes.py).
-- [ ] Gắn listener và icon Like/Dislike vào hàm render tin nhắn trong [web/app.js](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/web/app.js).
-- [ ] Kết nối API lưu CSAT khi bấm kết thúc phiên.
-- [ ] Xây dựng script `scripts/export_tuning_dataset.py` và viết unit test kiểm định.
+- [x] Cập nhật DDL migration trong `retailops/storage/pg_schema.py` (bảng `conversation_feedback`).
+- [x] Thêm phương thức `record_feedback()` vào `retailops/business/store.py`.
+- [x] Thêm route `/api/feedback` vào `retailops/http/routes.py`.
+- [x] Gắn listener và icon Like/Dislike vào hàm render tin nhắn trong `web/app.js`.
+- [x] Kết nối API lưu CSAT khi bấm kết thúc phiên trong `web/app.js`.
+- [x] Xây dựng script `scripts/export_tuning_dataset.py` (hỗ trợ trích xuất SFT và DPO) và viết unit test kiểm định (`tests/test_feedback.py` pass 10/10 tests).

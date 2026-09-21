@@ -1,6 +1,10 @@
 # Module 2: Store Manager Persistence, Shared Inventory & Audit Scope (P0)
 
-> **Mục tiêu**: Giải quyết tận gốc vấn đề kiến trúc: Product Catalog & Inventory phải có Single Source of Truth (SSOT), bảo toàn dữ liệu sau khi restart container, đồng bộ tức thì giữa Store Manager và Khách hàng / Chatbot AI, và sửa phạm vi Audit Trail toàn shop.
+> **Trạng thái:** PENDING / P0 HIGHEST PRIORITY (Chưa triển khai)  
+> **Mức độ minh chứng (Evidence):** L3 Live Deficiency Ghi nhận từ Kiến trúc  
+> **Snapshot tham chiếu:** `d3ca3a6` (Application Verified) · `0c9a7d4` (Git HEAD)  
+> **Ngày rà soát:** 2026-09-21  
+> **Mục tiêu:** Giải quyết tận gốc vấn đề kiến trúc: Product Catalog & Inventory phải có Single Source of Truth (SSOT), bảo toàn dữ liệu sau khi restart container, đồng bộ tức thì giữa Store Manager và Khách hàng / Chatbot AI, và sửa phạm vi Audit Trail toàn shop.
 
 ---
 
@@ -12,7 +16,7 @@
    - Giải pháp: Chuyển dữ liệu `products` sang bảng cơ sở dữ liệu `products` trong PostgreSQL (hoặc SQLite store hiện có của tenant/system) được bảo toàn qua persistent volume `/var/lib/postgresql/data` hoặc thư mục volume đã mount.
 
 2. **Khớp nối tồn kho giữa Manager và Tool Chatbot (`check_inventory`)**:
-   - Hiện tại: Manager sửa tồn kho sản phẩm `P-203` lên 100 cái trong Catalog. Nhưng khi khách chat, tool `check_inventory` trong [`retailops_tools.py`](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/retailops_tools.py) lại tra cứu từ một dictionary tĩnh `stock_map` hard-coded! Thậm chí SKU mới thêm vào còn bị chatbot báo mặc định 6 cái!
+   - Hiện tại: Manager sửa tồn kho sản phẩm `P-203` lên 100 cái trong Catalog. Nhưng khi khách chat, tool `check_inventory` trong [`retailops_tools.py`](../retailops_tools.py) lại tra cứu từ một dictionary tĩnh `stock_map` hard-coded! Thậm chí SKU mới thêm vào còn bị chatbot báo mặc định 6 cái!
    - Khắc phục:
      - `check_inventory` phải đọc trực tiếp từ `self.catalog.products[pid]` (hoặc DB kho hàng).
      - Hỗ trợ lưu trữ tồn kho theo biến thể/size trong DB để khi Manager chỉnh sửa tồn kho, Chatbot AI lập tức trả lời đúng số lượng tồn kho mới nhất.
@@ -32,35 +36,36 @@
 
 ## 2. Kế Hoạch Chỉnh Sửa File
 
-### [MODIFY] [retailops_conversation.py](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/retailops_conversation.py)
+### [MODIFY] `retailops_conversation.py`
 - Nâng cấp `Catalog`:
   - Hỗ trợ `ProductStore` kết nối trực tiếp với DB SQLite/PostgreSQL của hệ thống (`app.store`).
   - Nếu DB chưa có bảng products, tự động nạp seed từ `data/products.json` lần đầu tiên (idempotent seed import).
   - Mọi thao tác `add_product`, `update_product`, `delete_product` đều ghi trực tiếp vào DB, đảm bảo tất cả các phiên `Application` đều đọc chung một bảng dữ liệu.
 
-### [MODIFY] [retailops_tools.py](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/retailops_tools.py)
+### [MODIFY] `retailops_tools.py`
 - Trong hàm `check_inventory`:
   - Loại bỏ việc phụ thuộc duy nhất vào dictionary cứng `stock_map`.
   - Đọc từ `product = self.catalog.products.get(pid)`.
   - Nếu sản phẩm có thông tin `stock` hoặc `variants_stock` trong DB/Catalog, ưu tiên đọc số liệu động này.
   - Bảo tồn fallback an toàn cho các test cũ của P-101..P-301 nếu chưa có variant matrix trong catalog.
 
-### [MODIFY] [retailops/http/routes.py](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/retailops/http/routes.py)
+### [MODIFY] `retailops/http/routes.py`
 - Trong nhánh `GET /api/events`:
   - Nếu `getattr(app, 'role', '') == 'manager'`:
     - Truy vấn sự kiện toàn hệ thống từ bảng `events` (kèm `customer_id`).
     - Trả về danh sách sự kiện đầy đủ cho Manager.
 - Đảm bảo quyền `MANAGER` được kiểm soát chặt chẽ.
 
-### [MODIFY] [web/app.js](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/web/app.js)
+### [MODIFY] `web/app.js`
 - Trong `openSession()`: Tự động gọi `openManagerConsole()` khi `session.role === 'manager'`.
 - Trong `loadManagerAuditTrail()`: Đọc đúng trường `ev.customer_id` từ backend trả về.
 
 ---
 
 ## 3. Tiêu Chí Nghiệm Thu (Acceptance Criteria)
+
 - [ ] Manager sửa sản phẩm P-203 tồn kho lên 50 cái -> Mở một tab ẩn danh / session khác kiểm tra thấy đúng 50 cái.
 - [ ] Chatbot AI gọi `check_inventory` phản hồi đúng số lượng tồn kho mới được Manager cập nhật.
 - [ ] Manager Console tự động mở khi đăng nhập tài khoản có quyền `manager`.
 - [ ] Tab Audit Trail hiển thị đầy đủ các sự kiện mua hàng, hủy đơn, sửa trạng thái đơn của toàn bộ khách hàng trong shop, cột khách hàng hiển thị mã khách cụ thể (C-001, C-002...).
-- [ ] 332+ tests tự động tiếp tục pass.
+- [ ] Toàn bộ test suite tự động tiếp tục pass 100%.

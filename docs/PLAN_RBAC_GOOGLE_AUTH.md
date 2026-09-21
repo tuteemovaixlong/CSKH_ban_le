@@ -1,10 +1,11 @@
 # Kế hoạch Tích hợp Google OAuth 2.0 (SSO) & Phân quyền Giao diện Đa Vai trò (Role-Based UI Isolation)
 
-> [!IMPORTANT]
-> **Ưu tiên Triển khai: GIAI ĐOẠN 1 (Phục vụ Chuẩn hóa Trải nghiệm & Demo Khóa luận)**  
-> Tính năng này nâng cấp RetailOps từ ứng dụng demo nhập mã token thủ công thành **Nền tảng Quản trị Doanh nghiệp chuẩn mực (Enterprise SaaS)**. Tích hợp Đăng nhập một chạm bằng Google (Sign in with Google) và phân tách giao diện độc lập theo đúng thẩm quyền: Khách hàng, Nhân viên CSKH, Quản lý Cửa hàng, và Quản trị viên Kỹ thuật.
-
-Tài liệu này xác định kiến trúc, quy trình xác thực SSO và giải pháp phân tách giao diện người dùng (Role-Based Access Control - RBAC UI) trong hệ sinh thái RetailOps.
+> **Trạng thái:** IMPLEMENTED & ACTIVE (Core Code & UI Hoàn Tất; Cấu hình Redirect URI phụ thuộc Runtime EC2)  
+> **Mức độ minh chứng (Evidence):** L1 Automated Tests (`test_public_session.js`, OAuth E2E) · L3 Live Deployed (Commit `281e5b6`)  
+> **Snapshot tham chiếu:** `d3ca3a6` (Application Verified) · `0c9a7d4` (Git HEAD)  
+> **Ngày rà soát:** 2026-09-21  
+> **Ghi chú vận hành:** Bước 1 (Authorized Redirect URI) là cấu hình runtime trên Google Cloud Console, cần revalidate mỗi khi EC2 Stop/Start đổi IP (không dùng Elastic IP cố định).  
+> **Tổng quan:** Tích hợp Đăng nhập một chạm bằng Google (Sign in with Google) và phân tách giao diện độc lập theo đúng thẩm quyền: Khách hàng, Nhân viên CSKH, Quản lý Cửa hàng. Quản trị viên Kỹ thuật (Ops Admin) chạy trên subdomain riêng qua Caddy Basic Auth.
 
 ---
 
@@ -95,12 +96,14 @@ sequenceDiagram
 * **Name**: `RetailOps Web Client`
 * **Authorized JavaScript origins**:
   ```text
-  https://retailops.18-206-237-32.sslip.io
+  https://<RETAILOPS_PUBLIC_HOST>
   ```
+  *(Ví dụ với IP hiện tại: `https://retailops.98-84-139-124.sslip.io`)*
 * **Authorized redirect URIs**:
   ```text
-  https://retailops.18-206-237-32.sslip.io/auth/google/callback
+  https://<RETAILOPS_PUBLIC_HOST>/auth/google/callback
   ```
+  *(Ví dụ với IP hiện tại: `https://retailops.98-84-139-124.sslip.io/auth/google/callback`)*
 
 ### 3.3. Quy tắc Ánh xạ Vai trò Tự động (Smart Role Mapping)
 
@@ -157,8 +160,8 @@ document.body.dataset.role = session.role; // 'customer' | 'staff' | 'manager' |
 
 ## 5. Kế hoạch Triển khai (Checklist 5 Bước)
 
-- [ ] **Bước 1**: Điền thông tin trên Google Cloud Console (Authorized Origins & Redirect URIs) và lấy Client ID / Client Secret.
-- [ ] **Bước 2**: Viết module xác thực Google OAuth (`retailops/http/auth_google.py`) xử lý `/auth/google/login` và `/auth/google/callback`.
-- [ ] **Bước 3**: Cập nhật cơ chế phiên (`retailops/identity/store.py`) hỗ trợ ánh xạ `email` và mở rộng enum vai trò `('customer', 'viewer', 'staff', 'manager')`.
-- [ ] **Bước 4**: Thêm nút **"Đăng nhập bằng Google"** trên form đăng nhập `web/index.html`.
-- [ ] **Bước 5**: Tối ưu hóa CSS/JS phân quyền giao diện: `customer` chỉ thấy chat đơn của mình, `staff` mở thẳng Bàn làm việc, `manager` xem Dashboard CSAT.
+- [~] **Bước 1**: Cấu hình trên Google Cloud Console (Authorized Origins & Redirect URIs): Phụ thuộc vào IP/Domain hiện tại của EC2 sau mỗi lần Stop/Start.
+- [x] **Bước 2**: Viết module xác thực Google OAuth (`retailops/http/auth_google.py`) xử lý `/auth/google/login` và `/auth/google/callback` kèm mã hóa CSRF state qua HMAC.
+- [x] **Bước 3**: Cập nhật cơ chế phiên (`retailops/identity/store.py`) hỗ trợ ánh xạ `email` và mở rộng enum vai trò `('customer', 'viewer', 'staff', 'manager')`.
+- [x] **Bước 4**: Thêm nút **"Đăng nhập bằng Google"** trên form đăng nhập `web/index.html`.
+- [x] **Bước 5**: Tối ưu hóa CSS/JS phân quyền giao diện: `customer` chỉ thấy chat đơn của mình, `staff` mở thẳng Bàn làm việc, `manager` xem Dashboard CSAT; cô lập máy trạng thái auth và bổ sung bộ test E2E (Commit `281e5b6`).

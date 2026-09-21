@@ -1,8 +1,11 @@
 # BỘ TÌNH HUỐNG KIỂM THỬ NGHIỆP VỤ CSKH THƯƠNG MẠI ĐIỆN TỬ (RETAILOPS BUSINESS TEST SCENARIOS 2026)
 
-> **Tài liệu chuẩn hóa**: Bộ kịch bản kiểm thử nghiệp vụ toàn diện cho hệ thống AI Đa Tác Tử Chăm Sóc Khách Hàng Bán Lẻ & Thương Mại Điện Tử (Shopee, TikTok Shop, D2C).  
-> **Phiên bản**: 2.5 — Chuẩn hóa 6 SOPs Vận hành Thực chiến, Tra cứu RAG, Đổi Size 2 Chiều, Xử lý Bưu tá ảo và Phân quyền RBAC.  
-> **Đối tượng áp dụng**: Kiểm thử thủ công trên Giao diện Web EC2, Kiểm thử tự động E2E (`live-e2e.py`) và Đối chứng Benchmark Luận văn tốt nghiệp.
+> **Trạng thái:** IMPLEMENTED & ACTIVE SPECIFICATION  
+> **Mức độ minh chứng (Evidence):** L1 Automated Tests (`tests/test_ecommerce_ops.py`) · L3 Live Deployed  
+> **Snapshot tham chiếu:** `d3ca3a6` (Application Verified) · `0c9a7d4` (Git HEAD)  
+> **Ngày rà soát:** 2026-09-21  
+> **Ghi chú phân loại:** Chuẩn hóa Canonical 6 SOPs theo mã nguồn kiểm thử tự động `tests/test_ecommerce_ops.py`. Hủy đơn hàng là luồng nghiệp vụ giao dịch lõi (Core Order Workflow CORE-01), không đánh số là SOP 4.  
+> **Đối tượng áp dụng:** Kiểm thử thủ công trên Giao diện Web EC2, Kiểm thử tự động E2E (`live-e2e.py`) và Đối chứng Benchmark Luận văn tốt nghiệp.
 
 ---
 
@@ -13,9 +16,10 @@
 | **Logistics & Vận chuyển** | **SOP 1** | Bưu tá ảo SPX/GHN không giao, báo "không liên lạc được" | `dispute_agent` / `order_agent` | `track_shipment` | **100% (AI)** |
 | **Bảo hành & Lỗi sản phẩm** | **SOP 2** | Hàng lỗi, rách chỉ, kẹt khóa kéo, nhận ảnh unboxing | `dispute_agent` | `get_order`, `track_shipment`, `action_proposal: exchange_1to1` | **85% (AI + 1-Click Duyệt)** |
 | **Đổi Size / Đổi Mẫu** | **SOP 3** | Khách mặc không vừa, muốn đổi size/màu tận nhà | `dispute_agent` | `check_inventory`, `action_proposal: size_exchange` | **90% (AI + 1-Click Duyệt)** |
-| **Hủy Đơn Hàng** | **SOP 4** | Khách muốn hủy đơn hàng trước khi xuất kho | `order_agent` | `prepare_cancellation` | **100% (Xác nhận 2 bước)** |
-| **Sự Cố Kẹt Kho Vận** | **SOP 5** | Đơn hàng kẹt kho trung chuyển Mega SOC > 48h | `order_agent` | `track_shipment` (Voucher 50K đền bù) | **100% (AI)** |
-| **Khủng Hoảng & Bóc Phốt** | **SOP 6** | Khách giận dữ cực độ, dọa bóc phốt / Gặp nhân viên | `dispute_agent` | `request_human_support` (Priority VIP) | **Chuyển Người Thật (Handoff)** |
+| **Sự Cố Kẹt Kho Vận** | **SOP 4** | Đơn hàng kẹt kho trung chuyển Mega SOC > 48h | `order_agent` | `track_shipment` (Voucher 50K đền bù) | **100% (AI)** |
+| **Khủng Hoảng & Bóc Phốt** | **SOP 5** | Khách giận dữ cực độ, dọa bóc phốt / Khiếu nại gay gắt | `dispute_agent` | Strict Mode, Cảnh báo đỏ, `request_human_support` (Priority VIP) | **Chuyển Người Thật (Strict Handoff)** |
+| **Chuyển Giao Người Thật** | **SOP 6** | Khách chủ động bấm gặp nhân viên / Yêu cầu tư vấn viên | `dispute_agent` / `supervisor` | `request_human_support` | **Chuyển Nhân Viên CSKH (Staff Desk)** |
+| **Hủy Đơn Hàng An Toàn** | **CORE-01**| Khách muốn hủy đơn hàng trước khi xuất kho | `order_agent` | `prepare_cancellation` | **100% (Xác nhận 2 bước)** |
 | **Chính Sách & Tri Thức** | **RAG-01** | Tra cứu chính sách bảo hành, đổi trả, freeship, hoàn tiền | `policy_agent` | `search_knowledge` | **100% (RAG Trích dẫn)** |
 | **Tư Vấn Sản Phẩm** | **PROD-01** | Tư vấn chọn size, chất liệu, tìm kiếm danh mục | `policy_agent` / `order_agent` | `search_products`, `get_product` | **100% (AI)** |
 | **Giao Tiếp Tổng Quát** | **GEN-01** | Chào hỏi, cảm ơn, hỏi thăm ngoài lề, trò chuyện đời sống | `witty_agent` | Không cần tool | **100% (AI)** |
@@ -27,7 +31,7 @@
 
 ---
 
-### NHÓM 1: LOGISTICS & BƯU TÁ ẢO (SOP 1 & SOP 5)
+### NHÓM 1: LOGISTICS & BƯU TÁ ẢO (SOP 1 & SOP 4)
 
 #### 📋 Kịch bản TC-LOG-01: Bưu tá SPX báo "không liên lạc được" dù khách ở nhà cả ngày (SOP 1)
 * **Bối cảnh thực tế**: Đơn vị vận chuyển (SPX Express) đến cuối ca chưa kịp giao, tài xế bấm cập nhật ảo "Khách không nghe máy / Không liên lạc được" để tránh bị phạt KPI giao trễ. Khách hàng bức xúc phản ánh.
@@ -49,7 +53,7 @@
 
 ---
 
-#### 📋 Kịch bản TC-LOG-02: Đơn hàng kẹt kho Mega SOC Bắc Ninh > 48h đợt Mega Sale (SOP 5)
+#### 📋 Kịch bản TC-LOG-02: Đơn hàng kẹt kho Mega SOC Bắc Ninh > 48h đợt Mega Sale (SOP 4)
 * **Bối cảnh thực tế**: Đợt Sale ngày đôi (9.9 / 11.11), lượng hàng ùn ứ tại Tổng kho trung chuyển lớn (Bắc Ninh Mega SOC) hơn 2 ngày không di chuyển.
 * **Tài khoản test**: Khách hàng `C-004` (Lê Hoàng Nam) — Mã đơn: `O-304`.
 * **Câu nói của khách (Input Prompt)**:
@@ -140,7 +144,7 @@
 
 ---
 
-### NHÓM 4: HỦY ĐƠN HÀNG AN TOÀN (SOP 4 & STATE MACHINE GUARD)
+### NHÓM 4: HỦY ĐƠN HÀNG AN TOÀN (NGHIỆP VỤ LÕI CORE-01 & STATE MACHINE GUARD)
 
 #### 📋 Kịch bản TC-CAN-01: Hủy đơn hàng trạng thái PENDING (Quy trình 2 bước hợp lệ)
 * **Bối cảnh thực tế**: Khách vừa đặt nhầm đơn hàng cách đây 10 phút, đơn chưa xuất kho (trạng thái `pending`). Khách muốn hủy đơn.
@@ -172,9 +176,9 @@
 
 ---
 
-### NHÓM 5: KHỦNG HOẢNG, DỌA BÓC PHỐT & HANDOFF NGƯỜI THẬT (SOP 6)
+### NHÓM 5: KHỦNG HOẢNG, DỌA BÓC PHỐT (SOP 5) & TIẾP QUẢN NGƯỜI THẬT (SOP 6)
 
-#### 📋 Kịch bản TC-ESC-01: Khách chửi bới, dọa bóc phốt TikTok / Hội Bảo Vệ Người Tiêu Dùng
+#### 📋 Kịch bản TC-ESC-01: Khách chửi bới, dọa bóc phốt TikTok / Hội Bảo Vệ Người Tiêu Dùng (SOP 5)
 * **Bối cảnh thực tế**: Khách hàng gặp sự cố bức xúc tột độ, sử dụng ngôn từ gay gắt, đe dọa đăng bài bóc phốt mạng xã hội hoặc kiện cáo.
 * **Câu nói của khách (Input Prompt)**:
   > *"Lũ lừa đảo! Làm ăn tắc trách thế à? Tao sẽ bóc phốt cửa hàng chúng mày lên TikTok và gửi đơn ra Hội bảo vệ người tiêu dùng, để xem shop chúng mày làm ăn kiểu gì!"*
@@ -190,7 +194,7 @@
 
 ---
 
-#### 📋 Kịch bản TC-ESC-02: Khách chủ động yêu cầu gặp tư vấn viên là người thật
+#### 📋 Kịch bản TC-ESC-02: Khách chủ động yêu cầu gặp tư vấn viên là người thật (SOP 6)
 * **Bối cảnh thực tế**: Khách hàng không muốn chat với AI bot, chỉ muốn nói chuyện trực tiếp với nhân viên trực tổng đài.
 * **Câu nói của khách (Input Prompt)**:
   > *"Tôi muốn gặp nhân viên tư vấn, cho tôi nói chuyện với người thật đi đừng dùng bot trả lời nữa."*  
@@ -279,17 +283,17 @@ Khi thực hiện kiểm thử trên giao diện Web hoặc qua API, sử dụng
 ### 1. Tài Khoản Khách Hàng (Customers)
 * `C-001`: Khách hàng mặc định hồi quy (chỉ có đơn `O-101`, `O-102` - Dành cho CI/CD Regression).
 * `C-003`: Trần Thị Mai (SĐT: `0912345678`) — Phục vụ test SOP 1 (Bưu tá ảo `O-301`) và SOP 2 (Hàng lỗi `O-302`).
-* `C-004`: Lê Hoàng Nam (SĐT: `0988776655`) — Phục vụ test SOP 3 (Đổi size `O-303`) và SOP 5 (Kẹt kho `O-304`).
+* `C-004`: Lê Hoàng Nam (SĐT: `0988776655`) — Phục vụ test SOP 3 (Đổi size `O-303`) và SOP 4 (Kẹt kho `O-304`).
 
 ### 2. Danh Mục Đơn Hàng Kiểm Thử (Test Orders)
 | Mã Đơn | Khách Hàng | Tên Sản Phẩm | Trạng Thái Đơn | Kịch Bản Nghiệp Vụ Tương Ứng |
 | :--- | :---: | :--- | :---: | :--- |
-| `O-101` | `C-001` | Áo Polo Thể Thao Nam | `pending` | Đang trung chuyển GHTK Tân Bình, hủy đơn hợp lệ |
-| `O-102` | `C-001` | Quần Kaki Công Sở | `delivered` | Giao thành công GHN, từ chối hủy đơn |
+| `O-101` | `C-001` | Áo Polo Thể Thao Nam | `pending` | Đang trung chuyển GHTK Tân Bình, hủy đơn hợp lệ (CORE-01) |
+| `O-102` | `C-001` | Quần Kaki Công Sở | `delivered` | Giao thành công GHN, từ chối hủy đơn (CORE-01) |
 | `O-301` | `C-003` | Váy Hoa Nhí Vintage | `pending` | **SOP 1**: SPX báo ảo không liên lạc được (Shipper Tuấn) |
 | `O-302` | `C-003` | Túi Xách Da Đeo Chéo | `delivered` | **SOP 2**: Lỗi rách chỉ, còn bảo hành 85 ngày -> Đổi 1-1 |
 | `O-303` | `C-004` | Áo Polo Pique Cotton | `delivered` | **SOP 3**: Khách mặc chật -> Đổi sang size L (Kho còn 18) |
-| `O-304` | `C-004` | Giày Da Nam Oxford | `pending` | **SOP 5**: Kẹt kho Tổng BN Mega SOC 54h -> Cấp voucher 50K |
+| `O-304` | `C-004` | Giày Da Nam Oxford | `pending` | **SOP 4**: Kẹt kho Tổng BN Mega SOC 54h -> Cấp voucher 50K |
 | `O-819125`| Demo | Áo Sơ Mi Lụa Công Sở | `delivered` | Đơn hàng tra cứu live mẫu trên giao diện Web |
 
 ### 3. Tồn Kho Sản Phẩm Tra Cứu Đổi Size (`check_inventory`)

@@ -1,3 +1,13 @@
+---
+trạng_thái: PLANNED
+mã_kế_hoạch: PLAN_OMNICHANNEL_INTEGRATION
+nguồn_sự_thật:
+  - retailops/http/routes.py
+  - web/app.js
+  - web/staff.html
+cập_nhật_cuối: 2026-09-21
+---
+
 # Kế hoạch Tích hợp Đa kênh Mạng Xã hội (Omnichannel: Facebook Fanpage & Zalo OA)
 
 > [!IMPORTANT]
@@ -149,7 +159,7 @@ flowchart TD
 
 ### 3.3. Tích hợp Bàn làm việc Tư vấn viên CSKH 2 chiều (Staff Desk)
 
-Hệ thống đã có sẵn module Staff Desk tại [`retailops/http/routes.py`](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/retailops/http/routes.py) và [`web/app.js`](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/web/app.js):
+Hệ thống đã có sẵn module Staff Desk tại [`retailops/http/routes.py`](../retailops/http/routes.py) và [`web/app.js`](../web/app.js):
 
 1. **Khách yêu cầu gặp người thật trên Messenger/Zalo**:
    - Khi khách gõ: *"Cho tôi gặp nhân viên"* hoặc gửi phản hồi giận dữ, AI Agent kích hoạt công cụ `request_human_support`.

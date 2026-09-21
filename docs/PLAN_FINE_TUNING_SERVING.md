@@ -1,3 +1,13 @@
+---
+trạng_thái: PLANNED (Sau Khóa luận)
+mã_kế_hoạch: PLAN_FINE_TUNING_SERVING
+nguồn_sự_thật:
+  - scripts/check_eval_dataset.py
+  - evals/cases.jsonl
+  - retailops_providers.py
+cập_nhật_cuối: 2026-09-21
+---
+
 # Kế hoạch Huấn luyện (Fine-Tuning) & Tích hợp Model Chuyên môn hóa
 
 > [!IMPORTANT]
@@ -42,7 +52,7 @@ Mục tiêu là chọn mô hình có kích thước vừa phải (từ 3B đến
 
 Trước khi đưa model vào phục vụ thực tế, model phải vượt qua bộ đánh giá tự động có sẵn trong kho mã nguồn RetailOps:
 
-1. **Bộ Test Dataset Contract ([scripts/check_eval_dataset.py](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/scripts/check_eval_dataset.py))**:
+1. **Bộ Test Dataset Contract ([scripts/check_eval_dataset.py](../scripts/check_eval_dataset.py))**:
    - Chạy kiểm tra trên toàn bộ 30 ca kiểm thử tiêu chuẩn (`evals/cases.jsonl`):
      - `order_lookup`: 5 ca tra cứu và trích xuất `order_id`.
      - `policy`: 5 ca hỏi đáp chính sách đổi trả.
@@ -68,7 +78,7 @@ Sau khi huấn luyện hoàn tất, model được xuất ra theo 2 hình thức
   PARAMETER temperature 0.2
   PARAMETER stop "<|im_end|>"
   ```
-* Kết nối thông qua [notebooks/colab_agent.ipynb](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/notebooks/colab_agent.ipynb) hoặc Ollama endpoint.
+* Kết nối thông qua [notebooks/colab_agent.ipynb](../notebooks/colab_agent.ipynb) hoặc Ollama endpoint.
 
 ### Cách 2: Phục vụ qua vLLM chuẩn OpenAI API (Dành cho EC2 Production)
 * Khởi động server vLLM trên máy chủ GPU:
@@ -79,7 +89,7 @@ Sau khi huấn luyện hoàn tất, model được xuất ra theo 2 hình thức
       --max-model-len 4096 \
       --gpu-memory-utilization 0.9
   ```
-* Khai báo provider trong [retailops_providers.py](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/retailops_providers.py):
+* Khai báo provider trong [retailops_providers.py](../retailops_providers.py):
   - Khai báo model name `retailops-specialized-v1`.
   - Hệ thống tự động nhận diện và chuyển tiếp truy vấn qua giao thức chuẩn mà không cần viết lại mã nguồn backend.
 

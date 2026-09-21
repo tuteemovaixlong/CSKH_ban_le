@@ -1,8 +1,12 @@
 # Kế hoạch Tích hợp Tính năng Gửi File & Hình ảnh (Multimodal Vision & Attachment Support) cho Trợ lý AI
 
-> [!IMPORTANT]
-> **Ưu tiên Triển khai Cao: Xử lý Đa phương thức (Multimodal AI) trong CSKH Bán lẻ**  
-> Khách hàng mua sắm online thường xuyên cần gửi hình ảnh chụp thực tế: **sản phẩm lỗi/rách, sai màu/kích cỡ, hóa đơn bưu điện, mã vạch đơn hàng** hoặc gửi tài liệu phiếu bảo hành (PDF). Trợ lý AI cần có khả năng "nhìn" và phân tích hình ảnh này để giải quyết khiếu nại nhanh chóng hoặc đính kèm bằng chứng chuyển giao cho nhân viên CSKH (Staff Desk).
+> **Trạng thái:** PARTIALLY IMPLEMENTED (Image Vision: Implemented; Document/PDF: UI Upload Only / Partial)  
+> **Mức độ minh chứng (Evidence):** L3 Live Deployed (Web upload, OpenAI/Anthropic/Ollama native translation)  
+> **Snapshot tham chiếu:** `d3ca3a6` (Application Verified) · `0c9a7d4` (Git HEAD)  
+> **Ngày rà soát:** 2026-09-21  
+> **Tồn đọng kỹ thuật:** 
+> - *Image Vision*: Đã hoàn thành upload UI, thumbnail preview, băm sha256 chống trùng lặp, bypass cache và chuyển đổi format native cho OpenAI (`image_url`), Anthropic (`type: image`), Ollama (`images: [...]`). Tuy nhiên chưa có dedicated automated E2E test trong test suite.
+> - *Document / PDF*: Giao diện web hỗ trợ chọn file PDF, nhưng backend hiện chỉ chèn chuỗi text placeholder `[Tệp đính kèm: filename.pdf]` vào prompt, chưa có engine bóc tách nội dung PDF / OCR thực sự.
 
 ---
 

@@ -14,24 +14,38 @@ Mở web trong trình duyệt và dùng tài khoản demo đã cấp. Không ch�
 
 Luồng nghiệp vụ: tra đơn → chọn lý do hủy → xem lại → xác nhận → lưu trạng thái và nhật ký. Model chỉ hỗ trợ hội thoại và công cụ đọc; backend kiểm tra quyền, chủ sở hữu, trạng thái, phiên bản, thời hạn và idempotency trước giao dịch.
 
-## Kiến trúc và tài liệu hiện hành
+## Bản đồ Tài liệu & Hệ thống
+
+### 1. Hiện trạng Vận hành & Bằng chứng Kiểm thử (Ground Truth)
+
+| Tài liệu | Nội dung |
+| --- | --- |
+| [CURRENT_PROJECT_STATUS](docs/CURRENT_PROJECT_STATUS.md) | **Hiện trạng hệ thống đầy đủ**: Bằng chứng kiểm thử L1–L4, đối chiếu tính năng thực tế vs tài liệu |
+| [RELEASE_MANIFEST](docs/RELEASE_MANIFEST.md) | Tiêu chí nghiệm thu, ranh giới an toàn và quy trình phát hành |
+| [BUSINESS_TEST_SCENARIOS](docs/BUSINESS_TEST_SCENARIOS.md) | Đặc tả 6 kịch bản SOP chuẩn (SPX, 1-1, size, Mega SOC, rage, human handoff) |
+
+### 2. Kiến trúc Hệ thống Đang Hoạt động (Active Architecture)
 
 | Phần | Tài liệu |
 | --- | --- |
-| Cấu trúc package, cấu hình và ranh giới module | [SYSTEM_FOUNDATION](docs/SYSTEM_FOUNDATION.md) |
-| HTTPS, Caddy và cookie phiên | [PUBLIC_HTTPS](docs/PUBLIC_HTTPS.md) |
-| Tài khoản, membership và thu hồi credential | [PERSISTENT_IDENTITY](docs/PERSISTENT_IDENTITY.md) |
-| PostgreSQL và chuyển dữ liệu SQLite | [POSTGRESQL](docs/POSTGRESQL.md) |
-| LangGraph, checkpoint và xác nhận có thể khôi phục | [LANGGRAPH](docs/LANGGRAPH.md) |
-| RAG, nguồn trích dẫn và protocol Colab v2 | [RAG_CHAT](docs/RAG_CHAT.md) |
-| Chiến lược kiểm thử | [AUTOMATED_TEST_STRATEGY](docs/AUTOMATED_TEST_STRATEGY.md) |
-| Evaluation dataset và scoreboard | [evals](evals/README.md) |
-| Thiết lập CI/CD | [deploy/SETUP](deploy/SETUP.md) |
-| Lộ trình & Kế hoạch phát triển tổng thể | [PLAN_ROADMAP_INDEX](docs/PLAN_ROADMAP_INDEX.md) |
-| Đăng nhập Google SSO & Phân quyền vai trò | [PLAN_RBAC_GOOGLE_AUTH](docs/PLAN_RBAC_GOOGLE_AUTH.md) |
-| Tích hợp đa kênh mạng xã hội (Facebook / Zalo OA) | [PLAN_OMNICHANNEL_INTEGRATION](docs/PLAN_OMNICHANNEL_INTEGRATION.md) |
+| Ranh giới module & Cấu hình nền tảng | [SYSTEM_FOUNDATION](docs/SYSTEM_FOUNDATION.md) |
+| Định danh, Phân quyền RBAC & Session | [PERSISTENT_IDENTITY](docs/PERSISTENT_IDENTITY.md) |
+| LangGraph Multi-Agent, Checkpoint & Interrupt | [LANGGRAPH](docs/LANGGRAPH.md) |
+| Cơ sở dữ liệu PostgreSQL & pgvector | [POSTGRESQL](docs/POSTGRESQL.md) |
+| RAG Trích dẫn tri thức & Provenance | [RAG_CHAT](docs/RAG_CHAT.md) |
+| Ops Console & Giám sát vận hành | [ADMIN_CONSOLE](docs/ADMIN_CONSOLE.md) |
+| Hạ tầng HTTPS, Caddy & Reverse Proxy | [PUBLIC_HTTPS](docs/PUBLIC_HTTPS.md) |
+| Chiến lược kiểm thử tự động | [AUTOMATED_TEST_STRATEGY](docs/AUTOMATED_TEST_STRATEGY.md) |
+| Thiết lập CI/CD & AWS SSM | [deploy/SETUP](deploy/SETUP.md) |
 
-RAG hiện dùng PostgreSQL/pgvector schema v3 và feature-hash baseline. Kiểm tra provenance của trích dẫn không đồng nghĩa đã chấm semantic faithfulness. Evaluation Runner & Dashboard là bước phát triển tiếp theo, chưa được coi là hoàn thành chỉ nhờ dataset validator hoặc smoke PASS.
+### 3. Kế hoạch & Lộ trình Khắc phục (Plans & Drift Remediation)
+
+| Danh mục | Kế hoạch chi tiết |
+| --- | --- |
+| **Lộ trình Tổng thể** | [PLAN_ROADMAP_INDEX](docs/PLAN_ROADMAP_INDEX.md) · [PLAN_ADMIN_REMEDIATION_MASTER](docs/PLAN_ADMIN_REMEDIATION_MASTER.md) |
+| **Khắc phục UI/UX** | [PLAN_FIX_UI_01](docs/PLAN_FIX_UI_01_TRUTHFUL_UX.md) (UX trung thực) · [PLAN_FIX_UI_02](docs/PLAN_FIX_UI_02_MANAGER_PERSISTENCE.md) (Bền vững hóa Manager) · [PLAN_FIX_UI_03](docs/PLAN_FIX_UI_03_OPSCONSOLE_INTEGRITY.md) (Chuẩn hóa Ops Telemetry) · [PLAN_FIX_UI_04](docs/PLAN_FIX_UI_04_CHAT_HISTORY_RESUME.md) (Khôi phục chat) |
+| **Tính năng Đã Hoàn thành** | [PLAN_RBAC_GOOGLE_AUTH](docs/PLAN_RBAC_GOOGLE_AUTH.md) (Google SSO) · [PLAN_DATA_COLLECTION_FLYWHEEL](docs/PLAN_DATA_COLLECTION_FLYWHEEL.md) (Data Flywheel) · [PLAN_MCP_INTEGRATION](docs/PLAN_MCP_INTEGRATION.md) (FastMCP Server & Adapter) |
+| **Mở rộng Đang Triển khai** | [PLAN_MULTIMODAL_ATTACHMENTS](docs/PLAN_MULTIMODAL_ATTACHMENTS.md) (Vision & File) · [PLAN_OMNICHANNEL_INTEGRATION](docs/PLAN_OMNICHANNEL_INTEGRATION.md) (Đa kênh) · [PLAN_ECOMMERCE_OPS_COPILOT](docs/PLAN_ECOMMERCE_OPS_COPILOT.md) (Co-pilot) |
 
 ## Phát triển và kiểm thử
 

@@ -141,5 +141,8 @@ kiểm tra Docker/HTTPS như trước.
 | 5 — Đo và tối ưu | Baseline toàn tuyến, tải, chất lượng và chi phí; sau đó mới cache, serving hoặc fine-tune theo kết quả | So sánh trước–sau tái lập được trên cùng tập tác vụ |
 
 Giai đoạn 3 đã có LangGraph, checkpoint bền vững, lease theo request và interrupt xác nhận.
-Hạn mức API vẫn là số lần thử/ngày, chưa phải reservation theo USD/token. RAG/pgvector, MCP,
-multi-agent và các hàng 4–5 còn phía trước. Chưa thay đổi hạ tầng trả phí.
+Hạn mức API kiểm soát theo quota phiên/ngày. Trong các bản cập nhật 2026 tiếp theo, các công nghệ mở rộng đã được tích hợp vào codebase:
+- **RAG / pgvector**: Tìm kiếm chính sách đổi trả và sản phẩm với vector embeddings ([retailops/rag/](../retailops/rag/)).
+- **Model Context Protocol (MCP)**: Triển khai standalone FastMCP server ([retailops_mcp_server.py](../retailops_mcp_server.py)) và adapter ([retailops/workflow/mcp_client.py](../retailops/workflow/mcp_client.py)); luồng runtime chính hiện sử dụng direct `BoundTools` tối ưu độ trễ.
+- **Multi-Agent Architecture**: Cấu trúc Supervisor và 3 Subagents chuyên trách (Policy, Order Ops, Product Specialist) trong [retailops/workflow/](../retailops/workflow/).
+Chi tiết hiện trạng kiểm thử và triển khai xem tại [CURRENT_PROJECT_STATUS.md](CURRENT_PROJECT_STATUS.md).

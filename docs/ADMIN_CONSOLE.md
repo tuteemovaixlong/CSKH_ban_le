@@ -24,6 +24,10 @@ Latency p95 is displayed only with at least 20 observations, p99 with at least 1
 
 Successful-login principals are not DAU. Business events identify tenant/customer bindings, not necessarily the acting principal. Events are not messages; an HTTP replay or failure before an audit event may leave no event. Tenant-prefix classification (`e2e-`, `eval-`, `ci-`, `test-`) is an explicit heuristic used to separate test traffic, not an authorization boundary. All data is synthetic-demo.
 
+> [!NOTE]
+> **Ghi chú Đo lường Telemetry (Kế hoạch Khắc phục):**  
+> Hiện tại bộ thu thập telemetry trong Ops Console ước tính số lượng token qua tỷ lệ ký tự (`len // 3`) và gán `cost = 0.0` nếu backend vLLM/local không trả đối tượng `usage` chi tiết; đồng thời hiển thị fallback model Qwen 2.5 4B khi thiếu metadata. Chi tiết kế hoạch chuẩn hóa đo lường thực tế xem tại [PLAN_FIX_UI_03_OPSCONSOLE_INTEGRITY.md](PLAN_FIX_UI_03_OPSCONSOLE_INTEGRITY.md).
+
 ## Security and privacy
 
 The admin container has only read-only sanitized files. It has no DB credential, model key, public port, Docker socket, shell endpoint or evaluation execution button. Caddy is the authentication boundary for every admin URL (including data and assets), using a dedicated `opsadmin` Basic Auth identity over HTTPS and a bcrypt hash. The browser/password manager can retain the login; customer credentials do not grant admin access. Authorization and Cookie headers are removed before proxying to the admin service. The admin network is internal and is not attached to the customer web container.

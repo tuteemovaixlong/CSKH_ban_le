@@ -1,3 +1,12 @@
+---
+trạng_thái: PLANNED (Sau Khóa luận)
+mã_kế_hoạch: PLAN_PRODUCTION_SCALING
+nguồn_sự_thật:
+  - retailops/storage/pg_schema.py
+  - retailops_providers.py
+cập_nhật_cuối: 2026-09-21
+---
+
 # Kế hoạch Mở rộng Quy mô Hạ tầng (Production Scaling Architecture)
 
 > [!NOTE]
@@ -61,7 +70,7 @@ flowchart TD
    - Chuyển cơ sở dữ liệu từ container EC2 sang **Amazon RDS for PostgreSQL** (phiên bản 16+) kích hoạt sẵn extension `pgvector`.
    - Lợi ích: Tự động sao lưu (Automated Backups), Multi-AZ dự phòng hỏng hóc, không sợ mất dữ liệu khi restart EC2.
 2. **Kích hoạt Semantic Cache tối đa**:
-   - Sử dụng bảng `semantic_cache` trong [retailops/storage/pg_schema.py](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/retailops/storage/pg_schema.py#L70-L79) để hấp thụ phần lớn các câu hỏi lặp lại, giữ thời gian phản hồi dưới 50ms cho khách hàng.
+   - Sử dụng bảng `semantic_cache` trong [retailops/storage/pg_schema.py](../retailops/storage/pg_schema.py#L70-L79) để hấp thụ phần lớn các câu hỏi lặp lại, giữ thời gian phản hồi dưới 50ms cho khách hàng.
 
 ### Giai đoạn 2: Mở rộng Tầng Web API không trạng thái (Quy mô 10.000 – 100.000 yêu cầu/ngày)
 1. **Chuyển đổi sang Container Orchestration (AWS ECS Fargate hoặc EKS)**:
@@ -76,7 +85,7 @@ flowchart TD
    - Triển khai model fine-tune (`retailops-qwen2.5-7b`) lên máy chủ GPU chuyên dụng (AWS EC2 g5.xlarge hoặc g6.xlarge với GPU NVIDIA A10G/L4).
    - vLLM sử dụng cơ chế **PagedAttention** và **Continuous Batching**, cho phép phục vụ đồng thời 50–100 người dùng trên cùng một GPU mà không bị tụt tốc độ (throughput gấp 10–20 lần so với Ollama đơn lẻ).
 2. **Cơ chế Chuyển đổi Dự phòng (Circuit Breaker & Fallback)**:
-   - Nếu cụm GPU quá tải hoặc gặp sự cố, Router trong [retailops_providers.py](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/retailops_providers.py) tự động chuyển sang gọi Gemini Flash API trong tích tắc để dịch vụ không bao giờ bị gián đoạn.
+   - Nếu cụm GPU quá tải hoặc gặp sự cố, Router trong [retailops_providers.py](../retailops_providers.py) tự động chuyển sang gọi Gemini Flash API trong tích tắc để dịch vụ không bao giờ bị gián đoạn.
 
 ---
 

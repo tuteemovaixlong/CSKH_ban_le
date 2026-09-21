@@ -1,15 +1,20 @@
 # Kế hoạch Sử Dụng DeepSeek API: 2 Giai Đoạn Sinh Dữ Liệu Cho Hệ Thống RetailOps 2026
+---
+trạng_thái: PLANNED
+mã_kế_hoạch: PLAN_DEEPSEEK_DISTILLATION
+nguồn_sự_thật:
+  - agent_protocol.py
+  - retailops_tools.py
+cập_nhật_cuối: 2026-09-21
+---
+
+# Kế hoạch Chưng cất Dữ liệu Tổng hợp từ DeepSeek API (Distillation Plan)
 
 > [!IMPORTANT]
-> **CHIẾN LƯỢC 2 LẦN SINH DỮ LIỆU TỪ DEEPSEEK**:
-> 1. **LẦN 1 (Thực thi ngay - Module 1)**: **Sinh dữ liệu nghiệp vụ thực tế (Operational Business Mock Data)**.
->    - Sử dụng DeepSeek sinh danh mục sản phẩm phong phú, tập khách hàng, đơn hàng với đầy đủ trạng thái logistics thực tế (SPX bưu tá ảo, GHN chậm kho BN Mega SOC, GHTK đã giao cần bảo hành, ViettelPost...) để **nạp vào database hệ thống**.
->    - **Mục đích**: Hệ thống có kho dữ liệu kinh doanh chân thực, phong phú để chạy thử nghiệm toàn diện (Web App, Staff Desk, 6 SOPs) và làm ngân hàng dữ liệu cho Module 2 (Benchmark cơ sở).
-> 2. **LẦN 2 (Thực thi ở Module 5 & Module 6 - Nếu kịp tiến độ)**: **Sinh 3.000–5.000 mẫu hội thoại đa lượt (Multi-turn SFT Dataset)**.
->    - Sử dụng DeepSeek làm Teacher Model sinh các cuộc trò chuyện đa lượt chuẩn ChatML kèm Tool Calling & CoT reasoning.
->    - **Mục đích**: Huấn luyện LoRA Fine-tuning mô hình cục bộ `Qwen2.5-7B` và đo lường đối chứng cho Chương 4 Luận văn tốt nghiệp.
+> **Ưu tiên Triển khai: GIAI ĐOẠN 2 (Phục vụ Khóa luận Tốt nghiệp — Bước 3)**  
+> Để huấn luyện mô hình cục bộ (Local SLM) như Qwen 2.5 7B đạt độ chuẩn xác cao trong các tác vụ CSKH bán lẻ chuyên sâu, cần một tập dữ liệu hướng dẫn (Instruction-tuning Dataset) chất lượng cao. Phương pháp chưng cất tri thức (Knowledge Distillation) từ các mô hình cỡ lớn hàng đầu (DeepSeek-V3 / DeepSeek-R1) là giải pháp tối ưu nhất về chi phí và thời gian.
 
-Tài liệu này xác định phương pháp sử dụng DeepSeek API (DeepSeek-V3 / R1) cho cả 2 giai đoạn trên, tuân thủ nghiêm ngặt định dạng schema của RetailOps.
+Tài liệu này xác định phương pháp sinh tập dữ liệu tổng hợp (Synthetic Data Generation), bộ lọc kiểm chuẩn tự động và cấu trúc dữ liệu đầu ra phục vụ quá trình Fine-tuning.
 
 ---
 
@@ -20,7 +25,7 @@ Tài liệu này xác định phương pháp sử dụng DeepSeek API (DeepSeek-
 2. **Chi phí Siêu Tiết kiệm**:
    - Mức giá ~$0.14 - $0.28 / 1M tokens cho phép sinh hàng ngàn cuộc hội thoại đa lượt chỉ với ngân sách dưới $2 (~50.000 VNĐ).
 3. **Độ chính xác Cú pháp Tool Calling**:
-   - DeepSeek tuân thủ nghiêm ngặt định dạng JSON schema, rất thích hợp để sinh các lượt gọi công cụ khớp hoàn toàn với [agent_protocol.py](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/agent_protocol.py).
+   - DeepSeek tuân thủ nghiêm ngặt định dạng JSON schema, rất thích hợp để sinh các lượt gọi công cụ khớp hoàn toàn với [agent_protocol.py](../agent_protocol.py).
 4. **Năng lực Tiếng Việt Đời thường**:
    - Hiểu sâu sắc các thuật ngữ thương mại điện tử Việt Nam (ship COD, đồng kiểm, hàng rep, boom hàng, trả hàng hoàn tiền).
 
@@ -59,12 +64,12 @@ Dữ liệu sẽ được tạo theo tỷ lệ phân bổ cụ thể nhằm bao 
 
 Mỗi mẫu hội thoại do DeepSeek sinh ra phải vượt qua bộ lọc nghiêm ngặt được viết sẵn trong mã nguồn RetailOps:
 
-1. **Kiểm tra Schema**: Chạy qua hàm `validate_messages()` trong [agent_protocol.py](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/agent_protocol.py#L245) để đảm bảo:
+1. **Kiểm tra Schema**: Chạy qua hàm `validate_messages()` trong [agent_protocol.py](../agent_protocol.py#L245) để đảm bảo:
    - Cuộc trò chuyện bắt đầu bằng role `user`.
    - Các lượt xen kẽ `user` -> `assistant`.
    - Tham số tool call hợp lệ chuẩn JSON (không bị cụt hoặc lỗi định dạng).
 2. **Kiểm tra Giới hạn Ngữ cảnh**: Tổng số ký tự và độ dài message nằm trong ngân sách cho phép.
-3. **Kiểm tra Trích xuất Tool**: Tên công cụ phải nằm trong danh mục `TOOLS` được định nghĩa trong [retailops_tools.py](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/retailops_tools.py).
+3. **Kiểm tra Trích xuất Tool**: Tên công cụ phải nằm trong danh mục `TOOLS` được định nghĩa trong [retailops_tools.py](../retailops_tools.py).
 
 ---
 
@@ -84,7 +89,7 @@ Mỗi mẫu hội thoại do DeepSeek sinh ra phải vượt qua bộ lọc nghi
 ## 6. Kế hoạch Thực hiện
 
 - [ ] Soạn thảo template prompt sinh dữ liệu chi tiết cho Teacher Model.
-- [ ] Xây dựng script thực thi [scripts/generate_synthetic_deepseek.py](file:///d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/scripts/generate_synthetic_deepseek.py).
+- [ ] Xây dựng script thực thi [scripts/generate_synthetic_deepseek.py](../scripts/generate_synthetic_deepseek.py).
 - [ ] Chạy thử nghiệm sinh 20 mẫu pilot để đánh giá độ chuẩn xác cú pháp và ngôn ngữ.
 - [ ] Tích hợp kiểm duyệt tự động bằng hàm xác thực có sẵn trong dự án.
 - [ ] Sinh đầy đủ 3.000 mẫu và lưu vào thư mục `data/` phục vụ fine-tuning.

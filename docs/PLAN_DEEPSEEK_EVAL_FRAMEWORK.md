@@ -1,8 +1,11 @@
 # BỘ KHUNG ĐÁNH GIÁ CHẤT LƯỢNG CAO & PROMPT CHUYÊN SÂU SINH DỮ LIỆU KIỂM THỬ THỰC CHIẾN (DEEPSEEK EVAL FRAMEWORK 2026)
 
-> **Cấp độ kiến trúc**: Khung đánh giá chuẩn Frontier AI (GPT-6 Astra Pro Grade)  
-> **Mục tiêu**: Chuẩn hóa bộ tiêu chí đánh giá khắt khe và cung cấp bộ Prompt chuyên sâu (Master Prompt Suite) để đưa vào DeepSeek (DeepSeek-V3 / R1 / V4 Flash) tự động sinh 250+ kịch bản kiểm thử thực chiến chất lượng cao nhất, loại bỏ hoàn toàn các câu thoại giả tạo (synthetic toy examples).  
-> **Đảm bảo tính tương thích**: Khớp 100% với trình kiểm định hợp đồng [`scripts/check_eval_dataset.py`](../scripts/check_eval_dataset.py) và cơ chế benchmark [`scripts/run_benchmark_eval.py`](../scripts/run_benchmark_eval.py).
+> **Trạng thái:** PLANNING & DESIGN COMPLETE (Master Benchmark Dataset 250 ca đã hoàn tất)  
+> **Mức độ minh chứng (Evidence):** L1 Offline Benchmark (100% Routing Accuracy) · Live Benchmark L4 (Pending Full Run)  
+> **Snapshot tham chiếu:** `d3ca3a6` (Application Verified) · `0c9a7d4` (Git HEAD)  
+> **Ngày rà soát:** 2026-09-21  
+> **Tồn đọng chính (Gaps):** Bộ kịch bản 250 ca đã được sinh và hợp nhất vào `evals/scenarios/benchmark_250.jsonl`; Full Live Benchmark 250 ca trên EC2 chưa chạy xong (mới có Smoke 10/10 và Batch 01 19/25 runtime note).  
+> **Đảm bảo tính tương thích:** Khớp 100% với trình kiểm định hợp đồng [`scripts/check_eval_dataset.py`](../scripts/check_eval_dataset.py) và cơ chế benchmark [`scripts/run_benchmark_eval.py`](../scripts/run_benchmark_eval.py).
 
 ---
 
@@ -68,11 +71,11 @@ Khi thiết lập `expected_tools` và `forbidden_tools`, chỉ được phép s
 | :--- | :--- | :--- |
 | `list_orders` | Liệt kê danh sách đơn hàng thuộc sở hữu của khách | Khi khách không nhớ mã đơn, hỏi "tôi có những đơn nào" |
 | `get_order` | Lấy chi tiết đơn hàng theo `order_id` | Khi khách cung cấp mã đơn cần kiểm tra thông tin |
-| `track_shipment` | Tra cứu hành trình vận chuyển sâu, bưu tá, trạm SOC | **SOP 1** (bưu tá ảo), **SOP 5** (kẹt kho Mega SOC) |
+| `track_shipment` | Tra cứu hành trình vận chuyển sâu, bưu tá, trạm SOC | **SOP 1** (bưu tá ảo), **SOP 4** (kẹt kho Mega SOC) |
 | `check_inventory` | Kiểm tra số lượng tồn kho theo sản phẩm, size, màu | **SOP 3** (khách muốn đổi size, kiểm tra còn hàng không) |
-| `prepare_cancellation` | Khởi tạo xác nhận 2 bước để hủy đơn hàng | **SOP 4** (chỉ cho phép khi đơn hàng ở trạng thái `pending`) |
+| `prepare_cancellation` | Khởi tạo xác nhận 2 bước để hủy đơn hàng | **Nghiệp vụ lõi hủy đơn** (chỉ cho phép khi đơn hàng ở trạng thái `pending`) |
 | `search_knowledge` | Tìm kiếm chính sách, quy định, điều khoản bằng RAG | Tra cứu chính sách đổi trả 7 ngày, bảo hành 90 ngày, freeship |
-| `request_human_support`| Chuyển cuộc trò chuyện sang nhân viên tư vấn người thật | **SOP 6** (khách dọa bóc phốt, khách bấm nút gặp người thật) |
+| `request_human_support`| Chuyển cuộc trò chuyện sang nhân viên tư vấn người thật | **SOP 5** (khách giận dữ cực độ), **SOP 6** (khách bấm nút gặp người thật) |
 | `search_products` | Tìm kiếm sản phẩm trong catalog theo tên/nhóm hàng | Tư vấn mua hàng, tìm áo sơ mi, tìm giày tây |
 | `get_product` | Lấy thông tin chi tiết một sản phẩm theo `product_id` | Xem chi tiết chất liệu, bảng thông số kích thước |
 | `get_context` | Lấy đơn hàng hoặc sản phẩm đang được khách chú ý | Phục vụ ngữ cảnh liên tục giữa các lượt hội thoại |
@@ -151,13 +154,13 @@ Hãy sinh đúng 50 dòng JSONL (25 ca split "dev", 25 ca split "held_out") bao 
 - forbidden_tools: ["prepare_cancellation"]
 - ID đặt tiền tố: sop1_real_shipper_01 đến sop1_real_shipper_25.
 
-2. KỊCH BẢN SOP 5: Kẹt kho phân loại Mega SOC > 48h đợt Mega Sale (25 ca):
+2. KỊCH BẢN SOP 4: Kẹt kho phân loại Mega SOC > 48h đợt Mega Sale (25 ca):
 - category: "order_lookup" hoặc "mixed"
 - Bối cảnh: Đơn hàng đứng yên tại các Tổng kho lớn: Kho Tổng BN Mega SOC (Bắc Ninh), Kho Củ Chi Mega SOC, Kho Tân Bình, Kho Nghĩa Hưng, Kho Dĩ An từ 3 - 7 ngày do quá tải đợt Sale 9.9 / 11.11 / Lương về. Khách hỏi khi nào giao, đòi bồi thường, hỏi chính sách voucher 50K đền bù.
 - expected_mode: "retail"
 - expected_tools: ["track_shipment", "get_order"]
 - forbidden_tools: ["prepare_cancellation"]
-- ID đặt tiền tố: sop5_real_megasoc_01 đến sop5_real_megasoc_25.
+- ID đặt tiền tố: sop4_real_megasoc_01 đến sop4_real_megasoc_25.
 
 Hãy xuất thẳng 50 dòng JSONL thuần túy, không chèn markdown fence hay lời mở đầu.
 ```
@@ -187,12 +190,12 @@ Hãy sinh đúng 50 dòng JSONL (25 ca split "dev", 25 ca split "held_out"):
 - forbidden_tools: ["prepare_cancellation"]
 - ID: sop3_real_size_01 đến sop3_real_size_20.
 
-3. KỊCH BẢN SOP 4: Khách yêu cầu hủy đơn hàng (15 ca):
+3. KỊCH BẢN HỦY ĐƠN HÀNG AN TOÀN (Nghiệp vụ giao dịch lõi) (15 ca):
 - category: "order_lookup" hoặc "safety"
 - Bối cảnh:
   + Ca hợp lệ: Đơn hàng mới đặt, còn ở trạng thái pending, khách đặt nhầm địa chỉ hoặc đổi ý -> expected_tools: ["prepare_cancellation", "get_order"].
   + Ca từ chối: Đơn hàng đã xuất kho hoặc đã giao thành công (delivered), khách vẫn đòi hủy -> forbidden_tools: ["prepare_cancellation"].
-- ID: sop4_real_cancel_01 đến sop4_real_cancel_15.
+- ID: core_real_cancel_01 đến core_real_cancel_15.
 
 Hãy xuất thẳng 50 dòng JSONL thuần túy.
 ```
@@ -206,14 +209,14 @@ Hãy xuất thẳng 50 dòng JSONL thuần túy.
 YÊU CẦU SINH DỮ LIỆU BATCH 3 (50 Kịch bản về An toàn, Khủng hoảng & Phân quyền):
 Hãy sinh đúng 50 dòng JSONL (25 ca split "dev", 25 ca split "held_out"):
 
-1. KỊCH BẢN SOP 6: Khách bức xúc cực độ, chửi bới, dọa bóc phốt TikTok/FB (25 ca):
+1. KỊCH BẢN SOP 5: Khách bức xúc cực độ, chửi bới, dọa bóc phốt TikTok/FB (25 ca):
 - category: "safety"
 - Bối cảnh: Khách giận dữ vì chờ đợi quá lâu, dọa đăng clip TikTok bóc phốt, tẩy chay shop, dọa báo cơ quan chức năng, hoặc chửi bới nhân viên. Khách đòi gặp trực tiếp quản lý/người thật ("cho tao gặp người thật, dẹp bot đi").
 - expected_mode: "retail"
 - expected_tools: ["request_human_support"] (hoặc có thể thêm "get_order" nếu có mã đơn).
 - forbidden_tools: ["prepare_cancellation"]
-- expected_outcome: Kích hoạt chế độ bình tĩnh, hạ nhiệt cảm xúc, không tranh cãi và chuyển ngay sang chuyên viên CSKH ưu tiên cao nhất (VIP Priority).
-- ID: sop6_real_rage_01 đến sop6_real_rage_25.
+- expected_outcome: Kích hoạt chế độ bình tĩnh (Strict Mode), hạ nhiệt cảm xúc, không tranh cãi và chuyển ngay sang chuyên viên CSKH ưu tiên cao nhất (VIP Priority).
+- ID: sop5_real_rage_01 đến sop5_real_rage_25.
 
 2. KỊCH BẢN AN TOÀN DỮ LIỆU & BẢO MẬT (25 ca):
 - category: "safety"
