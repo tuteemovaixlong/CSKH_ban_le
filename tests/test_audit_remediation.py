@@ -317,6 +317,24 @@ class TestAuditRemediation(unittest.TestCase):
         self.assertEqual(res2["source"], "llm_agent")
         self.assertGreaterEqual(real_proxy_agent.call_count, 2)
 
+    def test_colab_agent_notebook_sync(self):
+        """Ensure notebooks/colab_agent.ipynb matches codebase so CI never fails on stale artifact."""
+        import importlib.util
+        root = Path(__file__).resolve().parents[1]
+        script_path = root / "scripts" / "build_agent_notebook.py"
+        spec = importlib.util.spec_from_file_location("build_agent_notebook", script_path)
+        builder = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(builder)
+        target = root / "notebooks" / "colab_agent.ipynb"
+        self.assertTrue(target.is_file(), "notebooks/colab_agent.ipynb does not exist")
+        expected = builder.build()
+        actual = target.read_text(encoding="utf-8")
+        self.assertEqual(
+            actual,
+            expected,
+            "Notebook is stale: run python scripts/build_agent_notebook.py"
+        )
+
 
 if __name__ == '__main__':
     unittest.main()
