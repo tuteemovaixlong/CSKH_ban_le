@@ -319,9 +319,11 @@ class TestAuditRemediation(unittest.TestCase):
 
     def test_colab_agent_notebook_sync(self):
         """Ensure notebooks/colab_agent.ipynb matches codebase so CI never fails on stale artifact."""
-        import importlib.util
         root = Path(__file__).resolve().parents[1]
         script_path = root / "scripts" / "build_agent_notebook.py"
+        if not script_path.is_file():
+            self.skipTest("scripts/build_agent_notebook.py not present in packaged container")
+        import importlib.util
         spec = importlib.util.spec_from_file_location("build_agent_notebook", script_path)
         builder = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(builder)
