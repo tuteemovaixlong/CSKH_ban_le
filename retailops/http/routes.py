@@ -1,5 +1,6 @@
 """Business route dispatch for both HTTP adapters; identity comes from the server."""
 import json
+import math
 from pathlib import Path
 import re
 import time
@@ -40,9 +41,12 @@ def _parse_price(val):
     if val is None or isinstance(val, bool):
         return False, None
     if isinstance(val, (int, float)):
-        if val < 0:
+        if not math.isfinite(val) or val < 0:
             return False, None
-        return True, int(val)
+        try:
+            return True, int(val)
+        except (ValueError, OverflowError):
+            return False, None
     if isinstance(val, str):
         v = val.strip()
         if not v.isdigit():
@@ -61,9 +65,12 @@ def _parse_non_negative_int(val):
     if val is None or isinstance(val, bool):
         return False, None
     if isinstance(val, (int, float)):
-        if val < 0 or int(val) != val:
+        if not math.isfinite(val) or val < 0 or int(val) != val:
             return False, None
-        return True, int(val)
+        try:
+            return True, int(val)
+        except (ValueError, OverflowError):
+            return False, None
     if isinstance(val, str):
         v = val.strip()
         if not v.isdigit():
