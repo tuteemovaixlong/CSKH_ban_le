@@ -29,14 +29,17 @@ def read_database(path, component, tables):
             db.row_factory = sqlite3.Row
             db.execute('BEGIN')
             marker = [dict(row) for row in db.execute('SELECT component,version FROM retailops_schema')]
-            allowed_versions = (1, 2) if component == 'business' else (1,)
+            allowed_versions = (1, 2, 3) if component == 'business' else (1,)
             if len(marker) != 1 or marker[0]['component'] != component or marker[0]['version'] not in allowed_versions:
-                raise ValueError('Import requires identity v1 and business v1/v2 in a stopped persistent SQLite snapshot.')
+                raise ValueError('Import requires identity v1 and business v1/v2/v3 in a stopped persistent SQLite snapshot.')
             if db.execute('PRAGMA integrity_check').fetchone()[0] != 'ok' or db.execute('PRAGMA foreign_key_check').fetchall():
                 raise ValueError('SQLite snapshot failed integrity checks.')
-            if component == 'business' and marker[0]['version'] == 2:
+            if component == 'business' and marker[0]['version'] >= 2:
                 tables = (*tables, 'graph_runs', 'graph_checkpoints', 'graph_writes')
-            return {table: [dict(row) for row in db.execute('SELECT * FROM "'+table+'"')] for table in tables}
+            if component == 'business' and marker[0]['version'] >= 3:
+                tables = (*tables, 'products', 'product_variants')
+            existing_tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            return {table: [dict(row) for row in db.execute('SELECT * FROM "'+table+'"')] for table in tables if table in existing_tables}
     except sqlite3.Error:
         raise ValueError('Cannot read the persistent SQLite snapshot; no target data was imported.') from None
 

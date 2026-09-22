@@ -30,7 +30,7 @@ class Application:
         self.api_daily_limit = api_daily_limit
         self.quota_store = store
         self.default_provider = 'custom'
-        self.catalog = Catalog()
+        self.catalog = Catalog(store=self.store)
         self.agent_lock = threading.Lock()
         self.semantic_cache = SemanticCache(min_similarity=0.65)
         self.tool_cache = ToolCache(default_ttl=180.0)

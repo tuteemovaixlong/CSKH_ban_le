@@ -250,6 +250,100 @@ class TestManagerCRUD(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn('result', res)
 
+    def test_manager_events_and_actor_audit(self):
+        # 1. Create a product
+        pid = 'P-777'
+        payload = {
+            'id': pid, 'name': 'Áo Audit Trail', 'category': 'Áo', 'price': 250000,
+            'stock': 30, 'warranty_days': 45, 'variants': ['Trắng · Size M']
+        }
+        api_result(self.app, 'C-001', 'POST', '/api/manager/products', payload)
+
+        # 2. Update the product
+        api_result(self.app, 'C-001', 'POST', '/api/manager/products/update', {'id': pid, 'price': 270000})
+
+        # 3. Delete the product
+        api_result(self.app, 'C-001', 'POST', '/api/manager/products/delete', {'id': pid})
+
+        # 4. Fetch manager events
+        status, res = api_result(self.app, 'C-001', 'GET', '/api/manager/events')
+        self.assertEqual(status, 200)
+        self.assertIn('events', res)
+        events = res['events']
+        
+        created_ev = next((e for e in events if e['kind'] == 'product_created' and e['payload'].get('product_id') == pid), None)
+        self.assertIsNotNone(created_ev)
+        self.assertEqual(created_ev['payload']['actor']['principal_id'], 'C-001')
+        self.assertEqual(created_ev['payload']['actor']['role'], 'manager')
+
+        updated_ev = next((e for e in events if e['kind'] == 'product_updated' and e['payload'].get('product_id') == pid), None)
+        self.assertIsNotNone(updated_ev)
+        self.assertEqual(updated_ev['payload']['updates']['price'], 270000)
+
+        deleted_ev = next((e for e in events if e['kind'] == 'product_deleted' and e['payload'].get('product_id') == pid), None)
+        self.assertIsNotNone(deleted_ev)
+
+    def test_cross_session_catalog_persistence(self):
+        # Session A: Manager creates product
+        pid = 'P-888'
+        payload = {
+            'id': pid, 'name': 'Sản Phẩm Đa Session', 'category': 'Quần', 'price': 350000,
+            'stock': 15, 'warranty_days': 60, 'variants': ['Đen · Size 30', 'Đen · Size 32']
+        }
+        api_result(self.app, 'C-001', 'POST', '/api/manager/products', payload)
+
+        # Session B: Customer application instance on the same store
+        customer_app = Application(self.store, {}, role='customer')
+        self.assertIn(pid, customer_app.catalog.products)
+        cust_prod = customer_app.catalog.products[pid]
+        self.assertEqual(cust_prod['name'], 'Sản Phẩm Đa Session')
+        self.assertEqual(cust_prod['price'], 350000)
+
+        # Customer tools bound to customer session can check inventory of new product
+        from retailops_tools import BoundTools
+        snapshot = {'order_id': None, 'product_id': None}
+        tools = BoundTools(self.store, customer_app.catalog, 'C-002', snapshot, {'name': 'test'})
+        inv = tools('check_inventory', {'product_id': pid, 'size': '30', 'color': 'Đen'})
+        self.assertTrue(inv['in_stock'])
+        self.assertGreater(inv['stock'], 0)
+
+        # Session A: Manager updates stock
+        api_result(self.app, 'C-001', 'POST', '/api/manager/products/update', {'id': pid, 'price': 390000})
+
+        # Session B immediately observes new price without reload
+        self.assertEqual(customer_app.catalog.products[pid]['price'], 390000)
+
+    def test_dispute_agent_out_of_stock_real_inventory(self):
+        from retailops.workflow.subagents.dispute_agent import run_dispute_agent
+        from retailops_tools import BoundTools
+
+        class MockGateway:
+            def __init__(self, reply=""):
+                self.reply = reply
+
+            def chat(self, messages, tools_allowed=True, timeout=30):
+                return {"message": {"role": "assistant", "content": self.reply}}
+
+        snapshot = {'order_id': 'O-101', 'product_id': 'P-101'}
+        tools = BoundTools(self.store, self.app.catalog, 'C-001', snapshot, {'name': 'test'})
+
+        # P-101 XL has stock = 0
+        state = {
+            "messages": [{"role": "user", "content": "Đơn O-101 mình mặc chật quá, muốn đổi size sang size XL có được không?"}],
+            "fresh": [], "trace": {}, "tool_count": 0, "complete": False,
+            "bound": {"order_id": "O-101", "product_id": "P-101"},
+            "intent": "unknown", "next_worker": "dispute_agent", "subagent_history": [],
+            "sentiment": "neutral", "strict_mode": False, "consecutive_ood_count": 0,
+            "action_proposal": None, "requires_human": False, "human_reason": None
+        }
+
+        res = run_dispute_agent(state, tools, MockGateway())
+        # Since XL is out of stock (stock == 0), no action proposal should be confirmed as ready
+        self.assertIsNone(res.get("action_proposal"))
+        last_msg = res["messages"][-1]["content"]
+        self.assertIn("hết hàng", last_msg.lower())
+
 
 if __name__ == '__main__':
     unittest.main()
+

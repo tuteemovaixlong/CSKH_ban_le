@@ -566,8 +566,10 @@ function renderOrder() {
   // Toggle manager buttons visibility
   const btnHeaderMgr = byId('btn-open-manager-console');
   if (btnHeaderMgr && btnHeaderMgr.style) btnHeaderMgr.style.display = isManager ? 'inline-flex' : 'none';
-  const btnSidebarMgr = byId('btn-sidebar-manager-console');
+  const btnSidebarMgr = byId('btn-sidebar-manager-nav');
   if (btnSidebarMgr && btnSidebarMgr.style) btnSidebarMgr.style.display = isManager ? 'flex' : 'none';
+  const btnPanelMgr = byId('btn-panel-manager-banner');
+  if (btnPanelMgr && btnPanelMgr.style) btnPanelMgr.style.display = isManager ? 'flex' : 'none';
 
   let filtered = orders;
   if (managerFilter !== 'all') {
@@ -664,7 +666,13 @@ function renderOrder() {
   }
 }
 
-const eventLabels = {order_viewed: 'Tra cứu đơn', cancellation_proposed: 'Tạo đề xuất hủy', order_cancelled: 'Đã xác nhận hủy', proposal_dismissed: 'Bỏ đề xuất', model_extraction: 'Model phân tích yêu cầu', model_unavailable: 'Không kết nối được model', chat_replied: 'Trả lời hội thoại', agent_replied: 'Phản hồi hội thoại', agent_failed: 'Lượt chat chưa hoàn tất'};
+const eventLabels = {
+  order_viewed: 'Tra cứu đơn', cancellation_proposed: 'Tạo đề xuất hủy', order_cancelled: 'Đã xác nhận hủy',
+  proposal_dismissed: 'Bỏ đề xuất', model_extraction: 'Model phân tích yêu cầu', model_unavailable: 'Không kết nối được model',
+  chat_replied: 'Trả lời hội thoại', agent_replied: 'Phản hồi hội thoại', agent_failed: 'Lượt chat chưa hoàn tất',
+  product_created: 'Thêm sản phẩm', product_updated: 'Sửa sản phẩm', product_deleted: 'Xóa sản phẩm',
+  order_status_updated_by_manager: 'Đổi trạng thái đơn'
+};
 async function refresh() {
   const [data, history] = await Promise.all([api('/api/orders'), api('/api/events')]);
   orders = data.orders || [];
@@ -1221,6 +1229,8 @@ async function openSession() {
   await restoreProposals().catch(() => {});
   if (session.role === 'staff') {
     openStaffDesk();
+  } else if (session.role === 'manager') {
+    openManagerConsole();
   }
 }
 byId('login-form').onsubmit = async event => {
@@ -1796,7 +1806,8 @@ let currentManagerTab = 'kpis';
 
 const mgrDialog = byId('manager-console-dialog');
 const btnOpenMgrHeader = byId('btn-open-manager-console');
-const btnOpenMgrSidebar = byId('btn-sidebar-manager-console');
+const btnOpenMgrSidebar = byId('btn-sidebar-manager-nav');
+const btnOpenMgrBanner = byId('btn-panel-manager-banner');
 const btnCloseMgr = byId('close-manager-console');
 const btnRefreshMgr = byId('refresh-manager-data');
 
@@ -1808,6 +1819,7 @@ function openManagerConsole() {
 
 if (btnOpenMgrHeader) btnOpenMgrHeader.onclick = openManagerConsole;
 if (btnOpenMgrSidebar) btnOpenMgrSidebar.onclick = openManagerConsole;
+if (btnOpenMgrBanner) btnOpenMgrBanner.onclick = openManagerConsole;
 if (btnCloseMgr && mgrDialog) btnCloseMgr.onclick = () => mgrDialog.close();
 if (btnRefreshMgr) btnRefreshMgr.onclick = () => loadManagerData();
 
@@ -2163,7 +2175,12 @@ async function loadManagerAuditTrail() {
   tbody.replaceChildren();
 
   try {
-    const hist = await api('/api/events');
+    let hist;
+    try {
+      hist = await api('/api/manager/events');
+    } catch (_) {
+      hist = await api('/api/events');
+    }
     const events = hist.events || [];
     if (!events.length) {
       const tr = el('tr');

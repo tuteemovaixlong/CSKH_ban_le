@@ -1,13 +1,52 @@
-"""Business schema v1, including safe upgrade of pre-versioned databases."""
+def migrate_v3(db):
+    db.execute("""CREATE TABLE IF NOT EXISTS products (
+                  id TEXT PRIMARY KEY,
+                  name TEXT NOT NULL,
+                  aliases TEXT NOT NULL DEFAULT '[]',
+                  category TEXT,
+                  price BIGINT,
+                  stock INTEGER,
+                  warranty_days INTEGER,
+                  description TEXT,
+                  variants TEXT NOT NULL DEFAULT '[]',
+                  material TEXT,
+                  care TEXT,
+                  is_system_immutable INTEGER NOT NULL DEFAULT 0 CHECK(is_system_immutable IN (0,1)),
+                  extra_data TEXT NOT NULL DEFAULT '{}',
+                  created_at REAL NOT NULL,
+                  updated_at REAL NOT NULL
+                )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS product_variants (
+                  id TEXT PRIMARY KEY,
+                  product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+                  variant_name TEXT NOT NULL,
+                  size TEXT,
+                  color TEXT,
+                  stock INTEGER NOT NULL DEFAULT 0,
+                  sku TEXT,
+                  price BIGINT
+                )""")
+    db.execute('CREATE INDEX IF NOT EXISTS idx_variants_product ON product_variants(product_id)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_variants_size_color ON product_variants(product_id, size, color)')
+    orders_table = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='orders'").fetchone()
+    if orders_table:
+        order_cols = {row['name'] for row in db.execute('PRAGMA table_info(orders)')}
+        if 'product_id' not in order_cols:
+            db.execute('ALTER TABLE orders ADD COLUMN product_id TEXT REFERENCES products(id)')
+            db.execute('CREATE INDEX IF NOT EXISTS idx_orders_product_id ON orders(product_id)')
+
 
 def initialize(db):
+    migrate_v3(db)
     db.execute("""CREATE TABLE IF NOT EXISTS orders (
                   id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, name TEXT NOT NULL,
                   variant TEXT NOT NULL, amount INTEGER NOT NULL,
                   status TEXT NOT NULL CHECK(status IN ('pending','delivered','cancelled')),
-                  version INTEGER NOT NULL DEFAULT 1, cancel_reason TEXT
+                  version INTEGER NOT NULL DEFAULT 1, cancel_reason TEXT,
+                  product_id TEXT REFERENCES products(id)
                 )""")
     db.execute('CREATE INDEX IF NOT EXISTS idx_orders_customer_id ON orders(customer_id)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_orders_product_id ON orders(product_id)')
     db.execute("""CREATE TABLE IF NOT EXISTS proposals (
                   id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, order_id TEXT NOT NULL REFERENCES orders(id),
                   order_version INTEGER NOT NULL, reason TEXT NOT NULL,

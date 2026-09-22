@@ -17,14 +17,64 @@ def matches(pattern, text):
     return bool(re.search(pattern, text))
 
 
+class CatalogMapping(dict):
+    """Dict-like proxy to BusinessStore products."""
+    def __init__(self, store):
+        self.store = store
+        super().__init__()
+
+    def get(self, key, default=None):
+        p = self.store.get_product(key)
+        return p if p is not None else default
+
+    def __getitem__(self, key):
+        p = self.store.get_product(key)
+        if p is None:
+            raise KeyError(key)
+        return p
+
+    def __contains__(self, key):
+        return self.store.get_product(key) is not None
+
+    def __len__(self):
+        return len(self.store.list_products())
+
+    def __iter__(self):
+        return iter(p['id'] for p in self.store.list_products())
+
+    def values(self):
+        return self.store.list_products()
+
+    def items(self):
+        return [(p['id'], p) for p in self.store.list_products()]
+
+    def keys(self):
+        return [p['id'] for p in self.store.list_products()]
+
+    def pop(self, key, *args):
+        return self.store.delete_product(key)
+
+
 class Catalog:
-    def __init__(self, path=None):
+    def __init__(self, store=None, path=None):
+        if store is not None and (isinstance(store, (str, Path)) or not hasattr(store, 'list_products')):
+            path = store
+            store = None
+        self.store = store
         self.path = Path(path or Path(__file__).resolve().parent / 'data/products.json')
-        data = json.loads(self.path.read_text(encoding='utf-8'))
-        self.source = data['source']
-        self.products = {p['id']: p for p in data['products']}
+        if self.store is not None:
+            if not self.store.list_products():
+                self.store.seed_catalog()
+            self.products = CatalogMapping(self.store)
+            self.source = "RetailOps Persistent Database Catalog"
+        else:
+            data = json.loads(self.path.read_text(encoding='utf-8'))
+            self.source = data.get('source', 'RetailOps In-Memory Catalog')
+            self.products = {p['id']: p for p in data.get('products', [])}
 
     def save(self):
+        if self.store is not None:
+            return
         data = {'source': self.source, 'products': list(self.products.values())}
         try:
             self.path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -35,24 +85,30 @@ class Catalog:
                 self.path, exc
             )
 
-    def add_product(self, p):
+    def add_product(self, p, actor=None):
         pid = p.get('id')
         if not pid:
             raise ValueError("Thiếu mã sản phẩm (id).")
+        if self.store is not None:
+            return self.store.add_product(p, actor=actor)
         self.products[pid] = p
         self.save()
         return p
 
-    def update_product(self, pid, updates):
+    def update_product(self, pid, updates, actor=None):
+        if self.store is not None:
+            return self.store.update_product(pid, updates, actor=actor)
         if pid not in self.products:
             raise KeyError(f"Không tìm thấy sản phẩm {pid}.")
         self.products[pid].update(updates)
         self.save()
         return self.products[pid]
 
-    def delete_product(self, pid):
+    def delete_product(self, pid, actor=None):
         if pid in ('P-101', 'P-102', 'P-202'):
             raise ValueError(f"Sản phẩm {pid} là sản phẩm cơ sở hệ thống phục vụ kiểm thử, không được phép xóa.")
+        if self.store is not None:
+            return self.store.delete_product(pid, actor=actor)
         if pid not in self.products:
             raise KeyError(f"Không tìm thấy sản phẩm {pid}.")
         removed = self.products.pop(pid)
@@ -60,20 +116,39 @@ class Catalog:
         return removed
 
     def all_products(self):
+        if self.store is not None:
+            return self.store.list_products()
         return list(self.products.values())
+
+    def get_variant_stock(self, pid, size, color=None):
+        if self.store is not None:
+            return self.store.get_variant_stock(pid, size, color)
+        STOCK_MAP = {
+            'P-101': {'S': 5, 'M': 12, 'L': 8, 'XL': 0},
+            'P-102': {'S': 0, 'M': 4, 'L': 15, 'XL': 3},
+            'P-202': {'S': 20, 'M': 18, 'L': 25, 'XL': 10},
+            'P-103': {'S': 8, 'M': 14, 'L': 10, 'XL': 2},
+            'P-104': {'S': 10, 'M': 15, 'L': 0, 'XL': 8},
+            'P-203': {'S': 12, 'M': 0, 'L': 18, 'XL': 5},
+            'P-301': {'39': 4, '40': 8, '41': 0, '42': 6, '43': 2},
+        }
+        return STOCK_MAP.get(pid, {}).get((size or '').upper().strip(), 0)
 
     def find(self, text):
         normalized = normalize(text)
         found = []
-        for product in self.products.values():
+        for product in self.all_products():
             names = [product['id'], product['name']] + product.get('aliases', [])
             if any(matches(r'(?<![a-z0-9_-])' + re.escape(normalize(name)) + r'(?![a-z0-9_-])', normalized) for name in names):
                 found.append(product)
         return found
 
     def for_order(self, order):
-        # Exact catalog name is the only link in the current single-item fixtures.
-        return next((p for p in self.products.values() if p['name'] == order['name']), None)
+        if order.get('product_id'):
+            p = self.products.get(order['product_id'])
+            if p:
+                return p
+        return next((p for p in self.all_products() if p['name'] == order['name']), None)
 
 
 def format_money(value):

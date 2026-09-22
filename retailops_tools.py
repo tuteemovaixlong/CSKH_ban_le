@@ -204,15 +204,9 @@ class BoundTools:
             product = self.catalog.products.get(pid)
             if not product:
                 return {'error': 'product_not_found', 'message': f'Sản phẩm {pid} không tồn tại trong kho.'}
-            stock_map = {
-                'P-101': {'S': 5, 'M': 12, 'L': 8, 'XL': 0},
-                'P-102': {'S': 0, 'M': 4, 'L': 15, 'XL': 3},
-                'P-202': {'S': 20, 'M': 18, 'L': 25, 'XL': 10},
-                'P-104': {'S': 10, 'M': 15, 'L': 0, 'XL': 8},
-                'P-203': {'S': 12, 'M': 0, 'L': 18, 'XL': 5},
-                'P-301': {'39': 4, '40': 8, '41': 0, '42': 6, '43': 2},
-            }
-            available = stock_map.get(pid, {}).get(size, 6)
+            available = self.catalog.get_variant_stock(pid, size, color)
+            if available is None:
+                available = 0
             return {
                 'product_id': pid, 'product_name': product.get('name'),
                 'size': size, 'color': color,

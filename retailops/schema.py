@@ -8,7 +8,7 @@ def migrate(db, component, initialize):
     if rows and (len(rows) != 1 or rows[0]['component'] != component):
         raise ValueError('Database belongs to another RetailOps component.')
     version = rows[0]['version'] if rows else 0
-    target = 2 if component == 'business' else 1
+    target = 3 if component == 'business' else 1
     if version not in range(target + 1):
         raise ValueError('Unsupported database schema version; use the matching application version.')
     if version == 0:
@@ -19,3 +19,8 @@ def migrate(db, component, initialize):
         from retailops.workflow.schema import initialize as graph_schema
         graph_schema(db)
         db.execute("UPDATE retailops_schema SET version=2 WHERE component='business'")
+
+    if component == 'business' and version < 3:
+        from retailops.business.schema import migrate_v3
+        migrate_v3(db)
+        db.execute("UPDATE retailops_schema SET version=3 WHERE component='business'")

@@ -45,7 +45,7 @@ class MigrationTests(unittest.TestCase):
             self.assertEqual(len(store.events('C-901')), 1)
             self.assertTrue(store.confirm('C-901', 'old-proposal', {'confirmed': True}, 'legacy-confirm-key')['replayed'])
             with store.connection() as db:
-                self.assertEqual(tuple(db.execute('SELECT * FROM retailops_schema').fetchone()), ('business', 2))
+                self.assertEqual(tuple(db.execute('SELECT * FROM retailops_schema').fetchone()), ('business', 3))
                 row = db.execute('SELECT revision,provider_id FROM conversations').fetchone()
                 self.assertEqual(tuple(row), (3, 'custom'))
                 self.assertEqual(db.execute('PRAGMA integrity_check').fetchone()[0], 'ok')
@@ -62,7 +62,7 @@ class MigrationTests(unittest.TestCase):
             reopened = BusinessStore(self.path)
             self.assertEqual(reopened.orders('C-001')[0]['status'], 'pending')
             with reopened.connection() as db:
-                self.assertEqual(db.execute('SELECT version FROM retailops_schema').fetchone()[0], 2)
+                self.assertEqual(db.execute('SELECT version FROM retailops_schema').fetchone()[0], 3)
                 self.assertEqual(db.execute('SELECT count(*) FROM graph_runs').fetchone()[0], 0)
 
     def test_import_rejects_missing_identity_version_marker(self):

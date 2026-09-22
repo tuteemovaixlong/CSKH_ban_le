@@ -79,24 +79,46 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
         # Check domain heuristic for SOP 2 (Defect / Warranty Exchange 1-1)
         if any(w in lower_msg for w in ["kẹt khóa", "bung chỉ", "hỏng khóa", "lỗi chỉ", "rách", "đổi 1-1", "đổi mới", "bảo hành"]):
             if extracted_oid:
+                pid = bound_context.get("product_id") or bound_obj.get("product_id")
+                if not pid and extracted_oid:
+                    order_res = execute("get_order", {"order_id": extracted_oid})
+                    state["tool_count"] += 1
+                    trace.setdefault("tools", []).append({"name": "get_order", "status": "ok" if isinstance(order_res, dict) and not order_res.get("error") else "error"})
+                    if isinstance(order_res, dict):
+                        order_data = order_res.get("order", {})
+                        if isinstance(order_data, dict):
+                            pid = order_data.get("product_id")
+                            if not pid:
+                                items = order_data.get("items", [])
+                                if items and isinstance(items, list) and isinstance(items[0], dict):
+                                    pid = items[0].get("product_id")
+
+                warranty_days = 90
+                if pid:
+                    prod_res = execute("get_product", {"product_id": pid})
+                    if isinstance(prod_res, dict) and not prod_res.get("error"):
+                        prod_data = prod_res.get("product", prod_res)
+                        if isinstance(prod_data, dict) and prod_data.get("warranty_days") is not None:
+                            warranty_days = prod_data["warranty_days"]
+
                 action_proposal = {
                     "action": "exchange_1to1",
                     "order_id": extracted_oid,
                     "reason": "Hàng lỗi vận chuyển/kẹt khóa/bung chỉ",
-                    "details": "Đổi mới 1-1 tận nhà, shipper mang áo mới thu hồi áo cũ, miễn phí 2 chiều",
+                    "details": f"Đổi mới 1-1 tận nhà (Bảo hành {warranty_days} ngày), shipper mang áo mới thu hồi áo cũ, miễn phí 2 chiều",
                     "status": "pending_staff_approval"
                 }
                 final_content = (
-                    f"Dạ shop chân thành xin lỗi anh/chị về sự cố kẹt khóa/bung chỉ của đơn hàng {extracted_oid}! "
-                    "Shop đã kiểm tra hạn bảo hành sản phẩm (bảo hành 90 ngày) và xác nhận đủ điều kiện Đổi mới 1-1 tận nhà. "
-                    "Em đã tạo Phiếu Đề Xuất Đổi Mới 1-1 chuyển sang bàn làm việc của Chuyên viên CSKH duyệt ngay. "
+                    f"Dạ shop chân thành xin lỗi anh/chị về sự cố của đơn hàng {extracted_oid}! "
+                    f"Shop áp dụng chính sách bảo hành {warranty_days} ngày và hỗ trợ Đổi mới 1-1 tận nhà cho sản phẩm lỗi. "
+                    "Em đã tạo Phiếu Đề Xuất Đổi Mới 1-1 chuyển sang bàn làm việc của Chuyên viên CSKH kiểm tra ngày nhận hàng thực tế và duyệt hỗ trợ ngay. "
                     "Bưu tá sẽ mang sản phẩm mới tinh đến đổi tận nơi và thu hồi sản phẩm lỗi về, anh/chị không cần ra bưu cục và không mất bất kỳ chi phí nào ạ!"
                 )
             else:
                 final_content = (
                     "Dạ shop chân thành xin lỗi anh/chị về sự cố sản phẩm gặp lỗi/kẹt khóa/bung chỉ! "
-                    "Shop áp dụng chính sách Đổi mới 1-1 tận nhà hoàn toàn miễn phí 2 chiều trong 90 ngày bảo hành. "
-                    "Anh/chị vui lòng cung cấp Mã đơn hàng (ví dụ: O-101) để em tạo Phiếu Đề Xuất Đổi Mới 1-1 chuyển chuyên viên CSKH hỗ trợ ngay nhé ạ!"
+                    "Shop áp dụng chính sách Đổi mới 1-1 tận nhà hoàn toàn miễn phí 2 chiều trong thời hạn bảo hành. "
+                    "Anh/chị vui lòng cung cấp Mã đơn hàng (ví dụ: O-101) để em kiểm tra bảo hành và tạo Phiếu Đề Xuất Đổi Mới 1-1 chuyển chuyên viên CSKH hỗ trợ ngay nhé ạ!"
                 )
         # Check domain heuristic for SOP 3 (Size Exchange 2-Way)
         elif any(w in lower_msg for w in ["đổi size", "không vừa", "chật", "rộng", "đổi sang size"]):
@@ -130,21 +152,27 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
                     if isinstance(stock_res, dict):
                         stock_qty = stock_res.get("stock", 0)
                 else:
-                    stock_qty = 6
+                    stock_qty = 0
 
-                action_proposal = {
-                    "action": "size_exchange",
-                    "order_id": extracted_oid,
-                    "target_size": target_size,
-                    "reason": "Khách mặc không vừa size",
-                    "details": f"Đổi sang size {target_size} tận nhà (Kho còn {stock_qty} sản phẩm)",
-                    "status": "pending_staff_approval"
-                }
-                final_content = (
-                    f"Dạ em đã kiểm tra kho cho đơn {extracted_oid}: Size {target_size} hiện còn {stock_qty} sản phẩm sẵn sàng đổi cho anh/chị! "
-                    "Em đã tạo Phiếu Đề Xuất Đổi Size 2 Chiều gửi lên Bàn làm việc Nhân viên CSKH xác nhận. "
-                    f"Sau khi duyệt, shipper sẽ mang áo size {target_size} mới đến tận nhà đổi cho anh/chị thử vừa vặn rồi mới nhận lại áo cũ mang về shop nhé ạ!"
-                )
+                if stock_qty > 0:
+                    action_proposal = {
+                        "action": "size_exchange",
+                        "order_id": extracted_oid,
+                        "target_size": target_size,
+                        "reason": "Khách mặc không vừa size",
+                        "details": f"Đổi sang size {target_size} tận nhà (Kho còn {stock_qty} sản phẩm)",
+                        "status": "pending_staff_approval"
+                    }
+                    final_content = (
+                        f"Dạ em đã kiểm tra kho cho đơn {extracted_oid}: Size {target_size} hiện còn {stock_qty} sản phẩm sẵn sàng đổi cho anh/chị! "
+                        "Em đã tạo Phiếu Đề Xuất Đổi Size 2 Chiều gửi lên Bàn làm việc Nhân viên CSKH xác nhận. "
+                        f"Sau khi duyệt, shipper sẽ mang áo size {target_size} mới đến tận nhà đổi cho anh/chị thử vừa vặn rồi mới nhận lại áo cũ mang về shop nhé ạ!"
+                    )
+                else:
+                    final_content = (
+                        f"Dạ em đã kiểm tra kho cho đơn {extracted_oid}: Size {target_size} hiện tạm thời đã hết hàng trong kho. "
+                        "Em đã ghi nhận nhu cầu của anh/chị và chuyển thông tin cho chuyên viên CSKH hỗ trợ tư vấn mẫu tương tự hoặc phương án hỗ trợ phù hợp nhất nhé ạ!"
+                    )
             else:
                 final_content = (
                     "Dạ shop hỗ trợ đổi size tận nhà miễn phí 2 chiều cho anh/chị! "

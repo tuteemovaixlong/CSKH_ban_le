@@ -236,6 +236,20 @@ class ToolCache:
                 removed += 1
         return removed
 
+    def invalidate_product(self, product_id: Optional[str] = None) -> int:
+        """Invalidate cached product entries upon catalog mutation."""
+        removed = 0
+        with self._lock:
+            keys_to_delete = []
+            for k, v in self._cache.items():
+                if ':get_product:' in k or ':list_products:' in k:
+                    if product_id is None or (product_id and product_id in k):
+                        keys_to_delete.append(k)
+            for k in keys_to_delete:
+                del self._cache[k]
+                removed += 1
+        return removed
+
     def clear(self):
         with self._lock:
             self._cache.clear()

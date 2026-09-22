@@ -168,6 +168,9 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
             return (200, {'proposals': [approval.proposal(app.store, customer, r['id']) for r in rows]})
         if path == "/api/events":
             return (200, {"events": app.store.events(customer)})
+        if path == "/api/manager/events":
+            app.require_permission(MANAGER)
+            return (200, {"events": app.store.manager_events(limit=100)})
         m = re.fullmatch(r"/api/orders/([A-Z]{1,6}-[0-9]{1,8})", path)
         if m:
             return (200, {"order": app.store.lookup(customer, m[1])})
@@ -275,7 +278,12 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
                 "stock": stock, "warranty_days": warranty_days, "material": body.get("material"),
                 "care": body.get("care"), "is_system_immutable": False
             }
-            app.catalog.add_product(product)
+            actor = {"principal_id": customer, "role": app.role, "actor_type": "principal"}
+            app.catalog.add_product(product, actor=actor)
+            if hasattr(app, 'tool_cache'):
+                app.tool_cache.invalidate_product(pid)
+            if hasattr(app, 'semantic_cache') and app.semantic_cache:
+                app.semantic_cache.clear()
             return (201, {"status": "ok", "product": product, "message": f"Đã thêm sản phẩm {name} ({pid}) vào catalog."})
         if path == "/api/manager/products/update":
             app.require_permission(MANAGER)
@@ -321,18 +329,28 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
             for k in ("material", "care"):
                 if k in body:
                     updates[k] = body[k]
-            product = app.catalog.update_product(pid, updates)
+            actor = {"principal_id": customer, "role": app.role, "actor_type": "principal"}
+            product = app.catalog.update_product(pid, updates, actor=actor)
+            if hasattr(app, 'tool_cache'):
+                app.tool_cache.invalidate_product(pid)
+            if hasattr(app, 'semantic_cache') and app.semantic_cache:
+                app.semantic_cache.clear()
             return (200, {"status": "ok", "product": product, "message": f"Đã cập nhật sản phẩm {pid}."})
         if path == "/api/manager/products/delete":
             app.require_permission(MANAGER)
             require(isinstance(body, dict) and "id" in body, 400, "invalid_body", "Thiếu mã sản phẩm.")
             pid = str(body["id"]).strip().upper()
+            actor = {"principal_id": customer, "role": app.role, "actor_type": "principal"}
             try:
-                removed = app.catalog.delete_product(pid)
+                removed = app.catalog.delete_product(pid, actor=actor)
             except ValueError as exc:
                 raise ApiError(400, "system_product_immutable", str(exc))
             except KeyError as exc:
                 raise ApiError(404, "product_not_found", str(exc))
+            if hasattr(app, 'tool_cache'):
+                app.tool_cache.invalidate_product(pid)
+            if hasattr(app, 'semantic_cache') and app.semantic_cache:
+                app.semantic_cache.clear()
             return (200, {"status": "ok", "removed": removed, "message": f"Đã xóa sản phẩm {pid}."})
         if path == "/api/manager/orders/update-status":
             app.require_permission(MANAGER)
