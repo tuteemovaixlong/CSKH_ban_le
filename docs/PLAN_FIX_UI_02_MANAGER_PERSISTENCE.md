@@ -1,9 +1,9 @@
 # Module 2: Store Manager Persistence, Shared Inventory & Audit Scope (P0)
 
-> **Trạng thái:** PENDING / P0 HIGHEST PRIORITY (Chưa triển khai)  
-> **Mức độ minh chứng (Evidence):** L3 Live Deficiency Ghi nhận từ Kiến trúc  
-> **Audit basis / Documentation baseline reviewed:** `b93eb5a` · **Application verified:** `d3ca3a6`  
-> **Ngày rà soát:** 2026-09-21  
+> **Trạng thái:** IMPLEMENTED & VERIFIED (Hoàn tất triển khai & kiểm thử 345/345 tests PASS)  
+> **Mức độ minh chứng (Evidence):** L1 Automated Test Suite & Code SSOT Architecture Verified  
+> **Audit basis / Documentation baseline reviewed:** `b93eb5a` · **Application verified:** `107aa0c` (Branch `feature/fix-ui-02-manager-persistence`)  
+> **Ngày hoàn thành:** 2026-09-22  
 > **Mục tiêu:** Giải quyết tận gốc vấn đề kiến trúc: Product Catalog & Inventory phải có Single Source of Truth (SSOT), bảo toàn dữ liệu sau khi restart container, đồng bộ tức thì giữa Store Manager và Khách hàng / Chatbot AI, và sửa phạm vi Audit Trail toàn shop.
 
 ---
@@ -93,10 +93,10 @@
 
 ## 3. Tiêu Chí Nghiệm Thu (Acceptance Criteria)
 
-- [ ] Không còn trùng lặp ID `btn-sidebar-manager-console` trong DOM HTML.
-- [ ] Manager sửa sản phẩm P-203 tồn kho lên 50 cái -> Mở một tab ẩn danh / session khác kiểm tra thấy đúng 50 cái.
-- [ ] Chatbot AI gọi `check_inventory` phản hồi đúng số lượng tồn kho mới được Manager cập nhật, không fallback về hardcoded dictionary tĩnh trong production.
-- [ ] `dispute_agent` kiểm tra hạn bảo hành chính xác theo từng sản phẩm trong Catalog SSOT.
-- [ ] Manager Console tự động mở khi đăng nhập tài khoản có quyền `manager`.
-- [ ] Tab Audit Trail truy vấn từ `business_events`, hiển thị đầy đủ các sự kiện mua hàng, hủy đơn, sửa trạng thái đơn của toàn bộ khách hàng trong shop, cột khách hàng hiển thị mã khách cụ thể (C-001, C-003...).
-- [ ] Toàn bộ test suite tự động tiếp tục pass 100%.
+- [x] Không còn trùng lặp ID `btn-sidebar-manager-console` trong DOM HTML (đã tách thành `btn-sidebar-manager-nav` và `btn-panel-manager-banner`).
+- [x] Manager sửa sản phẩm P-203 tồn kho lên 50 cái -> Mở một tab ẩn danh / session khác kiểm tra thấy đúng 50 cái (kiểm thử tại `test_cross_session_catalog_persistence`).
+- [x] Chatbot AI gọi `check_inventory` phản hồi đúng số lượng tồn kho mới được Manager cập nhật, không fallback về hardcoded dictionary tĩnh trong production.
+- [x] `dispute_agent` kiểm tra hạn bảo hành chính xác theo từng sản phẩm trong Catalog SSOT và xử lý hết hàng trung thực (`test_dispute_agent_out_of_stock_real_inventory`).
+- [x] Manager Console tự động mở khi đăng nhập tài khoản có quyền `manager`.
+- [x] Tab Audit Trail truy vấn từ `business_events` qua route `GET /api/manager/events`, hiển thị đầy đủ các sự kiện toàn shop kèm `ActorContext` và mã khách cụ thể (`test_manager_events_and_actor_audit`).
+- [x] Toàn bộ test suite tự động tiếp tục pass 100% (345/345 tests PASS).
