@@ -1,35 +1,35 @@
 ---
-trạng_thái: PLANNED (Sau Khóa luận)
+trạng_thái: SUPERSEDED / NEEDS UPDATE (Post-Thesis Scaling Roadmap)
 mã_kế_hoạch: PLAN_PRODUCTION_SCALING
 nguồn_sự_thật:
   - retailops/storage/pg_schema.py
   - retailops_providers.py
-cập_nhật_cuối: 2026-09-21
+cập_nhật_cuối: 2026-09-22
 ---
 
-# Kế hoạch Mở rộng Quy mô Hạ tầng (Production Scaling Architecture)
+# Kế Hoạch Mở Rộng Quy Mô Hạ Tầng (Production Scaling Architecture)
 
 > [!NOTE]
-> **Lịch trình Triển khai: GIAI ĐOẠN 2 (Post-Thesis / Mở rộng Thương mại)**  
-> Ở giai đoạn làm Khóa luận Tốt nghiệp, hệ thống tập trung vận hành ổn định trên máy chủ EC2 đơn lẻ (Single-instance HTTPS via Caddy) để phục vụ chấm điểm và demo live 100% tin cậy. Kiến trúc phân tán AWS ALB + Amazon RDS Multi-AZ + vLLM Cluster sẽ được đưa vào phần **Hướng phát triển tương lai** của Luận văn và triển khai sau khi bảo vệ xong.
+> **Lịch trình Triển khai: GIAI ĐOẠN 6 (Post-Thesis / Mở Rộng Thương Mại Sau Khóa Luận)**  
+> Ở giai đoạn làm Khóa luận Tốt nghiệp, hệ thống tập trung vận hành ổn định trên máy chủ EC2 đơn lẻ (Single-instance HTTPS via Caddy) kết hợp máy chủ WSGI Waitress (8 threads) và Bounded Concurrency Gate để phục vụ chấm điểm và demo live 100% tin cậy. Kiến trúc phân tán AWS ALB + Amazon RDS Multi-AZ + vLLM Cluster sẽ được đưa vào phần **Hướng phát triển tương lai** của Luận văn và triển khai sau khi bảo vệ xong.
 
 Tài liệu này xác định kiến trúc mở rộng (Scaling Architecture) cho RetailOps từ mô hình triển khai máy chủ đơn lẻ (Single-instance EC2) hiện tại sang kiến trúc phân tán có tính sẵn sàng cao (High Availability), chịu tải lớn và tối ưu hóa chi phí vận hành.
 
 ---
 
-## 1. Phân tích Hiện trạng & Các Điểm nghẽn (Bottlenecks)
+## 1. Phân Tích Hiện Trạng & Ranh Giới Tối Ưu
 
 * **Mô hình hiện tại**:
-  - Toàn bộ dịch vụ (Caddy Reverse Proxy, Web API container, PostgreSQL database) đang cùng chạy trên một máy chủ EC2 duy nhất.
-  - Model Inference đang sử dụng API bên ngoài (Gemini/Claude) hoặc máy chủ Colab/Ollama phụ trợ.
-* **Các điểm nghẽn khi người dùng tăng đột biến**:
-  1. **Tài nguyên CPU/RAM**: Một máy chủ EC2 đơn lẻ sẽ bị nghẽn RAM khi nhiều người đồng thời tải trang hoặc thực hiện tra cứu.
-  2. **Cơ sở dữ liệu**: PostgreSQL chạy trong container trên cùng ổ đĩa EBS với ứng dụng sẽ cạnh tranh IOPS với web server.
-  3. **Thời gian suy luận của Model**: Nếu sử dụng model mã nguồn mở tự host mà chỉ chạy đơn luồng (Ollama), thời gian xếp hàng (queue latency) sẽ tăng vọt khi có trên 5 người chat cùng lúc.
+  - Toàn bộ dịch vụ (Caddy Reverse Proxy, Web API container, PostgreSQL database) chạy trên máy chủ EC2 `retailops-dev` (t3.large).
+  - Model Inference kết nối vLLM tự host (GPU Colab L4 qua ngrok) hoặc Cloud API (OpenRouter/DeepSeek).
+* **Định hướng tối ưu hóa đúng đắn**:
+  1. **Tài nguyên CPU/RAM & WSGI Headroom**: Bounded InferenceGate giới hạn số lượt suy luận đồng thời, kiểm soát hàng đợi để luôn chừa ít nhất 2 luồng trống cho healthcheck và API quản trị.
+  2. **Cơ sở dữ liệu & Tri thức**: Khảo sát pooling (`psycopg_pool`) sau khi benchmark chứng minh overhead > 5ms/turn; GraphRAG Apache AGE quản lý phiên an toàn.
+  3. **Ranh giới Cache Coherence**: Loại bỏ giả định "Semantic Cache hit 60% cho policy/retail". Tra cứu chính sách và nghiệp vụ bắt buộc truy xuấtสด và kiểm tra trích dẫn sống. Semantic cache chỉ dùng cho câu hỏi xã giao thông thường (`mode == 'general'`).
 
 ---
 
-## 2. Kiến trúc Mở rộng Đích (Target Scale Architecture)
+## 2. Kiến Trúc Mở Rộng Đích Sau Khóa Luận (Target Scale Architecture)
 
 ```mermaid
 flowchart TD
@@ -38,72 +38,45 @@ flowchart TD
         Widget["Nhúng Web (embed.js)"]
     end
 
-    Browser --> ALB["AWS Application Load Balancer (ALB) + Caddy"]
-    Widget --> ALB
+    Browser & Widget --> ALB["AWS Application Load Balancer (ALB) + Caddy"]
 
     subgraph App Tier (Horizontal Auto-scaling)
-        ALB --> Web1["RetailOps Web Pod / Container #1"]
-        ALB --> Web2["RetailOps Web Pod / Container #2"]
-        ALB --> WebN["RetailOps Web Pod / Container #N"]
+        ALB --> Web1["RetailOps Web Pod #1 (Waitress / Concurrency Gate)"]
+        ALB --> Web2["RetailOps Web Pod #2 (Waitress / Concurrency Gate)"]
+        ALB --> WebN["RetailOps Web Pod #N (Waitress / Concurrency Gate)"]
     end
 
-    subgraph Data & Cache Tier
-        Web1 & Web2 & WebN --> Cache["Redis / In-Memory State Cache"]
+    subgraph Data & Knowledge Tier
         Web1 & Web2 & WebN --> RDS["Amazon RDS for PostgreSQL (Multi-AZ)"]
-        RDS --> Replica["RDS Read Replica + pgvector HNSW"]
+        RDS --> Replica["RDS Read Replica (pgvector + Apache AGE)"]
     end
 
-    subgraph Inference Tier (Dedicated GPU Serving)
-        Web1 & Web2 & WebN --> Router["Inference Router / Semantic Cache"]
-        Router -->|Cache Hit 60%| SemanticDB["pgvector Semantic Cache"]
-        Router -->|Cache Miss| vLLM["vLLM GPU Cluster (AWS G5 / RunPod / SageMaker)"]
-        Router -->|Fallback| CloudAPI["Cloud API (Gemini / Claude)"]
+    subgraph Inference Tier (Dedicated Serving)
+        Web1 & Web2 & WebN --> InfGate["InferenceGate (Bounded Semaphores)"]
+        InfGate --> vLLM["vLLM GPU Cluster (AWS G5 / RunPod)"]
+        InfGate --> CloudAPI["Cloud API (OpenRouter / DeepSeek API)"]
     end
 ```
 
 ---
 
-## 3. Lộ trình Mở rộng 3 Giai đoạn
+## 3. Lộ Trình Mở Rộng 3 Giai Đoạn (Sau Khi Bảo Vệ Khóa Luận)
 
-### Giai đoạn 1: Mở rộng Cụm Cơ sở Dữ liệu & Tách Tầng (Quy mô 1.000 – 10.000 yêu cầu/ngày)
-1. **Tách PostgreSQL ra AWS RDS**:
-   - Chuyển cơ sở dữ liệu từ container EC2 sang **Amazon RDS for PostgreSQL** (phiên bản 16+) kích hoạt sẵn extension `pgvector`.
-   - Lợi ích: Tự động sao lưu (Automated Backups), Multi-AZ dự phòng hỏng hóc, không sợ mất dữ liệu khi restart EC2.
-2. **Kích hoạt Semantic Cache tối đa**:
-   - Sử dụng bảng `semantic_cache` trong [retailops/storage/pg_schema.py](../retailops/storage/pg_schema.py#L70-L79) để hấp thụ phần lớn các câu hỏi lặp lại, giữ thời gian phản hồi dưới 50ms cho khách hàng.
+### Giai Đoạn 1: Tách Tầng Cơ Sở Dữ Liệu & Connection Pooling
+1. **Chuyển PostgreSQL sang AWS RDS**:
+   - Chuyển cơ sở dữ liệu từ container EC2 sang **Amazon RDS for PostgreSQL 16** có extension `pgvector` và `age`.
+   - Bật sao lưu tự động (Automated Backups) và Multi-AZ dự phòng.
+2. **Kích hoạt Bounded Connection Pooling**:
+   - Triển khai `psycopg_pool.ConnectionPool` với kích thước phù hợp, có reset hook để quản lý phiên Apache AGE và role `retailops`.
 
-### Giai đoạn 2: Mở rộng Tầng Web API không trạng thái (Quy mô 10.000 – 100.000 yêu cầu/ngày)
-1. **Chuyển đổi sang Container Orchestration (AWS ECS Fargate hoặc EKS)**:
-   - Vì mã nguồn Web/API của RetailOps đã tuân thủ kiến trúc **Stateless** (dữ liệu phiên lưu hoàn toàn trong DB), ta có thể cấu hình **Auto Scaling Group (ASG)**:
-     - Tự động tăng số container từ 2 lên 10 khi CPU vượt 70%.
-     - Tự động giảm số container khi đêm muộn để tiết kiệm chi phí.
+### Giai Đoạn 2: Mở Rộng Không Trạng Thái Tầng Web API (AWS ECS Fargate)
+1. **Auto Scaling Containers**:
+   - Do mã nguồn RetailOps tuân thủ kiến trúc Stateless (session lưu trong PostgreSQL), có thể cấu hình Auto Scaling Group (ASG) tăng giảm số container theo lưu lượng.
 2. **Phân tải qua AWS Application Load Balancer (ALB)**:
-   - ALB đảm nhận phân phối lưu lượng và quản lý chứng chỉ SSL/TLS tự động thay cho Caddy cục bộ.
+   - Phân chia lưu lượng mạng đồng đều, tích hợp AWS WAF chống tấn công DDoS.
 
-### Giai đoạn 3: Mở rộng Tầng Suy luận Model Chuyên biệt (vLLM Cluster)
-1. **Thay thế Ollama bằng vLLM Engine**:
-   - Triển khai model fine-tune (`retailops-qwen2.5-7b`) lên máy chủ GPU chuyên dụng (AWS EC2 g5.xlarge hoặc g6.xlarge với GPU NVIDIA A10G/L4).
-   - vLLM sử dụng cơ chế **PagedAttention** và **Continuous Batching**, cho phép phục vụ đồng thời 50–100 người dùng trên cùng một GPU mà không bị tụt tốc độ (throughput gấp 10–20 lần so với Ollama đơn lẻ).
-2. **Cơ chế Chuyển đổi Dự phòng (Circuit Breaker & Fallback)**:
-   - Nếu cụm GPU quá tải hoặc gặp sự cố, Router trong [retailops_providers.py](../retailops_providers.py) tự động chuyển sang gọi Gemini Flash API trong tích tắc để dịch vụ không bao giờ bị gián đoạn.
-
----
-
-## 4. Dự toán Chi phí Vận hành Đề xuất (Ước lượng Kế hoạch / Planning Estimates)
-
-| Tầng | Cấu hình đề xuất | Chi phí ước lượng kế hoạch/tháng |
-| :--- | :--- | :--- |
-| **Web Tier** | 2x AWS ECS Fargate Tasks (0.5 vCPU, 1GB RAM) | ~$25 |
-| **Database Tier** | AWS RDS PostgreSQL `db.t4g.medium` (Multi-AZ) | ~$65 |
-| **Inference Tier** | AWS EC2 `g5.xlarge` (1x A10G 24GB VRAM) (khi tự host) HOẶC dùng Serverless vLLM | ~$200 - $350 (hoặc pay-as-you-go qua RunPod ~$100) |
-| **Network & Cache** | ALB, CloudFront, Semantic Cache | ~$20 |
-| **Tổng cộng** | Hệ thống phục vụ 500.000+ tin nhắn/tháng | **~$300 - $450/tháng (Ước lượng kế hoạch)** |
-
----
-
-## 5. Kế hoạch Thực hiện
-
-- [ ] Chuẩn hóa Dockerfile hỗ trợ môi trường multi-task (`Dockerfile`).
-- [ ] Soạn thảo template AWS CloudFormation / Terraform khởi tạo RDS PostgreSQL + ALB.
-- [ ] Thử nghiệm hiệu năng của vLLM với mô hình Qwen2.5-7B trên môi trường GPU thử nghiệm.
-- [ ] Cấu hình cơ chế fallback tự động trong `retailops_providers.py` khi inference timeout.
+### Giai Đoạn 3: Cụm Serving Model Tự Host Chuyên Dụng
+1. **vLLM Cluster Trên GPU Dedicated**:
+   - Triển khai cụm GPU AWS EC2 G5 (NVIDIA A10G) hoặc máy chủ chuyên dụng chạy vLLM PagedAttention phục vụ mô hình Gemma-4-12B / Qwen2.5-7B đã fine-tune.
+2. **Đo đạc & Giám sát Toàn Tuyến**:
+   - Tích hợp Prometheus / Grafana giám sát `queue_wait_ms`, `provider_inference_ms`, `in_flight_inferences` và Jain's Fairness Index thời gian thực.

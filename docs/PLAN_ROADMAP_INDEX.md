@@ -2,110 +2,102 @@
 
 > **Trạng thái:** ACTIVE STRATEGIC ROADMAP  
 > **Mức độ minh chứng (Evidence):** L3 Live System Architecture Reference  
-> **Audit basis / Documentation baseline reviewed:** `b93eb5a` · **Application verified:** `d3ca3a6`  
-> **Ngày rà soát:** 2026-09-21  
+> **Audit basis / Documentation baseline reviewed:** `b93eb5a` · **Application verified:** `fd24e36`  
+> **Ngày rà soát & đồng bộ:** 2026-09-22  
 > **Báo cáo tiến độ vận hành mới nhất:** Xem tại [CURRENT_PROJECT_STATUS.md](CURRENT_PROJECT_STATUS.md)
 
 ---
 
-## 1. Sơ Đồ Phân Kỳ 6 Module Phát Triển Toàn Diện
+## 1. Sơ Đồ Phân Kỳ 7 Giai Đoạn Theo Dependency Kỹ Thuật (Phases 0–6)
 
 ```mermaid
 flowchart TD
-    subgraph PHASE_1["GIAI ĐOẠN 1: HỆ THỐNG LÕI & ĐO ĐẠC CƠ SỞ (THỰC THI NGAY)"]
-        M1["MODULE 1: Hệ Thống Lõi TMĐT 2026<br/>• Kiến trúc DB/UI khớp nối<br/>• Dữ liệu chuẩn P-103..P-401, C-003, C-004, O-301..O-304<br/>• 6 SOPs Vận hành Thực chiến & Staff Desk 1-Click UI<br/>• Standalone MCP-compatible Server & Client Adapter<br/>• 340 Tests Xanh Toàn Bộ"]
-        M2["MODULE 2: Đo Baseline Benchmark & Ops Console<br/>• Master Dataset 250 kịch bản (100% Offline Routing)<br/>• Latency p50/p95, Tool Accuracy<br/>• Bảng telemetry Ops Console"]
-        M1 --> M2
-    end
+    P0["PHASE 0: Documentation Truth & Reconciliation<br/>• Reconcile ma trận 18 plan hiện hữu + 2 plan đề xuất<br/>• Archive các khẳng định cũ (Semantic cache hit 50-60%)<br/>• Chuẩn hóa link Markdown tương đối (cấm URL file cục bộ)"]
+    
+    P1["PHASE 1: Data & Observability Foundation<br/>1. Đóng nốt PLAN_FIX_UI_01 (Truthful UX: dọn fallback lỗi KPI, form prefill)<br/>2. Thực thi PLAN_FIX_UI_02 (P0 SSOT: Catalog & Inventory vào PostgreSQL)<br/>3. Thực thi PLAN_FIX_UI_03 (Truthful Telemetry: token/cost thật, concurrency fields)"]
+    
+    P2["PHASE 2: Knowledge Graph & GraphRAG (Apache AGE)<br/>• Triển khai PLAN_GRAPHRAG_AGE.md v6.2<br/>• Ranh giới an toàn: Đọc product_id từ Catalog SSOT (FIX02)<br/>• Nhánh độc lập feature/graphrag-age (Không merge main / Không bật EC2)"]
+    
+    P3["PHASE 3: Runtime Efficiency & Bounded Concurrency<br/>• Triển khai PLAN_RUNTIME_EFFICIENCY_CONCURRENCY.md (Stage 1)<br/>• InferenceGate tại biên actual model I/O (không lock DB/tools/retrieval)<br/>• Chống trap nuốt lỗi trong dispute_agent & công thức headroom Waitress"]
+    
+    P4["PHASE 4: Scientific Evaluation & Thesis Benchmark<br/>• GraphRAG A/B Benchmark (6 chỉ số, cache tắt)<br/>• Concurrency Load Benchmark (1, 2, 4, 8, 16 workers, Jain's Fairness)<br/>• Đối chứng Gemma-4-12B self-hosted vs DeepSeek Cloud API trên 250 ca"]
+    
+    P5["PHASE 5: Demo Enhancements (Trình Diễn Thực Tế)<br/>• Webhook Facebook Messenger & Meta Handover (PLAN_OMNICHANNEL_INTEGRATION.md)<br/>• Cổng quét mã QR Demo Live trên di động phục vụ Hội đồng chấm thi"]
+    
+    P6["PHASE 6: Post-Thesis & Production Scaling<br/>• DeepSeek Distillation (PLAN_DEEPSEEK_DISTILLATION.md)<br/>• Unsloth LoRA Fine-Tuning (PLAN_FINE_TUNING_SERVING.md)<br/>• Hạ tầng phân tán AWS ALB + RDS Multi-AZ + vLLM Cluster (PLAN_PRODUCTION_SCALING.md)"]
 
-    subgraph PHASE_2["GIAI ĐOẠN 2: MỞ RỘNG KÊNH TƯƠNG TÁC & TRÌNH DIỄN THỰC TẾ"]
-        M3["MODULE 3: Webhook Facebook Messenger<br/>• Tích hợp Fanpage Messenger Chatbot<br/>• Meta Handover Protocol chuyển quyền nhân viên<br/>• Đồng bộ 2 chiều với Staff Desk"]
-        M4["MODULE 4: Cổng Quét Mã QR Demo Live<br/>• Sinh QR Code động dẫn vào chat Web / Messenger<br/>• Hội đồng chấm thi mở camera quét chat trực tiếp<br/>• Hạ tầng HTTPS sslip.io trên IP 98.84.139.124"]
-        M2 --> M3
-        M3 --> M4
-    end
-
-    subgraph PHASE_3["GIAI ĐOẠN 3: NGHIÊN CỨU SÂU & ĐỐI CHỨNG LUẬN VĂN"]
-        M5["MODULE 5: Serving vLLM & Kế Hoạch LoRA Fine-Tuning<br/>• Serving Self-Hosted Gemma-4-12B qua vLLM Colab L4<br/>• [Dự phòng]: Sinh dữ liệu đa lượt DeepSeek 3.000–5.000 mẫu<br/>• Huấn luyện LoRA Fine-tune Qwen2.5-7B bằng Unsloth"]
-        M6["MODULE 6: Đo Lường Evaluation Đối Chứng<br/>• Full Live Benchmark 250 ca trên Production EC2<br/>• Đối kháng DeepSeek API vs Model tự host<br/>• Bảng biểu, đồ thị thực nghiệm cho Chương 4 Luận văn"]
-        M4 -.-> M5
-        M5 --> M6
-    end
+    P0 --> P1
+    P1 --> P2
+    P2 --> P3
+    P3 --> P4
+    P4 --> P5
+    P5 --> P6
 ```
 
 ---
 
-## 2. Chi Tiết Từng Module & Phân Bổ Giá Trị
+## 2. Ma Trận Trạng Thái Kỹ Thuật (18 Kế Hoạch Hiện Hữu + 2 Kế Hoạch Đề Xuất)
 
-### 🟢 MODULE 1: Hệ Thống Lõi TMĐT 2026 (Khung Kiến Trúc, Dữ Liệu Chuẩn, 6 SOPs, Staff Desk 1-Click & Giao Thức MCP)
-- **Tài liệu chi tiết**: [PLAN_ECOMMERCE_OPS_COPILOT.md](PLAN_ECOMMERCE_OPS_COPILOT.md) & [PLAN_MCP_INTEGRATION.md](PLAN_MCP_INTEGRATION.md)
-- **Mục tiêu**:
-  - Khớp nối toàn vẹn ràng buộc Database (`orders.status IN ('pending', 'delivered', 'cancelled')`) và Giao diện UI (`renderOrder` với 5 trường bắt buộc).
-  - Bảo toàn 100% dữ liệu hồi quy (`C-001`, `P-101`, `P-102`) để toàn bộ test suite luôn xanh.
-  - Nạp dữ liệu sản phẩm mới (`P-103` đến `P-401`), khách mới (`C-003`, `C-004`), đơn hàng mới (`O-301` đến `O-304`).
-  - **Chuẩn hóa Giao thức MCP (Model Context Protocol)**: Triển khai standalone `RetailOps MCP Server` (FastMCP / JSON-RPC fallback qua stdio và SSE port 8002) tách rời các công cụ nghiệp vụ (`track_shipment`, `check_inventory`, `search_knowledge`, `cancel_order`, `request_human_support`) thành microservices độc lập kèm adapter `mcp_client.py`.
-  - **Xử lý 6 SOPs thực chiến**:
-    1. **SOP 1**: Bưu tá ảo SPX không giao -> Tra cứu bưu tá Nguyễn Văn Tuấn (0934112233), khiếu nại giao lại trong ngày.
-    2. **SOP 2**: Hàng lỗi bung chỉ / kẹt khóa -> Nhận ảnh unboxing, kiểm tra hạn bảo hành 90 ngày, tạo đề xuất đổi mới 1-1 tận nhà.
-    3. **SOP 3**: Đổi size nhanh -> Kiểm kho `check_inventory`, tạo đề xuất đổi size 2 chiều tận nhà.
-    4. **SOP 4**: Nghẽn kho phân loại Mega Sale (>48h) -> Giải thích và tự động cấp Voucher 50K đền bù.
-    5. **SOP 5**: Khách giận dữ cực độ -> Strict Mode xoa dịu, cảnh báo đỏ quản lý, xếp hàng đợi VIP.
-    6. **SOP 6**: Yêu cầu gặp nhân viên tư vấn -> Chuyển giao tiếp quản trực tiếp hoặc xếp hàng đợi (Queue).
-  - Nút bấm 1-Click trên Staff Desk: `[✅ Duyệt Đổi Mới 1-1 Tận Nhà]`, `[✅ Duyệt Đổi Size 2 Chiều]`.
-  - Nghiệp vụ Hủy đơn hàng an toàn (CORE-01) duy trì quy trình 2 bước và bảo vệ máy trạng thái.
+Bảng đối chiếu toàn diện giữa tài liệu thiết kế và hiện trạng mã nguồn thực tế tại snapshot `fd24e36`:
 
----
-
-### 🔵 MODULE 2: Đo Baseline Benchmark & Đánh Giá Mô Hình Nền (Model Evaluation Baseline)
-- **Tài liệu chi tiết**: [PLAN_MODEL_SELECTION_STRATEGY.md](PLAN_MODEL_SELECTION_STRATEGY.md) & [PLAN_FIX_UI_03_OPSCONSOLE_INTEGRITY.md](PLAN_FIX_UI_03_OPSCONSOLE_INTEGRITY.md)
-- **Mục tiêu**:
-  - Chạy bộ Master Benchmark 250 kịch bản chuẩn trong `evals/scenarios/benchmark_250.jsonl`.
-  - Đo đạc thông số gốc: **Tool Accuracy, Latency p50/p95, Tỷ lệ hoàn thành nghiệp vụ, Chi phí Token thực tế**.
-  - Chuẩn hóa đường ống Ops Console theo tiêu chuẩn Truthful Telemetry (loại bỏ token/cost giả lập).
-
----
-
-### 🟣 MODULE 3: Tích Hợp Webhook Facebook Messenger (Omnichannel Social Gateway)
-- **Tài liệu chi tiết**: [PLAN_OMNICHANNEL_INTEGRATION.md](PLAN_OMNICHANNEL_INTEGRATION.md)
-- **Mục tiêu**:
-  - Xây dựng Webhook endpoint nhận và gửi tin nhắn từ Facebook Fanpage (Messenger).
-  - Tích hợp **Meta Handover Protocol** để chuyển quyền chat sang ứng dụng Meta Business Suite trên điện thoại cho nhân viên.
-  - Đồng bộ 2 chiều lịch sử chat và ảnh khách gửi về bàn làm việc **Staff Desk**.
+| Mã Kế Hoạch | Tên Kế Hoạch / Module | Trạng Thái Trong Repo | Trạng Thái Kỹ Thuật Thật | Hiện Trạng Đối Chiếu Code Thật (`fd24e36`) |
+| :--- | :--- | :--- | :--- | :--- |
+| **[PLAN_FIX_UI_04](PLAN_FIX_UI_04_CHAT_HISTORY_RESUME.md)** | Chat History Auto-Resume & Session Memory | IMPLEMENTED & VERIFIED | **IMPLEMENTED & VERIFIED** | **Hoàn tất 100%:** Backend `GET /api/conversations`, client auto-resume khi F5 trong `web/app.js`, sidebar history, dialog, và test suite `tests/test_conversation_resume.py` (4/4 PASS). |
+| **[PLAN_DATA_COLLECTION_FLYWHEEL](PLAN_DATA_COLLECTION_FLYWHEEL.md)** | Thu Thập Dữ Liệu Hội Thoại & Phản Hồi | IMPLEMENTED (Core Complete) | **IMPLEMENTED (Core Complete) / MAINTENANCE** | **Hoàn tất core:** Bảng `conversation_feedback`, route `POST /api/feedback`, UI Like/Dislike, CSAT popup, script `scripts/export_tuning_dataset.py`, test `tests/test_feedback.py` (6/6 PASS). |
+| **[PLAN_REMEDIATION_GPT6_AUDIT](PLAN_REMEDIATION_GPT6_AUDIT.md)** | Khắc Phục Sau Đợt Rà Soát GPT-6 | Pending (Section 3) | **SUPERSEDED / HISTORICAL AUDIT** | **Kiểm toán lịch sử:** State machine guard (`routes.py:249`), băm Base64 ảnh F11 (`application.py:111`), ticket handoff F06, cache freshness F04, KPI động đã xong trong `tests/test_audit_remediation.py`. Catalog DB persistence chuyển duy nhất sang FIX02. |
+| **[PLAN_ADMIN_REMEDIATION_MASTER](PLAN_ADMIN_REMEDIATION_MASTER.md)** | Master Remediation Giao Diện Quản Trị & Dữ Liệu | PARTIALLY IMPLEMENTED | **PARTIALLY IMPLEMENTED** | FIX04 đã xong 100%, FIX01 đã xong phần lớn; FIX02 (Catalog SSOT) và FIX03 (Telemetry Integrity) đang chờ thực hiện ở Phase 1. |
+| **[PLAN_ECOMMERCE_OPS_COPILOT](PLAN_ECOMMERCE_OPS_COPILOT.md)** | Lõi TMĐT 2026, 6 SOPs & Staff Desk 1-Click | PARTIALLY IMPLEMENTED | **PARTIALLY IMPLEMENTED** | 6 SOP subagents, Staff Desk UI, cancellation state machine đã xong; phần Catalog/Inventory DB SSOT và hành động SOP thật của Manager đang chờ ở FIX02. |
+| **[PLAN_MULTIMODAL_ATTACHMENTS](PLAN_MULTIMODAL_ATTACHMENTS.md)** | Đính Kèm Ảnh Đa Phương Thức Cho Trợ Lý AI | PARTIALLY IMPLEMENTED | **PARTIAL** | Upload ảnh, thumbnail preview, băm sha256 chống trùng [F11] đã xong. *Tồn đọng:* Trích xuất Document/PDF chưa có engine OCR/parser thật và chưa có dedicated E2E test. |
+| **[PLAN_FIX_UI_01](PLAN_FIX_UI_01_TRUTHFUL_UX.md)** | Truthful UX, Safe Fallbacks & Role Boundary | PARTIALLY IMPLEMENTED | **PARTIAL / CLOSE REMAINING** | Đã xóa số cứng 83.5%, 4.8; gán nhãn `[Mô phỏng]` SOP 1..5; ẩn Tool Inspector.<br/>*Tồn đọng:* Thẻ KPI đơn hàng fallback về `—` khi lỗi API; không tự gán `Tiêu chuẩn` cho variants; bỏ pre-filled 299k/30 trong modal. |
+| **[PLAN_FIX_UI_02](PLAN_FIX_UI_02_MANAGER_PERSISTENCE.md)** | Store Manager Persistence & Shared Inventory (P0) | PENDING / P0 | **ACTIVE NEXT (Phase 1 Foundation)** | Catalog/Inventory hiện vẫn chạy file JSON / in-memory fallback trong `read_only` container; `check_inventory` vẫn tra từ điển tĩnh. **Triển khai ở Phase 1 làm SSOT cho toàn hệ thống.** |
+| **[PLAN_FIX_UI_03](PLAN_FIX_UI_03_OPSCONSOLE_INTEGRITY.md)** | Ops Console Telemetry Integrity (P1) | PENDING / P1 | **ACTIVE NEXT (Phase 1 Telemetry)** | Importer vẫn ước lượng token `len // 3`, gán cost `$0.0`, nhãn TTFT chưa đổi thành E2E Request Latency. Cần bổ sung telemetry phục vụ concurrency. |
+| **[PLAN_MCP_INTEGRATION](PLAN_MCP_INTEGRATION.md)** | Standalone FastMCP Server & Client Adapter | IMPLEMENTED | **STANDALONE IMPLEMENTED / PRODUCTION WIRING PENDING** | Code thật: server nằm tại `retailops_mcp_server.py`, client adapter tại `retailops/workflow/mcp_client.py`, kiểm thử tại `tests/test_mcp_protocol.py` (100% tests PASS). |
+| **[PLAN_RBAC_GOOGLE_AUTH](PLAN_RBAC_GOOGLE_AUTH.md)** | Phân Quyền Vai Trò & Google OAuth2 | IMPLEMENTED | **IMPLEMENTED / MAINTENANCE** | Runtime sử dụng server-side session cookie an toàn (không dùng JWT cho chat session); Ops Admin bảo vệ bằng Caddy Basic Auth; kiểm thử tại `tests/test_auth_google.py`, `tests/test_persistent_identity.py`, `tests/test_postgres.py`, `tests/test_public_web.py`. |
+| **[PLAN_MODEL_SELECTION_STRATEGY](PLAN_MODEL_SELECTION_STRATEGY.md)** | Chiến Lược Lựa Chọn & Định Tuyến Model | PLANNED | **SUPERSEDED / NEEDS UPDATE** | Cập nhật: Xóa bỏ khẳng định "Semantic Cache Hit 50% cho retail queries"; chuyển số liệu tok/s và concurrency thành Planning Estimates; quyết định model dựa trên benchmark thực tế. |
+| **[PLAN_PRODUCTION_SCALING](PLAN_PRODUCTION_SCALING.md)** | Mở Rộng Hạ Tầng Phân Tán (RDS/ALB/vLLM) | PLANNED (Sau Khóa luận) | **SUPERSEDED / NEEDS UPDATE** | Cập nhật: Xóa mục "Semantic Cache hit 60% cho policy/retail"; thay bằng deterministic routing, bounded concurrency, connection pooling; xác nhận thuộc phạm vi Post-thesis. |
+| **[PLAN_DEEPSEEK_EVAL_FRAMEWORK](PLAN_DEEPSEEK_EVAL_FRAMEWORK.md)** | Khung Đánh Giá Đối Kháng Gemma-4 vs DeepSeek | PLANNED | **PLANNED LATER (Phase 4 Evaluation)** | Thiết kế benchmark đối chứng khoa học phục vụ Chương 4 Khóa luận. |
+| **[PLAN_OMNICHANNEL_INTEGRATION](PLAN_OMNICHANNEL_INTEGRATION.md)** | Webhook Facebook Messenger & Meta Handover | PLANNED | **PLANNED LATER (Phase 5 Demo)** | Mở rộng kênh tương tác thực tế sau khi hoàn thành đo đạc khoa học. |
+| **[PLAN_DEEPSEEK_DISTILLATION](PLAN_DEEPSEEK_DISTILLATION.md)** | Sinh Dữ Liệu Tổng Hợp Đa Lượt & ChatML | PLANNED | **PLANNED LATER (Phase 6 Post-thesis)** | Pipeline sinh dữ liệu distillation phục vụ fine-tuning. |
+| **[PLAN_FINE_TUNING_SERVING](PLAN_FINE_TUNING_SERVING.md)** | Huấn Luyện LoRA Unsloth & Serving vLLM | PLANNED | **PLANNED LATER (Phase 6 Post-thesis)** | Đóng gói mô hình chuyên biệt cho môi trường tự host. |
+| **[PLAN_ROADMAP_INDEX](PLAN_ROADMAP_INDEX.md)** | Tổng Hợp Kế Hoạch Chiến Lược Hệ Thống | ACTIVE | **SUPERSEDED / REWRITE** | Viết lại theo 7 phase phụ thuộc kỹ thuật. |
+| **[PLAN_GRAPHRAG_AGE](PLAN_GRAPHRAG_AGE.md)** | GraphRAG Apache AGE trên PostgreSQL 16 (v6.2) | *Đề xuất mới* | **ACTIVE NEXT (Phase 2 Graph)** | Thiết kế kiến trúc v6.2 hoàn chỉnh: tách bạch provenance, ranh giới an toàn FIX02, cache coherence, Prepared Cypher literal, Blue-Green versioning. |
+| **[PLAN_RUNTIME_EFFICIENCY_CONCURRENCY](PLAN_RUNTIME_EFFICIENCY_CONCURRENCY.md)** | Runtime Efficiency & Bounded Concurrency | *Đề xuất mới* | **ACTIVE NEXT (Phase 3 Concurrency)** | Thiết kế InferenceGate tại biên actual model I/O, chống trap nuốt lỗi trong dispute_agent, công thức headroom Waitress, Jain's Fairness Index. |
 
 ---
 
-### 🟡 MODULE 4: Cổng Quét Mã QR Trải Nghiệm Trực Tiếp (Mobile QR Demo Gateway)
-- **Mục tiêu**:
-  - Sinh mã **QR Code động** dẫn thẳng tới hệ thống Web App hoặc Messenger Chatbot.
-  - Phục vụ buổi bảo vệ Khóa luận: Thầy cô trong Hội đồng chỉ cần mở camera điện thoại quét mã là trải nghiệm live trực tiếp qua domain HTTPS sslip.io trên IP EC2 `98.84.139.124`.
-  - Thuyết phục tuyệt đối về tính ứng dụng thực tế và mức độ hoàn thiện của sản phẩm.
+## 3. Trình Tự Triển Khai Chi Tiết Các Giai Đoạn
 
----
+### Giai Đoạn 0: Cập Nhật Tài Liệu & Đồng Bộ Kiến Trúc (Documentation Truth)
+- Hoàn thiện toàn bộ các file tài liệu thiết kế.
+- Kiểm tra cổng kiểm định: `python scripts/check_docs_contract.py` đạt kết quả SUCCESS (0 lỗi).
+- Rà soát `git diff` đảm bảo không có file runtime code nào bị chỉnh sửa.
 
-### 🟠 MODULE 5: Serving vLLM Tự Host (Gemma-4) & Kế Hoạch LoRA Fine-Tuning
-- **Tài liệu chi tiết**: [PLAN_DEEPSEEK_DISTILLATION.md](PLAN_DEEPSEEK_DISTILLATION.md) & [PLAN_FINE_TUNING_SERVING.md](PLAN_FINE_TUNING_SERVING.md)
-- **Mục tiêu**:
-  - Vận hành cụm Self-Hosted vLLM phục vụ mô hình `yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2` qua GPU Colab L4 kết nối ngrok tunnel.
-  - Kế hoạch mở rộng: Gọi DeepSeek API tự động sinh 3.000–5.000 mẫu hội thoại đa lượt (ChatML format kèm Tool Calling & CoT reasoning) chuẩn nghiệp vụ TMĐT Việt Nam.
-  - Huấn luyện LoRA Fine-tuning cho mô hình nền bằng Unsloth trên Colab / Server riêng và đóng gói serving.
+### Giai Đoạn 1: Nền Tảng Dữ Liệu & Khả Năng Quan Sát (Data & Observability Foundation)
+Triển khai qua 3 Pull Request nhỏ, độc lập:
+1. **PR 1.1: [PLAN_FIX_UI_01_TRUTHFUL_UX.md](PLAN_FIX_UI_01_TRUTHFUL_UX.md)**: Xóa số 0 tĩnh khi KPI lỗi mạng, bỏ tự gán `Tiêu chuẩn` cho variants, dọn dữ liệu mẫu prefill trong modal quản lý.
+2. **PR 1.2: [PLAN_FIX_UI_02_MANAGER_PERSISTENCE.md](PLAN_FIX_UI_02_MANAGER_PERSISTENCE.md) (P0 SSOT)**: Chuyển Catalog & Kho hàng vào bảng `products` trong PostgreSQL, đồng bộ tức thì với `check_inventory`, sửa phạm vi audit trail toàn shop.
+3. **PR 1.3: [PLAN_FIX_UI_03_OPSCONSOLE_INTEGRITY.md](PLAN_FIX_UI_03_OPSCONSOLE_INTEGRITY.md)**: Đọc token/cost thật, đổi tên TTFT thành E2E Request Latency, bổ sung telemetry phục vụ concurrency.
 
----
+### Giai Đoạn 2: Đồ Thị Tri Thức GraphRAG Apache AGE ([PLAN_GRAPHRAG_AGE.md](PLAN_GRAPHRAG_AGE.md))
+- Thực hiện trên nhánh độc lập `feature/graphrag-age`.
+- Kế thừa Catalog SSOT từ Giai đoạn 1; model schema giữ nguyên `search_knowledge({"query": str})`.
+- Kiểm thử tự động trên runner CI bằng container PostgreSQL 16 + AGE tự build; tuyệt đối không merge `main` và không bật EC2.
 
-### 🔴 MODULE 6: Đo Lường Evaluation Đối Chứng (Comparative Evaluation & Thesis Metrics)
-- **Tài liệu chi tiết**: [PLAN_DEEPSEEK_EVAL_FRAMEWORK.md](PLAN_DEEPSEEK_EVAL_FRAMEWORK.md)
-- **Mục tiêu**:
-  - Chạy toàn bộ 250 kịch bản Master Benchmark trên Production EC2 thật.
-  - Lập bảng so sánh đối chứng (Ablation Study): Model tự host (Gemma-4-12B) vs. Mô hình thương mại (DeepSeek-V3/R1).
-  - Đưa ra đồ thị so sánh độ chính xác công cụ, tốc độ sinh phản hồi và tỷ lệ tiết kiệm chi phí làm trọng tâm cho Chương 4 Khóa luận.
+### Giai Đoạn 3: Tối Ưu Hiệu Năng & Bounded Concurrency ([PLAN_RUNTIME_EFFICIENCY_CONCURRENCY.md](PLAN_RUNTIME_EFFICIENCY_CONCURRENCY.md))
+- Thay thế `self.agent_lock = threading.Lock()` toàn cục bằng `InferenceGate` đặt tại biên actual model I/O.
+- Chặn trap nuốt lỗi trong `dispute_agent.py`; thiết lập công thức headroom bảo vệ luồng cho Waitress.
+- Bổ sung telemetry đo đạc thời gian xếp hàng `queue_wait_ms` và thời gian model `provider_inference_ms`.
 
----
+### Giai Đoạn 4: Đo Lường Thực Nghiệm Khoa Học Cho Luận Văn (Scientific Evaluation)
+- Chạy benchmark đối chứng GraphRAG A/B trên 30 ca đa bước (`multihop_graph_eval.jsonl`) với cache tắt hoàn toàn.
+- Chạy benchmark tải đồng thời (`concurrency = 1, 2, 4, 8, 16`) đo lường độ trễ E2E, throughput, 429 rate, Jain's Fairness Index và wait-time dispersion.
+- Chạy đối chứng 250 kịch bản Master Benchmark: Gemma-4-12B self-hosted vs. DeepSeek Cloud API.
+- Lập bảng số liệu và biểu đồ thực nghiệm đưa vào Chương 4 Luận văn tốt nghiệp.
 
-## 3. Khớp Nối 6 Module Vào 5 Chương Luận Văn Tốt Nghiệp
+### Giai Đoạn 5: Mở Rộng Trình Diễn Thực Tế (Demo Enhancements)
+- Tích hợp Facebook Messenger Webhook & Meta Handover Protocol ([PLAN_OMNICHANNEL_INTEGRATION.md](PLAN_OMNICHANNEL_INTEGRATION.md)).
+- Tạo cổng sinh mã QR Demo Live trên di động phục vụ Hội đồng chấm thi.
 
-| Chương Luận Văn | Nội dung Học thuật | Module Đảm Nhiệm & Minh Chứng |
-| :--- | :--- | :--- |
-| **Chương 1: Mở đầu & Bối cảnh** | Thực trạng quá tải TMĐT 2026, áp lực FRR < 15 phút, tỷ lệ hủy đơn do bưu cục. | Phân tích bài toán thực tiễn của ngành TMĐT. |
-| **Chương 2: Cơ sở Lý thuyết** | Kiến trúc Multi-Agent, RAG đa tầng, Meta Handover, MCP Protocol, Distillation & LoRA. | Khung lý thuyết hỗ trợ toàn bộ 6 module. |
-| **Chương 3: Phân tích & Thiết kế** | Kiến trúc 3 tầng, sơ đồ LangGraph StateGraph, quy trình 6 SOPs, Webhook Messenger. | **Module 1, Module 3, Module 4**. |
-| **Chương 4: Thực nghiệm & Đánh giá** | Bảng số liệu Benchmark cơ sở, kết quả đo lường trực tiếp, đồ thị so sánh thực nghiệm. | **Module 2, Module 5, Module 6**. |
-| **Chương 5: Kết luận & Hướng phát triển** | Tổng kết hiệu quả tiết kiệm chi phí CSKH, khả năng thương mại hóa và mở rộng quy mô. | Đánh giá tổng thể hệ thống. |
+### Giai Đoạn 6: Nghiên Cứu Sau Khóa Luận & Mở Rộng Thương Mại (Post-Thesis)
+- Triển khai pipeline Distillation và Unsloth LoRA Fine-Tuning.
+- Chuyển đổi kiến trúc phân tán AWS ALB + RDS Multi-AZ + vLLM Cluster ([PLAN_PRODUCTION_SCALING.md](PLAN_PRODUCTION_SCALING.md)).

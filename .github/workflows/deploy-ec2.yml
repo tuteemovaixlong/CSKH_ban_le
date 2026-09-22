@@ -3,6 +3,10 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - '.github/workflows/deploy-ec2.yml'
 permissions:
   contents: read
 concurrency:

@@ -1,108 +1,77 @@
 ---
-trạng_thái: PLANNED
+trạng_thái: SUPERSEDED / NEEDS UPDATE (Ước Lượng Kế Hoạch & Đo Đạc Đối Chứng)
 mã_kế_hoạch: PLAN_MODEL_SELECTION_STRATEGY
 nguồn_sự_thật:
   - retailops_providers.py
   - evals/scenarios/benchmark_250.jsonl
-cập_nhật_cuối: 2026-09-21
+cập_nhật_cuối: 2026-09-22
 ---
 
-# Kế hoạch Chiến lược Lựa chọn Mô hình (Model Selection Strategy)
+# Kế Hoạch Chiến Lược Lựa Chọn Mô Hình (Model Selection Strategy)
 
 > [!TIP]
-> **Vai trò trong Khóa luận: GIAI ĐOẠN 1 (Thực nghiệm & Đánh giá Benchmark — Bước 3)**  
-> Ma trận so sánh giữa các mô hình và cơ chế định tuyến hỗn hợp (Hybrid Routing) được đối chiếu thực nghiệm trên bộ kịch bản kiểm thử chuẩn trong `evals/scenarios/benchmark_250.jsonl`. Kết quả đo đạc thực tế về **Độ chính xác gọi tool, Độ trễ phản hồi E2E, Tỷ lệ Hit Cache và Chi phí vận hành** sẽ là số liệu thực nghiệm cốt lõi của **Chương 4 (Thực nghiệm & Đánh giá)** trong Luận văn tốt nghiệp.
+> **Vai trò trong Khóa luận: GIAI ĐOẠN 4 (Thực nghiệm & Đánh giá Benchmark Đối chứng)**  
+> Ma trận so sánh giữa các mô hình và cơ chế định tuyến tĩnh/deterministic được đối chiếu thực nghiệm trên bộ kịch bản kiểm thử chuẩn trong [evals/scenarios/benchmark_250.jsonl](../evals/scenarios/benchmark_250.jsonl). Kết quả đo đạc thực tế về **Độ chính xác gọi tool, Độ trễ phản hồi E2E, Tỷ lệ lỗi 429 và Chi phí token thực tế** sẽ là số liệu thực nghiệm cốt lõi của **Chương 4 (Thực nghiệm & Đánh giá)** trong Luận văn tốt nghiệp.
 
-Tài liệu này xác định các phương án mô hình ngôn ngữ (LLM/SLM) khả thi cho RetailOps, phân tích điểm đánh đổi (Trade-off) giữa **Trí tuệ, Tốc độ, Sức chịu tải đồng thời (Concurrency) và Chi phí phần cứng** (các số liệu mang tính ước lượng kế hoạch / Planning Estimates), kèm kiến trúc định tuyến động đề xuất.
+Tài liệu này xác định các phương án mô hình ngôn ngữ (LLM/SLM) khả thi cho RetailOps, phân tích điểm đánh đổi (Trade-off) giữa **Trí tuệ, Tốc độ, Sức chịu tải đồng thời (Concurrency) và Chi phí phần cứng** (các số liệu trong bảng dưới mang tính ước lượng kế hoạch / Planning Estimates, cần được kiểm chứng bằng benchmark thực tế ở Phase 4).
 
 ---
 
-## 1. Ma trận So sánh Toàn diện các Phương án Mô hình (Ước lượng Kế hoạch / Planning Estimates)
+## 1. Ma Trận So Sánh Các Phương Án Mô Hình (Ước Lượng Kế Hoạch / Planning Estimates)
 
-| Tiêu chí | Phương án A: **Muse Glimmer 30B** *(4-bit AWQ)* | Phương án B: **Qwen2.5-7B** *(FP8 / BF16)* | Phương án C: **Qwen3-4B / 2.5-3B** *(Q4 / FP16)* | Phương án D: **Cloud API** *(DeepSeek-V3 / Gemini Flash)* |
+*Lưu ý khoa học*: Các chỉ số tokens/s, độ trễ và số request song song dưới đây là **ước tính kế hoạch lý thuyết** để định hướng cấu hình hạ tầng, không phải cam kết vận hành thực tế. Số liệu chính thức sẽ do bài benchmark ở Phase 4 công bố.
+
+| Tiêu chí | Phương án A: **Gemma-4-12B / Muse 30B** *(Quantized)* | Phương án B: **Qwen2.5-7B** *(FP8 / BF16)* | Phương án C: **Qwen2.5-3B / 4B** *(Q4 / FP16)* | Phương án D: **Cloud API** *(DeepSeek-V3 / OpenRouter)* |
 | :--- | :--- | :--- | :--- | :--- |
-| **Kích thước tham số** | **29.6 Tỷ** (Dense) | **7.6 Tỷ** | **3.8 – 4.0 Tỷ** | Hàng trăm tỷ (MoE) |
-| **VRAM yêu cầu** | ~15.5 GB (Vừa vặn 1x L4 24GB) | ~7.5 – 14.5 GB | ~2.5 – 7.0 GB | 0 GB (Chạy trên cloud) |
+| **Kích thước tham số** | **12 – 29 Tỷ** (Dense) | **7.6 Tỷ** | **3.0 – 4.0 Tỷ** | Hàng trăm tỷ (MoE) |
+| **VRAM yêu cầu** | ~14 – 16 GB (Vừa vặn 1x L4 24GB) | ~7.5 – 14.5 GB | ~2.5 – 7.0 GB | 0 GB (Chạy trên cloud) |
 | **Phần cứng tối thiểu** | 1x GPU L4 / RTX 4090 (24GB) | 1x GPU T4 / L4 (16GB–24GB) | **Chạy thẳng CPU EC2** (hoặc GPU) | Bất kỳ máy chủ nào |
-| **Tốc độ sinh token** | **~35 – 45 tokens/s** *(DFlash)* | **~75 – 95 tokens/s** | **~120 – 145 tokens/s** (CPU: ~25 tok/s) | ~60 – 100 tokens/s |
-| **Độ trễ phản hồi (60 từ)** | **~1.5 – 2.0 giây** | **~0.8 – 1.0 giây** | **~0.4 – 0.6 giây** | ~1.0 – 1.8 giây |
-| **Sức chịu tải (L4 24GB)** | ~25 – 35 requests song song (~300 user online) | ~80 – 120 requests song song (~1.000 user online) | ~200 – 300 requests song song (~2.500 user online) | Không giới hạn (theo quota) |
-| **Điểm mạnh độc nhất** | **Tự sửa lỗi Tool Call, Multimodal đọc ảnh hàng vỡ** | **Cân bằng vàng**, cộng đồng lớn | **Chạy CPU không tốn tiền GPU**, siêu rẻ | Trí tuệ tối đa, $0 bảo trì hạ tầng |
-| **Điểm yếu** | Bộ nhớ KV Cache còn lại ít (~8GB) | Không có sẵn multimodal đọc ảnh | Xử lý khiếu nại phức tạp ở mức khá | Cần kết nối Internet, phụ thuộc bên thứ 3 |
+| **Tốc độ sinh token (Ước tính)**| ~30 – 45 tokens/s | ~70 – 90 tokens/s | ~100 – 140 tokens/s (CPU: ~20) | ~50 – 90 tokens/s |
+| **Độ trễ phản hồi (Ước tính)** | ~1.5 – 2.5 giây | ~1.0 – 1.5 giây | ~0.6 – 1.2 giây | ~1.0 – 2.0 giây |
+| **Concurrency ước tính** | Bounded Semaphore 2–4 | Bounded Semaphore 4–8 | Bounded Semaphore 8+ | Bounded Semaphore 4–8 |
+| **Điểm mạnh** | **Tool Calling chuẩn, đọc hiểu tiếng Việt tốt** | Cân bằng vàng, cộng đồng lớn | Chạy CPU không tốn tiền GPU | Trí tuệ tối đa, $0 duy trì GPU |
+| **Hạn chế** | Cần GPU chuyên dụng | Cần GPU tối thiểu 16GB | Khả năng suy luận nghiệp vụ vừa phải | Phụ thuộc mạng Internet & API quota |
 
 ---
 
-## 2. Chi tiết Từng Phương án
+## 2. Kiến Trúc Định Tuyến & Ranh Giới Cache Coherence (Routing Architecture)
 
-### Phương án A: Muse Glimmer 30B (Chuyên gia Đa năng & Xử lý Tranh chấp)
-* **Đối tượng phù hợp**: Các sàn bán lẻ cần AI có tư duy logic sắc bén, tự phục hồi khi API lỗi và cần đọc ảnh khách hàng gửi (ảnh gói hàng bị móp vỡ, ảnh hóa đơn thanh toán).
-* **Cơ chế hoạt động trên L4**:
-  - Dùng bản lượng tử hóa **4-bit AWQ** chiếm 15.5 GB VRAM.
-  - Tận dụng bộ dự đoán **DFlash Speculative Drafter** có sẵn để đẩy tốc độ lên ~40 tokens/s.
-* **Đánh giá**: Trí thông minh số 1 trong các model tự host được trên 1 card L4 24GB.
-
-### Phương án B: Qwen2.5-7B (Cân bằng Doanh nghiệp Chuẩn mực)
-* **Đối tượng phù hợp**: Các doanh nghiệp muốn hệ thống chạy cực kỳ ổn định, tốc độ phản hồi nhanh như chớp (<1s), chịu được lưu lượng lớn trong các đợt Flash Sale.
-* **Cơ chế hoạt động trên L4**:
-  - Dùng bản **FP8 Native** của L4: chỉ tốn 7.5 GB VRAM, giải phóng tới 16.5 GB VRAM cho bộ đệm vLLM PagedAttention.
-* **Đánh giá**: Lựa chọn an toàn, bền bỉ và hiệu quả kinh tế cao nhất cho hệ thống production thông thường.
-
-### Phương án C: Qwen3-4B / Qwen2.5-3B (Tiết kiệm Tối đa - CPU Only)
-* **Đối tượng phù hợp**: Giai đoạn thử nghiệm ban đầu (MVP) với ngân sách tối thiểu $5, hoặc chạy trực tiếp trên máy chủ EC2 hiện có mà **không cần bỏ tiền thuê GPU**.
-* **Cơ chế hoạt động**:
-  - Nén file GGUF `Q4_K_M` (~2.0 GB), chạy trực tiếp bằng Ollama/llama.cpp trên CPU của máy chủ EC2 hiện tại với tốc độ ~20-25 tokens/s.
-* **Đánh giá**: Không tốn thêm chi phí duy trì hàng tháng.
-
----
-
-## 3. Kiến trúc Định tuyến Động Đề xuất (Hybrid Router Architecture)
-
-Thay vì chỉ chọn duy nhất một model, giải pháp tối ưu nhất cho RetailOps là kiến trúc **Định tuyến theo Ý định (Intent-based Routing)**:
+Kiến trúc định tuyến tuân thủ nghiêm ngặt nguyên tắc **Cache Coherence & Single Citation Authority**:
 
 ```mermaid
 flowchart TD
-    UserQuery["Khách hàng gửi tin nhắn"] --> CacheCheck{"Kiểm tra 3-Tier\nSemantic Cache?"}
+    UserQuery["Khách hàng gửi tin nhắn"] --> Preflight["Deterministic Preflight"]
     
-    CacheCheck -->|Cache Hit 50%| InstantReply["Trả lời tức thì (<20ms)"]
+    Preflight --> ModeCheck{"agent_protocol.request_mode()"}
     
-    CacheCheck -->|Cache Miss| IntentClassifier["Bộ phân loại Ý định (Supervisor Router)"]
+    ModeCheck -->|mode == 'general'| SemCache{"SemanticCache Lookup?"}
+    SemCache -->|Hit| InstantReply["Trả lời chào hỏi (<5ms)"]
+    SemCache -->|Miss| GenReply["Model trả lời xã giao"]
     
-    IntentClassifier -->|Ý định đơn giản: Tra cứu đơn, kiểm kho, chào hỏi| FastModel["Model Nhẹ (Qwen3-4B / Qwen2.5-7B)\nTốc độ: 100 tok/s - Chi phí $0"]
+    ModeCheck -->|mode == 'retail'| Supervisor["Deterministic Supervisor (0 Model Calls)"]
     
-    IntentClassifier -->|Ý định phức tạp: Đổi trả, khiếu nại đền bù, có ảnh đính kèm| SmartModel["Model Thông minh (Muse Glimmer 30B 4-bit)\nTự sửa lỗi tool & Multimodal"]
+    Supervisor -->|Handoff / Trực tiếp| DirectAnswer["Phản hồi Handoff / SOP (0 Model Calls)"]
+    Supervisor -->|Worker Subagent| InferenceGate["InferenceGate.acquire(provider)"]
     
-    FastModel & SmartModel -->|Nếu GPU quá tải / Timeout| FallbackCloud["Fallback: DeepSeek-V3 / Gemini Flash API\nĐảm bảo 100% không rớt kết nối"]
+    InferenceGate --> ActiveModel["Model Được Chọn (Tự Host vLLM hoặc Cloud API)"]
+    ActiveModel --> ToolLoop["Thực thi Tool (Kho hàng / Đơn / AGE Graph / RAG)"]
 ```
 
----
-
-## 4. Kế hoạch Tích hợp vào Mã nguồn RetailOps
-
-Hệ thống đã có sẵn module [retailops_providers.py](../retailops_providers.py). Các bước tích hợp gồm:
-
-1. **Thêm định danh Model vào `API_MODELS`**:
-   ```python
-   API_MODELS = {
-       ...,
-       'meta/muse-glimmer-30b-awq',
-       'qwen/qwen2.5-7b-instruct-fp8',
-       'qwen/qwen3-4b-instruct',
-   }
-   ```
-2. **Cấu hình Endpoint vLLM nội bộ**:
-   * Thiết lập biến môi trường `RETAILOPS_VLLM_ENDPOINT=http://127.0.0.1:8000/v1` trên EC2/Colab.
-3. **Kích hoạt Circuit Breaker (Chuyển mạch an toàn - Đề xuất tương lai)**:
-   * *(Kế hoạch đề xuất, chưa triển khai runtime)*: Nếu vLLM không phản hồi trong vòng 5 giây, hệ thống có thể chuyển tiếp sang DeepSeek-V3 API hoặc Gemini Flash.
+> [!WARNING]
+> **Quy Tắc Bất Biến Về Semantic Cache:**
+> - Toàn bộ các yêu cầu tra cứu chính sách, bảo hành, đơn hàng, đổi trả (`mode == 'retail'`) **hoàn toàn bypass SemanticCache cả ở chiều lookup lẫn store**.
+> - Không giả định tỷ lệ "Cache Hit 50%" cho các câu hỏi nghiệp vụ bán lẻ. Mọi bằng chứng chính sách bắt buộc phải được truy xuất tươi từ PostgreSQL RAG / Apache AGE và kiểm định trích dẫn provenance sống.
 
 ---
 
-## 5. Lộ trình Triển khai Đề xuất
+## 3. Tích Hợp Vào Mã Nguồn RetailOps Hiện Tại
 
-* **Giai đoạn 1 (Hiện tại - Ngân sách $5)**: 
-  - Dùng **DeepSeek API** sinh dữ liệu tổng hợp.
-  - Fine-tune bản **`Qwen2.5-3B`** hoặc **`Qwen3-4B`** trên Colab miễn phí để chạy thử nghiệm.
-* **Giai đoạn 2 (Khi có GPU L4 Colab/EC2)**:
-  - Triển khai **`Muse Glimmer 30B (4-bit AWQ)`** để kiểm thử tính năng tự phục hồi lỗi tool và đọc ảnh khiếu nại.
-  - Đo đạc thực tế độ trễ và sự hài lòng của người dùng.
-* **Giai đoạn 3 (Scale Production hàng ngàn user)**:
-  - Bật chế độ Hybrid Router: Qwen 7B chạy nền gánh 80% lưu lượng + Muse Glimmer 30B giải quyết 20% ca khiếu nại hóc búa.
+Hệ thống quản lý định danh và kết nối mô hình tập trung tại [retailops_providers.py](../retailops_providers.py):
+
+1. **Cấu Hình Provider Runtime**:
+   - `custom`: Kết nối vLLM tự host (mô hình `yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2` chạy trên GPU L4 qua ngrok tunnel).
+   - `api`: Kết nối dịch vụ Cloud API thương mại (OpenRouter / DeepSeek API).
+2. **Không Tự Động Failover Giữa Các Provider**:
+   - Hệ thống giữ nguyên lựa chọn provider tường minh theo cấu hình hoặc lựa chọn phiên của người dùng. Không triển khai circuit breaker tự động chuyển vùng nhà cung cấp khi chưa có hợp đồng kiểm thử, tránh rủi ro rò rỉ dữ liệu hoặc sai lệch chi phí.
+3. **Đo Đạc Khoa Học Phục Vụ Luận Văn (Phase 4)**:
+   - Chạy so sánh thực nghiệm 1-1 giữa mô hình `custom` tự host và `api` DeepSeek trên cùng 250 kịch bản chuẩn trong `evals/scenarios/benchmark_250.jsonl` để thu thập bảng số liệu đối chứng cho Chương 4 Luận văn.

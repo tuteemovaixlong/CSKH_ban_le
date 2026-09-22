@@ -1,10 +1,10 @@
 # Module 3: Ops Console Observability, Benchmark Importer & Telemetry Integrity (P1)
 
-> **Trạng thái:** PENDING / P1 (Chưa triển khai)  
+> **Trạng thái:** ACTIVE NEXT / P1 (Sẵn sàng triển khai sau FIX01 và FIX02)  
 > **Mức độ minh chứng (Evidence):** L1 Automated Test Baseline (`check_ops_console.py` 17 tests OK)  
-> **Audit basis / Documentation baseline reviewed:** `b93eb5a` · **Application verified:** `d3ca3a6`  
-> **Ngày rà soát:** 2026-09-21  
-> **Mục tiêu:** Chuẩn hóa toàn diện đường ống đo lường của Ops Console theo đúng tôn chỉ *"Kết quả đo được, không phải số minh họa"*; loại bỏ việc tự suy diễn/ước lượng token, loại bỏ số liệu hard-code cũ ngày 18/09, chuẩn hóa tên gọi E2E Latency và mở rộng phạm vi theo dõi Feedback.
+> **Audit basis / Documentation baseline reviewed:** `b93eb5a` · **Application verified:** `fd24e36`  
+> **Ngày rà soát & cập nhật:** 2026-09-22  
+> **Mục tiêu:** Chuẩn hóa toàn diện đường ống đo lường của Ops Console theo đúng tôn chỉ *"Kết quả đo được, không phải số minh họa"*; loại bỏ việc tự suy diễn/ước lượng token, loại bỏ số liệu hard-code cũ ngày 18/09, chuẩn hóa tên gọi E2E Latency, mở rộng phạm vi theo dõi Feedback và tích hợp đầy đủ telemetry phục vụ đo đạc concurrency.
 
 ---
 
@@ -17,7 +17,7 @@
      - Tự gán model & provider: `provider: 'custom'`, `model: 'qwen2.5:4b'` -> Không phản ánh đúng model chạy thật (Hệ thống hiện tại đang sử dụng mô hình self-hosted `yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2` qua vLLM Colab L4 hoặc OpenRouter API).
      - Đặt cứng run_id: `'live-benchmark-240-' + ts` trong khi bộ dữ liệu chuẩn là 250 kịch bản.
    - Khắc phục:
-     - Đọc token telemetry trực tiếp từ `c.get('trace', {}).get('prompt_tokens')` hoặc `c.get('tokens')`; nếu báo cáo không có thì để `None` (Unknown) chứ không chia 3.
+     - Đọc token telemetry trực tiếp từ `c.get('trace', {}).get('prompt_tokens')` hoặc `c.get('tokens')`; nếu báo cáo không có thì để `None` (Unknown) kèm `token_usage_available = False`, không chia 3 và không tự gán 0.
      - Đọc model & provider trực tiếp từ metadata của file báo cáo gốc (`doc.get('model')`, `doc.get('provider')`), phản ánh đúng mô hình Gemma-4-12B đang chạy thực tế thay vì hard-code Qwen.
      - Đặt `reported_cost_usd = c.get('cost') or None`.
      - Sinh run_id tự động dựa trên số ca thực tế: `f"live-benchmark-{len(cases)}-{ts}"`.
@@ -38,7 +38,19 @@
      `{case_id: str, category: str, success: bool, latency_ms: float, actual_worker: str, tools_called: list, extra_tools: list, error: str | null}`.
    - Phân loại lỗi Failure Explorer: Dựa trên `c.category === 'safety'` hoặc `c.error` cụ thể từ grader thay vì gán mô tả cố định.
 
-4. **Bổ sung các sự kiện mới vào Allowlist của [`opsconsole/usage.py`](../opsconsole/usage.py)**:
+4. **Bổ Sung Telemetry Đo Đạc Concurrency & Sửa Lỗi Hardcode Cache Trace**:
+   - Khắc phục lỗi hardcode `latency_ms = 5.0` trong [retailops/business/application.py](../retailops/business/application.py) dòng 126: Thay thế bằng đo đạc thời gian thực tế `round((time.monotonic() - started) * 1000, 2)`.
+   - Bổ sung các trường telemetry đo đạc concurrency vào `trace`:
+     - `queue_wait_ms`: Thời gian xếp hàng chờ slot trong InferenceGate.
+     - `provider_inference_ms`: Thời gian thực hiện lệnh gọi suy luận mô hình.
+     - `graph_retrieval_ms`: Thời gian truy vấn Cypher trên Apache AGE.
+     - `rag_retrieval_ms`: Thời gian tìm kiếm hybrid trên PostgreSQL.
+     - `db_ms`: Thời gian thực thi các lệnh SQL quan hệ.
+     - `model_calls`: Số lượt gọi model thực tế trong turn.
+     - `in_flight_inferences`: Số lượng inference đang chạy đồng thời.
+   - Bổ sung metric cấp tiến trình: `overload_429_count` ghi nhận tổng số lượt yêu cầu bị từ chối do quá tải (vì request 429 không có completed turn trong DB).
+
+5. **Bổ sung các sự kiện mới vào Allowlist của [`opsconsole/usage.py`](../opsconsole/usage.py)**:
    - Hiện tại: Chỉ ghi nhận các sự kiện cũ, bỏ sót `feedback_received` (CSAT, turn rating) và `order_status_updated_by_manager`, khiến chúng bị đẩy vào nhóm `other_event`.
    - Khắc phục: Mở rộng `ALLOWLISTED_EVENTS` để Ops Console ghi nhận đầy đủ telemetry về mức độ hài lòng của người dùng và các thao tác điều hành của Store Manager.
 
@@ -50,14 +62,14 @@
 - Sửa hàm `import_benchmark(source)`:
   - Lấy `model = doc.get('model') or doc.get('provider_id') or 'custom'`
   - Lấy `provider = doc.get('provider') or 'custom'`
-  - Đọc `prompt_tokens`, `generated_tokens`, `cost` nếu có trong trace, nếu không giữ `None`.
+  - Đọc `prompt_tokens`, `generated_tokens`, `cost` nếu có trong trace, nếu không giữ `None` (kèm `token_usage_available = False`).
   - Nhận diện cấu trúc kết quả từ `scripts/run_live_benchmark_http.py`: đọc `actual_worker`, `extra_tools`, bỏ phụ thuộc vào `expected_worker`.
   - Cập nhật định dạng `run_id`.
 
 ### [MODIFY] `opsconsole/web/admin.js`
 - Sửa hàm `showRun()`:
   - Thay thế toàn bộ chuỗi hard-code bằng dữ liệu động từ `activeRun`.
-  - Cập nhật nhãn "Độ trễ E2E (p50)" thay cho "TTFT".
+  - Cập nhật nhãn "Độ trễ E2E Request (p50)" thay cho "TTFT".
   - Hiển thị Failure Explorer chính xác theo lỗi và category, hiển thị `extra_tools` dưới dạng thông tin tham khảo.
 
 ### [MODIFY] `opsconsole/usage.py`
@@ -69,7 +81,7 @@
 
 - [ ] Chạy `python scripts/check_ops_console.py` và `opsconsole/tests/test_console.py` đạt 100% OK.
 - [ ] Mở Ops Console: Khi chọn bất kỳ run nào (240 ca hoặc 250 ca), thẻ hiển thị tự động lấy đúng số liệu của run đó (không còn chữ `94.6%` hay `Qwen 2.5 4B` cố định).
-- [ ] Không có token giả tạo hay cost giả tạo bằng $0 trong báo cáo import.
-- [ ] Nhãn độ trễ hiển thị đúng bản chất "E2E Latency".
+- [ ] Không có token giả tạo hay cost giả tạo bằng $0 trong báo cáo import; token không có hiển thị `Chưa có / Unknown`.
+- [ ] Nhãn độ trễ hiển thị đúng bản chất "Độ trễ E2E Request".
 - [ ] Báo cáo benchmark phân tách rõ ràng giữa `actual_worker`, công cụ đã gọi và `extra_tools` (mang tính thông tin), không bắt buộc trường `expected_worker`.
 - [ ] CI/CD và 340 tests tự động tiếp tục pass 100%.

@@ -2,13 +2,11 @@
 
 > **Trạng thái:** ACTIVE OPERATIONAL STATUS & EVIDENCE REPORT  
 > **Audit basis / Documentation baseline reviewed:** `b93eb5a`  
-> **Application snapshot đã xác minh:** `d3ca3a6ff6fa106af973d4c44c6ee955bce20f13` (Workflow Verify main CI #3: 340 Python tests OK)  
-> **Deploy EC2 gần nhất:** #141 tại snapshot `0b7256c` (Không có thay đổi runtime code giữa `0b7256c` và application snapshot)  
-> **EC2 Host:** `retailops-dev` / `i-0fd116d8927d0e412` / **t3.large** (2 vCPU, 8 GiB RAM, 50 GiB EBS, ~43 GiB free)  
-> **Public IPv4 hiện tại:** `98.84.139.124` (dynamic; không dùng Elastic IP)  
-> **Web khách hàng:** https://retailops.98-84-139-124.sslip.io  
-> **Admin Console:** https://admin-retailops.98-84-139-124.sslip.io  
-> **Runtime containers:** PostgreSQL + Web + Admin + Caddy đang hoạt động (Healthy); SSM Agent Snap active  
+> **Application snapshot đối chiếu:** `fd24e36` (Toàn bộ 340 tests Python regression PASS, 4/4 cổng hợp đồng PASS)  
+> **EC2 Host:** `retailops-dev` / `i-0fd116d8927d0e412` / **t3.large** (Hiện đang **STOPPED** để tối ưu chi phí; phát triển an toàn trên local/CI)  
+> **Deploy EC2 gần nhất:** #141 tại snapshot `0b7256c`  
+> **Runtime containers:** PostgreSQL + Web + Admin + Caddy (Healthy khi EC2 hoạt động)  
+> **Lộ trình kỹ thuật tổng thể:** Xem chi tiết tại [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md)  
 > **Báo cáo sự cố chi tiết:** [INCIDENT_RECOVERY_2026-09-21.md](INCIDENT_RECOVERY_2026-09-21.md)
 
 ---
@@ -18,94 +16,56 @@
 Theo chuẩn phân cấp minh chứng của [`RELEASE_MANIFEST.md`](RELEASE_MANIFEST.md) (`L1`: Automated tests; `L2`: Docker build/publish; `L3`: Live deployment; `L4`: Real-model E2E artifacts):
 
 | Module | Tên Module | Mức Triển Khai | Cấp Minh Chứng (Evidence) | Tồn Đọng Kỹ Thuật Chính (Gaps) |
-| :--- | :--- | :---: | :---: | :--- |
-| **Module 1** | **Hệ Thống Lõi TMĐT, 6 SOPs & MCP Server** | **PARTIAL** | **L3** *(PostgreSQL, Web, Staff Desk, Caddy healthy)* | Catalog vẫn lưu file JSON / in-memory fallback; `check_inventory` tra cứu `stock_map` tĩnh; Nút SOP 1..5 phía Store Manager mới dừng ở mô phỏng. |
-| **Module 2** | **Đo Baseline Benchmark Cơ Sở & Ops Console** | **PARTIAL** | **L1/L3 hỗn hợp** *(250 ca offline đạt 100% Routing)* | Importer Ops Console vẫn chia 3 ước tính token (`len // 3`) và gán cost $0.0; Tên chỉ số TTFT chưa đổi thành E2E Request Latency. |
-| **Module 3** | **Webhook Facebook Messenger (Omnichannel)** | **PLANNED** | **Design-only** *([PLAN_OMNICHANNEL_INTEGRATION.md](PLAN_OMNICHANNEL_INTEGRATION.md))* | Chưa có mã nguồn webhook endpoint, chưa tích hợp Meta App. |
-| **Module 4** | **Cổng Quét Mã QR Demo Live** | **PARTIAL** | **L3** *(HTTPS sslip.io, Web mobile responsive)* | Đã có hạ tầng web di động sẵn sàng cho demo; Chưa có module sinh mã QR động / thẻ QR demo. |
-| **Module 5** | **Self-Hosted vLLM & Serving Model Agentic** | **IMPLEMENTED / PARTIAL** | **Runtime-dependent** *(Colab L4 vLLM + ngrok)* | Tunnel ngrok và serving phụ thuộc runtime phiên làm việc; Chưa đóng gói serving cục bộ thường trực trên EC2. |
-| **Module 6** | **Đo Lường Evaluation Đối Chứng Luận Văn** | **PARTIAL** | **L1 offline (250 ca) + Runtime note EC2** | Smoke 10/10 và Batch 01 19/25 là ghi nhận runtime EC2 (chưa commit artifact vào Git); Full Live Benchmark 250 ca trên EC2 chưa chạy xong. |
+| :--- | :--- | :--- | :--- | :--- |
+| **Module 1** | **Hệ Thống Lõi TMĐT, 6 SOPs & MCP Server** | **PARTIAL** | **L1/L3 hỗn hợp** *(340 tests PASS, Staff Desk healthy)* | Catalog/Inventory hiện vẫn chạy file JSON / in-memory fallback trong container `read_only`; `check_inventory` tra cứu `stock_map` tĩnh. Khắc phục tại `PLAN_FIX_UI_02` (Phase 1 SSOT). |
+| **Module 2** | **Đo Baseline Benchmark Cơ Sở & Ops Console** | **PARTIAL** | **L1/L3 hỗn hợp** *(250 ca offline 100% Routing)* | Importer Ops Console vẫn chia 3 ước tính token (`len // 3`) và gán cost $0.0; Tên chỉ số TTFT chưa đổi thành E2E Request Latency. Khắc phục tại `PLAN_FIX_UI_03` (Phase 1 Telemetry). |
+| **Module 3** | **Webhook Facebook Messenger (Omnichannel)** | **PLANNED** | **Design-only** *([PLAN_OMNICHANNEL_INTEGRATION.md](PLAN_OMNICHANNEL_INTEGRATION.md))* | Chưa có mã nguồn webhook endpoint, chưa tích hợp Meta App (xếp vào Phase 5 Demo). |
+| **Module 4** | **Cổng Quét Mã QR Demo Live** | **PARTIAL** | **L3** *(HTTPS sslip.io, Web mobile responsive)* | Đã có hạ tầng web di động sẵn sàng cho demo; Chưa có module sinh mã QR động / thẻ QR demo (xếp vào Phase 5 Demo). |
+| **Module 5** | **Self-Hosted vLLM & Serving Model Agentic** | **IMPLEMENTED / PARTIAL** | **Runtime-dependent** *(Colab L4 vLLM + ngrok)* | Tunnel ngrok và serving phụ thuộc runtime phiên làm việc; Cần giải quyết điểm nghẽn single lock qua `PLAN_RUNTIME_EFFICIENCY_CONCURRENCY.md` (Phase 3). |
+| **Module 6** | **Đo Lường Evaluation Đối Chứng Luận Văn** | **PARTIAL** | **L1 offline (250 ca) + Runtime note EC2** | Offline Benchmark 250 ca đạt 100.0%; Full Live Benchmark 250 ca trên EC2 và đối chứng DeepSeek sẽ thực thi tại Phase 4 Scientific Evaluation. |
 
 ---
 
 ## 2. NHỮNG CÔNG VIỆC ĐÃ HOÀN THÀNH (COMPLETED EVIDENCE)
 
-### 2.1. Hợp nhất Master Benchmark & Chuẩn hóa Hợp đồng Dữ liệu
-- **Gom 10 Batch thành Master Dataset**: Tổng hợp toàn bộ 250 kịch bản từ `B01.jsonl` đến `B10.jsonl` vào [`evals/scenarios/benchmark_250.jsonl`](../evals/scenarios/benchmark_250.jsonl) (150 ca `dev`, 100 ca `held_out`).
+### 2.1. Hợp Nhất Master Benchmark & Chuẩn Hóa Hợp Đồng Dữ Liệu
+- **Master Dataset 250 kịch bản**: Tổng hợp toàn bộ 250 kịch bản từ `B01.jsonl` đến `B10.jsonl` vào [`evals/scenarios/benchmark_250.jsonl`](../evals/scenarios/benchmark_250.jsonl) (150 ca `dev`, 100 ca `held_out`).
 - **Xác thực Schema 9 trường nghiêm ngặt**: Vượt qua toàn bộ hợp đồng của [`scripts/check_eval_dataset.py`](../scripts/check_eval_dataset.py) và `validate_retailops_jsonl.py`.
 - **Đạt điểm tuyệt đối Offline Benchmark**: Đạt **250 / 250 PASS (100.0%)** trên bộ định tuyến giám sát (`run_benchmark_eval.py`), độ trễ p50 = 0.10 ms.
 
-### 2.2. Khắc phục Toàn diện Phản hồi Kiểm toán từ GPT-6 Astra Pro
-- **Khắc phục Whitelist Tool Khiếu Nại (`dispute_agent.py`)**:
-  - Loại bỏ hoàn toàn phương thức nội bộ `read_order`, chuyển sang công cụ đã đăng ký chuẩn `get_order`.
-  - Loại bỏ số lượng tồn kho fix cứng (`stock_qty = 15`), chuyển sang đọc dữ liệu từ thông tin sản phẩm hoặc trả về 0 an toàn (lưu ý: catalog sản phẩm Store Manager hiện vẫn lưu trong file JSON/RAM, chưa phải persistent DB inventory).
-- **Bổ sung Nhận diện Tiếng lóng TMĐT Việt Nam (`supervisor.py`)**:
-  - Mở rộng regex nhận diện các từ lóng giao vận: *"tài xế", "bom hàng", "giao thất bại", "kẹt kho", "Củ Chi SOC", "Bắc Ninh Mega SOC", "SPX", "GHN", "GHTK"*... không bị định tuyến nhầm sang chế độ tổng quát (`general`).
-  - Xử lý triệt để va chạm chuỗi con bằng regex lookbehind: `(?<!điều )\bkiện\b` (tránh hiểu nhầm *"điều kiện"* là khiếu nại *"kiện"*).
-- **Vượt qua Chặn Cảnh báo Ngrok (`retailops_providers.py`)**:
-  - Bổ sung header `'ngrok-skip-browser-warning': 'true'` vào toàn bộ các HTTP request gửi tới endpoint ngrok, khắc phục dứt điểm lỗi trả về HTML `ERR_NGROK_6024`.
+### 2.2. Khắc Phục Toàn Diện Phản Hồi Kiểm Toán Lịch Sử (Audit Remediation)
+- **State Machine Guard cho Đơn Hàng**: Chặn các bước chuyển trạng thái phi lý (`cancelled -> pending`, `delivered -> pending`) tại `retailops/http/routes.py:249`, kiểm thử tại `tests/test_manager_crud.py`.
+- **Băm Base64 Ảnh Vào Digest [F11]**: Băm nội dung ảnh vào token digest trong `retailops/business/application.py:111`, chống replay sai lệch khi gửi ảnh khác nhau cùng tên.
+- **Tự Động Ghi Nhận Ticket Handoff [F06]**: Khi kích hoạt `request_human_support`, hệ thống tự động ghi nhận bản ghi escalation vào `conversation_feedback`.
+- **An Toàn Cache [F04]**: Duy trì cập nhật `bound.versions` và `bound.knowledge.sources` khi cache-hit; loại bỏ cache cho các công cụ mutation.
+- **Tính Toán KPI Thực Tế Từ DB [P0.3 & F07]**: Endpoint `/api/manager/kpis` truy vấn trực tiếp từ bảng `orders`, `conversations` và `conversation_feedback`, loại bỏ số liệu hard-code tĩnh.
 
-### 2.3. Triển khai & Khởi động EC2 Thành công
-- **Cập nhật IP mới & Restart Containers**:
-  - Chạy `scripts/update_ec2.py` trên EC2 với IP mới: `98.84.139.124`.
-  - Cả 4 container Docker (`postgres`, `admin`, `web`, `caddy`) đều chạy ổn định và đạt trạng thái Healthy.
-  - Endpoint `healthz` trả về HTTP 200: `{"status": "ok", "scope": "synthetic-demo", "storage_backend": "postgresql", "agent_protocol": "retailops-agent-v2"}`.
+### 2.3. Khôi Phục Lịch Sử Chat & Hội Thoại Tiếp Diễn (Chat History Resume)
+- Bổ sung `GET /api/conversations`, client tự động resume phiên gần nhất khi F5, khôi phục toàn bộ bong bóng chat, nâng TTL lên 7 ngày và kiểm thử toàn diện tại `tests/test_conversation_resume.py` (4/4 PASS).
 
-### 2.4. Thực thi Đo Đạc Live Benchmark Thực tế (Live HTTP Evaluation)
-> *Ghi chú quan trọng:* Kết quả đợt chạy live dưới đây là **ghi nhận runtime trực tiếp trên EC2** trong phiên kiểm thử. Các file artifact sinh ra không được commit vào Git để bảo đảm working tree sạch sau incident recovery; báo cáo reproducible đã commit trong repo hiện là [`evals/reports/live_benchmark_report_20260918_042301.md`](../evals/reports/live_benchmark_report_20260918_042301.md) (240 ca).
-- **Giai đoạn 1 (Smoke Test - 10 ca đầu)**:
-  - **Tỷ lệ thành công**: **10 / 10 PASS (100.0%)**.
-  - **Độ trễ**: p50 = 24.28s, p95 = 31.39s.
-  - Phản hồi chuẩn mực: Khi khách không có mã đơn thì hỏi mã đơn; khi có mã đơn thì gọi tool `get_order`, `track_shipment` để trả về đúng trạng thái thực từ PostgreSQL.
-- **Giai đoạn 2 (Batch 01 - 25 ca)**:
-  - **Tỷ lệ thành công**: **19 / 25 PASS (76.0%)**.
-  - **Độ trễ**: p50 = **20.75s**, p95 = **31.07s**.
-  - Báo cáo chi tiết runtime trên EC2:
-    - `/home/ssm-user/CSKH_ban_le/evals/reports/live_benchmark_report_20260920_091714.json`
-    - `/home/ssm-user/CSKH_ban_le/evals/reports/live_benchmark_report_20260920_091714.md`
-    - `/home/ssm-user/CSKH_ban_le/evals/reports/live_benchmark_report_latest.json`
+### 2.4. Độc Lập Giao Thức MCP Server & Client
+- Triển khai `retailops_mcp_server.py` hỗ trợ stdio và SSE port 8002, kết nối qua `retailops/workflow/mcp_client.py` và kiểm thử tự động tại `tests/test_mcp_protocol.py` (100% PASS).
 
-### 2.5. Hoàn thiện CI/CD & Xác Minh Toàn Tuyến
-- **CI/CD Xanh 100%**: Snapshot application `d3ca3a6` đã được workflow **Verify main CI #3** kiểm thử vượt qua toàn bộ **340 Python tests OK**, bảo đảm các hợp đồng `PUBLIC_UI_ASSETS_OK`, `PUBLIC_HTTPS_PROXY_COOKIE_FLOW_OK`, `PERSISTENT_HTTPS_ACCOUNT_FLOW_OK`, `POSTGRES_HTTPS_IMPORT_RESTORE_OK`.
-- **Thiết kế Đối kháng DeepSeek**: Hoàn thành tài liệu kiến trúc [`PLAN_DEEPSEEK_EVAL_FRAMEWORK.md`](PLAN_DEEPSEEK_EVAL_FRAMEWORK.md).
+### 2.5. Hoàn Thiện CI/CD & Xác Minh Hợp Đồng Hệ Thống
+- Snapshot `fd24e36` vượt qua toàn bộ **340 Python tests OK**, đồng thời vượt qua 4 cổng kiểm định nghiêm ngặt:
+  - `python scripts/check_docs_contract.py` $\rightarrow$ PASS (4/4 gates).
+  - `python scripts/check_deployment_contract.py` $\rightarrow$ PASS.
+  - `python scripts/check_eval_dataset.py` $\rightarrow$ PASS.
+  - `python scripts/check_live_e2e_contract.py` $\rightarrow$ PASS.
 
 ---
 
-## 3. NHỮNG CÔNG VIỆC CHƯA LÀM ĐƯỢC & TỒN ĐỌNG (PENDING & NEXT STEPS)
+## 3. LỘ TRÌNH TRIỂN KHAI TIẾP THEO (NEXT PHASES ROADMAP)
 
-### 3.1. Phân tích Chi tiết 6 Ca FAIL trong Batch 01 (19/25 PASS)
-- **Hiện tượng**: Trong 25 ca chạy thật của Batch 01, có 6 ca bị đánh giá `FAIL`.
-- **Nhiệm vụ phiên tới**:
-  1. Chạy lệnh phân tích trích xuất 6 ca lỗi trên EC2:
-     ```bash
-     python3 -c "import json; r=json.load(open('evals/reports/live_benchmark_report_latest.json')); print('\n'.join(f'🔴 [{c[\"id\"]}] HTTP {c.get(\"status\")} | Lỗi: {c.get(\"error\")} | Tools: {c.get(\"tools_called\")} | Trả lời: {str(c.get(\"response\"))[:90]}' for c in r['cases'] if not c.get('passed')))"
-     ```
-  2. Xác định nguyên nhân: Do timeout ngrok (>120s), do gọi nhầm tool cấm (`prepare_cancellation`), hay do model phản hồi rỗng để có biện pháp tinh chỉnh prompt/routing.
+Hệ thống tuân thủ nghiêm ngặt lộ trình phụ thuộc kỹ thuật 7 giai đoạn đã thống nhất:
 
-### 3.2. Lọc Bỏ Rò Rỉ Token Suy Luận (`<|channel>thought...`)
-- **Hiện tượng**: Trong một số ca (như `ro_s1_004`, `ro_s1_010`), mô hình Gemma-4 sinh tag suy luận nội bộ `<|channel>thought\n...` xuất hiện trong nội dung câu trả lời cho người dùng.
-- **Nhiệm vụ phiên tới**: Bổ sung cơ chế làm sạch chuỗi (regex stripper) trong `retailops_providers.py` hoặc `agent_protocol.py` để bóc tách phần `thought` sang thuộc tính `reasoning`, giữ câu trả lời tự nhiên, thân thiện cho khách hàng.
-
-### 3.3. Thực thi Chạy Toàn Bộ 250 Ca Kiểm Thử (Full Master Benchmark)
-- **Kế hoạch**: Sau khi nắm rõ nguyên nhân 6 ca lỗi của Batch 01, chạy toàn bộ 250 kịch bản bằng chế độ chạy ngầm `nohup` trên EC2:
-  ```bash
-  nohup python3 scripts/run_live_benchmark_http.py > live_bench_full.log 2>&1 &
-  ```
-- **Mục tiêu**: Thu thập đầy đủ số liệu thực nghiệm p50, p95, accuracy cho toàn bộ 6 SOPs để lập bảng đối chứng đưa vào Chương 4 Báo cáo Khóa luận Tốt nghiệp.
-
-### 3.4. Kế hoạch Kiểm thử Đối kháng với DeepSeek API
-- Giữ ở mức thiết kế trong `docs/PLAN_DEEPSEEK_EVAL_FRAMEWORK.md`. Khi cần triển khai, chỉ cần cấu hình API Key và chạy so sánh trực tiếp song song giữa Gemma-4-12B (Self-hosted) và DeepSeek (Cloud API).
-
----
-
-## 4. HƯỚNG DẪN LOAD LẠI PHIÊN LÀM VIỆC TIẾP THEO
-
-Khi bạn quay trở lại, chỉ cần copy câu nhắc sau để tiếp tục ngay lập tức:
-
-```text
-Tiếp tục phiên làm việc: Hãy đọc file docs/CURRENT_PROJECT_STATUS.md để nắm lại toàn bộ tiến độ. 
-Chúng ta sẽ bắt đầu bằng việc:
-1. Phân tích chi tiết 6 ca FAIL trong Batch 01 (live_benchmark_report_latest.json).
-2. Xử lý triệt để việc rò rỉ token <|channel>thought của Gemma-4.
-3. Chạy Full Benchmark 250 ca trên EC2 để thu thập số liệu hoàn chỉnh cho Chương 4 Luận văn.
-```
+* **Phase 0 (Hiện tại)**: Documentation Truth & Reconciliation — Đồng bộ toàn bộ tài liệu dự án, ma trận trạng thái, loại bỏ số liệu giả định, kiểm tra `check_docs_contract.py` xanh.
+* **Phase 1**: Data & Observability Foundation:
+  - PR 1.1: [PLAN_FIX_UI_01_TRUTHFUL_UX.md](PLAN_FIX_UI_01_TRUTHFUL_UX.md) (Dọn dẹp fallback lỗi KPI, variant).
+  - PR 1.2: [PLAN_FIX_UI_02_MANAGER_PERSISTENCE.md](PLAN_FIX_UI_02_MANAGER_PERSISTENCE.md) (P0 SSOT: Catalog & Kho hàng vào PostgreSQL).
+  - PR 1.3: [PLAN_FIX_UI_03_OPSCONSOLE_INTEGRITY.md](PLAN_FIX_UI_03_OPSCONSOLE_INTEGRITY.md) (Truthful Telemetry: Token/Cost thật & Concurrency fields).
+* **Phase 2**: Triển khai GraphRAG Apache AGE v6.2 ([PLAN_GRAPHRAG_AGE.md](PLAN_GRAPHRAG_AGE.md)) trên nhánh `feature/graphrag-age` dựa trên Catalog SSOT từ Phase 1.
+* **Phase 3**: Triển khai Runtime Efficiency & Bounded Concurrency ([PLAN_RUNTIME_EFFICIENCY_CONCURRENCY.md](PLAN_RUNTIME_EFFICIENCY_CONCURRENCY.md)).
+* **Phase 4**: Đo lường thực nghiệm khoa học (GraphRAG A/B, Concurrency load test, Đối kháng Gemma-4 vs DeepSeek API) phục vụ Chương 4 Luận văn.
+* **Phase 5**: Demo Enhancements (Facebook Messenger Webhook & Cổng QR Live).
+* **Phase 6**: Post-Thesis Scaling (Distillation, LoRA Fine-Tuning, AWS Multi-AZ).
