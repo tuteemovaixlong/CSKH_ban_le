@@ -252,9 +252,9 @@
           <div class="kpi-card">
             <div class="kpi-icon">🤖</div>
             <div class="kpi-body">
-              <span class="kpi-title">Tỷ lệ AI Giải Quyết</span>
+              <span class="kpi-title">Tỷ lệ Tự Động (Non-Handoff)</span>
               <strong class="kpi-val" id="kpi-ai-res">—</strong>
-              <small class="kpi-sub">Tự động hóa không cần người</small>
+              <small class="kpi-sub">Phiên không cần chuyển chuyên viên</small>
             </div>
           </div>
           <div class="kpi-card">
@@ -277,7 +277,7 @@
             <div class="kpi-icon">💰</div>
             <div class="kpi-body">
               <span class="kpi-title">Tổng Giá Trị Đơn (GMV)</span>
-              <strong class="kpi-val" id="kpi-revenue">0 ₫</strong>
+              <strong class="kpi-val" id="kpi-revenue">—</strong>
               <small class="kpi-sub" id="kpi-orders-count">Đang tải dữ liệu đơn...</small>
             </div>
           </div>
@@ -286,19 +286,19 @@
         <div class="manager-stats-row">
           <div class="stat-mini-pill pending">
             <span>Chờ xử lý (Pending)</span>
-            <strong id="stat-pending-val">0</strong>
+            <strong id="stat-pending-val">—</strong>
           </div>
           <div class="stat-mini-pill delivered">
             <span>Đã giao (Delivered)</span>
-            <strong id="stat-delivered-val">0</strong>
+            <strong id="stat-delivered-val">—</strong>
           </div>
           <div class="stat-mini-pill cancelled">
             <span>Đã hủy (Cancelled)</span>
-            <strong id="stat-cancelled-val">0</strong>
+            <strong id="stat-cancelled-val">—</strong>
           </div>
           <div class="stat-mini-pill products">
             <span>Mặt hàng active</span>
-            <strong id="stat-products-val">0</strong>
+            <strong id="stat-products-val">—</strong>
           </div>
         </div>
       </div>
@@ -485,16 +485,16 @@
           </div>
           <div>
             <label for="prod-stock">Tồn kho ban đầu:</label>
-            <input type="number" id="prod-stock" placeholder="30" min="0" required>
+            <input type="number" id="prod-stock" placeholder="Ví dụ: 30" min="0">
           </div>
           <div>
             <label for="prod-warranty">Bảo hành (ngày):</label>
-            <input type="number" id="prod-warranty" placeholder="60" min="0" required>
+            <input type="number" id="prod-warranty" placeholder="Ví dụ: 30" min="0">
           </div>
         </div>
         <div class="form-row">
           <label for="prod-variants">Bảng Size / Biến thể (ngăn cách bằng dấu phẩy):</label>
-          <input type="text" id="prod-variants" placeholder="Đen · Size S, Đen · Size M, Đen · Size L" required>
+          <input type="text" id="prod-variants" placeholder="Ví dụ: Đen · Size S, Đen · Size M (để trống nếu không có biến thể)">
         </div>
         <div class="form-row">
           <label for="prod-desc">Mô tả sản phẩm:</label>

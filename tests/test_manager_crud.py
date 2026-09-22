@@ -37,6 +37,85 @@ class TestManagerCRUD(unittest.TestCase):
         self.assertIn('ai_resolution_rate', res)
         self.assertIn('avg_csat', res)
         self.assertIn('total_revenue', res)
+        # When store has 0 conversations, AI resolution and escalation rate must be None, not 100.0% / 0.0%
+        self.assertIsNone(res['ai_resolution_rate'])
+        self.assertIsNone(res['escalation_rate'])
+
+        # Now simulate 2 conversations, 1 with human handoff
+        c1 = self.store.new_conversation('C-001', 'custom')['conversation_id']
+        c2 = self.store.new_conversation('C-001', 'custom')['conversation_id']
+        with self.store.connection(write=True) as db:
+            db.execute("INSERT INTO conversation_feedback(conversation_id, customer_id, feedback_type, rating, reason_code, created_at) VALUES (?, 'C-001', 'human_handoff', NULL, 'customer_requested_human', 1001)", (c1,))
+        status2, res2 = api_result(self.app, 'C-001', 'GET', '/api/manager/kpis')
+        self.assertEqual(status2, 200)
+        self.assertEqual(res2['escalation_rate'], 50.0)
+        self.assertEqual(res2['ai_resolution_rate'], 50.0)
+
+    def test_manager_create_product_validation(self):
+        # 1. Missing price must raise 400 invalid_price
+        with self.assertRaises(ApiError) as ctx:
+            api_result(self.app, 'C-001', 'POST', '/api/manager/products', {'id': 'P-550', 'name': 'Áo Không Giá'})
+        self.assertEqual(ctx.exception.status, 400)
+        self.assertEqual(ctx.exception.code, 'invalid_price')
+
+        # 2. Negative price must raise 400 invalid_price
+        for bad_price in [-1000, -1, -0.5, "-500"]:
+            with self.subTest(bad_price=bad_price):
+                with self.assertRaises(ApiError) as ctx:
+                    api_result(self.app, 'C-001', 'POST', '/api/manager/products', {'id': 'P-550', 'name': 'Áo Giá Âm', 'price': bad_price})
+                self.assertEqual(ctx.exception.status, 400)
+                self.assertEqual(ctx.exception.code, 'invalid_price')
+
+        # 3. Boolean price must raise 400 invalid_price
+        for bool_price in [True, False]:
+            with self.subTest(bool_price=bool_price):
+                with self.assertRaises(ApiError) as ctx:
+                    api_result(self.app, 'C-001', 'POST', '/api/manager/products', {'id': 'P-550', 'name': 'Áo Giá Bool', 'price': bool_price})
+                self.assertEqual(ctx.exception.status, 400)
+                self.assertEqual(ctx.exception.code, 'invalid_price')
+
+        # 4. Non-numeric price must raise 400 invalid_price
+        for non_num in ['abc', '123a', [], {}, None]:
+            with self.subTest(non_num=non_num):
+                with self.assertRaises(ApiError) as ctx:
+                    api_result(self.app, 'C-001', 'POST', '/api/manager/products', {'id': 'P-550', 'name': 'Áo Giá Chữ', 'price': non_num})
+                self.assertEqual(ctx.exception.status, 400)
+                self.assertEqual(ctx.exception.code, 'invalid_price')
+
+        # 5. Minimal creation: UNKNOWN != ZERO (omitted optional stock, warranty, category, description must be None, not fabricated defaults)
+        status, res = api_result(self.app, 'C-001', 'POST', '/api/manager/products', {'id': 'P-550', 'name': 'Áo Tối Giản', 'price': 150000})
+        self.assertEqual(status, 201)
+        prod = res['product']
+        self.assertEqual(prod['price'], 150000)
+        self.assertEqual(prod['variants'], [])
+        self.assertIsNone(prod['stock'])
+        self.assertIsNone(prod['warranty_days'])
+        self.assertIsNone(prod['category'])
+        self.assertIsNone(prod['description'])
+
+        # 6. Update validations for price, stock, warranty
+        with self.assertRaises(ApiError) as ctx:
+            api_result(self.app, 'C-001', 'POST', '/api/manager/products/update', {'id': 'P-550', 'price': True})
+        self.assertEqual(ctx.exception.code, 'invalid_price')
+
+        with self.assertRaises(ApiError) as ctx:
+            api_result(self.app, 'C-001', 'POST', '/api/manager/products/update', {'id': 'P-550', 'price': 'không hợp lệ'})
+        self.assertEqual(ctx.exception.code, 'invalid_price')
+
+        with self.assertRaises(ApiError) as ctx:
+            api_result(self.app, 'C-001', 'POST', '/api/manager/products/update', {'id': 'P-550', 'stock': -5})
+        self.assertEqual(ctx.exception.code, 'invalid_stock')
+
+        with self.assertRaises(ApiError) as ctx:
+            api_result(self.app, 'C-001', 'POST', '/api/manager/products/update', {'id': 'P-550', 'stock': True})
+        self.assertEqual(ctx.exception.code, 'invalid_stock')
+
+        with self.assertRaises(ApiError) as ctx:
+            api_result(self.app, 'C-001', 'POST', '/api/manager/products/update', {'id': 'P-550', 'warranty_days': -10})
+        self.assertEqual(ctx.exception.code, 'invalid_warranty_days')
+
+        # Clean up
+        api_result(self.app, 'C-001', 'POST', '/api/manager/products/delete', {'id': 'P-550'})
 
     def test_manager_crud_lifecycle(self):
         new_pid = 'P-999'

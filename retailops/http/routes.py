@@ -36,6 +36,48 @@ def _record_chat_usage(app, customer, body, result, success):
         return
 
 
+def _parse_price(val):
+    if val is None or isinstance(val, bool):
+        return False, None
+    if isinstance(val, (int, float)):
+        if val < 0:
+            return False, None
+        return True, int(val)
+    if isinstance(val, str):
+        v = val.strip()
+        if not v.isdigit():
+            return False, None
+        try:
+            num = int(v)
+            if num < 0:
+                return False, None
+            return True, num
+        except (ValueError, OverflowError):
+            return False, None
+    return False, None
+
+
+def _parse_non_negative_int(val):
+    if val is None or isinstance(val, bool):
+        return False, None
+    if isinstance(val, (int, float)):
+        if val < 0 or int(val) != val:
+            return False, None
+        return True, int(val)
+    if isinstance(val, str):
+        v = val.strip()
+        if not v.isdigit():
+            return False, None
+        try:
+            num = int(v)
+            if num < 0:
+                return False, None
+            return True, num
+        except (ValueError, OverflowError):
+            return False, None
+    return False, None
+
+
 def api_result(app, customer, method, path, body=None, idempotency_key=None):
     if method == "GET":
         if path == "/api/session":
@@ -69,8 +111,12 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
                     esc_count = esc_row[0] if esc_row else 0
                     conv_row = db.execute("SELECT COUNT(*) FROM conversations").fetchone()
                     total_convs = conv_row[0] if conv_row else 0
-                    escalation_rate = round((esc_count / total_convs) * 100, 1) if total_convs > 0 else 0.0
-                    ai_resolution_rate = round(100.0 - escalation_rate, 1)
+                    if total_convs > 0:
+                        escalation_rate = round((esc_count / total_convs) * 100, 1)
+                        ai_resolution_rate = round(100.0 - escalation_rate, 1)
+                    else:
+                        escalation_rate = None
+                        ai_resolution_rate = None
                 except Exception:
                     avg_csat, csat_sample_size, escalation_rate, ai_resolution_rate = None, 0, None, None
             total_orders = len(rows)
@@ -195,20 +241,32 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
             require(name, 400, "invalid_product_name", "Tên sản phẩm không được để trống.")
             if pid in app.catalog.products:
                 raise ApiError(409, "product_exists", f"Sản phẩm {pid} đã tồn tại trong danh mục.")
-            price = int(body.get("price", 299000))
-            category = str(body.get("category", "Thời trang")).strip()
-            desc = str(body.get("description", f"Sản phẩm {name} chất lượng cao từ RetailOps.")).strip()
-            variants = body.get("variants", ["Tiêu chuẩn"])
-            if isinstance(variants, str):
-                variants = [v.strip() for v in variants.split(",") if v.strip()]
-            stock = body.get("stock", 25)
-            warranty_days = int(body.get("warranty_days", 30))
+            require("price" in body, 400, "invalid_price", "Thiếu giá sản phẩm.")
+            valid_price, price = _parse_price(body["price"])
+            require(valid_price, 400, "invalid_price", "Giá sản phẩm phải là số không âm.")
+            category = str(body["category"]).strip() if body.get("category") else None
+            description = str(body["description"]).strip() if body.get("description") else None
+            raw_variants = body.get("variants")
+            if isinstance(raw_variants, str):
+                variants = [v.strip() for v in raw_variants.split(",") if v.strip()]
+            elif isinstance(raw_variants, list):
+                variants = [str(v).strip() for v in raw_variants if str(v).strip()]
+            else:
+                variants = []
+            stock = None
+            if "stock" in body and body["stock"] is not None:
+                valid_stock, stock = _parse_non_negative_int(body["stock"])
+                require(valid_stock, 400, "invalid_stock", "Số lượng tồn kho phải là số nguyên không âm.")
+            warranty_days = None
+            if "warranty_days" in body and body["warranty_days"] is not None:
+                valid_w, warranty_days = _parse_non_negative_int(body["warranty_days"])
+                require(valid_w, 400, "invalid_warranty_days", "Số ngày bảo hành phải là số nguyên không âm.")
             aliases = body.get("aliases", [name.lower(), pid.lower()])
             product = {
                 "id": pid, "name": name, "aliases": aliases, "category": category,
-                "description": desc, "variants": variants, "price": price,
-                "stock": stock, "warranty_days": warranty_days, "material": body.get("material", "Vải cao cấp"),
-                "care": body.get("care", "Giặt máy nhẹ"), "is_system_immutable": False
+                "description": description, "variants": variants, "price": price,
+                "stock": stock, "warranty_days": warranty_days, "material": body.get("material"),
+                "care": body.get("care"), "is_system_immutable": False
             }
             app.catalog.add_product(product)
             return (201, {"status": "ok", "product": product, "message": f"Đã thêm sản phẩm {name} ({pid}) vào catalog."})
@@ -219,7 +277,41 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
             if pid not in app.catalog.products:
                 raise ApiError(404, "product_not_found", f"Không tìm thấy sản phẩm {pid}.")
             updates = {}
-            for k in ("name", "category", "description", "price", "stock", "warranty_days", "variants", "material", "care"):
+            if "name" in body:
+                n_val = str(body["name"]).strip()
+                require(n_val, 400, "invalid_product_name", "Tên sản phẩm không được để trống.")
+                updates["name"] = n_val
+            if "price" in body:
+                valid_p, price_val = _parse_price(body["price"])
+                require(valid_p, 400, "invalid_price", "Giá sản phẩm phải là số không âm.")
+                updates["price"] = price_val
+            if "stock" in body:
+                if body["stock"] is not None:
+                    valid_s, stock_val = _parse_non_negative_int(body["stock"])
+                    require(valid_s, 400, "invalid_stock", "Số lượng tồn kho phải là số nguyên không âm.")
+                    updates["stock"] = stock_val
+                else:
+                    updates["stock"] = None
+            if "warranty_days" in body:
+                if body["warranty_days"] is not None:
+                    valid_w, w_val = _parse_non_negative_int(body["warranty_days"])
+                    require(valid_w, 400, "invalid_warranty_days", "Số ngày bảo hành phải là số nguyên không âm.")
+                    updates["warranty_days"] = w_val
+                else:
+                    updates["warranty_days"] = None
+            if "category" in body:
+                updates["category"] = str(body["category"]).strip() if body["category"] else None
+            if "description" in body:
+                updates["description"] = str(body["description"]).strip() if body["description"] else None
+            if "variants" in body:
+                raw_vars = body["variants"]
+                if isinstance(raw_vars, str):
+                    updates["variants"] = [v.strip() for v in raw_vars.split(",") if v.strip()]
+                elif isinstance(raw_vars, list):
+                    updates["variants"] = [str(v).strip() for v in raw_vars if str(v).strip()]
+                else:
+                    updates["variants"] = []
+            for k in ("material", "care"):
                 if k in body:
                     updates[k] = body[k]
             product = app.catalog.update_product(pid, updates)

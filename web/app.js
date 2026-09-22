@@ -130,7 +130,7 @@ const ratingLabels = {
 };
 const cookieAuth = document.body?.dataset.auth === 'cookie';
 const persistentAccount = document.body?.dataset.dataMode === 'persistent-demo';
-const sourceLabels = {tool_result: 'Kết quả công cụ đã xác minh', interface: 'Hướng dẫn giao diện', store_data: 'Dữ liệu đơn hàng', llm_agent: 'Hội thoại model'};
+const sourceLabels = {tool_result: 'Kết quả công cụ đã xác minh', interface: 'Hướng dẫn giao diện', store_data: 'Dữ liệu đơn hàng', llm_agent: 'Hội thoại model', ui_simulation: 'Mô phỏng giao diện'};
 function showContext(context) {
   byId('conversation-context').textContent = context?.order_id ? 'Đang trao đổi: ' + context.order_id
     : context?.product_id ? 'Đang trao đổi: sản phẩm ' + context.product_id : 'Chưa chọn đơn hoặc sản phẩm';
@@ -286,7 +286,7 @@ function showErrorDetails(row, error) {
 function message(text, role = 'assistant', source = null, model = null, attachment = null) {
   const row = el('div', 'message ' + role), label = el('div', 'message-label');
   label.append(el('span', role === 'assistant' ? 'mini-r' : '', role === 'assistant' ? 'R' : ''));
-  label.append(document.createTextNode(role === 'user' ? 'Bạn' : 'RetailOps' + (source ? ' · ' + sourceLabels[source] : '') + (model ? ' · ' + model : '')));
+  label.append(document.createTextNode(role === 'user' ? 'Bạn' : 'RetailOps' + (source ? ' · ' + (sourceLabels[source] || source) : '') + (model ? ' · ' + model : '')));
   const bubble = el('div', 'bubble');
   if (attachment) {
     const card = el('div', 'chat-attachment-card');
@@ -1847,18 +1847,28 @@ async function loadManagerKPIs() {
         if (byId('kpi-csat-sub')) byId('kpi-csat-sub').textContent = 'Chưa có lượt đánh giá (0 lượt)';
       }
     }
-    if (byId('kpi-revenue')) byId('kpi-revenue').textContent = money(kpis.total_revenue || 0);
-    if (byId('kpi-orders-count')) byId('kpi-orders-count').textContent = (kpis.total_orders || 0) + ' đơn hàng ghi nhận';
+    if (byId('kpi-revenue')) {
+      byId('kpi-revenue').textContent = (kpis.total_revenue !== null && kpis.total_revenue !== undefined) ? money(kpis.total_revenue) : '—';
+    }
+    if (byId('kpi-orders-count')) {
+      byId('kpi-orders-count').textContent = (kpis.total_orders !== null && kpis.total_orders !== undefined) ? ((kpis.total_orders || 0) + ' đơn hàng ghi nhận') : '—';
+    }
 
-    if (byId('stat-pending-val')) byId('stat-pending-val').textContent = kpis.pending_orders ?? 0;
-    if (byId('stat-delivered-val')) byId('stat-delivered-val').textContent = kpis.delivered_orders ?? 0;
-    if (byId('stat-cancelled-val')) byId('stat-cancelled-val').textContent = kpis.cancelled_orders ?? 0;
-    if (byId('stat-products-val')) byId('stat-products-val').textContent = kpis.active_products ?? 0;
+    if (byId('stat-pending-val')) byId('stat-pending-val').textContent = kpis.pending_orders ?? '—';
+    if (byId('stat-delivered-val')) byId('stat-delivered-val').textContent = kpis.delivered_orders ?? '—';
+    if (byId('stat-cancelled-val')) byId('stat-cancelled-val').textContent = kpis.cancelled_orders ?? '—';
+    if (byId('stat-products-val')) byId('stat-products-val').textContent = kpis.active_products ?? '—';
   } catch (e) {
     console.warn('Lỗi tải KPIs:', e);
     if (byId('kpi-ai-res')) byId('kpi-ai-res').textContent = 'Lỗi';
     if (byId('kpi-human-esc')) byId('kpi-human-esc').textContent = 'Lỗi';
     if (byId('kpi-csat')) byId('kpi-csat').textContent = 'Lỗi';
+    if (byId('kpi-revenue')) byId('kpi-revenue').textContent = '—';
+    if (byId('kpi-orders-count')) byId('kpi-orders-count').textContent = 'Lỗi tải dữ liệu';
+    if (byId('stat-pending-val')) byId('stat-pending-val').textContent = '—';
+    if (byId('stat-delivered-val')) byId('stat-delivered-val').textContent = '—';
+    if (byId('stat-cancelled-val')) byId('stat-cancelled-val').textContent = '—';
+    if (byId('stat-products-val')) byId('stat-products-val').textContent = '—';
   }
 }
 
@@ -1903,7 +1913,7 @@ function renderManagerProductsTable() {
 
     const tdCat = el('td', '', p.category || 'Chưa phân loại');
     const tdPrice = el('td', '', (p.price !== null && p.price !== undefined) ? money(p.price) : 'Chưa có giá');
-    const tdVar = el('td', '', (p.variants || []).join(', ') || 'Tiêu chuẩn');
+    const tdVar = el('td', '', (p.variants && p.variants.length) ? p.variants.join(', ') : 'Chưa phân loại');
     const tdStock = el('td', '', (p.stock !== null && p.stock !== undefined) ? String(p.stock) : 'Chưa kiểm kho');
     const tdWarranty = el('td', '', p.warranty_days ? (p.warranty_days + ' ngày') : 'Chưa cập nhật');
 
@@ -1935,14 +1945,14 @@ if (btnOpenAddProd) {
   btnOpenAddProd.onclick = () => {
     editingProductId = null;
     byId('product-modal-title').textContent = '➕ Thêm Sản Phẩm Mới';
-    byId('prod-id').value = 'P-' + Math.floor(500 + Math.random() * 400);
+    byId('prod-id').value = '';
     byId('prod-id').readOnly = false;
     byId('prod-name').value = '';
-    byId('prod-category').value = 'Thời trang';
-    byId('prod-price').value = '299000';
-    byId('prod-stock').value = '30';
-    byId('prod-warranty').value = '30';
-    byId('prod-variants').value = 'Trắng · Size M, Đen · Size L';
+    byId('prod-category').value = '';
+    byId('prod-price').value = '';
+    byId('prod-stock').value = '';
+    byId('prod-warranty').value = '';
+    byId('prod-variants').value = '';
     byId('prod-desc').value = '';
     if (prodModal && typeof prodModal.showModal === 'function') prodModal.showModal();
   };
@@ -1953,11 +1963,11 @@ function openEditProductModal(p) {
   byId('product-modal-title').textContent = '✏ Chỉnh Sửa Sản Phẩm ' + p.id;
   byId('prod-id').value = p.id;
   byId('prod-id').readOnly = true;
-  byId('prod-name').value = p.name;
+  byId('prod-name').value = p.name || '';
   byId('prod-category').value = p.category || '';
-  byId('prod-price').value = p.price || 299000;
-  byId('prod-stock').value = p.stock !== null && p.stock !== undefined ? p.stock : 25;
-  byId('prod-warranty').value = p.warranty_days || 30;
+  byId('prod-price').value = (p.price !== null && p.price !== undefined) ? p.price : '';
+  byId('prod-stock').value = (p.stock !== null && p.stock !== undefined) ? p.stock : '';
+  byId('prod-warranty').value = (p.warranty_days !== null && p.warranty_days !== undefined) ? p.warranty_days : '';
   byId('prod-variants').value = (p.variants || []).join(', ');
   byId('prod-desc').value = p.description || '';
   if (prodModal && typeof prodModal.showModal === 'function') prodModal.showModal();
@@ -1971,15 +1981,24 @@ if (prodForm) {
   prodForm.onsubmit = async (e) => {
     e.preventDefault();
     const pid = byId('prod-id').value.trim();
+    const priceRaw = parseInt(byId('prod-price').value, 10);
+    if (isNaN(priceRaw) || priceRaw < 0) {
+      alert('Vui lòng nhập giá niêm yết hợp lệ (số không âm).');
+      return;
+    }
+    const stockStr = byId('prod-stock').value.trim();
+    const warrantyStr = byId('prod-warranty').value.trim();
+    const catStr = byId('prod-category').value.trim();
+    const descStr = byId('prod-desc').value.trim();
     const payload = {
       id: pid,
       name: byId('prod-name').value.trim(),
-      category: byId('prod-category').value.trim(),
-      price: parseInt(byId('prod-price').value, 10),
-      stock: parseInt(byId('prod-stock').value, 10),
-      warranty_days: parseInt(byId('prod-warranty').value, 10),
+      price: priceRaw,
+      category: catStr || null,
+      stock: stockStr ? parseInt(stockStr, 10) : null,
+      warranty_days: warrantyStr ? parseInt(warrantyStr, 10) : null,
       variants: byId('prod-variants').value.split(',').map(s => s.trim()).filter(Boolean),
-      description: byId('prod-desc').value.trim()
+      description: descStr || null
     };
 
     try {
@@ -2023,22 +2042,22 @@ document.querySelectorAll('.sop-action-btn').forEach(btn => {
     if (sop === '1') {
       await lookupOrder(oid || 'O-301');
       mgrDialog?.close?.();
-      message(`⚡ SOP 1 ĐÃ KÍCH HOẠT: Đã gửi lệnh khiếu nại bưu cục yêu cầu bưu tá giao lại ngay trong ca trước 18:00 cho đơn ${oid || 'O-301'}.`, 'assistant', 'store_data');
+      message(`[Mô phỏng] SOP 1: Mô phỏng gửi lệnh khiếu nại bưu cục yêu cầu bưu tá giao lại ngay trong ca trước 18:00 cho đơn ${oid || 'O-301'}. (Chế độ demo giao diện - chưa kết nối backend mutation)`, 'assistant', 'ui_simulation');
     } else if (sop === '2') {
       await lookupOrder(oid || 'O-302');
       mgrDialog?.close?.();
-      message(`✅ SOP 2 ĐÃ PHÊ DUYỆT: Lệnh Đổi mới 1-1 tận nhà đã được duyệt. Shipper GHTK sẽ mang sản phẩm mới tới đổi cho đơn ${oid || 'O-302'}.`, 'assistant', 'store_data');
+      message(`[Mô phỏng] SOP 2: Mô phỏng duyệt lệnh Đổi mới 1-1 tận nhà cho đơn ${oid || 'O-302'}. Shipper GHTK sẽ mang sản phẩm mới tới đổi. (Chế độ demo giao diện - chưa kết nối backend mutation)`, 'assistant', 'ui_simulation');
     } else if (sop === '3') {
       await lookupOrder(oid || 'O-303');
       mgrDialog?.close?.();
-      message(`✅ SOP 3 ĐÃ PHÊ DUYỆT: Lệnh Đổi size L 2 chiều tận nơi đã được kích hoạt thành công cho đơn ${oid || 'O-303'}.`, 'assistant', 'store_data');
+      message(`[Mô phỏng] SOP 3: Mô phỏng duyệt Đổi size L 2 chiều tận nơi freeship cho đơn ${oid || 'O-303'}. (Chế độ demo giao diện - chưa kết nối backend mutation)`, 'assistant', 'ui_simulation');
     } else if (sop === '4') {
       await lookupOrder(oid || 'O-304');
       mgrDialog?.close?.();
-      message(`🎁 SOP 4 ĐÃ XỬ LÝ: Đã cấp mã voucher đền bù 50.000đ [SALE50K-BN-SOC] cho đơn hàng ${oid || 'O-304'}.`, 'assistant', 'store_data');
+      message(`[Mô phỏng] SOP 4: Mô phỏng cấp mã voucher đền bù 50.000đ [SALE50K-BN-SOC] cho đơn hàng ${oid || 'O-304'}. (Chế độ demo giao diện - chưa kết nối backend mutation)`, 'assistant', 'ui_simulation');
     } else if (sop === '5') {
       mgrDialog?.close?.();
-      message(`🚨 SOP 5 CẢNH BÁO ĐỎ: Chế độ Strict Mode đã bật. Chuyên viên quản lý ca sẽ liên hệ khách hàng trong vòng 15 phút.`, 'assistant', 'store_data');
+      message(`[Mô phỏng] SOP 5: Mô phỏng tiếp nhận khẩn cấp & kích hoạt Strict Mode. Chuyên viên quản lý ca sẽ liên hệ khách hàng. (Chế độ demo giao diện - chưa kết nối backend mutation)`, 'assistant', 'ui_simulation');
     } else if (sop === '6') {
       mgrDialog?.close?.();
       const staffDialog = byId('staff-desk-dialog');

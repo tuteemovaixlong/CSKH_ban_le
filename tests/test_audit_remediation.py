@@ -265,6 +265,8 @@ class TestAuditRemediation(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIsNone(res["avg_csat"])
         self.assertEqual(res["csat_sample_size"], 0)
+        self.assertIsNone(res["ai_resolution_rate"])
+        self.assertIsNone(res["escalation_rate"])
 
     def test_multiagent_through_real_proxy_pipeline(self):
         """Multi-agent worker calls must pass strict RemoteAgent / inference_proxy validation pipeline."""
