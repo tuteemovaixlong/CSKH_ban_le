@@ -10,8 +10,8 @@ from retailops.storage.postgres import IDENTITY_SCHEMA, tenant_schema, transacti
 
 IDENTITY_TABLES = ('tenants', 'principals', 'memberships', 'credentials', 'identity_rate',
                    'provider_daily_usage', 'identity_events')
-BUSINESS_TABLES = ('customers', 'orders', 'proposals', 'business_events', 'conversations',
-                   'agent_turns', 'provider_daily_usage')
+BUSINESS_TABLES = ('customers', 'products', 'product_variants', 'orders', 'proposals',
+                   'business_events', 'conversations', 'agent_turns', 'provider_daily_usage')
 SEQUENCES = {'identity': ('identity_events',), 'business': ('business_events', 'agent_turns')}
 
 

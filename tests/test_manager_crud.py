@@ -482,11 +482,14 @@ class TestManagerCRUD(unittest.TestCase):
         snapshot_tables = read_database(self.store.path, 'business', BUSINESS_TABLES)
         table_order = list(snapshot_tables.keys())
         self.assertIn('products', table_order)
+        self.assertIn('product_variants', table_order)
         self.assertIn('orders', table_order)
         prod_idx = table_order.index('products')
+        var_idx = table_order.index('product_variants')
         order_idx = table_order.index('orders')
-        # Products MUST come before orders to satisfy orders.product_id foreign key constraint
-        self.assertLess(prod_idx, order_idx)
+        # Products and variants MUST come before orders to satisfy orders.product_id foreign key constraint
+        self.assertLess(prod_idx, var_idx)
+        self.assertLess(var_idx, order_idx)
 
 
 if __name__ == '__main__':

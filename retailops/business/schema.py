@@ -22,7 +22,7 @@ def migrate_v3(db):
                   variant_name TEXT NOT NULL,
                   size TEXT,
                   color TEXT,
-                  stock INTEGER NOT NULL DEFAULT 0,
+                  stock INTEGER,
                   sku TEXT,
                   price BIGINT
                 )""")
