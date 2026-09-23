@@ -474,7 +474,7 @@ class BusinessStore:
                 if val is not None:
                     p_max = float(val)
 
-            ev_row = db.execute("SELECT MAX(created_at) AS max_val FROM business_events WHERE kind LIKE 'product_%'").fetchone()
+            ev_row = db.execute("SELECT MAX(created_at) AS max_val FROM business_events WHERE kind LIKE ?", ('product_%',)).fetchone()
             ev_max = 0.0
             if ev_row:
                 try:
