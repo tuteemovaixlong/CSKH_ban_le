@@ -201,24 +201,39 @@ class BoundTools:
             pid = args['product_id']
             size = args['size'].upper().strip()
             color = args['color'].strip()
-            product = self.catalog.products.get(pid)
+            product = self.catalog.products.get(pid) or (self.store.get_product(pid) if hasattr(self, 'store') and self.store else None)
             if not product:
                 return {'error': 'product_not_found', 'message': f'Sản phẩm {pid} không tồn tại trong kho.'}
-            stock_map = {
-                'P-101': {'S': 5, 'M': 12, 'L': 8, 'XL': 0},
-                'P-102': {'S': 0, 'M': 4, 'L': 15, 'XL': 3},
-                'P-202': {'S': 20, 'M': 18, 'L': 25, 'XL': 10},
-                'P-104': {'S': 10, 'M': 15, 'L': 0, 'XL': 8},
-                'P-203': {'S': 12, 'M': 0, 'L': 18, 'XL': 5},
-                'P-301': {'39': 4, '40': 8, '41': 0, '42': 6, '43': 2},
-            }
-            available = stock_map.get(pid, {}).get(size, 6)
+            var_res = self.catalog.get_variant_stock(pid, size, color)
+            if hasattr(var_res, 'status'):
+                stock, status = var_res.stock, var_res.status
+            elif isinstance(var_res, tuple):
+                stock, status = var_res[0], var_res[1]
+            else:
+                stock, status = var_res, ('ok' if var_res is not None else 'stock_unknown')
+
+            if status == 'variant_not_found':
+                return {
+                    'error': 'variant_not_found',
+                    'product_id': pid, 'product_name': product.get('name'),
+                    'size': size, 'color': color,
+                    'stock': 0, 'in_stock': False,
+                    'status_text': f'Sản phẩm {product.get("name")} không có biến thể màu "{color}", size "{size}".'
+                }
+            if status == 'stock_unknown' or stock is None:
+                return {
+                    'product_id': pid, 'product_name': product.get('name'),
+                    'size': size, 'color': color,
+                    'stock': None, 'in_stock': None,
+                    'status_text': f'Tồn kho sản phẩm {product.get("name")} hiện chưa được cập nhật.'
+                }
+            in_stock = stock > 0
             return {
                 'product_id': pid, 'product_name': product.get('name'),
                 'size': size, 'color': color,
-                'stock': available,
-                'in_stock': available > 0,
-                'status_text': f'Còn {available} sản phẩm trong kho' if available > 0 else 'Tạm thời hết size này'
+                'stock': stock,
+                'in_stock': in_stock,
+                'status_text': f'Còn {stock} sản phẩm trong kho' if in_stock else f'Sản phẩm {product.get("name")} (màu {color}, size {size}) tạm thời hết hàng.'
             }
         if name == 'request_human_support':
             reason = args['reason'].strip()

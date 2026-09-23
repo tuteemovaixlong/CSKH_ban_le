@@ -11,11 +11,16 @@
       "category": "Áo thun",
       "description": "Sản phẩm áo thun trong danh mục thử nghiệm RetailOps.",
       "variants": [
-        "Trắng · Size M"
+        "Trắng · Size S",
+        "Trắng · Size M",
+        "Trắng · Size L",
+        "Trắng · Size XL"
       ],
       "material": null,
       "care": null,
-      "stock": null
+      "stock": null,
+      "price": 299000,
+      "warranty_days": 90
     },
     {
       "id": "P-102",
@@ -27,11 +32,16 @@
       "category": "Áo khoác",
       "description": "Sản phẩm áo khoác trong danh mục thử nghiệm RetailOps.",
       "variants": [
-        "Đen · Size L"
+        "Đen · Size S",
+        "Đen · Size M",
+        "Đen · Size L",
+        "Đen · Size XL"
       ],
       "material": null,
       "care": null,
-      "stock": null
+      "stock": null,
+      "price": 799000,
+      "warranty_days": 90
     },
     {
       "id": "P-202",
@@ -42,11 +52,16 @@
       "category": "Áo polo",
       "description": "Sản phẩm áo polo trong danh mục thử nghiệm RetailOps.",
       "variants": [
-        "Xanh · Size M"
+        "Xanh · Size S",
+        "Xanh · Size M",
+        "Xanh · Size L",
+        "Xanh · Size XL"
       ],
       "material": null,
       "care": null,
-      "stock": null
+      "stock": null,
+      "price": 399000,
+      "warranty_days": 90
     },
     {
       "id": "P-103",
@@ -67,7 +82,9 @@
       ],
       "material": "100% Cotton Oxford",
       "care": "Giặt máy chế độ nhẹ, nhiệt độ dưới 30 độ C, ủi ở nhiệt độ trung bình.",
-      "stock": 45
+      "stock": 45,
+      "price": 350000,
+      "warranty_days": 90
     },
     {
       "id": "P-104",
@@ -82,15 +99,17 @@
       "category": "Áo khoác",
       "description": "Áo khoác gió bomber 2 lớp chống nước và cản gió chuyên dụng, khóa kéo YKK kim loại cao cấp.",
       "variants": [
+        "Đen · Size S",
         "Đen · Size M",
         "Đen · Size L",
-        "Xanh Rêu · Size L",
         "Đen · Size XL"
       ],
       "material": "Polyeste tráng PU chống thấm nước, lót lụa mềm thoáng khí",
       "care": "Không giặt sấy nhiệt cao, giặt tay hoặc giặt máy túi giặt.",
       "warranty_policy": "Bảo hành 1 đổi 1 tận nhà trong 90 ngày đối với lỗi bung chỉ, kẹt khóa kéo YKK do vận chuyển hoặc sản xuất.",
-      "stock": 33
+      "stock": 33,
+      "price": 550000,
+      "warranty_days": 90
     },
     {
       "id": "P-203",
@@ -104,8 +123,7 @@
       "category": "Áo polo",
       "description": "Áo polo nam chất cá sấu CVC co giãn 4 chiều, thấm hút mồ hôi, cổ dệt bo viền chống bai dão.",
       "variants": [
-        "Trắng · Size M",
-        "Trắng · Size L",
+        "Xanh Navy · Size S",
         "Xanh Navy · Size M",
         "Xanh Navy · Size L",
         "Xanh Navy · Size XL"
@@ -118,7 +136,9 @@
       },
       "material": "95% Cotton CVC, 5% Spandex",
       "care": "Lộn trái khi phơi, giặt chung với quần áo cùng màu.",
-      "stock": 55
+      "stock": 55,
+      "price": 399000,
+      "warranty_days": 90
     },
     {
       "id": "P-301",
@@ -132,15 +152,17 @@
       "category": "Giày dép",
       "description": "Giày chạy bộ đế đệm khí siêu êm, thân dệt flyknit thông thoáng chân, trợ lực chạy bộ.",
       "variants": [
-        "Xám · Size 40",
-        "Xám · Size 41",
-        "Xám · Size 42",
-        "Đen · Size 41",
-        "Đen · Size 42"
+        "Tiêu chuẩn · Size 39",
+        "Tiêu chuẩn · Size 40",
+        "Tiêu chuẩn · Size 41",
+        "Tiêu chuẩn · Size 42",
+        "Tiêu chuẩn · Size 43"
       ],
       "material": "Đế EVA bọc cao su non, vải dệt Flyknit kháng khuẩn",
       "care": "Lau bằng khăn ẩm, không phơi trực tiếp dưới nắng gắt.",
-      "stock": 20
+      "stock": 20,
+      "price": 650000,
+      "warranty_days": 90
     },
     {
       "id": "P-401",
@@ -158,7 +180,9 @@
       ],
       "material": "Inox 304 tiêu chuẩn an toàn thực phẩm",
       "care": "Vệ sinh bằng giẻ mềm, không dùng búi sắt cọ xát mạnh.",
-      "stock": 15
+      "stock": 15,
+      "price": 1250000,
+      "warranty_days": 365
     },
     {
       "id": "P-501",
@@ -177,6 +201,14 @@
       },
       "aliases": [
         "áo polo nam oversize form rộng cotton compact"
+      ],
+      "warranty_days": 90,
+      "stock": 50,
+      "variants": [
+        "Đen · Size M",
+        "Đen · Size L",
+        "Trắng · Size M",
+        "Trắng · Size L"
       ]
     },
     {
@@ -197,6 +229,14 @@
       },
       "aliases": [
         "quần cargo nam kaki túi hộp phong cách streetwear"
+      ],
+      "warranty_days": 60,
+      "stock": 40,
+      "variants": [
+        "Kaki · Size 29",
+        "Kaki · Size 30",
+        "Kaki · Size 31",
+        "Kaki · Size 32"
       ]
     },
     {
@@ -217,6 +257,13 @@
       },
       "aliases": [
         "đầm nữ tay bồng phong cách hàn quốc dáng suông"
+      ],
+      "warranty_days": 30,
+      "stock": 35,
+      "variants": [
+        "Be · Size S",
+        "Be · Size M",
+        "Be · Size L"
       ]
     },
     {
@@ -237,6 +284,14 @@
       },
       "aliases": [
         "áo thun nữ cotton basic cổ tròn form vừa"
+      ],
+      "warranty_days": 30,
+      "stock": 60,
+      "variants": [
+        "Trắng · Size S",
+        "Trắng · Size M",
+        "Trắng · Size L",
+        "Đen · Size M"
       ]
     },
     {
@@ -254,6 +309,12 @@
       },
       "aliases": [
         "túi đeo chéo nam nữ da pu chống nước"
+      ],
+      "warranty_days": 90,
+      "stock": 30,
+      "variants": [
+        "Đen · Tiêu chuẩn",
+        "Nâu · Tiêu chuẩn"
       ]
     },
     {
@@ -271,6 +332,11 @@
       },
       "aliases": [
         "máy hút bụi cầm tay không dây thông minh 3in1"
+      ],
+      "warranty_days": 365,
+      "stock": 25,
+      "variants": [
+        "Trắng Bạc · Tiêu chuẩn"
       ]
     },
     {
@@ -288,6 +354,11 @@
       },
       "aliases": [
         "nồi chiên không dầu thông minh 6l điều khiển cảm ứng"
+      ],
+      "warranty_days": 365,
+      "stock": 18,
+      "variants": [
+        "Đen Nhám · Tiêu chuẩn"
       ]
     },
     {
@@ -305,6 +376,12 @@
       },
       "aliases": [
         "đèn led thông minh cảm biến chuyển động sạc usb"
+      ],
+      "warranty_days": 180,
+      "stock": 80,
+      "variants": [
+        "Trắng Ấm · Tiêu chuẩn",
+        "Trắng Tự Nhiên · Tiêu chuẩn"
       ]
     }
   ]

@@ -4,11 +4,26 @@ from retailops.storage.postgres import (BUSINESS_SCHEMA_CURRENT, IDENTITY_SCHEMA
 
 BUSINESS_DDL = [
     'CREATE TABLE customers (id TEXT PRIMARY KEY, name TEXT NOT NULL)',
+    '''CREATE TABLE products (id TEXT PRIMARY KEY, name TEXT NOT NULL,
+        aliases TEXT NOT NULL DEFAULT '[]', category TEXT, price BIGINT,
+        stock INTEGER, warranty_days INTEGER, description TEXT,
+        variants TEXT NOT NULL DEFAULT '[]', material TEXT, care TEXT,
+        is_system_immutable INTEGER NOT NULL DEFAULT 0 CHECK(is_system_immutable IN (0,1)),
+        extra_data TEXT NOT NULL DEFAULT '{}',
+        created_at DOUBLE PRECISION NOT NULL, updated_at DOUBLE PRECISION NOT NULL)''',
+    '''CREATE TABLE product_variants (id TEXT PRIMARY KEY,
+        product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        variant_name TEXT NOT NULL, size TEXT, color TEXT, stock INTEGER,
+        sku TEXT, price BIGINT)''',
+    'CREATE INDEX idx_variants_product ON product_variants(product_id)',
+    'CREATE INDEX idx_variants_size_color ON product_variants(product_id, size, color)',
     '''CREATE TABLE orders (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL REFERENCES customers(id),
+        product_id TEXT REFERENCES products(id),
         name TEXT NOT NULL, variant TEXT NOT NULL, amount BIGINT NOT NULL,
         status TEXT NOT NULL CHECK(status IN ('pending','delivered','cancelled')),
         version INTEGER NOT NULL DEFAULT 1, cancel_reason TEXT)''',
     'CREATE INDEX idx_orders_customer_id ON orders(customer_id)',
+    'CREATE INDEX idx_orders_product_id ON orders(product_id)',
     '''CREATE TABLE proposals (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL REFERENCES customers(id),
         order_id TEXT NOT NULL REFERENCES orders(id), order_version INTEGER NOT NULL, reason TEXT NOT NULL,
         expires_at DOUBLE PRECISION NOT NULL, state TEXT NOT NULL DEFAULT 'pending', confirm_key TEXT, result TEXT,
@@ -131,6 +146,27 @@ def initialize(db, schema, component):
                 row = {'component': 'business', 'version': 2}
             if row['version'] == 2:
                 initialize_knowledge(db)
+                db.execute("UPDATE retailops_schema SET version=3 WHERE component='business'")
+                row = {'component': 'business', 'version': 3}
+            if row['version'] == 3:
+                for statement in (
+                    '''CREATE TABLE IF NOT EXISTS products (id TEXT PRIMARY KEY, name TEXT NOT NULL,
+                        aliases TEXT NOT NULL DEFAULT '[]', category TEXT, price BIGINT,
+                        stock INTEGER, warranty_days INTEGER, description TEXT,
+                        variants TEXT NOT NULL DEFAULT '[]', material TEXT, care TEXT,
+                        is_system_immutable INTEGER NOT NULL DEFAULT 0 CHECK(is_system_immutable IN (0,1)),
+                        extra_data TEXT NOT NULL DEFAULT '{}',
+                        created_at DOUBLE PRECISION NOT NULL, updated_at DOUBLE PRECISION NOT NULL)''',
+                    '''CREATE TABLE IF NOT EXISTS product_variants (id TEXT PRIMARY KEY,
+                        product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+                        variant_name TEXT NOT NULL, size TEXT, color TEXT, stock INTEGER,
+                        sku TEXT, price BIGINT)''',
+                    'CREATE INDEX IF NOT EXISTS idx_variants_product ON product_variants(product_id)',
+                    'CREATE INDEX IF NOT EXISTS idx_variants_size_color ON product_variants(product_id, size, color)',
+                    'ALTER TABLE orders ADD COLUMN IF NOT EXISTS product_id TEXT REFERENCES products(id)',
+                    'CREATE INDEX IF NOT EXISTS idx_orders_product_id ON orders(product_id)',
+                ):
+                    db.raw.execute(statement)
                 db.execute("UPDATE retailops_schema SET version=? WHERE component='business'", (BUSINESS_SCHEMA_CURRENT,))
                 row = {'component': 'business', 'version': BUSINESS_SCHEMA_CURRENT}
             if row['version'] != BUSINESS_SCHEMA_CURRENT:

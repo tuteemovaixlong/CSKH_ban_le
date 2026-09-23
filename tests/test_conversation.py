@@ -223,9 +223,13 @@ class ConversationTests(unittest.TestCase):
 
     def test_existing_database_migrates_without_resetting_cancelled_order(self):
         path = Path(self.temp.name) / 'old.sqlite3'
-        with sqlite3.connect(path) as db:
+        db = sqlite3.connect(path)
+        try:
             db.execute('CREATE TABLE orders (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, name TEXT NOT NULL, variant TEXT NOT NULL, amount INTEGER NOT NULL, status TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, cancel_reason TEXT)')
             db.execute("INSERT INTO orders VALUES ('O-101','C-001','Áo thun Essential','M',299000,'cancelled',2,'ordered_by_mistake')")
+            db.commit()
+        finally:
+            db.close()
         migrated = BusinessStore(path); migrated.seed()
         order = migrated.lookup('C-001', 'O-101')
         self.assertEqual((order['status'], order['version']), ('cancelled', 2))

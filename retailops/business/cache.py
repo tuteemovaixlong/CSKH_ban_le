@@ -179,7 +179,7 @@ class ToolCache:
     Automatically invalidates customer orders when a mutation tool runs.
     """
 
-    CACHEABLE_TOOLS = {'get_order', 'get_product', 'list_products', 'search_knowledge'}
+    CACHEABLE_TOOLS = {'get_order', 'search_knowledge'}
     MUTATING_TOOLS = {'cancel_order', 'confirm_cancellation', 'update_shipping_address'}
 
     def __init__(self, default_ttl: float = 180.0):
@@ -230,6 +230,20 @@ class ToolCache:
             for k, v in self._cache.items():
                 if v.get('customer') == customer:
                     if order_id is None or order_id in k:
+                        keys_to_delete.append(k)
+            for k in keys_to_delete:
+                del self._cache[k]
+                removed += 1
+        return removed
+
+    def invalidate_product(self, product_id: Optional[str] = None) -> int:
+        """Invalidate cached product entries upon catalog mutation."""
+        removed = 0
+        with self._lock:
+            keys_to_delete = []
+            for k, v in self._cache.items():
+                if ':get_product:' in k or ':list_products:' in k:
+                    if product_id is None or (product_id and product_id in k):
                         keys_to_delete.append(k)
             for k in keys_to_delete:
                 del self._cache[k]

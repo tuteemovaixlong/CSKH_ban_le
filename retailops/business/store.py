@@ -19,6 +19,35 @@ from retailops.business.schema import initialize as initialize_schema
 
 ROOT = Path(__file__).resolve().parents[2]
 
+def _parse_variant_string(v_str):
+    parts = [pt.strip() for pt in str(v_str).split("·")]
+    color = None
+    size = None
+    if len(parts) >= 2:
+        color = parts[0]
+        size = parts[1].replace("Size ", "").strip()
+    elif len(parts) == 1:
+        if "Size " in parts[0]:
+            size = parts[0].replace("Size ", "").strip()
+        else:
+            size = parts[0]
+    return size, color
+
+
+class VariantStockResult(int):
+    """Backwards-compatible integer stock that also carries variant status and stock."""
+    def __new__(cls, stock, status='ok'):
+        val = int(stock) if stock is not None and not isinstance(stock, bool) else 0
+        obj = super().__new__(cls, val)
+        obj.stock = stock
+        obj.status = status
+        return obj
+
+    def __iter__(self):
+        yield self.stock
+        yield self.status
+
+
 class BusinessStore:
     CONVERSATION_TTL = 7 * 86400  # 7 days persistent chat history
 
@@ -56,16 +85,18 @@ class BusinessStore:
                 ('C-001', 'Mai Anh'),
                 ('C-002', 'Khách mẫu'),
                 ('C-003', 'Trần Thị Mai'),
-                ('C-004', 'Lê Hoàng Nam')
+                ('C-004', 'Lê Hoàng Nam'),
+                ('manager', 'Quản lý cửa hàng'),
+                ('system', 'Hệ thống')
             ]
             orders = [
-                ("O-101", "C-001", "Áo thun Essential", "Trắng · Size M · Số lượng 1", 299000, "pending"),
-                ("O-102", "C-001", "Áo khoác Everyday", "Đen · Size L · Số lượng 1", 799000, "delivered"),
-                ("O-202", "C-002", "Áo polo", "Xanh · Size M · Số lượng 1", 399000, "pending"),
-                ("O-301", "C-003", "Áo Sơ Mi Oxford Dài Tay", "Trắng · Size M · Số lượng 1", 350000, "pending"),
-                ("O-302", "C-003", "Áo Khoác Gió Bomber 2 Lớp", "Đen · Size L · Số lượng 1", 550000, "delivered"),
-                ("O-303", "C-004", "Áo Polo Nam Phối Bo Cổ Co Giãn", "Xanh Navy · Size M · Số lượng 1", 399000, "delivered"),
-                ("O-304", "C-004", "Bộ Nồi Inox 3 Đáy Cao Cấp", "Bạc · Bộ 3 món · Số lượng 1", 1250000, "pending"),
+                ("O-101", "C-001", "Áo thun Essential", "Trắng · Size M · Số lượng 1", 299000, "pending", "P-101"),
+                ("O-102", "C-001", "Áo khoác Everyday", "Đen · Size L · Số lượng 1", 799000, "delivered", "P-102"),
+                ("O-202", "C-002", "Áo polo", "Xanh · Size M · Số lượng 1", 399000, "pending", "P-202"),
+                ("O-301", "C-003", "Áo Sơ Mi Oxford Dài Tay", "Trắng · Size M · Số lượng 1", 350000, "pending", "P-103"),
+                ("O-302", "C-003", "Áo Khoác Gió Bomber 2 Lớp", "Đen · Size L · Số lượng 1", 550000, "delivered", "P-104"),
+                ("O-303", "C-004", "Áo Polo Nam Phối Bo Cổ Co Giãn", "Xanh Navy · Size M · Số lượng 1", 399000, "delivered", "P-203"),
+                ("O-304", "C-004", "Bộ Nồi Inox 3 Đáy Cao Cấp", "Bạc · Bộ 3 món · Số lượng 1", 1250000, "pending", "P-401"),
             ]
             seed_file = ROOT / "data" / "deepseek_seed_data.json"
             if seed_file.exists():
@@ -80,12 +111,375 @@ class BusinessStore:
                     known_oids = {x[0] for x in orders}
                     for o in data.get("orders", []):
                         if o["id"] not in known_oids:
-                            orders.append((o["id"], o["customer_id"], o["name"], o["variant"], o["amount"], o["status"]))
+                            orders.append((o["id"], o["customer_id"], o["name"], o["variant"], o["amount"], o["status"], o.get("product_id")))
                             known_oids.add(o["id"])
                 except Exception:
                     pass
             db.executemany("INSERT INTO customers VALUES (?,?) ON CONFLICT DO NOTHING", customers)
-            db.executemany("INSERT INTO orders(id, customer_id, name, variant, amount, status) VALUES (?,?,?,?,?,?) ON CONFLICT DO NOTHING", orders)
+            self.seed_catalog(db)
+            db.executemany("INSERT INTO orders(id, customer_id, name, variant, amount, status, product_id) VALUES (?,?,?,?,?,?,?) ON CONFLICT DO NOTHING", orders)
+            order_to_product = {
+                'O-101': 'P-101', 'O-102': 'P-102', 'O-202': 'P-202',
+                'O-301': 'P-103', 'O-302': 'P-104', 'O-303': 'P-203', 'O-304': 'P-401',
+                'O-305': 'P-501', 'O-306': 'P-503', 'O-307': 'P-506', 'O-308': 'P-502',
+                'O-309': 'P-504', 'O-310': 'P-507', 'O-311': 'P-505', 'O-312': 'P-508',
+            }
+            for oid, pid in order_to_product.items():
+                db.execute("UPDATE orders SET product_id=? WHERE id=? AND product_id IS NULL", (pid, oid))
+            db.execute("""
+                UPDATE orders 
+                SET product_id = (SELECT p.id FROM products p WHERE p.name = orders.name LIMIT 1)
+                WHERE product_id IS NULL AND EXISTS (SELECT 1 FROM products p WHERE p.name = orders.name)
+            """)
+
+    def seed_catalog(self, db=None):
+        def _do_seed(conn):
+            catalog_file = ROOT / "data" / "products.json"
+            if not catalog_file.exists():
+                return
+            try:
+                with open(catalog_file, "r", encoding="utf-8") as f:
+                    catalog_data = json.load(f)
+            except Exception:
+                return
+
+            STOCK_MAP = {
+                'P-101': {'S': 5, 'M': 12, 'L': 8, 'XL': 0},
+                'P-102': {'S': 0, 'M': 4, 'L': 15, 'XL': 3},
+                'P-202': {'S': 20, 'M': 18, 'L': 25, 'XL': 10},
+                'P-103': {'S': 8, 'M': 14, 'L': 10, 'XL': 2},
+                'P-104': {'S': 10, 'M': 15, 'L': 0, 'XL': 8},
+                'P-203': {'S': 12, 'M': 0, 'L': 18, 'XL': 5},
+                'P-301': {'39': 4, '40': 8, '41': 0, '42': 6, '43': 2},
+            }
+
+            now = time.time()
+            products = catalog_data.get("products", [])
+            for p in products:
+                pid = p["id"]
+                name = p.get("name", "")
+                aliases = json.dumps(p.get("aliases", []), ensure_ascii=False)
+                category = p.get("category")
+                price = p.get("price")
+                stock = p.get("stock", 0)
+                warranty_days = p.get("warranty_days", 90)
+                description = p.get("description", "")
+                raw_variants = p.get("variants", [])
+                variants_json = json.dumps(raw_variants, ensure_ascii=False)
+                material = p.get("material")
+                care = p.get("care")
+                is_sys = 1 if pid in ('P-101', 'P-102', 'P-202') or p.get("is_system_immutable") else 0
+
+                extra = {}
+                for k, v in p.items():
+                    if k not in {'id', 'name', 'aliases', 'category', 'price', 'stock',
+                                'warranty_days', 'description', 'variants', 'material',
+                                'care', 'is_system_immutable'}:
+                        extra[k] = v
+                extra_json = json.dumps(extra, ensure_ascii=False)
+
+                conn.execute("""
+                    INSERT INTO products(id, name, aliases, category, price, stock, warranty_days,
+                                         description, variants, material, care, is_system_immutable,
+                                         extra_data, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT DO NOTHING
+                """, (pid, name, aliases, category, price, stock, warranty_days,
+                      description, variants_json, material, care, is_sys,
+                      extra_json, now, now))
+
+                for v_str in raw_variants:
+                    size, color = _parse_variant_string(v_str)
+                    if pid in STOCK_MAP and size in STOCK_MAP[pid]:
+                        var_stock = STOCK_MAP[pid][size]
+                    else:
+                        var_stock = max(1, stock // len(raw_variants)) if raw_variants and stock else 5
+
+                    var_id = f"{pid}-{size or 'STD'}-{color or 'STD'}".replace(" ", "_")
+                    conn.execute("""
+                        INSERT INTO product_variants(id, product_id, variant_name, size, color, stock, price)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT DO NOTHING
+                    """, (var_id, pid, v_str, size, color, var_stock, price))
+
+        if db is not None:
+            _do_seed(db)
+        else:
+            with self.connection(write=True) as conn:
+                _do_seed(conn)
+
+    @staticmethod
+    def _row_to_product(row):
+        d = dict(row)
+        aliases = json.loads(d['aliases']) if isinstance(d['aliases'], str) else (d['aliases'] or [])
+        variants = json.loads(d['variants']) if isinstance(d['variants'], str) else (d['variants'] or [])
+        extra = json.loads(d.get('extra_data') or '{}') if isinstance(d.get('extra_data'), str) else (d.get('extra_data') or {})
+        return {
+            'id': d['id'],
+            'name': d['name'],
+            'aliases': aliases,
+            'category': d['category'],
+            'price': d['price'],
+            'stock': d['stock'],
+            'warranty_days': d['warranty_days'],
+            'description': d['description'],
+            'variants': variants,
+            'material': d['material'],
+            'care': d['care'],
+            'is_system_immutable': bool(d['is_system_immutable']),
+            **extra,
+            'created_at': d['created_at'],
+            'updated_at': d['updated_at']
+        }
+
+    def get_product(self, pid):
+        with self.connection() as db:
+            row = db.execute("SELECT * FROM products WHERE id=?", (pid,)).fetchone()
+            if not row:
+                return None
+            return self._row_to_product(row)
+
+    def list_products(self):
+        with self.connection() as db:
+            rows = db.execute("SELECT * FROM products ORDER BY id").fetchall()
+            return [self._row_to_product(r) for r in rows]
+
+    def add_product(self, p, actor=None):
+        require(isinstance(p, dict), 400, "invalid_product", "Dữ liệu sản phẩm không hợp lệ.")
+        pid = str(p.get("id", "")).strip().upper()
+        name = str(p.get("name", "")).strip()
+        require(pid and re.fullmatch(r"P-[0-9]{3,6}", pid), 400, "invalid_product_id", "Mã sản phẩm phải có dạng P-xxx (ví dụ: P-509).")
+        require(name, 400, "invalid_product_name", "Tên sản phẩm không được để trống.")
+
+        now = time.time()
+        aliases = json.dumps(p.get("aliases", [name.lower(), pid.lower()]), ensure_ascii=False)
+        category = p.get("category")
+        price = p.get("price")
+        stock = p.get("stock")
+        warranty_days = p.get("warranty_days")
+        description = p.get("description")
+        raw_variants = p.get("variants", [])
+        variants_json = json.dumps(raw_variants, ensure_ascii=False)
+        material = p.get("material")
+        care = p.get("care")
+        is_sys = 1 if pid in ('P-101', 'P-102', 'P-202') or p.get("is_system_immutable") else 0
+
+        extra = {}
+        for k, v in p.items():
+            if k not in {'id', 'name', 'aliases', 'category', 'price', 'stock',
+                        'warranty_days', 'description', 'variants', 'material',
+                        'care', 'is_system_immutable'}:
+                extra[k] = v
+        extra_json = json.dumps(extra, ensure_ascii=False)
+
+        with self.connection(write=True) as db:
+            existing = db.execute("SELECT 1 FROM products WHERE id=?", (pid,)).fetchone()
+            require(existing is None, 409, "product_exists", f"Sản phẩm {pid} đã tồn tại trong danh mục.")
+
+            db.execute("""
+                INSERT INTO products(id, name, aliases, category, price, stock, warranty_days,
+                                     description, variants, material, care, is_system_immutable,
+                                     extra_data, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (pid, name, aliases, category, price, stock, warranty_days,
+                  description, variants_json, material, care, is_sys,
+                  extra_json, now, now))
+
+            for v_str in raw_variants:
+                size, color = _parse_variant_string(v_str)
+                var_stock = max(0, stock // len(raw_variants)) if raw_variants and stock is not None else stock
+                var_id = f"{pid}-{size or 'STD'}-{color or 'STD'}".replace(" ", "_")
+                db.execute("""
+                    INSERT INTO product_variants(id, product_id, variant_name, size, color, stock, price)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT DO NOTHING
+                """, (var_id, pid, v_str, size, color, var_stock, price))
+
+            actor_ctx = actor or {"principal_id": "manager", "role": "manager", "actor_type": "principal"}
+            cid = actor_ctx.get("principal_id") or "manager"
+            self.log(db, cid, "product_created", None, product_id=pid, product=p, actor=actor_ctx)
+
+        return self.get_product(pid)
+
+    def update_product(self, pid, updates, actor=None):
+        require(isinstance(updates, dict), 400, "invalid_updates", "Dữ liệu cập nhật không hợp lệ.")
+        with self.connection(write=True) as db:
+            row = db.execute("SELECT * FROM products WHERE id=?", (pid,)).fetchone()
+            if row is None:
+                raise KeyError(f"Không tìm thấy sản phẩm {pid}.")
+
+            now = time.time()
+            cols = []
+            params = []
+            allowed_fields = {"name", "price", "warranty_days", "category", "description", "material", "care"}
+            for f in allowed_fields:
+                if f in updates:
+                    cols.append(f"{f}=?")
+                    params.append(updates[f])
+
+            if "aliases" in updates:
+                cols.append("aliases=?")
+                params.append(json.dumps(updates["aliases"], ensure_ascii=False))
+
+            existing_vars = db.execute("SELECT * FROM product_variants WHERE product_id=?", (pid,)).fetchall()
+            existing_map = {r["variant_name"]: dict(r) for r in existing_vars}
+            price_val = updates.get("price", row["price"])
+            explicit_variant_stocks = updates.get("variant_stocks", {})
+
+            if "variants" in updates:
+                cols.append("variants=?")
+                raw_vars = updates["variants"]
+                params.append(json.dumps(raw_vars, ensure_ascii=False))
+                db.execute("DELETE FROM product_variants WHERE product_id=?", (pid,))
+
+                new_var_records = []
+                for v_str in raw_vars:
+                    size, color = _parse_variant_string(v_str)
+                    if v_str in explicit_variant_stocks:
+                        var_stock = max(0, int(explicit_variant_stocks[v_str]))
+                    elif v_str in existing_map:
+                        # PRESERVE existing variant stock across metadata updates
+                        var_stock = existing_map[v_str]["stock"]
+                    else:
+                        var_stock = 0
+                    var_id = f"{pid}-{size or 'STD'}-{color or 'STD'}".replace(" ", "_")
+                    new_var_records.append((var_id, pid, v_str, size, color, var_stock, price_val))
+
+                for rec in new_var_records:
+                    db.execute("""
+                        INSERT INTO product_variants(id, product_id, variant_name, size, color, stock, price)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, rec)
+
+                # Total product stock is the sum of all variant stocks if variants exist
+                if new_var_records:
+                    total_variant_stock = sum(r[5] for r in new_var_records)
+                    cols.append("stock=?")
+                    params.append(total_variant_stock)
+                else:
+                    if "stock" in updates:
+                        cols.append("stock=?")
+                        params.append(updates["stock"])
+            else:
+                if explicit_variant_stocks and existing_map:
+                    for v_str, new_s in explicit_variant_stocks.items():
+                        if v_str in existing_map:
+                            db.execute("UPDATE product_variants SET stock=?, price=? WHERE product_id=? AND variant_name=?",
+                                       (max(0, int(new_s)), price_val, pid, v_str))
+                    v_sum = db.execute("SELECT COALESCE(SUM(stock), 0) FROM product_variants WHERE product_id=?", (pid,)).fetchone()[0]
+                    cols.append("stock=?")
+                    params.append(v_sum)
+                elif "stock" in updates:
+                    new_stock = updates["stock"]
+                    cols.append("stock=?")
+                    params.append(new_stock)
+                    if existing_vars and "price" in updates:
+                        db.execute("UPDATE product_variants SET price=? WHERE product_id=?", (price_val, pid))
+                elif "price" in updates and existing_vars:
+                    db.execute("UPDATE product_variants SET price=? WHERE product_id=?", (price_val, pid))
+
+            cols.append("updated_at=?")
+            params.append(now)
+            params.append(pid)
+
+            db.execute(f"UPDATE products SET {', '.join(cols)} WHERE id=?", tuple(params))
+
+            actor_ctx = actor or {"principal_id": "manager", "role": "manager", "actor_type": "principal"}
+            cid = actor_ctx.get("customer_id") or actor_ctx.get("principal_id") or "manager"
+            self.log(db, cid, "product_updated", None, product_id=pid, updates=updates, actor=actor_ctx)
+
+        return self.get_product(pid)
+
+    def delete_product(self, pid, actor=None):
+        if pid in ('P-101', 'P-102', 'P-202'):
+            raise ValueError(f"Sản phẩm {pid} là sản phẩm cơ sở hệ thống phục vụ kiểm thử, không được phép xóa.")
+        with self.connection(write=True) as db:
+            row = db.execute("SELECT * FROM products WHERE id=?", (pid,)).fetchone()
+            if row is None:
+                raise KeyError(f"Không tìm thấy sản phẩm {pid}.")
+            if row["is_system_immutable"]:
+                raise ValueError(f"Sản phẩm {pid} là sản phẩm cơ sở hệ thống, không được phép xóa.")
+
+            # Check if any orders reference this product
+            ref_orders = [r["id"] for r in db.execute("SELECT id FROM orders WHERE product_id=?", (pid,)).fetchall()]
+            if ref_orders:
+                raise ValueError(f"product_has_existing_orders: Sản phẩm {pid} đã phát sinh {len(ref_orders)} đơn hàng trong hệ thống ({', '.join(ref_orders[:3])}{'...' if len(ref_orders) > 3 else ''}). Không thể xóa để bảo toàn dữ liệu lịch sử đơn hàng và bảo hành.")
+
+            product_dict = self._row_to_product(row)
+            db.execute("DELETE FROM product_variants WHERE product_id=?", (pid,))
+            db.execute("DELETE FROM products WHERE id=?", (pid,))
+
+            actor_ctx = actor or {"principal_id": "manager", "role": "manager", "actor_type": "principal"}
+            cid = actor_ctx.get("customer_id") or actor_ctx.get("principal_id") or "manager"
+            self.log(db, cid, "product_deleted", None, product_id=pid, actor=actor_ctx)
+
+        return product_dict
+
+    def get_variant_stock(self, pid, size, color=None):
+        size_clean = (size or "").strip().upper()
+        color_clean = (color or "").strip().lower()
+        if color_clean in ("tiêu chuẩn", "standard", "default", ""):
+            color_clean = None
+
+        with self.connection() as db:
+            p_row = db.execute("SELECT stock FROM products WHERE id=?", (pid,)).fetchone()
+            if not p_row:
+                return VariantStockResult(None, "product_not_found")
+
+            rows = db.execute("SELECT * FROM product_variants WHERE product_id=?", (pid,)).fetchall()
+            if not rows:
+                st = p_row["stock"]
+                if st is None:
+                    return VariantStockResult(None, "stock_unknown")
+                if size_clean and size_clean not in ("FREE SIZE", "FREESIZE", "TIÊU CHUẨN", "STANDARD", "DEFAULT"):
+                    return VariantStockResult(None, "variant_not_found")
+                if color_clean:
+                    return VariantStockResult(None, "variant_not_found")
+                return VariantStockResult(st, "ok")
+
+            if color_clean:
+                matched = [r for r in rows if (r["size"] or "").strip().upper() == size_clean and (r["color"] or "").strip().lower() == color_clean]
+                if matched:
+                    st = matched[0]["stock"]
+                    if st is None:
+                        return VariantStockResult(None, "stock_unknown")
+                    return VariantStockResult(st, "ok")
+                return VariantStockResult(None, "variant_not_found")
+
+            matched_by_size = [r for r in rows if (r["size"] or "").strip().upper() == size_clean]
+            if matched_by_size:
+                if any(r["stock"] is None for r in matched_by_size):
+                    return VariantStockResult(None, "stock_unknown")
+                total_size_stock = sum(r["stock"] for r in matched_by_size)
+                return VariantStockResult(total_size_stock, "ok")
+
+            return VariantStockResult(None, "variant_not_found")
+
+    def get_catalog_revision(self):
+        with self.connection() as db:
+            p_row = db.execute("SELECT MAX(updated_at) FROM products").fetchone()
+            p_max = p_row[0] if p_row and p_row[0] is not None else 0.0
+            ev_row = db.execute("SELECT MAX(created_at) FROM business_events WHERE kind LIKE 'product_%'").fetchone()
+            ev_max = ev_row[0] if ev_row and ev_row[0] is not None else 0.0
+            return max(p_max, ev_max)
+
+
+    def manager_events(self, limit=100):
+        with self.connection() as db:
+            rows = db.execute(
+                "SELECT id, customer_id, created_at, kind, order_id, payload FROM business_events ORDER BY id DESC LIMIT ?",
+                (limit,)
+            ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            try:
+                d['payload'] = json.loads(d['payload']) if isinstance(d['payload'], str) else d['payload']
+            except Exception:
+                pass
+            result.append(d)
+        return result
+
 
     def add_customer(self, customer_id, name):
         require(isinstance(customer_id, str) and re.fullmatch(r'[A-Za-z0-9_-]{1,64}', customer_id)

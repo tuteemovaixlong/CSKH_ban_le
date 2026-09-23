@@ -2,7 +2,7 @@
 
 > **Trạng thái:** ACTIVE OPERATIONAL STATUS & EVIDENCE REPORT  
 > **Audit basis / Documentation baseline reviewed:** `b93eb5a`  
-> **Application snapshot đối chiếu:** `fd24e36` (Toàn bộ 340 tests Python regression PASS, 4/4 cổng hợp đồng PASS)  
+> **Application snapshot đối chiếu:** Nhánh `feature/fix-ui-02-manager-persistence` — Toàn bộ 353 tests Python regression PASS, 4/4 cổng hợp đồng PASS  
 > **EC2 Host:** `retailops-dev` / `i-0fd116d8927d0e412` / **t3.large** (Hiện đang **STOPPED** để tối ưu chi phí; phát triển an toàn trên local/CI)  
 > **Deploy EC2 gần nhất:** #141 tại snapshot `0b7256c`  
 > **Runtime containers:** PostgreSQL + Web + Admin + Caddy (Healthy khi EC2 hoạt động)  
@@ -17,7 +17,7 @@ Theo chuẩn phân cấp minh chứng của [`RELEASE_MANIFEST.md`](RELEASE_MANI
 
 | Module | Tên Module | Mức Triển Khai | Cấp Minh Chứng (Evidence) | Tồn Đọng Kỹ Thuật Chính (Gaps) |
 | :--- | :--- | :--- | :--- | :--- |
-| **Module 1** | **Hệ Thống Lõi TMĐT, 6 SOPs & MCP Server** | **PARTIAL** | **L1/L3 hỗn hợp** *(340 tests PASS, Staff Desk healthy)* | Catalog/Inventory hiện vẫn chạy file JSON / in-memory fallback trong container `read_only`; `check_inventory` tra cứu `stock_map` tĩnh. Khắc phục tại `PLAN_FIX_UI_02` (Phase 1 SSOT). |
+| **Module 1** | **Hệ Thống Lõi TMĐT, 6 SOPs & MCP Server** | **IMPLEMENTED** | **L1/L3 hỗn hợp** *(353 tests PASS, Staff Desk & Manager SSOT healthy)* | Đã hoàn tất Phase 1.1 (Truthful UX) và Phase 1.2 (Store Manager Persistence & Shared Catalog SSOT: bảng `products`, `product_variants` vào PostgreSQL v4 / SQLite v3, đồng bộ `check_inventory`, `dispute_agent`, audit events toàn shop, cùng 8 điểm khắc phục kiểm toán kỹ thuật từ GPT 6 Astra High). |
 | **Module 2** | **Đo Baseline Benchmark Cơ Sở & Ops Console** | **PARTIAL** | **L1/L3 hỗn hợp** *(250 ca offline 100% Routing)* | Importer Ops Console vẫn chia 3 ước tính token (`len // 3`) và gán cost $0.0; Tên chỉ số TTFT chưa đổi thành E2E Request Latency. Khắc phục tại `PLAN_FIX_UI_03` (Phase 1 Telemetry). |
 | **Module 3** | **Webhook Facebook Messenger (Omnichannel)** | **PLANNED** | **Design-only** *([PLAN_OMNICHANNEL_INTEGRATION.md](PLAN_OMNICHANNEL_INTEGRATION.md))* | Chưa có mã nguồn webhook endpoint, chưa tích hợp Meta App (xếp vào Phase 5 Demo). |
 | **Module 4** | **Cổng Quét Mã QR Demo Live** | **PARTIAL** | **L3** *(HTTPS sslip.io, Web mobile responsive)* | Đã có hạ tầng web di động sẵn sàng cho demo; Chưa có module sinh mã QR động / thẻ QR demo (xếp vào Phase 5 Demo). |
@@ -47,11 +47,22 @@ Theo chuẩn phân cấp minh chứng của [`RELEASE_MANIFEST.md`](RELEASE_MANI
 - Triển khai `retailops_mcp_server.py` hỗ trợ stdio và SSE port 8002, kết nối qua `retailops/workflow/mcp_client.py` và kiểm thử tự động tại `tests/test_mcp_protocol.py` (100% PASS).
 
 ### 2.5. Hoàn Thiện CI/CD & Xác Minh Hợp Đồng Hệ Thống
-- Snapshot `fd24e36` vượt qua toàn bộ **340 Python tests OK**, đồng thời vượt qua 4 cổng kiểm định nghiêm ngặt:
+- Nhánh `feature/fix-ui-02-manager-persistence` vượt qua toàn bộ **353 Python tests OK** (0 failures), đồng thời vượt qua 4 cổng kiểm định nghiêm ngặt:
   - `python scripts/check_docs_contract.py` $\rightarrow$ PASS (4/4 gates).
   - `python scripts/check_deployment_contract.py` $\rightarrow$ PASS.
   - `python scripts/check_eval_dataset.py` $\rightarrow$ PASS.
-  - `python scripts/check_live_e2e_contract.py` $\rightarrow$ PASS.
+  - `python scripts/build_agent_notebook.py --check` $\rightarrow$ PASS (Đồng bộ notebook artifacts).
+
+### 2.6. Hoàn Thành Phase 1.1 (Truthful UX) & Phase 1.2 (Store Manager Persistence SSOT)
+- **Phase 1.1 (Truthful UX - PR FIX01 - Commit `56fda06`)**: Xóa số 0 tĩnh khi KPI lỗi mạng, bỏ tự gán "Tiêu chuẩn" cho variants, dọn dữ liệu mẫu prefill trong modal quản lý.
+- **Phase 1.2 (Store Manager Persistence & Shared Inventory SSOT - PR FIX02)**:
+  - Chuyển toàn bộ Catalog & Tồn kho vào database SSOT (SQLite schema `v3`, PostgreSQL schema `v4`).
+  - Lớp proxy `CatalogMapping` đồng bộ thời gian thực giữa các session, không bị mất dữ liệu khi restart container.
+  - Khớp nối `check_inventory` và `dispute_agent` trực tiếp với tồn kho variant và `warranty_days` trong DB, xóa hoàn toàn số liệu giả định fallback (`stock_qty=6`).
+  - Chuẩn hóa `ActorContext` và mở rộng phạm vi Audit Trail toàn shop qua `GET /api/manager/events`.
+  - Phân tách DOM ID `btn-sidebar-manager-nav` và `btn-panel-manager-banner` trong giao diện, tự động mở Manager Console khi đăng nhập vai trò `manager`.
+  - Khắc phục triệt để 8 phản hồi kiểm toán kỹ thuật từ GPT 6 Astra High: bảo toàn tồn kho variant khi update product; khớp chính xác size/color và phân biệt rõ `stock_unknown`/`variant_not_found`/`out_of_stock`/`in_stock`; vô hiệu hóa cache cross-session khi Catalog thay đổi; đồng bộ bảo hành và chặn proposal cho đơn không tồn tại; tối ưu thứ tự import bảng; backfill toàn bộ `product_id` cho orders; chặn xóa sản phẩm đã có đơn; tách bạch `principal_id` và `customer_id`.
+  - Bổ sung 8 automated tests mới tại `tests/test_manager_crud.py`, đạt **353/353 tests PASS**.
 
 ---
 
@@ -59,11 +70,11 @@ Theo chuẩn phân cấp minh chứng của [`RELEASE_MANIFEST.md`](RELEASE_MANI
 
 Hệ thống tuân thủ nghiêm ngặt lộ trình phụ thuộc kỹ thuật 7 giai đoạn đã thống nhất:
 
-* **Phase 0 (Hiện tại)**: Documentation Truth & Reconciliation — Đồng bộ toàn bộ tài liệu dự án, ma trận trạng thái, loại bỏ số liệu giả định, kiểm tra `check_docs_contract.py` xanh.
+* **Phase 0**: Documentation Truth & Reconciliation — Đã hoàn tất đồng bộ toàn bộ tài liệu dự án, ma trận trạng thái, loại bỏ số liệu giả định.
 * **Phase 1**: Data & Observability Foundation:
-  - PR 1.1: [PLAN_FIX_UI_01_TRUTHFUL_UX.md](PLAN_FIX_UI_01_TRUTHFUL_UX.md) (Dọn dẹp fallback lỗi KPI, variant).
-  - PR 1.2: [PLAN_FIX_UI_02_MANAGER_PERSISTENCE.md](PLAN_FIX_UI_02_MANAGER_PERSISTENCE.md) (P0 SSOT: Catalog & Kho hàng vào PostgreSQL).
-  - PR 1.3: [PLAN_FIX_UI_03_OPSCONSOLE_INTEGRITY.md](PLAN_FIX_UI_03_OPSCONSOLE_INTEGRITY.md) (Truthful Telemetry: Token/Cost thật & Concurrency fields).
+  - PR 1.1: [PLAN_FIX_UI_01_TRUTHFUL_UX.md](PLAN_FIX_UI_01_TRUTHFUL_UX.md) (**ĐÃ HOÀN THÀNH** — Merged main `56fda06`).
+  - PR 1.2: [PLAN_FIX_UI_02_MANAGER_PERSISTENCE.md](PLAN_FIX_UI_02_MANAGER_PERSISTENCE.md) (**ĐÃ HOÀN THÀNH** — Branch `feature/fix-ui-02-manager-persistence` `107aa0c`).
+  - PR 1.3: [PLAN_FIX_UI_03_OPSCONSOLE_INTEGRITY.md](PLAN_FIX_UI_03_OPSCONSOLE_INTEGRITY.md) (**TIẾP THEO**: Truthful Telemetry: Token/Cost thật & Concurrency fields).
 * **Phase 2**: Triển khai GraphRAG Apache AGE v6.2 ([PLAN_GRAPHRAG_AGE.md](PLAN_GRAPHRAG_AGE.md)) trên nhánh `feature/graphrag-age` dựa trên Catalog SSOT từ Phase 1.
 * **Phase 3**: Triển khai Runtime Efficiency & Bounded Concurrency ([PLAN_RUNTIME_EFFICIENCY_CONCURRENCY.md](PLAN_RUNTIME_EFFICIENCY_CONCURRENCY.md)).
 * **Phase 4**: Đo lường thực nghiệm khoa học (GraphRAG A/B, Concurrency load test, Đối kháng Gemma-4 vs DeepSeek API) phục vụ Chương 4 Luận văn.

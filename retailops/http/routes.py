@@ -85,7 +85,28 @@ def _parse_non_negative_int(val):
     return False, None
 
 
-def api_result(app, customer, method, path, body=None, idempotency_key=None):
+def _extract_actor(app, customer, binding=None):
+    binding = binding or getattr(app, 'current_binding', None)
+    principal_id = None
+    tenant_id = None
+    display_name = None
+    if binding:
+        principal_id = getattr(binding, 'principal_id', None)
+        tenant_id = getattr(binding, 'tenant_id', None)
+        display_name = getattr(binding, 'display_name', None)
+    if not principal_id:
+        principal_id = getattr(app, 'principal_id', None) or ('manager' if getattr(app, 'role', '') == 'manager' else customer)
+    return {
+        "principal_id": principal_id,
+        "role": getattr(app, 'role', 'customer'),
+        "tenant_id": tenant_id or getattr(app, 'tenant_id', None),
+        "customer_id": customer,
+        "display_name": display_name,
+        "actor_type": "principal"
+    }
+
+
+def api_result(app, customer, method, path, body=None, idempotency_key=None, binding=None):
     if method == "GET":
         if path == "/api/session":
             return (200, {"customer_id": customer, "name": "Mai Anh" if customer == "C-001" else "Khách mẫu",
@@ -168,6 +189,9 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
             return (200, {'proposals': [approval.proposal(app.store, customer, r['id']) for r in rows]})
         if path == "/api/events":
             return (200, {"events": app.store.events(customer)})
+        if path == "/api/manager/events":
+            app.require_permission(MANAGER)
+            return (200, {"events": app.store.manager_events(limit=100)})
         m = re.fullmatch(r"/api/orders/([A-Z]{1,6}-[0-9]{1,8})", path)
         if m:
             return (200, {"order": app.store.lookup(customer, m[1])})
@@ -275,7 +299,12 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
                 "stock": stock, "warranty_days": warranty_days, "material": body.get("material"),
                 "care": body.get("care"), "is_system_immutable": False
             }
-            app.catalog.add_product(product)
+            actor = _extract_actor(app, customer, binding)
+            app.catalog.add_product(product, actor=actor)
+            if hasattr(app, 'tool_cache'):
+                app.tool_cache.invalidate_product(pid)
+            if hasattr(app, 'semantic_cache') and app.semantic_cache:
+                app.semantic_cache.clear()
             return (201, {"status": "ok", "product": product, "message": f"Đã thêm sản phẩm {name} ({pid}) vào catalog."})
         if path == "/api/manager/products/update":
             app.require_permission(MANAGER)
@@ -318,21 +347,36 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
                     updates["variants"] = [str(v).strip() for v in raw_vars if str(v).strip()]
                 else:
                     updates["variants"] = []
+            if "variant_stocks" in body and isinstance(body["variant_stocks"], dict):
+                updates["variant_stocks"] = body["variant_stocks"]
             for k in ("material", "care"):
                 if k in body:
                     updates[k] = body[k]
-            product = app.catalog.update_product(pid, updates)
+            actor = _extract_actor(app, customer, binding)
+            product = app.catalog.update_product(pid, updates, actor=actor)
+            if hasattr(app, 'tool_cache'):
+                app.tool_cache.invalidate_product(pid)
+            if hasattr(app, 'semantic_cache') and app.semantic_cache:
+                app.semantic_cache.clear()
             return (200, {"status": "ok", "product": product, "message": f"Đã cập nhật sản phẩm {pid}."})
         if path == "/api/manager/products/delete":
             app.require_permission(MANAGER)
             require(isinstance(body, dict) and "id" in body, 400, "invalid_body", "Thiếu mã sản phẩm.")
             pid = str(body["id"]).strip().upper()
+            actor = _extract_actor(app, customer, binding)
             try:
-                removed = app.catalog.delete_product(pid)
+                removed = app.catalog.delete_product(pid, actor=actor)
             except ValueError as exc:
-                raise ApiError(400, "system_product_immutable", str(exc))
+                err_msg = str(exc)
+                if "product_has_existing_orders" in err_msg:
+                    raise ApiError(400, "product_has_existing_orders", err_msg)
+                raise ApiError(400, "system_product_immutable", err_msg)
             except KeyError as exc:
                 raise ApiError(404, "product_not_found", str(exc))
+            if hasattr(app, 'tool_cache'):
+                app.tool_cache.invalidate_product(pid)
+            if hasattr(app, 'semantic_cache') and app.semantic_cache:
+                app.semantic_cache.clear()
             return (200, {"status": "ok", "removed": removed, "message": f"Đã xóa sản phẩm {pid}."})
         if path == "/api/manager/orders/update-status":
             app.require_permission(MANAGER)

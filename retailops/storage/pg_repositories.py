@@ -11,6 +11,7 @@ class PostgresBusinessStore(BusinessStore):
         if create:
             with self.connection(write=True) as db:
                 initialize(db, self.schema, 'business')
+                self.seed_catalog(db)
         else:
             check_schema(dsn, self.schema, 'business')
 

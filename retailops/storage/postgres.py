@@ -5,8 +5,8 @@ import re
 from retailops.core import ApiError
 
 IDENTITY_SCHEMA = 'retailops_identity'
-BUSINESS_SCHEMA_CURRENT = 3
-BUSINESS_SCHEMA_COMPATIBLE = (2, 3)  # v2 remains readable during the attended pgvector rollout.
+BUSINESS_SCHEMA_CURRENT = 4
+BUSINESS_SCHEMA_COMPATIBLE = (2, 3, 4)  # v2/v3 remain readable during migrations.
 
 
 def driver():
