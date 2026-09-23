@@ -1,9 +1,9 @@
 # Module 2: Store Manager Persistence, Shared Inventory & Audit Scope (P0)
 
-> **Trạng thái:** IMPLEMENTED & VERIFIED (Hoàn tất triển khai & kiểm thử 345/345 tests PASS)  
-> **Mức độ minh chứng (Evidence):** L1 Automated Test Suite & Code SSOT Architecture Verified  
-> **Audit basis / Documentation baseline reviewed:** `b93eb5a` · **Application verified:** `107aa0c` (Branch `feature/fix-ui-02-manager-persistence`)  
-> **Ngày hoàn thành:** 2026-09-22  
+> **Trạng thái:** MERGED TO MAIN & VERIFIED (PR #33 merged tại `a6ec080`, ổn định CI tại `d7ce461`)  
+> **Mức độ minh chứng (Evidence):** L1 Automated Test Suite (353/353 PASS), L2 Docker Build/Verify PASS, GitHub Actions CI PASS  
+> **Audit basis / Documentation baseline reviewed:** `b93eb5a` · **Application verified:** `d7ce461` (nhánh `main`)  
+> **Ngày hoàn thành & nghiệm thu:** 2026-09-23 / 2026-09-24  
 > **Mục tiêu:** Giải quyết tận gốc vấn đề kiến trúc: Product Catalog & Inventory phải có Single Source of Truth (SSOT), bảo toàn dữ liệu sau khi restart container, đồng bộ tức thì giữa Store Manager và Khách hàng / Chatbot AI, và sửa phạm vi Audit Trail toàn shop.
 
 ---
@@ -139,4 +139,12 @@ Dựa trên kết quả rà soát chi tiết của GPT 6 Astra High, nhánh `fea
 8. **[P2] Loại bỏ fallback ngầm trong `loadManagerAuditTrail`**:
    - *Khắc phục*: Trong `web/app.js`, loại bỏ việc tự động fallback sang `/api/events` khi `/api/manager/events` gặp lỗi để thông báo lỗi rõ ràng, minh bạch cho quản lý.
    - *Minh chứng*: Source code verified, không còn fallback ngầm.
+
+9. **Hợp Nhất Main (PR #33) & Ổn Định Tương Thích PostgreSQL / Docker (`85834d6`, `d7ce461`)**:
+   - *Khắc phục*: 
+     - Chuẩn hóa index dict_row cho PostgreSQL trên các hàm `get_catalog_revision()`, `update_product()`.
+     - Tham số hóa câu lệnh `LIKE ?` tránh hiểu nhầm `%` thành format placeholder trong psycopg.
+     - Cập nhật test knowledge schema lên version 4.
+     - Bổ sung `data/deepseek_seed_data.json` vào Dockerfile.
+   - *Minh chứng*: GitHub Actions CI Run #236 PASS 100% (offline + colab-python313), Ops Console Run #143 PASS 100%, Deploy container verification PASS 100%. Toàn bộ 353 regression tests xanh hoàn toàn.
 

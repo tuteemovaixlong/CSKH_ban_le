@@ -2,10 +2,10 @@
 
 > **Trạng thái:** ACTIVE OPERATIONAL STATUS & EVIDENCE REPORT  
 > **Audit basis / Documentation baseline reviewed:** `b93eb5a`  
-> **Application snapshot đối chiếu:** Nhánh `feature/fix-ui-02-manager-persistence` — Toàn bộ 353 tests Python regression PASS, 4/4 cổng hợp đồng PASS  
-> **EC2 Host:** `retailops-dev` / `i-0fd116d8927d0e412` / **t3.large** (Hiện đang **STOPPED** để tối ưu chi phí; phát triển an toàn trên local/CI)  
-> **Deploy EC2 gần nhất:** #141 tại snapshot `0b7256c`  
-> **Runtime containers:** PostgreSQL + Web + Admin + Caddy (Healthy khi EC2 hoạt động)  
+> **Application snapshot đối chiếu:** Nhánh `main` tại commit `d7ce461` (PR #33 merged `a6ec080`, hotfix compatibility `85834d6` & `d7ce461`)  
+> **Kiểm thử & CI:** 353 unit tests PASS (0 failures), 4/4 cổng hợp đồng PASS, GitHub Actions CI (Run #236) & Ops Console (Run #143) **100% SUCCESS**  
+> **EC2 Host:** `retailops-dev` / `i-0fd116d8927d0e412` / **t3.large** (Hiện đang **STOPPED** qua đêm để tối ưu chi phí cloud)  
+> **Deploy status:** Container image build & test **PASS 100%**; sẵn sàng kích hoạt lại khi bật EC2  
 > **Lộ trình kỹ thuật tổng thể:** Xem chi tiết tại [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md)  
 > **Báo cáo sự cố chi tiết:** [INCIDENT_RECOVERY_2026-09-21.md](INCIDENT_RECOVERY_2026-09-21.md)
 
@@ -64,6 +64,17 @@ Theo chuẩn phân cấp minh chứng của [`RELEASE_MANIFEST.md`](RELEASE_MANI
   - Khắc phục triệt để 8 phản hồi kiểm toán kỹ thuật từ GPT 6 Astra High: bảo toàn tồn kho variant khi update product; khớp chính xác size/color và phân biệt rõ `stock_unknown`/`variant_not_found`/`out_of_stock`/`in_stock`; vô hiệu hóa cache cross-session khi Catalog thay đổi; đồng bộ bảo hành và chặn proposal cho đơn không tồn tại; tối ưu thứ tự import bảng; backfill toàn bộ `product_id` cho orders; chặn xóa sản phẩm đã có đơn; tách bạch `principal_id` và `customer_id`.
   - Bổ sung 8 automated tests mới tại `tests/test_manager_crud.py`, đạt **353/353 tests PASS**.
 
+### 2.7. Hợp Nhất Vào Main & Ổn Định Toàn Bộ CI/CD Pipeline (Commit `85834d6` & `d7ce461`)
+- **Merge PR #33 vào main** (commit `a6ec080`): Tích hợp toàn bộ Phase 1.2 Store Manager Persistence vào nhánh chính.
+- **Khắc phục lỗi index psycopg `dict_row`**: Sửa `p_row[0]`, `ev_row[0]`, `v_sum[0]` thành alias name (`SELECT ... AS max_val / total_stock / cnt`) tại `store.py`, `routes.py`, `demo.py`, đảm bảo tương thích 100% cả SQLite và PostgreSQL.
+- **Tham số hóa câu lệnh LIKE**: Sửa `WHERE kind LIKE 'product_%'` thành `WHERE kind LIKE ?` kèm param để chống lỗi hiểu nhầm `%` thành format placeholder trong psycopg.
+- **Cập nhật Schema Version Assertion**: Đồng bộ test `tests/test_knowledge.py` assert đúng version hiện hành `BUSINESS_SCHEMA_CURRENT = 4`.
+- **Đóng gói Docker Seed Data**: Bổ sung `COPY data/deepseek_seed_data.json /app/data/deepseek_seed_data.json` vào `Dockerfile`, đưa bước kiểm thử container trong Deploy to EC2 về trạng thái PASS 100%.
+- **Trạng thái GitHub Actions hiện tại**:
+  - `CI` ([Run #236](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/35892629194)): **SUCCESS (Xanh 100%)**
+  - `Ops Console` ([Run #143](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/35892629115)): **SUCCESS (Xanh 100%)**
+  - `Deploy baseline runner to EC2`: Bước Verify & Test container đã **PASS 100%**; tạm dừng tại bước SSM send-command do EC2 instance đang STOPPED.
+
 ---
 
 ## 3. LỘ TRÌNH TRIỂN KHAI TIẾP THEO (NEXT PHASES ROADMAP)
@@ -73,10 +84,55 @@ Hệ thống tuân thủ nghiêm ngặt lộ trình phụ thuộc kỹ thuật 7
 * **Phase 0**: Documentation Truth & Reconciliation — Đã hoàn tất đồng bộ toàn bộ tài liệu dự án, ma trận trạng thái, loại bỏ số liệu giả định.
 * **Phase 1**: Data & Observability Foundation:
   - PR 1.1: [PLAN_FIX_UI_01_TRUTHFUL_UX.md](PLAN_FIX_UI_01_TRUTHFUL_UX.md) (**ĐÃ HOÀN THÀNH** — Merged main `56fda06`).
-  - PR 1.2: [PLAN_FIX_UI_02_MANAGER_PERSISTENCE.md](PLAN_FIX_UI_02_MANAGER_PERSISTENCE.md) (**ĐÃ HOÀN THÀNH** — Branch `feature/fix-ui-02-manager-persistence` `107aa0c`).
+  - PR 1.2: [PLAN_FIX_UI_02_MANAGER_PERSISTENCE.md](PLAN_FIX_UI_02_MANAGER_PERSISTENCE.md) (**ĐÃ HOÀN THÀNH** — Merged main `a6ec080`, CI/CD stabilized `d7ce461`).
   - PR 1.3: [PLAN_FIX_UI_03_OPSCONSOLE_INTEGRITY.md](PLAN_FIX_UI_03_OPSCONSOLE_INTEGRITY.md) (**TIẾP THEO**: Truthful Telemetry: Token/Cost thật & Concurrency fields).
 * **Phase 2**: Triển khai GraphRAG Apache AGE v6.2 ([PLAN_GRAPHRAG_AGE.md](PLAN_GRAPHRAG_AGE.md)) trên nhánh `feature/graphrag-age` dựa trên Catalog SSOT từ Phase 1.
 * **Phase 3**: Triển khai Runtime Efficiency & Bounded Concurrency ([PLAN_RUNTIME_EFFICIENCY_CONCURRENCY.md](PLAN_RUNTIME_EFFICIENCY_CONCURRENCY.md)).
 * **Phase 4**: Đo lường thực nghiệm khoa học (GraphRAG A/B, Concurrency load test, Đối kháng Gemma-4 vs DeepSeek API) phục vụ Chương 4 Luận văn.
 * **Phase 5**: Demo Enhancements (Facebook Messenger Webhook & Cổng QR Live).
 * **Phase 6**: Post-Thesis Scaling (Distillation, LoRA Fine-Tuning, AWS Multi-AZ).
+
+---
+
+## 4. QUY TRÌNH BẬT MÁY & ĐỒNG BỘ IP SÁNG MAI (COLD-START & IP REBIND RUNBOOK)
+
+Khi dừng máy qua đêm và bật lại vào sáng hôm sau, AWS sẽ cấp Public IPv4 mới cho instance `i-0fd116d8927d0e412` (do không dùng Elastic IP). Quy trình 4 bước đơn giản để kích hoạt lại toàn bộ hệ thống:
+
+```
+[1. Start EC2 Console] ──> [2. Cập nhật IP trong public.env] ──> [3. Re-run Deploy Job] ──> [4. Verify Live Smoke]
+```
+
+### Bước 1: Khởi Động Instance Trên AWS Console
+1. Truy cập [AWS EC2 Console (us-east-1)](https://us-east-1.console.aws.amazon.com/ec2/home?region=us-east-1#Instances:instanceState=stopped).
+2. Tích chọn instance `i-0fd116d8927d0e412` $\rightarrow$ Nhấn **Instance state** $\rightarrow$ Chọn **Start instance**.
+3. Chờ ~1-2 phút cho instance chuyển sang `Running` và lấy địa chỉ **Public IPv4** mới (ví dụ: `X.X.X.X`).
+
+### Bước 2: Cập Nhật IP Mới Vào `public.env` (Qua SSM Session Manager)
+1. Trong EC2 Console, chọn instance `i-0fd116d8927d0e412` $\rightarrow$ Nhấn **Connect** $\rightarrow$ Chọn tab **Session Manager** $\rightarrow$ Nhấn **Connect**.
+2. Chạy lệnh cập nhật (thay `X-X-X-X` bằng IP mới với dấu gạch ngang, ví dụ IP `54.210.88.99` thì hostname là `retailops.54-210-88-99.sslip.io`):
+```bash
+sudo sed -i 's/RETAILOPS_PUBLIC_HOST=.*/RETAILOPS_PUBLIC_HOST=retailops.X-X-X-X.sslip.io/' /opt/retailops/public.env
+sudo sed -i 's|RETAILOPS_PUBLIC_ORIGIN=.*|RETAILOPS_PUBLIC_ORIGIN=https://retailops.X-X-X-X.sslip.io|' /opt/retailops/public.env
+```
+3. Kiểm tra lại giá trị đã cập nhật:
+```bash
+sudo grep '^RETAILOPS_PUBLIC_' /opt/retailops/public.env
+```
+
+### Bước 3: Kích Hoạt Triển Khai (Deploy) Tự Động
+1. Mở GitHub Actions: [Deploy baseline runner to EC2 #149](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/35892629094).
+2. Nhấn nút **Re-run failed jobs** (hoặc vào tab *Actions* $\rightarrow$ *Deploy baseline runner to EC2* $\rightarrow$ *Run workflow* trên nhánh `main`).
+3. Workflow sẽ tự động:
+   - Đẩy Docker image mới nhất lên AWS ECR.
+   - Gửi lệnh qua SSM xuống EC2 để kích hoạt container mới.
+   - Cập nhật chứng chỉ TLS Caddy cho domain mới và khởi chạy web service.
+
+### Bước 4: Kiểm Tra Live Smoke & Trải Nghiệm Ứng Dụng
+1. Trong SSM Session Manager, chạy kiểm tra nhanh:
+```bash
+sudo python3 /opt/retailops/live-e2e.py --mode smoke
+```
+2. Mở trình duyệt truy cập: `https://retailops.X-X-X-X.sslip.io`
+   - Đăng nhập tài khoản demo (`customer`, `manager` hoặc Google Login).
+   - Kiểm tra Catalog và Inventory đã lưu vĩnh viễn trong DB, trải nghiệm Store Manager Console và Chatbot AI.
+
