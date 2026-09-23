@@ -135,10 +135,22 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                     csat_ratings = [r['rating'] for r in fb_rows if r['feedback_type'] == 'session_csat' and r.get('rating') is not None]
                     avg_csat = round(sum(csat_ratings) / len(csat_ratings), 1) if csat_ratings else None
                     csat_sample_size = len(csat_ratings)
-                    esc_row = db.execute("SELECT COUNT(DISTINCT conversation_id) FROM conversation_feedback WHERE feedback_type = 'human_handoff'").fetchone()
-                    esc_count = esc_row[0] if esc_row else 0
-                    conv_row = db.execute("SELECT COUNT(*) FROM conversations").fetchone()
-                    total_convs = conv_row[0] if conv_row else 0
+                    esc_row = db.execute("SELECT COUNT(DISTINCT conversation_id) AS cnt FROM conversation_feedback WHERE feedback_type = 'human_handoff'").fetchone()
+                    if esc_row:
+                        try:
+                            esc_count = esc_row["cnt"] if "cnt" in esc_row else esc_row[0]
+                        except (TypeError, KeyError, IndexError):
+                            esc_count = esc_row[0] if esc_row else 0
+                    else:
+                        esc_count = 0
+                    conv_row = db.execute("SELECT COUNT(*) AS cnt FROM conversations").fetchone()
+                    if conv_row:
+                        try:
+                            total_convs = conv_row["cnt"] if "cnt" in conv_row else conv_row[0]
+                        except (TypeError, KeyError, IndexError):
+                            total_convs = conv_row[0] if conv_row else 0
+                    else:
+                        total_convs = 0
                     if total_convs > 0:
                         escalation_rate = round((esc_count / total_convs) * 100, 1)
                         ai_resolution_rate = round(100.0 - escalation_rate, 1)

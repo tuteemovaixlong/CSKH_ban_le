@@ -366,9 +366,16 @@ class BusinessStore:
                         if v_str in existing_map:
                             db.execute("UPDATE product_variants SET stock=?, price=? WHERE product_id=? AND variant_name=?",
                                        (max(0, int(new_s)), price_val, pid, v_str))
-                    v_sum = db.execute("SELECT COALESCE(SUM(stock), 0) FROM product_variants WHERE product_id=?", (pid,)).fetchone()[0]
+                    v_sum_row = db.execute("SELECT COALESCE(SUM(stock), 0) AS total_stock FROM product_variants WHERE product_id=?", (pid,)).fetchone()
+                    if v_sum_row:
+                        try:
+                            v_sum = v_sum_row["total_stock"] if "total_stock" in v_sum_row else v_sum_row[0]
+                        except (TypeError, KeyError, IndexError):
+                            v_sum = v_sum_row[0] if v_sum_row else 0
+                    else:
+                        v_sum = 0
                     cols.append("stock=?")
-                    params.append(v_sum)
+                    params.append(int(v_sum or 0))
                 elif "stock" in updates:
                     new_stock = updates["stock"]
                     cols.append("stock=?")
@@ -457,10 +464,26 @@ class BusinessStore:
 
     def get_catalog_revision(self):
         with self.connection() as db:
-            p_row = db.execute("SELECT MAX(updated_at) FROM products").fetchone()
-            p_max = p_row[0] if p_row and p_row[0] is not None else 0.0
-            ev_row = db.execute("SELECT MAX(created_at) FROM business_events WHERE kind LIKE 'product_%'").fetchone()
-            ev_max = ev_row[0] if ev_row and ev_row[0] is not None else 0.0
+            p_row = db.execute("SELECT MAX(updated_at) AS max_val FROM products").fetchone()
+            p_max = 0.0
+            if p_row:
+                try:
+                    val = p_row["max_val"] if "max_val" in p_row else p_row[0]
+                except (TypeError, KeyError, IndexError):
+                    val = p_row[0] if p_row else None
+                if val is not None:
+                    p_max = float(val)
+
+            ev_row = db.execute("SELECT MAX(created_at) AS max_val FROM business_events WHERE kind LIKE 'product_%'").fetchone()
+            ev_max = 0.0
+            if ev_row:
+                try:
+                    val = ev_row["max_val"] if "max_val" in ev_row else ev_row[0]
+                except (TypeError, KeyError, IndexError):
+                    val = ev_row[0] if ev_row else None
+                if val is not None:
+                    ev_max = float(val)
+
             return max(p_max, ev_max)
 
 

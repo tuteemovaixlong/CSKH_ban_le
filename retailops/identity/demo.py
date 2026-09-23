@@ -87,7 +87,14 @@ class GuestSessions:
             secret = secrets.token_urlsafe(32)
             sid = hashlib.sha256(secret.encode()).hexdigest()
             with self.control.connection(write=True) as db:
-                count = db.execute('SELECT count(*) FROM guest_sessions').fetchone()[0]
+                cnt_row = db.execute('SELECT count(*) AS cnt FROM guest_sessions').fetchone()
+                if cnt_row:
+                    try:
+                        count = cnt_row['cnt'] if 'cnt' in cnt_row else cnt_row[0]
+                    except (TypeError, KeyError, IndexError):
+                        count = cnt_row[0] if cnt_row else 0
+                else:
+                    count = 0
                 require(count < self.capacity, 429, 'demo_capacity', 'Demo đã đủ phiên. Vui lòng thử lại sau.')
                 db.execute('INSERT INTO guest_sessions VALUES (?,?,?)',
                            (sid, self.invite_hash, time.time() + SESSION_SECONDS))
@@ -100,7 +107,14 @@ class GuestSessions:
             secret = secrets.token_urlsafe(32)
             sid = hashlib.sha256(secret.encode()).hexdigest()
             with self.control.connection(write=True) as db:
-                count = db.execute('SELECT count(*) FROM guest_sessions').fetchone()[0]
+                cnt_row = db.execute('SELECT count(*) AS cnt FROM guest_sessions').fetchone()
+                if cnt_row:
+                    try:
+                        count = cnt_row['cnt'] if 'cnt' in cnt_row else cnt_row[0]
+                    except (TypeError, KeyError, IndexError):
+                        count = cnt_row[0] if cnt_row else 0
+                else:
+                    count = 0
                 require(count < self.capacity, 429, 'demo_capacity', 'Demo đã đủ phiên. Vui lòng thử lại sau.')
                 db.execute('INSERT INTO guest_sessions VALUES (?,?,?)',
                            (sid, self.invite_hash, time.time() + SESSION_SECONDS))

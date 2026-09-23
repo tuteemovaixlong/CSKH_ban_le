@@ -78,6 +78,7 @@ class KnowledgePostgresTests(unittest.TestCase):
     def test_v2_store_stays_readable_until_explicit_v3_migration(self):
         from retailops.knowledge.repository import KnowledgeRepository
         from retailops.storage.pg_schema import initialize
+        from retailops.storage.postgres import BUSINESS_SCHEMA_CURRENT
         store = self.stores[0]
         with store.connection(write=True) as db:
             db.execute("DROP TABLE knowledge_chunks")
@@ -90,5 +91,5 @@ class KnowledgePostgresTests(unittest.TestCase):
         with compatible.connection(write=True) as db:
             initialize(db, compatible.schema, "business")
         with compatible.connection() as db:
-            self.assertEqual(db.execute("SELECT version FROM retailops_schema").fetchone()["version"], 3)
+            self.assertEqual(db.execute("SELECT version FROM retailops_schema").fetchone()["version"], BUSINESS_SCHEMA_CURRENT)
         self.assertEqual(KnowledgeRepository(compatible).search("hủy đơn"), [])
