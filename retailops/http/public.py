@@ -127,7 +127,8 @@ class PublicWeb:
                 self.sessions.logout(cookie)
                 headers.append(('Set-Cookie', f'{self.sessions.cookie_name}=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0'))
                 return 200, {'logged_out': True}, mime, headers
-            status, result = api_result(app, binding.customer_id, method, path, body, env.get('HTTP_IDEMPOTENCY_KEY'))
+            app.current_binding = binding
+            status, result = api_result(app, binding.customer_id, method, path, body, env.get('HTTP_IDEMPOTENCY_KEY'), binding=binding)
             if path == '/api/session':
                 result.update(self.sessions.metadata())
                 if binding.principal_id is not None:

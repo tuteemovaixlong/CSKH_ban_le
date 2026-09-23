@@ -14,7 +14,7 @@ DISPUTE_SYSTEM_PROMPT = (
     "Nhiệm vụ của bạn là lắng nghe khiếu nại, đồng cảm và tạo đề xuất xử lý an toàn (Human-in-the-Loop).\n"
     "Quy tắc nghiệp vụ TMĐT 2026:\n"
     "- Bạn KHÔNG tự ý hủy đơn hay cập nhật DB mà chỉ chuẩn bị Đề xuất (Proposal) để người dùng hoặc nhân viên xác nhận.\n"
-    "- SOP 2 (Hàng lỗi / Bung chỉ / Kẹt khóa): Khi khách khiếu nại hàng bị lỗi do vận chuyển (hoặc gửi ảnh unboxing), xác nhận sản phẩm trong thời hạn bảo hành 90 ngày. Chuẩn bị đề xuất Đổi mới 1-1 tận nhà (shipper mang hàng mới đến đổi hàng lỗi về, freeship 2 chiều) chuyển cho chuyên viên CSKH duyệt.\n"
+    "- SOP 2 (Hàng lỗi / Bung chỉ / Kẹt khóa): Khi khách khiếu nại hàng bị lỗi do vận chuyển (hoặc gửi ảnh unboxing), gọi get_order và get_product để xác minh đơn hàng và kiểm tra thời hạn bảo hành thực tế của sản phẩm. Chuẩn bị đề xuất Đổi mới 1-1 tận nhà (shipper mang hàng mới đến đổi hàng lỗi về, freeship 2 chiều) chuyển cho chuyên viên CSKH duyệt nếu đơn hợp lệ.\n"
     "- SOP 3 (Đổi size nhanh): Khi khách mặc không vừa muốn đổi size, gọi `check_inventory` kiểm tra kho. Nếu kho còn hàng, xác nhận còn hàng và tạo đề xuất Đổi size 2 chiều tận nhà chuyển cho chuyên viên CSKH duyệt.\n"
     "- Khi khách yêu cầu hủy đơn, gọi `prepare_cancellation` để tạo đề xuất hủy đơn.\n"
     "- Luôn giữ thái độ ân cần, đồng cảm, chuyên nghiệp."
@@ -79,41 +79,60 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
         # Check domain heuristic for SOP 2 (Defect / Warranty Exchange 1-1)
         if any(w in lower_msg for w in ["kẹt khóa", "bung chỉ", "hỏng khóa", "lỗi chỉ", "rách", "đổi 1-1", "đổi mới", "bảo hành"]):
             if extracted_oid:
-                pid = bound_context.get("product_id") or bound_obj.get("product_id")
-                if not pid and extracted_oid:
-                    order_res = execute("get_order", {"order_id": extracted_oid})
-                    state["tool_count"] += 1
-                    trace.setdefault("tools", []).append({"name": "get_order", "status": "ok" if isinstance(order_res, dict) and not order_res.get("error") else "error"})
-                    if isinstance(order_res, dict):
-                        order_data = order_res.get("order", {})
-                        if isinstance(order_data, dict):
-                            pid = order_data.get("product_id")
-                            if not pid:
-                                items = order_data.get("items", [])
-                                if items and isinstance(items, list) and isinstance(items[0], dict):
-                                    pid = items[0].get("product_id")
+                bound_oid = bound_context.get("order_id") or bound_obj.get("order_id")
+                is_order_ok = True
+                order_data = {}
+                if extracted_oid != bound_oid or not (bound_context.get("product_id") or bound_obj.get("product_id")):
+                    try:
+                        order_res = execute("get_order", {"order_id": extracted_oid})
+                        state["tool_count"] += 1
+                        is_order_ok = isinstance(order_res, dict) and not order_res.get("error")
+                        trace.setdefault("tools", []).append({"name": "get_order", "status": "ok" if is_order_ok else "error"})
+                        if is_order_ok and isinstance(order_res, dict):
+                            order_data = order_res.get("order", {})
+                    except Exception:
+                        is_order_ok = False
+                        state["tool_count"] += 1
+                        trace.setdefault("tools", []).append({"name": "get_order", "status": "error"})
 
-                warranty_days = 90
-                if pid:
-                    prod_res = execute("get_product", {"product_id": pid})
-                    if isinstance(prod_res, dict) and not prod_res.get("error"):
-                        prod_data = prod_res.get("product", prod_res)
-                        if isinstance(prod_data, dict) and prod_data.get("warranty_days") is not None:
-                            warranty_days = prod_data["warranty_days"]
+                if not is_order_ok:
+                    action_proposal = None
+                    final_content = (
+                        f"Dạ em rất tiếc, hệ thống không tìm thấy đơn hàng {extracted_oid} "
+                        f"(hoặc đơn không thuộc tài khoản của anh/chị). "
+                        "Anh/chị vui lòng kiểm tra lại chính xác Mã đơn hàng để em có thể tra cứu bảo hành và hỗ trợ mình ngay nhé ạ!"
+                    )
+                else:
+                    pid = bound_context.get("product_id") or bound_obj.get("product_id")
+                    if not pid and isinstance(order_data, dict):
+                        pid = order_data.get("product_id")
+                        if not pid:
+                            items = order_data.get("items", [])
+                            if items and isinstance(items, list) and isinstance(items[0], dict):
+                                pid = items[0].get("product_id")
 
-                action_proposal = {
-                    "action": "exchange_1to1",
-                    "order_id": extracted_oid,
-                    "reason": "Hàng lỗi vận chuyển/kẹt khóa/bung chỉ",
-                    "details": f"Đổi mới 1-1 tận nhà (Bảo hành {warranty_days} ngày), shipper mang áo mới thu hồi áo cũ, miễn phí 2 chiều",
-                    "status": "pending_staff_approval"
-                }
-                final_content = (
-                    f"Dạ shop chân thành xin lỗi anh/chị về sự cố của đơn hàng {extracted_oid}! "
-                    f"Shop áp dụng chính sách bảo hành {warranty_days} ngày và hỗ trợ Đổi mới 1-1 tận nhà cho sản phẩm lỗi. "
-                    "Em đã tạo Phiếu Đề Xuất Đổi Mới 1-1 chuyển sang bàn làm việc của Chuyên viên CSKH kiểm tra ngày nhận hàng thực tế và duyệt hỗ trợ ngay. "
-                    "Bưu tá sẽ mang sản phẩm mới tinh đến đổi tận nơi và thu hồi sản phẩm lỗi về, anh/chị không cần ra bưu cục và không mất bất kỳ chi phí nào ạ!"
-                )
+                    warranty_days = None
+                    if pid:
+                        prod_res = execute("get_product", {"product_id": pid})
+                        if isinstance(prod_res, dict) and not prod_res.get("error"):
+                            prod_data = prod_res.get("product", prod_res)
+                            if isinstance(prod_data, dict) and prod_data.get("warranty_days") is not None:
+                                warranty_days = prod_data["warranty_days"]
+
+                    w_desc = f"{warranty_days} ngày" if warranty_days is not None else "tiêu chuẩn của hãng/shop"
+                    action_proposal = {
+                        "action": "exchange_1to1",
+                        "order_id": extracted_oid,
+                        "reason": "Hàng lỗi vận chuyển/kẹt khóa/bung chỉ",
+                        "details": f"Đổi mới 1-1 tận nhà (Bảo hành {w_desc}), shipper mang áo mới thu hồi áo cũ, miễn phí 2 chiều",
+                        "status": "pending_staff_approval"
+                    }
+                    final_content = (
+                        f"Dạ shop chân thành xin lỗi anh/chị về sự cố của đơn hàng {extracted_oid}! "
+                        f"Shop áp dụng chính sách bảo hành {w_desc} và hỗ trợ Đổi mới 1-1 tận nhà cho sản phẩm lỗi. "
+                        "Em đã tạo Phiếu Đề Xuất Đổi Mới 1-1 chuyển sang bàn làm việc của Chuyên viên CSKH kiểm tra ngày nhận hàng thực tế và duyệt hỗ trợ ngay. "
+                        "Bưu tá sẽ mang sản phẩm mới tinh đến đổi tận nơi và thu hồi sản phẩm lỗi về, anh/chị không cần ra bưu cục và không mất bất kỳ chi phí nào ạ!"
+                    )
             else:
                 final_content = (
                     "Dạ shop chân thành xin lỗi anh/chị về sự cố sản phẩm gặp lỗi/kẹt khóa/bung chỉ! "
@@ -123,56 +142,74 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
         # Check domain heuristic for SOP 3 (Size Exchange 2-Way)
         elif any(w in lower_msg for w in ["đổi size", "không vừa", "chật", "rộng", "đổi sang size"]):
             if extracted_oid:
-                pid = bound_context.get("product_id") or bound_obj.get("product_id")
-                if not pid and extracted_oid:
-                    order_res = execute("get_order", {"order_id": extracted_oid})
-                    state["tool_count"] += 1
-                    trace.setdefault("tools", []).append({"name": "get_order", "status": "ok" if isinstance(order_res, dict) and not order_res.get("error") else "error"})
-                    if isinstance(order_res, dict):
-                        order_data = order_res.get("order", {})
-                        if isinstance(order_data, dict):
-                            pid = order_data.get("product_id")
-                            if not pid:
-                                items = order_data.get("items", [])
-                                if items and isinstance(items, list) and isinstance(items[0], dict):
-                                    pid = items[0].get("product_id")
+                bound_oid = bound_context.get("order_id") or bound_obj.get("order_id")
+                is_order_ok = True
+                order_data = {}
+                if extracted_oid != bound_oid or not (bound_context.get("product_id") or bound_obj.get("product_id")):
+                    try:
+                        order_res = execute("get_order", {"order_id": extracted_oid})
+                        state["tool_count"] += 1
+                        is_order_ok = isinstance(order_res, dict) and not order_res.get("error")
+                        trace.setdefault("tools", []).append({"name": "get_order", "status": "ok" if is_order_ok else "error"})
+                        if is_order_ok and isinstance(order_res, dict):
+                            order_data = order_res.get("order", {})
+                    except Exception:
+                        is_order_ok = False
+                        state["tool_count"] += 1
+                        trace.setdefault("tools", []).append({"name": "get_order", "status": "error"})
 
-                target_match = re.search(r'(?:đổi sang|sang|đổi)\s+(?:size\s+)?([smlx]|2xl|xl|xxl|\d{2})\b', lower_msg)
-                if target_match:
-                    target_size = target_match.group(1).upper()
+                if not is_order_ok:
+                    action_proposal = None
+                    final_content = (
+                        f"Dạ em rất tiếc, hệ thống không tìm thấy đơn hàng {extracted_oid} "
+                        f"(hoặc đơn không thuộc tài khoản của anh/chị). "
+                        "Anh/chị vui lòng kiểm tra lại chính xác Mã đơn hàng để em có thể kiểm tra kho và tạo phiếu đổi size nhé ạ!"
+                    )
                 else:
-                    all_sizes = re.findall(r'\b(?:size\s+)?([smlx]|2xl|xl|xxl|\d{2})\b', lower_msg)
-                    target_size = all_sizes[-1].upper() if all_sizes else "L"
+                    pid = bound_context.get("product_id") or bound_obj.get("product_id")
+                    if not pid and isinstance(order_data, dict):
+                        pid = order_data.get("product_id")
+                        if not pid:
+                            items = order_data.get("items", [])
+                            if items and isinstance(items, list) and isinstance(items[0], dict):
+                                pid = items[0].get("product_id")
 
-                stock_qty = 0
-                if pid:
-                    stock_res = execute("check_inventory", {"product_id": pid, "size": target_size, "color": "Tiêu chuẩn"})
-                    state["tool_count"] += 1
-                    trace.setdefault("tools", []).append({"name": "check_inventory", "status": "ok"})
-                    if isinstance(stock_res, dict):
-                        stock_qty = stock_res.get("stock", 0)
-                else:
+                    target_match = re.search(r'(?:đổi sang|sang|đổi)\s+(?:size\s+)?([smlx]|2xl|xl|xxl|\d{2})\b', lower_msg)
+                    if target_match:
+                        target_size = target_match.group(1).upper()
+                    else:
+                        all_sizes = re.findall(r'\b(?:size\s+)?([smlx]|2xl|xl|xxl|\d{2})\b', lower_msg)
+                        target_size = all_sizes[-1].upper() if all_sizes else "L"
+
                     stock_qty = 0
+                    if pid:
+                        stock_res = execute("check_inventory", {"product_id": pid, "size": target_size, "color": "Tiêu chuẩn"})
+                        state["tool_count"] += 1
+                        trace.setdefault("tools", []).append({"name": "check_inventory", "status": "ok"})
+                        if isinstance(stock_res, dict):
+                            stock_qty = stock_res.get("stock") or 0
+                    else:
+                        stock_qty = 0
 
-                if stock_qty > 0:
-                    action_proposal = {
-                        "action": "size_exchange",
-                        "order_id": extracted_oid,
-                        "target_size": target_size,
-                        "reason": "Khách mặc không vừa size",
-                        "details": f"Đổi sang size {target_size} tận nhà (Kho còn {stock_qty} sản phẩm)",
-                        "status": "pending_staff_approval"
-                    }
-                    final_content = (
-                        f"Dạ em đã kiểm tra kho cho đơn {extracted_oid}: Size {target_size} hiện còn {stock_qty} sản phẩm sẵn sàng đổi cho anh/chị! "
-                        "Em đã tạo Phiếu Đề Xuất Đổi Size 2 Chiều gửi lên Bàn làm việc Nhân viên CSKH xác nhận. "
-                        f"Sau khi duyệt, shipper sẽ mang áo size {target_size} mới đến tận nhà đổi cho anh/chị thử vừa vặn rồi mới nhận lại áo cũ mang về shop nhé ạ!"
-                    )
-                else:
-                    final_content = (
-                        f"Dạ em đã kiểm tra kho cho đơn {extracted_oid}: Size {target_size} hiện tạm thời đã hết hàng trong kho. "
-                        "Em đã ghi nhận nhu cầu của anh/chị và chuyển thông tin cho chuyên viên CSKH hỗ trợ tư vấn mẫu tương tự hoặc phương án hỗ trợ phù hợp nhất nhé ạ!"
-                    )
+                    if stock_qty > 0:
+                        action_proposal = {
+                            "action": "size_exchange",
+                            "order_id": extracted_oid,
+                            "target_size": target_size,
+                            "reason": "Khách mặc không vừa size",
+                            "details": f"Đổi sang size {target_size} tận nhà (Kho còn {stock_qty} sản phẩm)",
+                            "status": "pending_staff_approval"
+                        }
+                        final_content = (
+                            f"Dạ em đã kiểm tra kho cho đơn {extracted_oid}: Size {target_size} hiện còn {stock_qty} sản phẩm sẵn sàng đổi cho anh/chị! "
+                            "Em đã tạo Phiếu Đề Xuất Đổi Size 2 Chiều gửi lên Bàn làm việc Nhân viên CSKH xác nhận. "
+                            f"Sau khi duyệt, shipper sẽ mang áo size {target_size} mới đến tận nhà đổi cho anh/chị thử vừa vặn rồi mới nhận lại áo cũ mang về shop nhé ạ!"
+                        )
+                    else:
+                        final_content = (
+                            f"Dạ em đã kiểm tra kho cho đơn {extracted_oid}: Size {target_size} hiện tạm thời đã hết hàng trong kho. "
+                            "Em đã ghi nhận nhu cầu của anh/chị và chuyển thông tin cho chuyên viên CSKH hỗ trợ tư vấn mẫu tương tự hoặc phương án hỗ trợ phù hợp nhất nhé ạ!"
+                        )
             else:
                 final_content = (
                     "Dạ shop hỗ trợ đổi size tận nhà miễn phí 2 chiều cho anh/chị! "

@@ -251,30 +251,37 @@ class TestManagerCRUD(unittest.TestCase):
         self.assertIn('result', res)
 
     def test_manager_events_and_actor_audit(self):
+        from retailops.identity.contracts import SessionBinding
+        binding = SessionBinding(self.app, 'C-001', 'ws1', tenant_id='tenant-demo', principal_id='usr_manager_01', display_name='Manager Test')
+        self.app.current_binding = binding
+
         # 1. Create a product
         pid = 'P-777'
         payload = {
             'id': pid, 'name': 'Áo Audit Trail', 'category': 'Áo', 'price': 250000,
             'stock': 30, 'warranty_days': 45, 'variants': ['Trắng · Size M']
         }
-        api_result(self.app, 'C-001', 'POST', '/api/manager/products', payload)
+        api_result(self.app, 'C-001', 'POST', '/api/manager/products', payload, binding=binding)
 
         # 2. Update the product
-        api_result(self.app, 'C-001', 'POST', '/api/manager/products/update', {'id': pid, 'price': 270000})
+        api_result(self.app, 'C-001', 'POST', '/api/manager/products/update', {'id': pid, 'price': 270000}, binding=binding)
 
         # 3. Delete the product
-        api_result(self.app, 'C-001', 'POST', '/api/manager/products/delete', {'id': pid})
+        api_result(self.app, 'C-001', 'POST', '/api/manager/products/delete', {'id': pid}, binding=binding)
 
         # 4. Fetch manager events
-        status, res = api_result(self.app, 'C-001', 'GET', '/api/manager/events')
+        status, res = api_result(self.app, 'C-001', 'GET', '/api/manager/events', binding=binding)
         self.assertEqual(status, 200)
         self.assertIn('events', res)
         events = res['events']
         
         created_ev = next((e for e in events if e['kind'] == 'product_created' and e['payload'].get('product_id') == pid), None)
         self.assertIsNotNone(created_ev)
-        self.assertEqual(created_ev['payload']['actor']['principal_id'], 'C-001')
+        # Verify genuine principal_id vs customer_id separation
+        self.assertEqual(created_ev['payload']['actor']['principal_id'], 'usr_manager_01')
+        self.assertEqual(created_ev['payload']['actor']['customer_id'], 'C-001')
         self.assertEqual(created_ev['payload']['actor']['role'], 'manager')
+        self.assertEqual(created_ev['payload']['actor']['tenant_id'], 'tenant-demo')
 
         updated_ev = next((e for e in events if e['kind'] == 'product_updated' and e['payload'].get('product_id') == pid), None)
         self.assertIsNotNone(updated_ev)
@@ -342,6 +349,144 @@ class TestManagerCRUD(unittest.TestCase):
         self.assertIsNone(res.get("action_proposal"))
         last_msg = res["messages"][-1]["content"]
         self.assertIn("hết hàng", last_msg.lower())
+
+    def test_variant_stock_preserved_on_metadata_update(self):
+        # 1. P-203 has size M Navy stock = 0, size L Navy stock = 18, size S = 12, size XL = 5
+        m_stock = self.store.get_variant_stock('P-203', 'M', 'Xanh Navy')
+        self.assertEqual(m_stock.stock, 0)
+        l_stock = self.store.get_variant_stock('P-203', 'L', 'Xanh Navy')
+        self.assertEqual(l_stock.stock, 18)
+
+        # 2. Manager edits description and price, sending UI-style payload with existing variants list
+        payload = {
+            'id': 'P-203',
+            'name': 'Áo Polo Nam Phối Bo Cổ Co Giãn',
+            'description': 'Mô tả mới được cập nhật từ giao diện quản trị',
+            'price': 429000,
+            'variants': ['Xanh Navy · Size S', 'Xanh Navy · Size M', 'Xanh Navy · Size L', 'Xanh Navy · Size XL']
+        }
+        status, res = api_result(self.app, 'C-001', 'POST', '/api/manager/products/update', payload)
+        self.assertEqual(status, 200)
+
+        # 3. Size M Navy MUST still be 0! It must NOT become 55 // 4 = 13!
+        m_after = self.store.get_variant_stock('P-203', 'M', 'Xanh Navy')
+        self.assertEqual(m_after.stock, 0)
+        self.assertEqual(m_after.status, 'ok')
+
+        # 4. Size L Navy MUST still be 18!
+        l_after = self.store.get_variant_stock('P-203', 'L', 'Xanh Navy')
+        self.assertEqual(l_after.stock, 18)
+
+        # 5. Total stock must be preserved as sum of variants (12 + 0 + 18 + 5 = 35)
+        p_prod = self.store.get_product('P-203')
+        self.assertEqual(p_prod['stock'], 35)
+        self.assertEqual(p_prod['price'], 429000)
+
+    def test_check_inventory_nonexistent_color_variant_not_found(self):
+        from retailops_tools import BoundTools
+        snapshot = {'order_id': None, 'product_id': None}
+        tools = BoundTools(self.store, self.app.catalog, 'C-001', snapshot, {'name': 'test'})
+
+        # Request P-203 with non-existent color "Hồng không tồn tại"
+        res = tools('check_inventory', {'product_id': 'P-203', 'size': 'L', 'color': 'Hồng không tồn tại'})
+        self.assertEqual(res.get('error'), 'variant_not_found')
+        self.assertFalse(res['in_stock'])
+        self.assertEqual(res['stock'], 0)
+        self.assertIn('không có biến thể', res['status_text'])
+
+    def test_check_inventory_unknown_stock_preserves_none(self):
+        from retailops_tools import BoundTools
+        # Add product with stock=None
+        payload = {
+            'id': 'P-559', 'name': 'Áo Khoác Chưa Kiểm Kho', 'category': 'Áo', 'price': 500000,
+            'stock': None
+        }
+        api_result(self.app, 'C-001', 'POST', '/api/manager/products', payload)
+
+        snapshot = {'order_id': None, 'product_id': None}
+        tools = BoundTools(self.store, self.app.catalog, 'C-001', snapshot, {'name': 'test'})
+        res = tools('check_inventory', {'product_id': 'P-559', 'size': 'L', 'color': 'Tiêu chuẩn'})
+        self.assertIsNone(res['stock'])
+        self.assertIsNone(res['in_stock'])
+        self.assertIn('chưa được cập nhật', res['status_text'])
+
+    def test_cross_session_cache_bypass_and_synchronization(self):
+        from retailops_tools import BoundTools
+        # Customer App reads product P-203
+        cust_app = Application(self.store, {}, role='customer')
+        snapshot = {'order_id': None, 'product_id': None}
+        cust_tools = BoundTools(self.store, cust_app.catalog, 'C-001', snapshot, {'name': 'test'})
+        p_read1 = cust_tools('get_product', {'product_id': 'P-203'})
+        self.assertEqual(p_read1['product']['price'], 399000)
+
+        # Manager updates price to 999999
+        api_result(self.app, 'C-001', 'POST', '/api/manager/products/update', {'id': 'P-203', 'price': 999999})
+
+        # Customer reads again via tool -> must immediately see 999999 (not cached 399000!)
+        p_read2 = cust_tools('get_product', {'product_id': 'P-203'})
+        self.assertEqual(p_read2['product']['price'], 999999)
+
+    def test_dispute_agent_nonexistent_order_no_proposal(self):
+        from retailops.workflow.subagents.dispute_agent import run_dispute_agent
+        from retailops_tools import BoundTools
+
+        class MockGateway:
+            def __init__(self, reply=""):
+                self.reply = reply
+
+            def chat(self, messages, tools_allowed=True, timeout=30):
+                return {"message": {"role": "assistant", "content": self.reply}}
+
+        snapshot = {'order_id': None, 'product_id': None}
+        tools = BoundTools(self.store, self.app.catalog, 'C-001', snapshot, {'name': 'test'})
+
+        state = {
+            "messages": [{"role": "user", "content": "Đơn hàng O-999999 bị kẹt khóa, shop đổi mới giúp mình với!"}],
+            "fresh": [], "trace": {}, "tool_count": 0, "complete": False,
+            "bound": {},
+            "intent": "unknown", "next_worker": "dispute_agent", "subagent_history": [],
+            "sentiment": "negative", "strict_mode": False, "consecutive_ood_count": 0,
+            "action_proposal": None, "requires_human": False, "human_reason": None
+        }
+
+        res = run_dispute_agent(state, tools, MockGateway())
+        # For non-existent order, dispute agent must NOT create an exchange proposal!
+        self.assertIsNone(res.get("action_proposal"))
+        last_msg = res["messages"][-1]["content"]
+        self.assertIn("không tìm thấy", last_msg.lower())
+
+    def test_delete_product_with_existing_orders_blocked(self):
+        # Order O-302 references product P-104
+        with self.assertRaises(ApiError) as ctx:
+            api_result(self.app, 'C-001', 'POST', '/api/manager/products/delete', {'id': 'P-104'})
+        self.assertEqual(ctx.exception.status, 400)
+        self.assertEqual(ctx.exception.code, 'product_has_existing_orders')
+        self.assertIn('phát sinh', ctx.exception.message)
+
+    def test_seed_backfill_deepseek_orders(self):
+        with self.store.connection() as db:
+            o305 = db.execute("SELECT product_id FROM orders WHERE id='O-305'").fetchone()
+            self.assertIsNotNone(o305)
+            self.assertEqual(o305['product_id'], 'P-501')
+
+            o306 = db.execute("SELECT product_id FROM orders WHERE id='O-306'").fetchone()
+            self.assertIsNotNone(o306)
+            self.assertEqual(o306['product_id'], 'P-503')
+
+            o307 = db.execute("SELECT product_id FROM orders WHERE id='O-307'").fetchone()
+            self.assertIsNotNone(o307)
+            self.assertEqual(o307['product_id'], 'P-506')
+
+    def test_sqlite_to_postgres_import_table_order(self):
+        from retailops.storage.import_sqlite import read_database, BUSINESS_TABLES
+        snapshot_tables = read_database(self.store.path, 'business', BUSINESS_TABLES)
+        table_order = list(snapshot_tables.keys())
+        self.assertIn('products', table_order)
+        self.assertIn('orders', table_order)
+        prod_idx = table_order.index('products')
+        order_idx = table_order.index('orders')
+        # Products MUST come before orders to satisfy orders.product_id foreign key constraint
+        self.assertLess(prod_idx, order_idx)
 
 
 if __name__ == '__main__':

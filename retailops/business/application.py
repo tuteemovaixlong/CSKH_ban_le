@@ -115,6 +115,14 @@ class Application:
         if replay:
             return replay
 
+        # Invalidate semantic cache if catalog was updated in database by any session
+        if hasattr(self.store, 'get_catalog_revision'):
+            cur_cat_rev = self.store.get_catalog_revision()
+            if getattr(self, '_last_catalog_rev', None) is not None and getattr(self, '_last_catalog_rev', None) < cur_cat_rev:
+                if hasattr(self, 'semantic_cache') and self.semantic_cache:
+                    self.semantic_cache.clear()
+            self._last_catalog_rev = cur_cat_rev
+
         # Tier 1: Check Semantic / Exact Cache (for custom production model or when cache_api enabled; bypass if attachment)
         cached = self.semantic_cache.lookup(text) if (not attachment and (provider_id != 'api' or getattr(self, 'cache_api', False))) else None
         if cached:

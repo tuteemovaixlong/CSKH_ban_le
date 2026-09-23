@@ -34,10 +34,16 @@ def read_database(path, component, tables):
                 raise ValueError('Import requires identity v1 and business v1/v2/v3 in a stopped persistent SQLite snapshot.')
             if db.execute('PRAGMA integrity_check').fetchone()[0] != 'ok' or db.execute('PRAGMA foreign_key_check').fetchall():
                 raise ValueError('SQLite snapshot failed integrity checks.')
-            if component == 'business' and marker[0]['version'] >= 2:
-                tables = (*tables, 'graph_runs', 'graph_checkpoints', 'graph_writes')
-            if component == 'business' and marker[0]['version'] >= 3:
-                tables = (*tables, 'products', 'product_variants')
+            if component == 'business':
+                # Order tables to respect foreign keys: customers and products must precede orders
+                ordered = ['customers']
+                if marker[0]['version'] >= 3:
+                    ordered.extend(['products', 'product_variants'])
+                ordered.extend(['orders', 'proposals', 'business_events', 'conversations',
+                               'agent_turns', 'provider_daily_usage'])
+                if marker[0]['version'] >= 2:
+                    ordered.extend(['graph_runs', 'graph_checkpoints', 'graph_writes'])
+                tables = tuple(ordered)
             existing_tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             return {table: [dict(row) for row in db.execute('SELECT * FROM "'+table+'"')] for table in tables if table in existing_tables}
     except sqlite3.Error:

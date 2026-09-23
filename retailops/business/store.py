@@ -33,6 +33,21 @@ def _parse_variant_string(v_str):
             size = parts[0]
     return size, color
 
+
+class VariantStockResult(int):
+    """Backwards-compatible integer stock that also carries variant status and stock."""
+    def __new__(cls, stock, status='ok'):
+        val = int(stock) if stock is not None and not isinstance(stock, bool) else 0
+        obj = super().__new__(cls, val)
+        obj.stock = stock
+        obj.status = status
+        return obj
+
+    def __iter__(self):
+        yield self.stock
+        yield self.status
+
+
 class BusinessStore:
     CONVERSATION_TTL = 7 * 86400  # 7 days persistent chat history
 
@@ -105,10 +120,17 @@ class BusinessStore:
             db.executemany("INSERT INTO orders(id, customer_id, name, variant, amount, status, product_id) VALUES (?,?,?,?,?,?,?) ON CONFLICT DO NOTHING", orders)
             order_to_product = {
                 'O-101': 'P-101', 'O-102': 'P-102', 'O-202': 'P-202',
-                'O-301': 'P-103', 'O-302': 'P-104', 'O-303': 'P-203', 'O-304': 'P-401'
+                'O-301': 'P-103', 'O-302': 'P-104', 'O-303': 'P-203', 'O-304': 'P-401',
+                'O-305': 'P-501', 'O-306': 'P-503', 'O-307': 'P-506', 'O-308': 'P-502',
+                'O-309': 'P-504', 'O-310': 'P-507', 'O-311': 'P-505', 'O-312': 'P-508',
             }
             for oid, pid in order_to_product.items():
                 db.execute("UPDATE orders SET product_id=? WHERE id=? AND product_id IS NULL", (pid, oid))
+            db.execute("""
+                UPDATE orders 
+                SET product_id = (SELECT p.id FROM products p WHERE p.name = orders.name LIMIT 1)
+                WHERE product_id IS NULL AND EXISTS (SELECT 1 FROM products p WHERE p.name = orders.name)
+            """)
 
     def seed_catalog(self, db=None):
         def _do_seed(conn):
@@ -265,7 +287,7 @@ class BusinessStore:
 
             for v_str in raw_variants:
                 size, color = _parse_variant_string(v_str)
-                var_stock = max(0, stock // len(raw_variants)) if raw_variants and stock is not None else (stock or 0)
+                var_stock = max(0, stock // len(raw_variants)) if raw_variants and stock is not None else stock
                 var_id = f"{pid}-{size or 'STD'}-{color or 'STD'}".replace(" ", "_")
                 db.execute("""
                     INSERT INTO product_variants(id, product_id, variant_name, size, color, stock, price)
@@ -289,7 +311,7 @@ class BusinessStore:
             now = time.time()
             cols = []
             params = []
-            allowed_fields = {"name", "price", "stock", "warranty_days", "category", "description", "material", "care"}
+            allowed_fields = {"name", "price", "warranty_days", "category", "description", "material", "care"}
             for f in allowed_fields:
                 if f in updates:
                     cols.append(f"{f}=?")
@@ -299,21 +321,62 @@ class BusinessStore:
                 cols.append("aliases=?")
                 params.append(json.dumps(updates["aliases"], ensure_ascii=False))
 
+            existing_vars = db.execute("SELECT * FROM product_variants WHERE product_id=?", (pid,)).fetchall()
+            existing_map = {r["variant_name"]: dict(r) for r in existing_vars}
+            price_val = updates.get("price", row["price"])
+            explicit_variant_stocks = updates.get("variant_stocks", {})
+
             if "variants" in updates:
                 cols.append("variants=?")
                 raw_vars = updates["variants"]
                 params.append(json.dumps(raw_vars, ensure_ascii=False))
                 db.execute("DELETE FROM product_variants WHERE product_id=?", (pid,))
-                stock_val = updates.get("stock", row["stock"])
-                price_val = updates.get("price", row["price"])
+
+                new_var_records = []
                 for v_str in raw_vars:
                     size, color = _parse_variant_string(v_str)
-                    var_stock = max(0, stock_val // len(raw_vars)) if raw_vars and stock_val is not None else (stock_val or 0)
+                    if v_str in explicit_variant_stocks:
+                        var_stock = max(0, int(explicit_variant_stocks[v_str]))
+                    elif v_str in existing_map:
+                        # PRESERVE existing variant stock across metadata updates
+                        var_stock = existing_map[v_str]["stock"]
+                    else:
+                        var_stock = 0
                     var_id = f"{pid}-{size or 'STD'}-{color or 'STD'}".replace(" ", "_")
+                    new_var_records.append((var_id, pid, v_str, size, color, var_stock, price_val))
+
+                for rec in new_var_records:
                     db.execute("""
                         INSERT INTO product_variants(id, product_id, variant_name, size, color, stock, price)
                         VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """, (var_id, pid, v_str, size, color, var_stock, price_val))
+                    """, rec)
+
+                # Total product stock is the sum of all variant stocks if variants exist
+                if new_var_records:
+                    total_variant_stock = sum(r[5] for r in new_var_records)
+                    cols.append("stock=?")
+                    params.append(total_variant_stock)
+                else:
+                    if "stock" in updates:
+                        cols.append("stock=?")
+                        params.append(updates["stock"])
+            else:
+                if explicit_variant_stocks and existing_map:
+                    for v_str, new_s in explicit_variant_stocks.items():
+                        if v_str in existing_map:
+                            db.execute("UPDATE product_variants SET stock=?, price=? WHERE product_id=? AND variant_name=?",
+                                       (max(0, int(new_s)), price_val, pid, v_str))
+                    v_sum = db.execute("SELECT COALESCE(SUM(stock), 0) FROM product_variants WHERE product_id=?", (pid,)).fetchone()[0]
+                    cols.append("stock=?")
+                    params.append(v_sum)
+                elif "stock" in updates:
+                    new_stock = updates["stock"]
+                    cols.append("stock=?")
+                    params.append(new_stock)
+                    if existing_vars and "price" in updates:
+                        db.execute("UPDATE product_variants SET price=? WHERE product_id=?", (price_val, pid))
+                elif "price" in updates and existing_vars:
+                    db.execute("UPDATE product_variants SET price=? WHERE product_id=?", (price_val, pid))
 
             cols.append("updated_at=?")
             params.append(now)
@@ -322,7 +385,7 @@ class BusinessStore:
             db.execute(f"UPDATE products SET {', '.join(cols)} WHERE id=?", tuple(params))
 
             actor_ctx = actor or {"principal_id": "manager", "role": "manager", "actor_type": "principal"}
-            cid = actor_ctx.get("principal_id") or "manager"
+            cid = actor_ctx.get("customer_id") or actor_ctx.get("principal_id") or "manager"
             self.log(db, cid, "product_updated", None, product_id=pid, updates=updates, actor=actor_ctx)
 
         return self.get_product(pid)
@@ -337,12 +400,17 @@ class BusinessStore:
             if row["is_system_immutable"]:
                 raise ValueError(f"Sản phẩm {pid} là sản phẩm cơ sở hệ thống, không được phép xóa.")
 
+            # Check if any orders reference this product
+            ref_orders = [r["id"] for r in db.execute("SELECT id FROM orders WHERE product_id=?", (pid,)).fetchall()]
+            if ref_orders:
+                raise ValueError(f"product_has_existing_orders: Sản phẩm {pid} đã phát sinh {len(ref_orders)} đơn hàng trong hệ thống ({', '.join(ref_orders[:3])}{'...' if len(ref_orders) > 3 else ''}). Không thể xóa để bảo toàn dữ liệu lịch sử đơn hàng và bảo hành.")
+
             product_dict = self._row_to_product(row)
             db.execute("DELETE FROM product_variants WHERE product_id=?", (pid,))
             db.execute("DELETE FROM products WHERE id=?", (pid,))
 
             actor_ctx = actor or {"principal_id": "manager", "role": "manager", "actor_type": "principal"}
-            cid = actor_ctx.get("principal_id") or "manager"
+            cid = actor_ctx.get("customer_id") or actor_ctx.get("principal_id") or "manager"
             self.log(db, cid, "product_deleted", None, product_id=pid, actor=actor_ctx)
 
         return product_dict
@@ -354,24 +422,47 @@ class BusinessStore:
             color_clean = None
 
         with self.connection() as db:
+            p_row = db.execute("SELECT stock FROM products WHERE id=?", (pid,)).fetchone()
+            if not p_row:
+                return VariantStockResult(None, "product_not_found")
+
             rows = db.execute("SELECT * FROM product_variants WHERE product_id=?", (pid,)).fetchall()
             if not rows:
-                p_row = db.execute("SELECT stock FROM products WHERE id=?", (pid,)).fetchone()
-                return p_row["stock"] if p_row and p_row["stock"] is not None else None
+                st = p_row["stock"]
+                if st is None:
+                    return VariantStockResult(None, "stock_unknown")
+                if size_clean and size_clean not in ("FREE SIZE", "FREESIZE", "TIÊU CHUẨN", "STANDARD", "DEFAULT"):
+                    return VariantStockResult(None, "variant_not_found")
+                if color_clean:
+                    return VariantStockResult(None, "variant_not_found")
+                return VariantStockResult(st, "ok")
 
             if color_clean:
-                for r in rows:
-                    r_size = (r["size"] or "").strip().upper()
-                    r_color = (r["color"] or "").strip().lower()
-                    if r_size == size_clean and (not r_color or r_color == color_clean):
-                        return r["stock"]
+                matched = [r for r in rows if (r["size"] or "").strip().upper() == size_clean and (r["color"] or "").strip().lower() == color_clean]
+                if matched:
+                    st = matched[0]["stock"]
+                    if st is None:
+                        return VariantStockResult(None, "stock_unknown")
+                    return VariantStockResult(st, "ok")
+                return VariantStockResult(None, "variant_not_found")
 
-            for r in rows:
-                r_size = (r["size"] or "").strip().upper()
-                if r_size == size_clean:
-                    return r["stock"]
+            matched_by_size = [r for r in rows if (r["size"] or "").strip().upper() == size_clean]
+            if matched_by_size:
+                if any(r["stock"] is None for r in matched_by_size):
+                    return VariantStockResult(None, "stock_unknown")
+                total_size_stock = sum(r["stock"] for r in matched_by_size)
+                return VariantStockResult(total_size_stock, "ok")
 
-            return 0
+            return VariantStockResult(None, "variant_not_found")
+
+    def get_catalog_revision(self):
+        with self.connection() as db:
+            p_row = db.execute("SELECT MAX(updated_at) FROM products").fetchone()
+            p_max = p_row[0] if p_row and p_row[0] is not None else 0.0
+            ev_row = db.execute("SELECT MAX(created_at) FROM business_events WHERE kind LIKE 'product_%'").fetchone()
+            ev_max = ev_row[0] if ev_row and ev_row[0] is not None else 0.0
+            return max(p_max, ev_max)
+
 
     def manager_events(self, limit=100):
         with self.connection() as db:

@@ -85,7 +85,28 @@ def _parse_non_negative_int(val):
     return False, None
 
 
-def api_result(app, customer, method, path, body=None, idempotency_key=None):
+def _extract_actor(app, customer, binding=None):
+    binding = binding or getattr(app, 'current_binding', None)
+    principal_id = None
+    tenant_id = None
+    display_name = None
+    if binding:
+        principal_id = getattr(binding, 'principal_id', None)
+        tenant_id = getattr(binding, 'tenant_id', None)
+        display_name = getattr(binding, 'display_name', None)
+    if not principal_id:
+        principal_id = getattr(app, 'principal_id', None) or ('manager' if getattr(app, 'role', '') == 'manager' else customer)
+    return {
+        "principal_id": principal_id,
+        "role": getattr(app, 'role', 'customer'),
+        "tenant_id": tenant_id or getattr(app, 'tenant_id', None),
+        "customer_id": customer,
+        "display_name": display_name,
+        "actor_type": "principal"
+    }
+
+
+def api_result(app, customer, method, path, body=None, idempotency_key=None, binding=None):
     if method == "GET":
         if path == "/api/session":
             return (200, {"customer_id": customer, "name": "Mai Anh" if customer == "C-001" else "Khách mẫu",
@@ -278,7 +299,7 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
                 "stock": stock, "warranty_days": warranty_days, "material": body.get("material"),
                 "care": body.get("care"), "is_system_immutable": False
             }
-            actor = {"principal_id": customer, "role": app.role, "actor_type": "principal"}
+            actor = _extract_actor(app, customer, binding)
             app.catalog.add_product(product, actor=actor)
             if hasattr(app, 'tool_cache'):
                 app.tool_cache.invalidate_product(pid)
@@ -326,10 +347,12 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
                     updates["variants"] = [str(v).strip() for v in raw_vars if str(v).strip()]
                 else:
                     updates["variants"] = []
+            if "variant_stocks" in body and isinstance(body["variant_stocks"], dict):
+                updates["variant_stocks"] = body["variant_stocks"]
             for k in ("material", "care"):
                 if k in body:
                     updates[k] = body[k]
-            actor = {"principal_id": customer, "role": app.role, "actor_type": "principal"}
+            actor = _extract_actor(app, customer, binding)
             product = app.catalog.update_product(pid, updates, actor=actor)
             if hasattr(app, 'tool_cache'):
                 app.tool_cache.invalidate_product(pid)
@@ -340,11 +363,14 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None):
             app.require_permission(MANAGER)
             require(isinstance(body, dict) and "id" in body, 400, "invalid_body", "Thiếu mã sản phẩm.")
             pid = str(body["id"]).strip().upper()
-            actor = {"principal_id": customer, "role": app.role, "actor_type": "principal"}
+            actor = _extract_actor(app, customer, binding)
             try:
                 removed = app.catalog.delete_product(pid, actor=actor)
             except ValueError as exc:
-                raise ApiError(400, "system_product_immutable", str(exc))
+                err_msg = str(exc)
+                if "product_has_existing_orders" in err_msg:
+                    raise ApiError(400, "product_has_existing_orders", err_msg)
+                raise ApiError(400, "system_product_immutable", err_msg)
             except KeyError as exc:
                 raise ApiError(404, "product_not_found", str(exc))
             if hasattr(app, 'tool_cache'):

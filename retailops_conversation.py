@@ -123,6 +123,7 @@ class Catalog:
     def get_variant_stock(self, pid, size, color=None):
         if self.store is not None:
             return self.store.get_variant_stock(pid, size, color)
+        from retailops.business.store import VariantStockResult
         STOCK_MAP = {
             'P-101': {'S': 5, 'M': 12, 'L': 8, 'XL': 0},
             'P-102': {'S': 0, 'M': 4, 'L': 15, 'XL': 3},
@@ -132,7 +133,10 @@ class Catalog:
             'P-203': {'S': 12, 'M': 0, 'L': 18, 'XL': 5},
             'P-301': {'39': 4, '40': 8, '41': 0, '42': 6, '43': 2},
         }
-        return STOCK_MAP.get(pid, {}).get((size or '').upper().strip(), 0)
+        s_clean = (size or '').upper().strip()
+        if pid not in STOCK_MAP or s_clean not in STOCK_MAP[pid]:
+            return VariantStockResult(None, 'variant_not_found')
+        return VariantStockResult(STOCK_MAP[pid][s_clean], 'ok')
 
     def find(self, text):
         normalized = normalize(text)

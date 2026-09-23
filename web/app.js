@@ -2175,12 +2175,7 @@ async function loadManagerAuditTrail() {
   tbody.replaceChildren();
 
   try {
-    let hist;
-    try {
-      hist = await api('/api/manager/events');
-    } catch (_) {
-      hist = await api('/api/events');
-    }
+    const hist = await api('/api/manager/events');
     const events = hist.events || [];
     if (!events.length) {
       const tr = el('tr');
@@ -2203,6 +2198,9 @@ async function loadManagerAuditTrail() {
     }
   } catch (e) {
     console.warn('Lỗi tải Audit Trail:', e);
+    const tr = el('tr');
+    tr.innerHTML = '<td colspan="5" style="text-align:center; padding:24px; color:#ef4444;">Không thể tải nhật ký quản lý toàn shop. Vui lòng kiểm tra quyền hạn hoặc bấm thử lại.</td>';
+    tbody.append(tr);
   }
 }
 

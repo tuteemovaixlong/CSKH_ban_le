@@ -99,4 +99,44 @@
 - [x] `dispute_agent` kiểm tra hạn bảo hành chính xác theo từng sản phẩm trong Catalog SSOT và xử lý hết hàng trung thực (`test_dispute_agent_out_of_stock_real_inventory`).
 - [x] Manager Console tự động mở khi đăng nhập tài khoản có quyền `manager`.
 - [x] Tab Audit Trail truy vấn từ `business_events` qua route `GET /api/manager/events`, hiển thị đầy đủ các sự kiện toàn shop kèm `ActorContext` và mã khách cụ thể (`test_manager_events_and_actor_audit`).
-- [x] Toàn bộ test suite tự động tiếp tục pass 100% (345/345 tests PASS).
+- [x] Toàn bộ test suite tự động tiếp tục pass 100% (353/353 tests PASS, 0 failures).
+
+---
+
+## 4. Báo Cáo Khắc Phục 8 Điểm Nghẽn Kiểm Toán (Audit Remediation for GPT 6 Astra High)
+
+Dựa trên kết quả rà soát chi tiết của GPT 6 Astra High, nhánh `feature/fix-ui-02-manager-persistence` đã được bổ sung giải pháp xử lý triệt để 8 lỗi kỹ thuật:
+
+1. **[P1] Bảo toàn tồn kho biến thể khi sửa thông tin sản phẩm (`update_product`)**:
+   - *Nguyên nhân trước đây*: Khi sửa metadata không truyền `variants`, hệ thống tự phân bổ lại `stock // len(variants)` bình quân làm sai lệch số tồn thực tế từng size.
+   - *Khắc phục*: Tách biệt hoàn toàn việc cập nhật thông tin sản phẩm khỏi tồn kho biến thể. Chỉ cập nhật tồn kho khi có `variant_stocks` rõ ràng; tự động tính tổng `stock` từ tổng số lượng biến thể.
+   - *Minh chứng*: `test_update_product_metadata_preserves_variant_stocks` PASS.
+
+2. **[P1] Khớp chính xác biến thể size & màu và phân biệt trạng thái tồn kho**:
+   - *Khắc phục*: Khớp chính xác size và color (không gộp mù quáng các màu khác nhau). Phân biệt rành mạch 4 trạng thái qua `VariantStockResult`: `variant_not_found`, `stock_unknown` (None), `out_of_stock` (0), và `in_stock` (>0).
+   - *Minh chứng*: `test_get_variant_stock_exact_color_matching` và `test_check_inventory_unknown_stock_preserves_none` PASS.
+
+3. **[P1] Vô hiệu hóa cache cross-session khi Catalog thay đổi**:
+   - *Khắc phục*: Loại bỏ hoàn toàn `get_product` và `list_products` khỏi `ToolCache.CACHEABLE_TOOLS`. Bổ sung kiểm tra `catalog_revision` trong `Application.semantic_cache` để tự động invalidate cache khi dữ liệu sản phẩm bị cập nhật.
+   - *Minh chứng*: `test_cross_session_cache_bypass_and_synchronization` PASS.
+
+4. **[P1] Đồng bộ thời hạn bảo hành SSOT & chặn proposal cho đơn không tồn tại**:
+   - *Khắc phục*: Cập nhật `data/products.json` thống nhất trường `warranty_days` với mô tả sản phẩm (P-503: 30 ngày, P-504: 30 ngày, P-505: 90 ngày, P-506: 365 ngày). Trong `dispute_agent.py`, tra cứu thời hạn bảo hành thực tế từ sản phẩm; khi khách báo đơn không tồn tại (như `O-999999`), chặn hoàn toàn việc tạo `action_proposal` và yêu cầu khách kiểm tra lại mã đơn.
+   - *Minh chứng*: `test_dispute_agent_nonexistent_order_no_proposal` và `test_dispute_agent_uses_actual_product_warranty` PASS.
+
+5. **[P2] Thứ tự import bảng trong `import_sqlite.py`**:
+   - *Khắc phục*: Đưa `products` và `product_variants` lên trước `orders` trong danh sách import để thỏa mãn ràng buộc khóa ngoại (Foreign Key) khi nạp vào DB rỗng.
+   - *Minh chứng*: `test_import_sqlite_table_dependency_order` PASS.
+
+6. **[P2] Backfill toàn diện đơn hàng & Chặn xóa sản phẩm đã có đơn phát sinh**:
+   - *Khắc phục*: Hàm `seed()` tự động backfill `product_id` cho toàn bộ các đơn `O-101`..`O-312`. Hàm `delete_product()` kiểm tra ràng buộc nghiệp vụ: chặn xóa các sản phẩm đã có đơn hàng tham chiếu (`product_has_existing_orders` 400).
+   - *Minh chứng*: `test_delete_product_with_existing_orders_blocked` và `test_seed_backfill_deepseek_orders` PASS.
+
+7. **[P2] Tách bạch `principal_id` và `customer_id` trong `ActorContext`**:
+   - *Khắc phục*: Chuẩn hóa việc phân định `principal_id` (định danh người đăng nhập thực tế) và `customer_id` (ngữ cảnh khách hàng đang thao tác), tránh nhập nhằng gán đè `principal_id = customer_id`.
+   - *Minh chứng*: `test_actor_context_separation_principal_and_customer` PASS.
+
+8. **[P2] Loại bỏ fallback ngầm trong `loadManagerAuditTrail`**:
+   - *Khắc phục*: Trong `web/app.js`, loại bỏ việc tự động fallback sang `/api/events` khi `/api/manager/events` gặp lỗi để thông báo lỗi rõ ràng, minh bạch cho quản lý.
+   - *Minh chứng*: Source code verified, không còn fallback ngầm.
+
