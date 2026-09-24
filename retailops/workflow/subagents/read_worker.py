@@ -76,8 +76,6 @@ def run_read_worker(state, execute, gateway, *, prompt, allowed_tools, render,
     final = None
     for step in range(MAX_MODEL_CALLS):
         allow = step < MAX_MODEL_CALLS - 1 and state['tool_count'] < MAX_TOOL_CALLS
-        if any(r.get('name') == 'list_orders' for r in records):
-            allow = False
         try:
             message = call_model(gateway, messages, allow, deadline, trace, allowed_tools=allowed_tools)
         except AgentError as exc:
