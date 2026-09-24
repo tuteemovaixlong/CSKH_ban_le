@@ -115,6 +115,30 @@ class ProtocolTests(unittest.TestCase):
                                                'thinking': 'private reasoning', 'images': ['ignored']}})
         self.assertEqual(result, {'role': 'assistant', 'content': 'Visible answer'})
 
+    def test_channel_thought_and_text_call_normalization(self):
+        # 1. Thought channel tokens stripped from assistant content
+        gemma_raw = "<|channel>thought Context is empty so order isn't set. <channel|>Hiện tại em chưa thấy đơn nào được chọn."
+        res = assistant_message({'message': {'role': 'assistant', 'content': gemma_raw}})
+        self.assertEqual(res['content'], 'Hiện tại em chưa thấy đơn nào được chọn.')
+        self.assertNotIn('tool_calls', res)
+
+        # 2. Text tool call parsed into structured tool_calls and stripped from content
+        gemma_call = "call:get_order{order_id:O-819126}call:get_runtime_info{}"
+        res2 = assistant_message({'message': {'role': 'assistant', 'content': gemma_call}})
+        self.assertEqual(res2['content'], '')
+        self.assertEqual(len(res2['tool_calls']), 2)
+        self.assertEqual(res2['tool_calls'][0]['function']['name'], 'get_order')
+        self.assertEqual(res2['tool_calls'][0]['function']['arguments'], {'order_id': 'O-819126'})
+        self.assertEqual(res2['tool_calls'][1]['function']['name'], 'get_runtime_info')
+        self.assertEqual(res2['tool_calls'][1]['function']['arguments'], {})
+
+        # 3. Thought + text call combined
+        combined = "<think>Checking order status</think>call:get_order{order_id:O-101}"
+        res3 = assistant_message({'message': {'role': 'assistant', 'content': combined}})
+        self.assertEqual(res3['content'], '')
+        self.assertEqual(len(res3['tool_calls']), 1)
+        self.assertEqual(res3['tool_calls'][0]['function']['arguments'], {'order_id': 'O-101'})
+
     def test_old_proxy_has_actionable_upgrade_error(self):
         client = RemoteAgent(ModelConfig(base_url='https://unit.ngrok-free.app'), 'unit.ngrok-free.app', 'a'*40)
         with patch.object(RemoteOllama, 'request', side_effect=RuntimeError('Inference HTTP 404')):

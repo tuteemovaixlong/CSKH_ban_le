@@ -1,4 +1,4 @@
-"""Unit tests for Multi-Agent Workflow and Routing."""
+import copy
 import unittest
 
 from retailops.workflow.graph import run_multiagent
@@ -76,6 +76,49 @@ class MultiAgentFlowTests(unittest.TestCase):
         res = run_supervisor(state)
         self.assertEqual(res["intent"], "chitchat_general")
         self.assertEqual(res["next_worker"], "witty_agent")
+
+    def test_supervisor_multi_turn_order_continuation_routing(self):
+        # 1. "ngoài ra còn thông tin nào không" after order discussion
+        order_history_state: MultiAgentState = {
+            "messages": [
+                {"role": "user", "content": "giải thích giúp tôi đơn tôi đang select"},
+                {"role": "assistant", "content": "Danh sách đơn: O-819125, O-819126, O-819127"},
+                {"role": "user", "content": "O-819125 cái này"},
+                {"role": "assistant", "content": "Đơn O-819125: Chờ xử lý. Áo sơ mi lụa công sở."},
+                {"role": "user", "content": "ngoài ra còn thông tin nào không"}
+            ],
+            "fresh": [], "trace": {}, "tool_count": 0, "bound": {"context": {"order_id": "O-819125"}},
+            "complete": False, "intent": "unknown", "next_worker": "supervisor",
+            "subagent_history": ["supervisor:routed_to_order_agent", "order_agent:done"],
+            "sentiment": "neutral", "strict_mode": False, "consecutive_ood_count": 0,
+            "action_proposal": None, "requires_human": False, "human_reason": None
+        }
+        res1 = run_supervisor(order_history_state)
+        self.assertEqual(res1["intent"], "order_inquiry")
+        self.assertEqual(res1["next_worker"], "order_agent")
+        self.assertEqual(res1["trace"].get("routing_reason"), "order_context_continuation")
+
+        # 2. "còn cái quần tây ống thì sao ? shop tên gì"
+        state2 = copy.deepcopy(order_history_state)
+        state2["messages"][-1] = {"role": "user", "content": "còn cái quần tây ống thì sao ? shop tên gì"}
+        res2 = run_supervisor(state2)
+        self.assertEqual(res2["intent"], "order_inquiry")
+        self.assertEqual(res2["next_worker"], "order_agent")
+
+        # 3. Action prompts: "thực hiện đi ơ ?" / "kiểm tra đi"
+        for action_text in ["thực hiện đi ơ ?", "kiểm tra đi", "check giúp"]:
+            state3 = copy.deepcopy(order_history_state)
+            state3["messages"][-1] = {"role": "user", "content": action_text}
+            res3 = run_supervisor(state3)
+            self.assertEqual(res3["intent"], "order_inquiry")
+            self.assertEqual(res3["next_worker"], "order_agent")
+
+        # 4. Explicit general question while order is in history switches to witty_agent
+        state4 = copy.deepcopy(order_history_state)
+        state4["messages"][-1] = {"role": "user", "content": "Giải thích thuật toán SAC cho mình"}
+        res4 = run_supervisor(state4)
+        self.assertEqual(res4["intent"], "chitchat_general")
+        self.assertEqual(res4["next_worker"], "witty_agent")
 
     def test_supervisor_human_escalation(self):
         state: MultiAgentState = {

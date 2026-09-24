@@ -6,7 +6,7 @@ const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls)
 const statuses = {pending: 'Chờ xử lý', delivered: 'Đã giao', cancelled: 'Đã hủy'};
 const reasons = {ordered_by_mistake: 'Tôi đặt nhầm', no_longer_needed: 'Tôi không còn cần'};
 const money = value => new Intl.NumberFormat('vi-VN', {style: 'currency', currency: 'VND'}).format(value);
-let token = '', orders = [], selected = 'O-101', pending = null, busy = false, conversationId = null;
+let token = '', orders = [], selected = null, pending = null, busy = false, conversationId = null;
 let providerId = 'custom', providerOptions = [];
 let canCancel = true;
 let isHumanMode = false, currentRating = 5;
@@ -132,8 +132,10 @@ const cookieAuth = document.body?.dataset.auth === 'cookie';
 const persistentAccount = document.body?.dataset.dataMode === 'persistent-demo';
 const sourceLabels = {tool_result: 'Kết quả công cụ đã xác minh', interface: 'Hướng dẫn giao diện', store_data: 'Dữ liệu đơn hàng', llm_agent: 'Hội thoại model', ui_simulation: 'Mô phỏng giao diện'};
 function showContext(context) {
+  selected = context?.order_id || null;
   byId('conversation-context').textContent = context?.order_id ? 'Đang trao đổi: ' + context.order_id
     : context?.product_id ? 'Đang trao đổi: sản phẩm ' + context.product_id : 'Chưa chọn đơn hoặc sản phẩm';
+  renderOrder();
 }
 function selectedProvider() {
   return providerOptions.find(p => p.id === providerId);
@@ -164,6 +166,7 @@ async function newConversation(nextProvider = providerId) {
     message('Bạn xử lý đề xuất đang chờ xác nhận trước khi đổi nguồn hoặc mở cuộc trò chuyện mới nhé.', 'assistant', 'interface');
     return;
   }
+  selected = null;
   const result = await api('/api/conversations', {provider_id: nextProvider});
   conversationId = result.conversation_id; providerId = result.provider_id;
   renderedStaffTurnIds.clear();
@@ -593,9 +596,10 @@ function renderOrder() {
   if (tabs) {
     tabs.replaceChildren();
     for (const item of orders) {
-      const button = el('button', item.id === (order ? order.id : selected) ? 'selected' : '', item.id);
+      const isSelected = Boolean(selected && item.id === selected);
+      const button = el('button', isSelected ? 'selected' : '', item.id);
       button.dataset.order = item.id;
-      button.setAttribute('aria-pressed', item.id === (order ? order.id : selected) ? 'true' : 'false');
+      button.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
       button.onclick = () => act(() => lookupOrder(item.id));
       tabs.append(button);
     }
@@ -609,7 +613,7 @@ function renderOrder() {
       cardList.append(el('p', 'order-empty', 'Không tìm thấy đơn hàng phù hợp.'));
     } else {
       for (const item of filtered) {
-        const active = item.id === (order ? order.id : selected);
+        const active = Boolean(selected && item.id === selected);
         const card = el('div', 'order-card-item' + (active ? ' selected' : ''));
         card.dataset.order = item.id;
 
@@ -677,7 +681,7 @@ async function refresh() {
   const [data, history] = await Promise.all([api('/api/orders'), api('/api/events')]);
   orders = data.orders || [];
   orderScope = data.scope || 'customer';
-  if (!orders.some(o => o.id === selected)) selected = orders[0]?.id;
+  if (selected && !orders.some(o => o.id === selected)) selected = null;
   renderOrder(); const area = byId('activity'); area.replaceChildren();
   for (const event of history.events.slice(0, 8)) {
     const row = el('div', 'activity-item'), copy = el('div');

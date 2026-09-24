@@ -6,6 +6,7 @@ import re
 from typing import Any
 from retailops_conversation import normalize
 
+from agent_protocol import classify_user_text
 from retailops.guardrails.sentiment import analyze_sentiment
 from retailops.guardrails.topic_filter import check_topic_safety
 from retailops.workflow.state import MultiAgentState, WorkerType
@@ -139,10 +140,39 @@ def run_supervisor(state: MultiAgentState) -> MultiAgentState:
     has_order_phrase = bool(any(w in lower_msg for w in ["đơn em", "đơn này", "đơn tôi", "đơn mình", "đơn của", "mã đơn", "check đơn", "xem đơn", "tra đơn", "đơn cũ", "đơn mega sale"]))
     has_check_request = bool(has_order_phrase and any(w in lower_msg for w in ["check", "xem", "tra", "mã đơn đây", "kẹt"]))
 
+    # Multi-turn context resolution: active server context and conversational history
+    bound_ctx = state.get("bound", {}).get("context", {}) or {}
+    active_order_id = bound_ctx.get("order_id")
+
+    prev_messages = state.get("messages", [])[:-1]
+    prev_had_order = any(bool(re.search(r'\bO-\d+\b', m.get("content", ""))) for m in prev_messages[-4:])
+    recent_subagents = [s for s in state.get("subagent_history", []) if s.startswith("supervisor:routed_to_")]
+    prev_was_order_agent = bool(recent_subagents and recent_subagents[-1] == "supervisor:routed_to_order_agent")
+
+    is_info_continuation = any(w in lower_msg for w in [
+        "ngoài ra", "còn thông tin", "chi tiết hơn", "thêm thông tin", "còn gì nữa",
+        "hết chưa", "thì sao", "còn cái", "còn đơn", "thế còn", "còn gì", "shop tên gì"
+    ])
+    is_action_prompt = any(w in lower_msg for w in [
+        "thực hiện đi", "kiểm tra đi", "check đi", "tra đi", "xem đi", "làm đi",
+        "tra cứu đi", "kiểm tra giúp", "check giúp", "xem giúp", "giải thích giúp"
+    ])
+    is_item_selection = any(w in lower_msg for w in [
+        "cái này", "đơn này", "đơn đầu", "cái thứ", "mục này", "lấy cái này", "chọn cái này",
+        "quần tây", "áo sơ mi", "giày lười", "áo thun", "váy", "đầm"
+    ])
+
+    is_explicit_general = classify_user_text(last_user_msg) == "general" or any(w in lower_msg for w in [
+        "thuật toán", "algorithm", "thời tiết", "weather", "thủ đô", "toán học", "lập trình", "python"
+    ])
+
+    routing_reason = "default_routing"
+
     # 4. Actionable Cancellation & Refund (Dispute priority)
     if any(kw in lower_msg for kw in ["hủy đơn", "hủy hàng", "muốn hủy", "hủy luôn", "hoàn tiền"]):
         state["intent"] = "dispute_complaint"
         state["next_worker"] = "dispute_agent"
+        routing_reason = "dispute_cancellation_refund"
     else:
         # Check if it is a pure policy inquiry (conditions, working hours, how-to, fees)
         is_policy_intent = any(kw in lower_msg for kw in POLICY_KEYWORDS) or is_hours_inquiry
@@ -159,22 +189,36 @@ def run_supervisor(state: MultiAgentState) -> MultiAgentState:
         if (is_policy_intent and not has_specific_oid and not has_check_request and is_policy_condition_q) or is_how_to_claim or is_hours_inquiry:
             state["intent"] = "policy_knowledge"
             state["next_worker"] = "policy_agent"
+            routing_reason = "policy_conditions_faq"
         # 5. Actionable Exchange, Defect & Inventory (SOP 2, SOP 3)
         elif any(kw in lower_msg for kw in DISPUTE_KEYWORDS):
             state["intent"] = "dispute_complaint"
             state["next_worker"] = "dispute_agent"
+            routing_reason = "dispute_exchange_defect"
         # 6. Policy inquiry that didn't match dispute keywords
         elif is_policy_intent and not (has_specific_oid or has_order_phrase):
             state["intent"] = "policy_knowledge"
             state["next_worker"] = "policy_agent"
+            routing_reason = "policy_inquiry"
         # 7. Order inquiry / tracking / carrier (SOP 1, SOP 4)
         elif plural_orders or any(kw in lower_msg for kw in ORDER_KEYWORDS) or has_specific_oid or has_order_phrase:
             state["intent"] = "order_inquiry"
             state["next_worker"] = "order_agent"
-        # 8. Fallback to Witty Pivot Agent (Chitchat / OOD / General)
+            routing_reason = "order_direct_keywords"
+        # 8. Multi-turn order context continuation (F1 resolution)
+        elif not is_explicit_general and (
+            (active_order_id and (is_info_continuation or is_action_prompt)) or
+            ((prev_was_order_agent or prev_had_order) and (is_info_continuation or is_action_prompt or is_item_selection))
+        ):
+            state["intent"] = "order_inquiry"
+            state["next_worker"] = "order_agent"
+            routing_reason = "order_context_continuation"
+        # 9. Fallback to Witty Pivot Agent (Chitchat / OOD / General)
         else:
             state["intent"] = "chitchat_general"
             state["next_worker"] = "witty_agent"
+            routing_reason = "witty_general_fallback"
 
+    state.setdefault("trace", {})["routing_reason"] = routing_reason
     state["subagent_history"].append(f"supervisor:routed_to_{state['next_worker']}")
     return state

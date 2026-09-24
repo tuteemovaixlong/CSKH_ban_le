@@ -59,10 +59,12 @@ def run_witty_agent(state: MultiAgentState, gateway: Any, timeout: int = 15) -> 
     prompt_messages = worker_messages(state, prompt)
     response = call_model(gateway, prompt_messages, False, time.monotonic() + timeout,
                           state.setdefault('trace', {}))
-    if response.get('tool_calls'):
-        from retailops_agent import AgentError
-        raise AgentError('agent_response_failed', 'Tools are disabled for this response.', state['trace'])
-    content = response['content']
+    content = response.get('content', '').strip()
+    if response.get('tool_calls') or not content:
+        content = (
+            "Dạ em là trợ lý bán lẻ RetailOps Shop. Em luôn sẵn sàng giải đáp thắc mắc hoặc "
+            "hỗ trợ kiểm tra đơn hàng và tư vấn sản phẩm cho mình nhé ạ!"
+        )
     state['trace']['answer_source'] = 'llm_agent'
 
     msg = {"role": "assistant", "content": content}
