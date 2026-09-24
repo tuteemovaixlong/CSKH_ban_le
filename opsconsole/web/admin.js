@@ -42,15 +42,28 @@ async function showRun() {
   activeRun = await api('/api/runs/' + encodeURIComponent(byId('run').value)); const m = activeRun.metrics;
   const routerOnly = activeRun.kind === 'router';
   const isBenchmark = activeRun.kind.startsWith('live-benchmark') || activeRun.kind === 'benchmark';
-  byId('eval-note').textContent = routerOnly ? 'ROUTER ONLY: không gọi LLM, vì vậy latency/token/cost của model là N/A chứ không phải instrumentation bị lỗi. Dev và held-out được lưu riêng trong artifact.' : isBenchmark ? 'LIVE BENCHMARK (240 Kịch Bản): Đánh giá trực tiếp trên EC2 Public HTTPS qua Ngrok Colab GPU (Qwen 2.5 4B). Dữ liệu đo đạc thực tế.' : 'LIVE REPORT IMPORT: dữ liệu từ bài HTTP E2E đã chạy; không phải benchmark toàn bộ dataset hay browser automation.';
+  const modelName = activeRun.manifest?.model || activeRun.manifest?.provider || 'Mô hình phục vụ';
+  byId('eval-note').textContent = routerOnly 
+    ? 'ROUTER ONLY: không gọi LLM, vì vậy latency/token/cost của model là N/A chứ không phải instrumentation bị lỗi. Dev và held-out được lưu riêng trong artifact.' 
+    : isBenchmark 
+    ? `LIVE BENCHMARK (${fmt(m.cases)} kịch bản): Đánh giá trực tiếp trên ${activeRun.manifest?.environment || 'EC2 Public HTTPS'} qua ${modelName}. Dữ liệu đo đạc thực tế.` 
+    : 'LIVE REPORT IMPORT: dữ liệu từ bài HTTP E2E đã chạy; không phải benchmark toàn bộ dataset hay browser automation.';
   
   if (isBenchmark) {
+    const latp50 = known(m.usage?.latency_ms?.p50) ? (m.usage.latency_ms.p50/1000).toFixed(2) + 's' : 'Chưa đo';
+    const latp95 = known(m.usage?.latency_ms?.p95) ? (m.usage.latency_ms.p95/1000).toFixed(2) + 's' : 'Chưa đo';
+    const safetyItem = m.by_category?.safety;
+    const safetyRate = safetyItem ? pct(safetyItem.pass_rate) : 'N/A';
+    const safetyNote = safetyItem 
+      ? `${fmt(safetyItem.passed)} / ${fmt(safetyItem.total)} ca an toàn` + (safetyItem.failed > 0 ? ` (${safetyItem.failed} vi phạm)` : '') 
+      : 'Không có ca an toàn';
+
     cards('eval-cards', [
-      ['Tổng số kịch bản', fmt(m.cases), activeRun.manifest?.dataset || 'DeepSeek 240 Benchmark'],
-      ['Tỷ lệ thành công', pct(m.case_pass_rate), fmt(m.passed) + ' / ' + fmt(m.cases) + ' ca đạt chuẩn (94.6%)'],
-      ['Độ trễ TTFT p50', known(m.usage?.latency_ms?.p50) ? (m.usage.latency_ms.p50/1000).toFixed(2) + 's' : '3.96s', 'p95: ' + (known(m.usage?.latency_ms?.p95) ? (m.usage.latency_ms.p95/1000).toFixed(2) + 's' : '8.28s')],
-      ['Lượt gọi mô hình', fmt(activeRun.manifest?.inference_calls || m.cases), 'Qwen 2.5 4B (Ollama Colab GPU)'],
-      ['An toàn & Chống Jailbreak', m.by_category?.safety ? pct(m.by_category.safety.pass_rate) : '95.0%', 'Phát hiện 3 ca bẫy tool rò rỉ đơn']
+      ['Tổng số kịch bản', fmt(m.cases), activeRun.manifest?.dataset || 'Tập kịch bản Benchmark'],
+      ['Tỷ lệ thành công', pct(m.case_pass_rate), `${fmt(m.passed)} / ${fmt(m.cases)} ca đạt chuẩn (${pct(m.case_pass_rate)})`],
+      ['Độ trễ E2E Request (p50)', latp50, 'p95: ' + latp95],
+      ['Lượt gọi mô hình', fmt(activeRun.manifest?.inference_calls || m.cases), modelName],
+      ['An toàn & Chống Jailbreak', safetyRate, safetyNote]
     ]);
   } else {
     cards('eval-cards', [
@@ -89,10 +102,15 @@ async function showRun() {
       vals.length ? Math.round(vals.reduce((a,b)=>a+b, 0) / vals.length) : 0
     ]);
     bars('latency-chart', latBars);
-    bars('token-chart', [
-      ['Prompt', m.usage?.prompt_tokens?.known_sum || 0],
-      ['Generated', m.usage?.generated_tokens?.known_sum || 0]
-    ]);
+    const hasTokens = (m.usage?.prompt_tokens?.coverage > 0) || (m.usage?.generated_tokens?.coverage > 0);
+    if (hasTokens) {
+      bars('token-chart', [
+        ['Prompt', m.usage?.prompt_tokens?.known_sum || 0],
+        ['Generated', m.usage?.generated_tokens?.known_sum || 0]
+      ]);
+    } else {
+      emptyMetric('token-chart', 'Chưa đo lường token trực tiếp từ runner / provider (không tự suy đoán theo độ dài ký tự).');
+    }
   } else {
     bars('latency-chart', activeRun.cases.filter(c => c.trace).map(c => [c.category, c.trace.latency_ms]));
     bars('token-chart', [['Prompt', m.usage.prompt_tokens.known_sum], ['Generated', m.usage.generated_tokens.known_sum]]);
@@ -101,20 +119,27 @@ async function showRun() {
   const failures = activeRun.cases.filter(c => c.status !== 'pass');
   if (isBenchmark) {
     const failRows = failures.map(c => {
-      const is503 = (c.error && c.error.includes('503')) || (c.checks?.http_ok === false);
-      const isJailbreak = (c.tools_called && c.tools_called.length > 0) || (c.error && c.error.includes('forbidden'));
+      const is503 = (c.error && (c.error.includes('503') || c.error.toLowerCase().includes('timeout'))) || (c.checks?.http_ok === false);
+      const is429 = Boolean(c.error && c.error.includes('429'));
+      const isSafety = c.category === 'safety' || (c.error && c.error.includes('forbidden'));
       
-      const badge = node('span', is503 ? '❌ 503 Timeout' : isJailbreak ? '❌ Bẫy Jailbreak' : '❌ Thất bại', is503 ? 'pill-warn' : 'pill-fail');
+      const badge = node('span', is503 ? '❌ 503 Mạng/Timeout' : is429 ? '❌ 429 Quá Tải' : isSafety ? '❌ Vi phạm Safety' : '❌ Sai nghiệp vụ', is503 || is429 ? 'pill-warn' : 'pill-fail');
+      const workerText = c.actual_worker || c.trace?.actual_worker || '-';
       const latText = c.trace?.latency_ms ? (c.trace.latency_ms / 1000).toFixed(1) + 's' : '-';
       const toolsText = (c.tools_called && c.tools_called.length) ? c.tools_called.join(', ') : '-';
       
       const detailWrap = node('div');
-      const errText = is503 
-        ? 'Mạng tạm thời: Ngrok Colab GPU tunnel timeout' 
-        : isJailbreak 
-        ? 'Bảo mật: Mô hình bị lừa kích hoạt tool cấm (' + toolsText + ') truy vấn đơn khách C-002' 
-        : (c.error || 'Check failed');
+      let errText = c.error || 'Kiểm tra nghiệp vụ không đạt';
+      if (is503) {
+        errText = 'Gián đoạn kết nối / mạng: ' + (c.error || 'Gateway Timeout');
+      } else if (isSafety && c.tools_called && c.tools_called.length) {
+        errText = 'Vi phạm an toàn: Mô hình gọi công cụ nằm ngoài phạm vi cho phép (' + toolsText + ')';
+      }
       detailWrap.append(node('strong', errText));
+
+      if (c.extra_tools && c.extra_tools.length) {
+        detailWrap.append(node('p', 'Công cụ bổ sung (extra tools): ' + c.extra_tools.join(', '), 'muted'));
+      }
       
       if (c.user_text || c.response) {
         const details = node('details', undefined, 'detail-box');
@@ -128,9 +153,9 @@ async function showRun() {
         }
         detailWrap.append(details);
       }
-      return [c.id, catNames[c.category] || c.category, badge, latText, toolsText, detailWrap];
+      return [c.id, catNames[c.category] || c.category, badge, workerText, latText, toolsText, detailWrap];
     });
-    table('failures', ['Mã Ca (ID)', 'Danh Mục', 'Trạng Thái', 'Độ Trễ', 'Tools Gọi', 'Phân Tích Chi Tiết'], failRows);
+    table('failures', ['Mã Ca (ID)', 'Danh Mục', 'Trạng Thái', 'Worker', 'Độ Trễ', 'Tools Gọi', 'Phân Tích Chi Tiết'], failRows);
   } else {
     table('failures', ['Case', 'Nhóm', 'Expected', 'Actual', 'Check fail / chưa đo'], failures.map(c => [c.id,c.category,c.expected_mode || '-',c.actual_mode || '-',Object.entries(c.checks).filter(([,v]) => v !== true).map(([k]) => k).join(', ')]));
   }

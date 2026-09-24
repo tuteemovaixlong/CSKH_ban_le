@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from opsconsole.metrics import classification, distribution, observed_sum, retrieval
 from opsconsole.evaluation import (router_report, save_report, load_json, import_live,
-                                   case_result, summarize, trace_summary)
+                                   case_result, summarize, trace_summary, import_benchmark)
 from opsconsole.usage import aggregate
 from opsconsole.server import Console
 
@@ -132,6 +132,67 @@ class ArtifactTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Console(self.root, 'admin.example.com').read_run('escape')
 
+    def test_benchmark_import_truthful_tokens_and_cost(self):
+        source = self.root / 'bench_unknown.json'
+        source.write_text(json.dumps({
+            'model': 'yuxinlu1/gemma-4-12b',
+            'provider': 'vllm-colab',
+            'timestamp': '20260924_120000',
+            'cases': [
+                {
+                    'id': 'case-1',
+                    'category': 'order_lookup',
+                    'passed': True,
+                    'status': 200,
+                    'latency_ms': 123.4,
+                    'tools_called': ['get_order'],
+                    'expected_tools': ['get_order'],
+                    'actual_worker': 'order_agent',
+                    'response': 'Đơn hàng đang giao',
+                    'user_text': 'Kiểm tra đơn 123'
+                },
+                {
+                    'id': 'case-2',
+                    'category': 'product',
+                    'passed': True,
+                    'status': 200,
+                    'latency_ms': 250.0,
+                    'tools_called': ['get_order', 'check_inventory'],
+                    'expected_tools': [],
+                    'extra_tools': ['get_order'],
+                    'response': 'Sản phẩm còn hàng',
+                    'user_text': 'Còn áo polo không?',
+                    'trace': {
+                        'prompt_tokens': 120,
+                        'generated_tokens': 45,
+                        'reported_cost_usd': 0.0025,
+                        'worker': 'product_agent'
+                    }
+                }
+            ]
+        }), encoding='utf-8')
+        report = import_benchmark(source)
+        self.assertEqual(report['run_id'], 'live-benchmark-2-20260924_120000')
+        self.assertEqual(report['manifest']['model'], 'yuxinlu1/gemma-4-12b')
+        self.assertEqual(report['manifest']['provider'], 'vllm-colab')
+
+        # Case 1: unmeasured tokens and cost must be None, not len//3 or 0.0
+        c1 = report['cases'][0]
+        self.assertIsNone(c1['trace']['prompt_tokens'])
+        self.assertIsNone(c1['trace']['generated_tokens'])
+        self.assertFalse(c1['trace']['token_usage_available'])
+        self.assertIsNone(c1['trace']['reported_cost_usd'])
+        self.assertEqual(c1['trace']['actual_worker'], 'order_agent')
+        self.assertEqual(c1['trace']['extra_tools'], [])
+
+        # Case 2: measured tokens and cost must be faithful
+        c2 = report['cases'][1]
+        self.assertEqual(c2['trace']['prompt_tokens'], 120)
+        self.assertEqual(c2['trace']['generated_tokens'], 45)
+        self.assertTrue(c2['trace']['token_usage_available'])
+        self.assertEqual(c2['trace']['reported_cost_usd'], 0.0025)
+        self.assertEqual(c2['trace']['extra_tools'], ['get_order'])
+
 
 class UsageTests(unittest.TestCase):
     def test_demo_and_e2e_separate_no_identifiers_or_content(self):
@@ -157,6 +218,14 @@ class UsageTests(unittest.TestCase):
         self.assertEqual(report['windows']['demo_user']['1']['events'], 0)
         self.assertEqual(report['windows']['demo_user']['7']['events'], 1)
         self.assertTrue(report['source_partial'])
+
+    def test_expanded_events_allowlist(self):
+        from opsconsole.usage import EVENTS
+        self.assertIn('feedback_received', EVENTS)
+        self.assertIn('order_status_updated_by_manager', EVENTS)
+        self.assertIn('product_created_by_manager', EVENTS)
+        self.assertIn('product_updated_by_manager', EVENTS)
+        self.assertIn('product_deleted_by_manager', EVENTS)
 
 
 if __name__ == '__main__':

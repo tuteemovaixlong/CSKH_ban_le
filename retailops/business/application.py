@@ -32,6 +32,7 @@ class Application:
         self.default_provider = 'custom'
         self.catalog = Catalog(store=self.store)
         self.agent_lock = threading.Lock()
+        self.overload_429_count = 0
         self.semantic_cache = SemanticCache(min_similarity=0.65)
         self.tool_cache = ToolCache(default_ttl=180.0)
         if orchestrator is None:
@@ -131,7 +132,7 @@ class Application:
                 'protocol': 'cache-hit-v1',
                 'model': f"cache:{cached['type']}",
                 'provider': 'cache',
-                'latency_ms': 5.0,
+                'latency_ms': round((time.monotonic() - started) * 1000, 2),
                 'cache_hit': cached['type'],
                 'similarity': cached['similarity'],
                 'matched_query': cached.get('matched_query'),
@@ -140,7 +141,13 @@ class Application:
                 'generated_tokens': 0,
                 'reported_cost_usd': 0.0,
                 'tools': [],
-                'steps': []
+                'steps': [],
+                'queue_wait_ms': 0.0,
+                'provider_inference_ms': 0.0,
+                'graph_retrieval_ms': 0.0,
+                'rag_retrieval_ms': 0.0,
+                'db_ms': 0.0,
+                'in_flight_inferences': 0
             }
             cached_result = {
                 'action': cached['action'],
@@ -160,8 +167,10 @@ class Application:
         gateway = self.infer if provider_id == 'custom' else self.api_infer if provider_id == 'api' else None
         require(gateway is not None, 503, 'model_offline',
                 'Model chưa kết nối. Bạn vẫn có thể dùng các nút tra đơn và yêu cầu hủy.')
-        require(self.agent_lock.acquire(blocking=False), 429, 'model_busy',
-                'Model đang xử lý một cuộc trò chuyện khác. Bạn thử lại sau nhé.')
+        if not self.agent_lock.acquire(blocking=False):
+            self.overload_429_count += 1
+            raise ApiError(429, 'model_busy',
+                           'Model đang xử lý một cuộc trò chuyện khác. Bạn thử lại sau nhé.')
         stack = ExitStack()
         try:
             from retailops.workflow.checkpoints import workflow
@@ -250,6 +259,12 @@ class Application:
                       'message': answer['message'], 'source': answer['trace'].get('answer_source', 'llm_agent'),
                       'model_used': answer['trace'].get('model_responses', answer['trace'].get('model_calls', 0)) > 0,
                       'context': bound.context, 'trace': answer['trace'], 'provider_id': provider_id, 'replayed': False}
+            result['trace'].setdefault('queue_wait_ms', 0.0)
+            result['trace'].setdefault('provider_inference_ms', answer['trace'].get('latency_ms', 0.0))
+            result['trace'].setdefault('graph_retrieval_ms', 0.0)
+            result['trace'].setdefault('rag_retrieval_ms', 0.0)
+            result['trace'].setdefault('db_ms', 0.0)
+            result['trace'].setdefault('in_flight_inferences', 1)
             if answer.get('action_proposal'):
                 result['action_proposal'] = answer['action_proposal']
             # A second provenance check also covers a completed checkpoint replay.

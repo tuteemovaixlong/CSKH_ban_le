@@ -154,26 +154,65 @@ def import_benchmark(source):
     cases_raw = doc.get('cases', [])
     if not cases_raw:
         raise ValueError('Benchmark report contains no cases')
+
+    doc_provider = doc.get('provider') or 'custom'
+    doc_model = doc.get('model') or doc.get('model_id') or doc.get('provider_id') or None
+
     cases = []
     for c in cases_raw:
         cid = c['id']
         cat = c['category']
         is_pass = bool(c.get('passed'))
         status = c.get('status', 200)
+        c_trace = c.get('trace') if isinstance(c.get('trace'), dict) else {}
+
         tools = [t for t in c.get('tools_called', []) if t in TOOLS or t in ('get_order', 'list_orders')]
         checks = {'http_ok': status == 200, 'compliance': is_pass}
         expected_mode = 'retail' if cat in ('order_lookup', 'policy', 'product') else 'general'
         actual_mode = expected_mode if is_pass else None
+
+        subagent_hist = c_trace.get('subagent_history', [])
+        actual_worker = (
+            c.get('actual_worker')
+            or (subagent_hist[-1] if isinstance(subagent_hist, list) and subagent_hist else None)
+            or c_trace.get('worker')
+            or None
+        )
+        extra_tools = c.get('extra_tools')
+        if extra_tools is None:
+            exp_tools = c.get('expected_tools', [])
+            extra_tools = [t for t in tools if t not in exp_tools] if exp_tools else []
+
+        prompt_tokens = c_trace.get('prompt_tokens') if 'prompt_tokens' in c_trace else c.get('prompt_tokens')
+        generated_tokens = c_trace.get('generated_tokens') if 'generated_tokens' in c_trace else c.get('generated_tokens')
+        prompt_tokens = number(prompt_tokens) if prompt_tokens is not None else None
+        generated_tokens = number(generated_tokens) if generated_tokens is not None else None
+        token_usage_available = prompt_tokens is not None and generated_tokens is not None
+
+        cost_val = c_trace.get('reported_cost_usd') if 'reported_cost_usd' in c_trace else c.get('cost') or c.get('reported_cost_usd')
+        reported_cost_usd = number(cost_val) if cost_val is not None else None
+
+        latency_val = c_trace.get('latency_ms') if 'latency_ms' in c_trace else c.get('latency_ms')
+        latency_ms = number(latency_val) if latency_val is not None else 0.0
+
+        case_model = c_trace.get('model') or c.get('model') or doc_model or 'custom'
+        case_provider = c_trace.get('provider') or c.get('provider') or doc_provider
+
         trace = {
-            'latency_ms': c.get('latency_ms', 0.0),
-            'model_calls': 1 if status == 200 else 0,
-            'prompt_tokens': len(c.get('user_text', '')) // 3,
-            'generated_tokens': len(c.get('response', '')) // 3,
-            'reported_cost_usd': 0.0,
+            'latency_ms': latency_ms,
+            'model_calls': c_trace.get('model_calls') if 'model_calls' in c_trace else (1 if status == 200 else 0),
+            'prompt_tokens': prompt_tokens,
+            'generated_tokens': generated_tokens,
+            'token_usage_available': token_usage_available,
+            'reported_cost_usd': reported_cost_usd,
             'tools': tools,
             'request_mode': expected_mode if is_pass else 'unknown',
-            'provider': 'custom',
-            'model': 'qwen2.5:4b'
+            'provider': case_provider,
+            'model': case_model,
+            'actual_worker': actual_worker,
+            'extra_tools': extra_tools,
+            'queue_wait_ms': number(c_trace.get('queue_wait_ms')) or 0.0,
+            'provider_inference_ms': number(c_trace.get('provider_inference_ms')) or latency_ms
         }
         cases.append(case_result(
             cid, cat, checks,
@@ -184,20 +223,23 @@ def import_benchmark(source):
             user_text=c.get('user_text', ''),
             response=c.get('response', ''),
             tools_called=tools,
+            extra_tools=extra_tools,
+            actual_worker=actual_worker,
             error=c.get('error') or ''
         ))
     ts = doc.get('timestamp') or datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
     report = make_report('live-benchmark', cases, {
         'source_sha256': digest(raw),
-        'dataset': doc.get('dataset', 'benchmark_250.jsonl'),
-        'provider': doc.get('provider', 'custom (Qwen 2.5 4B via Colab GPU)'),
+        'dataset': doc.get('dataset', f'benchmark_{len(cases)}.jsonl'),
+        'provider': doc_provider,
+        'model': doc_model or 'custom',
         'environment': doc.get('environment', 'EC2 Public Live HTTPS'),
         'origin': doc.get('origin', ''),
         'inference_calls': len(cases),
         'failures_count': len([c for c in cases if c['status'] != 'pass']),
-        'transport': 'Live HTTPS -> PostgreSQL 16 -> LangGraph Multi-Agent -> Ngrok Colab GPU'
+        'transport': doc.get('transport', 'Live HTTPS -> PostgreSQL 16 -> LangGraph Multi-Agent -> Serving Gateway')
     })
-    report['run_id'] = 'live-benchmark-240-' + ts
+    report['run_id'] = f"live-benchmark-{len(cases)}-{ts}"
     return report
 
 

@@ -216,6 +216,10 @@ def evaluate_single_case(client: LiveClient, c: dict, provider: str, max_retries
                 if forb_tools and (set(tools_called) & forb_tools):
                     tool_pass = False
 
+                extra_tools = [t for t in tools_called if t not in exp_tools]
+                subagent_hist = trace.get("subagent_history", []) if isinstance(trace, dict) else []
+                actual_worker = subagent_hist[-1] if subagent_hist else trace.get("worker") if isinstance(trace, dict) else None
+
                 return {
                     "id": cid,
                     "category": cat,
@@ -223,8 +227,12 @@ def evaluate_single_case(client: LiveClient, c: dict, provider: str, max_retries
                     "status": 200,
                     "latency_ms": elapsed_ms,
                     "tools_called": tools_called,
+                    "extra_tools": extra_tools,
+                    "actual_worker": actual_worker,
                     "response": msg,
                     "sources": sources,
+                    "user_text": text,
+                    "trace": trace,
                     "retries": attempt
                 }
             elif status in (429, 502, 503, 504) or status == 0:
@@ -249,6 +257,10 @@ def evaluate_single_case(client: LiveClient, c: dict, provider: str, max_retries
         "status": last_status,
         "error": last_error,
         "latency_ms": elapsed_ms,
+        "tools_called": [],
+        "extra_tools": [],
+        "actual_worker": None,
+        "user_text": text,
         "retries": max_retries
     }
 
@@ -317,8 +329,8 @@ def run_live_eval(origin: str, token: str, dataset_path: Path, max_cases: int = 
     print(f"🎉 HOÀN TẤT LIVE BENCHMARK (Nguồn: {provider})")
     print(f"   - Tổng số ca kiểm thử : {total}")
     print(f"   - Số ca thành công    : {passed} / {total} ({round((passed/total)*100, 1) if total else 0}%)")
-    print(f"   - Độ trễ TTFT p50     : {round(p50, 1)} ms")
-    print(f"   - Độ trễ tối đa p95   : {round(p95, 1)} ms")
+    print(f"   - Độ trễ E2E Request (p50): {round(p50, 1)} ms")
+    print(f"   - Độ trễ E2E Request (p95): {round(p95, 1)} ms")
     print("=" * 60)
 
     # Xuất báo cáo kết quả
@@ -354,8 +366,8 @@ def run_live_eval(origin: str, token: str, dataset_path: Path, max_cases: int = 
         f"- **Model Provider:** `{provider}` (Google Colab T4 / Ollama ngrok)",
         f"- **Tập dữ liệu:** `{dataset_path.name}` ({total} ca thử nghiệm)",
         f"- **Tỷ lệ thành công:** **{passed}/{total} ({round((passed/total)*100, 1) if total else 0}%)**",
-        f"- **Độ trễ TTFT p50:** **{round(p50, 1)} ms**",
-        f"- **Độ trễ tối đa p95:** **{round(p95, 1)} ms**",
+        f"- **Độ trễ E2E Request (p50):** **{round(p50, 1)} ms**",
+        f"- **Độ trễ E2E Request (p95):** **{round(p95, 1)} ms**",
         "",
         "## Chi Tiết Các Lượt Kiểm Thử",
         "",

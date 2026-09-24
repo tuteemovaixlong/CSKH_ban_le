@@ -13,7 +13,10 @@ from opsconsole.metrics import trace_metrics, ratio
 
 WINDOWS = (1, 7, 30)
 EVENTS = frozenset(('agent_replied', 'agent_failed', 'order_viewed', 'order_cancelled',
-                    'cancellation_proposed', 'proposal_dismissed'))
+                    'cancellation_proposed', 'proposal_dismissed',
+                    'feedback_received', 'order_status_updated_by_manager',
+                    'product_created_by_manager', 'product_updated_by_manager',
+                    'product_deleted_by_manager'))
 TEST_PREFIXES = ('e2e-', 'eval-', 'ci-', 'test-')
 
 
