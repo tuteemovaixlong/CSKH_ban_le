@@ -313,6 +313,8 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             }
             actor = _extract_actor(app, customer, binding)
             app.catalog.add_product(product, actor=actor)
+            with app.store.connection(write=True) as db:
+                app.store.log(db, customer, "product_created_by_manager", pid, name=name, price=price)
             if hasattr(app, 'tool_cache'):
                 app.tool_cache.invalidate_product(pid)
             if hasattr(app, 'semantic_cache') and app.semantic_cache:
@@ -366,6 +368,8 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                     updates[k] = body[k]
             actor = _extract_actor(app, customer, binding)
             product = app.catalog.update_product(pid, updates, actor=actor)
+            with app.store.connection(write=True) as db:
+                app.store.log(db, customer, "product_updated_by_manager", pid, updates=updates)
             if hasattr(app, 'tool_cache'):
                 app.tool_cache.invalidate_product(pid)
             if hasattr(app, 'semantic_cache') and app.semantic_cache:
@@ -385,6 +389,8 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 raise ApiError(400, "system_product_immutable", err_msg)
             except KeyError as exc:
                 raise ApiError(404, "product_not_found", str(exc))
+            with app.store.connection(write=True) as db:
+                app.store.log(db, customer, "product_deleted_by_manager", pid)
             if hasattr(app, 'tool_cache'):
                 app.tool_cache.invalidate_product(pid)
             if hasattr(app, 'semantic_cache') and app.semantic_cache:

@@ -1,9 +1,9 @@
 # Module 3: Ops Console Observability, Benchmark Importer & Telemetry Integrity (P1)
 
-> **Trạng thái:** ACTIVE NEXT / P1 (Sẵn sàng triển khai sau FIX01 và FIX02)  
-> **Mức độ minh chứng (Evidence):** L1 Automated Test Baseline (`check_ops_console.py` 17 tests OK)  
+> **Trạng thái:** COMPLETED / VERIFIED (Phase 1.3 hoàn thành 100%)  
+> **Mức độ minh chứng (Evidence):** L1 Automated Test Baseline (`check_ops_console.py` 19 tests OK, 353/353 unit tests OK)  
 > **Audit basis / Documentation baseline reviewed:** `b93eb5a` · **Application verified:** `fd24e36`  
-> **Ngày rà soát & cập nhật:** 2026-09-22  
+> **Ngày rà soát & cập nhật:** 2026-09-24  
 > **Mục tiêu:** Chuẩn hóa toàn diện đường ống đo lường của Ops Console theo đúng tôn chỉ *"Kết quả đo được, không phải số minh họa"*; loại bỏ việc tự suy diễn/ước lượng token, loại bỏ số liệu hard-code cũ ngày 18/09, chuẩn hóa tên gọi E2E Latency, mở rộng phạm vi theo dõi Feedback và tích hợp đầy đủ telemetry phục vụ đo đạc concurrency.
 
 ---
@@ -79,9 +79,9 @@
 
 ## 3. Tiêu Chí Nghiệm Thu (Acceptance Criteria)
 
-- [ ] Chạy `python scripts/check_ops_console.py` và `opsconsole/tests/test_console.py` đạt 100% OK.
-- [ ] Mở Ops Console: Khi chọn bất kỳ run nào (240 ca hoặc 250 ca), thẻ hiển thị tự động lấy đúng số liệu của run đó (không còn chữ `94.6%` hay `Qwen 2.5 4B` cố định).
-- [ ] Không có token giả tạo hay cost giả tạo bằng $0 trong báo cáo import; token không có hiển thị `Chưa có / Unknown`.
-- [ ] Nhãn độ trễ hiển thị đúng bản chất "Độ trễ E2E Request".
-- [ ] Báo cáo benchmark phân tách rõ ràng giữa `actual_worker`, công cụ đã gọi và `extra_tools` (mang tính thông tin), không bắt buộc trường `expected_worker`.
-- [ ] CI/CD và 340 tests tự động tiếp tục pass 100%.
+- [x] Chạy `python scripts/check_ops_console.py` và `opsconsole/tests/test_console.py` đạt 100% OK (19/19 tests).
+- [x] Mở Ops Console: Khi chọn bất kỳ run nào (240 ca hoặc 250 ca), thẻ hiển thị tự động lấy đúng số liệu của run đó (không còn chữ `94.6%` hay `Qwen 2.5 4B` cố định).
+- [x] Không có token giả tạo hay cost giả tạo bằng $0 trong báo cáo import; token không có hiển thị `Chưa có / Unknown`.
+- [x] Nhãn độ trễ hiển thị đúng bản chất "Độ trễ E2E Request".
+- [x] Báo cáo benchmark phân tách rõ ràng giữa `actual_worker`, công cụ đã gọi và `extra_tools` (mang tính thông tin), không bắt buộc trường `expected_worker`.
+- [x] CI/CD và 353 tests tự động tiếp tục pass 100%.

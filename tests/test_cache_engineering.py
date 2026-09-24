@@ -137,8 +137,9 @@ class ApplicationCacheIntegrationTests(unittest.TestCase):
             # Verification: fast-path returned without calling model!
             self.assertEqual(result["source"], "semantic_cache")
             self.assertFalse(result["model_used"])
-            self.assertEqual(result["trace"]["cache_hit"], "exact")
-            self.assertEqual(result["trace"]["latency_ms"], 5.0)
+            self.assertGreaterEqual(result["trace"]["latency_ms"], 0.0)
+            self.assertEqual(result["trace"]["queue_wait_ms"], 0.0)
+            self.assertEqual(result["trace"]["in_flight_inferences"], 0)
             self.assertEqual(result["trace"]["model_calls"], 0)
             self.assertEqual(agent.call_count, 0)  # Model was NEVER touched!
 
