@@ -326,7 +326,7 @@ class OpenRouterAgent:
                    'stream': False, 'max_tokens': 2048, 'temperature': 0.2}
         custom_endpoint = os.getenv('RETAILOPS_API_ENDPOINT', '').strip()
         if custom_endpoint:
-            if tools:
+            if tools and allow_tools:
                 payload['tools'] = tools
                 payload['tool_choice'] = tool_choice
         elif not self.is_google:

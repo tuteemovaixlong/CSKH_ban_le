@@ -91,6 +91,11 @@ def run_read_worker(state, execute, gateway, *, prompt, allowed_tools, render,
             final = message['content']
             break
         if not allow or state['tool_count'] + len(calls) > MAX_TOOL_CALLS:
+            if records:
+                final = render(records)
+                if final:
+                    trace.update(answer_source='tool_result', degraded=True, fallback_reason='agent_budget_exceeded')
+                    break
             raise AgentError('agent_budget_exceeded', 'Model v\u01b0\u1ee3t gi\u1edbi h\u1ea1n g\u1ecdi c\u00f4ng c\u1ee5.', trace)
         # Append the assistant ONCE per batch, then exactly one result per call.
         messages.append(message)
