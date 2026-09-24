@@ -10,6 +10,7 @@ import os
 import re
 import urllib.error
 import urllib.request
+import uuid
 
 from agent_protocol import GENERAL_SYSTEM, PROTOCOL, SYSTEM, TOOLS, ProtocolError, assistant_message, request_mode, validate_messages, scoped_tools
 from retailops_agent import AgentError
@@ -366,6 +367,19 @@ class OpenRouterAgent:
         clean = assistant_message({'message': entry})
         if clean.get('tool_calls'):
             ids = []
+            if not entry.get('tool_calls'):
+                entry['tool_calls'] = [
+                    {
+                        'id': f'call_{i}_{uuid.uuid4().hex[:8]}',
+                        'type': 'function',
+                        'function': {
+                            'name': c['function']['name'],
+                            'arguments': json.dumps(c['function']['arguments'], ensure_ascii=False)
+                            if isinstance(c['function']['arguments'], dict) else str(c['function']['arguments'])
+                        }
+                    }
+                    for i, c in enumerate(clean['tool_calls'])
+                ]
             for call in entry['tool_calls']:
                 cid = call.get('id')
                 if call.get('type') != 'function' or not isinstance(cid, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', cid):

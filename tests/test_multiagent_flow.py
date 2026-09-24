@@ -120,6 +120,20 @@ class MultiAgentFlowTests(unittest.TestCase):
         self.assertEqual(res4["intent"], "chitchat_general")
         self.assertEqual(res4["next_worker"], "witty_agent")
 
+        # 5. Fresh product/store inquiry without previous order history
+        fresh_product_state: MultiAgentState = {
+            "messages": [{"role": "user", "content": "cái quần tây ống là sao ? shop tên gì"}],
+            "fresh": [], "trace": {}, "tool_count": 0, "bound": {},
+            "complete": False, "intent": "unknown", "next_worker": "supervisor",
+            "subagent_history": [], "sentiment": "neutral", "strict_mode": False,
+            "consecutive_ood_count": 0, "action_proposal": None,
+            "requires_human": False, "human_reason": None
+        }
+        res5 = run_supervisor(fresh_product_state)
+        self.assertEqual(res5["intent"], "order_inquiry")
+        self.assertEqual(res5["next_worker"], "order_agent")
+        self.assertEqual(res5["trace"].get("routing_reason"), "order_or_product_keywords")
+
     def test_supervisor_human_escalation(self):
         state: MultiAgentState = {
             "messages": [{"role": "user", "content": "Tôi cần gặp nhân viên tư vấn trực tiếp"}],

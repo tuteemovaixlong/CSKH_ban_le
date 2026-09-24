@@ -71,6 +71,28 @@ class ApiAdapterTests(unittest.TestCase):
         self.assertIsNone(result['trace']['model_digest'])
         self.assertEqual(adapter.for_turn()._messages, {})
 
+    def test_raw_text_tool_calls_synthesize_valid_ids_and_roundtrip(self):
+        adapter = OpenRouterAgent(KEY, 'yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2')
+        # Simulate Gemma returning text tool call syntax instead of OpenAI structured tool_calls
+        text_call_response = {
+            'model': 'yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2',
+            'choices': [{
+                'message': {
+                    'role': 'assistant',
+                    'content': 'call:get_order{order_id:O-819126}call:get_runtime_info{}'
+                },
+                'finish_reason': 'stop'
+            }],
+            'usage': {'prompt_tokens': 100, 'completion_tokens': 30, 'cost': 0.0003}
+        }
+        with patch.object(adapter, 'request', return_value=text_call_response):
+            result = adapter.chat([{'role': 'user', 'content': 'check O-819126'}], True, 1)
+        # Verify tool calls were synthesized without KeyError and have valid IDs
+        self.assertEqual(len(result['message']['tool_calls']), 2)
+        self.assertEqual(result['message']['tool_calls'][0]['function']['name'], 'get_order')
+        self.assertEqual(result['message']['tool_calls'][0]['function']['arguments'], {'order_id': 'O-819126'})
+        self.assertEqual(result['message']['tool_calls'][1]['function']['name'], 'get_runtime_info')
+
     def test_completed_history_rebuilds_consistent_tool_ids(self):
         adapter = OpenRouterAgent(KEY)
         history = [{'role': 'user', 'content': 'old'}, {'role': 'assistant', 'content': '', 'tool_calls': [

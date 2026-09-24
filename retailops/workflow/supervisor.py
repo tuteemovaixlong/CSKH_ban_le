@@ -49,6 +49,12 @@ ORDER_KEYWORDS = [
     "đơn của", "đơn bên", "đơn kẹt", "đơn báo", "đơn bị", "đơn cũ", "mã đây", "đơn mega sale"
 ]
 
+PRODUCT_OR_STORE_KEYWORDS = [
+    "sản phẩm", "quần tây", "áo sơ mi", "giày lười", "áo thun", "váy", "đầm",
+    "quần áo", "shop tên gì", "tên shop", "shop tên", "cửa hàng tên gì", "tên cửa hàng",
+    "shop bán gì", "cửa hàng bán gì", "shop có gì", "cửa hàng có gì", "mặt hàng"
+]
+
 DISPUTE_KEYWORDS = [
     "hủy đơn", "hủy hàng", "muốn hủy", "hủy luôn", "hoàn tiền", "trả hàng", "hàng lỗi",
     "hàng em lỗi", "rách", "vỡ", "bể", "sai hàng", "đổi hàng", "cancel",
@@ -151,7 +157,7 @@ def run_supervisor(state: MultiAgentState) -> MultiAgentState:
 
     is_info_continuation = any(w in lower_msg for w in [
         "ngoài ra", "còn thông tin", "chi tiết hơn", "thêm thông tin", "còn gì nữa",
-        "hết chưa", "thì sao", "còn cái", "còn đơn", "thế còn", "còn gì", "shop tên gì"
+        "hết chưa", "thì sao", "là sao", "còn cái", "còn đơn", "thế còn", "còn gì", "shop tên gì", "tên shop"
     ])
     is_action_prompt = any(w in lower_msg for w in [
         "thực hiện đi", "kiểm tra đi", "check đi", "tra đi", "xem đi", "làm đi",
@@ -200,11 +206,17 @@ def run_supervisor(state: MultiAgentState) -> MultiAgentState:
             state["intent"] = "policy_knowledge"
             state["next_worker"] = "policy_agent"
             routing_reason = "policy_inquiry"
-        # 7. Order inquiry / tracking / carrier (SOP 1, SOP 4)
-        elif plural_orders or any(kw in lower_msg for kw in ORDER_KEYWORDS) or has_specific_oid or has_order_phrase:
+        # 7. Order & Product / Store inquiry (SOP 1, SOP 4)
+        elif (
+            plural_orders
+            or any(kw in lower_msg for kw in ORDER_KEYWORDS)
+            or any(kw in lower_msg for kw in PRODUCT_OR_STORE_KEYWORDS)
+            or has_specific_oid
+            or has_order_phrase
+        ):
             state["intent"] = "order_inquiry"
             state["next_worker"] = "order_agent"
-            routing_reason = "order_direct_keywords"
+            routing_reason = "order_or_product_keywords"
         # 8. Multi-turn order context continuation (F1 resolution)
         elif not is_explicit_general and (
             (active_order_id and (is_info_continuation or is_action_prompt)) or
