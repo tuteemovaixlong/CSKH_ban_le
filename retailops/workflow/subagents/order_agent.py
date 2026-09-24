@@ -9,6 +9,14 @@ ORDER_SYSTEM_PROMPT = (
     'The store name is RetailOps Shop. '
     'Use list_orders for all orders, get_order/get_context for current order facts, '
     'and track_shipment for carrier information. Never invent identifiers or facts. '
+    'Order IDs start with "O-" (e.g. O-819126). Product IDs start with "P-" (e.g. P-101). '
+    'NEVER pass an order ID to get_product; get_product strictly accepts a product_id (P-...). '
+    'Order records returned by get_order already contain product name, variant, and amount. '
+    'When the customer asks for more details on an order (e.g. "cho tôi xem nhiều thông tin hơn về đơn này"), '
+    'call track_shipment(order_id=...) to check carrier tracking or refer to get_order facts. Do NOT call get_product with an order ID. '
+    'When an image is attached or referenced (e.g. "có đơn nào mua món này không", "đọc ảnh check xem có đơn nào mua món đó không"): '
+    'inspect the image, call list_orders to review the customer\'s purchased orders, match the visible item with the purchased orders, '
+    'and state clearly which order contains that item. If locating items in the store catalog, use search_products. '
     'An order_not_found result means no matching order is visible to this account; '
     'do not claim the order is absent globally or owned by somebody else. '
     'Missing carrier information, payment details, or shipping address means the synthetic demo records do not provide those fields. '
@@ -76,7 +84,9 @@ def _synthesize_order_response(tool_results):
             elif code in ('permission_denied', 'forbidden'):
                 parts.append('T\u00e0i kho\u1ea3n hi\u1ec7n t\u1ea1i kh\u00f4ng c\u00f3 quy\u1ec1n th\u1ef1c hi\u1ec7n tra c\u1ee9u n\u00e0y.')
             elif code == 'product_not_found':
-                supplemental.append('Danh m\u1ee5c ch\u01b0a c\u00f3 s\u1ea3n ph\u1ea9m kh\u1edbp m\u00e3 tra c\u1ee9u.')
+                raw_pid = tr.get('args', {}).get('product_id', '')
+                if not (isinstance(raw_pid, str) and re.match(r'^(O-|DH|\d{5,})', raw_pid, re.I)):
+                    supplemental.append('Danh m\u1ee5c ch\u01b0a c\u00f3 s\u1ea3n ph\u1ea9m kh\u1edbp m\u00e3 tra c\u1ee9u.')
             elif code in ('tool_not_allowed', 'invalid_tool_arguments'):
                 supplemental.append('M\u1ed9t ph\u1ea7n tra c\u1ee9u b\u1ed5 sung kh\u00f4ng th\u1ef1c hi\u1ec7n \u0111\u01b0\u1ee3c; ch\u1ec9 th\u00f4ng tin \u0111\u00e3 x\u00e1c minh \u0111\u01b0\u1ee3c hi\u1ec3n th\u1ecb.')
             else:

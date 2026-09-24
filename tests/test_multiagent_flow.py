@@ -134,6 +134,50 @@ class MultiAgentFlowTests(unittest.TestCase):
         self.assertEqual(res5["next_worker"], "order_agent")
         self.assertEqual(res5["trace"].get("routing_reason"), "order_or_product_keywords")
 
+    def test_supervisor_image_attachment_and_order_query_routing(self):
+        # 1. Attachment with image and question "có đơn nào mua món này khôgn"
+        image_attachment_state: MultiAgentState = {
+            "messages": [{
+                "role": "user",
+                "content": "có đơn nào mua món này khôgn",
+                "attachment": {"type": "image", "data": "base64dummy==", "mime_type": "image/png"}
+            }],
+            "fresh": [], "trace": {}, "tool_count": 0, "bound": {"context": {"order_id": "O-819126"}},
+            "complete": False, "intent": "unknown", "next_worker": "supervisor",
+            "subagent_history": ["supervisor:routed_to_order_agent", "order_agent:done"],
+            "sentiment": "neutral", "strict_mode": False, "consecutive_ood_count": 0,
+            "action_proposal": None, "requires_human": False, "human_reason": None
+        }
+        res_img = run_supervisor(image_attachment_state)
+        self.assertEqual(res_img["intent"], "order_inquiry")
+        self.assertEqual(res_img["next_worker"], "order_agent")
+
+        # 2. Text "Bạn đọc ảnh, check xem có đơn nào mua món đó không"
+        read_img_state: MultiAgentState = {
+            "messages": [{"role": "user", "content": "Bạn đọc ảnh, check xem có đơn nào mua món đó không"}],
+            "fresh": [], "trace": {}, "tool_count": 0, "bound": {},
+            "complete": False, "intent": "unknown", "next_worker": "supervisor",
+            "subagent_history": [], "sentiment": "neutral", "strict_mode": False,
+            "consecutive_ood_count": 0, "action_proposal": None,
+            "requires_human": False, "human_reason": None
+        }
+        res_read_img = run_supervisor(read_img_state)
+        self.assertEqual(res_read_img["intent"], "order_inquiry")
+        self.assertEqual(res_read_img["next_worker"], "order_agent")
+
+        # 3. Text "có đơn nào mua món này không" without attachment
+        order_query_state: MultiAgentState = {
+            "messages": [{"role": "user", "content": "có đơn nào mua món này không"}],
+            "fresh": [], "trace": {}, "tool_count": 0, "bound": {},
+            "complete": False, "intent": "unknown", "next_worker": "supervisor",
+            "subagent_history": [], "sentiment": "neutral", "strict_mode": False,
+            "consecutive_ood_count": 0, "action_proposal": None,
+            "requires_human": False, "human_reason": None
+        }
+        res_oq = run_supervisor(order_query_state)
+        self.assertEqual(res_oq["intent"], "order_inquiry")
+        self.assertEqual(res_oq["next_worker"], "order_agent")
+
     def test_supervisor_human_escalation(self):
         state: MultiAgentState = {
             "messages": [{"role": "user", "content": "Tôi cần gặp nhân viên tư vấn trực tiếp"}],

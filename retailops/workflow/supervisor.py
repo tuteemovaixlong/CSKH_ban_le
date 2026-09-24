@@ -143,10 +143,14 @@ def run_supervisor(state: MultiAgentState) -> MultiAgentState:
 
     # Check for order identifier or active transactional order focus
     has_specific_oid = bool(re.search(r'\b(o-\d+|dh\d+|\d{5,})\b', lower_msg))
-    has_order_phrase = bool(any(w in lower_msg for w in ["đơn em", "đơn này", "đơn tôi", "đơn mình", "đơn của", "mã đơn", "check đơn", "xem đơn", "tra đơn", "đơn cũ", "đơn mega sale"]))
+    has_order_phrase = bool(any(w in lower_msg for w in [
+        "đơn em", "đơn này", "đơn tôi", "đơn mình", "đơn của", "mã đơn", "check đơn",
+        "xem đơn", "tra đơn", "đơn cũ", "đơn mega sale", "có đơn", "đơn nào", "tìm đơn",
+        "đơn mua", "đã mua", "mua món", "mua cái", "mua hàng"
+    ]))
     has_check_request = bool(has_order_phrase and any(w in lower_msg for w in ["check", "xem", "tra", "mã đơn đây", "kẹt"]))
 
-    # Multi-turn context resolution: active server context and conversational history
+    # Multi-turn context resolution: active server context, conversational history, and attachments
     bound_ctx = state.get("bound", {}).get("context", {}) or {}
     active_order_id = bound_ctx.get("order_id")
 
@@ -155,17 +159,26 @@ def run_supervisor(state: MultiAgentState) -> MultiAgentState:
     recent_subagents = [s for s in state.get("subagent_history", []) if s.startswith("supervisor:routed_to_")]
     prev_was_order_agent = bool(recent_subagents and recent_subagents[-1] == "supervisor:routed_to_order_agent")
 
+    has_attachment = bool(state["messages"] and state["messages"][-1].get("attachment"))
+    has_image_query = any(w in lower_msg for w in [
+        "ảnh", "hình", "hình ảnh", "tấm ảnh", "tấm hình", "đọc ảnh", "xem ảnh",
+        "nhìn ảnh", "trong ảnh", "ảnh này", "ảnh đó", "ảnh đính kèm"
+    ])
+
     is_info_continuation = any(w in lower_msg for w in [
-        "ngoài ra", "còn thông tin", "chi tiết hơn", "thêm thông tin", "còn gì nữa",
-        "hết chưa", "thì sao", "là sao", "còn cái", "còn đơn", "thế còn", "còn gì", "shop tên gì", "tên shop"
+        "ngoài ra", "còn thông tin", "chi tiết hơn", "thêm thông tin", "nhiều thông tin",
+        "còn gì nữa", "hết chưa", "thì sao", "là sao", "còn cái", "còn đơn", "thế còn",
+        "còn gì", "shop tên gì", "tên shop"
     ])
     is_action_prompt = any(w in lower_msg for w in [
         "thực hiện đi", "kiểm tra đi", "check đi", "tra đi", "xem đi", "làm đi",
-        "tra cứu đi", "kiểm tra giúp", "check giúp", "xem giúp", "giải thích giúp"
+        "tra cứu đi", "kiểm tra giúp", "check giúp", "xem giúp", "giải thích giúp",
+        "check xem", "xem có", "kiểm tra xem", "tìm xem", "coi xem", "đọc ảnh", "xem ảnh"
     ])
     is_item_selection = any(w in lower_msg for w in [
-        "cái này", "đơn này", "đơn đầu", "cái thứ", "mục này", "lấy cái này", "chọn cái này",
-        "quần tây", "áo sơ mi", "giày lười", "áo thun", "váy", "đầm"
+        "cái này", "cái đó", "đơn này", "đơn đầu", "cái thứ", "mục này", "lấy cái này", "chọn cái này",
+        "món này", "món đó", "món kia", "đồ này", "đồ đó", "sản phẩm này", "sản phẩm đó",
+        "mẫu này", "mẫu đó", "quần tây", "áo sơ mi", "giày lười", "áo thun", "váy", "đầm"
     ])
 
     is_explicit_general = classify_user_text(last_user_msg) == "general" or any(w in lower_msg for w in [
@@ -217,10 +230,12 @@ def run_supervisor(state: MultiAgentState) -> MultiAgentState:
             state["intent"] = "order_inquiry"
             state["next_worker"] = "order_agent"
             routing_reason = "order_or_product_keywords"
-        # 8. Multi-turn order context continuation (F1 resolution)
+        # 8. Multi-turn order context continuation, image-assisted inquiry, or focused order inquiry
         elif not is_explicit_general and (
-            (active_order_id and (is_info_continuation or is_action_prompt)) or
-            ((prev_was_order_agent or prev_had_order) and (is_info_continuation or is_action_prompt or is_item_selection))
+            has_attachment
+            or has_image_query
+            or (active_order_id and (is_info_continuation or is_action_prompt or is_item_selection))
+            or ((prev_was_order_agent or prev_had_order) and (is_info_continuation or is_action_prompt or is_item_selection))
         ):
             state["intent"] = "order_inquiry"
             state["next_worker"] = "order_agent"
