@@ -175,7 +175,21 @@ Hệ thống đã có sẵn module Staff Desk tại [`retailops/http/routes.py`]
 
 ---
 
-## 4. Kế hoạch Triển khai (Checklist 5 Bước)
+### 3.4. Hiển Thị Chuỗi Suy Luận (COT) & Tiến Trình Gọi Tools (Kèm Nút Bật/Tắt Quản Trị)
+
+1. **Hiển thị trên Web & Mobile (Cổng QR Demo)**:
+   - Giao diện chat hiển thị khối suy luận dạng accordion có thể gập/mở:
+     - `💭 Chuỗi suy luận (Chain of Thought)`: Các bước tư duy nội tâm của mô hình trước khi hành động.
+     - `🛠️ Tiến trình gọi công cụ (Tool Calls)`: Timeline từng bước gọi tool (Ví dụ: `Supervisor phân tích` ➔ `dispute_agent` ➔ `lookup_order` ➔ `check_inventory` ➔ `sinh câu trả lời`).
+2. **Hiển thị trên Facebook Messenger**:
+   - Khi bật chế độ minh bạch cho khách: Bot gửi tin nhắn văn bản ngắn báo trạng thái suy luận/gọi công cụ (hoặc gửi dưới dạng khối trích dẫn `> 💭 Suy luận: ...`) trước khi gửi câu trả lời hoàn chỉnh.
+3. **Nút Quản trị viên (Admin Toggle Switch trong Store Manager Console)**:
+   - Thêm nút gạt trong **Store Manager Console**: *"Bật hiển thị chuỗi COT & Tool Call cho khách hàng"*.
+   - Cho phép Quản trị viên chủ động chuyển đổi giữa chế độ thương mại sạch sẽ (ẩn COT, chỉ gửi câu trả lời) và chế độ trình diễn kỹ thuật (hiện đầy đủ chuỗi suy luận cho Hội đồng nghiệm thu).
+
+---
+
+## 4. Kế hoạch Triển khai (Checklist 6 Bước)
 
 - [ ] **Bước 1**: Tạo file `retailops/http/webhooks.py` chứa router xử lý webhook cho Facebook và Zalo.
 - [ ] **Bước 2**: Bổ sung biến môi trường cấu hình trong `/opt/retailops/api.env`:
@@ -183,7 +197,8 @@ Hệ thống đã có sẵn module Staff Desk tại [`retailops/http/routes.py`]
   - `ZALO_OA_ACCESS_TOKEN`, `ZALO_APP_SECRET`
 - [ ] **Bước 3**: Viết adapter gửi tin nhắn đi (`retailops/http/social_messenger.py`) hỗ trợ gọi API Meta và Zalo.
 - [ ] **Bước 4**: Tạo Fanpage Facebook thử nghiệm và cấu hình Webhook URL trên Meta for Developers.
-- [ ] **Bước 5**: Viết unit test giả lập webhook payload (`tests/test_webhooks.py`) và tạo mã QR Demo đưa vào Slide Luận văn.
+- [ ] **Bước 5**: Tích hợp nút bật/tắt hiển thị COT trong Store Manager Console và định dạng hiển thị COT / Tool Trace trên Web & Messenger.
+- [ ] **Bước 6**: Viết unit test giả lập webhook payload (`tests/test_webhooks.py`) và tạo mã QR Demo đưa vào Slide Luận văn.
 
 ---
 
