@@ -28,7 +28,7 @@ def build_multiagent_graph(gateway: Any, execute: Any, saver: Any = None,
     def order_worker(state: MultiAgentState) -> MultiAgentState:
         restore(state.get("bound", {}))
         before_model()
-        new_state = run_order_agent(state, execute, gateway)
+        new_state = run_order_agent(state, execute, gateway, timeout=60)
         new_state["bound"] = capture()
         return new_state
 

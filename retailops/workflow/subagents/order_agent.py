@@ -11,12 +11,16 @@ ORDER_SYSTEM_PROMPT = (
     'and track_shipment for carrier information. Never invent identifiers or facts. '
     'Order IDs start with "O-" (e.g. O-819126). Product IDs start with "P-" (e.g. P-101). '
     'NEVER pass an order ID to get_product; get_product strictly accepts a product_id (P-...). '
-    'Order records returned by get_order already contain product name, variant, and amount. '
-    'When the customer asks for more details on an order (e.g. "cho tôi xem nhiều thông tin hơn về đơn này"), '
+    'Order records returned by get_order or list_orders already contain product name, variant, and amount. '
+    'When the customer asks if they ordered an item or asks about orders from an image '
+    '(e.g. "có đơn nào đặt món này chưa", "có đơn nào mua món này không", "đọc ảnh check đơn"): '
+    'call list_orders ONCE. DO NOT call search_products. DO NOT call get_order. '
+    'Immediately after list_orders returns, visually match the item from the image with the order records '
+    '(for example: O-819126 is "Quần tây ống đứng tôn dáng", O-819125 is "Áo sơ mi lụa công sở", O-819127 is "Giày lười da bò cao cấp") '
+    'and answer the customer directly in Vietnamese, stating whether they ordered the item, the order ID, product name, variant, amount, and status. '
+    'search_products is ONLY for finding items the store sells in the catalog; NEVER call search_products to check customer orders. '
+    'When the customer asks for more details on an existing order (e.g. "cho tôi xem nhiều thông tin hơn về đơn này"), '
     'call track_shipment(order_id=...) to check carrier tracking or refer to get_order facts. Do NOT call get_product with an order ID. '
-    'When an image is attached or referenced (e.g. "có đơn nào mua món này không", "đọc ảnh check xem có đơn nào mua món đó không"): '
-    'inspect the image, call list_orders to review the customer\'s purchased orders, match the visible item with the purchased orders, '
-    'and state clearly which order contains that item. If locating items in the store catalog, use search_products. '
     'An order_not_found result means no matching order is visible to this account; '
     'do not claim the order is absent globally or owned by somebody else. '
     'Missing carrier information, payment details, or shipping address means the synthetic demo records do not provide those fields. '
@@ -124,7 +128,9 @@ def _synthesize_order_response(tool_results):
                 item = _order(result['order'])
                 if item is None:
                     return None
-                rendered.append(item)
+                oid = result['order'].get('id', '')
+                if not (oid and any(oid in p for p in parts)):
+                    rendered.append(item)
             if result.get('product') is not None:
                 item = _product(result['product'])
                 if item is None:
@@ -145,7 +151,7 @@ def _synthesize_order_response(tool_results):
     return None
 
 
-def run_order_agent(state, execute, gateway, timeout=30):
+def run_order_agent(state, execute, gateway, timeout=60):
     return run_read_worker(state, execute, gateway, prompt=ORDER_SYSTEM_PROMPT,
                            allowed_tools=_ALLOWED, render=_synthesize_order_response,
                            worker='order_agent', timeout=timeout)
