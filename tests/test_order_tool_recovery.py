@@ -319,7 +319,7 @@ class OrderToolRecoveryTests(unittest.TestCase):
     def test_t06_google_login_seeds_product_id_and_backfill_is_idempotent(self):
         """T06: Google login seeds valid product_ids from catalog, and backfill script is idempotent."""
         from retailops.identity.persistent import PersistentSessions
-        from scripts.backfill_order_catalog_links import backfill_sqlite
+        from retailops.storage.backfill import backfill_sqlite
         temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(temp_dir.cleanup)
         sessions = PersistentSessions(Path(temp_dir.name))

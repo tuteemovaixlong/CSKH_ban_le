@@ -16,6 +16,7 @@ COPY opsconsole /app/opsconsole
 COPY evals/scenarios/baseline_v1.jsonl /app/evals/scenarios/baseline_v1.jsonl
 COPY deploy/compose.admin.yaml deploy/admin-console.py /app/deploy/
 COPY tests /app/tests
+COPY scripts /app/scripts
 COPY data/smoke.jsonl /app/data/smoke.jsonl
 COPY data/products.json /app/data/products.json
 COPY data/knowledge /app/data/knowledge
