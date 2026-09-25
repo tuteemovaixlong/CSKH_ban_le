@@ -152,6 +152,38 @@ class ReActEndToEndIntegrationTests(unittest.TestCase):
         self.assertIn('đơn O-101', steps[0]['tools'][0]['summary'])
         self.assertEqual(steps[1]['action'], 'final_answer')
 
+    def test_attachment_handling_for_text_only_and_vision_models(self):
+        from retailops_providers import OpenRouterAgent
+
+        # Text-only model: should convert image to textual context without image_url
+        text_agent = OpenRouterAgent('x' * 32, 'yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2')
+        self.assertFalse(text_agent.is_vision)
+
+        msg = [{
+            'role': 'user',
+            'content': 'tôi đã mua cái nào chưa ?',
+            'attachment': {
+                'type': 'image',
+                'name': 'Screenshot.png',
+                'data': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+                'mime_type': 'image/png'
+            }
+        }]
+
+        trans_text = text_agent.translate(msg)
+        self.assertIsInstance(trans_text[0]['content'], str)
+        self.assertIn('tôi đã mua cái nào chưa ?', trans_text[0]['content'])
+        self.assertIn('[Tệp đính kèm: Screenshot.png]', trans_text[0]['content'])
+
+        # Vision model: should retain image_url
+        vision_agent = OpenRouterAgent('x' * 32, 'Qwen/Qwen2.5-VL-7B-Instruct')
+        self.assertTrue(vision_agent.is_vision)
+
+        trans_vision = vision_agent.translate(msg)
+        self.assertIsInstance(trans_vision[0]['content'], list)
+        self.assertEqual(trans_vision[0]['content'][0]['text'], 'tôi đã mua cái nào chưa ?')
+        self.assertEqual(trans_vision[0]['content'][1]['type'], 'image_url')
+
 
 if __name__ == '__main__':
     unittest.main()

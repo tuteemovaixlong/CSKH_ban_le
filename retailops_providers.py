@@ -62,6 +62,28 @@ API_MODELS = {
     'vllm/qwen2.5-vl',
 }
 
+TEXT_ONLY_MODELS = frozenset((
+    'yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2',
+    'yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2-GGUF',
+    'google/gemma-4-26b-a4b-it:free',
+    'google/gemma-4-26b-a4b-it',
+    'google/gemma-4-31b-it:free',
+    'google/gemma-2-9b-it:free',
+    'meta/muse-spark-1.3-contributor',
+    'meta/muse-spark-1.2-contributor',
+))
+
+
+def is_vision_model(model_name: str) -> bool:
+    if not isinstance(model_name, str) or not model_name:
+        return True
+    lower = model_name.lower()
+    if model_name in TEXT_ONLY_MODELS:
+        return False
+    if 'gemma' in lower and '-vl' not in lower and 'vision' not in lower:
+        return False
+    return True
+
 
 def filter_system_prompt_for_tools(system_text, allowed_tools):
     """Removes directives requiring tools outside allowed_tools to prevent worker prompt conflicts."""
@@ -121,6 +143,7 @@ class OpenRouterAgent:
             else:
                 self.endpoint = OPENROUTER_ENDPOINT
             self.ENDPOINT = self.endpoint
+        self.is_vision = self.is_anthropic or self.is_google or is_vision_model(self.model)
         self._messages = {}
         self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirects())
 
@@ -165,16 +188,29 @@ class OpenRouterAgent:
                 entry = {'role': 'tool', 'tool_call_id': pending.pop(0), 'content': message['content']}
             elif message['role'] == 'user' and message.get('attachment'):
                 att = message['attachment']
-                content_list = [{'type': 'text', 'text': message['content']}]
+                text_content = message.get('content') or ''
                 if att.get('type') == 'image' and att.get('data'):
-                    data_url = att['data']
-                    if not data_url.startswith('data:'):
-                        mime = att.get('mime_type', 'image/jpeg')
-                        data_url = f"data:{mime};base64,{data_url}"
-                    content_list.append({'type': 'image_url', 'image_url': {'url': data_url}})
+                    if self.is_vision:
+                        data_url = att['data']
+                        if not data_url.startswith('data:'):
+                            mime = att.get('mime_type', 'image/jpeg')
+                            data_url = f"data:{mime};base64,{data_url}"
+                        entry = {
+                            'role': 'user',
+                            'content': [
+                                {'type': 'text', 'text': text_content},
+                                {'type': 'image_url', 'image_url': {'url': data_url}}
+                            ]
+                        }
+                    else:
+                        img_name = att.get('name') or 'hình ảnh'
+                        notice = f"[Tệp đính kèm: {img_name}] (Ghi chú: Mô hình hiện tại là SLM văn bản/công cụ, không hỗ trợ nhận diện trực tiếp pixel hình ảnh. Hãy xử lý yêu cầu dựa trên văn bản và công cụ tra cứu dữ liệu)."
+                        entry = {'role': 'user', 'content': f"{text_content}\n\n{notice}".strip()}
                 elif att.get('type') == 'document':
-                    content_list.append({'type': 'text', 'text': f"[Tệp đính kèm: {att.get('name', 'tài liệu')}]"})
-                entry = {'role': 'user', 'content': content_list}
+                    doc_name = att.get('name', 'tài liệu')
+                    entry = {'role': 'user', 'content': f"{text_content}\n\n[Tệp đính kèm: {doc_name}]".strip()}
+                else:
+                    entry = {'role': 'user', 'content': text_content}
             else:
                 entry = dict(message)
             translated.append(entry)
