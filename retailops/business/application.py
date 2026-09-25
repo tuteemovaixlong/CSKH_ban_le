@@ -299,6 +299,8 @@ class Application:
                     and (provider_id != 'api' or getattr(self, 'cache_api', False))):
                 self.semantic_cache.store(text, answer['message'], action=result['action'])
             return result
+        except ApiError:
+            raise
         except AgentError as exc:
             exc.trace['latency_ms'] = round((time.monotonic() - started) * 1000, 2)
             self.store.event(customer, 'agent_failed', code=exc.code, trace=exc.trace)
@@ -307,6 +309,10 @@ class Application:
             self.store.event(customer, 'agent_failed', code='model_unavailable')
             raise ApiError(503, 'model_unavailable',
                            'Không kết nối được nguồn model đã chọn. Kiểm tra cấu hình; hệ thống không tự chuyển model.') from None
+        except Exception as exc:
+            trace_dict = {'error_kind': type(exc).__name__, 'error_detail': str(exc), 'latency_ms': round((time.monotonic() - started) * 1000, 2)}
+            self.store.event(customer, 'agent_failed', code='internal_error', trace=trace_dict)
+            raise ApiError(500, 'internal_error', 'Không hoàn tất yêu cầu do lỗi xử lý nội bộ. Vui lòng tải lại trạng thái.', trace_dict) from None
         finally:
             stack.close()
 

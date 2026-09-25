@@ -28,49 +28,69 @@ def worker_messages(state, prompt):
 
 
 def _summarize_tool_result(name, args, result):
-    if not isinstance(result, dict):
-        return 'Kết quả không xác định'
-    err = result.get('error')
-    if err:
-        error_labels = {
-            'order_not_found': f"Không tìm thấy đơn hàng {args.get('order_id', '')} trong tài khoản",
-            'tool_not_allowed': f"Công cụ '{name}' ngoài phạm vi worker",
-            'invalid_tool_arguments': 'Tham số truyền vào công cụ không hợp lệ',
-            'product_not_found': f"Chưa tìm thấy sản phẩm {args.get('product_id', '')}",
-            'permission_denied': 'Không đủ quyền truy cập tài nguyên',
-            'tool_unavailable': 'Nguồn dữ liệu tạm thời chưa sẵn sàng'
-        }
-        return error_labels.get(err, f'Lỗi: {err}')
-    if name == 'get_order':
-        order = result.get('order', {})
-        return f"Đơn {order.get('id', '')}: {order.get('name', '')} ({order.get('variant', '')}), trạng thái: {order.get('status', '')}"
-    if name == 'get_product':
-        prod = result.get('product', {})
-        mat = prod.get('material', '')
-        warr = prod.get('warranty_days')
-        warr_str = f", bảo hành {warr} ngày" if warr else ""
-        return f"Sản phẩm {prod.get('id', '')}: {prod.get('name', '')}{f', chất liệu: {mat}' if mat else ''}{warr_str}"
-    if name == 'get_context':
-        order = result.get('order', {})
-        prod = result.get('product', {})
-        oid = order.get('id')
-        pid = order.get('product_id') or prod.get('id')
-        parts = []
-        if oid:
-            parts.append(f"đơn {oid}")
-        if pid:
-            parts.append(f"sản phẩm {pid}")
-        return f"Context: {', '.join(parts) if parts else 'không có focus'}"
-    if name == 'search_knowledge':
-        results = result.get('results', [])
-        return f"Tìm thấy {len(results)} tài liệu chính sách liên quan"
-    if name == 'track_shipment':
-        shipment = result.get('shipment', {})
-        return f"Vận đơn: {shipment.get('carrier', 'N/A')} - {shipment.get('tracking_code', 'Chưa có')}"
-    if name == 'list_orders':
-        orders = result.get('orders', [])
-        return f"Tìm thấy {len(orders)} đơn hàng trong tài khoản"
-    return 'Thực thi thành công'
+    try:
+        if not isinstance(result, dict):
+            return 'Kết quả không xác định'
+        err = result.get('error')
+        if err:
+            arg_map = args if isinstance(args, dict) else {}
+            error_labels = {
+                'order_not_found': f"Không tìm thấy đơn hàng {arg_map.get('order_id', '')} trong tài khoản",
+                'tool_not_allowed': f"Công cụ '{name}' ngoài phạm vi worker",
+                'invalid_tool_arguments': 'Tham số truyền vào công cụ không hợp lệ',
+                'product_not_found': f"Chưa tìm thấy sản phẩm {arg_map.get('product_id', '')}",
+                'permission_denied': 'Không đủ quyền truy cập tài nguyên',
+                'tool_unavailable': 'Nguồn dữ liệu tạm thời chưa sẵn sàng'
+            }
+            return error_labels.get(err, f'Lỗi: {err}')
+        if name == 'get_order':
+            order = result.get('order')
+            if isinstance(order, dict):
+                oid = order.get('id', '')
+                oname = order.get('name', '')
+                ovar = f" ({order.get('variant')})" if order.get('variant') else ""
+                ostatus = f", trạng thái: {order.get('status')}" if order.get('status') else ""
+                return f"Đơn {oid}: {oname}{ovar}{ostatus}"
+            return "Không có thông tin đơn hàng"
+        if name == 'get_product':
+            prod = result.get('product')
+            if isinstance(prod, dict):
+                pid = prod.get('id', '')
+                pname = prod.get('name', '')
+                mat = prod.get('material', '')
+                warr = prod.get('warranty_days')
+                warr_str = f", bảo hành {warr} ngày" if warr else ""
+                return f"Sản phẩm {pid}: {pname}{f', chất liệu: {mat}' if mat else ''}{warr_str}"
+            return "Không có thông tin sản phẩm"
+        if name == 'get_context':
+            order = result.get('order')
+            prod = result.get('product')
+            oid = order.get('id') if isinstance(order, dict) else None
+            pid = (order.get('product_id') if isinstance(order, dict) else None) or (prod.get('id') if isinstance(prod, dict) else None)
+            parts = []
+            if oid:
+                parts.append(f"đơn {oid}")
+            if pid:
+                parts.append(f"sản phẩm {pid}")
+            return f"Context: {', '.join(parts) if parts else 'không có focus'}"
+        if name == 'search_knowledge':
+            results = result.get('results')
+            count = len(results) if isinstance(results, list) else 0
+            return f"Tìm thấy {count} tài liệu chính sách liên quan"
+        if name == 'track_shipment':
+            shipment = result.get('shipment')
+            if isinstance(shipment, dict):
+                carrier = shipment.get('carrier', 'N/A')
+                tracking = shipment.get('tracking_code', 'Chưa có')
+                return f"Vận đơn: {carrier} - {tracking}"
+            return "Chưa có thông tin vận đơn"
+        if name == 'list_orders':
+            orders = result.get('orders')
+            count = len(orders) if isinstance(orders, list) else 0
+            return f"Tìm thấy {count} đơn hàng trong tài khoản"
+        return 'Thực thi thành công'
+    except Exception:
+        return 'Đã thực thi công cụ'
 
 
 def call_model(gateway, messages, allow_tools, deadline, trace, *, allowed_tools=None):

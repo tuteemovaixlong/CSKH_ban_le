@@ -131,7 +131,7 @@ vllm_cmd = [
     *quant_flags,
     "--port", "8001",
     "--gpu-memory-utilization", "0.88",
-    "--max-model-len", "4096",
+    "--max-model-len", "8192",
     "--kv-cache-dtype", "fp8",
     "--enable-prefix-caching",
     "--trust-remote-code",
