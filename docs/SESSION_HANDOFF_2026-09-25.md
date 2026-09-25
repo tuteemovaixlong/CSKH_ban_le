@@ -1,91 +1,101 @@
-# BÁO CÁO TIẾN ĐỘ & NHẬT KÝ SỰ CỐ (SESSION HANDOFF) — 2026-09-25
+# TÀI LIỆU BÀN GIAO PHIÊN LÀM VIỆC (SESSION HANDOFF) — 25/09/2026
 
-> **Thời điểm ghi nhận:** 2026-09-25 00:45:12 (GMT+7 / Asia/Ho_Chi_Minh)  
-> **Dự án:** RetailOps CSKH Bán Lẻ (`tuteemovaixlong/CSKH_ban_le`)  
-> **Nhánh:** `main`  
-> **Commit cơ sở:** `4a4f260` (`fix(workflow): remove single-tool cutoff, keep 4 model calls budget with accurate tool guidance`)  
-> **Môi trường thử nghiệm:** AWS EC2 (`retailops-dev`) kết nối custom vLLM backend trên Google Colab GPU (`yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2`) qua ngrok tunnel.  
-> **Mục đích tài liệu:** Lưu trữ chi tiết các lỗi vừa phát sinh trong phiên test trực tiếp, nguyên nhân kỹ thuật, tiến độ đã hoàn thành và danh mục công việc cần xử lý ngay khi mở máy lần tới.
-
----
-
-## 1. Chi Tiết Các Lỗi Gặp Phải Trong Phiên Test
-
-### Sự cố 1: Lỗi `tool_response_failed` ("Chưa thể xác minh kết quả tra cứu.")
-- **Thao tác người dùng:** Gửi ảnh chiếc quần tây (`Screenshot 2026-09-24 234028.png`) kèm câu hỏi *"có đơn nào mua cái này chưa"*.
-- **Chi tiết kỹ thuật từ Trace:**
-  - **Mã lượt:** `66ae62a4-b3bb-4eee-be72-acfc65be36d6`
-  - **HTTP Status:** `503`
-  - **Lỗi:** `{"error":"tool_response_failed","message":"Chưa thể xác minh kết quả tra cứu."}`
-  - **Số lượt gọi model:** `3` | **Thời gian xử lý:** `20.197 s`
-  - **Chuỗi công cụ:** `list_orders (ok)` -> `get_order (ok)` -> `prepare_cancellation (error: tool_not_allowed)`.
-- **Nguyên nhân gốc rễ (Root Cause):**
-  1. Sau khi gọi `list_orders` và `get_order`, model Gemma-4 tự ý gọi thêm công cụ `prepare_cancellation` (vốn là công cụ thuộc `dispute_agent`, không nằm trong danh mục công cụ cho phép `_ALLOWED` của `order_agent`).
-  2. Hệ thống ghi nhận `prepare_cancellation` bị lỗi `tool_not_allowed` và kích hoạt hàm tổng hợp dự phòng `_synthesize_order_response`.
-  3. Trong hàm `_synthesize_order_response`, việc xử lý các trường hợp kết hợp (vừa có `list_orders`, vừa có `get_order` đã bị khử trùng lặp, vừa có `tool_not_allowed`) đã rơi vào nhánh trả về `return None`.
-  4. Do `render(records)` trả về `None`, `read_worker.py` quăng ngoại lệ `AgentError('tool_response_failed', 'Chưa thể xác minh kết quả tra cứu.')`, làm đứt phiên với HTTP 503.
+> **Ngày ghi nhận:** 25/09/2026 (Tối)  
+> **Nhánh chính:** `main`  
+> **Cam kết mã nguồn:** Sẵn sàng cho Sprint gộp Concurrency + Relational Knowledge  
+> **Trạng thái EC2:** `retailops-dev` (`i-0fd116d8927d0e412`, `t3.large`) — Sẵn sàng **STOPPED** để tối ưu hóa chi phí điện toán đám mây.  
+> **Trạng thái Model vLLM:** Google Colab L4 vLLM serving `yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2` qua ngrok.
 
 ---
 
-### Sự cố 2 & 3: Lỗi `api_unavailable` ("Không nhận được phản hồi hợp lệ từ model. Vui lòng thử lại.")
-- **Thao tác người dùng:**
-  - Lượt 1: Gõ lệnh *"check giúp tôi đơn O0819127"* (nhập nhầm số `0` thay vì dấu gạch nối `-`).
-  - Lượt 2: Gõ lệnh *"check giúp tôi đơn O-819127"*.
-- **Chi tiết kỹ thuật từ Trace:**
-  - **Mã lượt 1:** `630eb246-e20c-4792-a26c-8011cb3da363` | **Độ trễ:** `372.41 ms` | `routing_reason: witty_general_fallback`
-  - **Mã lượt 2:** `971815c5-4c6e-43b8-a9f4-043a59126dfb` | **Độ trễ:** `361.50 ms` | `routing_reason: order_or_product_keywords`
-  - **Lỗi:** `{"error":"api_unavailable","message":"Không nhận được phản hồi hợp lệ từ model. Vui lòng thử lại.","model_errors":[{"code":"api_unavailable","call":1}]}`
-- **Nguyên nhân gốc rễ (Root Cause):**
-  1. **Mất kết nối máy chủ model (Upstream Outage):** Độ trễ chỉ mất ~360ms đã lập tức trả về lỗi. Điều này chứng minh tunnel ngrok hoặc phiên notebook chạy vLLM trên Google Colab đã bị ngắt kết nối (Colab timeout, ngrok session expired hoặc kernel GPU bị crash).
-  2. **Vấn đề định tuyến khi gõ sai mã đơn:**
-     - Khi gõ `O0819127` (số `0`), regex trong `supervisor.py` (`r'\b(o-\d+|dh\d+|\d{5,})\b'`) không nhận diện được đây là mã đơn, dẫn đến câu hỏi bị đẩy sang `witty_general_fallback`.
-     - Sau đó cả 2 cuộc gọi đều gặp sự cố ngắt kết nối API ngrok nên quăng lỗi `api_unavailable`.
+## 1. TỔNG KẾT THÀNH TỰU PHIÊN LÀM VIỆC (SESSION HIGHLIGHTS)
+
+Trong phiên hôm nay, hệ thống đã hoàn thành 4 hạng mục lớn:
+
+1. **Trực quan hóa vòng lặp suy luận ReAct & Backtracking lên UI (Commit `35dfa03`)**:
+   - Giao diện người dùng Web Chat (`retailops/http/static/index.html` và `app.js`) hiển thị minh bạch toàn bộ các chặng:
+     - 💭 **Suy luận (Reasoning)** của model.
+     - ⚙️ **Gọi công cụ (Tool Call)** với arguments chuẩn xác.
+     - 📋 **Kết quả thực tế (Observation)** trả về từ tool.
+     - 🔄 **Đánh giá & Quay lui (Evaluation & Backtracking)** khi model phân tích lại ngữ cảnh.
+   - Thêm dropdown "Chuỗi suy luận agent & công cụ" cho phép người dùng/kiểm toán viên mở ra xem chi tiết kỹ thuật từng bước.
+
+2. **Khắc phục lỗi sập HTTP 500 khi xử lý đơn/sản phẩm rỗng (Commit `2d30cdb`)**:
+   - Khắc phục `AttributeError: 'NoneType' object has no attribute 'get'` trong `_summarize_tool_result` khi context trả về `order=None` hoặc `prod=None`.
+   - Bổ sung phòng vệ kiểu dữ liệu `isinstance(..., dict)` và bọc khối `try...except Exception`.
+
+3. **Khắc phục lỗi treo suy luận 45.44s & HTTP 503 khi gửi ảnh tới Text-only Model (Commit `c6c7a1a`)**:
+   - Model `yuxinlu1/gemma-4-12B-agentic` là Text-only CausalLM, không hỗ trợ Vision Encoder. Việc đẩy Base64 hình ảnh khiến engine vLLM bị treo timeout 45s.
+   - Bổ sung hàm kiểm tra `is_vision_model()`: với model thuần text, chuyển file đính kèm thành ngữ cảnh text an toàn, loại bỏ triệt để hiện tượng vLLM hang.
+
+4. **Kế hoạch gộp Phase 3 (Concurrency) & Phase 2 (Relational Knowledge Graph)**:
+   - Soạn thảo và hoàn thiện tài liệu kiến trúc gộp: [`docs/PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT.md`](PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT.md).
+   - Thiết kế tích hợp:
+     - **Phần A (Bounded Concurrency)**: Gỡ bỏ `self.agent_lock` toàn cục tàn dư trong `application.py`, chuẩn hóa `InferenceGate` ($K=1$, queue=8, timeout 10s $\rightarrow$ 429 Retry-After).
+     - **Phần B (SQL Relational Knowledge Linkage)**: Nâng schema database lên `v5` với bảng `product_policy_links`, hạt nhân hóa tri thức quan hệ giữa sản phẩm thời trang và chính sách bảo hành 180 ngày (P-603).
+
+5. **Kết quả kiểm thử & hợp đồng chất lượng**:
+   - **415/415 tests PASS** (0 failures, 43 skipped).
+   - Toàn bộ 4/4 cổng hợp đồng (docs, deployment, eval dataset, notebook) đạt **PASS 100%**.
 
 ---
 
-## 2. Tiến Độ Đã Đạt Được Trước Khi Tạm Dừng
+## 2. HƯỚNG DẪN TẮT MÁY EC2 TỐI ƯU CHI PHÍ (SHUTDOWN RUNBOOK)
 
-1. **Routing đa phương thức & tệp đính kèm:**
-   - Hoàn thiện nhận diện trường `attachment` và các cụm từ chỉ ảnh (`đọc ảnh`, `xem ảnh`, `món này`, `món đó`) trong `retailops/workflow/supervisor.py`.
-2. **Khắc phục lỗi vLLM Tools Payload:**
-   - Trong `retailops_providers.py`, đã sửa logic để không gửi trường `tools` khi `allow_tools=False` cho custom vLLM endpoint, tránh lỗi `agent_budget_exceeded` do chat template của Gemma-4 tự động chèn `[AVAILABLE_TOOLS]`.
-3. **Mở rộng thời gian xử lý:**
-   - Tăng timeout của worker từ `30s` lên `60s` trong `retailops/workflow/graph.py` và `retailops/workflow/subagents/order_agent.py`.
-4. **Kiểm thử tự động:**
-   - Đạt 357/357 unit tests PASS, Ops Console 19/19 tests PASS, Docs Contract 100% hợp lệ.
+Sau khi lưu trữ mã nguồn lên GitHub, bạn hãy tắt máy EC2 để không phát sinh chi phí theo giờ:
+
+1. Mở [AWS EC2 Console (us-east-1)](https://us-east-1.console.aws.amazon.com/ec2/home?region=us-east-1#Instances:instanceState=running).
+2. Tích chọn instance `i-0fd116d8927d0e412` (`retailops-dev`).
+3. Nhấp vào menu **Instance state** $\rightarrow$ Chọn **Stop instance** (tuyệt đối không chọn *Terminate*).
+4. Instance sẽ chuyển sang trạng thái `Stopping` rồi `Stopped`. Chi phí compute CPU/RAM sẽ dừng tính ngay lập tức.
 
 ---
 
-## 3. Danh Mục Công Việc Cần Xử Lý Trong Phiên Kế Tiếp
+## 3. QUY TRÌNH BẬT MÁY LÀM TIẾP Ở PHIÊN SAU (COLD-START RESUME RUNBOOK)
 
-Ngay khi mở máy để tiếp tục dự án, cần thực hiện theo các bước sau:
+Khi bạn bật máy lên làm tiếp, thực hiện theo 4 bước nhanh dưới đây:
 
-### Bước 1: Khởi động lại Colab GPU & Cập nhật ngrok endpoint
-1. Mở notebook Colab chạy vLLM với model `yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2`.
-2. Lấy URL tunnel ngrok mới (dạng `https://xxxx.ngrok-free.app/v1/chat/completions`).
-3. Chạy lệnh cập nhật cấu hình API trên EC2:
+### Bước 1: Khởi Động Instance Trên AWS Console
+1. Truy cập [AWS EC2 Console (us-east-1)](https://us-east-1.console.aws.amazon.com/ec2/home?region=us-east-1#Instances:instanceState=stopped).
+2. Tích chọn `i-0fd116d8927d0e412` $\rightarrow$ Nhấn **Instance state** $\rightarrow$ Chọn **Start instance**.
+3. Chờ 1-2 phút cho instance chuyển sang `Running` và copy địa chỉ **Public IPv4 mới** (ví dụ: `54.210.88.99`).
+
+### Bước 2: Cập Nhật IP Mới Vào `public.env` (Qua SSM Session Manager)
+1. Trong EC2 Console, chọn instance $\rightarrow$ Nhấn nút **Connect** $\rightarrow$ Chọn tab **Session Manager** $\rightarrow$ Nhấn **Connect**.
+2. Chạy 2 lệnh cập nhật IP mới (thay `X-X-X-X` bằng IP mới với dấu gạch ngang, ví dụ IP `54.210.88.99` là `54-210-88-99`):
    ```bash
-   sudo python3 scripts/update_ec2.py --api-endpoint "https://xxxx.ngrok-free.app/v1/chat/completions"
+   sudo sed -i 's/RETAILOPS_PUBLIC_HOST=.*/RETAILOPS_PUBLIC_HOST=retailops.X-X-X-X.sslip.io/' /opt/retailops/public.env
+   sudo sed -i 's|RETAILOPS_PUBLIC_ORIGIN=.*|RETAILOPS_PUBLIC_ORIGIN=https://retailops.X-X-X-X.sslip.io|' /opt/retailops/public.env
+   sudo systemctl restart caddy retailops
    ```
 
-### Bước 2: Khắc phục Sự cố 1 (Bảo vệ hàm tổng hợp & chặn `prepare_cancellation`)
-1. **Trong `retailops/workflow/subagents/order_agent.py`:**
-   - Thêm quy định cấm gọi `prepare_cancellation` trong `ORDER_SYSTEM_PROMPT`:
-     *"Never call prepare_cancellation; cancellation requests are handled exclusively by dispute specialist."*
-   - Củng cố hàm `_synthesize_order_response`: Không bao giờ được phép `return None` nếu trong `tool_results` đã có ít nhất một công cụ thành công (như `list_orders` hoặc `get_order`). Bỏ qua các công cụ phụ bị lỗi `tool_not_allowed` thay vì làm hỏng toàn bộ chuỗi tổng hợp.
-2. **Trong `retailops/workflow/subagents/read_worker.py`:**
-   - Đảm bảo khi một công cụ bị `tool_not_allowed`, nếu trước đó đã có kết quả hợp lệ từ `list_orders` hoặc `get_order`, hệ thống tiếp tục ưu tiên kết xuất dữ liệu đã xác minh thay vì ném lỗi `tool_response_failed`.
+### Bước 3: Khởi Động Colab vLLM & Đồng Bộ Ngrok Endpoint
+1. Mở Google Colab: chạy **Cell 1**, **Cell 2** (Khởi động vLLM Gemma-4-12B) và **Cell 3** (Ngrok Tunnel).
+2. Copy URL ngrok sinh ra (ví dụ: `https://xxxx.ngrok-free.app/v1/chat/completions`).
+3. Trong cửa sổ SSM Session Manager trên EC2, cập nhật endpoint cho RetailOps:
+   ```bash
+   sudo python3 /opt/retailops/scripts/update_ec2.py --api-endpoint "https://xxxx.ngrok-free.app/v1/chat/completions"
+   ```
 
-### Bước 3: Tăng cường Regex nhận diện mã đơn trong Supervisor
-- Cập nhật regex trong `retailops/workflow/supervisor.py`:
-  - Cho phép nhận diện cả `O0819127`, `O-819127`, `o819127`:
-    ```python
-    has_specific_oid = bool(re.search(r'\b(o[-0-9]\d{5,}|o\d{6,}|dh\d+|\d{5,})\b', lower_msg))
-    ```
-  - Giúp hệ thống vẫn định tuyến chuẩn xác vào `order_agent` kể cả khi khách gõ nhầm dấu gạch nối thành số 0.
+### Bước 4: Kiểm Tra Nhanh (Smoke Test)
+1. Mở trình duyệt truy cập: `https://retailops.X-X-X-X.sslip.io`
+2. Kiểm tra giao diện Web Chat, đặt câu hỏi test:
+   *"Chính sách bảo hành sản phẩm SP-002 thế nào?"* hoặc kiểm tra chuỗi suy luận ReAct.
 
-### Bước 4: Kiểm thử End-to-End & Xác nhận trên EC2
-- Kiểm tra kịch bản:
-  1. Gửi ảnh quần tây + *"có đơn nào mua cái này chưa"*.
-  2. Gõ *"check giúp tôi đơn O0819127"* (gõ sai) và *"check giúp tôi đơn O-819127"* (gõ đúng).
-- Xác nhận phản hồi hiển thị mượt mà trên giao diện Web.
+---
+
+## 4. KẾ HOẠCH BẮT TAY VÀO LÀM NGAY (NEXT SPRINT TASKS)
+
+Khi bật máy phiên tới, tiến hành triển khai Sprint gộp theo đúng tài liệu [`docs/PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT.md`](PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT.md):
+
+1. **Task 1: Nâng cấp Schema v5 (`product_policy_links`)**:
+   - Thêm bảng liên kết quan hệ trong `retailops/data/store.py` (hỗ trợ cả SQLite & PostgreSQL).
+   - Nâng `BUSINESS_SCHEMA_CURRENT = 5`.
+2. **Task 2: Seed dữ liệu quan hệ cho P-603**:
+   - Seed quan hệ chính sách bảo hành 180 ngày cho danh mục túi xách thời trang cao cấp (`BAG-001`, `BAG-002`).
+3. **Task 3: Triển khai công cụ `query_related_policies`**:
+   - Cho phép Agent truy vấn trực tiếp chính sách liên kết của từng sản phẩm thay vì quét text thô.
+4. **Task 4: Dọn sạch `self.agent_lock` trong `application.py`**:
+   - Chuyển hoàn toàn sang cơ chế giới hạn hàng đợi `InferenceGate` ($K=1$, timeout 10s, trả 429 kèm header `Retry-After`).
+5. **Task 5: Viết bộ test suite mới**:
+   - `tests/test_concurrency_and_relational_knowledge.py` kiểm định toàn diện cả hai năng lực mới.

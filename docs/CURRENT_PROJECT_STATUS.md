@@ -2,12 +2,13 @@
 
 > **Trạng thái:** ACTIVE OPERATIONAL STATUS & EVIDENCE REPORT  
 > **Audit basis / Documentation baseline reviewed:** `b93eb5a`  
-> **Application snapshot đối chiếu:** Nhánh `main` tại commit `d7ce461` (PR #33 merged `a6ec080`, hotfix compatibility `85834d6` & `d7ce461`)  
-> **Kiểm thử & CI:** 353 unit tests PASS (0 failures), 4/4 cổng hợp đồng PASS, GitHub Actions CI (Run #236) & Ops Console (Run #143) **100% SUCCESS**  
-> **EC2 Host:** `retailops-dev` / `i-0fd116d8927d0e412` / **t3.large** (Hiện đang **STOPPED** qua đêm để tối ưu chi phí cloud)  
-> **Deploy status:** Container image build & test **PASS 100%**; sẵn sàng kích hoạt lại khi bật EC2  
+> **Application snapshot đối chiếu:** Nhánh `main` tại commit `c6c7a1a`  
+> **Kiểm thử & CI:** 415 unit tests PASS (0 failures), 4/4 cổng hợp đồng PASS, GitHub Actions CI & Ops Console & Deploy EC2 **100% SUCCESS**  
+> **EC2 Host:** `retailops-dev` / `i-0fd116d8927d0e412` / **t3.large** (Sẵn sàng tắt máy sau phiên làm việc để tối ưu chi phí cloud)  
+> **Deploy status:** Container image build & live rolling deploy **PASS 100%**; sẵn sàng kích hoạt lại khi bật EC2  
 > **Lộ trình kỹ thuật tổng thể:** Xem chi tiết tại [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md)  
-> **Báo cáo sự cố chi tiết:** [INCIDENT_RECOVERY_2026-09-21.md](INCIDENT_RECOVERY_2026-09-21.md)
+> **Kế hoạch đợt build tiếp theo:** [PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT.md](PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT.md)  
+> **Báo cáo sự cố chi tiết:** [INCIDENT_RECOVERY_2026-09-21.md](INCIDENT_RECOVERY_2026-09-21.md) và [SESSION_HANDOFF_2026-09-25.md](SESSION_HANDOFF_2026-09-25.md)
 
 ---
 
@@ -70,10 +71,20 @@ Theo chuẩn phân cấp minh chứng của [`RELEASE_MANIFEST.md`](RELEASE_MANI
 - **Tham số hóa câu lệnh LIKE**: Sửa `WHERE kind LIKE 'product_%'` thành `WHERE kind LIKE ?` kèm param để chống lỗi hiểu nhầm `%` thành format placeholder trong psycopg.
 - **Cập nhật Schema Version Assertion**: Đồng bộ test `tests/test_knowledge.py` assert đúng version hiện hành `BUSINESS_SCHEMA_CURRENT = 4`.
 - **Đóng gói Docker Seed Data**: Bổ sung `COPY data/deepseek_seed_data.json /app/data/deepseek_seed_data.json` vào `Dockerfile`, đưa bước kiểm thử container trong Deploy to EC2 về trạng thái PASS 100%.
-- **Trạng thái GitHub Actions hiện tại**:
-  - `CI` ([Run #236](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/35892629194)): **SUCCESS (Xanh 100%)**
-  - `Ops Console` ([Run #143](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/35892629115)): **SUCCESS (Xanh 100%)**
-  - `Deploy baseline runner to EC2`: Bước Verify & Test container đã **PASS 100%**; tạm dừng tại bước SSM send-command do EC2 instance đang STOPPED.
+
+### 2.8. Nâng Cấp Chuỗi Suy Luận ReAct, Sửa Lỗi HTTP 500 & Xử Lý Ảnh Text-Only (Phiên 25/09/2026)
+- **Trực Quan Hóa Quá Trình Suy Luận ReAct & Backtracking (Commit `35dfa03`)**:
+  - Giao diện Web UI hiện thị trực tiếp quy trình suy luận vòng lặp: Suy luận (Reasoning) $\rightarrow$ Gọi công cụ (Tool Call) $\rightarrow$ Kết quả thực tế (Observation) $\rightarrow$ Đánh giá & Quay lui (Evaluation/Backtracking).
+  - Người dùng và đánh giá viên có thể mở rộng khối "Chuỗi suy luận agent & công cụ" để kiểm toán từng bước reasoning của SLM Gemma-4-12B.
+- **Khắc Phục Dứt Điểm Lỗi HTTP 500 Khi Xử Lý Đơn/Sản Phẩm Trống (Commit `2d30cdb`)**:
+  - Sửa lỗi `AttributeError: 'NoneType' object has no attribute 'get'` trong `_summarize_tool_result` khi context trả về `order=None` hoặc `prod=None`.
+  - Kiểm tra kiểu dữ liệu an toàn `isinstance(..., dict)` và bọc phòng vệ exception, ngăn chặn sập endpoint `/api/chat`.
+- **Khắc Phục Treo Inference 45.44s & HTTP 503 Khi Gửi Ảnh Cho Text-only Model (Commit `c6c7a1a`)**:
+  - Model `yuxinlu1/gemma-4-12B-agentic` là kiến trúc CausalLM thuần văn bản. Việc gửi token Base64 hình ảnh vào vLLM khiến engine bị nghẽn không thể giải mã hình ảnh.
+  - Tách bạch hàm `is_vision_model()`: Với text-only models, tự động trích xuất thông tin ảnh thành ngữ cảnh văn bản an toàn (chẳng hạn metadata mô tả ảnh), không gửi chuỗi Base64 làm treo engine.
+- **Trạng thái kiểm thử hiện tại**:
+  - **415/415 tests PASS** (0 failures, 43 skipped).
+  - Toàn bộ 4/4 cổng hợp đồng (docs, deployment, eval dataset, notebook) đạt **PASS 100%**.
 
 ---
 
