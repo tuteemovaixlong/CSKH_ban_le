@@ -12,9 +12,16 @@ POLICY_SYSTEM_PROMPT = (
 
 def _synthesize_policy_response(tool_results):
     parts, seen = [], set()
+    has_disallowed_tool = False
     for tr in tool_results:
         result = tr.get('result')
-        if not isinstance(result, dict) or result.get('error'):
+        if not isinstance(result, dict):
+            return None
+        code = result.get('error')
+        if code in ('tool_not_allowed', 'invalid_tool_arguments'):
+            has_disallowed_tool = True
+            continue
+        if code:
             return None
         sources = result.get('results')
         if not isinstance(sources, list):
@@ -30,9 +37,14 @@ def _synthesize_policy_response(tool_results):
                 parts.append(excerpt.strip() + f' [{cid}]')
                 seen.add(cid)
     if parts:
-        return 'C\u00e1c tr\u00edch \u0111o\u1ea1n tra c\u1ee9u \u0111\u01b0\u1ee3c (ch\u01b0a c\u00f3 ph\u1ea7n di\u1ec5n gi\u1ea3i t\u1ef1 \u0111\u1ed9ng):\n\n' + '\n\n'.join(parts)
+        msg = 'Các trích đoạn tra cứu được (chưa có phần diễn giải tự động):\n\n' + '\n\n'.join(parts)
+        if has_disallowed_tool:
+            msg += '\n\n(Lưu ý: Một công cụ ngoài phạm vi tra cứu chính sách đã không được thực thi).'
+        return msg
+    if has_disallowed_tool:
+        return 'Yêu cầu tra cứu nằm ngoài phạm vi của chuyên viên chính sách (chỉ hỗ trợ tra cứu quy định cửa hàng). Vui lòng kiểm tra lại câu hỏi hoặc chọn đơn hàng phù hợp.'
     if tool_results:
-        return 'Ch\u01b0a t\u00ecm th\u1ea5y b\u1eb1ng ch\u1ee9ng ph\u00f9 h\u1ee3p trong kho ch\u00ednh s\u00e1ch. Ch\u01b0a th\u1ec3 x\u00e1c nh\u1eadn quy \u0111\u1ecbnh cho tr\u01b0\u1eddng h\u1ee3p n\u00e0y.'
+        return 'Chưa tìm thấy bằng chứng phù hợp trong kho chính sách. Chưa thể xác nhận quy định cho trường hợp này.'
     return None
 
 

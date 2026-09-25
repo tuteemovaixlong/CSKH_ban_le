@@ -141,8 +141,12 @@ def run_supervisor(state: MultiAgentState) -> MultiAgentState:
         state["subagent_history"].append("supervisor:escalate_human")
         return state
 
-    # Check for order identifier or active transactional order focus
+    import unicodedata
+    normalized_msg = unicodedata.normalize('NFKD', lower_msg).encode('ASCII', 'ignore').decode('utf-8')
+
+    # Check for order or product identifier in user text
     has_specific_oid = bool(re.search(r'\b(o-\d+|o0\d{5,}|o\d{5,}|dh\d+|\d{5,})\b', lower_msg))
+    has_specific_pid = bool(re.search(r'\b(p-\d+)\b', lower_msg))
     has_order_phrase = bool(any(w in lower_msg for w in [
         "đơn em", "đơn này", "đơn tôi", "đơn mình", "đơn của", "mã đơn", "check đơn",
         "xem đơn", "tra đơn", "đơn cũ", "đơn mega sale", "có đơn", "đơn nào", "tìm đơn",
@@ -153,9 +157,10 @@ def run_supervisor(state: MultiAgentState) -> MultiAgentState:
     # Multi-turn context resolution: active server context, conversational history, and attachments
     bound_ctx = state.get("bound", {}).get("context", {}) or {}
     active_order_id = bound_ctx.get("order_id")
+    active_product_id = bound_ctx.get("product_id")
 
     prev_messages = state.get("messages", [])[:-1]
-    prev_had_order = any(bool(re.search(r'\bO-\d+\b', m.get("content", ""))) for m in prev_messages[-4:])
+    prev_had_order = any(bool(re.search(r'\b(O-\d+|P-\d+)\b', m.get("content", ""))) for m in prev_messages[-4:])
     recent_subagents = [s for s in state.get("subagent_history", []) if s.startswith("supervisor:routed_to_")]
     prev_was_order_agent = bool(recent_subagents and recent_subagents[-1] == "supervisor:routed_to_order_agent")
 
@@ -179,7 +184,52 @@ def run_supervisor(state: MultiAgentState) -> MultiAgentState:
     is_item_selection = any(w in lower_msg for w in [
         "cái này", "cái đó", "đơn này", "đơn đầu", "cái thứ", "mục này", "lấy cái này", "chọn cái này",
         "món này", "món đó", "món kia", "đồ này", "đồ đó", "sản phẩm này", "sản phẩm đó",
-        "mẫu này", "mẫu đó", "quần tây", "áo sơ mi", "giày lười", "áo thun", "váy", "đầm"
+        "mẫu này", "mẫu đó", "quần tây", "áo sơ mi", "giày lười", "áo thun", "váy", "đầm",
+        "áo này", "quần này", "giày này", "chiếc này", "đôi này"
+    ]) or any(w in normalized_msg for w in [
+        "cai nay", "cai do", "don nay", "don dau", "mon nay", "mon do", "san pham nay",
+        "ao nay", "quan nay", "giay nay", "chiec nay", "doi nay"
+    ])
+
+    # Product attributes inquiry (material, size, care, catalog warranty, color, specs)
+    is_product_spec_q = any(w in lower_msg for w in [
+        "chất liệu", "chất vải", "làm bằng gì", "vải gì", "chất gì",
+        "bảo quản", "giặt thế nào", "giặt sao", "hướng dẫn bảo quản", "có giặt máy được không",
+        "màu gì", "màu sắc", "kích cỡ", "thông số", "chi tiết sản phẩm",
+        "size gì", "mặc vừa", "có size"
+    ]) or any(w in normalized_msg for w in [
+        "chat lieu", "chat vai", "lam bang gi", "vai gi", "chat gi",
+        "bao quan", "giat the nao", "giat sao", "mau sac", "mau gi", "thong so"
+    ])
+
+    # Item warranty inquiry (asking how long this specific item is under warranty, or if it's still covered)
+    has_warranty_term = ("bảo hành" in lower_msg or "bao hanh" in normalized_msg or "hạn bảo hành" in lower_msg)
+    is_item_warranty_q = has_warranty_term and (
+        is_item_selection
+        or any(w in lower_msg for w in [
+            "bao lâu", "mấy tháng", "mấy ngày", "hết hạn chưa", "còn hạn",
+            "còn bảo hành", "được bảo hành bao lâu", "bảo hành được bao lâu",
+            "món này", "sản phẩm này", "áo này", "quần này", "giày này", "đơn này"
+        ])
+        or any(w in normalized_msg for w in [
+            "bao lau", "may thang", "may ngay", "het han chua", "con han",
+            "con bao hanh", "mon nay", "san pham nay", "ao nay", "quan nay", "don nay"
+        ])
+    )
+
+    # General store policy FAQ: explicit inquiry about shop rules/policies, fees, procedures, hotline
+    is_general_store_policy = any(kw in lower_msg for kw in [
+        "chính sách của shop", "chính sách bảo hành của shop", "chính sách đổi trả của shop",
+        "chính sách shop", "quy định của shop", "chính sách bảo hành", "chính sách đổi trả",
+        "quy trình bảo hành", "thủ tục bảo hành", "điều kiện bảo hành",
+        "bảo hành có mất phí không", "mất phí không", "có mất phí", "ai trả phí", "ai chịu phí",
+        "mất hóa đơn", "mất bill", "cần hóa đơn không", "lỗi kỹ thuật để đổi",
+        "áp dụng cho những lỗi nào", "bảo hành áp dụng cho",
+        "tư vấn chính sách", "hotline", "tổng đài", "khung giờ", "mấy giờ"
+    ]) or any(kw in normalized_msg for kw in [
+        "chinh sach cua shop", "chinh sach bao hanh cua shop", "chinh sach shop",
+        "quy trinh bao hanh", "thu tuc bao hanh", "dieu kien bao hanh",
+        "bao hanh co mat phi khong", "mat phi khong", "ai tra phi"
     ])
 
     is_explicit_general = classify_user_text(last_user_msg) == "general" or any(w in lower_msg for w in [
@@ -188,64 +238,70 @@ def run_supervisor(state: MultiAgentState) -> MultiAgentState:
 
     routing_reason = "default_routing"
 
+    is_policy_intent = any(kw in lower_msg for kw in POLICY_KEYWORDS) or is_hours_inquiry or is_general_store_policy
+    is_how_to_claim = any(w in lower_msg for w in ["nhận kiểu gì", "nhận như thế nào", "làm sao để nhận"])
+    is_policy_condition_q = any(w in lower_msg for w in [
+        "áp dụng cho", "điều kiện", "trong bao lâu", "thời hạn", "mất phí", "ai trả",
+        "tính từ lúc nào", "làm sao để", "cần giấy tờ gì", "có cần", "làm mất bill",
+        "có đc", "có được", "được ko", "được không", "đc ko", "đc không", "cover ko",
+        "tư vấn chính sách", "hỗ trợ đổi mới 1-1 ko", "có nằm trong", "đổi mới 1-1 ko",
+        "như thế nào", "thế nào", "ra sao"
+    ])
+
     # 4. Actionable Cancellation & Refund (Dispute priority)
     if any(kw in lower_msg for kw in ["hủy đơn", "hủy hàng", "muốn hủy", "hủy luôn", "hoàn tiền"]):
         state["intent"] = "dispute_complaint"
         state["next_worker"] = "dispute_agent"
         routing_reason = "dispute_cancellation_refund"
+    # 5. Product specification or item-specific warranty inquiry (SOP 1, SOP 4)
+    # Takes precedence over general policy if the inquiry is about a specific item or product attributes.
+    elif not is_general_store_policy and (is_product_spec_q or is_item_warranty_q):
+        has_focus = bool(active_order_id or active_product_id or has_specific_oid or has_specific_pid or has_order_phrase or prev_had_order or prev_was_order_agent)
+        state["intent"] = "order_inquiry"
+        state["next_worker"] = "order_agent"
+        routing_reason = "product_spec_inquiry" if has_focus else "product_spec_no_context"
+    # 6. Policy conditions FAQ without an order check request:
+    elif (is_policy_intent and not has_specific_oid and not has_check_request and is_policy_condition_q) or is_how_to_claim or is_hours_inquiry or is_general_store_policy:
+        state["intent"] = "policy_knowledge"
+        state["next_worker"] = "policy_agent"
+        routing_reason = "policy_conditions_faq"
+    # 7. Actionable Exchange, Defect & Inventory (SOP 2, SOP 3)
+    elif any(kw in lower_msg for kw in DISPUTE_KEYWORDS):
+        state["intent"] = "dispute_complaint"
+        state["next_worker"] = "dispute_agent"
+        routing_reason = "dispute_exchange_defect"
+    # 8. Policy inquiry that didn't match dispute keywords
+    elif is_policy_intent and not (has_specific_oid or has_order_phrase):
+        state["intent"] = "policy_knowledge"
+        state["next_worker"] = "policy_agent"
+        routing_reason = "policy_inquiry"
+    # 9. Order & Product / Store inquiry (SOP 1, SOP 4)
+    elif (
+        plural_orders
+        or any(kw in lower_msg for kw in ORDER_KEYWORDS)
+        or any(kw in lower_msg for kw in PRODUCT_OR_STORE_KEYWORDS)
+        or has_specific_oid
+        or has_specific_pid
+        or has_order_phrase
+    ):
+        state["intent"] = "order_inquiry"
+        state["next_worker"] = "order_agent"
+        routing_reason = "order_or_product_keywords"
+    # 10. Multi-turn order context continuation, image-assisted inquiry, or focused order inquiry
+    elif not is_explicit_general and (
+        has_attachment
+        or has_image_query
+        or (active_order_id and (is_info_continuation or is_action_prompt or is_item_selection))
+        or ((prev_was_order_agent or prev_had_order) and (is_info_continuation or is_action_prompt or is_item_selection))
+    ):
+        state["intent"] = "order_inquiry"
+        state["next_worker"] = "order_agent"
+        routing_reason = "order_context_continuation"
+    # 11. Fallback to Witty Pivot Agent (Chitchat / OOD / General)
     else:
-        # Check if it is a pure policy inquiry (conditions, working hours, how-to, fees)
-        is_policy_intent = any(kw in lower_msg for kw in POLICY_KEYWORDS) or is_hours_inquiry
-        is_how_to_claim = any(w in lower_msg for w in ["nhận kiểu gì", "nhận như thế nào", "làm sao để nhận"])
-        is_policy_condition_q = any(w in lower_msg for w in [
-            "áp dụng cho", "điều kiện", "trong bao lâu", "thời hạn", "mất phí", "ai trả",
-            "tính từ lúc nào", "làm sao để", "cần giấy tờ gì", "có cần", "làm mất bill",
-            "có đc", "có được", "được ko", "được không", "đc ko", "đc không", "cover ko",
-            "tư vấn chính sách", "hỗ trợ đổi mới 1-1 ko", "có nằm trong", "đổi mới 1-1 ko",
-            "như thế nào", "thế nào", "ra sao"
-        ])
-
-        # If asking general policy conditions without an order check request:
-        if (is_policy_intent and not has_specific_oid and not has_check_request and is_policy_condition_q) or is_how_to_claim or is_hours_inquiry:
-            state["intent"] = "policy_knowledge"
-            state["next_worker"] = "policy_agent"
-            routing_reason = "policy_conditions_faq"
-        # 5. Actionable Exchange, Defect & Inventory (SOP 2, SOP 3)
-        elif any(kw in lower_msg for kw in DISPUTE_KEYWORDS):
-            state["intent"] = "dispute_complaint"
-            state["next_worker"] = "dispute_agent"
-            routing_reason = "dispute_exchange_defect"
-        # 6. Policy inquiry that didn't match dispute keywords
-        elif is_policy_intent and not (has_specific_oid or has_order_phrase):
-            state["intent"] = "policy_knowledge"
-            state["next_worker"] = "policy_agent"
-            routing_reason = "policy_inquiry"
-        # 7. Order & Product / Store inquiry (SOP 1, SOP 4)
-        elif (
-            plural_orders
-            or any(kw in lower_msg for kw in ORDER_KEYWORDS)
-            or any(kw in lower_msg for kw in PRODUCT_OR_STORE_KEYWORDS)
-            or has_specific_oid
-            or has_order_phrase
-        ):
-            state["intent"] = "order_inquiry"
-            state["next_worker"] = "order_agent"
-            routing_reason = "order_or_product_keywords"
-        # 8. Multi-turn order context continuation, image-assisted inquiry, or focused order inquiry
-        elif not is_explicit_general and (
-            has_attachment
-            or has_image_query
-            or (active_order_id and (is_info_continuation or is_action_prompt or is_item_selection))
-            or ((prev_was_order_agent or prev_had_order) and (is_info_continuation or is_action_prompt or is_item_selection))
-        ):
-            state["intent"] = "order_inquiry"
-            state["next_worker"] = "order_agent"
-            routing_reason = "order_context_continuation"
-        # 9. Fallback to Witty Pivot Agent (Chitchat / OOD / General)
-        else:
-            state["intent"] = "chitchat_general"
-            state["next_worker"] = "witty_agent"
-            routing_reason = "witty_general_fallback"
+        state["intent"] = "chitchat_general"
+        state["next_worker"] = "witty_agent"
+        routing_reason = "witty_general_fallback"
 
     state.setdefault("trace", {})["routing_reason"] = routing_reason
     state["subagent_history"].append(f"supervisor:routed_to_{state['next_worker']}")

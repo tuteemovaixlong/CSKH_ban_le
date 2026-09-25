@@ -63,6 +63,29 @@ API_MODELS = {
 }
 
 
+def filter_system_prompt_for_tools(system_text, allowed_tools):
+    """Removes directives requiring tools outside allowed_tools to prevent worker prompt conflicts."""
+    if allowed_tools is None:
+        return system_text
+    allowed_set = set(allowed_tools)
+    lines = []
+    for line in system_text.split('\n'):
+        if ('get_order' in line or 'get_context' in line) and not ({'get_order', 'get_context'} & allowed_set):
+            if 'Call get_order or get_context' in line:
+                continue
+        if ('get_product' in line or 'search_products' in line) and not ({'get_product', 'search_products'} & allowed_set):
+            if 'Call get_product' in line:
+                continue
+        if 'search_knowledge' in line and 'search_knowledge' not in allowed_set:
+            if 'For store policies, returns, shipping guidance' in line:
+                continue
+        if 'prepare_cancellation' in line and 'prepare_cancellation' not in allowed_set:
+            if 'The only cancellation-related tool is prepare_cancellation' in line:
+                continue
+        lines.append(line)
+    return '\n'.join(lines)
+
+
 class OpenRouterAgent:
     ENDPOINT = OPENROUTER_ENDPOINT
 
@@ -157,9 +180,11 @@ class OpenRouterAgent:
             translated.append(entry)
         return translated
 
-    def payload_messages(self, messages, system_prompt):
+    def payload_messages(self, messages, system_prompt, allowed_tools=None):
         """Exactly one system turn; preserve transport indices/tool IDs."""
         translated = self.translate(messages)
+        if allowed_tools is not None:
+            system_prompt = filter_system_prompt_for_tools(system_prompt, allowed_tools)
         if translated and translated[0].get('role') == 'system':
             worker_prompt = translated[0]['content']
             content = system_prompt if worker_prompt == system_prompt else system_prompt + '\n\n' + worker_prompt
@@ -214,6 +239,8 @@ class OpenRouterAgent:
         validate_messages(messages)
         mode = request_mode(messages)
         system_prompt = GENERAL_SYSTEM if mode == 'general' else SYSTEM
+        if allowed_tools is not None:
+            system_prompt = filter_system_prompt_for_tools(system_prompt, allowed_tools)
         anthropic_tools = []
         if mode != 'general' and allow_tools:
             for t in scoped_tools(allowed_tools):
@@ -331,7 +358,7 @@ class OpenRouterAgent:
         system_prompt = GENERAL_SYSTEM if mode == 'general' else SYSTEM
         tools = [] if mode == 'general' else available
         tool_choice = 'none' if not tools or not allow_tools else 'auto'
-        payload = {'model': self.model, 'messages': self.payload_messages(messages, system_prompt),
+        payload = {'model': self.model, 'messages': self.payload_messages(messages, system_prompt, allowed_tools=allowed_tools),
                    'stream': False, 'max_tokens': 2048, 'temperature': 0.2}
         custom_endpoint = os.getenv('RETAILOPS_API_ENDPOINT', '').strip()
         if custom_endpoint:

@@ -75,6 +75,8 @@ def run_read_worker(state, execute, gateway, *, prompt, allowed_tools, render,
     state['consecutive_ood_count'] = 0
     trace = state.setdefault('trace', {})
     trace['answer_source'] = 'llm_agent'
+    trace['selected_worker'] = worker
+    trace['allowed_tools'] = sorted(list(allowed_tools))
     messages = worker_messages(state, prompt)
     deadline = time.monotonic() + timeout
     records = []
@@ -99,7 +101,7 @@ def run_read_worker(state, execute, gateway, *, prompt, allowed_tools, render,
                 if final:
                     trace.update(answer_source='tool_result', degraded=True, fallback_reason='agent_budget_exceeded')
                     break
-            raise AgentError('agent_budget_exceeded', 'Model v\u01b0\u1ee3t gi\u1edbi h\u1ea1n g\u1ecdi c\u00f4ng c\u1ee5.', trace)
+            raise AgentError('agent_budget_exceeded', 'Model vượt giới hạn gọi công cụ.', trace)
         # Append the assistant ONCE per batch, then exactly one result per call.
         messages.append(message)
         state['fresh'].append(copy.deepcopy(message))
@@ -129,8 +131,13 @@ def run_read_worker(state, execute, gateway, *, prompt, allowed_tools, render,
             if not isinstance(result, dict):
                 result = {'error': 'tool_unavailable'}
             code = result.get('error')
-            trace.setdefault('tools', []).append({'name': name,
-                'status': 'error' if code else 'ok', **({'error_code': code} if code else {})})
+            tool_entry = {'name': name, 'status': 'error' if code else 'ok'}
+            if code:
+                tool_entry['error_code'] = code
+            if invalid == 'tool_not_allowed':
+                tool_entry['executed'] = False
+                tool_entry['stage'] = 'worker_scope_guard'
+            trace.setdefault('tools', []).append(tool_entry)
             if code in UNAVAILABLE:
                 trace['outcome'] = 'tool_unavailable'
                 raise AgentError('tool_unavailable', 'Ngu\u1ed3n d\u1eef li\u1ec7u ch\u01b0a s\u1eb5n s\u00e0ng. Ch\u01b0a th\u1ec3 x\u00e1c minh k\u1ebft qu\u1ea3.', trace)
