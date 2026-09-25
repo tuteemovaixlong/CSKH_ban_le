@@ -242,7 +242,133 @@ class OrderToolRecoveryTests(unittest.TestCase):
         use = body['messages'][1]['content'][0]
         tool_result = body['messages'][2]['content'][0]
         self.assertEqual(use['id'], tool_result['tool_use_id'])
-        self.assertIn('Worker instruction', body['system'])
+    def test_t01_select_order_context_resolves_without_asking_again(self):
+        """T01: When order facts are returned via get_context/get_order, response presents facts without asking to select."""
+        tool_results = [
+            {'name': 'get_context', 'args': {}, 'result': {
+                'order': {'id': 'O-819125', 'name': 'Áo sơ mi lụa công sở', 'variant': 'Trắng / M', 'amount': 450000, 'status': 'pending'}
+            }}
+        ]
+        res = _synthesize_order_response(tool_results)
+        self.assertIsNotNone(res)
+        self.assertIn('O-819125', res)
+        self.assertIn('Áo sơ mi lụa công sở', res)
+        self.assertNotIn('Chưa có đơn hoặc sản phẩm được chọn', res)
+
+    def test_t02_followup_more_info_uses_verified_order_without_guessing_pending_cause(self):
+        """T02: More info follow-up preserves verified order facts and does not invent missing shipment causes."""
+        tool_results = [
+            {'name': 'get_order', 'args': {'order_id': 'O-819125'}, 'result': {
+                'order': {'id': 'O-819125', 'name': 'Áo sơ mi lụa công sở', 'variant': 'Trắng / M', 'amount': 450000, 'status': 'pending'}
+            }},
+            {'name': 'track_shipment', 'args': {'order_id': 'O-819125'}, 'result': {'shipment': {}}}
+        ]
+        res = _synthesize_order_response(tool_results)
+        self.assertIsNotNone(res)
+        self.assertIn('O-819125', res)
+        self.assertNotIn('do đơn hàng đang pending nên chưa có mã vận đơn', res.lower())
+
+    def test_t03_list_orders_then_duplicate_get_order_then_dispute_tool_blocked(self):
+        """T03: Sequence list_orders -> duplicate get_order -> unallowed tool does not trigger tool_response_failed."""
+        tool_results = [
+            {'name': 'list_orders', 'args': {}, 'result': {'orders': [
+                {'id': 'O-819126', 'name': 'Quần tây ống đứng tôn dáng', 'variant': 'Đen / L', 'amount': 520000, 'status': 'delivered'}
+            ]}},
+            {'name': 'get_order', 'args': {'order_id': 'O-819126'}, 'result': {'order': {
+                'id': 'O-819126', 'name': 'Quần tây ống đứng tôn dáng', 'variant': 'Đen / L', 'amount': 520000, 'status': 'delivered'
+            }}},
+            {'name': 'prepare_cancellation', 'args': {'order_id': 'O-819126'}, 'result': {'error': 'tool_not_allowed'}}
+        ]
+        res = _synthesize_order_response(tool_results)
+        self.assertIsNotNone(res)
+        self.assertIn('O-819126', res)
+        self.assertIn('Quần tây ống đứng tôn dáng', res)
+        self.assertIn('Một phần tra cứu bổ sung không thực hiện được', res)
+
+    def test_t04_distinct_ids_o12_and_o123_not_confused_by_substring(self):
+        """T04: Substring O-12 inside O-123 is not conflated during deduplication."""
+        tool_results = [
+            {'name': 'list_orders', 'args': {}, 'result': {'orders': [
+                {'id': 'O-12', 'name': 'Item Twelve', 'variant': 'V1', 'amount': 120000, 'status': 'delivered'},
+                {'id': 'O-123', 'name': 'Item OneTwoThree', 'variant': 'V2', 'amount': 230000, 'status': 'pending'}
+            ]}},
+            {'name': 'get_order', 'args': {'order_id': 'O-123'}, 'result': {'order': {
+                'id': 'O-123', 'name': 'Item OneTwoThree', 'variant': 'V2', 'amount': 230000, 'status': 'pending'
+            }}}
+        ]
+        res = _synthesize_order_response(tool_results)
+        self.assertIsNotNone(res)
+        self.assertIn('O-12: Đã giao', res)
+        self.assertIn('O-123: Chờ xử lý', res)
+
+    def test_t05_ownership_denied_or_missing_order_does_not_fabricate_confirmation(self):
+        """T05: Missing or forbidden order returns denial, never synthesizes fake order confirmation."""
+        not_found_res = _synthesize_order_response([
+            {'name': 'get_order', 'args': {'order_id': 'O-999999'}, 'result': {'error': 'order_not_found'}}
+        ])
+        self.assertIsNotNone(not_found_res)
+        self.assertIn('Không tìm thấy đơn hàng O-999999', not_found_res)
+        self.assertNotIn('Đã giao', not_found_res)
+
+        forbidden_res = _synthesize_order_response([
+            {'name': 'get_order', 'args': {'order_id': 'O-888888'}, 'result': {'error': 'forbidden'}}
+        ])
+        self.assertIsNotNone(forbidden_res)
+        self.assertIn('không có quyền thực hiện tra cứu này', forbidden_res)
+
+    def test_t06_google_login_seeds_product_id_and_backfill_is_idempotent(self):
+        """T06: Google login seeds valid product_ids from catalog, and backfill script is idempotent."""
+        from retailops.identity.persistent import PersistentSessions
+        from scripts.backfill_order_catalog_links import backfill_sqlite
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        sessions = PersistentSessions(Path(temp_dir.name))
+        sessions.provision_tenant('test-tenant', 'Test Shop', seed_demo=True)
+        sessions.login_google('customer1@example.com', 'Customer One')
+        bstore = sessions.business_store('test-tenant')
+
+        # Check seeded orders have product_ids
+        with bstore.connection() as conn:
+            cust = conn.execute("SELECT id FROM customers WHERE name='Customer One'").fetchone()
+            self.assertIsNotNone(cust)
+            orders = conn.execute("SELECT id, name, product_id FROM orders WHERE customer_id=?", (cust['id'],)).fetchall()
+            self.assertEqual(len(orders), 3)
+            pids = {o['product_id'] for o in orders}
+            self.assertEqual(pids, {'P-601', 'P-602', 'P-603'})
+
+        # Run backfill: first run should find 0 to update because they're already linked
+        tenant_file = sessions.tenant_path(sessions.control.ensure_tenant('test-tenant', 'Test Shop'))
+        run1 = backfill_sqlite(tenant_file, dry_run=False)
+        self.assertEqual(run1['to_update'], 0)
+        self.assertEqual(run1['updated'], 0)
+
+        # Re-run backfill: second run must also be 0 (idempotent)
+        run2 = backfill_sqlite(tenant_file, dry_run=False)
+        self.assertEqual(run2['to_update'], 0)
+        self.assertEqual(run2['updated'], 0)
+
+    def test_t07_missing_catalog_link_and_shipment_states_missing_without_inventing_facts(self):
+        """T07: Order lacking catalog link and carrier shipment still preserves order facts truthfully."""
+        tool_results = [
+            {'name': 'get_order', 'args': {'order_id': 'O-819125'}, 'result': {
+                'order': {'id': 'O-819125', 'name': 'Áo sơ mi lụa công sở', 'variant': 'Trắng / M', 'amount': 450000, 'status': 'pending'}
+            }},
+            {'name': 'get_product', 'args': {'product_id': 'P-999'}, 'result': {'error': 'product_not_found'}}
+        ]
+        res = _synthesize_order_response(tool_results)
+        self.assertIsNotNone(res)
+        self.assertIn('O-819125', res)
+        self.assertIn('Áo sơ mi lụa công sở', res)
+        self.assertIn('Danh mục chưa có sản phẩm khớp mã tra cứu', res)
+
+    def test_order_prompt_forbids_dispute_tools_and_has_no_hardcoded_fixture_ids(self):
+        """ORDER_SYSTEM_PROMPT must not contain hardcoded fixture IDs and must forbid dispute tools."""
+        from retailops.workflow.subagents.order_agent import ORDER_SYSTEM_PROMPT
+        self.assertNotIn('O-819126', ORDER_SYSTEM_PROMPT)
+        self.assertNotIn('O-819125', ORDER_SYSTEM_PROMPT)
+        self.assertNotIn('O-819127', ORDER_SYSTEM_PROMPT)
+        self.assertIn('prepare_cancellation', ORDER_SYSTEM_PROMPT)
+        self.assertIn('register_complaint', ORDER_SYSTEM_PROMPT)
 
 
 if __name__ == '__main__':

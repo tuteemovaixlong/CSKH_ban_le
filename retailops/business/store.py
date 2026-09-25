@@ -20,13 +20,18 @@ from retailops.business.schema import initialize as initialize_schema
 ROOT = Path(__file__).resolve().parents[2]
 
 def _parse_variant_string(v_str):
-    parts = [pt.strip() for pt in str(v_str).split("·")]
+    delimiter = "·" if "·" in str(v_str) else ("/" if "/" in str(v_str) else None)
     color = None
     size = None
-    if len(parts) >= 2:
-        color = parts[0]
-        size = parts[1].replace("Size ", "").strip()
-    elif len(parts) == 1:
+    if delimiter:
+        parts = [pt.strip() for pt in str(v_str).split(delimiter)]
+        if len(parts) >= 2:
+            color = parts[0]
+            size = parts[1].replace("Size ", "").strip()
+        elif len(parts) == 1:
+            size = parts[0].replace("Size ", "").strip()
+    else:
+        parts = [str(v_str).strip()]
         if "Size " in parts[0]:
             size = parts[0].replace("Size ", "").strip()
         else:
@@ -151,6 +156,9 @@ class BusinessStore:
                 'P-104': {'S': 10, 'M': 15, 'L': 0, 'XL': 8},
                 'P-203': {'S': 12, 'M': 0, 'L': 18, 'XL': 5},
                 'P-301': {'39': 4, '40': 8, '41': 0, '42': 6, '43': 2},
+                'P-601': {'S': 10, 'M': 15, 'L': 10},
+                'P-602': {'S': 12, 'M': 18, 'L': 10},
+                'P-603': {'40': 6, '41': 10, '42': 9},
             }
 
             now = time.time()

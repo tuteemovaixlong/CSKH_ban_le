@@ -140,6 +140,10 @@ def run_read_worker(state, execute, gateway, *, prompt, allowed_tools, render,
             # The LLM cannot overrule an ownership denial or invent a missing order.
             final = render(records)
             if not final:
+                successful_records = [r for r in records if not r.get('result', {}).get('error')]
+                if successful_records:
+                    final = render(successful_records)
+            if not final:
                 raise AgentError('tool_response_failed', 'Ch\u01b0a th\u1ec3 x\u00e1c minh k\u1ebft qu\u1ea3 tra c\u1ee9u.', trace)
             codes = sorted({r['result']['error'] for r in records if r['result'].get('error')})
             hard_denial = any(code in ('order_not_found', 'permission_denied', 'forbidden') for code in codes)

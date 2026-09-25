@@ -383,6 +383,70 @@
         "Trắng Ấm · Tiêu chuẩn",
         "Trắng Tự Nhiên · Tiêu chuẩn"
       ]
+    },
+    {
+      "id": "P-601",
+      "name": "Áo sơ mi lụa công sở",
+      "category": "Áo sơ mi",
+      "price": 450000,
+      "description": "Áo sơ mi lụa công sở cao cấp, thiết kế thanh lịch, chất vải lụa mềm mại, chống nhăn, thoáng mát.",
+      "material": "Lụa tơ tằm nhân tạo",
+      "care": "Giặt tay hoặc giặt máy chế độ nhẹ, tránh phơi trực tiếp dưới nắng gắt",
+      "aliases": [
+        "áo sơ mi lụa công sở",
+        "áo sơ mi lụa",
+        "sơ mi lụa"
+      ],
+      "warranty_days": 90,
+      "stock": 35,
+      "variants": [
+        "Trắng · Size S",
+        "Trắng · Size M",
+        "Trắng · Size L"
+      ]
+    },
+    {
+      "id": "P-602",
+      "name": "Quần tây ống đứng tôn dáng",
+      "category": "Quần tây",
+      "price": 520000,
+      "description": "Quần tây ống đứng tôn dáng công sở, chất vải tuyết mưa đứng form, co giãn nhẹ thoải mái khi vận động.",
+      "material": "Vải tuyết mưa cao cấp",
+      "care": "Giặt bằng nước lạnh, ủi ở nhiệt độ trung bình",
+      "aliases": [
+        "quần tây ống đứng tôn dáng",
+        "quần tây ống đứng",
+        "quần tây"
+      ],
+      "warranty_days": 90,
+      "stock": 40,
+      "variants": [
+        "Đen · Size S",
+        "Đen · Size M",
+        "Đen · Size L"
+      ]
+    },
+    {
+      "id": "P-603",
+      "name": "Giày lười da bò cao cấp",
+      "category": "Giày lười",
+      "price": 890000,
+      "description": "Giày lười nam da bò nguyên tấm cao cấp, lót da êm chân khử mùi, đế cao su đúc nguyên khối chống trơn trượt.",
+      "material": "Da bò thật 100%",
+      "care": "Lau sạch bụi bằng khăn ẩm, đánh xi định kỳ, tránh ngâm nước",
+      "aliases": [
+        "giày lười da bò cao cấp",
+        "giày lười da bò",
+        "giày lười"
+      ],
+      "warranty_days": 180,
+      "stock": 25,
+      "variants": [
+        "Nâu · Size 40",
+        "Nâu · Size 41",
+        "Nâu · Size 42",
+        "Đen · Size 41"
+      ]
     }
   ]
 }

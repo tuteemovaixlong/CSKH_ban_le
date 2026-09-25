@@ -9,23 +9,27 @@ ORDER_SYSTEM_PROMPT = (
     'The store name is RetailOps Shop. '
     'Use list_orders for all orders, get_order/get_context for current order facts, '
     'and track_shipment for carrier information. Never invent identifiers or facts. '
-    'Order IDs start with "O-" (e.g. O-819126). Product IDs start with "P-" (e.g. P-101). '
+    'Order IDs start with "O-" (e.g. O-100001). Product IDs start with "P-" (e.g. P-101). '
     'NEVER pass an order ID to get_product; get_product strictly accepts a product_id (P-...). '
     'Order records returned by get_order or list_orders already contain product name, variant, and amount. '
     'When the customer asks if they ordered an item or asks about orders from an image '
     '(e.g. "có đơn nào đặt món này chưa", "có đơn nào mua món này không", "đọc ảnh check đơn"): '
     'call list_orders to review the customer\'s purchased orders. '
-    'Visually match the item from the image with the order records '
-    '(for example: O-819126 is "Quần tây ống đứng tôn dáng", O-819125 is "Áo sơ mi lụa công sở", O-819127 is "Giày lười da bò cao cấp") '
-    'and answer the customer directly in Vietnamese, stating whether they ordered the item, the order ID, product name, variant, amount, and status. '
+    'Treat visual appearance as candidate clues (e.g. item type, color) to match against order records; '
+    'do not assert identical SKU, material, or size solely from a photo. '
+    'Present matching candidate orders found in the customer account with their verified details '
+    '(order ID, product name, variant, amount, status). '
+    'If list_orders indicates results are truncated, mention that only recent orders were checked. '
     'search_products is ONLY for finding items the store sells in the catalog; NEVER call search_products to check customer orders. '
     'When the customer asks for more details on an existing order (e.g. "cho tôi xem nhiều thông tin hơn về đơn này"), '
-    'call track_shipment(order_id=...) to check carrier tracking or refer to get_order facts. Do NOT call get_product with an order ID. '
+    'rely on get_order/get_context facts, and call track_shipment only if carrier/delivery information is requested. '
+    'Do NOT call get_product with an order ID. '
     'An order_not_found result means no matching order is visible to this account; '
     'do not claim the order is absent globally or owned by somebody else. '
     'Missing carrier information, payment details, or shipping address means the synthetic demo records do not provide those fields. '
     'Never claim or invent that missing fields are caused by status being pending or delivered. '
     'Do not call search_knowledge or get_runtime_info; policy inquiries are handled by policy specialist. '
+    'Never call prepare_cancellation or register_complaint; cancellation requests, returns, and disputes are handled exclusively by dispute specialist. '
     'These tools do not file complaints, issue vouchers, cancel orders or promise redelivery. '
     'Do not claim any of those actions have occurred. For a status-only question get_order is enough. '
     'Track shipment only for a delivery question; missing tracking remains unknown. '
@@ -73,6 +77,8 @@ def _product(product):
 def _synthesize_order_response(tool_results):
     """Only show returned facts; supplemental misses cannot erase verified orders."""
     parts, supplemental = [], []
+    seen_order_ids = set()
+    seen_product_ids = set()
     for tr in tool_results:
         result = tr.get('result')
         if not isinstance(result, dict):
@@ -94,7 +100,8 @@ def _synthesize_order_response(tool_results):
             elif code in ('tool_not_allowed', 'invalid_tool_arguments'):
                 supplemental.append('M\u1ed9t ph\u1ea7n tra c\u1ee9u b\u1ed5 sung kh\u00f4ng th\u1ef1c hi\u1ec7n \u0111\u01b0\u1ee3c; ch\u1ec9 th\u00f4ng tin \u0111\u00e3 x\u00e1c minh \u0111\u01b0\u1ee3c hi\u1ec3n th\u1ecb.')
             else:
-                return None
+                if not parts:
+                    return None
         elif isinstance(result.get('shipment'), dict) and result['shipment']:
             shipment = result['shipment']
             lines = [f"Th\u00f4ng tin v\u1eadn chuy\u1ec3n \u0111\u01a1n {_text(result.get('order_id'))}:"]
@@ -105,12 +112,20 @@ def _synthesize_order_response(tool_results):
             if result.get('order_status') in _STATUS_MAP:
                 lines.append('Tr\u1ea1ng th\u00e1i \u0111\u01a1n: ' + _STATUS_MAP[result['order_status']])
             if len(lines) == 1:
-                return None
-            parts.append('\n'.join(lines))
+                if not parts:
+                    return None
+            else:
+                parts.append('\n'.join(lines))
         elif isinstance(result.get('orders'), list):
-            rendered = [_order(order) for order in result['orders']]
-            if any(item is None for item in rendered):
-                return None
+            rendered = []
+            for order in result['orders']:
+                item = _order(order)
+                if item is None:
+                    return None
+                oid = order.get('id', '')
+                if oid:
+                    seen_order_ids.add(oid)
+                rendered.append(item)
             parts.append('\n\n'.join(rendered) if rendered else 'T\u00e0i kho\u1ea3n hi\u1ec7n ch\u01b0a c\u00f3 \u0111\u01a1n h\u00e0ng.')
             if result.get('truncated'):
                 parts.append('Danh s\u00e1ch \u0111\u00e3 r\u00fat g\u1ecdn; c\u00f2n c\u00e1c \u0111\u01a1n kh\u00e1c ch\u01b0a hi\u1ec3n th\u1ecb.')
@@ -129,21 +144,36 @@ def _synthesize_order_response(tool_results):
                 if item is None:
                     return None
                 oid = result['order'].get('id', '')
-                if not (oid and any(oid in p for p in parts)):
+                if oid and oid in seen_order_ids:
+                    pass
+                else:
+                    if oid:
+                        seen_order_ids.add(oid)
                     rendered.append(item)
             if result.get('product') is not None:
                 item = _product(result['product'])
                 if item is None:
                     return None
-                rendered.append('Th\u00f4ng tin danh m\u1ee5c:\n' + item)
+                pid = result['product'].get('id', '')
+                if pid and pid in seen_product_ids:
+                    pass
+                else:
+                    if pid:
+                        seen_product_ids.add(pid)
+                    rendered.append('Th\u00f4ng tin danh m\u1ee5c:\n' + item)
             if rendered:
                 parts.extend(rendered)
             elif name == 'get_context':
-                parts.append('Ch\u01b0a c\u00f3 \u0111\u01a1n ho\u1eb7c s\u1ea3n ph\u1ea9m \u0111\u01b0\u1ee3c ch\u1ecdn. Vui l\u00f2ng ch\u1ecdn \u0111\u01a1n ho\u1eb7c cung c\u1ea5p m\u00e3.')
+                if not parts:
+                    parts.append('Ch\u01b0a c\u00f3 \u0111\u01a1n ho\u1eb7c s\u1ea3n ph\u1ea9m \u0111\u01b0\u1ee3c ch\u1ecdn. Vui l\u00f2ng ch\u1ecdn \u0111\u01a1n ho\u1eb7c cung c\u1ea5p m\u00e3.')
+            elif name == 'get_order' and seen_order_ids:
+                pass
             else:
-                return None
+                if not parts:
+                    return None
         else:
-            return None
+            if not parts:
+                return None
     if parts:
         return '\n\n'.join(dict.fromkeys(parts + supplemental))
     if supplemental:
