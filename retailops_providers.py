@@ -190,16 +190,25 @@ class OpenRouterAgent:
                 return result
         except urllib.error.HTTPError as exc:
             status = exc.code; exc.close()
-            if status in (401, 403):
-                raise AgentError('api_auth_failed', 'API chưa xác thực được. Chủ demo cần kiểm tra API key/quyền truy cập.') from None
-            if status == 402:
-                raise AgentError('api_credit_exhausted', 'API không đủ tín dụng. Bạn có thể chọn custom model đã được cấu hình.') from None
-            if status == 429:
-                raise AgentError('api_rate_limited', 'API đang giới hạn lưu lượng. Bạn thử lại sau nhé.') from None
-            raise AgentError('api_unavailable', 'API chưa hoàn tất yêu cầu. Không tự chuyển sang model khác.') from None
-        except (RuntimeError, OSError, ValueError):
+            error_map = {
+                400: ('api_unavailable', f'Yêu cầu API không hợp lệ (HTTP {status}).', 'bad_request'),
+                401: ('api_auth_failed', 'API chưa xác thực được. Chủ demo cần kiểm tra API key/quyền truy cập.', 'authentication_failed'),
+                402: ('api_credit_exhausted', 'API không đủ tín dụng. Bạn có thể chọn custom model đã được cấu hình.', 'credit_exhausted'),
+                403: ('api_auth_failed', 'API chưa xác thực được. Chủ demo cần kiểm tra API key/quyền truy cập.', 'forbidden'),
+                404: ('api_unavailable', f'Không tìm thấy API endpoint (HTTP {status}).', 'not_found'),
+                413: ('api_unavailable', f'Dung lượng yêu cầu quá lớn (HTTP {status}).', 'payload_too_large'),
+                422: ('api_unavailable', f'Dữ liệu yêu cầu không thể xử lý (HTTP {status}).', 'unprocessable_entity'),
+                429: ('api_rate_limited', 'API đang giới hạn lưu lượng. Bạn thử lại sau nhé.', 'rate_limited'),
+                503: ('api_unavailable', f'Dịch vụ tạm thời không khả dụng (HTTP {status}).', 'service_unavailable'),
+            }
+            if status in error_map:
+                code, msg, kind = error_map[status]
+                raise AgentError(code, msg, {'http_status': status, 'error_kind': kind}) from None
+            raise AgentError('api_unavailable', f'API chưa hoàn tất yêu cầu (HTTP {status}). Không tự chuyển sang model khác.', {'http_status': status, 'error_kind': f'http_{status}'}) from None
+        except (RuntimeError, OSError, ValueError) as exc:
             # Strip URLs, upstream bodies and credentials from exceptions.
-            raise AgentError('api_unavailable', 'Không nhận được phản hồi API hợp lệ. Bạn có thể thử lại sau.') from None
+            err_kind = 'timeout' if isinstance(exc, (TimeoutError, urllib.error.URLError)) and 'timed out' in str(exc).lower() else type(exc).__name__
+            raise AgentError('api_unavailable', 'Không nhận được phản hồi API hợp lệ. Bạn có thể thử lại sau.', {'error_kind': err_kind}) from None
 
     def _chat_anthropic(self, messages, allow_tools, timeout, *, allowed_tools=None):
         validate_messages(messages)

@@ -32,8 +32,19 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
     # Extract order_id safely from message or bound context (supports both flat bound and nested context)
     bound_obj = state.get("bound", {}) if isinstance(state.get("bound"), dict) else {}
     bound_context = bound_obj.get("context", {}) if isinstance(bound_obj.get("context"), dict) else bound_obj
-    order_match = re.search(r'\b(o-\d+|dh\d+)\b', lower_msg)
-    extracted_oid = order_match.group(1).upper() if order_match else (bound_context.get("order_id") or bound_obj.get("order_id"))
+    order_match = re.search(r'\b(o-\d+|o0\d{5,}|o\d{5,}|dh\d+|\d{5,})\b', lower_msg)
+    if order_match:
+        matched_str = order_match.group(1).upper()
+        if matched_str.startswith('O0'):
+            extracted_oid = 'O-' + matched_str[2:]
+        elif matched_str.startswith('O') and not matched_str.startswith('O-'):
+            extracted_oid = 'O-' + matched_str[1:]
+        elif matched_str.isdigit():
+            extracted_oid = 'O-' + matched_str
+        else:
+            extracted_oid = matched_str
+    else:
+        extracted_oid = bound_context.get("order_id") or bound_obj.get("order_id")
 
     prompt_messages = [
         {"role": "system", "content": DISPUTE_SYSTEM_PROMPT},
@@ -69,9 +80,12 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
                     prompt_messages.append(tool_entry)
 
                     if name == "prepare_cancellation" and extracted_oid:
+                        chosen_oid = args.get("order_id") or extracted_oid
+                        if isinstance(chosen_oid, str) and chosen_oid.upper().startswith('O0'):
+                            chosen_oid = 'O-' + chosen_oid[2:]
                         action_proposal = {
                             "action": "cancel_order",
-                            "order_id": args.get("order_id", extracted_oid),
+                            "order_id": chosen_oid,
                             "reason": args.get("reason", "Khách yêu cầu hủy"),
                             "status": "pending_user_confirmation"
                         }

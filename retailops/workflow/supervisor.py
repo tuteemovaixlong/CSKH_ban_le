@@ -142,7 +142,7 @@ def run_supervisor(state: MultiAgentState) -> MultiAgentState:
         return state
 
     # Check for order identifier or active transactional order focus
-    has_specific_oid = bool(re.search(r'\b(o-\d+|dh\d+|\d{5,})\b', lower_msg))
+    has_specific_oid = bool(re.search(r'\b(o-\d+|o0\d{5,}|o\d{5,}|dh\d+|\d{5,})\b', lower_msg))
     has_order_phrase = bool(any(w in lower_msg for w in [
         "đơn em", "đơn này", "đơn tôi", "đơn mình", "đơn của", "mã đơn", "check đơn",
         "xem đơn", "tra đơn", "đơn cũ", "đơn mega sale", "có đơn", "đơn nào", "tìm đơn",
@@ -160,10 +160,11 @@ def run_supervisor(state: MultiAgentState) -> MultiAgentState:
     prev_was_order_agent = bool(recent_subagents and recent_subagents[-1] == "supervisor:routed_to_order_agent")
 
     has_attachment = bool(state["messages"] and state["messages"][-1].get("attachment"))
-    has_image_query = any(w in lower_msg for w in [
-        "ảnh", "hình", "hình ảnh", "tấm ảnh", "tấm hình", "đọc ảnh", "xem ảnh",
-        "nhìn ảnh", "trong ảnh", "ảnh này", "ảnh đó", "ảnh đính kèm"
-    ])
+    is_false_image_term = bool(re.search(r'\b(hình thức|tình hình|ảnh hưởng)\b', lower_msg))
+    has_image_query = not is_false_image_term and bool(re.search(
+        r'\b(ảnh|hình|hình ảnh|tấm ảnh|tấm hình|bức ảnh|đọc ảnh|xem ảnh|nhìn ảnh|trong ảnh|ảnh này|ảnh đó|ảnh đính kèm)\b',
+        lower_msg
+    ))
 
     is_info_continuation = any(w in lower_msg for w in [
         "ngoài ra", "còn thông tin", "chi tiết hơn", "thêm thông tin", "nhiều thông tin",

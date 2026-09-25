@@ -618,6 +618,7 @@ class BusinessStore:
             rows = db.execute('''SELECT messages FROM agent_turns WHERE conversation_id=? AND customer_id=?
                 ORDER BY id DESC LIMIT 6''', (cid, customer)).fetchall()
         turns, characters, count = [], 0, 0
+        preserved_recent_image = False
         for row in rows:
             raw = json.loads(row['messages'])
             clean_turn = []
@@ -627,7 +628,15 @@ class BusinessStore:
                 if not isinstance(content, str):
                     content = str(content)
                 if role == 'user':
-                    clean_turn.append({'role': 'user', 'content': content})
+                    user_entry = {'role': 'user', 'content': content}
+                    att = m.get('attachment')
+                    if isinstance(att, dict) and att.get('type') in ('image', 'document'):
+                        if att.get('type') == 'image' and att.get('data') and not preserved_recent_image:
+                            user_entry['attachment'] = att
+                            preserved_recent_image = True
+                        else:
+                            user_entry['attachment'] = {'type': att.get('type'), 'name': att.get('name', '')}
+                    clean_turn.append(user_entry)
                 elif role == 'assistant':
                     entry = {'role': 'assistant', 'content': content}
                     if 'tool_calls' in m and m['tool_calls']:

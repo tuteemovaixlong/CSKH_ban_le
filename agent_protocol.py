@@ -142,6 +142,9 @@ _THOUGHT_PATTERNS = [
     re.compile(r'<\|thought\|>[\s\S]*?<\|thought\|>', re.IGNORECASE),
     re.compile(r'<thought>[\s\S]*?</thought>', re.IGNORECASE),
     re.compile(r'<think>[\s\S]*?</think>', re.IGNORECASE),
+    re.compile(r'<(?:thought|think)>[\s\S]*$', re.IGNORECASE),
+    re.compile(r'<\|channel\|?>thought[\s\S]*$', re.IGNORECASE),
+    re.compile(r'<\|thought\|>[\s\S]*$', re.IGNORECASE),
 ]
 _TEXT_CALL_PATTERN = re.compile(r'call:([a-zA-Z0-9_]+)\s*\{([^}]*)\}')
 
@@ -254,8 +257,10 @@ def assistant_message(response):
 
     # If no structured tool_calls returned, check if model formatted calls inline as text
     if not calls and _TEXT_CALL_PATTERN.search(content):
+        # Do not extract text calls that occur inside markdown code blocks
+        non_code_content = re.sub(r'```[\s\S]*?```', '', content)
         extracted_calls = []
-        for m in _TEXT_CALL_PATTERN.finditer(content):
+        for m in _TEXT_CALL_PATTERN.finditer(non_code_content):
             t_name = m.group(1)
             t_args_str = m.group(2)
             if t_name in TOOL_ARGUMENTS:

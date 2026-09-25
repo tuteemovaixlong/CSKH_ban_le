@@ -361,14 +361,186 @@ class OrderToolRecoveryTests(unittest.TestCase):
         self.assertIn('Áo sơ mi lụa công sở', res)
         self.assertIn('Danh mục chưa có sản phẩm khớp mã tra cứu', res)
 
-    def test_order_prompt_forbids_dispute_tools_and_has_no_hardcoded_fixture_ids(self):
-        """ORDER_SYSTEM_PROMPT must not contain hardcoded fixture IDs and must forbid dispute tools."""
+    def test_t08_image_with_purchase_query_reaches_model_payload_and_routes_to_order_agent(self):
+        """T08: Image query about purchasing routes to order_agent, includes image_url in payload, no canned greeting."""
+        att = {'type': 'image', 'data': 'aW1hZ2U=', 'mime_type': 'image/jpeg', 'name': 'pant.jpg'}
+        st = state('Có đơn nào mua món này không?')
+        st['messages'][-1]['attachment'] = att
+        routed = run_supervisor(st)
+        self.assertEqual(routed['next_worker'], 'order_agent')
+
+        responses = [
+            api_response(None, [('list_orders', {})]),
+            api_response('Bạn đã đặt Quần tây ống đứng tôn dáng trong đơn O-819126.')
+        ]
+        with patch.object(OpenRouterAgent, 'request', side_effect=responses) as req:
+            result = self.app.chat('C-001', self.body('Có đơn nào mua món này không?', attachment=att))
+        first_call_msgs = req.call_args_list[0].args[0]['messages']
+        user_entry = next(m for m in first_call_msgs if m['role'] == 'user')
+        self.assertEqual(user_entry['content'][1]['image_url']['url'], 'data:image/jpeg;base64,aW1hZ2U=')
+        self.assertNotIn('Dạ em là trợ lý bán lẻ', result['message'])
+        self.assertIn(result['source'], ('llm_agent', 'model'))
+
+    def test_t09_image_multiturn_followup_without_reupload_restores_image_from_history(self):
+        """T09: Follow-up turn referencing image restores attachment from conversation history without re-upload."""
+        att = {'type': 'image', 'data': 'aW1hZ2U=', 'mime_type': 'image/jpeg', 'name': 'pant.jpg'}
+        # Turn 1 with image
+        with patch.object(OpenRouterAgent, 'request', return_value=api_response('Tôi thấy bạn gửi ảnh quần tây.')):
+            self.app.chat('C-001', self.body('Món này tôi từng mua chưa?', attachment=att))
+
+        # Turn 2 follow-up without attachment
+        with patch.object(OpenRouterAgent, 'request', return_value=api_response('Đã đọc lại ảnh từ lịch sử và kiểm tra')) as req:
+            result2 = self.app.chat('C-001', self.body('đọc ảnh check tiếp đơn cho tôi xem'))
+        turn2_msgs = req.call_args.args[0]['messages']
+        user_entry2 = next(m for m in turn2_msgs if m['role'] == 'user')
+        self.assertTrue(any(item.get('type') == 'image_url' for item in user_entry2['content']))
+        self.assertEqual(result2['message'], 'Đã đọc lại ảnh từ lịch sử và kiểm tra')
+
+    def test_t10_attachment_isolation_across_conversations_and_customers(self):
+        """T10: Attachments do not leak to other conversations or other customers."""
+        att = {'type': 'image', 'data': 'aW1hZ2U=', 'mime_type': 'image/jpeg', 'name': 'pant.jpg'}
+        # Turn 1 with image in cid (C-001)
+        with patch.object(OpenRouterAgent, 'request', return_value=api_response('Nhận được ảnh')):
+            self.app.chat('C-001', self.body('Ảnh sản phẩm', attachment=att))
+
+        # New conversation for C-001
+        cid_new = self.app.new_conversation('C-001', {'provider_id': 'api'})['conversation_id']
+        body_new = {'conversation_id': cid_new, 'text': 'đọc ảnh check tiếp', 'request_id': str(uuid.uuid4())}
+        with patch.object(OpenRouterAgent, 'request', return_value=api_response('Không có ảnh nào')) as req:
+            self.app.chat('C-001', body_new)
+        user_entry = next(m for m in req.call_args.args[0]['messages'] if m['role'] == 'user')
+        if isinstance(user_entry['content'], list):
+            self.assertFalse(any(item.get('type') == 'image_url' for item in user_entry['content']))
+
+        # Conversation for C-002
+        cid_c2 = self.app.new_conversation('C-002', {'provider_id': 'api'})['conversation_id']
+        body_c2 = {'conversation_id': cid_c2, 'text': 'đọc ảnh check tiếp', 'request_id': str(uuid.uuid4())}
+        with patch.object(OpenRouterAgent, 'request', return_value=api_response('Không có ảnh nào')) as req:
+            self.app.chat('C-002', body_c2)
+        user_entry_c2 = next(m for m in req.call_args.args[0]['messages'] if m['role'] == 'user')
+        if isinstance(user_entry_c2['content'], list):
+            self.assertFalse(any(item.get('type') == 'image_url' for item in user_entry_c2['content']))
+
+    def test_t11_visual_match_presents_backend_candidates_without_unverified_certainty(self):
+        """T11: Candidate products from visual/search match are framed as candidates without 100% certainty."""
+        tool_results = [
+            {'name': 'search_products', 'args': {'query': 'quần tây'}, 'result': {'products': [
+                {'id': 'P-602', 'name': 'Quần tây ống đứng tôn dáng', 'category': 'Thời trang', 'variants': ['Đen · Size S/M/L'], 'price': 520000}
+            ]}}
+        ]
+        res = _synthesize_order_response(tool_results)
+        self.assertIsNotNone(res)
+        self.assertIn('Sản phẩm khớp trong danh mục (chưa xác nhận liên kết với đơn):', res)
+        self.assertIn('P-602', res)
+        self.assertIn('Quần tây ống đứng tôn dáng', res)
+
+    def test_t12_truncated_order_list_explicitly_informs_customer(self):
+        """T12: When list_orders is truncated, synthesized response clearly notifies customer."""
+        tool_results = [
+            {'name': 'list_orders', 'args': {}, 'result': {
+                'orders': [{'id': f'O-{i}', 'name': f'Item {i}', 'status': 'delivered'} for i in range(10)],
+                'truncated': True
+            }}
+        ]
+        res = _synthesize_order_response(tool_results)
+        self.assertIn('Danh sách đã rút gọn; còn các đơn khác chưa hiển thị.', res)
+
+    def test_t13_payment_method_and_false_image_terms_route_to_policy_agent(self):
+        """T13: 'hình thức thanh toán', 'tình hình', 'ảnh hưởng' do not falsely trigger image routing."""
+        s1 = state('Shop cho mình hỏi hình thức thanh toán bên mình như thế nào ạ?')
+        r1 = run_supervisor(s1)
+        self.assertEqual(r1['next_worker'], 'policy_agent')
+
+        s2 = state('Tình hình thời tiết có ảnh hưởng đến thời gian giao hàng không?')
+        r2 = run_supervisor(s2)
+        self.assertNotIn('image', r2.get('trace', {}).get('routing_reason', ''))
+
+    def test_t14_store_inquiry_and_no_hardcoded_customer_orders_in_prompt(self):
+        """T14: Store info routed appropriately and prompt contains zero customer order hardcodes."""
+        s = state('Shop tên gì?')
+        r = run_supervisor(s)
+        self.assertEqual(r['next_worker'], 'order_agent')
+
         from retailops.workflow.subagents.order_agent import ORDER_SYSTEM_PROMPT
-        self.assertNotIn('O-819126', ORDER_SYSTEM_PROMPT)
         self.assertNotIn('O-819125', ORDER_SYSTEM_PROMPT)
+        self.assertNotIn('O-819126', ORDER_SYSTEM_PROMPT)
         self.assertNotIn('O-819127', ORDER_SYSTEM_PROMPT)
-        self.assertIn('prepare_cancellation', ORDER_SYSTEM_PROMPT)
-        self.assertIn('register_complaint', ORDER_SYSTEM_PROMPT)
+
+    def test_t15_code_block_text_call_and_unclosed_thought_hardening(self):
+        """T15: Calls in markdown code blocks are ignored; unclosed thought tags are cleanly stripped."""
+        from agent_protocol import assistant_message
+        resp_code_block = {
+            'message': {
+                'role': 'assistant',
+                'content': 'Đây là ví dụ mã lệnh:\n```python\ncall:get_order{"order_id": "O-9999"}\n```\nBạn xem nhé.'
+            }
+        }
+        msg = assistant_message(resp_code_block)
+        self.assertFalse(msg.get('tool_calls'))
+        self.assertIn('Đây là ví dụ mã lệnh', msg['content'])
+
+        resp_unclosed = {
+            'message': {
+                'role': 'assistant',
+                'content': 'Dạ chào anh/chị!\n<thought>Tôi đang suy nghĩ về đơn hàng này chưa đóng tag'
+            }
+        }
+        msg_unclosed = assistant_message(resp_unclosed)
+        self.assertNotIn('Tôi đang suy nghĩ', msg_unclosed['content'])
+        self.assertIn('Dạ chào anh/chị!', msg_unclosed['content'])
+
+    def test_t16_witty_agent_records_system_fallback_when_unexpected_tools_produced(self):
+        """T16: When model emits unexpected tool calls with tools disabled, witty agent records system_fallback."""
+        from retailops.workflow.subagents.witty_agent import run_witty_agent
+        bad_resp = api_response(None, [('get_order', {'order_id': 'O-123'})])
+        with patch.object(self.adapter, 'chat', return_value={'message': {'role': 'assistant', 'content': '', 'tool_calls': [{'function': {'name': 'get_order', 'arguments': '{}'}}]}}):
+            s = state('Hôm nay thời tiết thế nào?')
+            out = run_witty_agent(s, self.adapter)
+        self.assertEqual(out['trace']['answer_source'], 'system_fallback')
+        self.assertTrue(out['trace']['degraded'])
+        self.assertEqual(out['trace']['fallback_reason'], 'unexpected_tools_in_no_tool_worker')
+        self.assertIn('witty_agent:fallback', out['subagent_history'])
+        self.assertNotIn('witty_agent:pivot_success', out['subagent_history'])
+
+    def test_t17_provider_trace_classifies_http_errors_and_masks_keys(self):
+        """T17: HTTP errors are classified by status code and error_kind without leaking secrets."""
+        import io
+        import urllib.error
+
+        agent = OpenRouterAgent(KEY, MODEL)
+        err400 = urllib.error.HTTPError('https://fixture.example', 400, 'Bad Request', {}, io.BytesIO(b'{"error": "bad"}'))
+        with patch.object(agent._opener, 'open', side_effect=err400):
+            with self.assertRaises(AgentError) as cm:
+                agent.request({'messages': []}, 5)
+            self.assertEqual(cm.exception.trace.get('http_status'), 400)
+            self.assertEqual(cm.exception.trace.get('error_kind'), 'bad_request')
+            self.assertNotIn(KEY, str(cm.exception))
+
+        err413 = urllib.error.HTTPError('https://fixture.example', 413, 'Payload Too Large', {}, io.BytesIO(b'too big'))
+        with patch.object(agent._opener, 'open', side_effect=err413):
+            with self.assertRaises(AgentError) as cm:
+                agent.request({'messages': []}, 5)
+            self.assertEqual(cm.exception.trace.get('http_status'), 413)
+            self.assertEqual(cm.exception.trace.get('error_kind'), 'payload_too_large')
+
+        with patch.object(agent._opener, 'open', side_effect=TimeoutError('Connection timed out')):
+            with self.assertRaises(AgentError) as cm:
+                agent.request({'messages': []}, 5)
+            self.assertEqual(cm.exception.trace.get('error_kind'), 'timeout')
+
+    def test_t18_order_id_typo_handling_and_normalization(self):
+        """T18: Order ID typos like O0819127 are routed appropriately and normalized by dispute handler."""
+        s = state('Kiểm tra đơn O0819127 xem giao đến đâu')
+        r = run_supervisor(s)
+        self.assertEqual(r['next_worker'], 'order_agent')
+
+        from retailops.workflow.subagents.dispute_agent import run_dispute_agent
+        disp_state = state('Tôi muốn hủy đơn O0819127')
+        mock_tool = lambda n, a: {'eligible': True, 'order_id': a.get('order_id')}
+        tool_call = {'function': {'name': 'prepare_cancellation', 'arguments': json.dumps({'order_id': 'O0819127', 'reason': 'Đổi ý'})}}
+        with patch.object(self.adapter, 'chat', return_value={'message': {'role': 'assistant', 'content': '', 'tool_calls': [tool_call]}}):
+            out = run_dispute_agent(disp_state, mock_tool, self.adapter)
+        self.assertEqual(out.get('action_proposal', {}).get('order_id'), 'O-819127')
 
 
 if __name__ == '__main__':

@@ -59,18 +59,24 @@ def run_witty_agent(state: MultiAgentState, gateway: Any, timeout: int = 15) -> 
     prompt_messages = worker_messages(state, prompt)
     response = call_model(gateway, prompt_messages, False, time.monotonic() + timeout,
                           state.setdefault('trace', {}))
-    content = response.get('content', '').strip()
-    if response.get('tool_calls') or not content:
+    has_unexpected_tools = bool(response.get('tool_calls'))
+    content = response.get('content', '')
+    if has_unexpected_tools or not content:
         content = (
             "Dạ em là trợ lý bán lẻ RetailOps Shop. Em luôn sẵn sàng giải đáp thắc mắc hoặc "
             "hỗ trợ kiểm tra đơn hàng và tư vấn sản phẩm cho mình nhé ạ!"
         )
-    state['trace']['answer_source'] = 'llm_agent'
+        state['trace']['answer_source'] = 'system_fallback'
+        state['trace']['degraded'] = True
+        state['trace']['fallback_reason'] = 'unexpected_tools_in_no_tool_worker' if has_unexpected_tools else 'empty_model_response'
+        state["subagent_history"].append("witty_agent:fallback")
+    else:
+        state['trace']['answer_source'] = 'llm_agent'
+        state["subagent_history"].append("witty_agent:pivot_success")
 
     msg = {"role": "assistant", "content": content}
     state["messages"].append(msg)
     state["fresh"].append(msg)
     state["complete"] = True
     state["consecutive_ood_count"] = state.get("consecutive_ood_count", 0) + 1
-    state["subagent_history"].append("witty_agent:pivot_success")
     return state

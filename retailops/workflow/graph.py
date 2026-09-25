@@ -101,6 +101,16 @@ def run_multiagent(gateway: Any, text: str, history: list, execute: Any, identit
         user_msg = {"role": "user", "content": text}
         if attachment:
             user_msg["attachment"] = attachment
+        else:
+            lower_text = text.lower()
+            refers_to_prior_image = any(w in lower_text for w in [
+                "ảnh đó", "ảnh này", "ảnh đính kèm", "trong ảnh", "nhìn ảnh", "đọc ảnh", "xem ảnh", "món đó", "món này"
+            ])
+            if refers_to_prior_image and history:
+                for prev_msg in reversed(history):
+                    if prev_msg.get("role") == "user" and prev_msg.get("attachment", {}).get("type") == "image":
+                        user_msg["attachment"] = copy.deepcopy(prev_msg["attachment"])
+                        break
         initial_state: MultiAgentState = {
             "messages": list(history) + [user_msg],
             "fresh": [user_msg],
