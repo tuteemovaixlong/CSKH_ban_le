@@ -17,6 +17,7 @@ from retailops.core import require
 from retailops.business.application import Application
 from retailops.business.store import BusinessStore
 from retailops.identity.contracts import SessionBinding
+from retailops.inference_gate import InferenceGate
 
 COOKIE = '__Host-retailops_session'
 SESSION_SECONDS = 8 * 3600
@@ -37,6 +38,7 @@ class GuestSessions:
         self.infer, self.api_infer, self.api_daily_limit = infer, api_infer, api_daily_limit
         self.capacity = capacity
         self.lock = threading.RLock()
+        self.inference_gate = InferenceGate()
         self.agent_lock = threading.Lock()
         self.apps, self.active = {}, {}
         # All guests share this persistent quota. Owner business.sqlite3 is untouched.
@@ -146,6 +148,7 @@ class GuestSessions:
                 app = Application(store, {}, self.infer, self.api_infer, self.api_daily_limit)
                 app.quota_store = self.control
                 app.agent_lock = self.agent_lock
+                app.inference_gate = self.inference_gate
                 app.default_provider = 'api' if self.api_infer is not None else 'custom'
                 self.apps[sid] = app
             self.active[sid] = self.active.get(sid, 0) + 1

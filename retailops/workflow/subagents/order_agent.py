@@ -21,6 +21,13 @@ ORDER_SYSTEM_PROMPT = (
     '(order ID, product name, variant, amount, status). '
     'If list_orders indicates results are truncated, mention that only recent orders were checked. '
     'search_products is ONLY for finding items the store sells in the catalog; NEVER call search_products to check customer orders. '
+    'When the customer asks about product details, material, color, care instructions, or warranty for an order '
+    '(e.g. "chất liệu và màu sắc của món này", "cho tôi biết thông tin chi tiết món này", "món này bảo hành bao lâu"): '
+    'inspect the order record from get_context or get_order to obtain its product_id (P-...), then call get_product(product_id=...). '
+    'NEVER call search_products with generic words like "món này" or "sản phẩm này" when an order is already identified. '
+    'When reporting warranty for a product: state the exact warranty_days from get_product (e.g. 180 ngày for P-603, 90 ngày for P-602). '
+    'Never claim 12 months or any unverified warranty figure. Mention that warranty period starts from delivery date; '
+    'if delivery date is not recorded, note that delivery date is required to verify remaining days. '
     'When the customer asks for more details on an existing order (e.g. "cho tôi xem nhiều thông tin hơn về đơn này"), '
     'rely on get_order/get_context facts, and call track_shipment only if carrier/delivery information is requested. '
     'Do NOT call get_product with an order ID. '
@@ -71,6 +78,9 @@ def _product(product):
                        ('care', 'B\u1ea3o qu\u1ea3n')):
         if _text(product.get(key)):
             lines.append(label + ': ' + _text(product[key], 300))
+    warranty = product.get('warranty_days')
+    if isinstance(warranty, (int, float)) and warranty > 0:
+        lines.append(f"B\u1ea3o h\u00e0nh: {int(warranty)} ng\u00e0y (t\u00ednh t\u1eeb ng\u00e0y nh\u1eadn h\u00e0ng)")
     return '\n'.join(lines)
 
 

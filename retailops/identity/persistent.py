@@ -13,6 +13,7 @@ from retailops.business.store import BusinessStore
 from retailops.core import require
 from retailops.identity.contracts import SessionBinding
 from retailops.identity.store import IdentityStore
+from retailops.inference_gate import InferenceGate
 
 
 class PersistentSessions:
@@ -27,6 +28,7 @@ class PersistentSessions:
         self.control = IdentityStore(self.directory/'identity.sqlite3')
         self.infer, self.api_infer = infer, api_infer
         self.api_daily_limit, self.capacity = api_daily_limit, capacity
+        self.inference_gate = InferenceGate()
         self.agent_lock, self.lock = threading.Lock(), threading.RLock()
         self.apps = OrderedDict()
         self.purge()
@@ -111,6 +113,7 @@ class PersistentSessions:
                                   self.api_daily_limit, role=member['role'])
                 app.quota_store = AccountQuotaStore(self.control, member['id'])
                 app.agent_lock = self.agent_lock
+                app.inference_gate = self.inference_gate
                 app.default_provider = 'api' if self.api_infer is not None else 'custom'
                 self.apps[key] = app
                 if len(self.apps) > self.capacity:

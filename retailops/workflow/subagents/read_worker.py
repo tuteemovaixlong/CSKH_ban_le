@@ -37,7 +37,7 @@ def call_model(gateway, messages, allow_tools, deadline, trace, *, allowed_tools
     trace['model_calls'] = trace.get('model_calls', 0) + 1
     trace.setdefault('model_responses', 0)
     try:
-        seconds = max(1, min(30, math.ceil(remaining)))
+        seconds = max(1, min(45, math.ceil(remaining)))
         scoped = getattr(gateway, 'chat_scoped', None)
         if allowed_tools is not None and callable(scoped):
             response = scoped(messages, allow_tools, seconds, allowed_tools)
@@ -68,7 +68,7 @@ def call_model(gateway, messages, allow_tools, deadline, trace, *, allowed_tools
 
 
 def run_read_worker(state, execute, gateway, *, prompt, allowed_tools, render,
-                    worker, timeout=30):
+                    worker, timeout=60):
     from retailops_agent import AgentError
 
     state = copy.deepcopy(state)

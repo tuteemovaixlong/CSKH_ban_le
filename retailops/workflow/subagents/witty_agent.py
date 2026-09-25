@@ -22,7 +22,7 @@ WITTY_SYSTEM_PROMPT = (
 )
 
 
-def run_witty_agent(state: MultiAgentState, gateway: Any, timeout: int = 15) -> MultiAgentState:
+def run_witty_agent(state: MultiAgentState, gateway: Any, timeout: int = 45) -> MultiAgentState:
     """Execute the witty pivot subagent."""
     state = copy.deepcopy(state)
     last_user_msg = next((m["content"] for m in reversed(state["messages"]) if m["role"] == "user"), "")

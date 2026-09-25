@@ -17,6 +17,7 @@ from retailops.knowledge.embedding import MODEL_ID as KNOWLEDGE_EMBEDDING_MODEL
 from retailops_providers import API_MODEL
 from retailops_conversation import Catalog, describe_order
 from retailops.business.cache import SemanticCache, ToolCache, is_cacheable_query
+from retailops.inference_gate import InferenceGate, GatedGateway
 
 class Application:
     def __init__(self, store, tokens, infer=None, api_infer=None, api_daily_limit=20, *, role='customer', orchestrator=None):
@@ -31,6 +32,7 @@ class Application:
         self.quota_store = store
         self.default_provider = 'custom'
         self.catalog = Catalog(store=self.store)
+        self.inference_gate = getattr(self, 'inference_gate', None) or InferenceGate()
         self.agent_lock = threading.Lock()
         self.overload_429_count = 0
         self.semantic_cache = SemanticCache(min_similarity=0.65)
@@ -167,11 +169,18 @@ class Application:
         gateway = self.infer if provider_id == 'custom' else self.api_infer if provider_id == 'api' else None
         require(gateway is not None, 503, 'model_offline',
                 'Model chưa kết nối. Bạn vẫn có thể dùng các nút tra đơn và yêu cầu hủy.')
-        if not self.agent_lock.acquire(blocking=False):
+        if self.agent_lock.locked():
             self.overload_429_count += 1
             raise ApiError(429, 'model_busy',
                            'Model đang xử lý một cuộc trò chuyện khác. Bạn thử lại sau nhé.')
+        conv_key = f"{customer}:{snapshot['id']}"
+        conv_lock = self.inference_gate.get_conversation_lock(conv_key)
+        if not conv_lock.acquire(blocking=False):
+            self.overload_429_count += 1
+            raise ApiError(429, 'model_busy',
+                           'Cuộc trò chuyện này đang xử lý một yêu cầu khác. Bạn thử lại sau nhé.')
         stack = ExitStack()
+        stack.callback(conv_lock.release)
         try:
             from retailops.workflow.checkpoints import workflow
             fingerprint = hashlib.sha256(json.dumps([digest, self.role, provider_id]).encode()).hexdigest()
@@ -183,6 +192,7 @@ class Application:
                 return replay
             if hasattr(gateway, 'for_turn'):
                 gateway = gateway.for_turn()
+            gated_gateway = GatedGateway(gateway, self.inference_gate)
             saved = saver.get_tuple(saver.config())
             saved_state = saved.checkpoint.get('channel_values', {}) if saved else {}
             if saved_state.get('complete'):
@@ -190,7 +200,7 @@ class Application:
                 identity = {'name': trace['model'], 'digest': trace['model_digest'],
                             'provider': trace['provider'], 'ollama_version': trace['ollama_version']}
             else:
-                identity = gateway.inspect()
+                identity = gated_gateway.inspect()
             identity = {**identity, 'selection': provider_id}
             reserved = False
             def before_model():
@@ -250,21 +260,21 @@ class Application:
 
             if getattr(self, 'orchestrator', 'multi_agent') == 'multi_agent' and not (hasattr(run_agent, 'side_effect') or hasattr(run_agent, 'mock_calls')):
                 from retailops.workflow.graph import run_multiagent
-                answer = run_multiagent(gateway, text, self.store.history(customer, snapshot['id']), execute, identity,
+                answer = run_multiagent(gated_gateway, text, self.store.history(customer, snapshot['id']), execute, identity,
                                         saver=saver, capture=capture, restore=restore, before_model=before_model, attachment=attachment)
             else:
-                answer = run_agent(gateway, text, self.store.history(customer, snapshot['id']), execute, identity,
+                answer = run_agent(gated_gateway, text, self.store.history(customer, snapshot['id']), execute, identity,
                                    saver=saver, capture=capture, restore=restore, before_model=before_model, attachment=attachment)
             result = {'action': 'choose_cancel_reason' if bound.cancel_order else 'reply',
                       'message': answer['message'], 'source': answer['trace'].get('answer_source', 'llm_agent'),
                       'model_used': answer['trace'].get('model_responses', answer['trace'].get('model_calls', 0)) > 0,
                       'context': bound.context, 'trace': answer['trace'], 'provider_id': provider_id, 'replayed': False}
-            result['trace'].setdefault('queue_wait_ms', 0.0)
+            result['trace']['queue_wait_ms'] = getattr(gated_gateway, 'total_queue_wait_ms', 0.0)
             result['trace'].setdefault('provider_inference_ms', answer['trace'].get('latency_ms', 0.0))
             result['trace'].setdefault('graph_retrieval_ms', 0.0)
             result['trace'].setdefault('rag_retrieval_ms', 0.0)
             result['trace'].setdefault('db_ms', 0.0)
-            result['trace'].setdefault('in_flight_inferences', 1)
+            result['trace']['in_flight_inferences'] = getattr(self.inference_gate, 'in_flight', 0)
             if answer.get('action_proposal'):
                 result['action_proposal'] = answer['action_proposal']
             # A second provenance check also covers a completed checkpoint replay.
@@ -298,10 +308,7 @@ class Application:
             raise ApiError(503, 'model_unavailable',
                            'Không kết nối được nguồn model đã chọn. Kiểm tra cấu hình; hệ thống không tự chuyển model.') from None
         finally:
-            try:
-                stack.close()
-            finally:
-                self.agent_lock.release()
+            stack.close()
 
     def focus(self, customer, cid, body):
         fields(body, {'order_id'})
