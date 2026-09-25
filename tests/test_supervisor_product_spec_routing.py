@@ -311,6 +311,19 @@ class SupervisorProductSpecRoutingTests(unittest.TestCase):
             tool_errors = [t for t in result['trace'].get('tools', []) if t.get('status') == 'error']
             self.assertEqual(tool_errors, [])
 
+            # Verify ReAct reasoning steps and evaluations are recorded
+            steps = result['trace'].get('steps', [])
+            self.assertEqual(len(steps), 3)
+            self.assertEqual(steps[0]['step'], 1)
+            self.assertEqual(steps[0]['action'], 'tool_call')
+            self.assertEqual(steps[0]['tools'][0]['name'], 'get_context')
+            self.assertEqual(steps[1]['step'], 2)
+            self.assertEqual(steps[1]['action'], 'tool_call')
+            self.assertEqual(steps[1]['tools'][0]['name'], 'get_product')
+            self.assertEqual(steps[2]['step'], 3)
+            self.assertEqual(steps[2]['action'], 'final_answer')
+            self.assertIn('Đầy đủ dữ kiện', steps[2]['evaluation'])
+
 
 if __name__ == "__main__":
     unittest.main()

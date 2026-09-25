@@ -424,7 +424,7 @@ class OpenRouterAgent:
             if len(set(ids)) != len(ids):
                 raise ProtocolError('Duplicate API tool IDs')
             # Opaque provider reasoning stays in this turn only, never SQLite/trace/UI.
-            for key in ('reasoning', 'reasoning_details'):
+            for key in ('reasoning', 'reasoning_details', 'reasoning_content'):
                 if raw.get(key) is not None:
                     entry[key] = copy.deepcopy(raw[key])
             self._messages[len(messages)] = entry
@@ -437,9 +437,10 @@ class OpenRouterAgent:
         cost = usage.get('cost')
         if cost is not None and (type(cost) not in (int, float) or not math.isfinite(cost) or cost < 0):
             raise ProtocolError('Invalid API cost')
+        reasoning_val = raw.get('reasoning') or raw.get('reasoning_content')
         return {'message': clean, 'done_reason': 'stop', 'model': self.model,
                 'prompt_eval_count': usage['prompt_tokens'], 'eval_count': usage['completion_tokens'],
-                'reported_cost_usd': cost, 'reasoning': raw.get('reasoning')}
+                'reported_cost_usd': cost, 'reasoning': reasoning_val}
 
 
 def api_from_environment():

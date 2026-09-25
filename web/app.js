@@ -864,8 +864,64 @@ function showTrace(row, trace, replayed = false) {
   if (trace.reported_cost_usd !== null && trace.reported_cost_usd !== undefined) {
     details.append(el('small', '', 'Chi phí lượt này do API báo: $' + trace.reported_cost_usd.toFixed(6)));
   }
-  if (trace.reasoning) {
-    details.append(el('p', '', '💭 Suy luận (Reasoning): ' + trace.reasoning));
+  if (Array.isArray(trace.steps) && trace.steps.length > 0) {
+    const stepsPanel = el('div', 'trace-steps-panel');
+    stepsPanel.append(el('div', 'trace-steps-title', '🔄 Quá trình suy luận, gọi công cụ & Đánh giá (ReAct Chain):'));
+    const timeline = el('div', 'trace-steps-timeline');
+    trace.steps.forEach(st => {
+      const card = el('div', 'trace-step-card' + (st.backtrack ? ' is-backtrack' : ''));
+      const header = el('div', 'trace-step-header');
+      header.append(el('span', 'trace-step-badge', 'Bước ' + st.step));
+      if (st.worker) {
+        header.append(el('span', 'trace-step-worker', '[' + st.worker + ']'));
+      }
+      if (st.backtrack) {
+        header.append(el('span', 'trace-step-backtrack-tag', '🔄 Tự điều chỉnh / Quay lui'));
+      }
+      card.append(header);
+
+      if (st.thought) {
+        const thoughtDiv = el('div', 'trace-step-thought');
+        thoughtDiv.append(el('strong', '', '💭 Suy luận: '), el('span', '', st.thought));
+        card.append(thoughtDiv);
+      }
+
+      if (Array.isArray(st.tools) && st.tools.length > 0) {
+        const toolsDiv = el('div', 'trace-step-tools');
+        st.tools.forEach(t => {
+          const tItem = el('div', 'trace-tool-item ' + (t.status === 'error' ? 'tool-error' : 'tool-ok'));
+          const tHeader = el('span', 'trace-tool-title', '🛠️ ' + t.name);
+          if (t.args && Object.keys(t.args).length > 0) {
+            tHeader.append(el('span', 'trace-tool-args', ' ' + JSON.stringify(t.args)));
+          }
+          tItem.append(tHeader);
+          if (t.summary) {
+            tItem.append(el('div', 'trace-tool-summary', '➜ ' + t.summary));
+          }
+          toolsDiv.append(tItem);
+        });
+        card.append(toolsDiv);
+      } else if (st.action === 'final_answer') {
+        card.append(el('div', 'trace-step-final', '✅ ' + (st.summary || 'Tổng hợp dữ kiện và hoàn tất câu trả lời.')));
+      }
+
+      if (st.evaluation) {
+        const evalDiv = el('div', 'trace-step-eval');
+        evalDiv.append(el('strong', '', '📋 Đánh giá: '), el('span', '', st.evaluation));
+        card.append(evalDiv);
+      }
+
+      timeline.append(card);
+    });
+    stepsPanel.append(timeline);
+    details.append(stepsPanel);
+  }
+
+  if (trace.reasoning && (!trace.steps || !trace.steps.some(s => s.thought))) {
+    const rawBox = el('div', 'trace-raw-reasoning');
+    rawBox.append(el('strong', '', '💭 Độc thoại suy luận (CoT):'));
+    rawBox.append(el('pre', 'trace-reasoning-pre', trace.reasoning));
+    details.append(rawBox);
   }
   row.append(details);
 }
