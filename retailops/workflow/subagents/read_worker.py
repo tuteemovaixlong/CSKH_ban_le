@@ -49,7 +49,12 @@ def call_model(gateway, messages, allow_tools, deadline, trace, *, allowed_tools
         code = exc.code if isinstance(exc, AgentError) else 'agent_response_failed'
         trace['reported_cost_usd'] = None
         trace['usage_incomplete'] = True
-        trace.setdefault('model_errors', []).append({'code': code, 'call': trace['model_calls']})
+        err_entry = {'code': code, 'call': trace['model_calls']}
+        if isinstance(exc, AgentError) and isinstance(exc.trace, dict):
+            for k in ('http_status', 'error_kind', 'stage', 'upstream_code'):
+                if k in exc.trace:
+                    err_entry[k] = exc.trace[k]
+        trace.setdefault('model_errors', []).append(err_entry)
         raise AgentError(code, 'Kh\u00f4ng nh\u1eadn \u0111\u01b0\u1ee3c ph\u1ea3n h\u1ed3i h\u1ee3p l\u1ec7 t\u1eeb model. Vui l\u00f2ng th\u1eed l\u1ea1i.', trace) from None
     trace['model_responses'] += 1
     trace['prompt_tokens'] = trace.get('prompt_tokens', 0) + (response.get('prompt_eval_count') or 0)

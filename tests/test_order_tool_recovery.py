@@ -542,6 +542,21 @@ class OrderToolRecoveryTests(unittest.TestCase):
             out = run_dispute_agent(disp_state, mock_tool, self.adapter)
         self.assertEqual(out.get('action_proposal', {}).get('order_id'), 'O-819127')
 
+    def test_t19_worker_model_errors_preserves_upstream_http_metadata(self):
+        """T19: Worker model_errors preserves upstream http_status and error_kind diagnostics."""
+        from retailops.workflow.subagents.order_agent import run_order_agent
+        order_st = state('Kiểm tra đơn O-819127')
+        http_err_trace = {'http_status': 400, 'error_kind': 'bad_request'}
+        with patch.object(self.adapter, 'chat_scoped', side_effect=AgentError('api_unavailable', 'Bad request', http_err_trace)):
+            with self.assertRaises(AgentError) as cm:
+                run_order_agent(order_st, lambda n, a: {}, self.adapter)
+            errors = cm.exception.trace.get('model_errors', [])
+            self.assertTrue(len(errors) > 0)
+            self.assertEqual(errors[0].get('code'), 'api_unavailable')
+            self.assertEqual(errors[0].get('http_status'), 400)
+            self.assertEqual(errors[0].get('error_kind'), 'bad_request')
+
 
 if __name__ == '__main__':
     unittest.main()
+
