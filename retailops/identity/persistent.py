@@ -113,7 +113,7 @@ class PersistentSessions:
                                   self.api_daily_limit, role=member['role'])
                 app.quota_store = AccountQuotaStore(self.control, member['id'])
                 app.agent_lock = self.agent_lock
-                app.inference_gate = self.inference_gate
+                app.inference_gate = getattr(self, 'inference_gate', None) or InferenceGate()
                 app.default_provider = 'api' if self.api_infer is not None else 'custom'
                 self.apps[key] = app
                 if len(self.apps) > self.capacity:

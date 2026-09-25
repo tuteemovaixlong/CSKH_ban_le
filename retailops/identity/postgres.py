@@ -6,6 +6,7 @@ from retailops.identity.persistent import PersistentSessions
 from retailops.storage.pg_repositories import PostgresBusinessStore, PostgresIdentityStore
 from retailops.storage.postgres import check_schema, tenant_schema
 from retailops.core import ApiError
+from retailops.inference_gate import InferenceGate
 
 
 class PostgresSessions(PersistentSessions):
@@ -14,6 +15,7 @@ class PostgresSessions(PersistentSessions):
         self.control = PostgresIdentityStore(dsn)
         self.infer, self.api_infer = infer, api_infer
         self.api_daily_limit, self.capacity = api_daily_limit, capacity
+        self.inference_gate = InferenceGate()
         self.agent_lock, self.lock = threading.Lock(), threading.RLock()
         self.apps = OrderedDict()
         self.purge()
