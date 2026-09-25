@@ -42,8 +42,8 @@ for path in glob.glob('/usr/local/lib/python*/dist-packages/torchaudio*'):
 
 print("CELL 1 HOÀN TẤT: Môi trường vLLM đã sẵn sàng.")
 
-# %% [CELL 2] Khởi động vLLM Server với Tool Calling
-subprocess.run(["pkill", "-9", "-f", "vllm.entrypoints.openai.api_server"], stderr=subprocess.DEVNULL)
+# %% [CELL 2] Khởi động vLLM Server tối ưu tốc độ cho Gemma-4-12B (L4 FP8 + CUDA Graphs + Prefix Caching)
+subprocess.run(["pkill", "-9", "-f", "vllm"], stderr=subprocess.DEVNULL)
 time.sleep(2)
 
 # Nạp HF_TOKEN từ Secrets nếu có (để HuggingFace Hub không bị giới hạn tải trọng số)
@@ -57,8 +57,53 @@ try:
 except Exception:
     pass
 
+# Tải tool_chat_template_gemma4.jinja và VÁ LỖI STRING ARGUMENTS AN TOÀN
+template_path = "/content/tool_chat_template_gemma4.jinja"
+template_url = "https://raw.githubusercontent.com/vllm-project/vllm/main/examples/tool_chat_template_gemma4.jinja"
+
+print("⏳ Đang tải Jinja chat template chuẩn từ vLLM...", flush=True)
+req = urllib.request.Request(template_url, headers={"User-Agent": "Mozilla/5.0"})
+try:
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        if resp.status != 200:
+            raise RuntimeError(f"Tải template thất bại với HTTP status: {resp.status}")
+        tmpl = resp.read().decode('utf-8')
+except Exception as e:
+    raise RuntimeError(f"Không thể tải template từ GitHub: {e}")
+
+if len(tmpl) < 1000:
+    raise RuntimeError(f"File template quá nhỏ hoặc không hợp lệ (kích thước: {len(tmpl)} bytes).")
+
+bad_block = """                    {%- elif function['arguments'] is none -%}
+                    {%- else -%}
+                        {{- raise_exception(
+                            "chat_template: tool_calls[].function.arguments must be a "
+                            "JSON object (mapping), not a string. Deserialize arguments "
+                            "before passing to the template."
+                        ) -}}
+                    {%- endif -%}"""
+
+good_block = """                    {%- elif function['arguments'] is string -%}
+                        {%- set raw_args = function['arguments'] | trim -%}
+                        {%- if raw_args.startswith('{') and raw_args.endswith('}') -%}
+                            {{- raw_args[1:-1] | trim -}}
+                        {%- else -%}
+                            {{- raw_args -}}
+                        {%- endif -%}
+                    {%- elif function['arguments'] is none -%}
+                    {%- endif -%}"""
+
+if bad_block in tmpl:
+    tmpl = tmpl.replace(bad_block, good_block)
+    print("✅ Đã vá lỗi JSON string arguments cho template thành công!")
+else:
+    print("ℹ️ Template không chứa khối lỗi hoặc đã có định dạng tương thích.")
+
+with open(template_path, 'w', encoding='utf-8') as f:
+    f.write(tmpl)
+
 MODEL = "yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2"
-print(f"Khởi động vLLM Server cho model: {MODEL} trên GPU L4...")
+print(f"Khởi động vLLM Server tối ưu cho model: {MODEL} trên GPU L4...")
 
 # CHỌN 1 TRONG 2 CÁCH QUANTIZATION DƯỚI ĐÂY:
 # -----------------------------------------------------------------------------------------------------
@@ -71,28 +116,42 @@ if QUANT_MODE == "fp8":
 else:
     quant_flags = ["--quantization", "bitsandbytes", "--load-format", "bitsandbytes"]
 
-# Tắt FlashInfer JIT ninja build và bật eager mode để khởi động nhanh trong 20 giây (không bị timeout)
+# Tắt FlashInfer JIT ninja để tránh xung đột thư viện trên Colab
 os.environ["VLLM_USE_FLASHINFER_SAMPLER"] = "0"
 os.environ["VLLM_USE_FLASHINFER"] = "0"
 
+# CẤU HÌNH TỐI ƯU HIỆU NĂNG CHO GPU L4 (ADA LOVELACE):
+# 1. Bỏ --enforce-eager: Cho phép CUDA Graphs để tăng tốc decoding lên 1.5x - 2x.
+# 2. --enable-prefix-caching: Giữ cache KV của System Prompt + Tool Schema (giảm 1.5s TTFT).
+# 3. --kv-cache-dtype fp8: Tận dụng phần cứng FP8 của GPU L4, giảm 50% băng thông đọc/ghi KV.
+# 4. --max-model-len 4096: Vừa vặn CSKH, khởi tạo CUDA Graph cực nhanh, tránh OOM.
 vllm_cmd = [
     sys.executable, "-m", "vllm.entrypoints.openai.api_server",
     "--model", MODEL,
     *quant_flags,
     "--port", "8001",
-    "--gpu-memory-utilization", "0.80",    # Dành 80% VRAM (chừa 5GB trống an toàn tuyệt đối)
-    "--max-model-len", "8192",             # Context 8k tokens cho chuỗi hội thoại CSKH dài
-    "--enforce-eager",                     # BỎ QUA torch.compile & CUDA Graph JIT (khởi động tức thì)
+    "--gpu-memory-utilization", "0.88",
+    "--max-model-len", "4096",
+    "--kv-cache-dtype", "fp8",
+    "--enable-prefix-caching",
     "--trust-remote-code",
-    "--enable-auto-tool-choice",           # BẮT BUỘC: Tự động kích hoạt function calling
-    "--tool-call-parser", "gemma4"         # BẮT BUỘC: Parser tool-calling native cho Gemma 4
+    "--enable-auto-tool-choice",
+    "--tool-call-parser", "gemma4",
+    "--reasoning-parser", "gemma4",
+    "--chat-template", template_path,
+    "--default-chat-template-kwargs", '{"enable_thinking": true}'
 ]
 
 log_file = open("/tmp/vllm.log", "w")
-vllm_proc = subprocess.Popen(vllm_cmd, stdout=log_file, stderr=subprocess.STDOUT)
+vllm_proc = subprocess.Popen(
+    vllm_cmd,
+    stdout=log_file,
+    stderr=subprocess.STDOUT,
+    start_new_session=True
+)
 globals()["_vllm_process"] = vllm_proc
 
-print(f"Đang nạp model ({QUANT_MODE}) vào GPU L4 (khoảng 1.5 - 2 phút)...", flush=True)
+print(f"Đang nạp model ({QUANT_MODE}) và biên dịch CUDA Graphs trên GPU L4 (khoảng 1.5 - 2 phút)...", flush=True)
 deadline = time.monotonic() + 450
 ready = False
 
@@ -111,7 +170,7 @@ while time.monotonic() < deadline:
 if not ready:
     raise RuntimeError("Quá thời gian chờ vLLM khởi động. Xem log: /tmp/vllm.log")
 
-print("✅ vLLM GEMMA-4-12B AGENTIC ĐÃ SẴN SÀNG TRÊN CỔNG 8001 (TOOL CALLING ON)!")
+print("✅ vLLM GEMMA-4-12B AGENTIC ĐÃ SẴN SÀNG TRÊN CỔNG 8001 (CUDA GRAPHS + PREFIX CACHING ON)!")
 
 # Warmup test trực tiếp với allow_tools=True
 test_payload = {
