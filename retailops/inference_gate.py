@@ -109,10 +109,18 @@ class InferenceGate:
 
         if not acquired:
             with self._lock:
-                try:
+                if event in self._queue:
                     self._queue.remove(event)
-                except ValueError:
-                    pass
+                else:
+                    # Hand-off race: exit() popped this event and called event.set()
+                    # right as event.wait() timed out!
+                    # Since this waiter is aborting with timeout, it holds a permit it will never use.
+                    # We must relinquish the permit to the next waiter or decrement _active_count.
+                    if self._queue:
+                        next_event = self._queue.popleft()
+                        next_event.set()
+                    else:
+                        self._active_count = max(0, self._active_count - 1)
                 self.total_timeout_requests += 1
             raise ApiError(
                 429,
@@ -161,7 +169,16 @@ class GatedGateway:
                     self._trace.get("queue_wait_ms", 0.0) + wait_ms, 2
                 )
                 self._trace["in_flight_inferences"] = self._gate.in_flight
-            return self._target.chat(messages, allow_tools, timeout)
+            remaining_timeout = timeout
+            if timeout is not None and isinstance(timeout, (int, float)):
+                remaining_timeout = timeout - (wait_ms / 1000.0)
+                if remaining_timeout <= 0.0:
+                    raise ApiError(
+                        504,
+                        "deadline_exceeded",
+                        "Thời gian chờ suy luận đã vượt quá thời hạn cho phép.",
+                    )
+            return self._target.chat(messages, allow_tools, remaining_timeout)
 
     def chat_scoped(self, messages, allow_tools: bool, timeout: float, allowed_tools):
         scoped = getattr(self._target, "chat_scoped", None)
@@ -172,6 +189,15 @@ class GatedGateway:
                     self._trace.get("queue_wait_ms", 0.0) + wait_ms, 2
                 )
                 self._trace["in_flight_inferences"] = self._gate.in_flight
+            remaining_timeout = timeout
+            if timeout is not None and isinstance(timeout, (int, float)):
+                remaining_timeout = timeout - (wait_ms / 1000.0)
+                if remaining_timeout <= 0.0:
+                    raise ApiError(
+                        504,
+                        "deadline_exceeded",
+                        "Thời gian chờ suy luận đã vượt quá thời hạn cho phép.",
+                    )
             if callable(scoped):
-                return scoped(messages, allow_tools, timeout, allowed_tools)
-            return self._target.chat(messages, allow_tools, timeout)
+                return scoped(messages, allow_tools, remaining_timeout, allowed_tools)
+            return self._target.chat(messages, allow_tools, remaining_timeout)

@@ -147,6 +147,60 @@ class InferenceGateTests(unittest.TestCase):
         self.assertIn("in_flight_inferences", trace)
         self.assertEqual(target.calls, 1)
 
+    def test_timeout_handoff_race_relinquishes_permit(self):
+        """Race where waiter timeout occurs simultaneously with exit() handoff."""
+        gate = InferenceGate(concurrency=1, max_queue=2, queue_timeout=0.05)
+        gate.enter()
+        self.assertEqual(gate.in_flight, 1)
+
+        event_b = threading.Event()
+        with gate._lock:
+            gate._queue.append(event_b)
+        acquired = event_b.wait(timeout=0.01)
+        self.assertFalse(acquired)
+
+        # A calls exit() -> pops event_b and sets it
+        gate.exit()
+
+        # B resolves timeout
+        with gate._lock:
+            if event_b in gate._queue:
+                gate._queue.remove(event_b)
+            else:
+                if gate._queue:
+                    next_event = gate._queue.popleft()
+                    next_event.set()
+                else:
+                    gate._active_count = max(0, gate._active_count - 1)
+            gate.total_timeout_requests += 1
+
+        self.assertEqual(gate.in_flight, 0)
+        self.assertEqual(gate.queue_size, 0)
+
+        # Slot must be immediately acquirable by next caller
+        wait_ms = gate.enter()
+        self.assertEqual(wait_ms, 0.0)
+        self.assertEqual(gate.in_flight, 1)
+        gate.exit()
+        self.assertEqual(gate.in_flight, 0)
+
+    def test_gated_gateway_deducts_queue_wait_from_deadline(self):
+        gate = InferenceGate(concurrency=1, max_queue=2, queue_timeout=1.0)
+        target = FakeGateway(reply="hello")
+        gated = GatedGateway(target, gate)
+
+        # With 10s timeout, target called with valid remaining timeout
+        gated.chat([{"role": "user", "content": "hi"}], False, 10.0)
+        self.assertEqual(target.calls, 1)
+
+        # With expired remaining timeout after queue wait
+        from unittest.mock import patch
+        with patch.object(gate, "enter", return_value=5000.0):
+            with self.assertRaises(ApiError) as ctx:
+                gated.chat([{"role": "user", "content": "hi"}], False, 2.0)
+            self.assertEqual(ctx.exception.status, 504)
+            self.assertEqual(ctx.exception.code, "deadline_exceeded")
+
 
 if __name__ == "__main__":
     unittest.main()
