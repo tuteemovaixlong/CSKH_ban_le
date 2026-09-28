@@ -95,14 +95,15 @@ flowchart TD
     CREATE INDEX IF NOT EXISTS idx_ppl_product_id ON product_policy_links(product_id);
     ```
   - Bổ sung hàm migration `migrate_v5(db)` tự động nâng cấp bảng nếu đang ở schema cũ.
-- **File Schema PostgreSQL:** `retailops/storage/pg_schema.sql`
-  - Bổ sung DDL tương đương cho PostgreSQL 16.
+- **File Schema PostgreSQL:** `retailops/storage/pg_schema.py`
+  - Bổ sung DDL tương đương cho PostgreSQL 16 qua hàm migration tuần tự v4 -> v5 (không nhảy cóc từ v3).
 - **File Store:** `retailops/business/store.py`
   - Bổ sung hàm `product_policies(db_or_conn, product_id)` và `add_product_policy_link(...)`.
   - Cập nhật hàm `seed()` để tự động liên kết:
-    - `P-603` (Giày da lười cao cấp): liên kết với `KB:WARRANTY_EXCHANGE_1TO1` (`override_warranty_days = 180`).
-    - `P-602` (Áo sơ mi lụa công sở): liên kết với `KB:WARRANTY_EXCHANGE_1TO1` (`override_warranty_days = 90`).
-    - `P-101`, `P-102` (Áo thun basic): liên kết với `KB:SIZE_EXCHANGE_TWOWAY`.
+    - `P-603` (Giày lười da bò cao cấp): liên kết với policy_key `warranty_180d` (`override_warranty_days = 180`).
+    - `P-602` (Quần tây ống đứng tôn dáng): liên kết với policy_key `standard_warranty_90d` (`override_warranty_days = 90`).
+    - `P-601` (Áo sơ mi lụa công sở): liên kết với policy_key `standard_warranty_90d` (`override_warranty_days = 90`).
+    - `P-101`, `P-102` (Áo thun basic): liên kết với policy_key `size_exchange_twoway`.
 - **File Tools:** `retailops_tools.py`
   - Trong phương thức `get_product(args)`: đính kèm trường `linked_policies` vào kết quả trả về của sản phẩm.
   - Cung cấp cho model căn cứ dữ liệu chính xác để trả lời: *"Sản phẩm P-603 được áp dụng chính sách bảo hành riêng 180 ngày (thay vì 90 ngày tiêu chuẩn)"*.

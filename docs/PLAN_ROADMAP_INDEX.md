@@ -8,28 +8,25 @@
 
 ---
 
-## 1. Sơ Đồ Phân Kỳ 7 Giai Đoạn Theo Dependency Kỹ Thuật (Phases 0–6)
+## 1. Sơ Đồ Phân Kỳ Các Giai Đoạn Theo Dependency Kỹ Thuật
 
 ```mermaid
 flowchart TD
-    P0["PHASE 0: Documentation Truth & Reconciliation<br/>• Reconcile ma trận 18 plan hiện hữu + 2 plan đề xuất<br/>• Archive các khẳng định cũ (Semantic cache hit 50-60%)<br/>• Chuẩn hóa link Markdown tương đối (cấm URL file cục bộ)"]
+    P0["PHASE 0: Documentation Truth & Reconciliation<br/>• Reconcile ma trận kế hoạch, archive các khẳng định cũ<br/>• Chuẩn hóa link Markdown tương đối (cấm URL file cục bộ)"]
     
-    P1["PHASE 1: Data & Observability Foundation<br/>1. Đóng nốt PLAN_FIX_UI_01 (Truthful UX: dọn fallback lỗi KPI, form prefill)<br/>2. Thực thi PLAN_FIX_UI_02 (P0 SSOT: Catalog & Inventory vào PostgreSQL)<br/>3. Thực thi PLAN_FIX_UI_03 (Truthful Telemetry: token/cost thật, concurrency fields)"]
+    P1["PHASE 1: Data & Observability Foundation (ĐÃ XONG)<br/>• PR 1.1: Truthful UX (dọn fallback lỗi KPI, form prefill)<br/>• PR 1.2: P0 SSOT: Catalog & Inventory vào PostgreSQL/SQLite<br/>• PR 1.3: Truthful Telemetry: token/cost thật, concurrency fields<br/>• PR 1.4: Chat History Resume (khôi phục session khi F5)"]
     
-    P2["PHASE 2: Knowledge Graph & GraphRAG (Apache AGE)<br/>• Triển khai PLAN_GRAPHRAG_AGE.md v6.2<br/>• Ranh giới an toàn: Đọc product_id từ Catalog SSOT (FIX02)<br/>• Nhánh độc lập feature/graphrag-age (Không merge main / Không bật EC2)"]
+    M25["MODULE 2.5: System Hardening & Quality Gate (ACTIVE SPRINT)<br/>• PR A: Context, Cache & Dispute Correctness (F01..F06)<br/>• PR B: Concurrency, Headroom & Truthful Telemetry (F07, F09, lock cleanup)<br/>• PR C: Relational Knowledge & Clean Schema Migration (F10, ADR SQL Linkage)"]
     
-    P3["PHASE 3: Runtime Efficiency & Bounded Concurrency<br/>• Triển khai PLAN_RUNTIME_EFFICIENCY_CONCURRENCY.md (Stage 1)<br/>• InferenceGate tại biên actual model I/O (không lock DB/tools/retrieval)<br/>• Chống trap nuốt lỗi trong dispute_agent & công thức headroom Waitress"]
-    
-    P4["PHASE 4: Scientific Evaluation & Thesis Benchmark<br/>• GraphRAG A/B Benchmark (6 chỉ số, cache tắt)<br/>• Concurrency Load Benchmark (1, 2, 4, 8, 16 workers, Jain's Fairness)<br/>• Đối chứng Gemma-4-12B self-hosted vs DeepSeek Cloud API trên 250 ca"]
+    P4["PHASE 4: Scientific Evaluation & Thesis Benchmark<br/>• Concurrency Load Benchmark (1, 2, 4, 8, 16 workers, Jain's Fairness)<br/>• Đối chứng Gemma-4-12B self-hosted vs DeepSeek Cloud API trên 250 ca"]
     
     P5["PHASE 5: Demo Enhancements (Trình Diễn Thực Tế & Omnichannel)<br/>• Webhook Facebook Messenger & Meta Handover (PLAN_OMNICHANNEL_INTEGRATION.md)<br/>• Cổng quét mã QR Demo Live trên di động phục vụ Hội đồng chấm thi<br/>• Hiển thị chuỗi COT, quá trình gọi Tools & Nút bật/tắt hiển thị COT cho quản trị viên"]
     
     P6["PHASE 6: Post-Thesis & Production Scaling<br/>• DeepSeek Distillation (PLAN_DEEPSEEK_DISTILLATION.md)<br/>• Unsloth LoRA Fine-Tuning (PLAN_FINE_TUNING_SERVING.md)<br/>• Hạ tầng phân tán AWS ALB + RDS Multi-AZ + vLLM Cluster (PLAN_PRODUCTION_SCALING.md)"]
 
     P0 --> P1
-    P1 --> P2
-    P2 --> P3
-    P3 --> P4
+    P1 --> M25
+    M25 --> P4
     P4 --> P5
     P5 --> P6
 ```
@@ -59,9 +56,10 @@ Bảng đối chiếu toàn diện giữa tài liệu thiết kế và hiện tr
 | **[PLAN_OMNICHANNEL_INTEGRATION](PLAN_OMNICHANNEL_INTEGRATION.md)** | Webhook Facebook Messenger & Meta Handover | PLANNED | **PLANNED LATER (Phase 5 Demo)** | Mở rộng kênh tương tác thực tế sau khi hoàn thành đo đạc khoa học. |
 | **[PLAN_DEEPSEEK_DISTILLATION](PLAN_DEEPSEEK_DISTILLATION.md)** | Sinh Dữ Liệu Tổng Hợp Đa Lượt & ChatML | PLANNED | **PLANNED LATER (Phase 6 Post-thesis)** | Pipeline sinh dữ liệu distillation phục vụ fine-tuning. |
 | **[PLAN_FINE_TUNING_SERVING](PLAN_FINE_TUNING_SERVING.md)** | Huấn Luyện LoRA Unsloth & Serving vLLM | PLANNED | **PLANNED LATER (Phase 6 Post-thesis)** | Đóng gói mô hình chuyên biệt cho môi trường tự host. |
-| **[PLAN_ROADMAP_INDEX](PLAN_ROADMAP_INDEX.md)** | Tổng Hợp Kế Hoạch Chiến Lược Hệ Thống | ACTIVE | **SUPERSEDED / REWRITE** | Viết lại theo 7 phase phụ thuộc kỹ thuật. |
-| **[PLAN_GRAPHRAG_AGE](PLAN_GRAPHRAG_AGE.md)** | GraphRAG Apache AGE trên PostgreSQL 16 (v6.2) | *Đề xuất mới* | **ACTIVE NEXT (Phase 2 Graph)** | Thiết kế kiến trúc v6.2 hoàn chỉnh: tách bạch provenance, ranh giới an toàn FIX02, cache coherence, Prepared Cypher literal, Blue-Green versioning. |
-| **[PLAN_RUNTIME_EFFICIENCY_CONCURRENCY](PLAN_RUNTIME_EFFICIENCY_CONCURRENCY.md)** | Runtime Efficiency & Bounded Concurrency | *Đề xuất mới* | **ACTIVE NEXT (Phase 3 Concurrency)** | Thiết kế InferenceGate tại biên actual model I/O, chống trap nuốt lỗi trong dispute_agent, công thức headroom Waitress, Jain's Fairness Index. |
+| **[PLAN_MODULE_2_5_HARDENING_VERIFICATION](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md)** | Quality Gate: System Hardening & Context Integrity | Active | **ACTIVE (MODULE 2.5 SPRINT)** | Chốt chặn chất lượng: Khắc phục 10 lỗi kỹ thuật F01–F10 qua 3 PR độc lập (PR A: Context/Cache/Dispute; PR B: Concurrency/Headroom/Telemetry; PR C: Relational Migration). |
+| **[PLAN_GRAPHRAG_AGE](PLAN_GRAPHRAG_AGE.md)** | GraphRAG Apache AGE trên PostgreSQL 16 (v6.2) | Research Only | **ACADEMIC RESEARCH / OFFLINE CONTAINER** | **ADR Quyết định:** Hoãn cài extension C Apache AGE trên EC2 production để tránh rủi ro sập host đơn; chuyển sang lưu trữ phục vụ nghiên cứu độc lập và benchmark container A/B offline. Production sử dụng SQL Relational Linkage. |
+| **[PLAN_RUNTIME_EFFICIENCY_CONCURRENCY](PLAN_RUNTIME_EFFICIENCY_CONCURRENCY.md)** | Runtime Efficiency & Bounded Concurrency | Active Target | **INTEGRATED INTO MODULE 2.5 PR B** | Tích hợp vào Module 2.5 PR B: InferenceGate, Headroom Waitress $Q \le 5$, header Retry-After: 5, dọn lock tàn dư. |
+| **[PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT](PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT.md)** | Kế Hoạch Sprint Gộp Concurrency & Relational | Active | **CANONICAL SPRINT SPEC** | Đặc tả kỹ thuật chi tiết của Module 2.5 (PR B và PR C). |
 
 ---
 
@@ -70,26 +68,18 @@ Bảng đối chiếu toàn diện giữa tài liệu thiết kế và hiện tr
 ### Giai Đoạn 0: Cập Nhật Tài Liệu & Đồng Bộ Kiến Trúc (Documentation Truth)
 - Hoàn thiện toàn bộ các file tài liệu thiết kế.
 - Kiểm tra cổng kiểm định: `python scripts/check_docs_contract.py` đạt kết quả SUCCESS (0 lỗi).
-- Rà soát `git diff` đảm bảo không có file runtime code nào bị chỉnh sửa.
 
 ### Giai Đoạn 1: Nền Tảng Dữ Liệu & Khả Năng Quan Sát (Data & Observability Foundation)
-Triển khai qua 3 Pull Request nhỏ, độc lập:
-1. **PR 1.1: [PLAN_FIX_UI_01_TRUTHFUL_UX.md](PLAN_FIX_UI_01_TRUTHFUL_UX.md)**: (**ĐÃ HOÀN THÀNH** — Merged `main` commit `56fda06`) Xóa số 0 tĩnh khi KPI lỗi mạng, bỏ tự gán `Tiêu chuẩn` cho variants, dọn dữ liệu mẫu prefill trong modal quản lý.
-2. **PR 1.2: [PLAN_FIX_UI_02_MANAGER_PERSISTENCE.md](PLAN_FIX_UI_02_MANAGER_PERSISTENCE.md) (P0 SSOT)**: (**ĐÃ HOÀN THÀNH** — Branch `feature/fix-ui-02-manager-persistence` commit `107aa0c`) Chuyển Catalog & Kho hàng vào bảng `products`, `product_variants` trong PostgreSQL/SQLite, đồng bộ tức thì với `check_inventory`, sửa phạm vi audit trail toàn shop.
-3. **PR 1.3: [PLAN_FIX_UI_03_OPSCONSOLE_INTEGRITY.md](PLAN_FIX_UI_03_OPSCONSOLE_INTEGRITY.md)**: (**ĐÃ HOÀN THÀNH** — Branch `feature/fix-ui-03-opsconsole-integrity`) Đọc token/cost thật, đổi tên TTFT thành E2E Request Latency, bổ sung telemetry phục vụ concurrency, kiểm thử 100% PASS.
+- ĐÃ HOÀN TẤT VÀ MERGE VÀO MAIN (PR 1.1, PR 1.2, PR 1.3, PR 1.4).
 
-### Giai Đoạn 2: Đồ Thị Tri Thức GraphRAG Apache AGE ([PLAN_GRAPHRAG_AGE.md](PLAN_GRAPHRAG_AGE.md))
-- Thực hiện trên nhánh độc lập `feature/graphrag-age`.
-- Kế thừa Catalog SSOT từ Giai đoạn 1; model schema giữ nguyên `search_knowledge({"query": str})`.
-- Kiểm thử tự động trên runner CI bằng container PostgreSQL 16 + AGE tự build; tuyệt đối không merge `main` và không bật EC2.
-
-### Giai Đoạn 3: Tối Ưu Hiệu Năng & Bounded Concurrency ([PLAN_RUNTIME_EFFICIENCY_CONCURRENCY.md](PLAN_RUNTIME_EFFICIENCY_CONCURRENCY.md))
-- Thay thế `self.agent_lock = threading.Lock()` toàn cục bằng `InferenceGate` đặt tại biên actual model I/O.
-- Chặn trap nuốt lỗi trong `dispute_agent.py`; thiết lập công thức headroom bảo vệ luồng cho Waitress.
-- Bổ sung telemetry đo đạc thời gian xếp hàng `queue_wait_ms` và thời gian model `provider_inference_ms`.
+### Module 2.5: Chốt Chặn Kiểm Thử & Ổn Định Vận Hành Thực Tế (Quality Gate)
+- Xem chi tiết tại [PLAN_MODULE_2_5_HARDENING_VERIFICATION.md](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md).
+- Triển khai qua 3 Pull Request nhỏ, độc lập:
+  1. **PR A (Context, Cache & Dispute Correctness)**: Sửa rò rỉ cache F01, khóa turn F02, re-raise lỗi hạ tầng F03, chặn proposal hủy đơn delivered F04, sửa đồng bộ product context F05, variant precision F06.
+  2. **PR B (Concurrency, Headroom & Telemetry)**: Công thức headroom Waitress $Q \le 5$, header `Retry-After: 5`, dọn sạch `agent_lock`, đóng connection fixture SQLite, đo telemetry thật F09.
+  3. **PR C (Relational Linkage & Clean Migration)**: Triển khai bảng `product_policy_links` trên PostgreSQL (`pg_schema.py`) và SQLite theo migration tuần tự v3 -> v4 -> v5; nạp dữ liệu chuẩn P-603 bảo hành 180 ngày; chính thức hóa ADR thay thế Apache AGE bằng SQL Relational.
 
 ### Giai Đoạn 4: Đo Lường Thực Nghiệm Khoa Học Cho Luận Văn (Scientific Evaluation)
-- Chạy benchmark đối chứng GraphRAG A/B trên 30 ca đa bước (`multihop_graph_eval.jsonl`) với cache tắt hoàn toàn.
 - Chạy benchmark tải đồng thời (`concurrency = 1, 2, 4, 8, 16`) đo lường độ trễ E2E, throughput, 429 rate, Jain's Fairness Index và wait-time dispersion.
 - Chạy đối chứng 250 kịch bản Master Benchmark: Gemma-4-12B self-hosted vs. DeepSeek Cloud API.
 - Lập bảng số liệu và biểu đồ thực nghiệm đưa vào Chương 4 Luận văn tốt nghiệp.
