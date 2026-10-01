@@ -2,26 +2,30 @@
 
 > **Mã kế hoạch:** `PLAN_MODULE_2_5_HARDENING_VERIFICATION`  
 > **Trạng thái:** ACTIVE IMPLEMENTATION PLAN  
-> **Phiên bản:** 1.0 (2026-09-28)  
-> **Audit basis / Documentation baseline reviewed:** `b93eb5a`  
-> **Mục tiêu:** Thiết lập chốt chặn kiểm thử & ổn định vận hành thực tế (Quality Gate) giữa Module 2 (Baseline & Ops Console) và Module 3 (Omnichannel Meta Webhook). Khắc phục dứt điểm 10 lỗi kỹ thuật và khoảng trống kiến trúc (F01–F10) được kiểm chứng độc lập.  
+> **Phiên bản:** 1.1 (2026-09-28)  
+> **Audit basis / Documentation baseline reviewed:** `11c3048`  
+> **Mục tiêu:** Thiết lập chốt chặn kiểm thử & ổn định vận hành thực tế (Quality Gate) giữa Module 2 (Baseline & Ops Console) và Module 3 (Omnichannel Meta Webhook). Khắc phục dứt điểm 10 lỗi kỹ thuật và khoảng trống kiến trúc (F01–F10, F08a) được kiểm chứng độc lập.  
 > **Tham chiếu lộ trình:** [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md) · [PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT.md](PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT.md)
 
 ---
 
 ## 1. Bối Cảnh & Định Vị Module 2.5
 
-Hệ thống RetailOps 2026 đã hoàn thành các phân hệ nền tảng (Module 1 Lõi TMĐT, Module 2 Baseline 250 ca & Ops Console). Tuy nhiên, qua đợt kiểm toán kỹ thuật chuyên sâu tại commit `1da07f0`, hệ thống bộc lộ các bẫy lỗi logic và điểm nghẽn concurrency cần được xử lý dứt điểm trước khi mở rộng kênh giao tiếp người dùng bên ngoài:
+Hệ thống RetailOps 2026 đã hoàn thành các phân hệ nền tảng (Module 1 Lõi TMĐT, Module 2 Baseline 250 ca & Ops Console). Tuy nhiên, qua đợt kiểm toán kỹ thuật chuyên sâu tại commit `1da07f0`, `11c3048` và đợt rà soát kiến trúc độc lập, hệ thống bộc lộ các bẫy lỗi logic, an toàn dữ liệu, bảo mật và điểm nghẽn concurrency cần được xử lý dứt điểm trước khi mở rộng kênh giao tiếp người dùng bên ngoài:
 1. **Rò rỉ ngữ cảnh qua Cache (F01 & F02)**: Semantic Cache trả dữ liệu bảo hành của sản phẩm khác (P-603 vs P-602) và ghi turn ngoài `conv_lock`.
-2. **Nuốt ngoại lệ hạ tầng (F03)**: `dispute_agent` nuốt `ApiError(429/503)` và trả về thành công giả lập.
-3. **Đề xuất và ngữ cảnh không trung thực (F04, F05, F06)**: Tạo đề xuất hủy đơn đã giao (`delivered`); lấy nhầm `product_id` cũ khi đổi đơn mới; bỏ qua màu sắc và tự gán size L khi đổi size.
-4. **Concurrency chưa bảo vệ headroom HTTP (F07)**: Waitress 8 threads có thể bị chiếm dụng toàn bộ khi GPU bận; thiếu header `Retry-After: 5`.
-5. **Thiết kế migration cần tường minh (F10)**: Tránh nhảy cóc version migration giữa SQLite và PostgreSQL; đồng bộ đúng file `pg_schema.py`.
+2. **Nuốt ngoại lệ hạ tầng (F03)**: `dispute_agent` và `Application.execute()` nuốt lỗi hạ tầng (429/503/timeout) và trả về thành công giả lập.
+3. **Đề xuất và ngữ cảnh không trung thực (F04, F05, F06, F08a)**: Tạo đề xuất hủy đơn đã giao (`delivered`); lấy nhầm `product_id` cũ khi đổi đơn mới; bỏ qua màu sắc và tự gán size L khi đổi size; bot và UI staff tuyên bố sai sự thật về trạng thái tạo phiếu, giữ kho và vận đơn.
+4. **Crash 500 khi sản phẩm thiếu category (F11)**: Tạo sản phẩm với `category=None` khiến `retailops_tools.py:50` ném `TypeError` sập luồng chat của mọi người dùng khi tìm kiếm sản phẩm.
+5. **Mất mát lịch sử chat vĩnh viễn (F12)**: `finish_turn()` thực hiện `DELETE FROM agent_turns ... LIMIT 6` làm mất hoàn toàn lịch sử chat ngoài 6 lượt gần nhất, hỏng tính năng resume và transcript CSKH.
+6. **Lệch Tool Cache giữa Manager và Customer (F13)**: Manager đổi trạng thái đơn hàng nhưng chỉ xóa cache trong instance `Application` của Manager, bỏ sót cache của Customer gây xung đột phiên bản.
+7. **Lỗ hổng bảo mật OAuth Login CSRF (SEC-01)**: Endpoint `/auth/google/login` tạo state nhưng không ràng buộc với cookie/session trình duyệt khởi tạo, vi phạm RFC 6749 §10.12.
+8. **Concurrency chưa bảo vệ headroom HTTP (F07)**: Waitress 8 threads có thể bị chiếm dụng toàn bộ khi GPU bận; thiếu header `Retry-After: 5`.
+9. **Thiết kế migration cần tường minh (F10)**: Tránh nhảy cóc version migration giữa SQLite và PostgreSQL; đồng bộ đúng file `pg_schema.py`.
 
 ```mermaid
 flowchart LR
     M1["Module 1: Lõi TMĐT & SOPs"] --> M2["Module 2: Baseline & Ops"]
-    M2 --> M25["MODULE 2.5: QUALITY GATE<br/>• PR A: Context, Cache & Dispute<br/>• PR B: Concurrency & Telemetry<br/>• PR C: Relational Migration"]
+    M2 --> M25["MODULE 2.5: QUALITY GATE<br/>• PR A: Context, Cache, Dispute, Tool & Truthful Boundary<br/>• PR B: Concurrency, History Preservation, Cache Sync & Security<br/>• PR C: Relational Migration"]
     M25 --> M3["Module 3: Webhook Omnichannel"]
     M25 --> M4["Module 4: QR Demo"]
     M25 --> M6["Module 6: Evaluation Luận Văn"]
@@ -31,27 +35,41 @@ flowchart LR
 
 ## 2. Phân Kỳ 3 Pull Request (PR A, PR B, PR C)
 
-### 2.1. PR A — Context, Cache & Dispute Correctness (Ưu tiên P1)
-* **Phạm vi xử lý:** F01, F02, F03, F04, F05, F06.
+### 2.1. PR A — Context, Cache, Dispute Correctness, Tool Safety & Truthful Boundary (Ưu tiên P1)
+* **Phạm vi xử lý:** F01, F02, F03, F04, F05, F06, F08a, F11.
 * **Tệp tác động:**
   - `retailops/business/cache.py`:
-    - Hàm `is_cacheable_query(text)` chỉ chấp nhận các câu hỏi FAQ độc lập ngữ cảnh; cấm cache khi phiên chat đang có `product_id` hoặc `order_id`.
-    - Bảo toàn và khôi phục đầy đủ `sources` hợp lệ khi cache-hit.
+    - Áp dụng chính sách fail-closed cho `is_cacheable_query(text, context)`: chỉ chấp nhận allowlist FAQ tĩnh hoàn toàn độc lập ngữ cảnh; cấm cache khi phiên chat đang có `product_id` hoặc `order_id`.
+    - Tất cả câu hỏi chính sách/RAG hoặc chứa thực thể động đều bypass cache 100% (PR A không cache phản hồi có citations/tri thức động).
   - `retailops/business/application.py`:
     - Đưa luồng ghi turn của Semantic Cache vào bên trong phạm vi kiểm soát của `conv_lock`.
+    - Hợp đồng Replay 2 chặng: Replay #1 fast-path trước lock; Replay #2 dưới lock bắt request thắng đua.
+    - Sửa `Application.execute()`: Re-raise ngoại lệ hạ tầng (status >= 500 hoặc 429), chỉ chuyển đổi lỗi 4xx nghiệp vụ thành dict tool result.
+  - `retailops_tools.py`:
+    - **F11 FIX**: Bọc an toàn `p.get('category') or ''` và ép kiểu danh sách aliases chuỗi trong `search_products`. Loại bỏ triệt để nguy cơ `TypeError` khi catalog có sản phẩm mang `category=None`.
   - `retailops/workflow/subagents/dispute_agent.py`:
-    - Bắt riêng lỗi parse; re-raise `ApiError(429/503/504)` ra tầng HTTP.
+    - Re-raise lỗi hạ tầng ra tầng HTTP; chuẩn hóa telemetry tối thiểu: `model_calls` (attempt) và `model_responses` (thành công) đồng bộ với `read_worker.py`.
     - Chỉ tạo `action_proposal.cancel_order` khi tool `prepare_cancellation` trả về `eligible=True`.
     - Ưu tiên `product_id` của bản ghi đơn hàng mới tra cứu, không lấy `bound_context.product_id` của đơn cũ.
-    - Lấy đúng màu và size từ yêu cầu; không tự động mặc định `color='Tiêu chuẩn'` gây cộng dồn tồn kho sai lệch.
+    - Lấy đúng màu và size từ yêu cầu; phân biệt `variant_not_found`, `stock_unknown` (catalog thiếu data), hết hàng (`stock == 0`) và còn hàng (`stock > 0`).
+    - **F08a**: Ngôn từ đổi hàng trung thực: Bot chỉ thông báo tìm thấy phương án phù hợp; KHÔNG nói "đã tạo phiếu đề xuất", "xem trên màn hình" hay "đã gửi chuyên viên CSKH duyệt" khi chưa có UI render và chưa persist ticket.
+  - `web/app.js`:
+    - Sửa câu chat mô phỏng của nút Staff Desk: Chỉ gửi thông báo CSKH thông thường, KHÔNG tuyên bố tạo vận đơn hay giữ hàng kho.
 
-### 2.2. PR B — Concurrency, Headroom & Truthful Telemetry (Ưu tiên P1/P2)
-* **Phạm vi xử lý:** F07, F09, BUG-01, BUG-04.
+### 2.2. PR B — Concurrency, History Preservation, Cache Sync & Security (Ưu tiên P1/P2)
+* **Phạm vi xử lý:** F07, F09, F12, F13, SEC-01, BUG-01, BUG-04.
 * **Tệp tác động:**
   - `retailops/bootstrap.py` & `retailops/inference_gate.py`:
     - Áp dụng công thức Headroom an toàn: Với Waitress `threads=8` và GPU `slots=1`, cấu hình hàng đợi `max_queue=5` (luôn dành ít nhất 2 threads cho `/health`, `/api/session`, và static routes).
   - `retailops/http/public.py` & `retailops/http/private.py`:
     - Bổ sung header `Retry-After: 5` khi trả mã lỗi HTTP 429.
+  - `retailops/business/store.py`:
+    - **F12 FIX (Bảo toàn lịch sử chat)**: Loại bỏ câu lệnh `DELETE FROM agent_turns ... LIMIT 6` trong `finish_turn()`. Giữ nguyên toàn bộ lịch sử trong database để phục vụ resume chat và transcript CSKH.
+    - Chuyển việc giới hạn cửa sổ ngữ cảnh (bounded window 6 turns) sang phạm vi bộ nhớ của hàm `history()` trước khi đưa vào context prompt của LLM.
+  - `retailops/http/routes.py` & `retailops/identity/persistent.py`:
+    - **F13 FIX (Đồng bộ vô hiệu hóa Cache)**: Khi Manager cập nhật trạng thái đơn hàng qua `POST /api/manager/orders/status`, thực hiện invalidate cache trên toàn bộ active applications hoặc gắn cơ chế kiểm tra `order.version` trước khi trả dữ liệu từ `ToolCache`.
+  - `retailops/http/auth_google.py` & `retailops/http/public.py`:
+    - **SEC-01 FIX (Chống OAuth Login CSRF)**: Ràng buộc `state` với trình duyệt khởi tạo bằng transient session cookie (`HttpOnly`, `SameSite=Lax`). Kiểm tra khớp cookie ở callback `/auth/google/callback`.
   - Dọn sạch `self.agent_lock` đồng bộ ở cả `Application`, `identity/demo.py`, `persistent.py`, `postgres.py` và cập nhật các unit test trong `tests/test_conversation.py`.
   - `tests/test_schema_migration.py` & `tests/test_providers.py`:
     - Đóng tường minh connection SQLite bằng `contextlib.closing()` hoặc `try/finally db.close()`.
@@ -70,16 +88,26 @@ flowchart LR
     - Chuẩn hóa tên sản phẩm: `P-601` (Áo sơ mi lụa công sở), `P-602` (Quần tây ống đứng), `P-603` (Giày lười da bò).
   - Cập nhật tài liệu: Ghi nhận rõ ADR hoãn Apache AGE trên EC2 production, chính thức thay thế bằng SQL Relational Knowledge Linkage.
 
+### 2.4. Khoảng Trống Hoãn Triển Khai (Known Deferred Gap): F08b Durable Exchange Approval Lifecycle
+* **Trạng thái:** **DEFERRED / OUT OF SCOPE FOR MODULE 2.5**.
+* **Đặc tả:** Xây dựng bảng lưu trữ bền vững `exchange_requests`, API xác nhận của khách (`POST /api/exchange-proposals`), API phê duyệt của nhân viên (`POST /api/staff/exchange/approve`), queue tự động và state machine 2-stage hoàn chỉnh.
+* **Kế hoạch:** Yêu cầu thiết kế kiến trúc và đặc tả kỹ thuật độc lập trong giai đoạn sau Module 2.5, tuyệt đối không gộp vào PR B hay PR C.
+
 ---
 
 ## 3. Tiêu Chí Nghiệm Thu (Acceptance Criteria)
 
-1. **Cache Isolation**: Hội thoại hỏi P-603 (180 ngày) không bao giờ làm hội thoại P-602 trả về 180 ngày khi hỏi cùng câu gián tiếp.
-2. **Serialization**: Không có turn nào được ghi vào DB ngoài khóa `conv_lock`.
-3. **No Infrastructure Error Swallowing**: Khi gateway gặp 429/503, HTTP trả đúng mã 429/503 kèm header `Retry-After: 5`; trace ghi nhận chính xác lỗi.
+1. **Cache Isolation**: Hội thoại hỏi P-603 (180 ngày) không bao giờ làm hội thoại P-602 trả về 180 ngày; toàn bộ câu hỏi có context động bypass cache 100%.
+2. **Serialization**: Toàn bộ các AI/cache turns trên route `/api/chat` phải được commit an toàn bên dưới `conv_lock`.
+3. **No Infrastructure Error Swallowing**: Khi gateway hoặc cơ sở dữ liệu gặp lỗi hạ tầng (5xx, 429, timeout), HTTP trả đúng mã lỗi 503/429 kèm header `Retry-After: 5`; trace ghi nhận chính xác lỗi; không biến thành "không tìm thấy đơn" hay "shop đã ghi nhận".
 4. **Truthful Proposals**: Đơn hàng đã giao (`delivered`) không thể tạo đề xuất hủy và không thông báo mở bảng xác nhận hủy.
 5. **Order/Product Sync**: Đổi sang đơn mới thì thông tin sản phẩm và bảo hành phải lấy từ đơn mới.
 6. **Variant Accuracy**: Đổi size phải kiểm tra đúng màu và size; thiếu thông tin thì hỏi lại, không tự gán mặc định.
-7. **Thread Headroom**: Dưới tải 8 request đồng thời, route `/health` và đọc session vẫn phản hồi trong ngưỡng cho phép.
-8. **Clean Schema Upgrade**: Migration nâng cấp thành công từ clean DB, SQLite v3 và PostgreSQL v3/v4; rollback khi có lỗi DDL.
-9. **Doc Contract**: 4/4 cổng hợp đồng tài liệu và triển khai đạt PASS 100%.
+7. **Tool Search Safety**: Sản phẩm có `category=None` không gây lỗi `TypeError` trong `search_products`.
+8. **Chat History Retention**: Lịch sử hội thoại không bị xóa cứng trong database sau 6 lượt; F5 và transcript CSKH hiển thị trọn vẹn toàn bộ các lượt trước đó.
+9. **Cross-App Cache Sync**: Manager cập nhật trạng thái đơn thì phiên chat của khách hàng không bị đọc cache cũ hoặc lỗi CAS conflict.
+10. **OAuth CSRF Protection**: Callback Google OAuth từ trình duyệt khác bị từ chối nếu không khớp transient session cookie.
+11. **Truthful Exchange Wording**: Không tuyên bố tạo phiếu, giữ kho hay tạo vận đơn khi chưa có backend transaction.
+12. **Thread Headroom**: Dưới tải 8 request đồng thời, route `/health` và đọc session vẫn phản hồi trong ngưỡng cho phép.
+13. **Clean Schema Upgrade**: Migration nâng cấp thành công từ clean DB, SQLite v3 và PostgreSQL v3/v4; rollback khi có lỗi DDL.
+14. **Doc Contract**: 4/4 cổng hợp đồng tài liệu và triển khai đạt PASS 100%.

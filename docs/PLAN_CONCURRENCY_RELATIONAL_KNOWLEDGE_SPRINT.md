@@ -108,6 +108,26 @@ flowchart TD
   - Trong phương thức `get_product(args)`: đính kèm trường `linked_policies` vào kết quả trả về của sản phẩm.
   - Cung cấp cho model căn cứ dữ liệu chính xác để trả lời: *"Sản phẩm P-603 được áp dụng chính sách bảo hành riêng 180 ngày (thay vì 90 ngày tiêu chuẩn)"*.
 
+### 3.3. Phần Data Integrity & Lưu Trữ Lịch Sử Chat (F12 & F13)
+- **File Store:** `retailops/business/store.py`
+  - **F12 FIX (Bảo toàn lịch sử chat)**: Xóa bỏ câu lệnh xóa cứng `DELETE FROM agent_turns ... LIMIT 6` trong `finish_turn()` (dòng 702–704).
+  - Giữ nguyên toàn bộ các bản ghi trong `agent_turns` để bảng này lưu trữ lịch sử trọn vẹn của hội thoại, phục vụ resume chat trên web UI và transcript CSKH tại Staff Desk.
+  - Chuyển logic giới hạn cửa sổ ngữ cảnh (bounded window 6 lượt) sang hàm `store.history(customer, conversation_id, limit=6)` khi nạp context gửi vào prompt của LLM.
+- **File Routes & Application:** `retailops/http/routes.py` & `retailops/business/application.py`
+  - **F13 FIX (Đồng bộ vô hiệu hóa Cache giữa Manager và Customer)**:
+  - Khi Manager cập nhật trạng thái đơn qua `POST /api/manager/orders/status`, thay vì chỉ gọi `app.tool_cache.invalidate()` trên instance riêng của Manager, hệ thống kích hoạt cơ chế kiểm tra `order.version` hoặc xóa cache cross-application trên active sessions để khách hàng không đọc dữ liệu cũ.
+
+### 3.4. Phần Bảo Mật Xác Thực: Chống OAuth Login CSRF (SEC-01)
+- **File Auth & HTTP:** `retailops/http/auth_google.py` & `retailops/http/public.py`
+  - **SEC-01 FIX (Ràng buộc State với Browser Session)**:
+  - Khi người dùng gửi yêu cầu khởi tạo đăng nhập Google tại `/auth/google/login`:
+    - Tạo một giá trị nonce ngẫu nhiên `oauth_browser_nonce` lưu vào cookie `retailops_oauth_transient` (`HttpOnly`, `SameSite=Lax`, `Path=/auth/google`, `Max-Age=600`).
+    - Gắn `hashlib.sha256(oauth_browser_nonce).hexdigest()[:16]` vào payload của OAuth `state`.
+  - Khi Google chuyển hướng về `/auth/google/callback`:
+    - Kiểm tra cookie `retailops_oauth_transient` gửi kèm; đối chiếu băm với thông tin trong `state`.
+    - Từ chối ngay lập tức nếu thiếu cookie hoặc không khớp (ngăn chặn tấn công ép đăng nhập tài khoản nạn nhân theo chuẩn RFC 6749 §10.12).
+    - Xóa transient cookie sau khi đăng nhập thành công.
+
 ---
 
 ## 4. Ma Trận Nghiệm Thu (Verification Criteria)
@@ -117,29 +137,34 @@ flowchart TD
 | **C01** | Bounded Concurrency $K=1$ | 2 client gọi model cùng lúc $\rightarrow$ Request 1 xử lý, Request 2 xếp hàng trong `InferenceGate` với `queue_wait_ms > 0`. | `tests/test_inference_gate.py` |
 | **C02** | Hàng đợi quá tải (> 8 requests) | Request thứ 9 bị từ chối ngay với HTTP 429 `model_busy` và header `Retry-After: 5`. | `tests/test_inference_gate.py` |
 | **C03** | Chờ hàng đợi quá 10s | Request bị ngắt với HTTP 429 `queue_timeout`, slot không bị rò rỉ. | `tests/test_inference_gate.py` |
-| **C04** | Chat cùng 1 phiên dồn dập | `conv_lock` từ chối tin nhắn thứ 2 khi tin thứ 1 chưa hoàn tất turn, bảo toàn checkpoint. | `tests/test_conversation_concurrency.py` |
+| **C04** | Chat cùng 1 phiên dồn dập | `conv_lock` từ chối tin nhắn thứ 2 khi tin thứ 1 chưa hoàn tất turn, bảo toàn checkpoint. | `tests/test_conversation.py` |
 | **K01** | Schema Migration v5 | Khởi tạo DB sạch hoặc nâng cấp từ v4 $\rightarrow$ bảng `product_policy_links` được tạo thành công với chỉ mục. | `tests/test_schema_migration.py` |
 | **K02** | Tra cứu liên kết P-603 | Gọi `get_product('P-603')` $\rightarrow$ kết quả có `linked_policies` chứa chính sách 180 ngày. | `tests/test_policy_precedence.py` |
 | **K03** | Precedence bảo hành | Model trả lời câu hỏi về P-603 nêu đúng 180 ngày và dẫn chứng chính sách, không bịa "12 tháng". | `tests/test_policy_precedence.py` |
-| **K04** | Toàn bộ Regression Suite | Chạy toàn bộ test suites của dự án $\ge 420$ tests đạt **PASS 100%**. | `python -m unittest discover tests` |
+| **D01** | Bảo toàn Lịch sử Chat (F12) | Hội thoại qua 7 lượt chat không bị mất lượt đầu tiên trong DB; F5 và API `GET /api/conversations` trả về đủ cả 7 turns. | `tests/test_conversation_resume.py` |
+| **D02** | Đồng bộ Cache Manager (F13) | Manager đổi đơn hàng từ `pending` sang `delivered` $\rightarrow$ phiên chat của khách hàng nhận biết trạng thái mới ngay, không dùng cache cũ. | `tests/test_business_api.py` |
+| **S01** | OAuth CSRF State Binding (SEC-01) | Callback `/auth/google/callback` thiếu transient cookie hoặc khác browser bị từ chối HTTP 403 `oauth_state_invalid`. | `tests/test_auth_google.py` |
+| **K04** | Toàn bộ Regression Suite | Chạy toàn bộ test suites của dự án $\ge 425$ tests đạt **PASS 100%**. | `python -m unittest discover tests` |
 
 ---
 
 ## 5. Kế Hoạch Triển Khai Từng Bước (Implementation Steps)
 
 1. **Bước 1: Cập nhật Database Schema & Migrations (v5)**
-   - Thêm migration `v5` vào `retailops/business/schema.py` và `retailops/storage/pg_schema.sql`.
+   - Thêm migration `v5` vào `retailops/business/schema.py` và `retailops/storage/pg_schema.py`.
    - Nạp dữ liệu seed cho `product_policy_links` trong `retailops/business/store.py`.
 2. **Bước 2: Cập nhật Tool & Subagent Logic**
    - Đính kèm `linked_policies` trong `retailops_tools.py`.
    - Củng cố prompt và hướng dẫn trong `order_agent.py` và `policy_agent.py`.
-3. **Bước 3: Dọn dẹp Concurrency & Hoàn thiện Application Layer**
+3. **Bước 3: Dọn dẹp Concurrency, Bảo toàn Chat History & Bảo mật Auth**
    - Gỡ bỏ hoàn toàn `self.agent_lock` trong `retailops/business/application.py`.
+   - Bỏ `DELETE LIMIT 6` trong `store.py:finish_turn()`, chuyển giới hạn sang `store.history()`.
+   - Bổ sung transient cookie bảo vệ state trong `retailops/http/auth_google.py`.
    - Đảm bảo `GatedGateway` đo đạc đầy đủ telemetry và hiển thị trong trace.
 4. **Bước 4: Kiểm thử Tự Động & Đồng Bộ Artifacts**
-   - Tạo bộ test mới `tests/test_concurrency_and_relational_knowledge.py`.
+   - Bổ sung kịch bản kiểm thử mới cho F12, F13, SEC-01 và policy precedence.
    - Đồng bộ `notebooks/colab_agent.ipynb` bằng `scripts/build_agent_notebook.py`.
-   - Chạy toàn bộ 420+ tests đảm bảo không có lỗi hồi quy.
+   - Chạy toàn bộ 425+ tests đảm bảo không có lỗi hồi quy.
 5. **Bước 5: Commit, Push & Tự Động Deploy EC2**
    - Commit với thông điệp chuẩn semantic.
    - Đẩy lên `main` và theo dõi GitHub Actions deploy lên máy chủ EC2.
