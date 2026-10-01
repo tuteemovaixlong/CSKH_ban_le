@@ -1,11 +1,11 @@
 # KẾ HOẠCH TRIỂN KHAI PR A: CONTEXT, CACHE, DISPUTE & TRUTHFUL BOUNDARY
 
 > **Mã kế hoạch:** `PLAN_PR_A_CONTEXT_CACHE_DISPUTE`  
-> **Trạng thái:** ACTIVE IMPLEMENTATION PLAN (DEMO REVISION v1.1)  
-> **Phiên bản:** 1.1 (2026-09-28)  
-> **Audit basis / Documentation baseline reviewed:** `11c3048`  
+> **Trạng thái:** ACTIVE IMPLEMENTATION PLAN (DEMO REVISION v1.2)  
+> **Phiên bản:** 1.2 (2026-10-01)  
+> **Audit basis / Documentation baseline reviewed:** `c30ff1d`  
 > **Thuộc phân hệ:** Module 2.5 — System Hardening & Quality Gate  
-> **Mục tiêu:** Khắc phục dứt điểm 6 lỗi logic trọng yếu (F01–F06) và thiết lập ranh giới ngôn từ trung thực (F08a) liên quan đến rò rỉ ngữ cảnh cache, vi phạm serialization phiên chat, nuốt lỗi hạ tầng trong tool execution, đề xuất hủy đơn sai lệch và ngộ nhận trạng thái phê duyệt đổi hàng.  
+> **Mục tiêu:** Khắc phục dứt điểm 6 lỗi logic trọng yếu (F01–F06), lỗi crash catalog (F11) và thiết lập ranh giới ngôn từ trung thực (F08a) liên quan đến rò rỉ ngữ cảnh cache, vi phạm serialization phiên chat, nuốt lỗi hạ tầng trong tool execution, đề xuất hủy đơn sai lệch và ngộ nhận trạng thái phê duyệt đổi hàng. Mỗi hạng mục đều có tệp/hàm, hành vi mong đợi, test tương ứng và trạng thái chưa kiểm chứng.  
 > **Tài liệu tham chiếu:** [PLAN_MODULE_2_5_HARDENING_VERIFICATION.md](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md) · [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md)
 
 ---
@@ -354,6 +354,7 @@ flowchart TB
 5. **Serialization & Revalidation Đúng Đắn**: Toàn bộ các turn AI/cache trên route `/api/chat` phải được commit an toàn bên dưới `conv_lock`; dưới lock bắt buộc revalidate snapshot ngữ cảnh từ database trước khi accept cache hit; request thua lock nhận HTTP 429 ngay lập tức.
 6. **Trung thực Vận hành**: Lỗi hạ tầng trong tool execution không bị nuốt; đề xuất hủy chỉ tạo khi đủ điều kiện; ngôn từ đổi hàng không ngộ nhận trạng thái backend; nút Staff Desk không tuyên bố duyệt giao dịch ảo.
 7. **Tool Search Safety**: Sản phẩm có `category=None` không gây lỗi `TypeError` trong `search_products`.
+8. **Bảo Vệ Benchmark Đóng Băng**: Toàn bộ kịch bản kiểm thử mới của PR A tuân thủ nguyên tắc không can thiệp, không biến đổi và không nới lỏng bộ 250 kịch bản Master Benchmark (Frozen Baseline) dùng cho đánh giá thực nghiệm Luận văn.
 
 ---
 

@@ -40,35 +40,39 @@ Trong mã nguồn thực tế tại snapshot `fd24e36`:
 flowchart TD
     Req["HTTP POST /api/chat"] --> Worker["Waitress Worker Thread (1/8)"]
     
-    subgraph Preflight["Deterministic Preflight (ZERO MODEL LOCK)"]
-        Worker --> Replay{"Replay Check?"}
-        Replay -->|Hit| RetReplay["Return replay (<2ms)"]
-        Replay -->|Miss| ModeCheck["agent_protocol.request_mode()"]
-        ModeCheck --> Mode{"mode == 'general'?"}
-        Mode -->|Yes| SemCache{"SemanticCache.lookup?"}
-        SemCache -->|Hit| RetCache["Return cache (<5ms)"]
-        Mode -->|No / Miss| Sup["run_supervisor() (Deterministic)"]
-        Sup --> SupRoute{"Supervisor Route"}
-        SupRoute -->|Direct / Escalation| RetDirect["Return human_handoff / direct (<10ms)"]
+    subgraph Preflight["Deterministic Preflight (Fast Path Read-Only, 0 Lock, 0 GPU)"]
+        Worker --> Replay1{"Replay #1 Check?"}
+        Replay1 -->|Hit| RetReplay["Return replay (<2ms)"]
+        Replay1 -->|Miss| ConvLock["Acquire conv_lock (non-blocking)<br/>(Loser receives 429 model_busy immediately)"]
+    end
+
+    subgraph LockedPreflight["Under conv_lock: Replay #2, Snapshot Revalidation & Cache Commit"]
+        ConvLock --> Replay2{"Replay #2 Check?"}
+        Replay2 -->|Hit| RetReplay2["Return replay under lock"]
+        Replay2 -->|Miss| RevalSnap["Reload & Revalidate Snapshot from DB"]
+        RevalSnap --> CacheElig{"Cache Eligible?<br/>(No order/product context, static FAQ)"}
+        CacheElig -->|Yes| SemCache{"SemanticCache.lookup?"}
+        SemCache -->|Hit| RetCache["finish_turn() under lock & return cache (<5ms)"]
+        CacheElig -->|No / Miss| WfInit["Initialize Workflow Checkpoint"]
     end
     
-    subgraph ExecutionLoop["Subagent Worker Execution Loop"]
-        SupRoute -->|Worker Turn| Subagent["OrderAgent / DisputeAgent / PolicyAgent"]
-        Subagent --> Gate1["InferenceGate.acquire(provider, customer_id, timeout)"]
+    subgraph ExecutionLoop["Subagent Worker Execution Loop (InferenceGate Admission)"]
+        WfInit --> Subagent["OrderAgent / DisputeAgent / PolicyAgent"]
+        Subagent --> Gate1["InferenceGate.enter(timeout=10s)"]
         Gate1 --> ModelCall1["gateway.chat() #1 (Model I/O)"]
-        ModelCall1 --> GateRel1["finally: InferenceGate.release()"]
+        ModelCall1 --> GateRel1["finally: InferenceGate.exit()"]
         
         GateRel1 --> ToolReq{"Tool Call Requested?"}
         ToolReq -->|No| Answer["Final Text Answer"]
-        ToolReq -->|Yes| Tools["Execute Tools (ZERO MODEL LOCK):<br/>get_order / check_inventory / PostgreSQL / AGE Graph"]
-        Tools --> Gate2["InferenceGate.acquire(provider, customer_id, timeout)"]
+        ToolReq -->|Yes| Tools["Execute Tools (ZERO GPU SLOT):<br/>get_order / check_inventory / PostgreSQL"]
+        Tools --> Gate2["InferenceGate.enter(timeout=10s)"]
         Gate2 --> ModelCall2["gateway.chat() #2 (Model I/O)"]
-        ModelCall2 --> GateRel2["finally: InferenceGate.release()"]
+        ModelCall2 --> GateRel2["finally: InferenceGate.exit()"]
         GateRel2 --> Answer
     end
     
-    Answer --> Finish["store.finish_turn()"]
-    Finish --> HTTP200["HTTP 200 Response"]
+    Answer --> Finish["store.finish_turn() under conv_lock"]
+    Finish --> HTTP200["Release conv_lock & HTTP 200 Response"]
 ```
 
 #### Các Yêu Cầu Kỹ Thuật Bắt Buộc Trong Stage 1:
@@ -77,28 +81,20 @@ flowchart TD
    - Sử dụng `threading.BoundedSemaphore` riêng biệt cho từng Provider (`custom` vLLM vs `api` Cloud).
    - Hỗ trợ per-customer fairness: Mỗi `customer_id` tối đa 1 active model call, giải phóng an toàn khi gặp ngoại lệ.
 2. **Chặn Trap Nuốt Lỗi Overload Trong `dispute_agent` (Bắt Buộc)**:
-   - Trong `retailops/workflow/subagents/dispute_agent.py`, khối `try...except Exception as exc:` hiện tại có nguy cơ nuốt ngoại lệ overload và biến lỗi 429 thành phản hồi giả *"Dạ shop đã ghi nhận..."*.
-   - Khóa cứng quy tắc:
-     ```python
-     except AgentError as exc:
-         if exc.code in ('model_busy', 'inference_overloaded'):
-             raise
-     ```
-     Ngoại lệ overload/429 bắt buộc phải nổi lên tầng trên cùng để trả về đúng HTTP 429 cho client, không được biến thành câu trả lời thành công giả.
+   - Trong `retailops/workflow/subagents/dispute_agent.py`, ngoại lệ overload (HTTP status 429) và lỗi hạ tầng (>= 500) bắt buộc phải re-raise ra ngoài để trả HTTP 429/503 cho client, tuyệt đối không nuốt thành phản hồi giả *"Dạ shop đã ghi nhận..."*.
 3. **Công Thức Headroom & Backpressure Trên Sync Waitress**:
    - Waitress có 8 worker threads. Blocking semaphore wait cũng chiếm luồng WSGI.
-   - Để bảo đảm luôn có ít nhất `RESERVED_NONMODEL_THREADS` (mặc định 2) trống phục vụ `/healthz`, `/api/session`, `/api/orders`:
+   - Để bảo đảm luôn có ít nhất `RESERVED_NONMODEL_THREADS` (mặc định 2) trống phục vụ `/health`, `/api/session`, `/api/orders`:
      $$\text{MAX\_WAITERS} \le \text{WAITRESS\_THREADS} - \text{RESERVED\_NONMODEL\_THREADS} - \text{MAX\_CONCURRENT\_INFERENCE}$$
-   - Các biến cấu hình:
-     - `RETAILOPS_HTTP_THREADS` (mặc định: 8)
-     - `RETAILOPS_RESERVED_HTTP_THREADS` (mặc định: 2)
-     - `RETAILOPS_MAX_CONCURRENT_INFERENCE` (mặc định thận trọng: 1 hoặc 2; các mức CPU=1/2, GPU=2/4, Cloud=4/8 là candidate benchmark)
-     - `RETAILOPS_MAX_INFERENCE_WAITERS` (tính động theo công thức trên)
-   - Trình khởi động kiểm tra: nếu `capacity + waiters > threads - reserved` thì báo lỗi cấu hình.
-4. **Chuẩn Hóa Fast-Path**:
+   - Cấu hình: `WAITRESS_THREADS = 8`, `GPU_SLOTS = 1`, `MAX_QUEUE = 5`. Quá tải hàng đợi hoặc timeout (> 10s) trả về HTTP 429 kèm header `Retry-After: 5`.
+4. **Chuẩn Hóa Fast-Path & Cache Serialization**:
    - `confirm_cancellation` là tuyến giao dịch HTTP độc lập (`POST /api/cancellation-proposals/{proposal_id}/confirm`), vốn dĩ không đi qua luồng chat inference.
-   - Idempotency replay và SemanticCache general hit diễn ra trước khi chạm tới InferenceGate.
-   - Human escalation / direct supervisor responses được bảo vệ để giữ nguyên 0 model calls (`model_calls = 0`).
+   - Idempotency Replay #1 chạy ở fast-path ngoài lock.
+   - Replay #2, tái thẩm định snapshot từ DB và Semantic Cache lookup/commit bắt buộc diễn ra **dưới phạm vi bảo vệ của `conv_lock`** (F02 FIX).
+   - Tuyệt đối không ghi Semantic Cache nếu turn đã gọi bất kỳ tool nào (`tool_count > 0`, kể cả read tools như `get_current_time`).
+5. **Xử Lý Race Condition Khi Invalidate Cache & Multi-Tenant ToolCache**:
+   - Khóa cache trong `ToolCache` phân tách tuyệt đối theo `tenant_id` (`(tenant_id, customer_id, tool_name, args_hash)`).
+   - Gắn `cache_epoch` theo từng customer/tenant: Khi Manager cập nhật đơn qua `POST /api/manager/orders/update-status`, epoch tăng lên. Các lệnh ghi từ tool calls in-flight bắt đầu trước thời điểm invalidate sẽ bị hủy bỏ (discard stale write), triệt tiêu hoàn toàn race condition.
 
 ---
 
@@ -146,19 +142,11 @@ Bổ sung các trường telemetry vào cấu trúc trả về:
 
 ---
 
-## 5. Phương Án Benchmark Đo Đạc Runtime & Concurrency
+## 6. Bảo Vệ Bộ Benchmark 250 Ca Đã Đóng Băng (Frozen Baseline Protection)
 
-Quy trình kiểm thử tải đồng thời phục vụ Chương 4 Khóa luận:
+> [!IMPORTANT]
+> **Nguyên Tắc Bất Biến Về Dữ Liệu Thực Nghiệm Khoa Học Cho Luận Văn:**
+> 1. **Frozen Baseline**: Toàn bộ **250 kịch bản Master Benchmark** (phân bổ qua các nhóm nghiệp vụ Tra cứu đơn, Hủy đơn, Đổi hàng, Bảo hành, Khiếu nại, Out-of-scope) là bộ dữ liệu đánh giá **ĐÃ ĐÓNG BĂNG**.
+> 2. **Không Thay Đổi Benchmark**: Tuyệt đối KHÔNG thay đổi câu hỏi, không nới lỏng tiêu chí chấm điểm, và không lọc bỏ các ca khó để "làm đẹp" số liệu độ chính xác (Router Accuracy / Resolution Rate).
+> 3. **Cơ Sở Đo Lường Đối Chứng Module 6**: Mọi thực nghiệm so sánh khoa học giữa mô hình self-hosted Gemma-4-12B và DeepSeek Cloud API trong Chương 4 Luận văn tốt nghiệp bắt buộc phải chạy trên cùng một bộ 250 kịch bản cố định này để bảo đảm tính khách quan, có thể tái lập (reproducibility) và trung thực học thuật.
 
-* **Tải Đo Đạc**: `concurrency = 1, 2, 4, 8, 16` luồng đồng thời.
-  - *Ghi chú khoa học*: Khi `concurrency > 8` (vượt quá 8 worker threads của Waitress), bài test đo lường cả độ trễ xếp hàng HTTP của WSGI server.
-* **Bộ Chỉ Số Thu Thập**:
-  1. **Throughput & Latency**: RPS thành công, E2E Latency (p50, p95, p99).
-  2. **Thời Gian Xếp Hàng & Xử Lý**: Queue wait (p50, p95), Provider inference time (p50, p95).
-  3. **Tỷ Lệ Thành Công & Áp Lực Ngược**: Tỷ lệ hoàn thành nghiệp vụ (Success rate %), Tỷ lệ lỗi 429 quá tải (Overload 429 rate %).
-  4. **Hiệu Quả Tài Nguyên & Chi Phí**: `model_calls/request`, `prompt_tokens/request`, `generated_tokens/request`, `cost/1000 successful requests`.
-  5. **Tính Công Bằng Giữa Các Khách Hàng**:
-     - Sử dụng chỉ số **Jain's Fairness Index** để đánh giá tính công bằng trong phân bổ tài nguyên suy luận.
-     - Sử dụng độ phân tán thời gian chờ (**wait-time dispersion / standard deviation**) để đo độ lệch độ trễ giữa các khách hàng.
-  6. **Độ Tin Cậy & Cô Lập**: Tool Accuracy %, Citation Validity %, và kiểm tra cô lập dữ liệu tuyệt đối giữa các khách hàng (zero cross-customer leakage).
-  7. **Tiêu Thụ Tài Nguyên Hệ Thống**: CPU %, RAM sử dụng, và VRAM peak (khi chạy trên GPU).

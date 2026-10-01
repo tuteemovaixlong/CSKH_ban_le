@@ -38,18 +38,22 @@ flowchart TD
     CaddyAuth["Xác thực Caddy Basic Auth (:8100/admin)"] -->|opsadmin| ViewAdmin["4. GIAO DIỆN QUẢN TRỊ VIÊN KỸ THUẬT (Ops Console)\n• Chạy trên subdomain độc lập (:8100/admin)\n• Đo kiểm Model Router Accuracy, Confusion Matrix\n• Giám sát Latency p95/p99, Token Usage & Container"]
 ```
 
-### Bảng Ma trận Quyền hạn Chi tiết
+### Bảng Ma trận Quyền hạn Chi tiết (RBAC Matrix)
 
-| Chức năng | Khách hàng (`customer`) | Khách chỉ xem (`viewer`) | Nhân viên CSKH (`staff`) | Quản lý Shop (`manager`) | Quản trị viên Kỹ thuật (`opsadmin`)* |
+| Chức năng / Thao tác | Khách hàng (`customer`) | Khách chỉ xem (`viewer`) | Nhân viên CSKH (`staff`) | Quản lý Shop (`manager`) | Quản trị Kỹ thuật (`opsadmin`)* |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| **Chat tư vấn với AI Agent** | ✅ | ❌ *(Ẩn)* | ❌ *(Ẩn)* | ❌ *(Ẩn)* |
-| **Xem đơn hàng cá nhân** | ✅ *(Chỉ đơn của mình)* | ❌ *(Ẩn)* | ❌ *(Ẩn)* | ❌ *(Ẩn)* |
-| **Đánh giá CSAT (👍/👎)** | ✅ | ❌ *(Ẩn)* | ❌ *(Ẩn)* | ❌ *(Ẩn)* |
-| **Bàn làm việc CSKH (Hàng đợi & Chat 2 chiều)** | ❌ *(Ẩn nút)* | ✅ *(Màn hình chính)* | ✅ *(Có thể xem)* | ❌ *(Ẩn)* |
-| **Quản lý toàn bộ đơn hàng của Shop** | ❌ *(Bị từ chối)* | ❌ *(Chỉ xem qua ca)* | ✅ | ❌ *(Không can thiệp)* |
-| **Nhật ký can thiệp đơn (Audit Trail)** | ❌ *(Bị từ chối)* | ❌ *(Bị từ chối)* | ✅ | ❌ *(Không can thiệp)* |
-| **Báo cáo CSAT & Tỷ lệ giải quyết ca** | ❌ *(Bị từ chối)* | ❌ *(Bị từ chối)* | ✅ | ❌ *(Không can thiệp)* |
-| **Đo kiểm Router, Latency, Token (Ops Console)** | ❌ *(Bị từ chối)* | ❌ *(Bị từ chối)* | ❌ *(Bị từ chối)* | ✅ *(Độc quyền)* |
+| **Chat tư vấn với AI Agent** | ✅ | ❌ *(Bị chặn/Ẩn)* | ❌ *(Ẩn trên Staff Desk)* | ❌ *(Ẩn trên Manager Console)* | ❌ *(Không dùng)* |
+| **Xem đơn hàng cá nhân** | ✅ *(Chỉ đơn của mình)* | ✅ *(Chỉ xem đơn mình)* | ❌ *(Chuyển sang Bàn làm việc)* | ❌ *(Chuyển sang Manager)* | ❌ *(Không dùng)* |
+| **Hủy đơn hàng đang chờ (`orders:cancel`)** | ✅ *(Đơn của mình)* | ❌ *(Chỉ đọc)* | ✅ *(Hỗ trợ hủy thay khách)* | ✅ *(Quyền tối cao)* | ❌ *(Không can thiệp)* |
+| **Đánh giá CSAT (👍/👎)** | ✅ | ❌ *(Ẩn)* | ❌ *(Ẩn)* | ❌ *(Ẩn)* | ❌ *(Không dùng)* |
+| **Bàn làm việc CSKH (`staff:desk`)** | ❌ *(Bị từ chối 403)* | ❌ *(Bị từ chối 403)* | ✅ *(Màn hình chính)* | ✅ *(Có thể xem/hỗ trợ)* | ❌ *(Không can thiệp)* |
+| **Quản lý đơn toàn shop (`store:manage`)** | ❌ *(Bị từ chối 403)* | ❌ *(Bị từ chối 403)* | ❌ *(Chỉ xem theo ca)* | ✅ *(Cập nhật trạng thái)* | ❌ *(Không can thiệp)* |
+| **CRUD Sản phẩm / Danh mục** | ❌ *(Bị từ chối 403)* | ❌ *(Bị từ chối 403)* | ❌ *(Bị từ chối 403)* | ✅ *(Đầy đủ Create/Update/Delete)* | ❌ *(Không can thiệp)* |
+| **Nhật ký can thiệp đơn (Audit Trail)** | ❌ *(Bị từ chối 403)* | ❌ *(Bị từ chối 403)* | ❌ *(Bị từ chối 403)* | ✅ *(Xem toàn bộ audit log)* | ❌ *(Không can thiệp)* |
+| **Báo cáo CSAT & KPIs Cửa hàng** | ❌ *(Bị từ chối 403)* | ❌ *(Bị từ chối 403)* | ❌ *(Bị từ chối 403)* | ✅ *(KPIs & Báo cáo)* | ❌ *(Không can thiệp)* |
+| **Ops Console Router / Telemetry** | ❌ *(Bị từ chối)* | ❌ *(Bị từ chối)* | ❌ *(Bị từ chối)* | ❌ *(Bị từ chối)* | ✅ *(Độc quyền :8100/admin)* |
+
+> `*` Ghi chú: `opsadmin` chạy trên cổng quản trị kỹ thuật độc lập (`:8100/admin`), được bảo vệ bằng Caddy Basic Auth và không dùng chung database session của web bán lẻ. Cơ sở thẩm quyền mã nguồn: `retailops/business/permissions.py:ROLE_PERMISSIONS`.
 
 ---
 
@@ -68,11 +72,12 @@ sequenceDiagram
 
     User->>Web: Nhấp chọn "Đăng nhập bằng Google"
     Web->>Backend: GET /auth/google/login
-    Backend-->>Web: Redirect sang URL Google OAuth kèm `state` (chống CSRF)
+    Backend-->>Web: Redirect sang URL Google OAuth kèm `state` và Set-Cookie `retailops_oauth_transient` (HttpOnly, SameSite=Lax, Max-Age=600)
     Web->>Google: Chuyển hướng sang màn hình chọn tài khoản Gmail
     User->>Google: Đăng nhập & Xác nhận cấp quyền (email, profile)
     Google-->>Web: Redirect về Callback URL kèm `code` và `state`
-    Web->>Backend: GET /auth/google/callback?code=...&state=...
+    Web->>Backend: GET /auth/google/callback?code=...&state=... kèm Cookie `retailops_oauth_transient`
+    Note over Backend: Kiểm tra băm cookie trong `state` (SEC-01: Chống Login CSRF)<br/>Từ chối 403 nếu thiếu hoặc không khớp!
     Backend->>Google: Gửi POST đổi `code` lấy `id_token` & `access_token`
     Google-->>Backend: Trả về Profile (email, name, sub, picture)
     
@@ -124,6 +129,21 @@ Khi một email đăng nhập:
 1. Nếu email khớp với `STAFF_EMAILS` $\to$ Cấp quyền `staff`.
 2. Nếu email khớp với `MANAGER_EMAILS` $\to$ Cấp quyền `manager`.
 3. Mọi email khác $\to$ Tự động cấp quyền `customer` và cấp mã khách hàng mới (ví dụ `C-GOOGLE-xxxx`).
+
+### 3.4. Chống Tấn Công OAuth Login CSRF (Hạng mục SEC-01) [CHƯA KIỂM CHỨNG / PENDING TEST]
+
+- **Vấn đề bảo mật**: Kẻ tấn công có thể khởi tạo luồng OAuth từ trình duyệt của mình, lấy URL callback chứa `code` và `state` của kẻ tấn công, rồi lừa nạn nhân truy cập liên kết đó. Trình duyệt nạn nhân sẽ hoàn tất đăng nhập bằng danh tính của kẻ tấn công, dẫn đến rò rỉ dữ liệu hoặc chiếm quyền kiểm soát phiên (RFC 6749 §10.12).
+- **Tệp & Hàm liên quan**:
+  - `retailops/http/auth_google.py`: `handle_google_login(app, query, headers)`, `handle_google_callback(app, query, headers)`.
+  - `retailops/http/public.py`: Tuyến điều hướng `/auth/google/login` và `/auth/google/callback`.
+- **Hành vi mong đợi**:
+  1. Khi vào `/auth/google/login`: Backend sinh một chuỗi ngẫu nhiên cryptographically secure `oauth_browser_nonce` (32 bytes hex).
+  2. Gửi cookie `Set-Cookie: retailops_oauth_transient=<nonce>; HttpOnly; SameSite=Lax; Path=/auth/google; Max-Age=600`.
+  3. Tính toán `nonce_hash = hashlib.sha256(oauth_browser_nonce.encode()).hexdigest()[:16]` và nhúng vào payload `state` (được ký HMAC).
+  4. Khi Google chuyển hướng về `/auth/google/callback`: Trích xuất cookie `retailops_oauth_transient`, băm lại và so khớp với `nonce_hash` trong `state`.
+  5. Nếu thiếu cookie hoặc băm không khớp: Từ chối ngay lập tức với mã lỗi HTTP 403 `oauth_state_invalid`.
+  6. Sau khi đăng nhập thành công: Xóa transient cookie (`Max-Age=0`).
+- **Test tương ứng**: `tests/test_auth_google.py::test_oauth_csrf_state_binding`, `tests/test_auth_google.py::test_oauth_callback_missing_transient_cookie`.
 
 ---
 

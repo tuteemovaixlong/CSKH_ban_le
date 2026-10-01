@@ -2,8 +2,8 @@
 
 > **Trạng thái:** ACTIVE STRATEGIC ROADMAP  
 > **Mức độ minh chứng (Evidence):** L3 Live System Architecture Reference  
-> **Audit basis / Documentation baseline reviewed:** `b93eb5a` · **Application verified:** `fd24e36`  
-> **Ngày rà soát & đồng bộ:** 2026-09-22  
+> **Audit basis / Documentation baseline reviewed:** `c30ff1d` · **Application verified:** `c30ff1d`  
+> **Ngày rà soát & đồng bộ:** 2026-10-01  
 > **Báo cáo tiến độ vận hành mới nhất:** Xem tại [CURRENT_PROJECT_STATUS.md](CURRENT_PROJECT_STATUS.md)
 
 ---
@@ -16,7 +16,7 @@ flowchart TD
     
     P1["PHASE 1: Data & Observability Foundation (ĐÃ XONG)<br/>• PR 1.1: Truthful UX (dọn fallback lỗi KPI, form prefill)<br/>• PR 1.2: P0 SSOT: Catalog & Inventory vào PostgreSQL/SQLite<br/>• PR 1.3: Truthful Telemetry: token/cost thật, concurrency fields<br/>• PR 1.4: Chat History Resume (khôi phục session khi F5)"]
     
-    M25["MODULE 2.5: System Hardening & Quality Gate (ACTIVE SPRINT)<br/>• PR A: Context, Cache & Dispute Correctness (F01..F06)<br/>• PR B: Concurrency, Headroom & Truthful Telemetry (F07, F09, lock cleanup)<br/>• PR C: Relational Knowledge & Clean Schema Migration (F10, ADR SQL Linkage)"]
+    M25["MODULE 2.5: System Hardening & Quality Gate (ACTIVE SPRINT)<br/>• PR A: Context, Cache & Dispute Correctness (F01..F06, F11, F12, F13, SEC-01)<br/>• PR B: Concurrency, Headroom & Truthful Telemetry (F07, F09, lock cleanup)<br/>• PR C: Relational Knowledge & Schema v5 (HOÃN / DEFERRED - Schema v4 SSOT)"]
     
     P4["PHASE 4: Scientific Evaluation & Thesis Benchmark<br/>• Concurrency Load Benchmark (1, 2, 4, 8, 16 workers, Jain's Fairness)<br/>• Đối chứng Gemma-4-12B self-hosted vs DeepSeek Cloud API trên 250 ca"]
     
