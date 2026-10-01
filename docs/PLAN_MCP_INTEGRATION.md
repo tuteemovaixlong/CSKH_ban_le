@@ -13,7 +13,7 @@ cập_nhật_cuối: 2026-09-21
 # Kế hoạch Tích hợp MCP Server (Model Context Protocol Integration Plan)
 
 > [!IMPORTANT]
-> **Hiện trạng Triển khai Thực tế (Tháng 09/2026):**  
+> **Hiện trạng Triển khai Thực tế (Tháng 09/2026):**
 > 1. **Standalone Server & Adapter ĐÃ HOÀN TẤT**: Máy chủ giao thức độc lập [retailops_mcp_server.py](../retailops_mcp_server.py) triển khai kiến trúc hybrid: sử dụng `FallbackMCPServer` thuần chuẩn Python (xử lý JSON-RPC 2.0 qua stdio và SSE HTTP server port 8002) không bắt buộc cài đặt package ngoài, đồng thời tự động tích hợp SDK chính thức (`FastMCP`) nếu môi trường có sẵn thư viện `mcp`. Client adapter [retailops/workflow/mcp_client.py](../retailops/workflow/mcp_client.py) kết nối in-process trực tiếp (`from retailops_mcp_server import app`), kiểm thử tự động đạt **14/14 test pass** ([tests/test_mcp_protocol.py](../tests/test_mcp_protocol.py)).
 > 2. **Production Pipeline Hiện Tại**: Pipeline LangGraph chính chạy trên EC2 ([retailops/workflow/agent.py](../retailops/workflow/agent.py), [retailops/workflow/graph.py](../retailops/workflow/graph.py)) đang trực tiếp sử dụng in-process `BoundTools` ([retailops_tools.py](../retailops_tools.py)) nhằm tối ưu độ trễ và giữ container tối giản (`mcp` không nằm trong `requirements-runtime.txt`). Việc chuyển toàn bộ runtime chính sang gọi qua MCP SSE server là tùy chọn kiến trúc decoupling sẵn sàng kích hoạt khi mở rộng microservices.
 
@@ -115,7 +115,7 @@ from retailops_mcp_server import app
 
 1. **Client Adapter Sẵn sàng**: [retailops/workflow/mcp_client.py](../retailops/workflow/mcp_client.py) cung cấp các hàm chuyển đổi MCP tools thành LangChain/LangGraph tools (`RetailOpsMCPClient`).
 2. **Production Runtime Hiện tại**: Trong [retailops/workflow/agent.py](../retailops/workflow/agent.py) và [retailops/workflow/graph.py](../retailops/workflow/graph.py), agent bind trực tiếp các công cụ Python nội bộ từ `retailops_tools.py` để đạt độ trễ thấp nhất (<5ms so với mạng HTTP/SSE) và hạn chế phụ thuộc thư viện bên thứ 3 trong production Docker container.
-3. **Kế hoạch Chuyển đổi**: Khi cần mở rộng phân tán máy chủ công cụ ra cụm riêng, chỉ cần bật cờ cấu hình để nạp tools qua adapter `mcp_client.py`.
+3. **Kế hoạch Chuyển đổi**: Client adapter `mcp_client.py` hiện lưu trữ `sse_url` nhưng các phương thức gọi nội bộ vẫn sử dụng server in-process. Việc đấu nối truyền tải mạng từ xa qua SSE (remote SSE transport/wiring) thuộc phạm vi mở rộng hạ tầng phân tán trong tương lai (Post-thesis Phase 6), không triển khai trong Module 2.5.
 
 ---
 
@@ -125,5 +125,5 @@ from retailops_mcp_server import app
 - [x] **Bước 2**: Đóng gói đầy đủ 10 công cụ nghiệp vụ TMĐT chuẩn, 3 resources RAG policies/catalog, 1 prompt template và tính năng tra cứu thông số kỹ thuật bên ngoài có rào chắn an toàn (`search_product_specs`).
 - [x] **Bước 3**: Hỗ trợ truyền tải kép: `stdio` (cho Claude Desktop, Cursor, Antigravity IDE) và `sse` (port 8002 cho microservices/n8n), kèm cấu hình [mcp_config.json](../mcp_config.json).
 - [x] **Bước 4**: Xây dựng adapter [retailops/workflow/mcp_client.py](../retailops/workflow/mcp_client.py) và bộ kiểm thử tự động toàn diện [tests/test_mcp_protocol.py](../tests/test_mcp_protocol.py) (**14/14 test pass**).
-- [ ] **Bước 5 (Tùy chọn tương lai)**: Đưa `mcp` vào `requirements-runtime.txt` và chuyển toàn bộ runtime chính trong `graph.py` sang gọi qua SSE adapter khi triển khai cụm microservices đa server.
+- [ ] **Bước 5 (Kế hoạch tương lai - Post-thesis)**: Đưa `mcp` vào `requirements-runtime.txt` và xây dựng remote SSE network transport hoàn chỉnh khi triển khai cụm microservices đa server.
 

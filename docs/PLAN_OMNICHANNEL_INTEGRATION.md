@@ -12,8 +12,12 @@ cập_nhật_cuối: 2026-09-21
 # Kế hoạch Tích hợp Đa kênh Mạng Xã hội (Omnichannel: Facebook Fanpage & Zalo OA)
 
 > [!IMPORTANT]
-> **Ưu tiên Triển khai: GIAI ĐOẠN 1 (Phục vụ Kịch bản Demo Live Khóa luận Tốt nghiệp)**  
-> Tính năng này biến RetailOps từ ứng dụng web đơn lẻ thành **Hệ thống CSKH Đa kênh (Omnichannel AI Agent)** hoàn chỉnh. Đây là điểm nhấn đột phá nhất trong buổi bảo vệ khóa luận: Hội đồng chấm thi có thể **dùng chính điện thoại cá nhân quét mã QR để chat trực tiếp với AI Agent qua Facebook Messenger hoặc Zalo OA** ngay tại hội trường.
+> **Ưu tiên Triển khai: PHASE 5: Demo Enhancements (Trình Diễn Thực Tế & Omnichannel)**
+> Thuộc Giai đoạn 5 trong Lộ trình Chiến lược [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md) (triển khai sau khi hoàn tất đánh giá thực nghiệm khoa học Phase 4). Điểm nhấn phục vụ Hội đồng chấm thi quét mã QR trên di động trải nghiệm trực tiếp.
+> **Yêu cầu kỹ thuật bắt buộc trước khi triển khai:**
+> 1. *Xác thực Webhook POST*: Kiểm tra chữ ký `X-Hub-Signature-256` qua HMAC SHA-256 với Meta App Secret.
+> 2. *Chống trùng lặp (Idempotency)*: Kiểm tra và bỏ qua các bản tin trùng lặp dựa trên `mid` (Message ID) do Meta tự động retry.
+> 3. *Phản hồi ACK tức thì (< 5s)*: Meta quy định webhook phải trả HTTP 200 trong 5 giây. Không được gọi suy luận mô hình đồng bộ trực tiếp trong vòng đời request webhook; bắt buộc trả HTTP 200 ngay, đưa việc xử lý AI vào background queue, và gửi câu trả lời qua Meta Graph Send API.
 
 Tài liệu này xác định kiến trúc, quy trình kỹ thuật và lộ trình tích hợp hai kênh mạng xã hội phổ biến nhất tại Việt Nam (**Facebook Fanpage Messenger** và **Zalo Official Account**) vào hệ sinh thái RetailOps.
 
@@ -50,7 +54,7 @@ flowchart TD
     subgraph EC2Server ["Máy chủ EC2 RetailOps (Caddy HTTPS)"]
         Caddy["Caddy Reverse Proxy (HTTPS)"]
         WebhookRouter["Webhook Dispatcher\n(/webhook/facebook & /webhook/zalo)"]
-        
+
         subgraph RetailOpsCore ["Bộ lõi RetailOps Agentic AI"]
             App["Application Core (chat, session)"]
             Cache["3-Tier Cache Engine (Semantic pgvector)"]

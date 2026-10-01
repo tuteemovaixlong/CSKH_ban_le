@@ -1,9 +1,9 @@
 # Kế Hoạch Triển Khai Kỹ Thuật: Phase 1.1 — Truthful UX & Safe Fallbacks
 
-> **Kế hoạch mục tiêu:** PR 1.1 thuộc Giai đoạn 1 (Data & Observability Foundation)  
-> **Tài liệu tham chiếu:** [PLAN_FIX_UI_01_TRUTHFUL_UX.md](PLAN_FIX_UI_01_TRUTHFUL_UX.md) · [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md)  
-> **Commit baseline:** `f68516d`  
-> **Trạng thái:** DRAFT — AWAITING USER REVIEW  
+> **Kế hoạch mục tiêu:** PR 1.1 thuộc Giai đoạn 1 (Data & Observability Foundation)
+> **Tài liệu tham chiếu:** [PLAN_FIX_UI_01_TRUTHFUL_UX.md](PLAN_FIX_UI_01_TRUTHFUL_UX.md) · [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md)
+> **Commit baseline:** `56fda06`
+> **Trạng thái:** HISTORICAL IMPLEMENTATION SPEC (PR 1.1 baseline snapshot commit `56fda06`; toàn bộ Phase 1 gồm FIX 01..FIX 04 được hoàn thiện qua chuỗi commit tiếp nối; xem tổng quan tại [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md))
 > **Mục tiêu PR:** Pull Request nhỏ, độc lập, không chạm runtime backend lõi, dễ dàng kiểm thử và rollback.
 
 ---
@@ -73,7 +73,7 @@ async function loadManagerKPIs() {
     if (byId('kpi-ai-res')) byId('kpi-ai-res').textContent = 'Lỗi';
     if (byId('kpi-human-esc')) byId('kpi-human-esc').textContent = 'Lỗi';
     if (byId('kpi-csat')) byId('kpi-csat').textContent = 'Lỗi';
-    // KHUYẾT THIẾU: kpi-revenue, kpi-orders-count, stat-pending-val, stat-delivered-val, 
+    // KHUYẾT THIẾU: kpi-revenue, kpi-orders-count, stat-pending-val, stat-delivered-val,
     // stat-cancelled-val, stat-products-val hoàn toàn không được xử lý trong catch!
   }
 }

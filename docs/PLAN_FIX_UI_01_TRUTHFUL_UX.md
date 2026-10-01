@@ -1,9 +1,9 @@
 # Module 1: Truthful UX, Safe Fallbacks & Role Boundary (P0)
 
-> **Trạng thái:** PARTIALLY IMPLEMENTED (Phần lớn đã hoàn thành; Còn tồn đọng thẻ 0 khi lỗi và fallback Tiêu chuẩn)  
-> **Mức độ minh chứng (Evidence):** L1 Automated Tests · L3 Live Deployed  
-> **Audit basis / Documentation baseline reviewed:** `b93eb5a` · **Application verified:** `d3ca3a6`  
-> **Ngày rà soát:** 2026-09-21  
+> **Trạng thái:** HISTORICAL AUDIT SNAPSHOT (Ghi nhận hiện trạng tại snapshot 2026-09-21; PR 1.1 snapshot tại commit `56fda06`; các tồn đọng về variant fallback và Store Manager sau đó được hoàn thiện trong FIX 02..FIX 04 của Phase 1; xem chi tiết tại [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md))
+> **Mức độ minh chứng (Evidence):** L1 Automated Tests (`tests/test_truthful_ux.py`, `tests/test_audit_remediation.py`) · L3 Live Deployed
+> **Audit basis / Documentation baseline reviewed:** `b93eb5a` · **Application verified:** `d3ca3a6`
+> **Ngày rà soát & đồng bộ:** 2026-10-01
 > **Mục tiêu:** Loại bỏ toàn bộ các số liệu giả lập, số liệu tĩnh hard-code trong giao diện; đảm bảo nguyên tắc *"Dữ liệu không rõ phải hiển thị Chưa rõ (Unknown), không được biến thiếu sót thành số liệu thành tích"*.
 
 ---
@@ -40,7 +40,7 @@
 
 8. **Độ lệch ngữ nghĩa của chỉ số "Tỷ lệ tự giải quyết (AI Resolution)"** — 🟡 **MỘT PHẦN**:
    - Hiện trạng công thức trong `retailops/http/routes.py` (dòng 72-73):
-     `escalation_rate = round((esc_count / total_convs) * 100, 1) if total_convs > 0 else 0.0`  
+     `escalation_rate = round((esc_count / total_convs) * 100, 1) if total_convs > 0 else 0.0`
      `ai_resolution_rate = round(100.0 - escalation_rate, 1)`
    - Vấn đề: Đây thực chất là **"Tỷ lệ không chuyển người thật" (Non-handoff rate)** chứ không chứng minh khách hàng đã được giải quyết vấn đề thỏa đáng (ví dụ: AI trả lời sai nhưng khách chán nản tự thoát).
    - Đặc biệt: Khi hệ thống mới khởi động chưa có hội thoại nào (`total_convs = 0`), công thức trả về `ai_resolution_rate = 100.0%`, biến việc thiếu dữ liệu thành số liệu thành tích tuyệt đối.

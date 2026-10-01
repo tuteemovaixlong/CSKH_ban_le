@@ -10,7 +10,7 @@ cập_nhật_cuối: 2026-09-22
 # Kế Hoạch Chiến Lược Lựa Chọn Mô Hình (Model Selection Strategy)
 
 > [!TIP]
-> **Vai trò trong Khóa luận: GIAI ĐOẠN 4 (Thực nghiệm & Đánh giá Benchmark Đối chứng)**  
+> **Vai trò trong Khóa luận: GIAI ĐOẠN 4 (Thực nghiệm & Đánh giá Benchmark Đối chứng)**
 > Ma trận so sánh giữa các mô hình và cơ chế định tuyến tĩnh/deterministic được đối chiếu thực nghiệm trên bộ kịch bản kiểm thử chuẩn trong [evals/scenarios/benchmark_250.jsonl](../evals/scenarios/benchmark_250.jsonl). Kết quả đo đạc thực tế về **Độ chính xác gọi tool, Độ trễ phản hồi E2E, Tỷ lệ lỗi 429 và Chi phí token thực tế** sẽ là số liệu thực nghiệm cốt lõi của **Chương 4 (Thực nghiệm & Đánh giá)** trong Luận văn tốt nghiệp.
 
 Tài liệu này xác định các phương án mô hình ngôn ngữ (LLM/SLM) khả thi cho RetailOps, phân tích điểm đánh đổi (Trade-off) giữa **Trí tuệ, Tốc độ, Sức chịu tải đồng thời (Concurrency) và Chi phí phần cứng** (các số liệu trong bảng dưới mang tính ước lượng kế hoạch / Planning Estimates, cần được kiểm chứng bằng benchmark thực tế ở Phase 4).
@@ -41,18 +41,18 @@ Kiến trúc định tuyến tuân thủ nghiêm ngặt nguyên tắc **Cache Co
 ```mermaid
 flowchart TD
     UserQuery["Khách hàng gửi tin nhắn"] --> Preflight["Deterministic Preflight"]
-    
+
     Preflight --> ModeCheck{"agent_protocol.request_mode()"}
-    
+
     ModeCheck -->|mode == 'general'| SemCache{"SemanticCache Lookup?"}
     SemCache -->|Hit| InstantReply["Trả lời chào hỏi (<5ms)"]
     SemCache -->|Miss| GenReply["Model trả lời xã giao"]
-    
+
     ModeCheck -->|mode == 'retail'| Supervisor["Deterministic Supervisor (0 Model Calls)"]
-    
+
     Supervisor -->|Handoff / Trực tiếp| DirectAnswer["Phản hồi Handoff / SOP (0 Model Calls)"]
     Supervisor -->|Worker Subagent| InferenceGate["InferenceGate.acquire(provider)"]
-    
+
     InferenceGate --> ActiveModel["Model Được Chọn (Tự Host vLLM hoặc Cloud API)"]
     ActiveModel --> ToolLoop["Thực thi Tool (Kho hàng / Đơn / AGE Graph / RAG)"]
 ```

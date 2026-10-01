@@ -1,10 +1,10 @@
 # Kế hoạch Tích hợp Tính năng Gửi File & Hình ảnh (Multimodal Vision & Attachment Support) cho Trợ lý AI
 
-> **Trạng thái:** PARTIALLY IMPLEMENTED (Image Vision: Implemented; Document/PDF: UI Upload Only / Partial)  
-> **Mức độ minh chứng (Evidence):** L3 Live Deployed (Web upload, OpenAI/Anthropic/Ollama native translation)  
-> **Audit basis / Documentation baseline reviewed:** `b93eb5a` · **Application verified:** `d3ca3a6`  
-> **Ngày rà soát:** 2026-09-21  
-> **Tồn đọng kỹ thuật:** 
+> **Trạng thái:** PARTIALLY IMPLEMENTED (Image Vision: Implemented; Document/PDF: UI Upload Only / Partial)
+> **Mức độ minh chứng (Evidence):** L3 Live Deployed (Web upload, OpenAI/Anthropic/Ollama native translation)
+> **Audit basis / Documentation baseline reviewed:** `b93eb5a` · **Application verified:** `d3ca3a6`
+> **Ngày rà soát:** 2026-09-21
+> **Tồn đọng kỹ thuật:**
 > - *Image Vision*: Đã hoàn thành upload UI, thumbnail preview, băm sha256 chống trùng lặp, bypass cache và chuyển đổi format native cho OpenAI (`image_url`), Anthropic (`type: image`), Ollama (`images: [...]`). Tuy nhiên chưa có dedicated automated E2E test trong test suite.
 > - *Document / PDF*: Giao diện web hỗ trợ chọn file PDF, nhưng backend hiện chỉ chèn chuỗi text placeholder `[Tệp đính kèm: filename.pdf]` vào prompt, chưa có engine bóc tách nội dung PDF / OCR thực sự.
 
@@ -32,15 +32,15 @@ flowchart TD
     User["Khách hàng (Web App / Mobile)"] -->|1. Chọn ảnh / Kéo thả / Dán Ctrl+V| UI["Giao diện Chat Khách hàng"]
     UI -->|2. Preview thumbnail + Nén ảnh client-side| Encoder["Base64 Data URI (Mime: JPEG/PNG/WebP/PDF)"]
     Encoder -->|3. POST /api/chat kèm attachment| Router["Public Web API (/api/chat)"]
-    
+
     Router -->|4. Kiểm tra type in ('image', 'document') & len(data) <= 6_000_000 chars (~4.5MB)| Validation["Security & Size Guard (retailops/business/application.py)"]
     Validation --> Storage["Lưu vết đính kèm vào Database (conversations/turns)"]
-    
+
     Validation --> Dispatcher{"Model Routing"}
     Dispatcher -->|Google Gemini API (gemini-2.5-flash)| GeminiVision["Gemini Multimodal Vision\n(inlineData / image_url)"]
     Dispatcher -->|Anthropic Claude API| ClaudeVision["Claude Multimodal\n(type: image / document)"]
     Dispatcher -->|Custom Text-only Model| Fallback["Ghi nhận file + Chuyển giao Staff Desk"]
-    
+
     GeminiVision --> Response["AI phân tích ảnh & Trả lời chi tiết"]
     Response --> UI
     Storage --> StaffDesk["🎧 Bàn làm việc Chuyên viên CSKH (Staff Desk) hiển thị ảnh bằng chứng"]

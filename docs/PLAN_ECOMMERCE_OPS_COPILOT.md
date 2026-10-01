@@ -1,10 +1,10 @@
 # KẾ HOẠCH CHIẾN LƯỢC TOÀN DIỆN: MODULE 1 — HỆ THỐNG AI ĐA TÁC TỬ CSKH, BẢO HÀNH & XỬ LÝ KHỦNG HOẢNG THƯƠNG MẠI ĐIỆN TỬ (E-COMMERCE OPS COPILOT 2026)
 
-> **Trạng thái:** PARTIALLY IMPLEMENTED (Core Agent, 6 SOPs & Staff Desk hoàn tất; DB SSOT cho Catalog/Inventory đang chờ theo FIX 02)  
-> **Mức độ minh chứng (Evidence):** L1 Automated Tests (`tests/test_ecommerce_ops.py`) · L3 Live Deployed  
-> **Audit basis / Documentation baseline reviewed:** `b93eb5a` · **Application verified:** `d3ca3a6`  
-> **Ngày rà soát:** 2026-09-21  
-> **Tồn đọng chính (Gaps):** Single Source of Truth cho Catalog và Inventory trong DB PostgreSQL; hành động nghiệp vụ thực tế cho các nút SOP 1..5 phía Store Manager.  
+> **Trạng thái:** HISTORICAL ARCHITECTURE SPEC (Ghi nhận thiết kế và hiện trạng tại snapshot 2026-09-21; các tồn đọng Single Source of Truth cho Catalog và Inventory sau đó đã được hoàn tất trong FIX 02 tại commit `a6ec080`/`d7ce461`; xem chi tiết tại [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md))
+> **Mức độ minh chứng (Evidence):** L1 Automated Tests (`tests/test_ecommerce_ops.py`) · L3 Live Deployed
+> **Audit basis / Documentation baseline reviewed:** `b93eb5a` · **Application verified:** `d3ca3a6`
+> **Ngày rà soát & đồng bộ:** 2026-10-01
+> **Tồn đọng lịch sử:** Single Source of Truth cho Catalog và Inventory đã giải quyết tại FIX 02; các nút SOP 1..5 phía Store Manager hiển thị nhãn [Mô phỏng] tại FIX 01.
 > **Mục tiêu cốt lõi:** Tự động hóa tác vụ CSKH lặp lại, xử lý 6 kịch bản vận hành thực chiến (SOP 1 - 6), hỗ trợ nhân viên phê duyệt 1-Click và duy trì test suite xanh.
 
 ---

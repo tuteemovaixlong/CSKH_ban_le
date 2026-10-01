@@ -1,10 +1,10 @@
 # Kế hoạch Thu thập Dữ liệu & Vòng lặp Phản hồi Người dùng (Data Flywheel)
 
-> **Trạng thái:** IMPLEMENTED (Core Complete)  
-> **Mức độ minh chứng (Evidence):** L1 Automated Tests (`tests/test_feedback.py` 6/6 PASS) · L3 Live Deployed  
-> **Audit basis / Documentation baseline reviewed:** `b93eb5a` · **Application verified:** `d3ca3a6`  
-> **Ngày rà soát:** 2026-09-21  
-> **Kết luận:** Toàn bộ bảng DDL `conversation_feedback`, route `POST /api/feedback`, UI Like/Dislike, CSAT popup và script xuất dữ liệu `scripts/export_tuning_dataset.py` đã hoàn thành và được kiểm thử tự động.  
+> **Trạng thái:** IMPLEMENTED (Core Complete SQLite / Production PostgreSQL Export Pending)
+> **Mức độ minh chứng (Evidence):** L1 Automated Tests (`tests/test_feedback.py` 6/6 PASS) · L3 Live Deployed
+> **Audit basis / Documentation baseline reviewed:** `c30ff1d` · **Application verified:** `c30ff1d`
+> **Ngày rà soát & đồng bộ:** 2026-10-01
+> **Kết luận & Phụ thuộc F12:** Bảng DDL `conversation_feedback`, route `POST /api/feedback`, UI Like/Dislike, CSAT popup và script xuất dữ liệu `scripts/export_tuning_dataset.py` đã hoàn tất cho SQLite cục bộ. Connector `export.py` hiện đọc trực tiếp SQLite; pipeline export cho PostgreSQL production là hạng mục mở rộng. Đồng thời, vòng lặp dữ liệu phụ thuộc sống còn vào **[F12] Bảo toàn lịch sử chat** (loại bỏ lệnh `DELETE LIMIT 6` để không làm mồ côi liên kết `turn_id` của phản hồi).
 > **Mục tiêu:** Thu thập dữ liệu hội thoại, phản hồi chất lượng (CSAT, Like/Dislike) và dữ liệu can thiệp của tư vấn viên để phục vụ quá trình tinh chỉnh (Fine-tuning) và tối ưu hóa theo sở thích (RLHF / DPO).
 
 ---

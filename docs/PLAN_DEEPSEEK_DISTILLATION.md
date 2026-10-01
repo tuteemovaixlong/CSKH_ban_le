@@ -10,8 +10,8 @@ cập_nhật_cuối: 2026-09-21
 # Kế hoạch Chưng cất Dữ liệu Tổng hợp từ DeepSeek API (Distillation Plan)
 
 > [!IMPORTANT]
-> **Ưu tiên Triển khai: GIAI ĐOẠN 2 (Phục vụ Khóa luận Tốt nghiệp — Bước 3)**  
-> Để huấn luyện mô hình cục bộ (Local SLM) như Qwen 2.5 7B đạt độ chuẩn xác cao trong các tác vụ CSKH bán lẻ chuyên sâu, cần một tập dữ liệu hướng dẫn (Instruction-tuning Dataset) chất lượng cao. Phương pháp chưng cất tri thức (Knowledge Distillation) từ các mô hình cỡ lớn hàng đầu (DeepSeek-V3 / DeepSeek-R1) là giải pháp tối ưu nhất về chi phí và thời gian.
+> **Ưu tiên Triển khai: PHASE 6: Post-Thesis & Production Scaling (Nghiên cứu Sau Khóa luận)**
+> Thuộc Giai đoạn 6 trong Lộ trình Chiến lược [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md). Để huấn luyện mô hình cục bộ (Local SLM) như Qwen 2.5 7B đạt độ chuẩn xác cao trong các tác vụ CSKH bán lẻ chuyên sâu, cần một tập dữ liệu hướng dẫn (Instruction-tuning Dataset) chất lượng cao. Phương pháp chưng cất tri thức (Knowledge Distillation) từ các mô hình cỡ lớn hàng đầu (DeepSeek-V3 / DeepSeek-R1) là giải pháp tối ưu nhất về chi phí và thời gian.
 
 Tài liệu này xác định phương pháp sinh tập dữ liệu tổng hợp (Synthetic Data Generation), bộ lọc kiểm chuẩn tự động và cấu trúc dữ liệu đầu ra phục vụ quá trình Fine-tuning.
 

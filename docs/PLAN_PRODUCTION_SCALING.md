@@ -10,7 +10,7 @@ cập_nhật_cuối: 2026-09-22
 # Kế Hoạch Mở Rộng Quy Mô Hạ Tầng (Production Scaling Architecture)
 
 > [!NOTE]
-> **Lịch trình Triển khai: GIAI ĐOẠN 6 (Post-Thesis / Mở Rộng Thương Mại Sau Khóa Luận)**  
+> **Lịch trình Triển khai: GIAI ĐOẠN 6 (Post-Thesis / Mở Rộng Thương Mại Sau Khóa Luận)**
 > Ở giai đoạn làm Khóa luận Tốt nghiệp, hệ thống tập trung vận hành ổn định trên máy chủ EC2 đơn lẻ (Single-instance HTTPS via Caddy) kết hợp máy chủ WSGI Waitress (8 threads) và Bounded Concurrency Gate để phục vụ chấm điểm và demo live 100% tin cậy. Kiến trúc phân tán AWS ALB + Amazon RDS Multi-AZ + vLLM Cluster sẽ được đưa vào phần **Hướng phát triển tương lai** của Luận văn và triển khai sau khi bảo vệ xong.
 
 Tài liệu này xác định kiến trúc mở rộng (Scaling Architecture) cho RetailOps từ mô hình triển khai máy chủ đơn lẻ (Single-instance EC2) hiện tại sang kiến trúc phân tán có tính sẵn sàng cao (High Availability), chịu tải lớn và tối ưu hóa chi phí vận hành.
@@ -23,7 +23,7 @@ Tài liệu này xác định kiến trúc mở rộng (Scaling Architecture) ch
   - Toàn bộ dịch vụ (Caddy Reverse Proxy, Web API container, PostgreSQL database) chạy trên máy chủ EC2 `retailops-dev` (t3.large).
   - Model Inference kết nối vLLM tự host (GPU Colab L4 qua ngrok) hoặc Cloud API (OpenRouter/DeepSeek).
 * **Định hướng tối ưu hóa đúng đắn**:
-  1. **Tài nguyên CPU/RAM & WSGI Headroom**: Bounded InferenceGate giới hạn số lượt suy luận đồng thời, kiểm soát hàng đợi để luôn chừa ít nhất 2 luồng trống cho healthcheck và API quản trị.
+  1. **Tài nguyên CPU/RAM & WSGI Headroom**: Bounded Chat Admission Limiter kết hợp `InferenceGate` ($K=1, Q=5$): admission giới hạn tối đa 6 chat được nhận xử lý đồng thời trên Waitress 8 workers, giảm nguy cơ chat chiếm hết worker; không bảo đảm luôn có hai worker rảnh hoặc một pool riêng; mục tiêu có điều kiện P99 $\le 50\text{ms}$ cho `/healthz` dưới tải bão hòa 6 chat kiểm soát.
   2. **Cơ sở dữ liệu & Tri thức**: Khảo sát pooling (`psycopg_pool`) sau khi benchmark chứng minh overhead > 5ms/turn; GraphRAG Apache AGE quản lý phiên an toàn.
   3. **Ranh giới Cache Coherence**: Loại bỏ giả định "Semantic Cache hit 60% cho policy/retail". Tra cứu chính sách và nghiệp vụ bắt buộc truy xuấtสด và kiểm tra trích dẫn sống. Semantic cache chỉ dùng cho câu hỏi xã giao thông thường (`mode == 'general'`).
 

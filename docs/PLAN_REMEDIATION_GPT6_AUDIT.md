@@ -1,8 +1,8 @@
 # Kế Hoạch Khắc Phục Sau Đợt Rà Soát GPT-6 Astra Pro Mode (Historical Audit)
 
-> **Trạng thái:** SUPERSEDED / HISTORICAL AUDIT  
-> **Audit basis / Documentation baseline reviewed:** `b93eb5a` · **Application verified:** `fd24e36`  
-> **Ngày rà soát & lưu trữ:** 2026-09-22  
+> **Trạng thái:** SUPERSEDED / HISTORICAL AUDIT
+> **Audit basis / Documentation baseline reviewed:** `b93eb5a` · **Application verified:** `fd24e36`
+> **Ngày rà soát & lưu trữ:** 2026-09-22
 > **Kết luận:** Toàn bộ các hạng mục kỹ thuật ngắn hạn đã được triển khai và kiểm thử tự động 100% trong mã nguồn (`tests/test_audit_remediation.py`, `tests/test_manager_crud.py`). Hạng mục Catalog DB Persistence duy nhất còn lại được chuyển giao và theo dõi độc quyền tại [PLAN_FIX_UI_02_MANAGER_PERSISTENCE.md](PLAN_FIX_UI_02_MANAGER_PERSISTENCE.md).
 
 ---

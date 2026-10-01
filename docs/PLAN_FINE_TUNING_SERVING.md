@@ -12,7 +12,7 @@ cập_nhật_cuối: 2026-09-21
 # Kế hoạch Huấn luyện (Fine-Tuning) & Tích hợp Model Chuyên môn hóa
 
 > [!IMPORTANT]
-> **Lịch trình Triển khai: GIAI ĐOẠN 2 (Sau khi Hoàn thành & Bảo vệ Khóa luận Tốt nghiệp)**  
+> **Lịch trình Triển khai: GIAI ĐOẠN 2 (Sau khi Hoàn thành & Bảo vệ Khóa luận Tốt nghiệp)**
 > Để đảm bảo độ ổn định tuyệt đối và tránh rủi ro mô hình sinh lỗi khi demo trước Hội đồng chấm khóa luận, giai đoạn Fine-tuning chỉ được kích hoạt sau khi hệ thống nền tảng, bộ thu thập dữ liệu (Flywheel) và Báo cáo luận văn đã hoàn tất 100%. Trong thời gian bảo vệ khóa luận, hệ thống sử dụng các mô hình đã được kiểm chứng (Gemini Flash, Claude Haiku hoặc Qwen2.5-7B-Instruct pretrained).
 
 Tài liệu này xác định quy trình kỹ thuật để huấn luyện (Fine-tuning) mô hình mã nguồn mở gọn nhẹ bằng phương pháp LoRA / QLoRA, đánh giá chất lượng bằng bộ benchmark của RetailOps, và đóng gói triển khai cắm trực tiếp vào hệ thống.

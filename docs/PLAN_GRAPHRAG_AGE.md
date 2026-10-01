@@ -1,9 +1,9 @@
 # Kế Hoạch Kỹ Thuật (v6.2): GraphRAG Apache AGE trên PostgreSQL 16
 
-> **Mục tiêu:** Nâng cấp hệ thống Cơ sở Tri thức RetailOps từ **deterministic hybrid lexical + feature-hash vector RAG baseline** hiện tại lên kiến trúc **Đồ thị tri thức (Knowledge Graph - GraphRAG)** sử dụng **Apache AGE (openCypher)** tích hợp trực tiếp trên PostgreSQL 16.  
-> **Cam kết kỹ thuật & Nghiên cứu:** Hỗ trợ suy luận quan hệ bắc cầu đa bước (*Multi-hop relational reasoning*) cho các SOPs nghiệp vụ TMĐT, giảm thiểu phát biểu không có cơ sở (*reduce unsupported claims*) và cải thiện khả năng truy vết nguồn gốc (*improve provenance*).  
-> **Snapshot đối chiếu:** Commit `fd24e36` trên nhánh `main` (toàn bộ 340 regression tests, cổng tài liệu 4/4 và hợp đồng triển khai đều đang PASS).  
-> **Audit basis / Documentation baseline reviewed:** `b93eb5a` · **Application verified:** `fd24e36`  
+> **Mục tiêu:** Nâng cấp hệ thống Cơ sở Tri thức RetailOps từ **deterministic hybrid lexical + feature-hash vector RAG baseline** hiện tại lên kiến trúc **Đồ thị tri thức (Knowledge Graph - GraphRAG)** sử dụng **Apache AGE (openCypher)** tích hợp trực tiếp trên PostgreSQL 16.
+> **Cam kết kỹ thuật & Nghiên cứu:** Hỗ trợ suy luận quan hệ bắc cầu đa bước (*Multi-hop relational reasoning*) cho các SOPs nghiệp vụ TMĐT, giảm thiểu phát biểu không có cơ sở (*reduce unsupported claims*) và cải thiện khả năng truy vết nguồn gốc (*improve provenance*).
+> **Snapshot đối chiếu:** Commit `fd24e36` trên nhánh `main` (toàn bộ 340 regression tests, cổng tài liệu 4/4 và hợp đồng triển khai đều đang PASS).
+> **Audit basis / Documentation baseline reviewed:** `b93eb5a` · **Application verified:** `fd24e36`
 > **Phiên bản v6.2:** Tách bạch provenance thực thể/quan hệ, sửa lỗi cache request_mode, chuẩn hóa link tương đối (cấm URL file cục bộ), ranh giới an toàn với Catalog SSOT (FIX02) và candidate restriction không gây Cartesian mismatch.
 
 ---
@@ -106,7 +106,7 @@ graph TD
     conn.execute("CREATE EXTENSION IF NOT EXISTS age;")
     conn.execute("LOAD 'age';")
     conn.execute("SET search_path = ag_catalog, pg_catalog;")
-    
+
     with conn.transaction():
         conn.execute("SELECT pg_advisory_xact_lock(hashtextextended('retailops_graph_ingest', 0));")
         # Ingest đồ thị mới -> verify -> grants -> activate
