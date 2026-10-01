@@ -167,39 +167,41 @@ flowchart TB
 
 ## 3. Thiết Kế Kỹ Thuật Chi Tiết Từng Tệp Mã Nguồn
 
-### 3.1. Tệp `retailops/business/cache.py`
-1. **Chính sách Cache Fail-Closed (Positive Allowlist Policy)**:
-   - Loại bỏ các câu hỏi chính sách/phí ship khỏi static cache (do protocol yêu cầu phí ship/vận chuyển/bảo hành phải qua `search_knowledge` và trích dẫn citations).
-   - Hàm `is_cacheable_query` chỉ chấp nhận các câu hỏi FAQ tĩnh có nguồn xác định rõ ràng (deterministic static source), mọi câu hỏi khác mặc định trả về `False` (`unknown query -> False`):
+### 3.1. Tệp `retailops/business/cache.py` & `retailops/business/application.py`
+1. **Kiến Trúc An Toàn Cache 3 Yếu Tố (Tri-Factor Cache Safety)**:
+   Để khắc phục triệt để lỗi F01 mà không làm gãy các unit test hiện hữu trong `tests/test_cache_engineering.py`, an toàn Semantic Cache được kiểm soát chặt chẽ qua 3 lớp phòng vệ độc lập:
+   - **Lớp 1: Bộ Lọc Truy Vấn (Query Filter - `is_cacheable_query`)**:
+     * Loại bỏ câu hỏi chứa mã đơn cụ thể (`ORDER_PATTERN`), mã sản phẩm (`PRODUCT_PATTERN`), hoặc ý định mutation đổi trả/hủy đơn (`MUTATION_PATTERN`).
+     * Loại bỏ câu hỏi chứa đại từ chỉ định phụ thuộc ngữ cảnh ("nó", "món này", "cái này", "sản phẩm này", "đơn này", "áo này", "quần này", "này").
+     * Bảo toàn khả năng cacheable cho các câu hỏi chính sách/FAQ chung khi không có context phụ thuộc (đảm bảo tương thích 100% với `tests/test_cache_engineering.py:38-41`).
      ```python
-     STATIC_FAQ_PATTERNS = [
-         re.compile(r'^(mấy giờ|giờ mở cửa|thời gian làm việc|shop ở đâu|địa chỉ shop|kênh liên hệ)', re.IGNORECASE),
-     ]
+     DEICTIC_PATTERN = re.compile(r'\b(nó|món này|cái này|sản phẩm này|đơn này|áo này|quần này|đây|này)\b', re.IGNORECASE)
 
      def is_cacheable_query(text: str, context: Optional[dict] = None) -> bool:
-         # 1. Bắt buộc từ chối nếu phiên có context động (order_id hoặc product_id)
+         # 1. Bắt buộc từ chối nếu phiên hội thoại đang có context động
          if context and (context.get('product_id') or context.get('order_id')):
              return False
          if not isinstance(text, str):
              return False
          cleaned = text.strip()
-         if len(cleaned) < 2 or len(cleaned) > 500:
+         if len(cleaned) < 2 or len(cleaned) > 1000:
              return False
-         # 2. Từ chối câu hỏi mang thực thể cụ thể, mutation hoặc đại từ chỉ định
          if ORDER_PATTERN.search(cleaned) or PRODUCT_PATTERN.search(cleaned) or MUTATION_PATTERN.search(cleaned):
              return False
-         deictic_pattern = re.compile(r'\b(nó|món này|cái này|sản phẩm này|đơn này|áo này|quần này|đây|này)\b', re.IGNORECASE)
-         if deictic_pattern.search(cleaned):
+         if DEICTIC_PATTERN.search(cleaned):
              return False
-         # 3. Chỉ chấp nhận các câu hỏi khớp allowlist FAQ tĩnh (FAIL-CLOSED: Unknown -> False)
-         if any(p.search(cleaned) for p in STATIC_FAQ_PATTERNS):
-             return True
-         return False
+         return True
      ```
-   - *Ghi chú thiết kế:* Nếu trong quá trình triển khai PR A chưa có static FAQ SSOT đủ an toàn, cho phép tạm bypass/disable semantic cache trong PR A mà không ảnh hưởng tới luồng workflow thông thường.
-2. **Đồng bộ điều kiện giữa `lookup` và `store`**:
-   - Cả hai đầu đọc (`lookup`) và ghi (`store`) đều bắt buộc chạy qua cùng một logic `is_cacheable_query(text, context)`.
-   - Các câu trả lời dựa trên tri thức động truy xuất (RAG / có citations/sources) sẽ **bị loại khỏi Semantic Cache trong PR A** để bảo toàn tính xác thực và revalidation tri thức tại chỗ.
+   - **Lớp 2: Bảo Vệ Ngữ Cảnh Hội Thoại (Context Guard)**:
+     * Tại cả hai chặng `lookup` (đọc) và `store` (ghi), nếu `snapshot` hoặc `bound.context` đang có `product_id` hoặc `order_id` $\rightarrow$ **Bắt buộc bypass cache 100%**.
+     * Triệt tiêu hoàn toàn khả năng một câu hỏi "bảo hành bao lâu" khi đang xem giày P-603 bị trả về câu trả lời cache của áo P-101.
+   - **Lớp 3: Kiểm Chứng Nguồn Gốc Phản Hồi (Response Provenance Guard tại `application.py:296-300`)**:
+     * Tuyệt đối KHÔNG ghi vào Semantic Cache nếu phản hồi được tạo ra có sử dụng tri thức động:
+       1. `bound.knowledge.searches`: Đã gọi công cụ tìm kiếm tri thức RAG.
+       2. `result.get('sources')`: Phản hồi có trích dẫn nguồn văn bản chính sách/vận chuyển.
+       3. `bound.versions`: Đã đọc bản ghi có phiên bản (đơn hàng, tồn kho).
+       4. `bound.context.get('product_id')` hoặc `bound.context.get('order_id')`.
+     * Chỉ những phản hồi thuần túy mang tính thông tin tĩnh chung (generic answer) mới được phép ghi vào cache.
 
 ### 3.2. Tệp `retailops/business/store.py` (Chuẩn hóa Storage Boundary)
 1. **Chuẩn hóa Ngoại lệ Cơ sở Dữ liệu tại Storage Boundary**:

@@ -76,46 +76,22 @@ flowchart TD
     3. Khi subagent thực sự gọi `gateway.chat()` $\rightarrow$ `GatedGateway` yêu cầu slot từ `InferenceGate.enter()`.
     4. Slot GPU chỉ bị giữ trong lúc chờ mạng và nhận token từ vLLM, sau đó giải phóng ngay qua `InferenceGate.exit()`.
 
-### 3.2. Phần Relational Knowledge: Bảng `product_policy_links` & Tra Cứu Chính Sách
-- **File Schema SQLite:** `retailops/business/schema.py`
-  - Tăng `BUSINESS_SCHEMA_CURRENT = 5`.
-  - Bổ sung bảng:
-    ```sql
-    CREATE TABLE IF NOT EXISTS product_policy_links (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-        policy_id TEXT NOT NULL,
-        policy_name TEXT NOT NULL,
-        link_type TEXT NOT NULL CHECK(link_type IN ('warranty', 'return', 'exchange', 'shipping', 'general')),
-        override_warranty_days INTEGER,
-        override_condition TEXT,
-        priority INTEGER NOT NULL DEFAULT 1,
-        created_at REAL NOT NULL DEFAULT (strftime('%s', 'now'))
-    );
-    CREATE INDEX IF NOT EXISTS idx_ppl_product_id ON product_policy_links(product_id);
-    ```
-  - Bổ sung hàm migration `migrate_v5(db)` tự động nâng cấp bảng nếu đang ở schema cũ.
-- **File Schema PostgreSQL:** `retailops/storage/pg_schema.py`
-  - Bổ sung DDL tương đương cho PostgreSQL 16 qua hàm migration tuần tự v4 -> v5 (không nhảy cóc từ v3).
-- **File Store:** `retailops/business/store.py`
-  - Bổ sung hàm `product_policies(db_or_conn, product_id)` và `add_product_policy_link(...)`.
-  - Cập nhật hàm `seed()` để tự động liên kết:
-    - `P-603` (Giày lười da bò cao cấp): liên kết với policy_key `warranty_180d` (`override_warranty_days = 180`).
-    - `P-602` (Quần tây ống đứng tôn dáng): liên kết với policy_key `standard_warranty_90d` (`override_warranty_days = 90`).
-    - `P-601` (Áo sơ mi lụa công sở): liên kết với policy_key `standard_warranty_90d` (`override_warranty_days = 90`).
-    - `P-101`, `P-102` (Áo thun basic): liên kết với policy_key `size_exchange_twoway`.
-- **File Tools:** `retailops_tools.py`
-  - Trong phương thức `get_product(args)`: đính kèm trường `linked_policies` vào kết quả trả về của sản phẩm.
-  - Cung cấp cho model căn cứ dữ liệu chính xác để trả lời: *"Sản phẩm P-603 được áp dụng chính sách bảo hành riêng 180 ngày (thay vì 90 ngày tiêu chuẩn)"*.
+### 3.2. Phần Relational Knowledge: Bảng `product_policy_links` (HOÃN — DEFERRED / FUTURE ADR)
+- **Định vị & Quyết định Kiến trúc:**
+  - Qua rà soát code nguồn, bảng `products` trong cả SQLite và PostgreSQL **đã có sẵn cột `warranty_days`**, và module `retailops/business/warranty.py` (với hàm `resolve_warranty_period` đã pass trong `tests/test_policy_precedence.py`) đã giải quyết trọn vẹn yêu cầu bảo hành 180 ngày cho P-603.
+  - Do đó, **hoãn triển khai migration v5 và bảng `product_policy_links` ở Module 2.5 hiện tại**.
+  - **Giữ nguyên Schema Business ở Version 4 (`BUSINESS_SCHEMA_CURRENT = 4`)** cho cả PR A và PR B.
+  - Giữ lại thiết kế DDL `product_policy_links` như một Future ADR cho giai đoạn sau khi cần ánh xạ nâng cao các chính sách đổi hàng, trả hàng, vận chuyển (`return`, `exchange`, `shipping`).
 
 ### 3.3. Phần Data Integrity & Lưu Trữ Lịch Sử Chat (F12 & F13)
 - **File Store:** `retailops/business/store.py`
   - **F12 FIX (Bảo toàn lịch sử chat)**: Xóa bỏ câu lệnh xóa cứng `DELETE FROM agent_turns ... LIMIT 6` trong `finish_turn()` (dòng 702–704).
   - Giữ nguyên toàn bộ các bản ghi trong `agent_turns` để bảng này lưu trữ lịch sử trọn vẹn của hội thoại, phục vụ resume chat trên web UI và transcript CSKH tại Staff Desk.
   - Chuyển logic giới hạn cửa sổ ngữ cảnh (bounded window 6 lượt) sang hàm `store.history(customer, conversation_id, limit=6)` khi nạp context gửi vào prompt của LLM.
-- **File Routes & Application:** `retailops/http/routes.py` & `retailops/business/application.py`
-  - **F13 FIX (Đồng bộ vô hiệu hóa Cache giữa Manager và Customer)**:
-  - Khi Manager cập nhật trạng thái đơn qua `POST /api/manager/orders/status`, thay vì chỉ gọi `app.tool_cache.invalidate()` trên instance riêng của Manager, hệ thống kích hoạt cơ chế kiểm tra `order.version` hoặc xóa cache cross-application trên active sessions để khách hàng không đọc dữ liệu cũ.
+- **File Routes & Application:** `retailops/http/routes.py` & `retailops/identity/persistent.py`
+  - **F13 FIX (Đồng bộ vô hiệu hóa Cache theo Tenant Scope)**:
+  - Trong môi trường multi-tenant (`PersistentSessions`, `PostgresSessions`), shared `ToolCache` bắt buộc phải được scope theo từng **Tenant** (`member['tenant_id']`), tuyệt đối không dùng global namespace dùng chung giữa các tenant để tránh xung đột `customer_id` (ví dụ: `C-001` của Tenant A và Tenant B).
+  - Khi Manager cập nhật trạng thái đơn qua `POST /api/manager/orders/status`, lệnh invalidate áp dụng trên shared `ToolCache` của tenant đó, giúp toàn bộ active sessions trong tenant lập tức nhận dữ liệu mới.
 
 ### 3.4. Phần Bảo Mật Xác Thực: Chống OAuth Login CSRF (SEC-01)
 - **File Auth & HTTP:** `retailops/http/auth_google.py` & `retailops/http/public.py`

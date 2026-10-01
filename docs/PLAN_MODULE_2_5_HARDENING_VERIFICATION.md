@@ -38,12 +38,14 @@ flowchart LR
 ### 2.1. PR A — Context, Cache, Dispute Correctness, Tool Safety & Truthful Boundary (Ưu tiên P1)
 * **Phạm vi xử lý:** F01, F02, F03, F04, F05, F06, F08a, F11.
 * **Tệp tác động:**
-  - `retailops/business/cache.py`:
-    - Áp dụng chính sách fail-closed cho `is_cacheable_query(text, context)`: chỉ chấp nhận allowlist FAQ tĩnh hoàn toàn độc lập ngữ cảnh; cấm cache khi phiên chat đang có `product_id` hoặc `order_id`.
-    - Tất cả câu hỏi chính sách/RAG hoặc chứa thực thể động đều bypass cache 100% (PR A không cache phản hồi có citations/tri thức động).
-  - `retailops/business/application.py`:
-    - Đưa luồng ghi turn của Semantic Cache vào bên trong phạm vi kiểm soát của `conv_lock`.
-    - Hợp đồng Replay 2 chặng: Replay #1 fast-path trước lock; Replay #2 dưới lock bắt request thắng đua.
+  - `retailops/business/cache.py` & `retailops/business/application.py`:
+    - **F01 FIX (An Toàn Cache 3 Yếu Tố — Tri-Factor Cache Safety)**:
+      1. *Query Filter*: Từ chối câu hỏi chứa mã đơn/sản phẩm cụ thể hoặc đại từ chỉ định ("món này", "đơn này", "sản phẩm này"). Không áp allowlist text quá hẹp gây phá vỡ test FAQ hiện hữu.
+      2. *Context Guard*: Bắt buộc bypass cache khi phiên hội thoại đang có `order_id` hoặc `product_id` trong context snapshot.
+      3. *Response Provenance*: Tuyệt đối KHÔNG ghi cache nếu phản hồi từ agent có sử dụng dynamic tool calls, có tri thức truy xuất RAG (`bound.knowledge.searches`), hoặc có trích dẫn `sources`.
+    - **F02 FIX (Serialization cho AI/Cache Turns)**:
+      - Đưa luồng ghi turn của Semantic Cache vào bên trong phạm vi kiểm soát của `conv_lock`.
+      - Hợp đồng Replay 2 chặng: Replay #1 fast-path trước lock; Replay #2 dưới lock bắt request thắng đua.
     - Sửa `Application.execute()`: Re-raise ngoại lệ hạ tầng (status >= 500 hoặc 429), chỉ chuyển đổi lỗi 4xx nghiệp vụ thành dict tool result.
   - `retailops_tools.py`:
     - **F11 FIX**: Bọc an toàn `p.get('category') or ''` và ép kiểu danh sách aliases chuỗi trong `search_products`. Loại bỏ triệt để nguy cơ `TypeError` khi catalog có sản phẩm mang `category=None`.
@@ -67,31 +69,32 @@ flowchart LR
     - **F12 FIX (Bảo toàn lịch sử chat)**: Loại bỏ câu lệnh `DELETE FROM agent_turns ... LIMIT 6` trong `finish_turn()`. Giữ nguyên toàn bộ lịch sử trong database để phục vụ resume chat và transcript CSKH.
     - Chuyển việc giới hạn cửa sổ ngữ cảnh (bounded window 6 turns) sang phạm vi bộ nhớ của hàm `history()` trước khi đưa vào context prompt của LLM.
   - `retailops/http/routes.py` & `retailops/identity/persistent.py`:
-    - **F13 FIX (Đồng bộ vô hiệu hóa Cache)**: Khi Manager cập nhật trạng thái đơn hàng qua `POST /api/manager/orders/status`, thực hiện invalidate cache trên toàn bộ active applications hoặc gắn cơ chế kiểm tra `order.version` trước khi trả dữ liệu từ `ToolCache`.
+    - **F13 FIX (Đồng bộ vô hiệu hóa Cache theo Tenant Scope)**:
+      - Trong môi trường multi-tenant (`PersistentSessions`, `PostgresSessions`), `ToolCache` được chia sẻ ở phạm vi **từng Tenant** (`tenant_id`), không dùng global namespace để tránh xung đột `customer_id` giữa các tenant.
+      - Khi Manager cập nhật trạng thái đơn hàng qua `POST /api/manager/orders/status`, lệnh invalidate áp dụng trên shared `ToolCache` của tenant tương ứng, giúp toàn bộ active sessions nhận ngay dữ liệu mới.
   - `retailops/http/auth_google.py` & `retailops/http/public.py`:
     - **SEC-01 FIX (Chống OAuth Login CSRF)**: Ràng buộc `state` với trình duyệt khởi tạo bằng transient session cookie (`HttpOnly`, `SameSite=Lax`). Kiểm tra khớp cookie ở callback `/auth/google/callback`.
-  - Dọn sạch `self.agent_lock` đồng bộ ở cả `Application`, `identity/demo.py`, `persistent.py`, `postgres.py` và cập nhật các unit test trong `tests/test_conversation.py`.
+  - **Dọn sạch Legacy `self.agent_lock`**:
+    - Mục tiêu kiến trúc concurrency chỉ còn đúng 2 tầng phân định rõ ràng:
+      1. Khóa tuần tự hóa theo từng phiên hội thoại (`conv_lock` per conversation, non-blocking, trả 429 `model_busy` khi đua request).
+      2. Cổng kiểm soát tài nguyên GPU (`InferenceGate` với FIFO queue và admission timeout).
+    - Xóa bỏ hoàn toàn biến `self.agent_lock` ở `Application`, `identity/demo.py`, `persistent.py`, `postgres.py`.
   - `tests/test_schema_migration.py` & `tests/test_providers.py`:
     - Đóng tường minh connection SQLite bằng `contextlib.closing()` hoặc `try/finally db.close()`.
   - `retailops/business/application.py`:
     - Đo đạc thời gian model I/O thực tế tách biệt với queue wait time; không dùng 0.0 giả lập cho độ trễ chưa đo.
 
-### 2.3. PR C — Relational Knowledge & Clean Schema Migration (Ưu tiên P2)
-* **Phạm vi xử lý:** F10, ADR AGE vs SQL Relational.
-* **Tệp tác động:**
-  - `retailops/storage/pg_schema.py`:
-    - Phân tách bước migration từ v3 -> v4 (Catalog) và từ v4 -> v5 (`product_policy_links`).
-  - `retailops/schema.py` & `retailops/business/schema.py`:
-    - Thiết kế migration tương ứng trên SQLite nâng schema tuần tự.
-  - `retailops/business/store.py`:
-    - Seed dữ liệu chuẩn xác cho `product_policy_links`: `P-603` (Giày lười da bò cao cấp) liên kết chính sách bảo hành 180 ngày.
-    - Chuẩn hóa tên sản phẩm: `P-601` (Áo sơ mi lụa công sở), `P-602` (Quần tây ống đứng), `P-603` (Giày lười da bò).
-  - Cập nhật tài liệu: Ghi nhận rõ ADR hoãn Apache AGE trên EC2 production, chính thức thay thế bằng SQL Relational Knowledge Linkage.
+### 2.3. PR C — Relational Knowledge & Clean Schema Migration (HOÃN — DEFERRED / FUTURE ADR)
+* **Trạng thái:** **DEFERRED / OUT OF SCOPE CHO MODULE 2.5**.
+* **Định vị:**
+  - Hiện tại, bảng `products` trong cả SQLite và PostgreSQL **đã có sẵn cột `warranty_days`**, kết hợp với module `retailops/business/warranty.py` (đã có sẵn hàm `resolve_warranty_period` ưu tiên thuộc tính sản phẩm trước chính sách chung) **đã đủ giải quyết 100% bài toán bảo hành 180 ngày của sản phẩm P-603**.
+  - Do đó, **giữ nguyên Schema Business ở Version 4 (`BUSINESS_SCHEMA_CURRENT = 4`)** trong toàn bộ Module 2.5 (PR A và PR B). Không thực hiện migration v5 ở giai đoạn này để triệt tiêu rủi ro lỗi DDL trên môi trường EC2.
+  - Giữ PR C như một tài liệu kiến trúc tham chiếu (Future ADR) cho giai đoạn mở rộng sau này khi cần cấu trúc bảng liên kết đa chiều cho các chính sách đổi hàng, trả hàng, vận chuyển (`return`, `exchange`, `shipping`).
 
-### 2.4. Khoảng Trống Hoãn Triển Khai (Known Deferred Gap): F08b Durable Exchange Approval Lifecycle
+### 2.4. Khoảng Trống Hoãn Triển Khai: F08b Durable Exchange Approval Lifecycle
 * **Trạng thái:** **DEFERRED / OUT OF SCOPE FOR MODULE 2.5**.
 * **Đặc tả:** Xây dựng bảng lưu trữ bền vững `exchange_requests`, API xác nhận của khách (`POST /api/exchange-proposals`), API phê duyệt của nhân viên (`POST /api/staff/exchange/approve`), queue tự động và state machine 2-stage hoàn chỉnh.
-* **Kế hoạch:** Yêu cầu thiết kế kiến trúc và đặc tả kỹ thuật độc lập trong giai đoạn sau Module 2.5, tuyệt đối không gộp vào PR B hay PR C.
+* **Kế hoạch:** Yêu cầu thiết kế kiến trúc và đặc tả kỹ thuật độc lập trong giai đoạn sau Module 2.5, tuyệt đối không gộp vào PR A hay PR B.
 
 ---
 
