@@ -77,7 +77,7 @@ Bảng đối chiếu toàn diện giữa tài liệu thiết kế và hiện tr
 - Triển khai qua 3 Pull Request nhỏ, độc lập:
   1. **PR A (Context, Cache & Dispute Correctness)**: Sửa rò rỉ cache F01, khóa turn F02, re-raise lỗi hạ tầng F03, chặn proposal hủy đơn delivered F04, sửa đồng bộ product context F05, variant precision F06.
   2. **PR B (Concurrency, Headroom & Telemetry)**: Công thức headroom Waitress $Q \le 5$, header `Retry-After: 5`, dọn sạch `agent_lock`, đóng connection fixture SQLite, đo telemetry thật F09.
-  3. **PR C (Relational Linkage & Clean Migration)**: Triển khai bảng `product_policy_links` trên PostgreSQL (`pg_schema.py`) và SQLite theo migration tuần tự v3 -> v4 -> v5; nạp dữ liệu chuẩn P-603 bảo hành 180 ngày; chính thức hóa ADR thay thế Apache AGE bằng SQL Relational.
+  3. **PR C (Relational Linkage & Clean Migration - HOÃN / DEFERRED)**: Hoãn triển khai trong Module 2.5; duy trì Schema v4 (`BUSINESS_SCHEMA_CURRENT = 4`). Cột `warranty_days` trong bảng `products` và module `warranty.py` đã giải quyết trọn vẹn P-603 180 ngày. Giữ thiết kế DDL `product_policy_links` làm Future ADR cho giai đoạn sau.
 
 ### Giai Đoạn 4: Đo Lường Thực Nghiệm Khoa Học Cho Luận Văn (Scientific Evaluation)
 - Chạy benchmark tải đồng thời (`concurrency = 1, 2, 4, 8, 16`) đo lường độ trễ E2E, throughput, 429 rate, Jain's Fairness Index và wait-time dispersion.

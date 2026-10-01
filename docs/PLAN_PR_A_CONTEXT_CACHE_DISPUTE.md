@@ -98,19 +98,20 @@ flowchart TB
         A_Lock -- "Đã giữ Lock" --> A_Rep2{"6. Replay #2 (Dưới Lock)<br/>(Bắt concurrent request vừa commit xong)"}
         A_Rep2 -- "Đã commit" --> A_Rep2Ret["Trả kết quả Replay & Release Lock"]
         
-        A_Rep2 -- "Turn mới" --> A_CacheElig{"7. Điều kiện Cache Fail-Closed (F01 FIX):<br/>- Không order/product context?<br/>- Không attachment, không deictic words?<br/>- Khớp Allowlist FAQ tĩnh (giờ mở cửa, địa chỉ)?<br/>(Query không rõ ràng -> return False; chính sách/RAG -> bypass)"}
+        A_Rep2 -- "Turn mới" --> A_Reval["7. Reload & Revalidate Snapshot (Dưới Lock)<br/>(store.snapshot nạp context mới nhất từ DB)"]
+        A_Reval --> A_CacheElig{"8. Điều kiện Cache Fail-Closed (F01 FIX):<br/>- Revalidated snapshot không có order/product context?<br/>- Không attachment, không deictic words?<br/>- Khớp Allowlist FAQ tĩnh (giờ mở cửa, địa chỉ)?<br/>(Query không rõ ràng -> return False; chính sách/RAG -> bypass)"}
         
-        A_CacheElig -- "Thỏa mãn (Allowlist FAQ tĩnh)" --> A_CacheLook{"8. Semantic Cache Lookup"}
+        A_CacheElig -- "Thỏa mãn (Allowlist FAQ tĩnh)" --> A_CacheLook{"9. Semantic Cache Lookup"}
         A_CacheElig -- "Không thỏa mãn / RAG / Bối cảnh động" --> A_Bypass["Bypass Cache 100%<br/>(Chuyển sang luồng Workflow)"]
         
         %% Cache hit serialization
-        A_CacheLook -- "Hit" --> A_FinLock["✅ F02 FIX: finish_turn() DƯỚI conv_lock<br/>- Commit turn /api/chat an toàn tuyệt đối<br/>- Giải phóng conv_lock trong ExitStack callback<br/>- Không CAS conflict, không rò rỉ dữ liệu"]
+        A_CacheLook -- "Hit" --> A_FinLock["✅ F02 FIX: finish_turn() DƯỚI conv_lock<br/>- Commit từ snapshot vừa revalidate (không dùng snapshot cũ)<br/>- Giải phóng conv_lock trong ExitStack callback<br/>- Không CAS conflict, không rò rỉ dữ liệu"]
         A_FinLock --> A_CacheDone["Trả kết quả Cache Hit cho khách"]
         
         A_CacheLook -- "Miss" --> A_Bypass
         
-        A_Bypass --> A_ModelWf["9. Khởi tạo Workflow & Cấp Permit Model<br/>(Chỉ cấp GPU permit khi thực sự gọi model)"]
-        A_ModelWf --> A_DispAgent["10. Chạy Dispute Subagent Chuẩn hóa"]
+        A_Bypass --> A_ModelWf["10. Khởi tạo Workflow & Cấp Permit Model<br/>(Chỉ cấp GPU permit khi thực sự gọi model)"]
+        A_ModelWf --> A_DispAgent["11. Chạy Dispute Subagent Chuẩn hóa"]
         
         %% Dispute Target Fixes
         A_DispAgent --> A_OrderRes["✅ F05 FIX: Phân giải Thứ tự Ưu tiên Đơn hàng<br/>- Mã đơn explicit trong tin nhắn hiện tại THẮNG TUYỆT ĐỐI<br/>- Gọi get_order(new_id) để lấy dữ liệu mới nhất<br/>- Trích xuất product_id từ chính đơn mới này"]
@@ -196,12 +197,14 @@ flowchart TB
      * Tại cả hai chặng `lookup` (đọc) và `store` (ghi), nếu `snapshot` hoặc `bound.context` đang có `product_id` hoặc `order_id` $\rightarrow$ **Bắt buộc bypass cache 100%**.
      * Triệt tiêu hoàn toàn khả năng một câu hỏi "bảo hành bao lâu" khi đang xem giày P-603 bị trả về câu trả lời cache của áo P-101.
    - **Lớp 3: Kiểm Chứng Nguồn Gốc Phản Hồi (Response Provenance Guard tại `application.py:296-300`)**:
+     * **Nguyên tắc cấm tuyệt đối**: Trong PR A, Semantic Cache **TUYỆT ĐỐI KHÔNG ĐƯỢC STORE** nếu turn đã gọi BẤT KỲ tool nào. Không chỉ dựa vào `bound.versions/sources/knowledge/context`; bắt buộc dùng trace/cờ thực thi tool calls thực tế (`trace.get('tool_count', 0) > 0` hoặc danh sách `executed_tools`). Bất kỳ turn nào có gọi tool (kể cả read tools đơn giản như `get_current_time`) đều bị tước quyền ghi cache.
      * Tuyệt đối KHÔNG ghi vào Semantic Cache nếu phản hồi được tạo ra có sử dụng tri thức động:
-       1. `bound.knowledge.searches`: Đã gọi công cụ tìm kiếm tri thức RAG.
-       2. `result.get('sources')`: Phản hồi có trích dẫn nguồn văn bản chính sách/vận chuyển.
-       3. `bound.versions`: Đã đọc bản ghi có phiên bản (đơn hàng, tồn kho).
-       4. `bound.context.get('product_id')` hoặc `bound.context.get('order_id')`.
-     * Chỉ những phản hồi thuần túy mang tính thông tin tĩnh chung (generic answer) mới được phép ghi vào cache.
+       1. Đã gọi bất kỳ tool nào trong turn (`tool_count > 0` hoặc có tool call trace thực tế, ví dụ `get_current_time`, `get_order`, `get_product`,...).
+       2. `bound.knowledge.searches`: Đã gọi công cụ tìm kiếm tri thức RAG.
+       3. `result.get('sources')`: Phản hồi có trích dẫn nguồn văn bản chính sách/vận chuyển.
+       4. `bound.versions`: Đã đọc bản ghi có phiên bản (đơn hàng, tồn kho).
+       5. `bound.context.get('product_id')` hoặc `bound.context.get('order_id')`.
+     * Chỉ những phản hồi thuần túy mang tính thông tin tĩnh chung (generic answer, 0 tool call) mới được phép ghi vào cache.
 
 ### 3.2. Tệp `retailops/business/store.py` (Chuẩn hóa Storage Boundary)
 1. **Chuẩn hóa Ngoại lệ Cơ sở Dữ liệu tại Storage Boundary**:
@@ -215,15 +218,19 @@ flowchart TB
    - Đảm bảo mọi lỗi rớt kết nối hoặc lock database ở bất kỳ chặng nào (preflight hay runtime) đều trở thành HTTP 503 chuẩn xác.
 
 ### 3.3. Tệp `retailops/business/application.py`
-1. **Hợp đồng Tuần tự hóa & Replay 2 Chặng cho AI/Cache Turns**:
+1. **Hợp đồng Tuần tự hóa, Snapshot Revalidation & Replay 2 Chặng cho AI/Cache Turns**:
    - **Chặng 1 (Replay #1 Fast Path)**: Chạy `store.replay(customer, cid, request_id, digest)` ngay ở đầu hàm `chat()` (0 lock wait, 0 GPU permit). Nếu đã commit trước đó $\rightarrow$ Trả kết quả ngay lập tức.
    - **Chặng 2 (Acquire Lock non-blocking & agent_lock)**:
      - Giữ nguyên kiểm tra `self.agent_lock` (chỉ di chuyển vị trí nếu cần bảo vệ cache serialization; việc dọn dẹp và xóa bỏ hoàn toàn `agent_lock` vẫn thuộc sở hữu của PR B).
      - Lấy `conv_lock = self.inference_gate.get_conversation_lock(conv_key)`. Gọi `conv_lock.acquire(blocking=False)`.
      - Nếu thất bại $\rightarrow$ Ném ngay `ApiError(429, 'model_busy')`. Request thua lock nhận 429 ngay, không commit DB, không tốn inference.
      - Đăng ký `conv_lock.release` qua `ExitStack`.
-   - **Chặng 3 (Replay #2 Under Lock)**: Kiểm tra lại `store.replay` dưới lock để bắt kịp request thắng đua vừa commit xong.
-   - **Chặng 4 (Cache Lookup & Commit Under Lock)**: Chỉ lookup khi thỏa mãn `is_cacheable_query(text, context=snapshot)`. Khi cache hit, gọi `self.store.finish_turn(...)` **bên trong phạm vi bảo vệ của `conv_lock`**.
+   - **Chặng 3 (Replay #2 & Snapshot Revalidation Under Lock)**:
+     - Kiểm tra lại `store.replay` dưới lock để bắt kịp request thắng đua vừa commit xong.
+     - **Reload & Revalidate Conversation Snapshot**: Gọi lại `snapshot = self.store.snapshot(customer, cid)` ngay dưới `conv_lock` để lấy bản chụp ngữ cảnh mới nhất từ DB. Nếu request trước đó vừa thắng đua và cập nhật context (`order_id` / `product_id`), bản chụp mới sẽ phản ánh ngay lập tức. Tuyệt đối không chấp nhận cache-hit hay commit từ snapshot pre-lock cũ.
+   - **Chặng 4 (Cache Lookup & Commit Under Lock)**:
+     - Chỉ lookup khi snapshot đã revalidate và query text thỏa mãn `is_cacheable_query(text, context=snapshot)`.
+     - Khi cache hit, kiểm tra tính hợp lệ và gọi `self.store.finish_turn(...)` **bên trong phạm vi bảo vệ của `conv_lock` với snapshot mới nhất**.
    - **Chặng 5 (Workflow Execution)**: Đi tiếp vào workflow multi-agent, chỉ xin inference permit khi thực sự gọi model.
 2. **Sửa `Application.execute()` — Chặn nuốt lỗi hạ tầng (F03 Tool Contract)**:
    - Sửa chính xác theo thuộc tính `exc.status` (HTTP status number int) thay vì so sánh nhầm `exc.code`:
@@ -303,7 +310,7 @@ flowchart TB
 
 ---
 
-## 4. Ma Trận Kiểm Thử Hồi Quy (Test Regression Matrix — 26 Scenarios)
+## 4. Ma Trận Kiểm Thử Hồi Quy (Test Regression Matrix — 28 Scenarios)
 
 | Finding | Kịch bản Kiểm thử (Scenario) | Điều kiện Đầu vào / Kích hoạt | Kỳ vọng Kết quả (Expected Output) | Trạng thái Commit DB? | Tiêu tốn Model Call? |
 |---|---|---|---|:---:|:---:|
@@ -311,10 +318,12 @@ flowchart TB
 | **F01** | Deictic / Context-dependent query | Query chứa "món này", "cái này" | Bypass cache 100% | Có | Có (`calls=1, resp=1`) |
 | **F01** | True context-free static FAQ hit | Hội thoại mới KHÔNG có `order_id`/`product_id` hỏi "shop mở cửa mấy giờ" | Cache hit thành công; trả lời FAQ tĩnh | Có (`finish_turn` dưới lock) | **Không (0 call)** |
 | **F01** | Policy / Shipping RAG query safety | Query chính sách bảo hành / phí ship không thuộc allowlist tĩnh | Bypass semantic cache trong PR A (`is_cacheable_query -> False`) | Có | Có (`calls=1, resp=1`) |
+| **F01** | Tool execution provenance guard | Turn hội thoại có gọi bất kỳ tool nào (ví dụ `get_current_time` hoặc read tool) | TUYỆT ĐỐI KHÔNG ghi vào Semantic Cache (`tool_count > 0` tước quyền cache) | Có (sau workflow) | Có (`calls=1, resp=1`) |
 | **F02** | Same `request_id` replay | Gửi lại cùng `request_id` và cùng `digest` sau khi turn đã commit | Replay #1 hit trả kết quả ngay tức thì; không acquire lock | Không đổi | **Không (0 call)** |
 | **F02** | Different `request_id` race | Hai request khác `request_id` gửi đồng thời trên cùng conversation | Request A thắng lock thực thi; Request B nhận **HTTP 429 `model_busy` ngay** | Request A: Có<br/>Request B: Không | Request A: 1 call<br/>Request B: 0 call |
 | **F02** | Cache-hit vs Chat race | 1 request cache-hit đua với 1 chat request cùng conversation | Request thắng giữ lock thực thi; request thua nhận **HTTP 429** | 1 turn commit | 0 hoặc 1 call |
 | **F02** | Lock release after fatal failure | Request bị lỗi 500 hoặc ngoại lệ giữa chừng khi đang giữ lock | `conv_lock` bắt buộc được release trong ExitStack; request tiếp theo chạy bình thường | Không commit lỗi | `calls=0, resp=0` (nếu preflight) hoặc `calls=1, resp=0` (nếu gateway) |
+| **F02** | Snapshot revalidation under lock | Request A thắng lock cập nhật `order_id='O-101'`; Request B chờ sau lock | Khi Request B vào lock, reload snapshot $\rightarrow$ thấy `order_id` $\rightarrow$ bypass cache, không commit snapshot cũ | Có | Có (`calls=1, resp=1`) |
 | **F03** | Infrastructure error in execute() | `bound('get_order')` ném `ApiError(503)` | `execute()` re-raise ra ngoài; KHÔNG nuốt thành dict error | Không commit | `calls=1, resp=1` (tool chạy sau model) |
 | **F03** | DB Outage during preflight | Mock DB raise `sqlite3.OperationalError` tại storage boundary | Chuẩn hóa / Re-raise `ApiError(503, 'database_unavailable')` ra ngoài | Không commit | `calls=0, resp=0` (chưa gọi model) |
 | **F03** | Model Overload 429 | Gateway trả về 429 trước response | Propagate HTTP 429 ra client; KHÔNG nuốt thành "shop đã ghi nhận" | Không commit | `calls=1, resp=0` |
@@ -338,11 +347,11 @@ flowchart TB
 
 ## 5. Tiêu Chí Nghiệm Thu (Acceptance Criteria)
 
-1. **Test Suite PR A PASS 100%**: File `tests/test_pr_a_correctness.py` bao phủ toàn bộ 26 kịch bản ma trận kiểm thử F01–F06, F08a và F11 đạt kết quả PASS.
+1. **Test Suite PR A PASS 100%**: File `tests/test_pr_a_correctness.py` bao phủ toàn bộ 28 kịch bản ma trận kiểm thử F01–F06, F08a và F11 đạt kết quả PASS.
 2. **Không phá vỡ Regression**: Toàn bộ các test suite hiện hữu (`test_audit_remediation.py`, `test_manager_crud.py`, `test_conversation.py`, `test_system_foundation.py`) tiếp tục PASS.
 3. **Docs Contract PASS**: Chạy `python scripts/check_docs_contract.py` đạt 4/4 cổng kiểm định toàn vẹn.
-4. **Cô lập Ngữ cảnh Triệt để**: Không có hiện tượng rò rỉ dữ liệu bảo hành/sản phẩm qua Semantic Cache; query không thuộc allowlist tĩnh bị từ chối cache.
-5. **Serialization Đúng Đắn**: Toàn bộ các turn AI/cache trên route `/api/chat` phải được commit an toàn bên dưới `conv_lock`; request thua lock nhận HTTP 429 ngay lập tức.
+4. **Cô lập Ngữ cảnh Triệt để**: Không có hiện tượng rò rỉ dữ liệu bảo hành/sản phẩm qua Semantic Cache; query không thuộc allowlist tĩnh bị từ chối cache; turn gọi bất kỳ tool nào (`tool_count > 0`, kể cả `get_current_time`) bị tước quyền ghi cache.
+5. **Serialization & Revalidation Đúng Đắn**: Toàn bộ các turn AI/cache trên route `/api/chat` phải được commit an toàn bên dưới `conv_lock`; dưới lock bắt buộc revalidate snapshot ngữ cảnh từ database trước khi accept cache hit; request thua lock nhận HTTP 429 ngay lập tức.
 6. **Trung thực Vận hành**: Lỗi hạ tầng trong tool execution không bị nuốt; đề xuất hủy chỉ tạo khi đủ điều kiện; ngôn từ đổi hàng không ngộ nhận trạng thái backend; nút Staff Desk không tuyên bố duyệt giao dịch ảo.
 7. **Tool Search Safety**: Sản phẩm có `category=None` không gây lỗi `TypeError` trong `search_products`.
 

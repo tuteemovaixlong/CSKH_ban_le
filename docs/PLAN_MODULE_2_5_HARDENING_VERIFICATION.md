@@ -42,10 +42,10 @@ flowchart LR
     - **F01 FIX (An Toàn Cache 3 Yếu Tố — Tri-Factor Cache Safety)**:
       1. *Query Filter*: Từ chối câu hỏi chứa mã đơn/sản phẩm cụ thể hoặc đại từ chỉ định ("món này", "đơn này", "sản phẩm này"). Không áp allowlist text quá hẹp gây phá vỡ test FAQ hiện hữu.
       2. *Context Guard*: Bắt buộc bypass cache khi phiên hội thoại đang có `order_id` hoặc `product_id` trong context snapshot.
-      3. *Response Provenance*: Tuyệt đối KHÔNG ghi cache nếu phản hồi từ agent có sử dụng dynamic tool calls, có tri thức truy xuất RAG (`bound.knowledge.searches`), hoặc có trích dẫn `sources`.
-    - **F02 FIX (Serialization cho AI/Cache Turns)**:
-      - Đưa luồng ghi turn của Semantic Cache vào bên trong phạm vi kiểm soát của `conv_lock`.
-      - Hợp đồng Replay 2 chặng: Replay #1 fast-path trước lock; Replay #2 dưới lock bắt request thắng đua.
+      3. *Response Provenance Guard*: Tuyệt đối KHÔNG ghi vào Semantic Cache nếu turn đã gọi BẤT KỲ tool nào (kiểm tra cờ trace/tool-call thực tế `tool_count > 0` hoặc đã thực thi tool calls, kể cả read tools như `get_current_time`), hoặc có tri thức truy xuất RAG (`bound.knowledge.searches`), trích dẫn `sources`, hoặc `bound.versions`/context động.
+    - **F02 FIX (Serialization & Snapshot Revalidation cho AI/Cache Turns)**:
+      - Đưa toàn bộ luồng kiểm tra cache-hit và ghi turn của Semantic Cache vào bên trong phạm vi kiểm soát của `conv_lock`.
+      - Hợp đồng Replay & Snapshot Revalidation: Sau khi acquire `conv_lock`, thực hiện Replay #2 VÀ reload/revalidate snapshot ngữ cảnh hội thoại (`self.store.snapshot(...)`) từ database. Chỉ khi snapshot mới nhất hợp lệ và đủ điều kiện cache mới accept cache-hit và gọi `finish_turn()`, tuyệt đối không commit từ snapshot pre-lock cũ.
     - Sửa `Application.execute()`: Re-raise ngoại lệ hạ tầng (status >= 500 hoặc 429), chỉ chuyển đổi lỗi 4xx nghiệp vụ thành dict tool result.
   - `retailops_tools.py`:
     - **F11 FIX**: Bọc an toàn `p.get('category') or ''` và ép kiểu danh sách aliases chuỗi trong `search_products`. Loại bỏ triệt để nguy cơ `TypeError` khi catalog có sản phẩm mang `category=None`.
@@ -71,7 +71,7 @@ flowchart LR
   - `retailops/http/routes.py` & `retailops/identity/persistent.py`:
     - **F13 FIX (Đồng bộ vô hiệu hóa Cache theo Tenant Scope)**:
       - Trong môi trường multi-tenant (`PersistentSessions`, `PostgresSessions`), `ToolCache` được chia sẻ ở phạm vi **từng Tenant** (`tenant_id`), không dùng global namespace để tránh xung đột `customer_id` giữa các tenant.
-      - Khi Manager cập nhật trạng thái đơn hàng qua `POST /api/manager/orders/status`, lệnh invalidate áp dụng trên shared `ToolCache` của tenant tương ứng, giúp toàn bộ active sessions nhận ngay dữ liệu mới.
+      - Khi Manager cập nhật trạng thái đơn hàng qua `POST /api/manager/orders/update-status`, lệnh invalidate áp dụng trên shared `ToolCache` của tenant tương ứng, giúp toàn bộ active sessions nhận ngay dữ liệu mới.
   - `retailops/http/auth_google.py` & `retailops/http/public.py`:
     - **SEC-01 FIX (Chống OAuth Login CSRF)**: Ràng buộc `state` với trình duyệt khởi tạo bằng transient session cookie (`HttpOnly`, `SameSite=Lax`). Kiểm tra khớp cookie ở callback `/auth/google/callback`.
   - **Dọn sạch Legacy `self.agent_lock`**:
