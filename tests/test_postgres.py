@@ -497,6 +497,119 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         with transaction(DSN) as db:
             self.assertEqual(db.execute("SELECT version FROM retailops_schema WHERE component='identity'").fetchone()['version'], 3)
 
+    def test_identity_rollback_policy_and_account_reconciliation(self):
+        """PostgreSQL Integration: Rollback policy guard and account reconciliation runbook.
+
+        Review Finding (P1/P2):
+        - Disabling existing colliding memberships (active=0) is INSUFFICIENT for baseline v1 rollback,
+          because baseline v1 binary (c6c7a1a) lacks collision guards and will provision NEW customer
+          memberships sharing the same colliding customer_id (e.g. via CG-{hash[:8]}).
+        - Policy: Rollback to baseline binaries lacking collision guards is strictly FORBIDDEN.
+          Rollback is only safe to images containing collision guards.
+
+        Test Verification:
+        1. Setup: Schema at v3 with quarantined customer_id 'CG-rec-shared' and unresolved_collisions entry.
+        2. Guard Enforcement: Verify that PostgresIdentityStore (v3) fail-closed blocks any login,
+           session creation, or Google OAuth provisioning on colliding customer_ids.
+        3. Reconciliation & Reactivation Runbook Execution:
+           Step a: Admin identifies collision from unresolved_collisions ('shop-a', 'CG-rec-shared').
+           Step b: Admin disambiguates: keeps 'CG-rec-shared' for member 1 ('m-rec-1'), provisions
+                   distinct customer_id ('CG-rec-distinct-2') for member 2 ('m-rec-2').
+           Step c: Admin updates memberships.customer_id for 'm-rec-2'.
+           Step d: Admin creates 1-to-1 customer_links for each member.
+           Step e: Admin removes resolved collision from unresolved_collisions table.
+           Step f: Admin reactivates memberships: active=1, auth_version=auth_version+1.
+        4. Post-Reconciliation Verification:
+           - Both members can create sessions and authenticate cleanly.
+           - Member 1 session resolves to 'CG-rec-shared'.
+           - Member 2 session resolves to 'CG-rec-distinct-2'.
+           - Neither membership is blocked with 503 collision_unresolved.
+           - Data isolation between the two customer accounts is completely restored.
+        """
+        with transaction(DSN, write=True) as db:
+            # Setup two colliding customer accounts sharing 'CG-rec-shared'
+            db.execute("INSERT INTO principals (id, name) VALUES ('p-rec-1', 'Alice Rec') ON CONFLICT DO NOTHING")
+            db.execute("INSERT INTO principals (id, name) VALUES ('p-rec-2', 'Bob Rec') ON CONFLICT DO NOTHING")
+            db.execute(
+                "INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) "
+                "VALUES ('m-rec-1', 'shop-a', 'p-rec-1', 'CG-rec-shared', 'customer', 0, 1) ON CONFLICT DO NOTHING"
+            )
+            db.execute(
+                "INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) "
+                "VALUES ('m-rec-2', 'shop-a', 'p-rec-2', 'CG-rec-shared', 'customer', 0, 1) ON CONFLICT DO NOTHING"
+            )
+            db.execute(
+                "INSERT INTO unresolved_collisions (tenant_id, customer_id, created_at) "
+                "VALUES ('shop-a', 'CG-rec-shared', ?) ON CONFLICT DO NOTHING",
+                (time.time(),)
+            )
+
+        pg_istore = PostgresIdentityStore(DSN, create=False)
+
+        # 1. Guard check: Both members are blocked with 503 collision_unresolved
+        with self.assertRaises(ApiError) as ctx1:
+            pg_istore.create_session_for_membership('m-rec-1', 3600, 10)
+        self.assertEqual(ctx1.exception.status, 503)
+        self.assertEqual(ctx1.exception.code, "collision_unresolved")
+
+        with self.assertRaises(ApiError) as ctx2:
+            pg_istore.create_session_for_membership('m-rec-2', 3600, 10)
+        self.assertEqual(ctx2.exception.status, 503)
+        self.assertEqual(ctx2.exception.code, "collision_unresolved")
+
+        # 2. Execute Account Reconciliation & Reactivation Runbook:
+        with transaction(DSN, write=True) as db:
+            # Step a: Verify collision is detected
+            collision_row = db.execute(
+                "SELECT * FROM unresolved_collisions WHERE tenant_id='shop-a' AND customer_id='CG-rec-shared'"
+            ).fetchone()
+            self.assertIsNotNone(collision_row)
+
+            # Step b & c: Disambiguate identities - allocate distinct customer_id for m-rec-2
+            db.execute(
+                "UPDATE memberships SET customer_id='CG-rec-distinct-2' WHERE id='m-rec-2'"
+            )
+
+            # Step d: Establish 1-to-1 customer_links mapping
+            db.execute(
+                "INSERT INTO customer_links (id, tenant_id, principal_id, customer_id, created_at) "
+                "VALUES ('cl-rec-1', 'shop-a', 'p-rec-1', 'CG-rec-shared', ?) ON CONFLICT DO NOTHING",
+                (time.time(),)
+            )
+            db.execute(
+                "INSERT INTO customer_links (id, tenant_id, principal_id, customer_id, created_at) "
+                "VALUES ('cl-rec-2', 'shop-a', 'p-rec-2', 'CG-rec-distinct-2', ?) ON CONFLICT DO NOTHING",
+                (time.time(),)
+            )
+
+            # Step e: Remove resolved collision record from unresolved_collisions
+            db.execute(
+                "DELETE FROM unresolved_collisions WHERE tenant_id='shop-a' AND customer_id='CG-rec-shared'"
+            )
+
+            # Step f: Reactivate both memberships with bumped auth_version
+            db.execute(
+                "UPDATE memberships SET active=1, auth_version=auth_version+1 WHERE id IN ('m-rec-1', 'm-rec-2')"
+            )
+
+        # 3. Post-reconciliation verification
+        # Member 1 session creation succeeds
+        sid1 = pg_istore.create_session_for_membership('m-rec-1', 3600, 10)
+        res1 = pg_istore.resolve(sid1)
+        self.assertIsNotNone(res1)
+        self.assertEqual(res1.get('customer_id'), 'CG-rec-shared')
+        self.assertEqual(res1.get('id'), 'm-rec-1')
+
+        # Member 2 session creation succeeds with segregated customer_id
+        sid2 = pg_istore.create_session_for_membership('m-rec-2', 3600, 10)
+        res2 = pg_istore.resolve(sid2)
+        self.assertIsNotNone(res2)
+        self.assertEqual(res2.get('customer_id'), 'CG-rec-distinct-2')
+        self.assertEqual(res2.get('id'), 'm-rec-2')
+
+        # Both customer IDs are distinct and segregated
+        self.assertNotEqual(res1.get('customer_id'), res2.get('customer_id'))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -110,15 +110,25 @@ Theo chuẩn phân cấp minh chứng của [`RELEASE_MANIFEST.md`](RELEASE_MANI
      - Nâng cấp `IDENTITY_SCHEMA_CURRENT = 3` và `IDENTITY_SCHEMA_COMPATIBLE = (1, 2, 3)`. Biến quy trình bảo trì thành migration có version chạy một lần: cả đường nâng cấp v1->v3 và v2->v3 đều cập nhật `retailops_schema.version = 3` và đánh dấu hoàn tất.
      - Đổi tên test và mô tả chính thức thành `test_identity_v1_to_v3_migration_blocks_collision_and_prevents_first_login_claim`.
      - Sửa fixture test: cấp tài khoản staff cùng `customer_id` với nhóm collision (`CG-v2-shared` ở v2->v3 và `CG-pg-shared` ở v1->v3); xác minh bằng chứng runtime rằng session của staff được bảo toàn nguyên vẹn, chỉ session của `role = 'customer'` bị thu hồi.
-     - **Chốt phương án Rollback an toàn & không mất dữ liệu**:
-       - *Cảnh báo an toàn:* Việc version rebind thuần túy về v1 (`UPDATE retailops_schema SET version = 1`) mà không có biện pháp bảo vệ là **KHÔNG AN TOÀN**, vì binary baseline v1 thiếu logic kiểm tra `unresolved_collisions` và có thể mở lại truy cập nhầm lẫn đơn hàng cho các tài khoản collision.
-       - *Phương án A (Khuyến nghị chuẩn):* Rollback về image tương thích trung gian vẫn duy trì collision guard và bảng `unresolved_collisions` (chấp nhận version 2/3), không rollback về image baseline thiếu guard.
-       - *Phương án B (Nếu bắt buộc rollback về image baseline v1):* Quy trình hạ cấp bắt buộc phải khóa cứng toàn bộ tài khoản va chạm ở tầng DB trước khi đổi version: `UPDATE memberships SET active = 0, auth_version = auth_version + 1 WHERE role = 'customer' AND (tenant_id, customer_id) IN (SELECT tenant_id, customer_id FROM unresolved_collisions); UPDATE retailops_schema SET version = 1 WHERE component = 'identity';`. Nhờ đó, baseline code sẽ lập tức từ chối đăng nhập (vì `active=0`), ngăn chặn triệt để rò rỉ đơn hàng. Đồng thời, toàn bộ bảng `customer_links` và `external_identities` vẫn được giữ nguyên vẹn (không DROP) để bảo toàn 100% dữ liệu phát sinh sau backup khi roll forward trở lại.
-- **Trạng thái kiểm thử hiện tại (02/10/2026)**:
-  - **422 tests PASS** (0 failures, 0 errors, 45 skipped across 467 tests).
-  - Toàn bộ 45 test skipped đều thuộc nhóm tích hợp PostgreSQL/pgvector phụ thuộc `RETAILOPS_TEST_DATABASE_URL` (không có PostgreSQL service trên Windows host).
-  - Toàn bộ 4/4 cổng hợp đồng (docs, deployment, eval dataset, notebook) đạt **PASS 100%**.
-  - **KẾT LUẬN NGHIỆM THU:** N08 TUYỆT ĐỐI CHƯA TUYÊN BỐ READY; trạng thái giữ nguyên **BLOCKED / NOT READY FOR PRODUCTION** do integration test trên PostgreSQL thật đang ở trạng thái SKIP trên máy trạm; phải chờ CI runner chạy trên disposable PostgreSQL container thật để đạt PASS 100% toàn bộ 45 tests này.
+     - **Chốt phương án Rollback an toàn & Quy trình Khôi phục tài khoản (Reconciliation Runbook)**:
+       - *Phân tích rủi ro & Cảnh báo an toàn:* Việc chỉ đặt `active = 0` trên các membership va chạm hiện có là **KHÔNG ĐỦ AN TOÀN** để hạ cấp về binary baseline v1 (`c6c7a1a`). Binary baseline v1 thiếu logic kiểm tra `unresolved_collisions` và hàm `get_or_create_google_member()` vẫn tự động tạo customer membership mới với `active = 1` mang cùng `customer_id` (`CG-{hash[:8]}`) khi có người dùng đăng nhập bằng email trùng băm rút gọn.
+       - *Chính sách Rollback chuẩn (Rollback Policy):* **CẤM TUYỆT ĐỐI rollback về image baseline thiếu collision guard**. Chỉ cho phép rollback về image tương thích có collision guard (các image từ release N08 trở đi, hỗ trợ schema v3 và duy trì kiểm tra `unresolved_collisions` tại các điểm chạm đăng nhập).
+       - *Kịch bản thảm họa ngoại lệ (nếu bắt buộc hạ cấp nhị phân về baseline v1):* Toàn bộ luồng đăng nhập / provisioning khách hàng (`/api/auth/*`) phải được khóa cứng ở chế độ **Maintenance Mode (Fail-Closed)** tại reverse proxy / Caddy (trả về HTTP 503 Service Unavailable), đồng thời giữ nguyên vẹn toàn bộ bảng `customer_links`, `external_identities` và `unresolved_collisions` (không DROP) để bảo toàn 100% dữ liệu định danh phát sinh sau backup khi roll forward trở lại.
+       - *Quy trình Khôi phục & Kích hoạt lại tài khoản (Reconciliation & Reactivation Runbook):*
+         1. **Phát hiện & Cách ly:** Truy vấn bảng `unresolved_collisions` (`SELECT tenant_id, customer_id FROM unresolved_collisions;`) để xác định toàn bộ các nhóm tài khoản va chạm bị cách ly.
+         2. **Đối soát định danh & Dữ liệu:** Đội vận hành / hỗ trợ khách hàng đối soát dữ liệu đơn hàng (orders) và lịch sử hội thoại (conversations) giữa các membership của cùng `customer_id` dựa trên thông tin định danh thật (email, Google sub, số điện thoại, địa chỉ giao hàng).
+         3. **Phân tách & Tái cấp phát Customer ID:** Cấp `customer_id` mới riêng biệt cho membership thứ hai (trong cả Business DB và Identity DB); chuyển quyền sở hữu đơn hàng/hội thoại tương ứng về ID mới; tạo bản ghi `customer_links` và `external_identities` tương ứng cho từng membership để ánh xạ chính xác 1-1.
+         4. **Giải tỏa cách ly & Ghi nhận Audit:** Xóa bản ghi `(tenant_id, customer_id)` khỏi bảng `unresolved_collisions` và ghi audit event `collision_resolved`.
+         5. **Kích hoạt lại (Reactivation):** Cập nhật `UPDATE memberships SET active = 1, auth_version = auth_version + 1 WHERE id IN (:mid1, :mid2);`. Yêu cầu khách hàng đăng nhập lại; phiên mới được cấp độc lập và an toàn tuyệt đối.
+- **Trạng thái kiểm thử hiện tại (03/10/2026)**:
+  - **Môi trường máy trạm Windows:** 422 tests PASS, 46 tests SKIP across 468 tests (0 failures, 0 errors).
+    - Toàn bộ 46 test skipped đều do thiếu `RETAILOPS_TEST_DATABASE_URL` cục bộ (gồm **32 tests trong `tests/test_postgres.py`**, 11 tests trong `tests/test_rag_chat.py`, 2 tests trong `tests/test_knowledge.py`, 1 test trong `tests/test_public_web.py`).
+    - *Hiệu chỉnh số liệu:* File `tests/test_postgres.py` chứa **32 tests** (16 test nghiệp vụ kế thừa từ `WorkflowCases` + 16 test tích hợp chuyên sâu, bao gồm test rollback & reconciliation mới); không phải 45 tests như nhầm lẫn trước đây với tổng số skipped tests toàn bộ suite.
+  - **Môi trường GitHub Actions CI Runner (PostgreSQL + pgvector container thật):**
+    - Run ID `37035980381` (Head SHA: `b9389f58c6ae8c271da29ffb3121f3455def8de8`): **SUCCESS 100%**.
+    - Step 8 (*Unit, pgvector and HTTP contract tests*): **467/467 tests PASS (0 FAIL, 0 ERROR, 0 SKIP)** trên PostgreSQL thật.
+    - Toàn bộ 4/4 cổng hợp đồng (docs, deployment, eval dataset, notebook) đạt **PASS 100%**.
+  - **KẾT LUẬN NGHIỆM THU:** N08 TUYỆT ĐỐI CHƯA TUYÊN BỐ READY; trạng thái giữ nguyên **BLOCKED / NOT READY FOR PRODUCTION** cho đến khi hoàn tất nghiệm thu đầy đủ trên feature branch; tuân thủ nghiêm ngặt cấm merge/deploy.
 
 ---
 
