@@ -566,26 +566,26 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
                 "VALUES ('O-REC-003', 'CG-rec-shared', 'P-REC-001', 'Áo Polo Test', 'M / Xanh', 500000, 'pending', 1) "
                 "ON CONFLICT DO NOTHING"
             )
-            # Real conversations: CONV-REC-001 for Alice, CONV-REC-002 for Bob
+            # Real conversations: 11111111-1111-1111-1111-111111111111 for Alice, 22222222-2222-2222-2222-222222222222 for Bob
             b_db.execute(
                 "INSERT INTO conversations (id, customer_id, order_id, product_id, revision, expires_at) "
-                "VALUES ('CONV-REC-001', 'CG-rec-shared', 'O-REC-001', 'P-REC-001', 1, ?) ON CONFLICT DO NOTHING",
+                "VALUES ('11111111-1111-1111-1111-111111111111', 'CG-rec-shared', 'O-REC-001', 'P-REC-001', 1, ?) ON CONFLICT DO NOTHING",
                 (now + 3600,)
             )
             b_db.execute(
                 "INSERT INTO conversations (id, customer_id, order_id, product_id, revision, expires_at) "
-                "VALUES ('CONV-REC-002', 'CG-rec-shared', 'O-REC-003', 'P-REC-001', 1, ?) ON CONFLICT DO NOTHING",
+                "VALUES ('22222222-2222-2222-2222-222222222222', 'CG-rec-shared', 'O-REC-003', 'P-REC-001', 1, ?) ON CONFLICT DO NOTHING",
                 (now + 3600,)
             )
             b_db.execute(
                 "INSERT INTO agent_turns (conversation_id, customer_id, request_id, input_hash, messages, result, created_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
-                ('CONV-REC-001', 'CG-rec-shared', 'req-turn-001', 'hash001', '[]', '{\"reply\":\"Alice hello\"}', now)
+                ('11111111-1111-1111-1111-111111111111', 'CG-rec-shared', 'req-turn-001', 'hash001', '[]', '{\"reply\":\"Alice hello\"}', now)
             )
             b_db.execute(
                 "INSERT INTO agent_turns (conversation_id, customer_id, request_id, input_hash, messages, result, created_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
-                ('CONV-REC-002', 'CG-rec-shared', 'req-turn-002', 'hash002', '[]', '{\"reply\":\"Bob hello\"}', now)
+                ('22222222-2222-2222-2222-222222222222', 'CG-rec-shared', 'req-turn-002', 'hash002', '[]', '{\"reply\":\"Bob hello\"}', now)
             )
 
         pg_istore = PostgresIdentityStore(DSN, create=False)
@@ -609,7 +609,7 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
                     "target_customer_id": "CG-rec-alice",
                     "target_customer_name": "Alice Rec",
                     "order_ids": ["O-REC-001", "O-REC-002"],
-                    "conversation_ids": ["CONV-REC-001"],
+                    "conversation_ids": ["11111111-1111-1111-1111-111111111111"],
                     "external_identity": {
                         "issuer": "https://accounts.google.com",
                         "sub": "google-sub-alice-rec-12345",
@@ -621,7 +621,7 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
                     "target_customer_id": "CG-rec-bob",
                     "target_customer_name": "Bob Rec",
                     "order_ids": ["O-REC-003"],
-                    "conversation_ids": ["CONV-REC-002"],
+                    "conversation_ids": ["22222222-2222-2222-2222-222222222222"],
                     "external_identity": {
                         "issuer": "https://accounts.google.com",
                         "sub": "google-sub-bob-rec-67890",
@@ -660,11 +660,11 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             self.assertEqual(order_map["O-REC-003"], "CG-rec-bob")
 
             conv_rows = b_db.execute(
-                "SELECT id, customer_id FROM conversations WHERE id IN ('CONV-REC-001', 'CONV-REC-002')"
+                "SELECT id, customer_id FROM conversations WHERE id IN ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222')"
             ).fetchall()
             conv_map = {r["id"]: r["customer_id"] for r in conv_rows}
-            self.assertEqual(conv_map["CONV-REC-001"], "CG-rec-alice")
-            self.assertEqual(conv_map["CONV-REC-002"], "CG-rec-bob")
+            self.assertEqual(conv_map["11111111-1111-1111-1111-111111111111"], "CG-rec-alice")
+            self.assertEqual(conv_map["22222222-2222-2222-2222-222222222222"], "CG-rec-bob")
 
         # CRITICAL FAIL-CLOSED VERIFICATION:
         # Identity DB has NOT committed: unresolved_collisions is STILL active
@@ -759,13 +759,13 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             b_store.lookup('CG-rec-alice', 'O-REC-003')
         self.assertEqual(ctx_cross1.exception.status, 404)
 
-        # Alice owns CONV-REC-001, CANNOT see Bob's CONV-REC-002
+        # Alice owns 11111111-1111-1111-1111-111111111111, CANNOT see Bob's 22222222-2222-2222-2222-222222222222
         alice_convs = b_store.list_conversations('CG-rec-alice')
         alice_conv_ids = {c['id'] for c in alice_convs}
-        self.assertEqual(alice_conv_ids, {'CONV-REC-001'})
-        self.assertNotIn('CONV-REC-002', alice_conv_ids)
+        self.assertEqual(alice_conv_ids, {'11111111-1111-1111-1111-111111111111'})
+        self.assertNotIn('22222222-2222-2222-2222-222222222222', alice_conv_ids)
         with self.assertRaises(ApiError) as ctx_cross_conv1:
-            b_store.conversation('CG-rec-alice', 'CONV-REC-002')
+            b_store.conversation('CG-rec-alice', '22222222-2222-2222-2222-222222222222')
         self.assertEqual(ctx_cross_conv1.exception.status, 404)
 
         # Bob owns O-REC-003, CANNOT see Alice's O-REC-001 or O-REC-002
@@ -780,13 +780,13 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             b_store.lookup('CG-rec-bob', 'O-REC-001')
         self.assertEqual(ctx_cross2.exception.status, 404)
 
-        # Bob owns CONV-REC-002, CANNOT see Alice's CONV-REC-001
+        # Bob owns 22222222-2222-2222-2222-222222222222, CANNOT see Alice's 11111111-1111-1111-1111-111111111111
         bob_convs = b_store.list_conversations('CG-rec-bob')
         bob_conv_ids = {c['id'] for c in bob_convs}
-        self.assertEqual(bob_conv_ids, {'CONV-REC-002'})
-        self.assertNotIn('CONV-REC-001', bob_conv_ids)
+        self.assertEqual(bob_conv_ids, {'22222222-2222-2222-2222-222222222222'})
+        self.assertNotIn('11111111-1111-1111-1111-111111111111', bob_conv_ids)
         with self.assertRaises(ApiError) as ctx_cross_conv2:
-            b_store.conversation('CG-rec-bob', 'CONV-REC-001')
+            b_store.conversation('CG-rec-bob', '11111111-1111-1111-1111-111111111111')
         self.assertEqual(ctx_cross_conv2.exception.status, 404)
 
         # 8e. External identities verification (Google sub and email mappings)
