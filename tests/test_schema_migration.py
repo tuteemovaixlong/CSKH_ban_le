@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from retailops.core import ApiError
 from retailops.business.store import BusinessStore
 from retailops.identity.store import IdentityStore
 
@@ -117,8 +118,10 @@ class MigrationTests(unittest.TestCase):
     def test_live_repository_does_not_recreate_a_deleted_database(self):
         store = BusinessStore(self.path)
         self.path.unlink()
-        with self.assertRaises(sqlite3.OperationalError):
+        with self.assertRaises(ApiError) as ctx:
             store.orders('C-001')
+        self.assertEqual(ctx.exception.status, 503)
+        self.assertEqual(ctx.exception.code, 'database_unavailable')
         self.assertFalse(self.path.exists())
 
 

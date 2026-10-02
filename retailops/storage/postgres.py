@@ -5,6 +5,8 @@ import re
 from retailops.core import ApiError
 
 IDENTITY_SCHEMA = 'retailops_identity'
+IDENTITY_SCHEMA_CURRENT = 3
+IDENTITY_SCHEMA_COMPATIBLE = (1, 2, 3)
 BUSINESS_SCHEMA_CURRENT = 4
 BUSINESS_SCHEMA_COMPATIBLE = (2, 3, 4)  # v2/v3 remain readable during migrations.
 
@@ -84,7 +86,7 @@ def assert_schema(db, schema, component):
     if len(rows) != 1 or rows[0].get('component') != component:
         raise ValueError('Unsupported PostgreSQL schema version or component.')
     version = rows[0].get('version')
-    supported = (1,) if component == 'identity' else BUSINESS_SCHEMA_COMPATIBLE
+    supported = IDENTITY_SCHEMA_COMPATIBLE if component == 'identity' else BUSINESS_SCHEMA_COMPATIBLE
     if version not in supported:
         raise ValueError('Unsupported PostgreSQL schema version or component.')
 

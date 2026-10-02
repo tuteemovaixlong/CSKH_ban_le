@@ -49,7 +49,13 @@ class BoundTools:
             products = []
             for p in self.catalog.products.values():
                 cat = str(p.get('category') or '')
-                aliases = [str(a) for a in p.get('aliases', []) if a]
+                raw_aliases = p.get('aliases')
+                if isinstance(raw_aliases, (list, tuple)):
+                    aliases = [str(a) for a in raw_aliases if a is not None]
+                elif isinstance(raw_aliases, str):
+                    aliases = [raw_aliases]
+                else:
+                    aliases = []
                 searchable = normalize(' '.join([str(p.get('id', '')), str(p.get('name', '')), cat] + aliases))
                 if query in searchable:
                     products.append(p)
@@ -82,6 +88,9 @@ class BoundTools:
             return {'order': order, 'eligible': eligible, 'transaction_performed': False,
                     'next_step': 'User must select a reason and press the separate confirmation button.' if eligible
                     else 'Order cannot be cancelled in its current state.'}
+        if name in ('clear_cancellation', 'reset_cancellation'):
+            self.cancel_order = None
+            return {'cleared': True}
         if name == 'get_runtime_info':
             return {k: self.identity.get(k) for k in ('name', 'digest', 'details', 'ollama_version', 'agent_protocol', 'provider', 'identity_source')}
         if name == 'get_current_time':

@@ -536,7 +536,7 @@ class OrderToolRecoveryTests(unittest.TestCase):
 
         from retailops.workflow.subagents.dispute_agent import run_dispute_agent
         disp_state = state('Tôi muốn hủy đơn O0819127')
-        mock_tool = lambda n, a: {'eligible': True, 'order_id': a.get('order_id')}
+        mock_tool = lambda n, a: {'eligible': True, 'order': {'id': 'O-819127', 'status': 'pending'}, 'order_id': 'O-819127'}
         tool_call = {'function': {'name': 'prepare_cancellation', 'arguments': json.dumps({'order_id': 'O0819127', 'reason': 'Đổi ý'})}}
         with patch.object(self.adapter, 'chat', return_value={'message': {'role': 'assistant', 'content': '', 'tool_calls': [tool_call]}}):
             out = run_dispute_agent(disp_state, mock_tool, self.adapter)

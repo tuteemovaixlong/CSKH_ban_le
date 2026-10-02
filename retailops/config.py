@@ -81,15 +81,15 @@ class Settings:
     def __post_init__(self):
         if self.interface not in ('public', 'private'):
             raise ValueError('Interface must be public or private.')
-        if self.data_mode not in (DATA_MODE, 'persistent-demo'):
-            raise ValueError('Data mode must be synthetic-demo or persistent-demo; real customer data is not supported yet.')
-        if self.data_mode == 'persistent-demo' and self.interface != 'public':
-            raise ValueError('Persistent accounts require the public HTTPS interface.')
+        if self.data_mode not in (DATA_MODE, 'persistent-demo', 'live'):
+            raise ValueError('Data mode must be synthetic-demo, persistent-demo, or live; real customer data is not supported yet.')
+        if self.data_mode in ('persistent-demo', 'live') and self.interface != 'public':
+            raise ValueError('Persistent/live accounts require the public HTTPS interface.')
         if self.storage_backend not in ('sqlite', 'postgresql'):
             raise ValueError('Storage backend must be sqlite or postgresql.')
         if self.storage_backend == 'postgresql':
-            if self.interface != 'public' or self.data_mode != 'persistent-demo':
-                raise ValueError('PostgreSQL requires persistent-demo on the HTTPS interface.')
+            if self.interface != 'public' or self.data_mode not in ('persistent-demo', 'live'):
+                raise ValueError('PostgreSQL requires persistent-demo or live on the HTTPS interface.')
             from retailops.storage.postgres import validate_dsn
             validate_dsn(self.database_url)
         if self.data_mode == DATA_MODE and not re.fullmatch(r'[A-Za-z0-9_-]{32,128}', self.access_token):

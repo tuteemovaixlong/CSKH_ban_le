@@ -8,12 +8,14 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import sqlite3
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -258,6 +260,234 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
                                 cwd=ROOT, text=True, capture_output=True, timeout=15)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn(DSN, result.stdout+result.stderr)
+
+    def test_identity_v1_to_v3_migration_blocks_collision_and_prevents_first_login_claim(self):
+        """PostgreSQL Integration: Real v1->v3 migration with legacy collisions.
+        - Seeds v1 identity schema containing two customer accounts sharing customer_id 'CG-pg-shared'.
+        - Maps legacy Google principal ID to Alice Collide so Google OAuth actually resolves to m-pg1.
+        - Seeds tenant business orders under 'CG-pg-shared'.
+        - Triggers v1->v3 upgrade via PostgresIdentityStore.
+        - Verifies unresolved_collisions table is populated with ('shop-a', 'CG-pg-shared').
+        - Verifies colliding sessions are invalidated while staff session is preserved.
+        - Verifies customer_links excludes colliding accounts.
+        - Verifies the first Google login or token login is blocked with 503 collision_unresolved.
+        - Verifies neither account can access or claim the orders."""
+        # 1. Roll identity schema back to v1 state and simulate legacy collisions
+        with transaction(DSN, write=True) as db:
+            db.raw.execute("DROP TABLE IF EXISTS customer_links CASCADE")
+            db.raw.execute("DROP TABLE IF EXISTS external_identities CASCADE")
+            db.raw.execute("DROP TABLE IF EXISTS unresolved_collisions CASCADE")
+            db.execute("UPDATE retailops_schema SET version=1 WHERE component='identity'")
+
+            # Insert colliding memberships in shop-a sharing 'CG-pg-shared'
+            # Derive Alice Collide's legacy Google principal ID so Google login matches her membership
+            prefix = re.sub(r'[^a-zA-Z0-9_-]', '_', 'alice_pg@example.com'.split('@')[0])[:25]
+            hash_suffix = hashlib.sha256('alice_pg@example.com'.encode()).hexdigest()[:10]
+            alice_pid = f"g_{prefix}_{hash_suffix}"
+
+            db.execute("INSERT INTO principals (id, name) VALUES (?, 'Alice Collide') ON CONFLICT DO NOTHING", (alice_pid,))
+            db.execute("INSERT INTO principals (id, name) VALUES ('p-pg2', 'Bob Collide') ON CONFLICT DO NOTHING")
+            db.execute(
+                "INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) "
+                "VALUES ('m-pg1', 'shop-a', ?, 'CG-pg-shared', 'customer', 1, 1)",
+                (alice_pid,)
+            )
+            db.execute(
+                "INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) "
+                "VALUES ('m-pg2', 'shop-a', 'p-pg2', 'CG-pg-shared', 'customer', 1, 1)"
+            )
+            token_pg1 = "k" * 43
+            db.execute("INSERT INTO credentials (membership_id, hash, created_at) VALUES ('m-pg1', ?, ?)",
+                       (hashlib.sha256(token_pg1.encode()).hexdigest(), time.time()))
+            db.execute("INSERT INTO sessions (id, membership_id, auth_version, expires_at) VALUES ('s-pg1', 'm-pg1', 1, 9999999999)")
+            db.execute("INSERT INTO sessions (id, membership_id, auth_version, expires_at) VALUES ('s-pg2', 'm-pg2', 1, 9999999999)")
+
+            # Insert an active staff session sharing CG-pg-shared to verify v1->v3 does not revoke non-customer sessions
+            db.execute("INSERT INTO principals (id, name) VALUES ('p-pg-staff', 'Staff PG') ON CONFLICT DO NOTHING")
+            db.execute(
+                "INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) "
+                "VALUES ('m-pg-staff', 'shop-a', 'p-pg-staff', 'CG-pg-shared', 'staff', 1, 1)"
+            )
+            db.execute("INSERT INTO sessions (id, membership_id, auth_version, expires_at) VALUES ('s-pg-staff', 'm-pg-staff', 1, 9999999999)")
+
+        # 2. Add an order under 'CG-pg-shared' in shop-a's business store
+        bstore = self.sessions.business_store('shop-a')
+        with bstore.connection(write=True) as bdb:
+            bdb.execute("INSERT INTO customers (id, name) VALUES ('CG-pg-shared', 'Shared Collided Customer') ON CONFLICT DO NOTHING")
+            bdb.execute(
+                "INSERT INTO orders (id, customer_id, name, variant, amount, status, version, product_id) "
+                "VALUES ('O-PG-COLLIDE', 'CG-pg-shared', 'Áo Khoác PG', 'Đen / L', 800000, 'pending', 1, 'P-101') "
+                "ON CONFLICT DO NOTHING"
+            )
+
+        # 3. Initialize / Upgrade PostgresIdentityStore to v3
+        pg_istore = PostgresIdentityStore(DSN, create=False)
+
+        # 4. Verify v3 upgrade state
+        with transaction(DSN) as db:
+            self.assertEqual(db.execute("SELECT version FROM retailops_schema WHERE component='identity'").fetchone()['version'], 3)
+
+            # Check unresolved_collisions table
+            unres = db.execute("SELECT * FROM unresolved_collisions WHERE tenant_id='shop-a' AND customer_id='CG-pg-shared'").fetchone()
+            self.assertIsNotNone(unres)
+
+            # Check colliding sessions were invalidated
+            sessions_active = db.execute("SELECT count(*) as cnt FROM sessions WHERE membership_id IN ('m-pg1', 'm-pg2')").fetchone()['cnt']
+            self.assertEqual(sessions_active, 0)
+
+            # Check customer_links does NOT contain CG-pg-shared
+            cl_count = db.execute("SELECT count(*) as cnt FROM customer_links WHERE tenant_id='shop-a' AND customer_id='CG-pg-shared'").fetchone()['cnt']
+            self.assertEqual(cl_count, 0)
+
+            # Check staff session was preserved despite sharing CG-pg-shared
+            staff_active = db.execute("SELECT count(*) as cnt FROM sessions WHERE membership_id='m-pg-staff'").fetchone()['cnt']
+            self.assertEqual(staff_active, 1)
+
+        # Staff session resolves successfully
+        resolved_staff_v1 = pg_istore.resolve('s-pg-staff')
+        self.assertIsNotNone(resolved_staff_v1)
+        self.assertEqual(resolved_staff_v1.get('role'), 'staff')
+
+        # 5. First login attempts: verify fail-closed with 503 collision_unresolved
+        # A. Credential / token login
+        with self.assertRaises(ApiError) as ctx_login:
+            pg_istore.login(token_pg1, 3600, 10)
+        self.assertEqual(ctx_login.exception.status, 503)
+        self.assertEqual(ctx_login.exception.code, "collision_unresolved")
+
+        # B. Session creation
+        with self.assertRaises(ApiError) as ctx_sess:
+            pg_istore.create_session_for_membership('m-pg1', 3600, 10)
+        self.assertEqual(ctx_sess.exception.status, 503)
+        self.assertEqual(ctx_sess.exception.code, "collision_unresolved")
+
+        # C. First Google login for m-pg1: actually resolves to alice_pid / m-pg1, must NOT claim customer_id or create customer_links!
+        with self.assertRaises(ApiError) as ctx_google:
+            pg_istore.get_or_create_google_member(
+                'shop-a', 'alice_pg@example.com', 'Alice Collide', sub='google-sub-pg1', email_verified=True
+            )
+        self.assertEqual(ctx_google.exception.status, 503)
+        self.assertEqual(ctx_google.exception.code, "collision_unresolved")
+
+        # Verify NO customer_links was created for m-pg1 after Google login attempt
+        with transaction(DSN) as db:
+            cl_post = db.execute("SELECT count(*) as cnt FROM customer_links WHERE tenant_id='shop-a' AND customer_id='CG-pg-shared'").fetchone()['cnt']
+            self.assertEqual(cl_post, 0)
+
+    def test_identity_v2_existing_schema_upgrade_marks_collision_and_revokes_active_sessions(self):
+        """PostgreSQL Integration: Existing v2 schema migration to v3 with active sessions.
+        - Schema starts at version 2 (with external_identities, customer_links) but truly without unresolved_collisions table.
+        - Introduces colliding customer memberships sharing 'CG-v2-shared' with an active session.
+        - Introduces a non-customer (staff) membership with an active session to test revocation scope.
+        - Triggers PostgresIdentityStore(DSN, create=False) which executes v2->v3 migration.
+        - Verifies unresolved_collisions table is created and populated for ('shop-a', 'CG-v2-shared').
+        - Verifies retailops_schema version is upgraded to 3.
+        - Verifies only the colliding customer session is revoked; staff session remains intact.
+        - Verifies resolving colliding session returns None / unauthorized.
+        - Verifies resolving staff session succeeds.
+        - Verifies login, session creation, and Google login remain blocked with 503 collision_unresolved.
+        - Verifies subsequent PostgresIdentityStore startup leaves version at 3 without re-running initialize."""
+        with transaction(DSN, write=True) as db:
+            # 1. Faithfully simulate legacy v2 schema: drop unresolved_collisions if present, set version=2
+            db.raw.execute("DROP TABLE IF EXISTS unresolved_collisions CASCADE")
+            db.execute("UPDATE retailops_schema SET version=2 WHERE component='identity'")
+
+            # Insert two colliding customer accounts in shop-a sharing 'CG-v2-shared'
+            prefix = re.sub(r'[^a-zA-Z0-9_-]', '_', 'alice_v2@example.com'.split('@')[0])[:25]
+            hash_suffix = hashlib.sha256('alice_v2@example.com'.encode()).hexdigest()[:10]
+            alice_v2_pid = f"g_{prefix}_{hash_suffix}"
+
+            db.execute("INSERT INTO principals (id, name) VALUES (?, 'Alice V2') ON CONFLICT DO NOTHING", (alice_v2_pid,))
+            db.execute("INSERT INTO principals (id, name) VALUES ('p-v2-2', 'Bob V2') ON CONFLICT DO NOTHING")
+            db.execute(
+                "INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) "
+                "VALUES ('m-v2-1', 'shop-a', ?, 'CG-v2-shared', 'customer', 1, 1) ON CONFLICT DO NOTHING",
+                (alice_v2_pid,)
+            )
+            db.execute(
+                "INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) "
+                "VALUES ('m-v2-2', 'shop-a', 'p-v2-2', 'CG-v2-shared', 'customer', 1, 1) ON CONFLICT DO NOTHING"
+            )
+
+            # Insert an active session for colliding customer m-v2-1
+            active_secret = secrets.token_urlsafe(32)
+            session_hash = hashlib.sha256(active_secret.encode()).hexdigest()
+            db.execute(
+                "INSERT INTO sessions (id, membership_id, auth_version, expires_at) "
+                "VALUES (?, 'm-v2-1', 1, ?) ON CONFLICT DO NOTHING",
+                (session_hash, time.time() + 3600)
+            )
+
+            # Insert an active staff membership sharing the exact same collided customer_id 'CG-v2-shared'
+            # This verifies that session revocation strictly targets role='customer' and preserves staff/manager sessions
+            db.execute("INSERT INTO principals (id, name) VALUES ('p-v2-staff', 'Staff Member') ON CONFLICT DO NOTHING")
+            db.execute(
+                "INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) "
+                "VALUES ('m-v2-staff', 'shop-a', 'p-v2-staff', 'CG-v2-shared', 'staff', 1, 1) ON CONFLICT DO NOTHING"
+            )
+            staff_secret = secrets.token_urlsafe(32)
+            staff_session_hash = hashlib.sha256(staff_secret.encode()).hexdigest()
+            db.execute(
+                "INSERT INTO sessions (id, membership_id, auth_version, expires_at) "
+                "VALUES (?, 'm-v2-staff', 1, ?) ON CONFLICT DO NOTHING",
+                (staff_session_hash, time.time() + 3600)
+            )
+
+        # Trigger PostgresIdentityStore startup with create=False on the existing v2 schema -> executes v2->v3 migration
+        pg_istore = PostgresIdentityStore(DSN, create=False)
+
+        # Verify post-migration state:
+        with transaction(DSN) as db:
+            # 1. Version upgraded to 3
+            self.assertEqual(db.execute("SELECT version FROM retailops_schema WHERE component='identity'").fetchone()['version'], 3)
+
+            # 2. Collision recorded in newly created unresolved_collisions table
+            unres = db.execute(
+                "SELECT * FROM unresolved_collisions WHERE tenant_id='shop-a' AND customer_id='CG-v2-shared'"
+            ).fetchone()
+            self.assertIsNotNone(unres)
+
+            # 3. Active colliding customer session was revoked / deleted
+            sess_row = db.execute("SELECT * FROM sessions WHERE id=?", (session_hash,)).fetchone()
+            self.assertIsNone(sess_row)
+
+            sess_cnt = db.execute(
+                "SELECT count(*) as cnt FROM sessions WHERE membership_id IN ('m-v2-1', 'm-v2-2')"
+            ).fetchone()['cnt']
+            self.assertEqual(sess_cnt, 0)
+
+            # 4. Active staff session was NOT revoked / preserved
+            staff_sess_row = db.execute("SELECT * FROM sessions WHERE id=?", (staff_session_hash,)).fetchone()
+            self.assertIsNotNone(staff_sess_row)
+
+        # 5. Colliding customer session resolve fails
+        resolved = pg_istore.resolve(session_hash)
+        self.assertIsNone(resolved)
+
+        # 6. Staff session resolve succeeds and preserves role
+        resolved_staff = pg_istore.resolve(staff_session_hash)
+        self.assertIsNotNone(resolved_staff)
+        self.assertEqual(resolved_staff.get('role'), 'staff')
+        self.assertEqual(resolved_staff.get('membership_id'), 'm-v2-staff')
+
+        # 7. Attempting to create a session on m-v2-1 is blocked with 503 collision_unresolved
+        with self.assertRaises(ApiError) as ctx:
+            pg_istore.create_session_for_membership('m-v2-1', 3600, 10)
+        self.assertEqual(ctx.exception.status, 503)
+        self.assertEqual(ctx.exception.code, "collision_unresolved")
+
+        # 8. Google login mapped to m-v2-1 is also blocked with 503 collision_unresolved
+        with self.assertRaises(ApiError) as ctx_goog:
+            pg_istore.get_or_create_google_member(
+                'shop-a', 'alice_v2@example.com', 'Alice V2', sub='google-sub-v2-1', email_verified=True
+            )
+        self.assertEqual(ctx_goog.exception.status, 503)
+        self.assertEqual(ctx_goog.exception.code, "collision_unresolved")
+
+        # 9. Verify subsequent startup does NOT fail and leaves version at 3
+        pg_istore_reopened = PostgresIdentityStore(DSN, create=False)
+        with transaction(DSN) as db:
+            self.assertEqual(db.execute("SELECT version FROM retailops_schema WHERE component='identity'").fetchone()['version'], 3)
 
 
 if __name__ == '__main__':

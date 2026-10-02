@@ -98,7 +98,10 @@ def run(gateway, text, history, execute, identity, timeout=110, *, saver=None,
                 result = execute(name, args)
             if not isinstance(result, dict):
                 raise AgentError('tool_response_failed', 'Công cụ trả dữ liệu không hợp lệ.', state['trace'])
-            state['trace']['tools'].append({'name': name, 'status': 'error' if result.get('error') else 'ok'})
+            code = result.get('error')
+            if code in ('database_unavailable', 'tool_unavailable', 'order_access_denied'):
+                raise AgentError('tool_unavailable', 'Nguồn dữ liệu chưa sẵn sàng. Chưa thể xác minh kết quả.', state['trace'])
+            state['trace']['tools'].append({'name': name, 'status': 'error' if code else 'ok'})
             entry = {'role': 'tool', 'tool_name': name, 'content': json.dumps(result, ensure_ascii=False, separators=(',', ':'))}
             state['messages'].append(entry)
             state['fresh'].append(entry)
@@ -135,6 +138,7 @@ def run(gateway, text, history, execute, identity, timeout=110, *, saver=None,
                              'tools': [], 'steps': [], 'general_citations_removed': 0}}
         state = graph.invoke(initial, config, **({'durability': 'sync'} if saver else {}))
     state = copy.deepcopy(state)
+    state['trace']['tool_count'] = state.get('tool_count', 0)
     state['trace']['resumed_from_checkpoint'] = bool(checkpoint and checkpoint.values)
     state['trace']['metrics_scope'] = 'checkpointed_path; failed attempts are logged separately'
     restore(state['bound'])

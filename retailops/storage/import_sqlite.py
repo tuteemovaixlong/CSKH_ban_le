@@ -9,7 +9,7 @@ from retailops.storage.pg_schema import initialize
 from retailops.storage.postgres import IDENTITY_SCHEMA, tenant_schema, transaction
 
 IDENTITY_TABLES = ('tenants', 'principals', 'memberships', 'credentials', 'identity_rate',
-                   'provider_daily_usage', 'identity_events')
+                   'provider_daily_usage', 'identity_events', 'external_identities', 'customer_links', 'unresolved_collisions')
 BUSINESS_TABLES = ('customers', 'products', 'product_variants', 'orders', 'proposals',
                    'business_events', 'conversations', 'agent_turns', 'provider_daily_usage')
 SEQUENCES = {'identity': ('identity_events',), 'business': ('business_events', 'agent_turns')}
@@ -29,9 +29,9 @@ def read_database(path, component, tables):
             db.row_factory = sqlite3.Row
             db.execute('BEGIN')
             marker = [dict(row) for row in db.execute('SELECT component,version FROM retailops_schema')]
-            allowed_versions = (1, 2, 3) if component == 'business' else (1,)
+            allowed_versions = (1, 2, 3, 4) if component == 'business' else (1, 2)
             if len(marker) != 1 or marker[0]['component'] != component or marker[0]['version'] not in allowed_versions:
-                raise ValueError('Import requires identity v1 and business v1/v2/v3 in a stopped persistent SQLite snapshot.')
+                raise ValueError('Import requires identity v1/v2 and business v1/v2/v3/v4 in a stopped persistent SQLite snapshot.')
             if db.execute('PRAGMA integrity_check').fetchone()[0] != 'ok' or db.execute('PRAGMA foreign_key_check').fetchall():
                 raise ValueError('SQLite snapshot failed integrity checks.')
             if component == 'business':

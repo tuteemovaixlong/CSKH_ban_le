@@ -103,7 +103,19 @@ class PublicWeb:
                 require(False, 400, 'oauth_exchange_failed', str(e))
 
             role = resolve_role_from_email(user_info['email'])
-            secret = self.sessions.login_google(user_info['email'], user_info['name'], role=role)
+            is_live = getattr(self.sessions, 'data_mode', None) in ('production', 'live')
+            email_verified = bool(user_info.get('email_verified', False))
+            if is_live and not email_verified:
+                require(False, 400, 'unverified_email', 'Tài khoản Google chưa được xác minh email.')
+
+            secret = self.sessions.login_google(
+                user_info['email'],
+                user_info['name'],
+                role=role,
+                sub=user_info.get('sub'),
+                email_verified=email_verified,
+                live=is_live
+            )
             headers.append(('Set-Cookie', f'{self.sessions.cookie_name}={secret}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age={self.sessions.session_seconds}'))
             headers.append(('Location', '/'))
             return 302, b'', 'text/html; charset=utf-8', headers

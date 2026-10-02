@@ -100,7 +100,12 @@ class TestEcommerceOps(unittest.TestCase):
         self.assertEqual(routed_state["next_worker"], "dispute_agent")
 
         gateway = MockGateway(reply="Đã tạo đề xuất đổi size.")
-        processed_state = run_dispute_agent(routed_state, self.tools, gateway)
+        tools_c004 = BoundTools(
+            self.store, self.catalog, "C-004",
+            {"order_id": "O-303", "product_id": "P-203"},
+            {"name": "test-runner", "provider": "test"}
+        )
+        processed_state = run_dispute_agent(routed_state, tools_c004, gateway)
 
         proposal = processed_state["action_proposal"]
         self.assertIsNotNone(proposal)

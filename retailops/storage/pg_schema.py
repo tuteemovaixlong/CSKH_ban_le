@@ -1,6 +1,6 @@
 """Explicit PostgreSQL DDL and staged business migrations."""
 from retailops.storage.postgres import (BUSINESS_SCHEMA_CURRENT, IDENTITY_SCHEMA,
-                                        assert_schema, valid_schema)
+                                        IDENTITY_SCHEMA_CURRENT, assert_schema, valid_schema)
 
 BUSINESS_DDL = [
     'CREATE TABLE customers (id TEXT PRIMARY KEY, name TEXT NOT NULL)',
@@ -92,6 +92,14 @@ IDENTITY_DDL = [
         attempts INTEGER NOT NULL, PRIMARY KEY(day,provider_id))''',
     '''CREATE TABLE identity_events (id BIGSERIAL PRIMARY KEY, created_at DOUBLE PRECISION NOT NULL,
         kind TEXT NOT NULL, tenant_id TEXT, membership_id TEXT)''',
+    '''CREATE TABLE external_identities (id TEXT PRIMARY KEY, issuer TEXT NOT NULL,
+        sub TEXT NOT NULL, principal_id TEXT NOT NULL REFERENCES principals(id), email TEXT,
+        created_at DOUBLE PRECISION NOT NULL, UNIQUE(issuer, sub))''',
+    '''CREATE TABLE customer_links (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
+        principal_id TEXT NOT NULL REFERENCES principals(id), customer_id TEXT NOT NULL,
+        created_at DOUBLE PRECISION NOT NULL, UNIQUE(tenant_id, principal_id), UNIQUE(tenant_id, customer_id))''',
+    '''CREATE TABLE unresolved_collisions (tenant_id TEXT NOT NULL REFERENCES tenants(id),
+        customer_id TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL, PRIMARY KEY(tenant_id, customer_id))''',
 ]
 
 
@@ -137,6 +145,84 @@ def initialize(db, schema, component):
         row = db.raw.execute(sql.SQL('SELECT component,version FROM {}.retailops_schema').format(sql.Identifier(schema))).fetchone()
         if not row or row['component'] != component:
             raise ValueError('Unsupported PostgreSQL schema version or component.')
+        if component == 'identity':
+            db.raw.execute(sql.SQL('SET LOCAL search_path TO {}, pg_catalog').format(sql.Identifier(schema)))
+            if row['version'] == 1:
+                for statement in (
+                    '''CREATE TABLE IF NOT EXISTS external_identities (
+                        id TEXT PRIMARY KEY, issuer TEXT NOT NULL, sub TEXT NOT NULL,
+                        principal_id TEXT NOT NULL REFERENCES principals(id), email TEXT,
+                        created_at DOUBLE PRECISION NOT NULL, UNIQUE(issuer, sub))''',
+                    '''CREATE TABLE IF NOT EXISTS customer_links (
+                        id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
+                        principal_id TEXT NOT NULL REFERENCES principals(id), customer_id TEXT NOT NULL,
+                        created_at DOUBLE PRECISION NOT NULL, UNIQUE(tenant_id, principal_id), UNIQUE(tenant_id, customer_id))''',
+                    '''CREATE TABLE IF NOT EXISTS unresolved_collisions (
+                        tenant_id TEXT NOT NULL REFERENCES tenants(id),
+                        customer_id TEXT NOT NULL,
+                        created_at DOUBLE PRECISION NOT NULL,
+                        PRIMARY KEY(tenant_id, customer_id))''',
+                    '''INSERT INTO unresolved_collisions (tenant_id, customer_id, created_at)
+                       SELECT tenant_id, customer_id, extract(epoch from now())
+                       FROM memberships
+                       WHERE role = 'customer'
+                       GROUP BY tenant_id, customer_id
+                       HAVING count(*) > 1
+                       ON CONFLICT DO NOTHING''',
+                    '''DELETE FROM sessions WHERE membership_id IN (
+                           SELECT id FROM memberships
+                           WHERE role = 'customer'
+                             AND (tenant_id, customer_id) IN (
+                                 SELECT tenant_id, customer_id FROM memberships WHERE role = 'customer' GROUP BY tenant_id, customer_id HAVING count(*) > 1
+                             )
+                       )''',
+                    '''INSERT INTO customer_links (id, tenant_id, principal_id, customer_id, created_at)
+                       SELECT md5(random()::text || clock_timestamp()::text), m.tenant_id, m.principal_id, m.customer_id, extract(epoch from now())
+                       FROM memberships m
+                       WHERE m.role='customer'
+                         AND (m.tenant_id, m.customer_id) NOT IN (
+                             SELECT tenant_id, customer_id FROM memberships WHERE role='customer' GROUP BY tenant_id, customer_id HAVING count(*) > 1
+                         )
+                       ON CONFLICT DO NOTHING''',
+                ):
+                    db.raw.execute(statement)
+                db.execute("UPDATE retailops_schema SET version=? WHERE component='identity'", (IDENTITY_SCHEMA_CURRENT,))
+                row = {'component': 'identity', 'version': IDENTITY_SCHEMA_CURRENT}
+            if row['version'] == 2:
+                for statement in (
+                    '''CREATE TABLE IF NOT EXISTS unresolved_collisions (
+                        tenant_id TEXT NOT NULL REFERENCES tenants(id),
+                        customer_id TEXT NOT NULL,
+                        created_at DOUBLE PRECISION NOT NULL,
+                        PRIMARY KEY(tenant_id, customer_id))''',
+                    '''INSERT INTO unresolved_collisions (tenant_id, customer_id, created_at)
+                       SELECT tenant_id, customer_id, extract(epoch from now())
+                       FROM memberships
+                       WHERE role = 'customer'
+                       GROUP BY tenant_id, customer_id
+                       HAVING count(*) > 1
+                       ON CONFLICT DO NOTHING''',
+                    '''DELETE FROM customer_links WHERE (tenant_id, customer_id) IN (
+                           SELECT tenant_id, customer_id FROM unresolved_collisions
+                       )''',
+                    '''DELETE FROM sessions WHERE membership_id IN (
+                           SELECT id FROM memberships
+                           WHERE role = 'customer'
+                             AND (
+                                 (tenant_id, customer_id) IN (
+                                     SELECT tenant_id, customer_id FROM memberships WHERE role = 'customer' GROUP BY tenant_id, customer_id HAVING count(*) > 1
+                                 )
+                                 OR (tenant_id, customer_id) IN (
+                                     SELECT tenant_id, customer_id FROM unresolved_collisions
+                                 )
+                             )
+                       )''',
+                ):
+                    db.raw.execute(statement)
+                db.execute("UPDATE retailops_schema SET version=? WHERE component='identity'", (IDENTITY_SCHEMA_CURRENT,))
+                row = {'component': 'identity', 'version': IDENTITY_SCHEMA_CURRENT}
+            if row['version'] != IDENTITY_SCHEMA_CURRENT:
+                raise ValueError('Unsupported PostgreSQL schema version or component.')
         if component == 'business':
             db.raw.execute(sql.SQL('SET LOCAL search_path TO {}, pg_catalog').format(sql.Identifier(schema)))
             if row['version'] == 1:
@@ -202,5 +288,5 @@ def initialize(db, schema, component):
         graph_schema(db)
         initialize_knowledge(db)
     db.execute('INSERT INTO retailops_schema VALUES (?,?)',
-               (component, BUSINESS_SCHEMA_CURRENT if component == 'business' else 1))
+               (component, BUSINESS_SCHEMA_CURRENT if component == 'business' else IDENTITY_SCHEMA_CURRENT))
     return True

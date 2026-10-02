@@ -19,6 +19,8 @@ Nguồn quyết định: `docs/review gpt 6 astra.md`.
 
 READY chỉ áp dụng cho **Module 2.5 PR A/B**. Các plan nghiên cứu, post-thesis hoặc superseded không được coi là cùng đạt READY chỉ vì file bàn giao này tồn tại.
 
+> **Phân định ranh giới Kế hoạch vs Thực thi:** Mốc `PLAN_READY_TO_IMPLEMENT` được xác lập ngày 01/10/2026 (baseline `d01f729` / `c30ff1d`) chỉ khẳng định mức độ sẵn sàng và nhất quán của tài liệu kế hoạch, tuyệt đối không đồng nghĩa với việc hoàn tất triển khai (code complete). Quá trình kiểm tra và nghiệm thu mã nguồn PR A được theo dõi độc lập tại [review gpt 6.1 sol.md](review gpt 6.1 sol.md) và [REVIEW_ACCOUNT_ORDER_WORKFLOW.md](REVIEW_ACCOUNT_ORDER_WORKFLOW.md) (hiện phát hiện 4 P1 blocker trong N08 cần khắc phục trước khi đạt mốc `PR_A_VERIFIED`).
+
 ## 2. Baseline chính xác được duyệt
 
 - Commit repository tại thời điểm review: **d01f729**.

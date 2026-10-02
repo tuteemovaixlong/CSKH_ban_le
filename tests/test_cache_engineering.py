@@ -23,12 +23,19 @@ class FakeAgent:
 
     def chat(self, messages, allow_tools, timeout):
         self.call_count += 1
+        last_text = ""
+        if messages and isinstance(messages, list):
+            last_text = messages[-1].get("content", "")
+        if "mở cửa" in last_text.lower():
+            ans = "Shop mở cửa từ 8:00 đến 22:00 tất cả các ngày trong tuần ạ."
+        else:
+            ans = "Chính sách bảo hành và đổi trả trong 7 ngày làm việc."
         return {
-            "message": {"role": "assistant", "content": "Chính sách bảo hành và đổi trả trong 7 ngày làm việc."},
+            "message": {"role": "assistant", "content": ans},
             "prompt_eval_count": 50,
             "eval_count": 25,
             "reported_cost_usd": 0.0,
-            "reasoning": "Tra cứu chính sách bảo hành chung."
+            "reasoning": "Tra cứu FAQ."
         }
 
 
@@ -165,6 +172,7 @@ class ApplicationCacheIntegrationTests(unittest.TestCase):
             res1 = app.chat("C-001", body1)
             self.assertEqual(agent.call_count, 1)
             self.assertEqual(res1["source"], "llm_agent")
+            self.assertEqual(res1["message"], "Shop mở cửa từ 8:00 đến 22:00 tất cả các ngày trong tuần ạ.")
 
             # 2. Second turn: semantically similar query hits cache, agent is NOT called!
             cid2 = store.new_conversation("C-001", "custom")["conversation_id"]
@@ -178,6 +186,7 @@ class ApplicationCacheIntegrationTests(unittest.TestCase):
             self.assertEqual(res2["source"], "semantic_cache")
             self.assertEqual(res2["trace"]["cache_hit"], "semantic")
             self.assertGreaterEqual(res2["trace"]["similarity"], 0.65)
+            self.assertEqual(res2["message"], "Shop mở cửa từ 8:00 đến 22:00 tất cả các ngày trong tuần ạ.")
 
 
 if __name__ == "__main__":

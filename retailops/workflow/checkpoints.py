@@ -106,7 +106,14 @@ def workflow(store, customer, purpose, key, fingerprint, seed, *, expires_at=Non
             require(row['customer_id'] == customer and row['fingerprint'] == fingerprint, 409,
                     'request_conflict', 'Mã yêu cầu đã dùng cho nội dung, quyền hoặc nguồn model khác.')
             require(row['lease_until'] <= now, 429, 'workflow_busy', 'Yêu cầu này đang được xử lý. Hãy thử lại sau.')
-            seed = json.loads(row['seed'])
+            old_seed = json.loads(row['seed']) if isinstance(row['seed'], str) else row['seed']
+            if isinstance(seed, dict) and isinstance(old_seed, dict):
+                require(old_seed.get('revision') == seed.get('revision') and
+                        old_seed.get('order_id') == seed.get('order_id') and
+                        old_seed.get('product_id') == seed.get('product_id'),
+                        409, 'conversation_changed',
+                        'Ngữ cảnh đã thay đổi hoặc hết hạn. Hãy gửi lại trong cuộc trò chuyện hiện tại.')
+            seed = old_seed
             db.execute('UPDATE graph_runs SET lease_owner=?,lease_until=? WHERE id=?', (owner, now+180, run_id))
     saver = SqlSaver(store, customer, run_id, owner)
     try:

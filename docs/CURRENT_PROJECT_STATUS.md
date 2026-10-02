@@ -1,14 +1,14 @@
 # BÁO CÁO TIẾN ĐỘ & TRẠNG THÁI HỆ THỐNG RETAILOPS 2026
 
-> **Trạng thái:** ACTIVE OPERATIONAL STATUS & EVIDENCE REPORT  
-> **Audit basis / Documentation baseline reviewed:** `b93eb5a`  
-> **Application snapshot đối chiếu:** Nhánh `main` tại commit `c6c7a1a`  
-> **Kiểm thử & CI:** 415 unit tests PASS (0 failures), 4/4 cổng hợp đồng PASS, GitHub Actions CI & Ops Console & Deploy EC2 **100% SUCCESS**  
-> **EC2 Host:** `retailops-dev` / `i-0fd116d8927d0e412` / **t3.large** (Sẵn sàng tắt máy sau phiên làm việc để tối ưu chi phí cloud)  
-> **Deploy status:** Container image build & live rolling deploy **PASS 100%**; sẵn sàng kích hoạt lại khi bật EC2  
-> **Lộ trình kỹ thuật tổng thể:** Xem chi tiết tại [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md)  
-> **Kế hoạch đợt build tiếp theo:** [PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT.md](PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT.md)  
-> **Báo cáo sự cố chi tiết:** [INCIDENT_RECOVERY_2026-09-21.md](INCIDENT_RECOVERY_2026-09-21.md) và [SESSION_HANDOFF_2026-09-25.md](SESSION_HANDOFF_2026-09-25.md)
+> **Trạng thái:** ACTIVE OPERATIONAL STATUS & EVIDENCE REPORT<br>
+> **Audit basis / Documentation baseline reviewed:** `b93eb5a`<br>
+> **Application snapshot đối chiếu:** Nhánh `main` tại commit `c6c7a1a`<br>
+> **Kiểm thử & CI:** 422 unit tests PASS (0 failures, 0 errors, 45 skipped across 467 total tests), 4/4 cổng hợp đồng PASS, GitHub Actions CI & Ops Console & Deploy EC2 **100% SUCCESS**<br>
+> **EC2 Host:** `retailops-dev` / `i-0fd116d8927d0e412` / **t3.large** (Sẵn sàng tắt máy sau phiên làm việc để tối ưu chi phí cloud)<br>
+> **Deploy status:** Container image build & live rolling deploy **PASS 100%**; sẵn sàng kích hoạt lại khi bật EC2<br>
+> **Lộ trình kỹ thuật tổng thể:** Xem chi tiết tại [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md)<br>
+> **Kế hoạch đợt build tiếp theo:** [PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT.md](PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT.md)<br>
+> **Báo cáo sự cố & bàn giao:** [INCIDENT_RECOVERY_2026-09-21.md](INCIDENT_RECOVERY_2026-09-21.md) và [SESSION_HANDOFF_2026-10-02.md](SESSION_HANDOFF_2026-10-02.md)
 
 ---
 
@@ -20,7 +20,7 @@ Theo chuẩn phân cấp minh chứng của [`RELEASE_MANIFEST.md`](RELEASE_MANI
 | :--- | :--- | :--- | :--- | :--- |
 | **Module 1** | **Hệ Thống Lõi TMĐT, 6 SOPs & MCP Server** | **IMPLEMENTED** | **L1/L3 hỗn hợp** *(353+ tests PASS, Staff Desk & Manager SSOT healthy)* | Đã hoàn tất Phase 1.1 (Truthful UX) và Phase 1.2 (Store Manager Persistence & Shared Catalog SSOT: bảng `products`, `product_variants` vào PostgreSQL v4 / SQLite v3, đồng bộ `check_inventory`, `dispute_agent`, audit events toàn shop). Còn tồn đọng các ca rò rỉ context F04–F06. |
 | **Module 2** | **Đo Baseline Benchmark Cơ Sở & Ops Console** | **IMPLEMENTED** | **L1/L3 hỗn hợp** *(250 ca offline 100% Routing, 19/19 Ops Console tests OK)* | Hoàn tất Phase 1.3 (`PLAN_FIX_UI_03`): Bỏ chia 3 token, chi phí chưa đo để Unknown/None, chuẩn hóa nhãn E2E Request Latency, mở rộng allowlist Usage, bổ sung concurrency telemetry (`queue_wait_ms`, `in_flight_inferences`, `overload_429_count`). |
-| **Module 2.5** | **Kiểm Thử & Ổn Định Vận Hành (Quality Gate)** | **IN PROGRESS (ACTIVE SPRINT)** | **L1 in-progress** *([PLAN_MODULE_2_5_HARDENING_VERIFICATION.md](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md))* | **Chốt chặn chất lượng bắt buộc trước khi mở kênh:** Khắc phục F01–F06 (Cache isolation, serialization dưới `conv_lock`, re-raise lỗi 429/503 trong dispute, chặn proposal sai cho đơn delivered, đồng bộ product context, variant precision); F07–F09 (Headroom Waitress, header Retry-After, dọn `agent_lock`, truthful telemetry); và F10 (Migration tuần tự v3->v4->v5). |
+| **Module 2.5** | **Kiểm Thử & Ổn Định Vận Hành (Quality Gate)** | **PR A CODE IMPLEMENTED / N08 BLOCKED (CHỜ CI POSTGRES)** | **L1 PASS (422 tests, 45 skipped)** *([PLAN_MODULE_2_5_HARDENING_VERIFICATION.md](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md))* | **PR A hoàn thành code sửa lỗi; N08 BLOCKED chờ chạy PostgreSQL thật:** Đã xử lý 2 blocker P1 từ review Astra (PostgreSQL v1->v2 và bảo trì v2 collision guard + A2 fail-closed bền vững); bổ sung migration PostgreSQL schema v2 hiện hữu để đánh dấu collision và thu hồi session cũ; sửa integration test để Google identity thực sự ánh xạ tới membership bị collision; bổ sung integration test nâng cấp v2 có session đang hoạt động; bổ sung fault-injection saga recovery A1 cho cả orders/conversations. Trạng thái giữ nguyên **BLOCKED / NOT READY FOR PRODUCTION** do môi trường máy trạm thiếu PostgreSQL live/Docker (toàn bộ 45 integration tests đang ở trạng thái SKIP). |
 | **Module 3** | **Webhook Facebook Messenger (Omnichannel)** | **PLANNED** | **Design-only** *([PLAN_OMNICHANNEL_INTEGRATION.md](PLAN_OMNICHANNEL_INTEGRATION.md))* | Chờ hoàn tất nghiệm thu Module 2.5 trước khi mở cổng webhook tiếp nhận tin nhắn từ Meta API (xếp vào Phase 5 Demo). |
 | **Module 4** | **Cổng Quét Mã QR Demo Live** | **PARTIAL** | **L3** *(HTTPS sslip.io, Web mobile responsive)* | Đã có hạ tầng web di động sẵn sàng cho demo; Chưa có module sinh mã QR động / thẻ QR demo (xếp vào Phase 5 Demo). |
 | **Module 5** | **Self-Hosted vLLM & Serving Model Agentic** | **IMPLEMENTED / PARTIAL** | **Runtime-dependent** *(Colab L4 vLLM + ngrok)* | Đã tối ưu CUDA Graphs, prefix caching, fp8 kv cache và xử lý an toàn ảnh text-only. Cần hoàn tất chuẩn hóa headroom và timeout gate ở Module 2.5 PR B. |
@@ -83,9 +83,42 @@ Theo chuẩn phân cấp minh chứng của [`RELEASE_MANIFEST.md`](RELEASE_MANI
 - **Khắc Phục Treo Inference 45.44s & HTTP 503 Khi Gửi Ảnh Cho Text-only Model (Commit `c6c7a1a`)**:
   - Model `yuxinlu1/gemma-4-12B-agentic` là kiến trúc CausalLM thuần văn bản. Việc gửi token Base64 hình ảnh vào vLLM khiến engine bị nghẽn không thể giải mã hình ảnh.
   - Tách bạch hàm `is_vision_model()`: Với text-only models, tự động trích xuất thông tin ảnh thành ngữ cảnh văn bản an toàn (chẳng hạn metadata mô tả ảnh), không gửi chuỗi Base64 làm treo engine.
-- **Trạng thái kiểm thử hiện tại**:
-  - **415 tests trên CI Linux Docker** (0 failures, 1 skipped).
+
+### 2.9. Tiến Độ Triển Khai PR A & Hiện Trạng Nghiệm Thu N08 (Phiên 02/10/2026)
+> **Trạng thái:** PR A đã hoàn tất mã nguồn cốt lõi và kiểm thử fault-injection; **N08 GIỮ TRẠNG THÁI BLOCKED / NOT READY FOR PRODUCTION** do toàn bộ integration test PostgreSQL đang ở trạng thái SKIP trên máy trạm Windows thiếu PostgreSQL live.
+
+- **N03 (An Toàn Dữ Liệu & Error Masking - ĐÃ ĐẠT)**:
+  - Khi database gặp sự cố gián đoạn (`database_unavailable`), công cụ nghiệp vụ trả về cho người dùng mã lỗi công khai `tool_unavailable` kèm HTTP 503.
+  - Ghi log và telemetry nội bộ đầy đủ: `stage=tool_execution`, `tool=get_order`, `status=503`, `original_code=database_unavailable`.
+  - Không để lộ chi tiết kỹ thuật cơ sở dữ liệu nội bộ và không commit turn lỗi vào conversation turn store.
+- **N08-D (Cấu Hình Live Data Mode & Cách Ly Dữ Liệu Mẫu - ĐÃ ĐẠT)**:
+  - Hỗ trợ cấu hình `data_mode="live"` xuyên suốt `Settings` -> `bootstrap` -> `PersistentSessions` -> OAuth callback.
+  - Tài khoản live nhận 0 đơn hàng, không seed catalog demo, không seed đơn mẫu. Lỗi provision khách hàng trả về HTTP 503 `customer_provision_failed` và từ chối cấp session.
+- **Xử lý 2 Blocker N08 (P1) theo review GPT 6 Astra**:
+  1. **Blocker P1 (PostgreSQL v1->v2 collision protection)**:
+     - Tạo bảng `unresolved_collisions` trong PostgreSQL schema DDL.
+     - Trong migration v1->v2: Ghi các nhóm collision `HAVING count(*) > 1` vào `unresolved_collisions`, xóa sạch active sessions của các colliding members, loại trừ triệt để nhóm collision khỏi backfill `customer_links`.
+     - Chặn triệt để luồng đăng nhập Google (`get_or_create_google_member`), password/token (`login`), và tạo session (`create_session_for_membership`) với HTTP 503 `collision_unresolved`. Tài khoản đăng nhập đầu tiên **tuyệt đối không thể claim** `customer_id` dùng chung hoặc đơn hàng mơ hồ.
+  2. **Blocker P1 (A2 Fail-closed bền vững)**:
+     - Bền vững hóa trạng thái unresolved vào bảng `unresolved_collisions` trong cả SQLite và PostgreSQL.
+     - Thanh trừng mọi `customer_links` cũ trỏ tới colliding customer ID khi business DB không truy cập được.
+     - Mọi guard session/login truy vấn trực tiếp bảng `unresolved_collisions` độc lập với `customer_links`, bảo đảm fail-closed tiếp tục duy trì kể cả sau khi tiến trình khởi động lại.
+  3. **Finding P2 (A1 Fault Injection Saga Recovery)**:
+     - Tách bạch rõ ranh giới commit giữa Business DB và Identity DB (mô hình saga phân tán không dùng 2PC).
+     - Bổ sung regression test `test_n08_a1_two_db_transaction_recovery_and_journal` tiêm lỗi crash sau khi Business DB đã commit quarantine cho cả `orders` và `conversations`, kiểm chứng khả năng rollback của Identity DB và retry phục hồi lũy thừa hoàn chỉnh.
+  4. **Migration PostgreSQL v3, Test Naming v1->v3 & Phương Án Rollback Không Mất Dữ Liệu**:
+     - Nâng cấp `IDENTITY_SCHEMA_CURRENT = 3` và `IDENTITY_SCHEMA_COMPATIBLE = (1, 2, 3)`. Biến quy trình bảo trì thành migration có version chạy một lần: cả đường nâng cấp v1->v3 và v2->v3 đều cập nhật `retailops_schema.version = 3` và đánh dấu hoàn tất.
+     - Đổi tên test và mô tả chính thức thành `test_identity_v1_to_v3_migration_blocks_collision_and_prevents_first_login_claim`.
+     - Sửa fixture test: cấp tài khoản staff cùng `customer_id` với nhóm collision (`CG-v2-shared` ở v2->v3 và `CG-pg-shared` ở v1->v3); xác minh bằng chứng runtime rằng session của staff được bảo toàn nguyên vẹn, chỉ session của `role = 'customer'` bị thu hồi.
+     - **Chốt phương án Rollback an toàn & không mất dữ liệu**:
+       - *Cảnh báo an toàn:* Việc version rebind thuần túy về v1 (`UPDATE retailops_schema SET version = 1`) mà không có biện pháp bảo vệ là **KHÔNG AN TOÀN**, vì binary baseline v1 thiếu logic kiểm tra `unresolved_collisions` và có thể mở lại truy cập nhầm lẫn đơn hàng cho các tài khoản collision.
+       - *Phương án A (Khuyến nghị chuẩn):* Rollback về image tương thích trung gian vẫn duy trì collision guard và bảng `unresolved_collisions` (chấp nhận version 2/3), không rollback về image baseline thiếu guard.
+       - *Phương án B (Nếu bắt buộc rollback về image baseline v1):* Quy trình hạ cấp bắt buộc phải khóa cứng toàn bộ tài khoản va chạm ở tầng DB trước khi đổi version: `UPDATE memberships SET active = 0, auth_version = auth_version + 1 WHERE role = 'customer' AND (tenant_id, customer_id) IN (SELECT tenant_id, customer_id FROM unresolved_collisions); UPDATE retailops_schema SET version = 1 WHERE component = 'identity';`. Nhờ đó, baseline code sẽ lập tức từ chối đăng nhập (vì `active=0`), ngăn chặn triệt để rò rỉ đơn hàng. Đồng thời, toàn bộ bảng `customer_links` và `external_identities` vẫn được giữ nguyên vẹn (không DROP) để bảo toàn 100% dữ liệu phát sinh sau backup khi roll forward trở lại.
+- **Trạng thái kiểm thử hiện tại (02/10/2026)**:
+  - **422 tests PASS** (0 failures, 0 errors, 45 skipped across 467 tests).
+  - Toàn bộ 45 test skipped đều thuộc nhóm tích hợp PostgreSQL/pgvector phụ thuộc `RETAILOPS_TEST_DATABASE_URL` (không có PostgreSQL service trên Windows host).
   - Toàn bộ 4/4 cổng hợp đồng (docs, deployment, eval dataset, notebook) đạt **PASS 100%**.
+  - **KẾT LUẬN NGHIỆM THU:** N08 TUYỆT ĐỐI CHƯA TUYÊN BỐ READY; trạng thái giữ nguyên **BLOCKED / NOT READY FOR PRODUCTION** do integration test trên PostgreSQL thật đang ở trạng thái SKIP trên máy trạm; phải chờ CI runner chạy trên disposable PostgreSQL container thật để đạt PASS 100% toàn bộ 45 tests này.
 
 ---
 
@@ -99,7 +132,7 @@ Hệ thống tuân thủ nghiêm ngặt lộ trình phụ thuộc kỹ thuật 7
   - PR 1.2: [PLAN_FIX_UI_02_MANAGER_PERSISTENCE.md](PLAN_FIX_UI_02_MANAGER_PERSISTENCE.md) (**ĐÃ HOÀN THÀNH** — Merged main `a6ec080`, CI/CD stabilized `d7ce461`).
   - PR 1.3: [PLAN_FIX_UI_03_OPSCONSOLE_INTEGRITY.md](PLAN_FIX_UI_03_OPSCONSOLE_INTEGRITY.md) (**ĐÃ HOÀN THÀNH** — Truthful Telemetry & Concurrency telemetry merged).
 * **Module 2.5 (Quality Gate)**: System Hardening & Verification ([PLAN_MODULE_2_5_HARDENING_VERIFICATION.md](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md))
-  - **PR A**: Context, Cache & Dispute Correctness (Khắc phục F01–F06).
+  - **PR A**: Context, Cache & Dispute Correctness + Account Identity N08 (**ĐANG XỬ LÝ 4 P1 BLOCKER — CHƯA NGHIỆM THU** theo [REVIEW_ACCOUNT_ORDER_WORKFLOW.md](REVIEW_ACCOUNT_ORDER_WORKFLOW.md)).
   - **PR B**: Concurrency, Headroom & Truthful Telemetry (Khắc phục F07, F09, BUG-01, BUG-04).
   - **PR C**: Relational Knowledge & Clean Schema Migration (Khắc phục F10; chính thức thay thế Apache AGE trên EC2 bằng SQL Relational Linkage).
 * **Phase 4**: Đo lường thực nghiệm khoa học (Concurrency load test, Đối kháng Gemma-4 vs DeepSeek API trên 250 ca) phục vụ Chương 4 Luận văn.

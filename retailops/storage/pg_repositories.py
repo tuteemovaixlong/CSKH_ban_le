@@ -27,6 +27,10 @@ class PostgresIdentityStore(IdentityStore):
                 initialize(db, IDENTITY_SCHEMA, 'identity')
         else:
             check_schema(dsn, IDENTITY_SCHEMA, 'identity')
+            with self.connection(write=True) as db:
+                row = db.raw.execute("SELECT version FROM retailops_schema WHERE component='identity'").fetchone()
+                if row and row.get('version') in (1, 2):
+                    initialize(db, IDENTITY_SCHEMA, 'identity')
         try:
             with self.connection(write=True) as db:
                 db.raw.execute("""

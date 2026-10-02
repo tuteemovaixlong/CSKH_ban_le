@@ -232,8 +232,15 @@ class BusinessStore:
     @staticmethod
     def _row_to_product(row):
         d = dict(row)
-        aliases = json.loads(d['aliases']) if isinstance(d['aliases'], str) else (d['aliases'] or [])
-        variants = json.loads(d['variants']) if isinstance(d['variants'], str) else (d['variants'] or [])
+        raw_aliases = json.loads(d['aliases']) if isinstance(d['aliases'], str) else d['aliases']
+        if isinstance(raw_aliases, (list, tuple)):
+            aliases = [str(a) for a in raw_aliases if a is not None]
+        elif isinstance(raw_aliases, str):
+            aliases = [raw_aliases]
+        else:
+            aliases = []
+        raw_variants = json.loads(d['variants']) if isinstance(d['variants'], str) else d['variants']
+        variants = raw_variants if isinstance(raw_variants, list) else []
         extra = json.loads(d.get('extra_data') or '{}') if isinstance(d.get('extra_data'), str) else (d.get('extra_data') or {})
         return {
             'id': d['id'],
@@ -273,7 +280,10 @@ class BusinessStore:
         require(name, 400, "invalid_product_name", "Tên sản phẩm không được để trống.")
 
         now = time.time()
-        aliases = json.dumps(p.get("aliases", [name.lower(), pid.lower()]), ensure_ascii=False)
+        raw_aliases = p.get("aliases")
+        if not isinstance(raw_aliases, (list, tuple)):
+            raw_aliases = [name.lower(), pid.lower()]
+        aliases = json.dumps([str(a) for a in raw_aliases if a is not None], ensure_ascii=False)
         category = p.get("category")
         price = p.get("price")
         stock = p.get("stock")
@@ -340,7 +350,8 @@ class BusinessStore:
 
             if "aliases" in updates:
                 cols.append("aliases=?")
-                params.append(json.dumps(updates["aliases"], ensure_ascii=False))
+                raw_al = updates["aliases"] if isinstance(updates["aliases"], (list, tuple)) else []
+                params.append(json.dumps([str(a) for a in raw_al if a is not None], ensure_ascii=False))
 
             existing_vars = db.execute("SELECT * FROM product_variants WHERE product_id=?", (pid,)).fetchall()
             existing_map = {r["variant_name"]: dict(r) for r in existing_vars}
@@ -633,6 +644,12 @@ class BusinessStore:
             # The answer is explicitly an old result. Never reopen a stale cancel card.
             return {**result, 'replayed': True, 'action': 'reply'}
         return None
+
+    def get_graph_run(self, run_id):
+        with self.connection() as db:
+            row = db.execute('''SELECT id,customer_id,fingerprint,seed,expires_at,lease_owner,lease_until
+                FROM graph_runs WHERE id=?''', (run_id,)).fetchone()
+            return dict(row) if row else None
 
     def history(self, customer, cid):
         with self.connection() as db:

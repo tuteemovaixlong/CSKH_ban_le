@@ -74,6 +74,24 @@ def is_static_faq_query(text: str) -> bool:
     return any(p.fullmatch(norm) for p in STATIC_FAQ_PATTERNS)
 
 
+def resolve_faq_intent(text: str) -> Optional[str]:
+    """Resolve canonical FAQ intent/topic for semantic cache partitioning."""
+    norm = normalize_faq_text(text)
+    if not norm:
+        return None
+    if any(w in norm for w in ("mở cửa", "đóng cửa", "giờ làm việc", "mấy giờ", "hoạt động")):
+        return "hours"
+    if any(w in norm for w in ("địa chỉ", "vị trí", "ở đâu", "nằm ở đâu", "chi nhánh")):
+        return "address"
+    if any(w in norm for w in ("hotline", "số điện thoại", "tổng đài", "liên hệ", "sđt")):
+        return "hotline"
+    if any(w in norm for w in ("xin chào", "chào shop", "hi shop", "hello shop")):
+        return "greeting"
+    if any(w in norm for w in ("đặt hàng", "mua hàng")):
+        return "order_guide"
+    return None
+
+
 def is_cache_eligible_for_lookup(text: str, snapshot: dict, has_prior_turns: bool, attachment=None) -> bool:
     if attachment is not None:
         return False
@@ -111,22 +129,26 @@ class SemanticCache:
             return None
 
         q_hash = self._query_hash(query_text)
+        query_topic = resolve_faq_intent(query_text)
 
         with self._lock:
             # 1. Exact Match (Tier 1A)
             exact = self._hash_map.get(q_hash)
             now = time.time()
             if exact and exact['expires_at'] > now:
-                exact['hit_count'] += 1
-                exact['last_hit_at'] = now
-                return {
-                    'type': 'exact',
-                    'similarity': 1.0,
-                    'answer': exact['answer'],
-                    'action': exact['action'],
-                    'entry_id': exact['id'],
-                    'hit_count': exact['hit_count']
-                }
+                exact_topic = exact.get('topic')
+                if not (query_topic and exact_topic and query_topic != exact_topic):
+                    exact['hit_count'] += 1
+                    exact['last_hit_at'] = now
+                    return {
+                        'type': 'exact',
+                        'similarity': 1.0,
+                        'answer': exact['answer'],
+                        'action': exact['action'],
+                        'entry_id': exact['id'],
+                        'hit_count': exact['hit_count'],
+                        'topic': exact_topic
+                    }
 
             # 2. Semantic Cosine Match (Tier 1B)
             try:
@@ -139,6 +161,10 @@ class SemanticCache:
 
             for entry in self._entries:
                 if entry['expires_at'] <= now:
+                    continue
+                entry_topic = entry.get('topic')
+                # Intent partitioning: queries with different canonical FAQ topics MUST NOT match
+                if query_topic and entry_topic and query_topic != entry_topic:
                     continue
                 # Dot product of normalized vectors = cosine similarity
                 score = sum(a * b for a, b in zip(q_vec, entry['vector']))
@@ -156,7 +182,8 @@ class SemanticCache:
                     'action': best_entry['action'],
                     'entry_id': best_entry['id'],
                     'matched_query': best_entry['query_text'],
-                    'hit_count': best_entry['hit_count']
+                    'hit_count': best_entry['hit_count'],
+                    'topic': best_entry.get('topic')
                 }
 
         return None
@@ -177,11 +204,13 @@ class SemanticCache:
         q_hash = self._query_hash(query_text)
         now = time.time()
         entry_id = str(uuid.uuid4())
+        topic = (metadata or {}).get('topic') or resolve_faq_intent(query_text)
 
         entry = {
             'id': entry_id,
             'query_text': query_text.strip(),
             'query_hash': q_hash,
+            'topic': topic,
             'vector': q_vec,
             'answer': answer.strip(),
             'action': action,

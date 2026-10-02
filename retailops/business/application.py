@@ -1,12 +1,15 @@
 """Application use cases: conversation, provider selection and focused order lookup."""
 import hashlib
 import json
+import logging
 import os
 from contextlib import ExitStack
 import re
 import threading
 import time
 import uuid
+
+logger = logging.getLogger("retailops.application")
 from retailops.core import ApiError, REASONS, STATUSES, fields, require
 from retailops.identity.bearer import authenticate_bearer
 from retailops.business.permissions import CANCEL, ROLE_PERMISSIONS
@@ -37,6 +40,7 @@ class Application:
         self.overload_429_count = 0
         self.semantic_cache = SemanticCache(min_similarity=0.65)
         self.tool_cache = ToolCache(default_ttl=180.0)
+        self.internal_events = []
         if orchestrator is None:
             infer_cls = getattr(getattr(infer, '__class__', None), '__name__', '')
             api_infer_cls = getattr(getattr(api_infer, '__class__', None), '__name__', '')
@@ -47,6 +51,25 @@ class Application:
                 self.orchestrator = os.environ.get('RETAILOPS_ORCHESTRATOR', 'multi_agent')
         else:
             self.orchestrator = orchestrator
+
+    def record_internal_event(self, event_type, **kwargs):
+        event = {
+            'event': event_type,
+            'timestamp': time.time(),
+            **kwargs
+        }
+        if not hasattr(self, 'internal_events'):
+            self.internal_events = []
+        self.internal_events.append(event)
+        logger.error(
+            "Internal %s: stage=%s tool=%s status=%s original_code=%s",
+            event_type,
+            kwargs.get('stage'),
+            kwargs.get('tool'),
+            kwargs.get('status'),
+            kwargs.get('original_code')
+        )
+        return event
 
     def providers(self):
         custom_model = getattr(getattr(self.infer, 'config', None), 'model', 'qwen3.5:4b')
@@ -142,6 +165,27 @@ class Application:
             # Reload & Revalidate conversation snapshot under lock
             snapshot = self.store.conversation(customer, snapshot['id'])
 
+            # G02: Check interrupted runs in graph_runs under conv_lock BEFORE cache lookup & workflow
+            run_key = [snapshot['id'], request_id]
+            fingerprint = hashlib.sha256(json.dumps([digest, self.role, provider_id]).encode()).hexdigest()
+            run_id = hashlib.sha256(json.dumps([customer, 'chat-v1', run_key]).encode()).hexdigest()
+
+            existing_run = self.store.get_graph_run(run_id) if hasattr(self.store, 'get_graph_run') else None
+            if existing_run is not None:
+                now = time.time()
+                if existing_run.get('expires_at', 0) > now:
+                    require(existing_run['customer_id'] == customer and existing_run['fingerprint'] == fingerprint, 409,
+                            'request_conflict', 'Mã yêu cầu đã dùng cho nội dung, quyền hoặc nguồn model khác.')
+                    require(existing_run.get('lease_until', 0) <= now, 429,
+                            'workflow_busy', 'Yêu cầu này đang được xử lý. Hãy thử lại sau.')
+                    old_seed = json.loads(existing_run['seed']) if isinstance(existing_run['seed'], str) else existing_run['seed']
+                    if isinstance(old_seed, dict):
+                        require(old_seed.get('revision') == snapshot.get('revision') and
+                                old_seed.get('order_id') == snapshot.get('order_id') and
+                                old_seed.get('product_id') == snapshot.get('product_id'),
+                                409, 'conversation_changed',
+                                'Ngữ cảnh đã thay đổi hoặc hết hạn. Hãy gửi lại trong cuộc trò chuyện hiện tại.')
+
             # Invalidate semantic cache if catalog was updated in database by any session
             if hasattr(self.store, 'get_catalog_revision'):
                 cur_cat_rev = self.store.get_catalog_revision()
@@ -150,8 +194,15 @@ class Application:
                         self.semantic_cache.clear()
                 self._last_catalog_rev = cur_cat_rev
 
-            has_prior_turns = self.store.has_turns(customer, snapshot['id']) if hasattr(self.store, 'has_turns') else False
-            eligibility_before_turn = is_cache_eligible_for_lookup(text, snapshot, has_prior_turns, attachment)
+            try:
+                has_prior_turns = self.store.has_turns(customer, snapshot['id']) if hasattr(self.store, 'has_turns') else True
+            except Exception:
+                has_prior_turns = True
+
+            eligibility_before_turn = (
+                existing_run is None
+                and is_cache_eligible_for_lookup(text, snapshot, has_prior_turns, attachment)
+            )
 
             # Tier 1: Check Semantic / Exact Cache under conv_lock
             cached = None
@@ -197,7 +248,6 @@ class Application:
                 return cached_result
 
             from retailops.workflow.checkpoints import workflow
-            fingerprint = hashlib.sha256(json.dumps([digest, self.role, provider_id]).encode()).hexdigest()
             saver, snapshot = stack.enter_context(workflow(self.store, customer, 'chat-v1',
                 [snapshot['id'], request_id], fingerprint, snapshot, expires_at=snapshot['expires_at']))
 
@@ -252,8 +302,19 @@ class Application:
                 try:
                     res = bound(name, arguments)
                 except ApiError as exc:
-                    if exc.status == 429 or exc.status >= 500:
+                    if exc.status == 429:
                         raise
+                    if exc.status >= 500:
+                        self.record_internal_event(
+                            'tool_error',
+                            stage='tool_execution',
+                            tool=name,
+                            status=exc.status,
+                            original_code=exc.code,
+                        )
+                        code = 'tool_unavailable' if exc.code == 'database_unavailable' else exc.code
+                        msg = 'Dịch vụ tạm thời không khả dụng. Vui lòng thử lại sau.' if exc.code == 'database_unavailable' else exc.message
+                        raise ApiError(exc.status, code, msg)
                     if name in ('get_order', 'get_context', 'track_shipment', 'prepare_cancellation'):
                         bound.context = {'order_id': None, 'product_id': None}
                         bound.cancel_order = None
@@ -284,6 +345,26 @@ class Application:
             else:
                 answer = run_agent(gated_gateway, text, self.store.history(customer, snapshot['id']), execute, identity,
                                    saver=saver, capture=capture, restore=restore, before_model=before_model, attachment=attachment)
+
+            # N01: Rollback cancel_order and mutated context if target order is invalid, unverified, or mismatched
+            if bound.cancel_order:
+                extracted_m = re.search(r'\bO-(\d+)\b', text, re.IGNORECASE)
+                extracted_oid = f"O-{extracted_m.group(1)}" if extracted_m else None
+                expected_oid = extracted_oid or snapshot.get('order_id')
+                cancel_oid = bound.cancel_order.get('id')
+                if not expected_oid or (cancel_oid and cancel_oid != expected_oid):
+                    bound.cancel_order = None
+                    if bound.context.get('order_id') != snapshot.get('order_id'):
+                        bound.context['order_id'] = snapshot.get('order_id')
+                        bound.context['product_id'] = snapshot.get('product_id')
+                elif answer.get('action_proposal') is not None:
+                    prop = answer.get('action_proposal')
+                    if prop and (prop.get('action') != 'cancel_order' or prop.get('order_id') != cancel_oid):
+                        bound.cancel_order = None
+                        if bound.context.get('order_id') != snapshot.get('order_id'):
+                            bound.context['order_id'] = snapshot.get('order_id')
+                            bound.context['product_id'] = snapshot.get('product_id')
+
             result = {'action': 'choose_cancel_reason' if bound.cancel_order else 'reply',
                       'message': answer['message'], 'source': answer['trace'].get('answer_source', 'llm_agent'),
                       'model_used': answer['trace'].get('model_responses', answer['trace'].get('model_calls', 0)) > 0,
@@ -313,15 +394,35 @@ class Application:
                 result['human_support'] = bound.human_support
             self.store.finish_turn(customer, snapshot, request_id, digest, answer['messages'], result, bound.versions)
 
-            tools_called = answer.get('trace', {}).get('tools', [])
-            reported_tool_count = answer.get('trace', {}).get('tool_count', len(tools_called))
-            total_tool_count = max(reported_tool_count, len(tools_called), tool_execution_count, len(tools_called_in_turn))
+            trace_obj = answer.get('trace') if isinstance(answer.get('trace'), dict) else {}
+            tools_val = trace_obj.get('tools')
+            tools_called_list = tools_val if isinstance(tools_val, list) else []
+            tool_cnt_val = trace_obj.get('tool_count')
+
+            # G05: Strict explicit provenance verification
+            has_explicit_provenance = (
+                isinstance(trace_obj, dict)
+                and 'tools' in trace_obj and isinstance(trace_obj['tools'], list)
+                and 'tool_count' in trace_obj and isinstance(trace_obj['tool_count'], int)
+                and not trace_obj.get('resumed_from_checkpoint')
+                and not trace_obj.get('degraded')
+            )
+
+            tool_calls_detected = (
+                len(tools_called_list) > 0
+                or (isinstance(tool_cnt_val, int) and tool_cnt_val > 0)
+                or tool_execution_count > 0
+                or len(tools_called_in_turn) > 0
+            )
 
             can_store_cache = (
                 eligibility_before_turn is True
                 and not attachment
                 and result['source'] == 'llm_agent'
                 and not result['trace'].get('degraded')
+                and not result['trace'].get('resumed_from_checkpoint')
+                and has_explicit_provenance
+                and not tool_calls_detected
                 and is_cacheable_query(text)
                 and not bound.cancel_order
                 and not bound.context.get('order_id')
@@ -330,11 +431,11 @@ class Application:
                 and snapshot.get('product_id') is None
                 and result.get('action') == 'reply'
                 and (provider_id != 'api' or getattr(self, 'cache_api', False))
-                and total_tool_count == 0
                 and not bound.knowledge.searches
                 and not result.get('sources')
                 and not bound.versions
                 and not getattr(bound, 'human_support', None)
+                and not result.get('human_support')
             )
             if can_store_cache:
                 self.semantic_cache.store(text, answer['message'], action=result['action'])
@@ -342,9 +443,18 @@ class Application:
         except ApiError:
             raise
         except AgentError as exc:
-            exc.trace['latency_ms'] = round((time.monotonic() - started) * 1000, 2)
-            self.store.event(customer, 'agent_failed', code=exc.code, trace=exc.trace)
-            raise ApiError(503, exc.code, str(exc), exc.trace) from None
+            exc_trace = exc.trace if isinstance(getattr(exc, 'trace', None), dict) else {}
+            http_status = getattr(exc, 'http_status', None) or exc_trace.get('http_status')
+            if not http_status:
+                if exc.code in ('api_rate_limited', 'model_busy'):
+                    http_status = 429
+                elif exc.code == 'agent_timeout':
+                    http_status = 504
+                else:
+                    http_status = 503
+            exc_trace['latency_ms'] = round((time.monotonic() - started) * 1000, 2)
+            self.store.event(customer, 'agent_failed', code=exc.code, trace=exc_trace)
+            raise ApiError(http_status, exc.code, str(exc), exc_trace) from None
         except (RuntimeError, ValueError, OSError):
             self.store.event(customer, 'agent_failed', code='model_unavailable')
             raise ApiError(503, 'model_unavailable',
