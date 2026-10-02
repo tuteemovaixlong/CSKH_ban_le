@@ -532,11 +532,11 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             db.execute("INSERT INTO principals (id, name) VALUES ('p-rec-2', 'Bob Rec') ON CONFLICT DO NOTHING")
             db.execute(
                 "INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) "
-                "VALUES ('m-rec-1', 'shop-a', 'p-rec-1', 'CG-rec-shared', 'customer', 0, 1) ON CONFLICT DO NOTHING"
+                "VALUES ('m-rec-1', 'shop-a', 'p-rec-1', 'CG-rec-shared', 'customer', 1, 1) ON CONFLICT DO NOTHING"
             )
             db.execute(
                 "INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) "
-                "VALUES ('m-rec-2', 'shop-a', 'p-rec-2', 'CG-rec-shared', 'customer', 0, 1) ON CONFLICT DO NOTHING"
+                "VALUES ('m-rec-2', 'shop-a', 'p-rec-2', 'CG-rec-shared', 'customer', 1, 1) ON CONFLICT DO NOTHING"
             )
             db.execute(
                 "INSERT INTO unresolved_collisions (tenant_id, customer_id, created_at) "
