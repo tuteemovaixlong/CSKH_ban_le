@@ -343,6 +343,12 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             staff_active = db.execute("SELECT count(*) as cnt FROM sessions WHERE membership_id='m-pg-staff'").fetchone()['cnt']
             self.assertEqual(staff_active, 1)
 
+        # Colliding customer session resolve fails (session revoked)
+        with self.assertRaises(ApiError) as ctx_revoked_v1:
+            pg_istore.resolve('s-pg1')
+        self.assertEqual(ctx_revoked_v1.exception.status, 401)
+        self.assertEqual(ctx_revoked_v1.exception.code, 'session_expired')
+
         # Staff session resolves successfully
         resolved_staff_v1 = pg_istore.resolve('s-pg-staff')
         self.assertIsNotNone(resolved_staff_v1)
@@ -460,9 +466,11 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             staff_sess_row = db.execute("SELECT * FROM sessions WHERE id=?", (staff_session_hash,)).fetchone()
             self.assertIsNotNone(staff_sess_row)
 
-        # 5. Colliding customer session resolve fails
-        resolved = pg_istore.resolve(session_hash)
-        self.assertIsNone(resolved)
+        # 5. Colliding customer session resolve fails (session revoked)
+        with self.assertRaises(ApiError) as ctx_revoked:
+            pg_istore.resolve(session_hash)
+        self.assertEqual(ctx_revoked.exception.status, 401)
+        self.assertEqual(ctx_revoked.exception.code, 'session_expired')
 
         # 6. Staff session resolve succeeds and preserves role
         resolved_staff = pg_istore.resolve(staff_session_hash)
