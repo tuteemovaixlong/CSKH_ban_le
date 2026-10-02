@@ -595,14 +595,16 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         # 3. Post-reconciliation verification
         # Member 1 session creation succeeds
         sid1 = pg_istore.create_session_for_membership('m-rec-1', 3600, 10)
-        res1 = pg_istore.resolve(sid1)
+        h1 = hashlib.sha256(sid1.encode()).hexdigest()
+        res1 = pg_istore.resolve(h1)
         self.assertIsNotNone(res1)
         self.assertEqual(res1.get('customer_id'), 'CG-rec-shared')
         self.assertEqual(res1.get('id'), 'm-rec-1')
 
         # Member 2 session creation succeeds with segregated customer_id
         sid2 = pg_istore.create_session_for_membership('m-rec-2', 3600, 10)
-        res2 = pg_istore.resolve(sid2)
+        h2 = hashlib.sha256(sid2.encode()).hexdigest()
+        res2 = pg_istore.resolve(h2)
         self.assertIsNotNone(res2)
         self.assertEqual(res2.get('customer_id'), 'CG-rec-distinct-2')
         self.assertEqual(res2.get('id'), 'm-rec-2')
