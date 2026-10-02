@@ -476,7 +476,7 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         resolved_staff = pg_istore.resolve(staff_session_hash)
         self.assertIsNotNone(resolved_staff)
         self.assertEqual(resolved_staff.get('role'), 'staff')
-        self.assertEqual(resolved_staff.get('membership_id'), 'm-v2-staff')
+        self.assertEqual(resolved_staff.get('id'), 'm-v2-staff')
 
         # 7. Attempting to create a session on m-v2-1 is blocked with 503 collision_unresolved
         with self.assertRaises(ApiError) as ctx:
