@@ -42,7 +42,7 @@ N03 có log nội bộ và event trong bộ nhớ; chưa kiểm hệ thống thu
 
 ### N08-A1 — P1: Transaction hai DB không rollback đồng bộ
 
-**Vị trí:** [identity/store.py](D:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/retailops/identity/store.py) (dòng 124), các nhánh business transaction tại dòng 126–175 và 207–211; identity chỉ commit tại dòng 248.
+**Vị trí:** [identity/store.py](../retailops/identity/store.py) (dòng 124), các nhánh business transaction tại dòng 126–175 và 207–211; identity chỉ commit tại dòng 248.
 
 Business store dùng **connection/transaction riêng**, commit ngay khi thoát with b_conn_ctx; outer identity transaction chưa commit. Lỗi phát sinh ở identity commit hoặc một tenant xử lý sau đó không rollback các business transaction đã hoàn tất. Claim “toàn bộ thao tác rollback an toàn” chưa đúng.
 
@@ -63,7 +63,7 @@ Identity vẫn giữ mapping cũ trong khi business đã chuyển đơn và tạ
 
 ### N08-A2 — P1: Không mở được business DB vẫn di trú identity
 
-**Vị trí:** [identity/store.py](D:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/retailops/identity/store.py) (dòng 79), dòng 79–104 và 176–183.
+**Vị trí:** [identity/store.py](../retailops/identity/store.py) (dòng 79), dòng 79–104 và 176–183.
 
 get_tenant_db_conn() nuốt lỗi resolver/connection rồi thử SQLite fallback. Khi cả hai không lấy được business DB, trả None; helper vẫn đổi customer của membership thứ hai và ghi legacy_collision_migrated. Không biết đơn/history hiện hữu thuộc ai nhưng vẫn cho account giữ ID cũ.
 
@@ -84,7 +84,7 @@ quarantine: chưa thực hiện
 
 ### N08-B1 — P1: Link account legacy bằng email chưa được xác minh
 
-**Vị trí:** [auth_google.py](D:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/retailops/http/auth_google.py) (dòng 168–177), đoạn nhận/trả userinfo; [public.py](D:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/retailops/http/public.py) (dòng 105); [identity/store.py](D:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/retailops/identity/store.py) (dòng 408).
+**Vị trí:** [auth_google.py](../retailops/http/auth_google.py) (dòng 168–177), đoạn nhận/trả userinfo; [public.py](../retailops/http/public.py) (dòng 105); [identity/store.py](../retailops/identity/store.py) (dòng 408).
 
 Code mới dùng email để tìm và link principal legacy. exchange_code_for_user_info() **không kiểm hoặc truyền email_verified**; callback không có guard; store chỉ yêu cầu sub không rỗng ở live. Có sub hợp lệ không chứng minh email dùng để tìm account cũ đã được xác minh.
 
@@ -105,7 +105,7 @@ Kiểm này chứng minh boundary hiện chấp nhận linking không đạt đi
 
 ### N08-C1 — P1: PostgreSQL schema v2 bị runtime từ chối
 
-**Vị trí:** [postgres.py](D:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/retailops/storage/postgres.py) (dòng 89); [pg_repositories.py](D:/year_2026/Work_2026/agentic_AI/CSKH_ban_le/retailops/storage/pg_repositories.py) (dòng 23).
+**Vị trí:** [postgres.py](../retailops/storage/postgres.py) (dòng 89); [pg_repositories.py](../retailops/storage/pg_repositories.py) (dòng 23).
 
 Đã thêm IDENTITY_SCHEMA_CURRENT=2 và IDENTITY_SCHEMA_COMPATIBLE=(1,2), nhưng assert_schema() vẫn dùng:
 
