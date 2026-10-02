@@ -42,6 +42,16 @@ def initialize(db):
             created_at REAL NOT NULL, UNIQUE(tenant_id, principal_id), UNIQUE(tenant_id, customer_id))''',
         '''CREATE TABLE IF NOT EXISTS unresolved_collisions (tenant_id TEXT NOT NULL REFERENCES tenants(id),
             customer_id TEXT NOT NULL, created_at REAL NOT NULL, PRIMARY KEY(tenant_id, customer_id))''',
+        '''CREATE TABLE IF NOT EXISTS reconciliation_journal (
+            id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL REFERENCES tenants(id),
+            colliding_customer_id TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('started', 'business_committed', 'identity_committed', 'completed')),
+            plan_json TEXT NOT NULL,
+            error_message TEXT,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL)''',
+        'CREATE INDEX IF NOT EXISTS idx_reconciliation_journal_tenant ON reconciliation_journal(tenant_id, colliding_customer_id)',
     ]
     for statement in statements:
         db.execute(statement)

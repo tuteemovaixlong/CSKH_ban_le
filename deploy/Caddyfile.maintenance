@@ -1,0 +1,35 @@
+{
+	admin off
+}
+
+{$RETAILOPS_PUBLIC_HOST} {
+	# Only this exact DNS name receives a certificate. No on-demand TLS.
+	encode zstd gzip
+	request_body {
+		max_size 10MB
+	}
+	header {
+		-Server
+		Strict-Transport-Security "max-age=86400"
+	}
+
+	# Emergency Fail-Closed Maintenance Mode for Auth/Provisioning Endpoints
+	# Blocks Google OAuth flows and token login during identity/database reconciliation
+	@auth_maintenance {
+		path /auth/google/config /auth/google/login /auth/google/callback /api/login
+	}
+	handle @auth_maintenance {
+		header Content-Type "application/json; charset=utf-8"
+		header Retry-After "300"
+		respond `{"error":"maintenance_mode","message":"Hệ thống xác thực đang bảo trì để đối soát dữ liệu."}` 503
+	}
+
+	reverse_proxy web:8000 {
+		header_up -Authorization
+		header_up -Forwarded
+		transport http {
+			dial_timeout 5s
+			response_header_timeout 155s
+		}
+	}
+}

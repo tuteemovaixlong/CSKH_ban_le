@@ -27,6 +27,7 @@ from retailops.core import ApiError, ROOT
 from retailops.http.public import PublicWeb
 from retailops.identity.persistent import PersistentSessions
 from retailops.identity.postgres import PostgresSessions
+from retailops.identity.reconcile import get_reconciliation_status, reconcile_collision
 from retailops.storage.import_sqlite import import_snapshot
 from retailops.storage.pg_repositories import PostgresIdentityStore
 from retailops.storage.postgres import BUSINESS_SCHEMA_CURRENT, IDENTITY_SCHEMA, tenant_schema, transaction
@@ -498,36 +499,30 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             self.assertEqual(db.execute("SELECT version FROM retailops_schema WHERE component='identity'").fetchone()['version'], 3)
 
     def test_identity_rollback_policy_and_account_reconciliation(self):
-        """PostgreSQL Integration: Rollback policy guard and account reconciliation runbook.
+        """PostgreSQL Integration: Rollback policy guard and two-database account reconciliation with journal.
 
-        Review Finding (P1/P2):
+        Review Finding (P1 Blocker 2 & 3):
         - Disabling existing colliding memberships (active=0) is INSUFFICIENT for baseline v1 rollback,
-          because baseline v1 binary (c6c7a1a) lacks collision guards and will provision NEW customer
-          memberships sharing the same colliding customer_id (e.g. via CG-{hash[:8]}).
-        - Policy: Rollback to baseline binaries lacking collision guards is strictly FORBIDDEN.
-          Rollback is only safe to images containing collision guards.
-
-        Test Verification:
-        1. Setup: Schema at v3 with quarantined customer_id 'CG-rec-shared' and unresolved_collisions entry.
-        2. Guard Enforcement: Verify that PostgresIdentityStore (v3) fail-closed blocks any login,
-           session creation, or Google OAuth provisioning on colliding customer_ids.
-        3. Reconciliation & Reactivation Runbook Execution:
-           Step a: Admin identifies collision from unresolved_collisions ('shop-a', 'CG-rec-shared').
-           Step b: Admin disambiguates: keeps 'CG-rec-shared' for member 1 ('m-rec-1'), provisions
-                   distinct customer_id ('CG-rec-distinct-2') for member 2 ('m-rec-2').
-           Step c: Admin updates memberships.customer_id for 'm-rec-2'.
-           Step d: Admin creates 1-to-1 customer_links for each member.
-           Step e: Admin removes resolved collision from unresolved_collisions table.
-           Step f: Admin reactivates memberships: active=1, auth_version=auth_version+1.
-        4. Post-Reconciliation Verification:
-           - Both members can create sessions and authenticate cleanly.
-           - Member 1 session resolves to 'CG-rec-shared'.
-           - Member 2 session resolves to 'CG-rec-distinct-2'.
-           - Neither membership is blocked with 503 collision_unresolved.
-           - Data isolation between the two customer accounts is completely restored.
+          because baseline v1 binary lacks collision guards and provisions new customer memberships
+          sharing the same colliding customer_id. Rollback to baseline binaries is strictly FORBIDDEN.
+        - Two-database reconciliation must operate across Identity DB and Business DB with:
+          1. Persistent reconciliation journal ('started' -> 'business_committed' -> 'completed').
+          2. Fail-closed guarantee: accounts remain quarantined in unresolved_collisions until both DBs commit.
+          3. Fault injection testing:
+             - Injected fault after Business DB commit: verify Business DB migrated orders/conversations,
+               while Identity DB remains fail-closed (503 collision_unresolved) with zero data leak.
+             - Injected fault during Identity DB commit: verify rollback maintains fail-closed state.
+          4. Recovery & Retry via standard reconciliation service: resumes cleanly using the journal and idempotency key.
+          5. Real Business DB data: real products, orders, conversations, agent turns for both customers.
+          6. Post-reconciliation ownership & data isolation verification:
+             - Alice owns only Alice's orders and conversations; 404 on Bob's records.
+             - Bob owns only Bob's orders and conversations; 404 on Alice's records.
+             - External identities (Google sub/email) linked 1-to-1.
+             - customer_links mapped 1-to-1.
         """
+        now = time.time()
+        # 1. Setup Identity DB: two colliding accounts sharing 'CG-rec-shared'
         with transaction(DSN, write=True) as db:
-            # Setup two colliding customer accounts sharing 'CG-rec-shared'
             db.execute("INSERT INTO principals (id, name) VALUES ('p-rec-1', 'Alice Rec') ON CONFLICT DO NOTHING")
             db.execute("INSERT INTO principals (id, name) VALUES ('p-rec-2', 'Bob Rec') ON CONFLICT DO NOTHING")
             db.execute(
@@ -541,12 +536,61 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             db.execute(
                 "INSERT INTO unresolved_collisions (tenant_id, customer_id, created_at) "
                 "VALUES ('shop-a', 'CG-rec-shared', ?) ON CONFLICT DO NOTHING",
-                (time.time(),)
+                (now,)
+            )
+
+        # 2. Setup Business DB: real products, orders, and conversations for both customers under colliding ID
+        b_store = self.sessions.business_store('shop-a')
+        with b_store.connection(write=True) as b_db:
+            b_db.execute(
+                "INSERT INTO customers (id, name) VALUES ('CG-rec-shared', 'Colliding Shared Customer') ON CONFLICT DO NOTHING"
+            )
+            b_db.execute(
+                "INSERT INTO products (id, name, price, stock, is_system_immutable, created_at, updated_at) "
+                "VALUES ('P-REC-001', 'Áo Polo Test', 250000, 100, 0, ?, ?) ON CONFLICT DO NOTHING",
+                (now, now)
+            )
+            # Real orders: O-REC-001 & O-REC-002 intended for Alice, O-REC-003 intended for Bob
+            b_db.execute(
+                "INSERT INTO orders (id, customer_id, product_id, name, variant, amount, status, version) "
+                "VALUES ('O-REC-001', 'CG-rec-shared', 'P-REC-001', 'Áo Polo Test', 'L / Đen', 250000, 'pending', 1) "
+                "ON CONFLICT DO NOTHING"
+            )
+            b_db.execute(
+                "INSERT INTO orders (id, customer_id, product_id, name, variant, amount, status, version) "
+                "VALUES ('O-REC-002', 'CG-rec-shared', 'P-REC-001', 'Áo Polo Test', 'XL / Trắng', 250000, 'delivered', 1) "
+                "ON CONFLICT DO NOTHING"
+            )
+            b_db.execute(
+                "INSERT INTO orders (id, customer_id, product_id, name, variant, amount, status, version) "
+                "VALUES ('O-REC-003', 'CG-rec-shared', 'P-REC-001', 'Áo Polo Test', 'M / Xanh', 500000, 'pending', 1) "
+                "ON CONFLICT DO NOTHING"
+            )
+            # Real conversations: CONV-REC-001 for Alice, CONV-REC-002 for Bob
+            b_db.execute(
+                "INSERT INTO conversations (id, customer_id, order_id, product_id, revision, expires_at) "
+                "VALUES ('CONV-REC-001', 'CG-rec-shared', 'O-REC-001', 'P-REC-001', 1, ?) ON CONFLICT DO NOTHING",
+                (now + 3600,)
+            )
+            b_db.execute(
+                "INSERT INTO conversations (id, customer_id, order_id, product_id, revision, expires_at) "
+                "VALUES ('CONV-REC-002', 'CG-rec-shared', 'O-REC-003', 'P-REC-001', 1, ?) ON CONFLICT DO NOTHING",
+                (now + 3600,)
+            )
+            b_db.execute(
+                "INSERT INTO agent_turns (conversation_id, customer_id, request_id, input_hash, messages, result, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+                ('CONV-REC-001', 'CG-rec-shared', 'req-turn-001', 'hash001', '[]', '{\"reply\":\"Alice hello\"}', now)
+            )
+            b_db.execute(
+                "INSERT INTO agent_turns (conversation_id, customer_id, request_id, input_hash, messages, result, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+                ('CONV-REC-002', 'CG-rec-shared', 'req-turn-002', 'hash002', '[]', '{\"reply\":\"Bob hello\"}', now)
             )
 
         pg_istore = PostgresIdentityStore(DSN, create=False)
 
-        # 1. Guard check: Both members are blocked with 503 collision_unresolved
+        # 3. Pre-Reconciliation Guard Check: Both members are strictly blocked with 503 collision_unresolved
         with self.assertRaises(ApiError) as ctx1:
             pg_istore.create_session_for_membership('m-rec-1', 3600, 10)
         self.assertEqual(ctx1.exception.status, 503)
@@ -557,60 +601,214 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         self.assertEqual(ctx2.exception.status, 503)
         self.assertEqual(ctx2.exception.code, "collision_unresolved")
 
-        # 2. Execute Account Reconciliation & Reactivation Runbook:
-        with transaction(DSN, write=True) as db:
-            # Step a: Verify collision is detected
-            collision_row = db.execute(
-                "SELECT * FROM unresolved_collisions WHERE tenant_id='shop-a' AND customer_id='CG-rec-shared'"
+        # 4. Formulate Two-Database Reconciliation Plan
+        plan = {
+            "reassignments": [
+                {
+                    "membership_id": "m-rec-1",
+                    "target_customer_id": "CG-rec-alice",
+                    "target_customer_name": "Alice Rec",
+                    "order_ids": ["O-REC-001", "O-REC-002"],
+                    "conversation_ids": ["CONV-REC-001"],
+                    "external_identity": {
+                        "issuer": "https://accounts.google.com",
+                        "sub": "google-sub-alice-rec-12345",
+                        "email": "alice.rec@example.com",
+                    },
+                },
+                {
+                    "membership_id": "m-rec-2",
+                    "target_customer_id": "CG-rec-bob",
+                    "target_customer_name": "Bob Rec",
+                    "order_ids": ["O-REC-003"],
+                    "conversation_ids": ["CONV-REC-002"],
+                    "external_identity": {
+                        "issuer": "https://accounts.google.com",
+                        "sub": "google-sub-bob-rec-67890",
+                        "email": "bob.rec@example.com",
+                    },
+                },
+            ]
+        }
+        idempotency_key = "rec-shop-a-shared"
+
+        # 5. Fault Injection 1: Crash immediately after Business DB commit
+        with self.assertRaises(RuntimeError) as fault1:
+            reconcile_collision(
+                self.sessions,
+                "shop-a",
+                "CG-rec-shared",
+                plan,
+                idempotency_key=idempotency_key,
+                fault_stage="after_business_commit",
+            )
+        self.assertIn("Fault injected after business commit", str(fault1.exception))
+
+        # Check Journal status in Identity DB is 'business_committed'
+        j1 = get_reconciliation_status(self.sessions, idempotency_key)
+        self.assertIsNotNone(j1)
+        self.assertEqual(j1["status"], "business_committed")
+
+        # Check Business DB state: orders and conversations have migrated to target customer IDs
+        with b_store.connection() as b_db:
+            order_rows = b_db.execute(
+                "SELECT id, customer_id FROM orders WHERE id IN ('O-REC-001', 'O-REC-002', 'O-REC-003')"
+            ).fetchall()
+            order_map = {r["id"]: r["customer_id"] for r in order_rows}
+            self.assertEqual(order_map["O-REC-001"], "CG-rec-alice")
+            self.assertEqual(order_map["O-REC-002"], "CG-rec-alice")
+            self.assertEqual(order_map["O-REC-003"], "CG-rec-bob")
+
+            conv_rows = b_db.execute(
+                "SELECT id, customer_id FROM conversations WHERE id IN ('CONV-REC-001', 'CONV-REC-002')"
+            ).fetchall()
+            conv_map = {r["id"]: r["customer_id"] for r in conv_rows}
+            self.assertEqual(conv_map["CONV-REC-001"], "CG-rec-alice")
+            self.assertEqual(conv_map["CONV-REC-002"], "CG-rec-bob")
+
+        # CRITICAL FAIL-CLOSED VERIFICATION:
+        # Identity DB has NOT committed: unresolved_collisions is STILL active
+        # Neither customer can create sessions or access data across the crash boundary!
+        with self.assertRaises(ApiError) as ctx1_crash:
+            pg_istore.create_session_for_membership('m-rec-1', 3600, 10)
+        self.assertEqual(ctx1_crash.exception.status, 503)
+        self.assertEqual(ctx1_crash.exception.code, "collision_unresolved")
+
+        with self.assertRaises(ApiError) as ctx2_crash:
+            pg_istore.create_session_for_membership('m-rec-2', 3600, 10)
+        self.assertEqual(ctx2_crash.exception.status, 503)
+        self.assertEqual(ctx2_crash.exception.code, "collision_unresolved")
+
+        # 6. Fault Injection 2: Crash during Identity DB commit
+        with self.assertRaises(RuntimeError) as fault2:
+            reconcile_collision(
+                self.sessions,
+                "shop-a",
+                "CG-rec-shared",
+                plan,
+                idempotency_key=idempotency_key,
+                fault_stage="during_identity_commit",
+            )
+        self.assertIn("Fault injected during identity DB commit", str(fault2.exception))
+
+        # Identity DB transaction rolled back: still fail-closed
+        with self.assertRaises(ApiError) as ctx1_roll:
+            pg_istore.create_session_for_membership('m-rec-1', 3600, 10)
+        self.assertEqual(ctx1_roll.exception.status, 503)
+        self.assertEqual(ctx1_roll.exception.code, "collision_unresolved")
+
+        # 7. Recovery & Resume: Call standard reconcile_collision service (no fault)
+        rec_result = reconcile_collision(
+            self.sessions,
+            "shop-a",
+            "CG-rec-shared",
+            plan,
+            idempotency_key=idempotency_key,
+        )
+        self.assertEqual(rec_result["status"], "completed")
+
+        # Verify Journal state is 'completed'
+        j2 = get_reconciliation_status(self.sessions, idempotency_key)
+        self.assertIsNotNone(j2)
+        self.assertEqual(j2["status"], "completed")
+
+        # Verify Idempotency: re-running with same idempotency_key returns already_completed
+        idempotent_result = reconcile_collision(
+            self.sessions,
+            "shop-a",
+            "CG-rec-shared",
+            plan,
+            idempotency_key=idempotency_key,
+        )
+        self.assertEqual(idempotent_result["status"], "completed")
+        self.assertTrue(idempotent_result.get("already_completed"))
+
+        # 8. Post-Reconciliation Verification:
+        # 8a. Collision record removed from unresolved_collisions
+        with transaction(DSN) as db:
+            unres = db.execute(
+                "SELECT 1 FROM unresolved_collisions WHERE tenant_id='shop-a' AND customer_id='CG-rec-shared'"
             ).fetchone()
-            self.assertIsNotNone(collision_row)
+            self.assertIsNone(unres)
 
-            # Step b & c: Disambiguate identities - allocate distinct customer_id for m-rec-2
-            db.execute(
-                "UPDATE memberships SET customer_id='CG-rec-distinct-2' WHERE id='m-rec-2'"
-            )
-
-            # Step d: Establish 1-to-1 customer_links mapping
-            db.execute(
-                "INSERT INTO customer_links (id, tenant_id, principal_id, customer_id, created_at) "
-                "VALUES ('cl-rec-1', 'shop-a', 'p-rec-1', 'CG-rec-shared', ?) ON CONFLICT DO NOTHING",
-                (time.time(),)
-            )
-            db.execute(
-                "INSERT INTO customer_links (id, tenant_id, principal_id, customer_id, created_at) "
-                "VALUES ('cl-rec-2', 'shop-a', 'p-rec-2', 'CG-rec-distinct-2', ?) ON CONFLICT DO NOTHING",
-                (time.time(),)
-            )
-
-            # Step e: Remove resolved collision record from unresolved_collisions
-            db.execute(
-                "DELETE FROM unresolved_collisions WHERE tenant_id='shop-a' AND customer_id='CG-rec-shared'"
-            )
-
-            # Step f: Reactivate both memberships with bumped auth_version
-            db.execute(
-                "UPDATE memberships SET active=1, auth_version=auth_version+1 WHERE id IN ('m-rec-1', 'm-rec-2')"
-            )
-
-        # 3. Post-reconciliation verification
-        # Member 1 session creation succeeds
+        # 8b. Member 1 (Alice) session creation succeeds and maps to CG-rec-alice
         sid1 = pg_istore.create_session_for_membership('m-rec-1', 3600, 10)
         h1 = hashlib.sha256(sid1.encode()).hexdigest()
         res1 = pg_istore.resolve(h1)
         self.assertIsNotNone(res1)
-        self.assertEqual(res1.get('customer_id'), 'CG-rec-shared')
+        self.assertEqual(res1.get('customer_id'), 'CG-rec-alice')
         self.assertEqual(res1.get('id'), 'm-rec-1')
 
-        # Member 2 session creation succeeds with segregated customer_id
+        # 8c. Member 2 (Bob) session creation succeeds and maps to CG-rec-bob
         sid2 = pg_istore.create_session_for_membership('m-rec-2', 3600, 10)
         h2 = hashlib.sha256(sid2.encode()).hexdigest()
         res2 = pg_istore.resolve(h2)
         self.assertIsNotNone(res2)
-        self.assertEqual(res2.get('customer_id'), 'CG-rec-distinct-2')
+        self.assertEqual(res2.get('customer_id'), 'CG-rec-bob')
         self.assertEqual(res2.get('id'), 'm-rec-2')
 
-        # Both customer IDs are distinct and segregated
-        self.assertNotEqual(res1.get('customer_id'), res2.get('customer_id'))
+        # 8d. Business DB Data Isolation & Ownership Verification:
+        # Alice owns O-REC-001 and O-REC-002, CANNOT see Bob's O-REC-003
+        alice_orders = b_store.orders('CG-rec-alice')
+        alice_order_ids = {o['id'] for o in alice_orders}
+        self.assertEqual(alice_order_ids, {'O-REC-001', 'O-REC-002'})
+        self.assertNotIn('O-REC-003', alice_order_ids)
+
+        self.assertEqual(b_store.lookup('CG-rec-alice', 'O-REC-001')['id'], 'O-REC-001')
+        with self.assertRaises(ApiError) as ctx_cross1:
+            b_store.lookup('CG-rec-alice', 'O-REC-003')
+        self.assertEqual(ctx_cross1.exception.status, 404)
+
+        # Alice owns CONV-REC-001, CANNOT see Bob's CONV-REC-002
+        alice_convs = b_store.list_conversations('CG-rec-alice')
+        alice_conv_ids = {c['id'] for c in alice_convs}
+        self.assertEqual(alice_conv_ids, {'CONV-REC-001'})
+        self.assertNotIn('CONV-REC-002', alice_conv_ids)
+        with self.assertRaises(ApiError) as ctx_cross_conv1:
+            b_store.conversation('CG-rec-alice', 'CONV-REC-002')
+        self.assertEqual(ctx_cross_conv1.exception.status, 404)
+
+        # Bob owns O-REC-003, CANNOT see Alice's O-REC-001 or O-REC-002
+        bob_orders = b_store.orders('CG-rec-bob')
+        bob_order_ids = {o['id'] for o in bob_orders}
+        self.assertEqual(bob_order_ids, {'O-REC-003'})
+        self.assertNotIn('O-REC-001', bob_order_ids)
+        self.assertNotIn('O-REC-002', bob_order_ids)
+
+        self.assertEqual(b_store.lookup('CG-rec-bob', 'O-REC-003')['id'], 'O-REC-003')
+        with self.assertRaises(ApiError) as ctx_cross2:
+            b_store.lookup('CG-rec-bob', 'O-REC-001')
+        self.assertEqual(ctx_cross2.exception.status, 404)
+
+        # Bob owns CONV-REC-002, CANNOT see Alice's CONV-REC-001
+        bob_convs = b_store.list_conversations('CG-rec-bob')
+        bob_conv_ids = {c['id'] for c in bob_convs}
+        self.assertEqual(bob_conv_ids, {'CONV-REC-002'})
+        self.assertNotIn('CONV-REC-001', bob_conv_ids)
+        with self.assertRaises(ApiError) as ctx_cross_conv2:
+            b_store.conversation('CG-rec-bob', 'CONV-REC-001')
+        self.assertEqual(ctx_cross_conv2.exception.status, 404)
+
+        # 8e. External identities verification (Google sub and email mappings)
+        with transaction(DSN) as db:
+            alice_ext = db.execute("SELECT sub, email FROM external_identities WHERE principal_id='p-rec-1'").fetchone()
+            self.assertIsNotNone(alice_ext)
+            self.assertEqual(alice_ext['sub'], 'google-sub-alice-rec-12345')
+            self.assertEqual(alice_ext['email'], 'alice.rec@example.com')
+
+            bob_ext = db.execute("SELECT sub, email FROM external_identities WHERE principal_id='p-rec-2'").fetchone()
+            self.assertIsNotNone(bob_ext)
+            self.assertEqual(bob_ext['sub'], 'google-sub-bob-rec-67890')
+            self.assertEqual(bob_ext['email'], 'bob.rec@example.com')
+
+            # 8f. Customer links verification
+            cl_alice = db.execute("SELECT customer_id FROM customer_links WHERE tenant_id='shop-a' AND principal_id='p-rec-1'").fetchone()
+            self.assertIsNotNone(cl_alice)
+            self.assertEqual(cl_alice['customer_id'], 'CG-rec-alice')
+
+            cl_bob = db.execute("SELECT customer_id FROM customer_links WHERE tenant_id='shop-a' AND principal_id='p-rec-2'").fetchone()
+            self.assertIsNotNone(cl_bob)
+            self.assertEqual(cl_bob['customer_id'], 'CG-rec-bob')
 
 
 if __name__ == '__main__':

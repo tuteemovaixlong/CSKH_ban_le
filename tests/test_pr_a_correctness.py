@@ -1402,6 +1402,218 @@ class TestPrACorrectness(unittest.TestCase):
             self.assertEqual(ctx_re_goog.exception.status, 503)
             self.assertEqual(ctx_re_goog.exception.code, "collision_unresolved")
 
+    def test_n08_reconciliation_coordinator_journal_idempotency_and_recovery(self):
+        """Blocker P2: Two-database reconciliation with journal, idempotency, and fault recovery.
+        Exercises the reconciliation coordinator across independent Identity DB and Business DB boundaries:
+        1. Setup: colliding accounts sharing 'CG-col-shared', quarantined in unresolved_collisions.
+        2. Business DB: real orders and conversations for both users under 'CG-col-shared'.
+        3. Pre-check: both accounts fail-closed with 503 collision_unresolved.
+        4. Fault injection: crash after Business DB commit -> journal records 'business_committed',
+           accounts remain fail-closed quarantined across crash boundary.
+        5. Recovery: resume via reconcile_collision with persistent journal -> completed.
+        6. Idempotency: re-running with same key returns already_completed=True.
+        7. Post-check: clean independent sessions, orders/conversations ownership 100% isolated,
+           customer_links and external_identities mapped.
+        """
+        import time
+        from retailops.identity.persistent import PersistentSessions
+        from retailops.identity.reconcile import reconcile_collision, get_reconciliation_status
+
+        with tempfile.TemporaryDirectory() as td:
+            sessions = PersistentSessions(Path(td), data_mode="production")
+            sessions.provision_tenant("shop-rec", "Shop Reconciliation", seed_demo=False)
+            now = time.time()
+
+            # 1. Setup Identity DB with collision
+            with sessions.control.connection(write=True) as id_db:
+                id_db.execute("INSERT INTO principals (id, name) VALUES ('p-a', 'Alice Col')")
+                id_db.execute("INSERT INTO principals (id, name) VALUES ('p-b', 'Bob Col')")
+                id_db.execute(
+                    "INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) "
+                    "VALUES ('m-a', 'shop-rec', 'p-a', 'CG-col-shared', 'customer', 1, 1)"
+                )
+                id_db.execute(
+                    "INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) "
+                    "VALUES ('m-b', 'shop-rec', 'p-b', 'CG-col-shared', 'customer', 1, 1)"
+                )
+                id_db.execute(
+                    "INSERT INTO unresolved_collisions (tenant_id, customer_id, created_at) "
+                    "VALUES ('shop-rec', 'CG-col-shared', ?)",
+                    (now,)
+                )
+
+            # 2. Setup Business DB with orders and conversations
+            bstore = sessions.business_store("shop-rec")
+            with bstore.connection(write=True) as bdb:
+                bdb.execute("INSERT INTO customers (id, name) VALUES ('CG-col-shared', 'Shared Colliding Customer')")
+                bdb.execute(
+                    "INSERT INTO products (id, name, price, stock, is_system_immutable, created_at, updated_at) "
+                    "VALUES ('P-COL-1', 'Polo Shirt', 100000, 50, 0, ?, ?)",
+                    (now, now)
+                )
+                bdb.execute(
+                    "INSERT INTO orders (id, customer_id, product_id, name, variant, amount, status, version) "
+                    "VALUES ('O-A1', 'CG-col-shared', 'P-COL-1', 'Polo Shirt', 'M', 100000, 'pending', 1)"
+                )
+                bdb.execute(
+                    "INSERT INTO orders (id, customer_id, product_id, name, variant, amount, status, version) "
+                    "VALUES ('O-A2', 'CG-col-shared', 'P-COL-1', 'Polo Shirt', 'L', 100000, 'delivered', 1)"
+                )
+                bdb.execute(
+                    "INSERT INTO orders (id, customer_id, product_id, name, variant, amount, status, version) "
+                    "VALUES ('O-B1', 'CG-col-shared', 'P-COL-1', 'Polo Shirt', 'XL', 100000, 'pending', 1)"
+                )
+                bdb.execute(
+                    "INSERT INTO conversations (id, customer_id, order_id, product_id, revision, expires_at) "
+                    "VALUES ('CONV-A1', 'CG-col-shared', 'O-A1', 'P-COL-1', 1, ?)",
+                    (now + 3600,)
+                )
+                bdb.execute(
+                    "INSERT INTO conversations (id, customer_id, order_id, product_id, revision, expires_at) "
+                    "VALUES ('CONV-B1', 'CG-col-shared', 'O-B1', 'P-COL-1', 1, ?)",
+                    (now + 3600,)
+                )
+
+            # 3. Pre-check: fail-closed with 503
+            with self.assertRaises(ApiError) as ctx_pre_a:
+                sessions.control.create_session_for_membership('m-a', 3600, 10)
+            self.assertEqual(ctx_pre_a.exception.status, 503)
+            self.assertEqual(ctx_pre_a.exception.code, "collision_unresolved")
+
+            with self.assertRaises(ApiError) as ctx_pre_b:
+                sessions.control.create_session_for_membership('m-b', 3600, 10)
+            self.assertEqual(ctx_pre_b.exception.status, 503)
+            self.assertEqual(ctx_pre_b.exception.code, "collision_unresolved")
+
+            plan = {
+                "reassignments": [
+                    {
+                        "membership_id": "m-a",
+                        "target_customer_id": "CG-col-alice",
+                        "target_customer_name": "Alice Col",
+                        "order_ids": ["O-A1", "O-A2"],
+                        "conversation_ids": ["CONV-A1"],
+                        "external_identity": {
+                            "issuer": "https://accounts.google.com",
+                            "sub": "sub-alice-col-1",
+                            "email": "alice.col@example.com",
+                        },
+                    },
+                    {
+                        "membership_id": "m-b",
+                        "target_customer_id": "CG-col-bob",
+                        "target_customer_name": "Bob Col",
+                        "order_ids": ["O-B1"],
+                        "conversation_ids": ["CONV-B1"],
+                        "external_identity": {
+                            "issuer": "https://accounts.google.com",
+                            "sub": "sub-bob-col-2",
+                            "email": "bob.col@example.com",
+                        },
+                    },
+                ]
+            }
+            idempotency_key = "rec-shop-rec-shared"
+
+            # 4. Fault injection: crash after business commit
+            with self.assertRaises(RuntimeError) as f_ctx:
+                reconcile_collision(
+                    sessions,
+                    "shop-rec",
+                    "CG-col-shared",
+                    plan,
+                    idempotency_key=idempotency_key,
+                    fault_stage="after_business_commit",
+                )
+            self.assertIn("Fault injected after business commit", str(f_ctx.exception))
+
+            # Journal is 'business_committed'
+            j1 = get_reconciliation_status(sessions, idempotency_key)
+            self.assertIsNotNone(j1)
+            self.assertEqual(j1["status"], "business_committed")
+
+            # System remains fail-closed across crash boundary
+            with self.assertRaises(ApiError) as ctx_crash:
+                sessions.control.create_session_for_membership('m-a', 3600, 10)
+            self.assertEqual(ctx_crash.exception.status, 503)
+            self.assertEqual(ctx_crash.exception.code, "collision_unresolved")
+
+            # 5. Recovery & Resume: call reconcile_collision without fault
+            res = reconcile_collision(
+                sessions,
+                "shop-rec",
+                "CG-col-shared",
+                plan,
+                idempotency_key=idempotency_key,
+            )
+            self.assertEqual(res["status"], "completed")
+
+            j2 = get_reconciliation_status(sessions, idempotency_key)
+            self.assertEqual(j2["status"], "completed")
+
+            # 6. Idempotency test
+            res_idemp = reconcile_collision(
+                sessions,
+                "shop-rec",
+                "CG-col-shared",
+                plan,
+                idempotency_key=idempotency_key,
+            )
+            self.assertEqual(res_idemp["status"], "completed")
+            self.assertTrue(res_idemp.get("already_completed"))
+
+            # 7. Post-reconciliation verification
+            with sessions.control.connection() as id_db:
+                unres = id_db.execute(
+                    "SELECT 1 FROM unresolved_collisions WHERE tenant_id='shop-rec' AND customer_id='CG-col-shared'"
+                ).fetchone()
+                self.assertIsNone(unres)
+
+            # Sessions resolve cleanly
+            sid_a = sessions.control.create_session_for_membership('m-a', 3600, 10)
+            import hashlib
+            h_a = hashlib.sha256(sid_a.encode()).hexdigest()
+            res_a = sessions.control.resolve(h_a)
+            self.assertEqual(res_a["customer_id"], "CG-col-alice")
+
+            sid_b = sessions.control.create_session_for_membership('m-b', 3600, 10)
+            h_b = hashlib.sha256(sid_b.encode()).hexdigest()
+            res_b = sessions.control.resolve(h_b)
+            self.assertEqual(res_b["customer_id"], "CG-col-bob")
+
+            # Orders ownership & isolation
+            alice_orders = {o["id"] for o in bstore.orders("CG-col-alice")}
+            self.assertEqual(alice_orders, {"O-A1", "O-A2"})
+            bob_orders = {o["id"] for o in bstore.orders("CG-col-bob")}
+            self.assertEqual(bob_orders, {"O-B1"})
+
+            self.assertEqual(bstore.lookup("CG-col-alice", "O-A1")["id"], "O-A1")
+            with self.assertRaises(ApiError):
+                bstore.lookup("CG-col-alice", "O-B1")
+
+            self.assertEqual(bstore.lookup("CG-col-bob", "O-B1")["id"], "O-B1")
+            with self.assertRaises(ApiError):
+                bstore.lookup("CG-col-bob", "O-A1")
+
+            # Conversations ownership & isolation
+            alice_convs = {c["id"] for c in bstore.list_conversations("CG-col-alice")}
+            self.assertEqual(alice_convs, {"CONV-A1"})
+            bob_convs = {c["id"] for c in bstore.list_conversations("CG-col-bob")}
+            self.assertEqual(bob_convs, {"CONV-B1"})
+
+            # External identities
+            with sessions.control.connection() as id_db:
+                ext_a = id_db.execute("SELECT sub, email FROM external_identities WHERE principal_id='p-a'").fetchone()
+                self.assertEqual(ext_a["sub"], "sub-alice-col-1")
+                ext_b = id_db.execute("SELECT sub, email FROM external_identities WHERE principal_id='p-b'").fetchone()
+                self.assertEqual(ext_b["sub"], "sub-bob-col-2")
+
+                cl_a = id_db.execute("SELECT customer_id FROM customer_links WHERE tenant_id='shop-rec' AND principal_id='p-a'").fetchone()
+                self.assertEqual(cl_a["customer_id"], "CG-col-alice")
+                cl_b = id_db.execute("SELECT customer_id FROM customer_links WHERE tenant_id='shop-rec' AND principal_id='p-b'").fetchone()
+                self.assertEqual(cl_b["customer_id"], "CG-col-bob")
+
+
     def test_n08_b1_legacy_linking_requires_verified_email(self):
         """N08-B1 Regression: Legacy email linking strictly requires email_verified=True.
         - Unverified email in live OAuth callback raises 400 unverified_email.
