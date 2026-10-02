@@ -118,8 +118,8 @@ class ApplicationCacheIntegrationTests(unittest.TestCase):
 
             # Pre-seed semantic cache with FAQ
             app.semantic_cache.store(
-                "Chính sách đổi trả hàng như thế nào?",
-                "Shop hỗ trợ đổi trả trong vòng 7 ngày nếu lỗi nhà sản xuất."
+                "Shop mở cửa mấy giờ?",
+                "Shop mở cửa từ 8h đến 22h hàng ngày ạ."
             )
 
             # Create conversation
@@ -128,7 +128,7 @@ class ApplicationCacheIntegrationTests(unittest.TestCase):
             # Query with semantically similar wording
             body = {
                 "conversation_id": cid,
-                "text": "Chính sách đổi trả hàng như thế nào?",
+                "text": "Shop mở cửa mấy giờ?",
                 "request_id": "req_" + "1" * 28
             }
 
@@ -159,7 +159,7 @@ class ApplicationCacheIntegrationTests(unittest.TestCase):
             # 1. First turn: cache miss, agent is called and response is auto-cached!
             body1 = {
                 "conversation_id": cid,
-                "text": "Chính sách bảo hành sản phẩm?",
+                "text": "Shop mở cửa mấy giờ?",
                 "request_id": "req_" + "a" * 28
             }
             res1 = app.chat("C-001", body1)
@@ -170,7 +170,7 @@ class ApplicationCacheIntegrationTests(unittest.TestCase):
             cid2 = store.new_conversation("C-001", "custom")["conversation_id"]
             body2 = {
                 "conversation_id": cid2,
-                "text": "Cho tôi hỏi chính sách bảo hành sản phẩm?",
+                "text": "Mấy giờ shop mở cửa?",
                 "request_id": "req_" + "b" * 28
             }
             res2 = app.chat("C-001", body2)

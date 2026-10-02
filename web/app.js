@@ -1720,39 +1720,39 @@ async function resolveStaffTicket() {
 
 async function approveExchange1to1() {
   if (!activeStaffTicket) return;
-  const replyMsg = "Dạ chuyên viên CSKH đã phê duyệt Lệnh Đổi Mới 1-1 tận nhà cho đơn hàng! Hệ thống đã kết nối bưu cục tạo vận đơn thu hồi đổi trả 2 chiều. Shipper sẽ mang sản phẩm mới tinh đến đổi tận nơi cho anh/chị và miễn phí hoàn toàn ạ.";
+  const replyMsg = "Dạ chuyên viên CSKH đã tiếp nhận thông tin yêu cầu đổi hàng. Shop sẽ liên hệ xác nhận chi tiết hỗ trợ mình sớm nhất ạ.";
   try {
     await api('/api/staff/reply', {
       conversation_id: activeStaffTicket.conversation_id,
       message: replyMsg,
       staff_name: 'Nguyễn Mai Anh (Chuyên viên CSKH)'
     });
-    alert('✅ Đã duyệt Đổi mới 1-1 thành công! Đã gửi thông báo xác nhận sang cho khách hàng.');
+    alert('Đã gửi phản hồi tiếp nhận cho khách hàng qua chat.');
     refreshStaffTranscript(activeStaffTicket.conversation_id, true);
     if (conversationId && activeStaffTicket.conversation_id === conversationId) {
       humanMessage(replyMsg, 'Nguyễn Mai Anh (Chuyên viên CSKH)');
     }
   } catch (err) {
-    alert('Lỗi phê duyệt: ' + err.message);
+    alert('Lỗi tiếp nhận: ' + err.message);
   }
 }
 
 async function approveExchangeSize() {
   if (!activeStaffTicket) return;
-  const replyMsg = "Dạ chuyên viên CSKH đã phê duyệt Lệnh Đổi Size 2 Chiều tận nhà cho đơn hàng! Kho tổng đã xuất giữ sản phẩm size mới chuẩn kích cỡ cho anh/chị. Bưu tá sẽ mang hàng mới đến cho anh/chị thử vừa vặn rồi mới nhận lại hàng cũ nhé ạ.";
+  const replyMsg = "Dạ chuyên viên CSKH đã tiếp nhận thông tin yêu cầu đổi hàng. Shop sẽ liên hệ xác nhận chi tiết hỗ trợ mình sớm nhất ạ.";
   try {
     await api('/api/staff/reply', {
       conversation_id: activeStaffTicket.conversation_id,
       message: replyMsg,
       staff_name: 'Nguyễn Mai Anh (Chuyên viên CSKH)'
     });
-    alert('✅ Đã duyệt Đổi size 2 chiều thành công! Kho tổng đã ghi nhận giữ hàng.');
+    alert('Đã gửi phản hồi tiếp nhận cho khách hàng qua chat.');
     refreshStaffTranscript(activeStaffTicket.conversation_id, true);
     if (conversationId && activeStaffTicket.conversation_id === conversationId) {
       humanMessage(replyMsg, 'Nguyễn Mai Anh (Chuyên viên CSKH)');
     }
   } catch (err) {
-    alert('Lỗi phê duyệt: ' + err.message);
+    alert('Lỗi tiếp nhận: ' + err.message);
   }
 }
 

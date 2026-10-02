@@ -13,7 +13,7 @@ class BoundTools:
     def __init__(self, store, catalog, customer, snapshot, identity, *, can_cancel=True):
         self.store, self.catalog, self.customer, self.snapshot = store, catalog, customer, snapshot
         self.conversation_id = snapshot.get('id') if isinstance(snapshot, dict) else None
-        self.context = {k: snapshot[k] for k in ('order_id', 'product_id')}
+        self.context = {k: (snapshot.get(k) if isinstance(snapshot, dict) else None) for k in ('order_id', 'product_id')}
         self.identity = identity
         self.versions = {}
         self.cancel_order = None
@@ -46,8 +46,13 @@ class BoundTools:
             return {'order': self.read_order(args['order_id'])}
         if name == 'search_products':
             query = normalize(args['query']).strip()
-            products = [p for p in self.catalog.products.values() if query in normalize(
-                ' '.join([p['id'], p['name'], p['category']] + p['aliases']))]
+            products = []
+            for p in self.catalog.products.values():
+                cat = str(p.get('category') or '')
+                aliases = [str(a) for a in p.get('aliases', []) if a]
+                searchable = normalize(' '.join([str(p.get('id', '')), str(p.get('name', '')), cat] + aliases))
+                if query in searchable:
+                    products.append(p)
             if len(products) == 1:
                 if self.context['product_id'] != products[0]['id']:
                     self.context['order_id'] = None

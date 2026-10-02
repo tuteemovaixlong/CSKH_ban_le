@@ -16,7 +16,7 @@ from retailops.knowledge.citations import CitationError, cited_sources
 from retailops.knowledge.embedding import MODEL_ID as KNOWLEDGE_EMBEDDING_MODEL
 from retailops_providers import API_MODEL
 from retailops_conversation import Catalog, describe_order
-from retailops.business.cache import SemanticCache, ToolCache, is_cacheable_query
+from retailops.business.cache import SemanticCache, ToolCache, is_cacheable_query, is_cache_eligible_for_lookup
 from retailops.inference_gate import InferenceGate, GatedGateway
 
 class Application:
@@ -118,54 +118,6 @@ class Application:
         if replay:
             return replay
 
-        # Invalidate semantic cache if catalog was updated in database by any session
-        if hasattr(self.store, 'get_catalog_revision'):
-            cur_cat_rev = self.store.get_catalog_revision()
-            if getattr(self, '_last_catalog_rev', None) is not None and getattr(self, '_last_catalog_rev', None) < cur_cat_rev:
-                if hasattr(self, 'semantic_cache') and self.semantic_cache:
-                    self.semantic_cache.clear()
-            self._last_catalog_rev = cur_cat_rev
-
-        # Tier 1: Check Semantic / Exact Cache (for custom production model or when cache_api enabled; bypass if attachment)
-        cached = self.semantic_cache.lookup(text) if (not attachment and (provider_id != 'api' or getattr(self, 'cache_api', False))) else None
-        if cached:
-            cache_trace = {
-                'turn_id': str(uuid.uuid4()),
-                'protocol': 'cache-hit-v1',
-                'model': f"cache:{cached['type']}",
-                'provider': 'cache',
-                'latency_ms': round((time.monotonic() - started) * 1000, 2),
-                'cache_hit': cached['type'],
-                'similarity': cached['similarity'],
-                'matched_query': cached.get('matched_query'),
-                'model_calls': 0,
-                'prompt_tokens': 0,
-                'generated_tokens': 0,
-                'reported_cost_usd': 0.0,
-                'tools': [],
-                'steps': [],
-                'queue_wait_ms': 0.0,
-                'provider_inference_ms': 0.0,
-                'graph_retrieval_ms': 0.0,
-                'rag_retrieval_ms': 0.0,
-                'db_ms': 0.0,
-                'in_flight_inferences': 0
-            }
-            cached_result = {
-                'action': cached['action'],
-                'message': cached['answer'],
-                'source': 'semantic_cache',
-                'model_used': False,
-                'context': {'order_id': snapshot.get('order_id'), 'product_id': snapshot.get('product_id')},
-                'trace': cache_trace,
-                'provider_id': snapshot['provider_id'],
-                'replayed': False
-            }
-            user_msg = {'role': 'user', 'content': text}
-            assistant_msg = {'role': 'assistant', 'content': cached['answer']}
-            self.store.finish_turn(customer, snapshot, request_id, digest, [user_msg, assistant_msg], cached_result, {})
-            return cached_result
-
         gateway = self.infer if provider_id == 'custom' else self.api_infer if provider_id == 'api' else None
         require(gateway is not None, 503, 'model_offline',
                 'Model chưa kết nối. Bạn vẫn có thể dùng các nút tra đơn và yêu cầu hủy.')
@@ -182,14 +134,73 @@ class Application:
         stack = ExitStack()
         stack.callback(conv_lock.release)
         try:
+            # Replay #2 check under lock (catches concurrent winning request)
+            replay = self.store.replay(customer, snapshot['id'], request_id, digest)
+            if replay:
+                return replay
+
+            # Reload & Revalidate conversation snapshot under lock
+            snapshot = self.store.conversation(customer, snapshot['id'])
+
+            # Invalidate semantic cache if catalog was updated in database by any session
+            if hasattr(self.store, 'get_catalog_revision'):
+                cur_cat_rev = self.store.get_catalog_revision()
+                if getattr(self, '_last_catalog_rev', None) is not None and getattr(self, '_last_catalog_rev', None) < cur_cat_rev:
+                    if hasattr(self, 'semantic_cache') and self.semantic_cache:
+                        self.semantic_cache.clear()
+                self._last_catalog_rev = cur_cat_rev
+
+            has_prior_turns = self.store.has_turns(customer, snapshot['id']) if hasattr(self.store, 'has_turns') else False
+            eligibility_before_turn = is_cache_eligible_for_lookup(text, snapshot, has_prior_turns, attachment)
+
+            # Tier 1: Check Semantic / Exact Cache under conv_lock
+            cached = None
+            if eligibility_before_turn and (provider_id != 'api' or getattr(self, 'cache_api', False)):
+                cached = self.semantic_cache.lookup(text)
+
+            if cached:
+                cache_trace = {
+                    'turn_id': str(uuid.uuid4()),
+                    'protocol': 'cache-hit-v1',
+                    'model': f"cache:{cached['type']}",
+                    'provider': 'cache',
+                    'latency_ms': round((time.monotonic() - started) * 1000, 2),
+                    'cache_hit': cached['type'],
+                    'similarity': cached['similarity'],
+                    'matched_query': cached.get('matched_query'),
+                    'model_calls': 0,
+                    'prompt_tokens': 0,
+                    'generated_tokens': 0,
+                    'reported_cost_usd': 0.0,
+                    'tools': [],
+                    'steps': [],
+                    'queue_wait_ms': 0.0,
+                    'provider_inference_ms': 0.0,
+                    'graph_retrieval_ms': 0.0,
+                    'rag_retrieval_ms': 0.0,
+                    'db_ms': 0.0,
+                    'in_flight_inferences': 0
+                }
+                cached_result = {
+                    'action': cached['action'],
+                    'message': cached['answer'],
+                    'source': 'semantic_cache',
+                    'model_used': False,
+                    'context': {'order_id': snapshot.get('order_id'), 'product_id': snapshot.get('product_id')},
+                    'trace': cache_trace,
+                    'provider_id': snapshot['provider_id'],
+                    'replayed': False
+                }
+                user_msg = {'role': 'user', 'content': text}
+                assistant_msg = {'role': 'assistant', 'content': cached['answer']}
+                self.store.finish_turn(customer, snapshot, request_id, digest, [user_msg, assistant_msg], cached_result, {})
+                return cached_result
+
             from retailops.workflow.checkpoints import workflow
             fingerprint = hashlib.sha256(json.dumps([digest, self.role, provider_id]).encode()).hexdigest()
             saver, snapshot = stack.enter_context(workflow(self.store, customer, 'chat-v1',
                 [snapshot['id'], request_id], fingerprint, snapshot, expires_at=snapshot['expires_at']))
-            # A concurrent completed retry must not spend GPU or duplicate history.
-            replay = self.store.replay(customer, snapshot['id'], request_id, digest)
-            if replay:
-                return replay
+
             if hasattr(gateway, 'for_turn'):
                 gateway = gateway.for_turn()
             gated_gateway = GatedGateway(gateway, self.inference_gate)
@@ -211,7 +222,13 @@ class Application:
             bound = BoundTools(self.store, self.catalog, customer, snapshot, identity,
                                can_cancel=CANCEL in self.permissions)
 
+            tool_execution_count = 0
+            tools_called_in_turn = []
+
             def execute(name, arguments):
+                nonlocal tool_execution_count
+                tool_execution_count += 1
+                tools_called_in_turn.append(name)
                 cached_res = self.tool_cache.get(customer, name, arguments)
                 if cached_res is not None:
                     # F04: Maintain freshness and evidence registration on cache hit
@@ -235,6 +252,8 @@ class Application:
                 try:
                     res = bound(name, arguments)
                 except ApiError as exc:
+                    if exc.status == 429 or exc.status >= 500:
+                        raise
                     if name in ('get_order', 'get_context', 'track_shipment', 'prepare_cancellation'):
                         bound.context = {'order_id': None, 'product_id': None}
                         bound.cancel_order = None
@@ -293,10 +312,31 @@ class Application:
             if getattr(bound, 'human_support', None):
                 result['human_support'] = bound.human_support
             self.store.finish_turn(customer, snapshot, request_id, digest, answer['messages'], result, bound.versions)
-            if (not attachment and result['source'] == 'llm_agent'
-                    and not result['trace'].get('degraded') and is_cacheable_query(text) and not bound.cancel_order
-                    and not bound.context.get('order_id') and result.get('action') == 'reply'
-                    and (provider_id != 'api' or getattr(self, 'cache_api', False))):
+
+            tools_called = answer.get('trace', {}).get('tools', [])
+            reported_tool_count = answer.get('trace', {}).get('tool_count', len(tools_called))
+            total_tool_count = max(reported_tool_count, len(tools_called), tool_execution_count, len(tools_called_in_turn))
+
+            can_store_cache = (
+                eligibility_before_turn is True
+                and not attachment
+                and result['source'] == 'llm_agent'
+                and not result['trace'].get('degraded')
+                and is_cacheable_query(text)
+                and not bound.cancel_order
+                and not bound.context.get('order_id')
+                and not bound.context.get('product_id')
+                and snapshot.get('order_id') is None
+                and snapshot.get('product_id') is None
+                and result.get('action') == 'reply'
+                and (provider_id != 'api' or getattr(self, 'cache_api', False))
+                and total_tool_count == 0
+                and not bound.knowledge.searches
+                and not result.get('sources')
+                and not bound.versions
+                and not getattr(bound, 'human_support', None)
+            )
+            if can_store_cache:
                 self.semantic_cache.store(text, answer['message'], action=result['action'])
             return result
         except ApiError:

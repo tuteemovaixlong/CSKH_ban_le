@@ -13,7 +13,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from contextlib import contextmanager
 from pathlib import Path
-from retailops.core import REASONS, fields, require
+from retailops.core import ApiError, REASONS, fields, require
 from retailops.schema import migrate
 from retailops.business.schema import initialize as initialize_schema
 
@@ -69,19 +69,32 @@ class BusinessStore:
         # Only explicit construction may create a database. A lost mount must not
         # silently create a blank database while a cached repository is in use.
         uri = self.path.resolve().as_uri() + ('?mode=rwc' if create else '?mode=rw')
-        db = sqlite3.connect(uri, uri=True, timeout=5)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA foreign_keys=ON")
+        db = None
         try:
+            db = sqlite3.connect(uri, uri=True, timeout=5)
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA foreign_keys=ON")
             if write:
                 db.execute("BEGIN IMMEDIATE")
             yield db
             db.commit()
+        except sqlite3.OperationalError as exc:
+            if db:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+            raise ApiError(503, 'database_unavailable', 'Cơ sở dữ liệu tạm thời gián đoạn. Vui lòng thử lại sau ít phút.') from exc
         except Exception:
-            db.rollback()
+            if db:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
             raise
         finally:
-            db.close()
+            if db is not None:
+                db.close()
 
     def seed(self):
         # Conflict handling preserves cancelled orders across process/container restarts.
@@ -588,6 +601,14 @@ class BusinessStore:
         require(row is not None, 404, 'conversation_not_found', 'Không tìm thấy cuộc trò chuyện của bạn. Hãy mở cuộc trò chuyện mới.')
         require(row['expires_at'] > time.time(), 409, 'conversation_expired', 'Cuộc trò chuyện đã hết hạn. Hãy bấm Cuộc trò chuyện mới.')
         return dict(row)
+
+    def has_turns(self, customer, cid) -> bool:
+        require(isinstance(cid, str) and re.fullmatch(r'[a-f0-9-]{36}', cid),
+                400, 'invalid_conversation', 'Mã cuộc trò chuyện không hợp lệ.')
+        with self.connection() as db:
+            row = db.execute('SELECT 1 FROM agent_turns WHERE conversation_id=? AND customer_id=? LIMIT 1',
+                             (cid, customer)).fetchone()
+            return row is not None
 
     def remember(self, customer, snapshot, oid, pid):
         if snapshot is None:
