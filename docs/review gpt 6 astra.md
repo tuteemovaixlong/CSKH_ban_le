@@ -1,43 +1,57 @@
-# Independent Review — Gemini N08 Rollback & Reconciliation
+# Review GPT 6 Astra — Gemini N08 follow-up
 
-**Kết luận: CHƯA SẴN SÀNG để merge hoặc production.** Chính sách cấm rollback về binary thiếu collision guard là hướng an toàn, nhưng đường maintenance sai route và test mới chưa chứng minh reconciliation dữ liệu giữa hai database.
+**Kết luận: CHƯA SẴN SÀNG để merge/deploy.** Gemini đã xử lý đúng các route đăng nhập trong app và bổ sung test/tài liệu, nhưng còn lỗi nâng cấp schema, an toàn retry, và khả năng vận hành thật.
 
-## Prompt ngắn cho Gemini
+## Prompt cô đọng cho Gemini
 
-> Chỉ xử lý các blocker N08 sau: (1) sửa runbook/Caddy maintenance để chặn đúng các endpoint đăng nhập thực tế (/auth/google/config, /auth/google/login, /auth/google/callback, POST /api/login), có test xác nhận từng route trả 503; (2) làm reconciliation Identity DB ↔ Business DB có journal/idempotency, fail-closed và recovery sau lỗi giữa hai lần commit; (3) mở rộng PostgreSQL integration test với orders/conversations thật, kiểm ownership trước/sau, lỗi sau business commit, lỗi identity commit và restart/retry. Cung cấp log CI chi tiết ở đúng SHA; không tuyên bố 468 PASS nếu log không chứng minh. Không merge/deploy.
+> Chỉ xử lý blocker N08: thêm migration có version để mọi Identity DB v3 hiện hữu có reconciliation_journal; ràng buộc idempotency key với plan bất biến và chỉ resume bằng plan đã lưu; xác minh owner/count cho mọi order, conversation và dữ liệu liên quan, không nuốt lỗi DB hoặc tự đổi principal của Google sub; nối maintenance Caddy và reconciliation vào quy trình triển khai/vận hành thực tế; sửa fault injection để bao phủ crash sau Business commit trước journal update và lỗi sau khi Identity đã chạy các câu lệnh cập nhật. Thêm regression từ schema v3 cũ, chạy Caddy thật và PostgreSQL disposable, cung cấp log CI đúng SHA. Không merge/deploy.
 
-## Findings
+## Phát hiện
 
-### P1 — Maintenance Mode chặn sai endpoint
+### P1 — PostgreSQL Identity schema v3 hiện hữu không có journal mới
 
-Runbook trong docs/CURRENT_PROJECT_STATUS.md chỉ định chặn /api/auth/*, nhưng retailops/http/public.py định tuyến Google auth tại /auth/google/config, /auth/google/login, /auth/google/callback và token login tại POST /api/login. deploy/Caddyfile hiện chỉ reverse-proxy toàn bộ request, không có matcher hoặc cấu hình maintenance tương ứng. Vì vậy nếu rollback về binary cũ, biện pháp khẩn cấp được mô tả có thể để nguyên các đường đăng nhập/provisioning đang cần khóa.
+IDENTITY_SCHEMA_CURRENT vẫn là 3. Trong pg_schema.initialize, reconciliation_journal chỉ được tạo ở nhánh migrate từ version 1 hoặc 2. Khi database đã ở version 3, không có DDL bổ sung nào chạy; version 3 vẫn được chấp nhận. Vì vậy database đã nâng cấp trước đó có thể thiếu bảng, và reconcile_collision sẽ lỗi ngay khi truy vấn journal.
 
-**Cần sửa:** ghi đúng path/method, cấu hình matcher cụ thể ở proxy hoặc cơ chế maintenance tương đương, và kiểm thử từng route qua adapter/proxy.
+Test mới chạy trên database CI được khởi tạo với DDL hiện tại; không có test nâng cấp một database v3 cũ không chứa bảng journal.
 
-### P1 — Test reconciliation không kiểm tra dữ liệu đơn hàng/hội thoại
+**Cần đóng:** thêm migration versioned từ v3 hoặc cơ chế additive migration đảm bảo bảng luôn tồn tại; kiểm thử fixture v3 cũ rồi chạy reconciliation thật.
 
-tests/test_postgres.py::test_identity_rollback_policy_and_account_reconciliation tạo collision trong Identity DB rồi dùng SQL trực tiếp để đổi memberships.customer_id, tạo customer_links, xóa unresolved_collisions và kích hoạt membership. Nó không tạo hay cập nhật orders/conversations trong Business DB, không kiểm external_identities, không gọi runbook/service reconciliation, và không thử đường Caddy rollback. Vì vậy test chứng minh guard và tách mapping Identity sau thao tác thủ công; chưa chứng minh đơn hàng/lịch sử được phân chia đúng hoặc isolation dữ liệu đã khôi phục.
+### P1 — Retry có thể hoàn tất bằng một plan khác với plan đã commit ở Business DB
 
-**Cần sửa:** chạy reconciliation thật trên dữ liệu có đơn và hội thoại của cả hai khách; xác nhận mỗi bản ghi thuộc đúng customer_id trước/sau. Tiêm lỗi và restart/retry qua chính quy trình được bàn giao vận hành.
+reconcile_collision đọc plan_json từ journal nhưng chỉ dùng status. Nếu lần đầu đã commit Business theo Plan A và journal là business_committed, lần retry cùng idempotency key với Plan B sẽ bỏ qua cập nhật Business nhưng dùng Plan B để cập nhật membership/customer_links trong Identity. Kết quả là quyền sở hữu hai database lệch nhau.
 
-### P1 — Quy trình hai database chưa có recovery an toàn
+**Cần đóng:** lưu hash/canonical form của plan, từ chối mọi retry có plan khác và resume bằng plan đã lưu trong journal; kiểm tra tenant, collision và membership trước khi ghi.
 
-Runbook chuyển membership và đơn/hội thoại ở hai database riêng rồi mới gỡ quarantine, nhưng không nêu journal, transaction coordinator, idempotency key, checkpoint hay cách phục hồi khi tiến trình dừng giữa chừng. Đây là rủi ro thực tế: trong retailops/identity/store.py, transaction Business DB kết thúc trước các cập nhật Identity DB. Nếu Identity commit lỗi, hai nơi có thể giữ mapping khác nhau; nếu mở lại account/quarantine sớm, quyền truy cập có thể sai.
+### P1 — Có thể đánh dấu hoàn tất dù dữ liệu Business cập nhật thiếu hoặc lỗi
 
-**Cần sửa:** giữ account bị chặn cho đến khi cả hai phía được đối soát; ghi trạng thái migration bền vững và có bước resume/rollback rõ ràng. Không tuyên bố atomic giữa hai database nếu không có cơ chế bảo đảm điều đó.
+Các lệnh cập nhật orders/conversations chỉ lọc theo ID, không kiểm tra customer_id nguồn hay số dòng bị ảnh hưởng. Một ID sai hoặc bản ghi không còn tồn tại vẫn có thể đi tiếp đến xóa unresolved_collisions và đánh dấu completed. Các cập nhật proposals, business_events, agent_turns và conversation_feedback bắt mọi Exception rồi bỏ qua, kể cả lỗi DB thật. External identity cũng dùng ON CONFLICT để đổi principal_id mà không xác nhận sub hiện tại thuộc đúng account.
 
-## Bằng chứng kiểm tra
+**Cần đóng:** kiểm tra nguồn sở hữu và row count trước khi bỏ quarantine; chỉ xem bảng là tùy chọn nếu schema xác định rõ điều đó, không nuốt lỗi tùy ý; không tự chuyển Google sub đang gắn với principal khác.
 
-- Branch: feature/module-2.5-pr-a; HEAD: 5cc05e4bfcc3716c3aa549f5b5f6275f549ed7da.
-- Từ b9389f5 đến HEAD, các thay đổi là status doc, test PostgreSQL, notebook và review; không có thay đổi production code trong phần cập nhật rollback/reconciliation này.
-- Chạy full unittest cục bộ: **468 tests, 422 pass, 46 skip, 0 fail/error**. Test PostgreSQL mới nằm trong nhóm bị skip khi thiếu RETAILOPS_TEST_DATABASE_URL, nên không được xác nhận bởi lần chạy cục bộ này.
-- scripts/check_docs_contract.py: **PASS 4/4**.
-- scripts/build_agent_notebook.py --check: **PASS**.
-- git diff --check: **PASS** trước khi ghi review này.
-- GitHub Actions run 37042000803 được báo cáo thành công ở SHA trên; trạng thái tổng thể xanh, nhưng log chi tiết của step test không đọc được trong lần kiểm tra này nên con số 468 PASS / 0 SKIP trên CI chưa được xác minh độc lập.
+### P1 — Maintenance Caddy và reconciliation chưa có đường vận hành thực tế
 
-## Quyết định và bước kế tiếp
+deploy/compose.public.yaml vẫn mount ./Caddyfile; deploy/start-public-web.sh chỉ chép và validate Caddyfile thường. Caddyfile.maintenance được chép vào image ứng dụng nhưng không được cài vào thư mục triển khai hoặc chọn bởi compose. Test chỉ kiểm tra nội dung file và WSGI response, không chạy Caddy với cấu hình maintenance. Do đó biện pháp chặn auth khi rollback về binary cũ chưa được chứng minh là có thể bật theo runbook.
 
-N08 **chưa sẵn sàng merge/deploy**. Có thể chuyển sang vòng sửa tiếp theo cho ba blocker P1 trên, nhưng chưa nên mở PR B hoặc tuyên bố hoàn tất N08. Sau khi Gemini cập nhật, cần chạy PostgreSQL disposable trên đúng commit, lưu log test đầy đủ, rồi review lại.
+Ngoài ra, tìm kiếm repo chỉ thấy reconcile_collision được định nghĩa và gọi từ tests; chưa có CLI/API/vận hành production để nhân viên chạy reconciliation như tài liệu tuyên bố.
 
-*Bản này thay toàn bộ review cũ; chỉ giữ kết luận và các blocker còn liên quan đến lần cập nhật N08 hiện tại.*
+**Cần đóng:** cung cấp lệnh/chuyển cấu hình maintenance có thể thực thi, validate bằng Caddy, và một entry point được bảo vệ cho reconciliation; kiểm thử đúng quy trình operator dùng.
+
+### P2 — Fault injection chưa bao phủ các điểm lỗi mà báo cáo mô tả
+
+Fault after_business_commit được gọi sau khi journal đã chuyển sang business_committed, nên chưa kiểm tra crash trong khoảng Business đã commit nhưng journal vẫn là started. Fault during_identity_commit ném lỗi ngay đầu transaction, trước khi Identity có thay đổi; đây chưa phải lỗi giữa hoặc tại commit sau khi các câu lệnh đã chạy. Test retry dùng cùng đối tượng sessions và cùng plan, không mô phỏng khởi động lại tiến trình hay plan bị đổi.
+
+**Cần đóng:** tiêm lỗi đúng giữa các ranh giới commit và sau các Identity update đã được thực thi; khởi tạo coordinator mới để resume từ journal.
+
+## Điểm đã cải thiện và kiểm chứng
+
+- Maintenance guard trong PublicWeb chặn đúng ba route Google auth và POST /api/login; test WSGI cho các route này có.
+- Test PostgreSQL mới tạo orders/conversations thật, kiểm tra ownership hai phía và các mã 404 ở BusinessStore.
+- Chạy full unittest cục bộ: **470 tests, 46 skipped, 0 failures/errors**. PostgreSQL integration không chạy cục bộ khi thiếu RETAILOPS_TEST_DATABASE_URL; vì vậy lần chạy này không xác nhận test reconciliation trên PostgreSQL.
+- Docs contract **PASS 4/4**; deployment contract **PASS**; eval dataset **PASS**; notebook sync **PASS**; git diff --check **PASS**.
+- Gemini báo CI run 37047893366 ở SHA c34c54b thành công, 470 tests với 1 skip và 45 PostgreSQL tests pass. Tôi chưa xác minh độc lập được toàn bộ Actions log/artifact; không dùng báo cáo đó để lấp các lỗ hổng schema/retry nêu trên.
+
+## Quyết định
+
+**Chưa sẵn sàng cho merge/deploy hoặc chuyển PR B.** Có thể tiếp tục vòng sửa N08. Sau khi đóng các blocker, cần chạy migration từ schema v3 cũ, fault/restart recovery, Caddy maintenance thật và PostgreSQL integration trên đúng commit rồi review lại.
+
+*File này thay toàn bộ review cũ; chỉ giữ nhận định và lịch sử cần thiết cho lần sửa N08 hiện tại.*

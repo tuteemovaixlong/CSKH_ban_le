@@ -3,7 +3,7 @@
 > **Trạng thái:** ACTIVE OPERATIONAL STATUS & EVIDENCE REPORT<br>
 > **Audit basis / Documentation baseline reviewed:** `b93eb5a`<br>
 > **Application snapshot đối chiếu:** Nhánh `main` tại commit `c6c7a1a`<br>
-> **Kiểm thử & CI:** 422 unit tests PASS (0 failures, 0 errors, 45 skipped across 467 total tests), 4/4 cổng hợp đồng PASS, GitHub Actions CI & Ops Console & Deploy EC2 **100% SUCCESS**<br>
+> **Kiểm thử & CI:** 424 unit tests PASS (0 failures, 0 errors, 46 skipped across 470 total tests cục bộ); GitHub Actions CI Run 37047893366 trên nhánh feature/module-2.5-pr-a (PostgreSQL 16 container thật): **469/470 PASS** (1 skip, 0 failures), 4/4 cổng hợp đồng PASS 100%<br>
 > **EC2 Host:** `retailops-dev` / `i-0fd116d8927d0e412` / **t3.large** (Sẵn sàng tắt máy sau phiên làm việc để tối ưu chi phí cloud)<br>
 > **Deploy status:** Container image build & live rolling deploy **PASS 100%**; sẵn sàng kích hoạt lại khi bật EC2<br>
 > **Lộ trình kỹ thuật tổng thể:** Xem chi tiết tại [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md)<br>
@@ -20,7 +20,7 @@ Theo chuẩn phân cấp minh chứng của [`RELEASE_MANIFEST.md`](RELEASE_MANI
 | :--- | :--- | :--- | :--- | :--- |
 | **Module 1** | **Hệ Thống Lõi TMĐT, 6 SOPs & MCP Server** | **IMPLEMENTED** | **L1/L3 hỗn hợp** *(353+ tests PASS, Staff Desk & Manager SSOT healthy)* | Đã hoàn tất Phase 1.1 (Truthful UX) và Phase 1.2 (Store Manager Persistence & Shared Catalog SSOT: bảng `products`, `product_variants` vào PostgreSQL v4 / SQLite v3, đồng bộ `check_inventory`, `dispute_agent`, audit events toàn shop). Còn tồn đọng các ca rò rỉ context F04–F06. |
 | **Module 2** | **Đo Baseline Benchmark Cơ Sở & Ops Console** | **IMPLEMENTED** | **L1/L3 hỗn hợp** *(250 ca offline 100% Routing, 19/19 Ops Console tests OK)* | Hoàn tất Phase 1.3 (`PLAN_FIX_UI_03`): Bỏ chia 3 token, chi phí chưa đo để Unknown/None, chuẩn hóa nhãn E2E Request Latency, mở rộng allowlist Usage, bổ sung concurrency telemetry (`queue_wait_ms`, `in_flight_inferences`, `overload_429_count`). |
-| **Module 2.5** | **Kiểm Thử & Ổn Định Vận Hành (Quality Gate)** | **PR A CODE IMPLEMENTED / N08 BLOCKED (CHỜ CI POSTGRES)** | **L1 PASS (422 tests, 45 skipped)** *([PLAN_MODULE_2_5_HARDENING_VERIFICATION.md](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md))* | **PR A hoàn thành code sửa lỗi; N08 BLOCKED chờ chạy PostgreSQL thật:** Đã xử lý 2 blocker P1 từ review Astra (PostgreSQL v1->v2 và bảo trì v2 collision guard + A2 fail-closed bền vững); bổ sung migration PostgreSQL schema v2 hiện hữu để đánh dấu collision và thu hồi session cũ; sửa integration test để Google identity thực sự ánh xạ tới membership bị collision; bổ sung integration test nâng cấp v2 có session đang hoạt động; bổ sung fault-injection saga recovery A1 cho cả orders/conversations. Trạng thái giữ nguyên **BLOCKED / NOT READY FOR PRODUCTION** do môi trường máy trạm thiếu PostgreSQL live/Docker (toàn bộ 45 integration tests đang ở trạng thái SKIP). |
+| **Module 2.5** | **Kiểm Thử & Ổn Định Vận Hành (Quality Gate)** | **PR A IMPLEMENTED / N08 BLOCKERS RESOLVED & VERIFIED ON CI** | **L1 PASS (469 CI tests PASS / 45 PG tests PASS, Run ID 37047893366)** *([PLAN_MODULE_2_5_HARDENING_VERIFICATION.md](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md))* | **PR A và 3 Blocker N08 hoàn tất & verify trên CI:** Xử lý triệt để 3 blocker N08 theo review Astra (sửa matcher/handler 4 auth maintenance routes fail-closed 503; điều phối đối soát hai DB có `reconciliation_journal`, idempotency và recovery sau lỗi; mở rộng PostgreSQL test với orders/conversations thật, fault injection 2 phase và retry/resume). CI Run 37047893366 (commit `c34c54b`) đạt SUCCESS với 469 tests PASS trên PostgreSQL 16 container thật. Nhánh `feature/module-2.5-pr-a` sẵn sàng nghiệm thu; chưa merge `main`, chưa deploy. |
 | **Module 3** | **Webhook Facebook Messenger (Omnichannel)** | **PLANNED** | **Design-only** *([PLAN_OMNICHANNEL_INTEGRATION.md](PLAN_OMNICHANNEL_INTEGRATION.md))* | Chờ hoàn tất nghiệm thu Module 2.5 trước khi mở cổng webhook tiếp nhận tin nhắn từ Meta API (xếp vào Phase 5 Demo). |
 | **Module 4** | **Cổng Quét Mã QR Demo Live** | **PARTIAL** | **L3** *(HTTPS sslip.io, Web mobile responsive)* | Đã có hạ tầng web di động sẵn sàng cho demo; Chưa có module sinh mã QR động / thẻ QR demo (xếp vào Phase 5 Demo). |
 | **Module 5** | **Self-Hosted vLLM & Serving Model Agentic** | **IMPLEMENTED / PARTIAL** | **Runtime-dependent** *(Colab L4 vLLM + ngrok)* | Đã tối ưu CUDA Graphs, prefix caching, fp8 kv cache và xử lý an toàn ảnh text-only. Cần hoàn tất chuẩn hóa headroom và timeout gate ở Module 2.5 PR B. |
@@ -121,16 +121,20 @@ Theo chuẩn phân cấp minh chứng của [`RELEASE_MANIFEST.md`](RELEASE_MANI
          3. **Commit Phase 1 (Business DB):** Mở transaction trên Business DB của tenant (`shop-a`), tạo bản ghi khách hàng đích (`customers`), chuyển quyền sở hữu các đơn hàng (`orders`), hội thoại (`conversations`), lượt chat (`agent_turns`), và phản hồi (`conversation_feedback`) sang mã khách hàng riêng biệt đã phân tách. Commit Business DB và cập nhật journal thành `business_committed`.
          4. **Phục hồi sau lỗi (Fault Recovery & Resume):** Nếu tiến trình gặp sự cố giữa hai lần commit (sau Business DB commit hoặc trước/trong Identity DB commit), hệ thống tiếp tục duy trì **Fail-Closed** tuyệt đối nhờ bảng `unresolved_collisions`. Khi chạy lại lệnh đối soát (`reconcile_collision`) với cùng `idempotency_key`, coordinator đọc journal, nhận biết trạng thái `business_committed` và tiếp tục thực hiện Phase 2 mà không làm mất mát, trùng lặp hay xung đột dữ liệu.
          5. **Commit Phase 2 (Identity DB):** Cập nhật `memberships` (`customer_id` mới, `active = 1`, `auth_version = auth_version + 1`), thu hồi phiên cũ trong `sessions`, thiết lập liên kết định danh 1-1 trong `customer_links` và `external_identities` (Google sub/email), xóa bản ghi khỏi `unresolved_collisions`, ghi nhận audit event `collision_reconciled`, và cập nhật journal thành `completed`. Hoàn tất đối soát an toàn.
-- **Trạng thái kiểm thử hiện tại (03/10/2026)**:
+- **Trạng thái kiểm thử & xác thực CI (03/10/2026)**:
   - **Môi trường máy trạm Windows:** 424 tests PASS, 46 tests SKIP across 470 tests (0 failures, 0 errors).
-    - Bổ sung test kiểm chứng Maintenance Mode fail-closed 503 trên toàn bộ 4 auth routes (`GET /auth/google/config`, `GET /auth/google/login`, `GET /auth/google/callback`, `POST /api/login`) trong `tests/test_public_web.py`.
-    - Bổ sung test kiểm chứng Reconciliation Coordinator hai database có journal, idempotency và recovery sau fault injection trong `tests/test_pr_a_correctness.py`.
-    - Nâng cấp toàn diện test `test_identity_rollback_policy_and_account_reconciliation` trong `tests/test_postgres.py` (32 tests) với orders/conversations thật trong PostgreSQL Business DB, fault injection sau business commit và retry/resume tự động.
-    - Toàn bộ 46 test skipped trên máy trạm Windows đều do thiếu `RETAILOPS_TEST_DATABASE_URL` cục bộ (gồm **32 tests trong `tests/test_postgres.py`**, 11 tests trong `tests/test_rag_chat.py`, 2 tests trong `tests/test_knowledge.py`, 1 test trong `tests/test_public_web.py`).
-  - **Môi trường GitHub Actions CI Runner (PostgreSQL + pgvector container thật):**
-    - Toàn bộ các test tích hợp PostgreSQL thật được kiểm thử tự động trên runner có `RETAILOPS_TEST_DATABASE_URL`.
-    - Toàn bộ 4/4 cổng hợp đồng (docs, deployment, eval dataset, notebook) đạt **PASS 100%**.
-  - **KẾT LUẬN NGHIỆM THU:** N08 TUYỆT ĐỐI CHƯA TUYÊN BỐ READY; trạng thái giữ nguyên **BLOCKED / NOT READY FOR PRODUCTION** cho đến khi hoàn tất nghiệm thu đầy đủ trên feature branch; tuân thủ nghiêm ngặt cấm merge/deploy.
+    - Đã kiểm chứng Maintenance Mode fail-closed 503 trên toàn bộ 4 auth routes (`GET /auth/google/config`, `GET /auth/google/login`, `GET /auth/google/callback`, `POST /api/login`) trong `tests/test_public_web.py`.
+    - Đã kiểm chứng Reconciliation Coordinator hai database có journal, idempotency và recovery sau fault injection trong `tests/test_pr_a_correctness.py`.
+    - Nâng cấp test `test_identity_rollback_policy_and_account_reconciliation` trong `tests/test_postgres.py` với orders/conversations thật trong Business DB, fault injection sau business commit và retry/resume tự động.
+    - 46 test skipped trên máy trạm Windows do không có PostgreSQL container cục bộ (gồm 32 tests trong `tests/test_postgres.py`, 11 tests trong `tests/test_rag_chat.py`, 2 tests trong `tests/test_knowledge.py`, 1 test trong `tests/test_public_web.py`).
+  - **Môi trường GitHub Actions CI Runner (PostgreSQL 16 + pgvector container thật):**
+    - **Run ID:** `37047893366` | **Commit:** `c34c54b` | **Trạng thái:** `COMPLETED` / `SUCCESS`
+    - **URL:** [https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37047893366](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37047893366)
+    - **Kết quả Full Suite:** **469 PASS**, 1 SKIP (test external paid model), **0 FAIL, 0 ERROR across 470 tests**.
+    - **PostgreSQL Integration:** Toàn bộ 45/45 PostgreSQL integration tests chạy trên PostgreSQL thật **100% PASS**.
+    - **Cổng hợp đồng:** 4/4 cổng hợp đồng (docs, deployment, eval dataset, notebook) đạt **PASS 100%**.
+    - **Public HTTPS verification:** Đạt `PUBLIC_UI_ASSETS_OK`, `PUBLIC_HTTPS_PROXY_COOKIE_FLOW_OK`, `PERSISTENT_HTTPS_ACCOUNT_FLOW_OK`, `POSTGRES_HTTPS_IMPORT_RESTORE_OK`.
+  - **KẾT LUẬN NGHIỆM THU N08:** Toàn bộ 3 Blocker N08 đã được xử lý và kiểm chứng thành công trên PostgreSQL CI runner. Nhánh `feature/module-2.5-pr-a` đã sẵn sàng cho bước nghiệm thu mã nguồn (Code Review Approval); tuân thủ cam kết: **chưa merge vào main, chưa deploy**.
 
 ---
 
@@ -195,3 +199,54 @@ sudo python3 /opt/retailops/live-e2e.py --mode smoke
    - Đăng nhập tài khoản demo (`customer`, `manager` hoặc Google Login).
    - Kiểm tra Catalog và Inventory đã lưu vĩnh viễn trong DB, trải nghiệm Store Manager Console và Chatbot AI.
 
+---
+
+## 5. TRẠNG THÁI BÀN GIAO PHIÊN LÀM VIỆC & KẾ HOẠCH SÁNG MAI (HANDOFF FOR NEXT MORNING)
+
+### 5.1. Tóm Tắt Trạng Thái Lưu Trữ
+- **Nhánh Git:** `feature/module-2.5-pr-a`
+- **Head Commit:** `c34c54b4e682346340faf17a08db9a1d40a149b0` (`c34c54b`)
+- **Trạng thái working tree:** Clean (100% đã commit và push lên `origin/feature/module-2.5-pr-a`).
+- **Trạng thái CI:** GitHub Actions Run ID `37047893366` **SUCCESS** (Job `offline` và Job `colab-python313` đều xanh).
+- **Cam kết tuân thủ:** Chưa merge vào nhánh `main`, chưa deploy lên EC2, chưa tạo PR mới.
+
+### 5.2. Các Hạng Mục N08 Đã Xử Lý Dứt Điểm
+1. **Blocker 1 (Auth Maintenance Mode):**
+   - Proxy Caddy: `deploy/Caddyfile.maintenance` chặn đích danh 4 route: `GET /auth/google/config`, `GET /auth/google/login`, `GET /auth/google/callback`, `POST /api/login` trả về HTTP 503 JSON `maintenance_mode`.
+   - App layer: `retailops/http/public.py` kiểm tra `RETAILOPS_AUTH_MAINTENANCE` chặt chẽ (`is True`), trả về 503 fail-closed.
+   - Regression test: `test_auth_maintenance_mode_blocks_all_login_routes_with_503` trong `tests/test_public_web.py`.
+2. **Blocker 2 (Two-Database Reconciliation):**
+   - Điều phối đối soát: `retailops/identity/reconcile.py` (`reconcile_collision`, `get_reconciliation_status`).
+   - Bảng journal: `reconciliation_journal` trong `retailops/storage/pg_schema.py` và `retailops/identity/store.py`.
+   - Các pha xử lý có journal: `started` -> `business_committed` -> `completed` (hoặc `rolled_back`).
+   - Đảm bảo idempotency key và khôi phục sau lỗi (fault recovery/resume) giữa 2 phase Business DB và Identity DB.
+   - Unit test: `test_n08_reconciliation_coordinator_journal_idempotency_and_recovery` trong `tests/test_pr_a_correctness.py`.
+3. **Blocker 3 (PostgreSQL Test Real Data & Fault Injection):**
+   - Test `test_identity_rollback_policy_and_account_reconciliation` trong `tests/test_postgres.py`.
+   - Khởi tạo `products`, `orders` thật (`O-REC-001`, `O-REC-002`, `O-REC-003`), `conversations` thật (UUID 36 ký tự) trong Business DB PostgreSQL thật.
+   - Tiêm lỗi sau Business DB commit và trong Identity DB commit; xác minh trạng thái fail-closed 503 `collision_unresolved`.
+   - Thực thi retry/resume tự động và xác minh 100% tính cô lập dữ liệu (Alice và Bob chỉ xem được tài nguyên của mình, tra cứu chéo trả về 404 Not Found).
+
+### 5.3. Hướng Dẫn Sáng Mai Bật Máy Làm Tiếp
+1. **Kiểm tra trạng thái repository:**
+   ```bash
+   git status
+   git log -n 3 --oneline
+   ```
+   *(Xác nhận đang ở nhánh `feature/module-2.5-pr-a` tại commit `c34c54b`, working tree clean)*
+2. **Kiểm tra nhanh 4 cổng hợp đồng:**
+   ```bash
+   python scripts/check_docs_contract.py
+   python scripts/check_deployment_contract.py
+   python scripts/check_eval_dataset.py
+   python scripts/build_agent_notebook.py --check
+   ```
+   *(Tất cả 4 lệnh đều phải báo PASS)*
+3. **Kiểm tra local test suite (nếu cần chạy lại):**
+   ```bash
+   python -m unittest discover -s tests -p "test_*.py"
+   ```
+   *(Kỳ vọng: 470 tests, 424 PASS, 46 SKIP, 0 FAIL, 0 ERROR)*
+4. **Bước tiếp theo theo lộ trình dự án:**
+   - Xem xét nghiệm thu PR A (Code Review & Merge Decision vào `main`).
+   - Bắt đầu triển khai **Module 2.5 PR B** (Concurrency, Headroom & Truthful Telemetry theo kế hoạch [PLAN_MODULE_2_5_HARDENING_VERIFICATION.md](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md)).
