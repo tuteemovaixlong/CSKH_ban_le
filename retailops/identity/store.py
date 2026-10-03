@@ -48,6 +48,7 @@ def initialize(db):
             colliding_customer_id TEXT NOT NULL,
             status TEXT NOT NULL CHECK(status IN ('started', 'business_committed', 'identity_committed', 'completed')),
             plan_json TEXT NOT NULL,
+            plan_hash TEXT,
             error_message TEXT,
             created_at REAL NOT NULL,
             updated_at REAL NOT NULL)''',
@@ -93,6 +94,22 @@ def migrate_legacy_collisions(db, tenant_stores=None):
         created_at REAL NOT NULL,
         PRIMARY KEY(tenant_id, customer_id)
     )''')
+    db.execute('''CREATE TABLE IF NOT EXISTS reconciliation_journal (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL REFERENCES tenants(id),
+        colliding_customer_id TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('started', 'business_committed', 'identity_committed', 'completed')),
+        plan_json TEXT NOT NULL,
+        plan_hash TEXT,
+        error_message TEXT,
+        created_at REAL NOT NULL,
+        updated_at REAL NOT NULL
+    )''')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_reconciliation_journal_tenant ON reconciliation_journal(tenant_id, colliding_customer_id)')
+    try:
+        db.execute('ALTER TABLE reconciliation_journal ADD COLUMN plan_hash TEXT')
+    except Exception:
+        pass
 
     # Helper to resolve tenant business database connection
     def get_tenant_db_conn(t_id):
@@ -141,6 +158,16 @@ def migrate_legacy_collisions(db, tenant_stores=None):
             WHERE m.tenant_id=? AND m.customer_id=? AND m.role='customer'
             ORDER BY m.id
         ''', (t_id, c_id)).fetchall()
+
+        already_unresolved = db.execute(
+            "SELECT 1 FROM unresolved_collisions WHERE tenant_id=? AND customer_id=?",
+            (t_id, c_id)
+        ).fetchone()
+        if already_unresolved:
+            for m in members:
+                unresolved_collision_members.add(m['id'])
+                db.execute('DELETE FROM sessions WHERE membership_id=?', (m['id'],))
+            continue
 
         b_conn_ctx = get_tenant_db_conn(t_id)
         if not b_conn_ctx:

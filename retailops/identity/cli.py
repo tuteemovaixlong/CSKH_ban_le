@@ -50,9 +50,17 @@ def add_parser(commands):
     role.add_argument('--role', choices=tuple(ROLE_PERMISSIONS), required=True)
     revoke = actions.add_parser('revoke', help='Revoke login and sessions; retain business data.')
     revoke.add_argument('--membership', required=True)
+    reconcile = actions.add_parser('reconcile-collision', help='Operator execution for account collision reconciliation.')
+    reconcile.add_argument('--tenant', required=True)
+    reconcile.add_argument('--customer', required=True)
+    reconcile.add_argument('--plan-file', type=Path, required=True, help='Path to JSON reconciliation plan file.')
+    reconcile.add_argument('--idempotency-key', default=None)
+    status = actions.add_parser('reconciliation-status', help='Query reconciliation status by idempotency key.')
+    status.add_argument('--idempotency-key', required=True)
 
 
 def run(args):
+    import json
     from retailops.config import database_settings
     backend, dsn = database_settings(os.environ)
     if backend == 'postgresql':
@@ -74,6 +82,23 @@ def run(args):
         return issue_credential(sessions.control, args.membership, args.credential_file)
     if action == 'set-role':
         sessions.control.set_role(args.membership, args.role)
-    elif action == 'revoke':
+        return {'result': 'MEMBERSHIP_UPDATED', 'membership_id': args.membership, 'existing_sessions_revoked': True}
+    if action == 'revoke':
         sessions.control.revoke(args.membership)
-    return {'result': 'MEMBERSHIP_UPDATED', 'membership_id': args.membership, 'existing_sessions_revoked': True}
+        return {'result': 'MEMBERSHIP_UPDATED', 'membership_id': args.membership, 'existing_sessions_revoked': True}
+    if action == 'reconcile-collision':
+        from retailops.identity.reconcile import reconcile_collision
+        plan_content = json.loads(args.plan_file.read_text(encoding='utf-8'))
+        result = reconcile_collision(
+            sessions,
+            tenant_id=args.tenant,
+            colliding_customer_id=args.customer,
+            plan=plan_content,
+            idempotency_key=args.idempotency_key,
+        )
+        return {'result': 'COLLISION_RECONCILED', **result}
+    if action == 'reconciliation-status':
+        from retailops.identity.reconcile import get_reconciliation_status
+        status_res = get_reconciliation_status(sessions, args.idempotency_key)
+        return {'result': 'RECONCILIATION_STATUS', 'journal': status_res}
+    return {'result': 'UNKNOWN_ACTION'}

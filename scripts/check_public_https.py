@@ -80,6 +80,20 @@ def main():
             assert request('/api/logout',{})[0] == 200
             assert request('/api/orders')[0] == 401
             print('PUBLIC_HTTPS_PROXY_COOKIE_FLOW_OK (temporary test CA; no public certificate or paid inference)')
+            # Test Caddy maintenance mode switch through real Caddy container
+            maint_caddy = (ROOT / 'deploy/Caddyfile.maintenance').read_text().replace('{$RETAILOPS_PUBLIC_HOST} {', '{$RETAILOPS_PUBLIC_HOST} {\n\ttls internal')
+            (temp / 'Caddyfile').write_text(maint_caddy)
+            run(base + ['restart', 'caddy'])
+            for path in ('/auth/google/config', '/auth/google/login', '/auth/google/callback'):
+                st, res = request(path)
+                assert st == 503 and res.get('error') == 'maintenance_mode', (path, st, res)
+            st_login, res_login = request('/api/login', {'token': INVITE})
+            assert st_login == 503 and res_login.get('error') == 'maintenance_mode', (st_login, res_login)
+            # Restore standard Caddy configuration
+            normal_caddy = (ROOT / 'deploy/Caddyfile').read_text().replace('{$RETAILOPS_PUBLIC_HOST} {', '{$RETAILOPS_PUBLIC_HOST} {\n\ttls internal')
+            (temp / 'Caddyfile').write_text(normal_caddy)
+            run(base + ['restart', 'caddy'])
+            print('PUBLIC_CADDY_MAINTENANCE_SWITCH_OK (real Caddy blocks 4 auth routes with 503 fail-closed)')
             # Provision through the packaged operator CLI, then switch the same HTTPS stack.
             admin = base+['exec','-T','web','python','-m','retailops','identity']
             run(admin+['init-tenant','--tenant','ci-shop','--name','CI shop','--seed-demo'])

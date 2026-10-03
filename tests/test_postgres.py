@@ -324,9 +324,9 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         # 3. Initialize / Upgrade PostgresIdentityStore to v3
         pg_istore = PostgresIdentityStore(DSN, create=False)
 
-        # 4. Verify v3 upgrade state
+        # 4. Verify v4 upgrade state
         with transaction(DSN) as db:
-            self.assertEqual(db.execute("SELECT version FROM retailops_schema WHERE component='identity'").fetchone()['version'], 3)
+            self.assertEqual(db.execute("SELECT version FROM retailops_schema WHERE component='identity'").fetchone()['version'], 4)
 
             # Check unresolved_collisions table
             unres = db.execute("SELECT * FROM unresolved_collisions WHERE tenant_id='shop-a' AND customer_id='CG-pg-shared'").fetchone()
@@ -445,8 +445,8 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
 
         # Verify post-migration state:
         with transaction(DSN) as db:
-            # 1. Version upgraded to 3
-            self.assertEqual(db.execute("SELECT version FROM retailops_schema WHERE component='identity'").fetchone()['version'], 3)
+            # 1. Version upgraded to 4
+            self.assertEqual(db.execute("SELECT version FROM retailops_schema WHERE component='identity'").fetchone()['version'], 4)
 
             # 2. Collision recorded in newly created unresolved_collisions table
             unres = db.execute(
@@ -493,10 +493,30 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         self.assertEqual(ctx_goog.exception.status, 503)
         self.assertEqual(ctx_goog.exception.code, "collision_unresolved")
 
-        # 9. Verify subsequent startup does NOT fail and leaves version at 3
+        # 9. Verify subsequent startup does NOT fail and leaves version at 4
         pg_istore_reopened = PostgresIdentityStore(DSN, create=False)
         with transaction(DSN) as db:
-            self.assertEqual(db.execute("SELECT version FROM retailops_schema WHERE component='identity'").fetchone()['version'], 3)
+            self.assertEqual(db.execute("SELECT version FROM retailops_schema WHERE component='identity'").fetchone()['version'], 4)
+
+    def test_identity_v3_to_v4_migration_creates_journal_on_postgres(self):
+        """P1 Integration: Existing v3 PostgreSQL schema lacking reconciliation_journal table
+        auto-upgrades to v4 upon startup and provides working reconciliation."""
+        with transaction(DSN, write=True) as db:
+            db.execute("DROP TABLE IF EXISTS reconciliation_journal CASCADE")
+            db.execute("UPDATE retailops_schema SET version = 3 WHERE component = 'identity'")
+
+        # Startup auto-upgrades to v4 and creates reconciliation_journal
+        pg_istore = PostgresIdentityStore(DSN, create=False)
+        with transaction(DSN) as db:
+            self.assertEqual(db.execute("SELECT version FROM retailops_schema WHERE component='identity'").fetchone()['version'], 4)
+            has_journal = db.execute(
+                "SELECT 1 FROM information_schema.tables WHERE table_schema='retailops_identity' AND table_name='reconciliation_journal'"
+            ).fetchone()
+            self.assertIsNotNone(has_journal)
+            has_col = db.execute(
+                "SELECT 1 FROM information_schema.columns WHERE table_schema='retailops_identity' AND table_name='reconciliation_journal' AND column_name='plan_hash'"
+            ).fetchone()
+            self.assertIsNotNone(has_col)
 
     def test_identity_rollback_policy_and_account_reconciliation(self):
         """PostgreSQL Integration: Rollback policy guard and two-database account reconciliation with journal.
@@ -632,7 +652,24 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         }
         idempotency_key = "rec-shop-a-shared"
 
-        # 5. Fault Injection 1: Crash immediately after Business DB commit
+        # 5a. Fault Injection 1a: Crash after Business DB commit BEFORE journal update
+        with self.assertRaises(RuntimeError) as fault1a:
+            reconcile_collision(
+                self.sessions,
+                "shop-a",
+                "CG-rec-shared",
+                plan,
+                idempotency_key=idempotency_key,
+                fault_stage="after_business_commit_before_journal",
+            )
+        self.assertIn("before journal update", str(fault1a.exception))
+
+        # Check Journal status is 'started'
+        j0 = get_reconciliation_status(self.sessions, idempotency_key)
+        self.assertIsNotNone(j0)
+        self.assertEqual(j0["status"], "started")
+
+        # 5b. Fault Injection 1b: Crash after Business DB commit AND journal updated to business_committed
         with self.assertRaises(RuntimeError) as fault1:
             reconcile_collision(
                 self.sessions,
@@ -679,7 +716,7 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         self.assertEqual(ctx2_crash.exception.status, 503)
         self.assertEqual(ctx2_crash.exception.code, "collision_unresolved")
 
-        # 6. Fault Injection 2: Crash during Identity DB commit
+        # 6. Fault Injection 2: Crash during Identity DB commit AFTER updates executed
         with self.assertRaises(RuntimeError) as fault2:
             reconcile_collision(
                 self.sessions,
@@ -687,9 +724,9 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
                 "CG-rec-shared",
                 plan,
                 idempotency_key=idempotency_key,
-                fault_stage="during_identity_commit",
+                fault_stage="during_identity_commit_after_updates",
             )
-        self.assertIn("Fault injected during identity DB commit", str(fault2.exception))
+        self.assertIn("Fault injected during identity commit after updates executed", str(fault2.exception))
 
         # Identity DB transaction rolled back: still fail-closed
         with self.assertRaises(ApiError) as ctx1_roll:
@@ -697,9 +734,25 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         self.assertEqual(ctx1_roll.exception.status, 503)
         self.assertEqual(ctx1_roll.exception.code, "collision_unresolved")
 
-        # 7. Recovery & Resume: Call standard reconcile_collision service (no fault)
+        # 6b. Plan Immutability check on retry: retrying with altered plan raises 409
+        import copy
+        altered_plan = copy.deepcopy(plan)
+        altered_plan["reassignments"][0]["target_customer_id"] = "CG-rec-altered"
+        with self.assertRaises(ApiError) as ctx_alt:
+            reconcile_collision(
+                self.sessions,
+                "shop-a",
+                "CG-rec-shared",
+                altered_plan,
+                idempotency_key=idempotency_key,
+            )
+        self.assertEqual(ctx_alt.exception.status, 409)
+        self.assertEqual(ctx_alt.exception.code, "plan_conflict")
+
+        # 7. Recovery & Resume: Simulate process restart by instantiating a fresh PostgresSessions
+        restarted_pg_sessions = PostgresSessions(DSN)
         rec_result = reconcile_collision(
-            self.sessions,
+            restarted_pg_sessions,
             "shop-a",
             "CG-rec-shared",
             plan,
@@ -708,13 +761,13 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         self.assertEqual(rec_result["status"], "completed")
 
         # Verify Journal state is 'completed'
-        j2 = get_reconciliation_status(self.sessions, idempotency_key)
+        j2 = get_reconciliation_status(restarted_pg_sessions, idempotency_key)
         self.assertIsNotNone(j2)
         self.assertEqual(j2["status"], "completed")
 
         # Verify Idempotency: re-running with same idempotency_key returns already_completed
         idempotent_result = reconcile_collision(
-            self.sessions,
+            restarted_pg_sessions,
             "shop-a",
             "CG-rec-shared",
             plan,
@@ -809,6 +862,51 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             cl_bob = db.execute("SELECT customer_id FROM customer_links WHERE tenant_id='shop-a' AND principal_id='p-rec-2'").fetchone()
             self.assertIsNotNone(cl_bob)
             self.assertEqual(cl_bob['customer_id'], 'CG-rec-bob')
+
+        # 8g. Ownership & External Identity hijack protections on PostgreSQL:
+        bad_owner_plan = {
+            "reassignments": [
+                {
+                    "membership_id": "m-rec-1",
+                    "target_customer_id": "CG-rec-alice-new",
+                    "order_ids": ["O-REC-003"],  # O-REC-003 belongs to Bob!
+                },
+                {
+                    "membership_id": "m-rec-2",
+                    "target_customer_id": "CG-rec-bob-new",
+                    "order_ids": [],
+                },
+            ]
+        }
+        with transaction(DSN, write=True) as db:
+            db.execute("INSERT INTO unresolved_collisions VALUES ('shop-a', 'CG-rec-alice', ?) ON CONFLICT DO NOTHING", (now,))
+        with self.assertRaises(ApiError) as ctx_pg_owner:
+            reconcile_collision(restarted_pg_sessions, "shop-a", "CG-rec-alice", bad_owner_plan, idempotency_key="rec-pg-bad-owner")
+        self.assertEqual(ctx_pg_owner.exception.status, 403)
+        self.assertEqual(ctx_pg_owner.exception.code, "order_ownership_conflict")
+
+        hijack_sub_plan = {
+            "reassignments": [
+                {
+                    "membership_id": "m-rec-1",
+                    "target_customer_id": "CG-rec-alice-new",
+                    "order_ids": [],
+                    "external_identity": {
+                        "issuer": "https://accounts.google.com",
+                        "sub": "google-sub-bob-rec-67890",  # belongs to Bob / p-rec-2!
+                    },
+                },
+                {
+                    "membership_id": "m-rec-2",
+                    "target_customer_id": "CG-rec-bob-new",
+                    "order_ids": [],
+                },
+            ]
+        }
+        with self.assertRaises(ApiError) as ctx_pg_hijack:
+            reconcile_collision(restarted_pg_sessions, "shop-a", "CG-rec-alice", hijack_sub_plan, idempotency_key="rec-pg-hijack")
+        self.assertEqual(ctx_pg_hijack.exception.status, 409)
+        self.assertEqual(ctx_pg_hijack.exception.code, "external_identity_conflict")
 
 
 if __name__ == '__main__':

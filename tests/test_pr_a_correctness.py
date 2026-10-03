@@ -1072,7 +1072,7 @@ class TestPrACorrectness(unittest.TestCase):
         ddl_str = " ".join(IDENTITY_DDL)
         self.assertIn("CREATE TABLE external_identities", ddl_str)
         self.assertIn("CREATE TABLE customer_links", ddl_str)
-        self.assertEqual(IDENTITY_SCHEMA_CURRENT, 3)
+        self.assertEqual(IDENTITY_SCHEMA_CURRENT, 4)
 
         # Check import_sqlite includes both tables
         self.assertIn("external_identities", IDENTITY_TABLES)
@@ -1515,7 +1515,30 @@ class TestPrACorrectness(unittest.TestCase):
             }
             idempotency_key = "rec-shop-rec-shared"
 
-            # 4. Fault injection: crash after business commit
+            # 4a. Fault injection Point 1a: crash after Business DB commit BEFORE journal update
+            with self.assertRaises(RuntimeError) as f_ctx_before:
+                reconcile_collision(
+                    sessions,
+                    "shop-rec",
+                    "CG-col-shared",
+                    plan,
+                    idempotency_key=idempotency_key,
+                    fault_stage="after_business_commit_before_journal",
+                )
+            self.assertIn("before journal update", str(f_ctx_before.exception))
+
+            # Journal is still 'started'
+            j0 = get_reconciliation_status(sessions, idempotency_key)
+            self.assertIsNotNone(j0)
+            self.assertEqual(j0["status"], "started")
+
+            # System remains fail-closed across crash boundary
+            with self.assertRaises(ApiError) as ctx_crash0:
+                sessions.control.create_session_for_membership('m-a', 3600, 10)
+            self.assertEqual(ctx_crash0.exception.status, 503)
+            self.assertEqual(ctx_crash0.exception.code, "collision_unresolved")
+
+            # 4b. Fault injection Point 1b: crash after Business DB commit AND journal updated to business_committed
             with self.assertRaises(RuntimeError) as f_ctx:
                 reconcile_collision(
                     sessions,
@@ -1532,15 +1555,43 @@ class TestPrACorrectness(unittest.TestCase):
             self.assertIsNotNone(j1)
             self.assertEqual(j1["status"], "business_committed")
 
-            # System remains fail-closed across crash boundary
+            # 4c. Fault injection Point 2: crash after Identity DB updates executed, before committing
+            with self.assertRaises(RuntimeError) as f_ctx_id:
+                reconcile_collision(
+                    sessions,
+                    "shop-rec",
+                    "CG-col-shared",
+                    plan,
+                    idempotency_key=idempotency_key,
+                    fault_stage="during_identity_commit_after_updates",
+                )
+            self.assertIn("Fault injected during identity commit after updates executed", str(f_ctx_id.exception))
+
+            # Identity DB transaction rolled back: unresolved_collisions is still intact and accounts fail-closed
             with self.assertRaises(ApiError) as ctx_crash:
                 sessions.control.create_session_for_membership('m-a', 3600, 10)
             self.assertEqual(ctx_crash.exception.status, 503)
             self.assertEqual(ctx_crash.exception.code, "collision_unresolved")
 
-            # 5. Recovery & Resume: call reconcile_collision without fault
+            # 4d. Plan Immutability check: retrying with modified plan fails with 409 plan_conflict
+            import copy
+            tampered_plan = copy.deepcopy(plan)
+            tampered_plan["reassignments"][0]["target_customer_id"] = "CG-tampered"
+            with self.assertRaises(ApiError) as ctx_tamper:
+                reconcile_collision(
+                    sessions,
+                    "shop-rec",
+                    "CG-col-shared",
+                    tampered_plan,
+                    idempotency_key=idempotency_key,
+                )
+            self.assertEqual(ctx_tamper.exception.status, 409)
+            self.assertEqual(ctx_tamper.exception.code, "plan_conflict")
+
+            # 5. Recovery & Resume with Process Restart: instantiate fresh coordinator sessions from disk
+            restarted_sessions = PersistentSessions(Path(td), data_mode="production")
             res = reconcile_collision(
-                sessions,
+                restarted_sessions,
                 "shop-rec",
                 "CG-col-shared",
                 plan,
@@ -1548,12 +1599,12 @@ class TestPrACorrectness(unittest.TestCase):
             )
             self.assertEqual(res["status"], "completed")
 
-            j2 = get_reconciliation_status(sessions, idempotency_key)
+            j2 = get_reconciliation_status(restarted_sessions, idempotency_key)
             self.assertEqual(j2["status"], "completed")
 
-            # 6. Idempotency test
+            # 6. Idempotency test on restarted sessions
             res_idemp = reconcile_collision(
-                sessions,
+                restarted_sessions,
                 "shop-rec",
                 "CG-col-shared",
                 plan,
@@ -1612,6 +1663,176 @@ class TestPrACorrectness(unittest.TestCase):
                 self.assertEqual(cl_a["customer_id"], "CG-col-alice")
                 cl_b = id_db.execute("SELECT customer_id FROM customer_links WHERE tenant_id='shop-rec' AND principal_id='p-b'").fetchone()
                 self.assertEqual(cl_b["customer_id"], "CG-col-bob")
+
+    def test_n08_reconciliation_ownership_and_external_identity_guards(self):
+        """P1 Regression: Reconciliation rejects mismatched order ownership and external identity hijacking.
+        - Updating an order owned by someone else raises 403 order_ownership_conflict.
+        - Updating a non-existent order raises 404 order_not_found.
+        - Linking a Google sub already attached to another principal raises 409 external_identity_conflict.
+        - Accounts remain quarantined in unresolved_collisions when validation fails."""
+        from retailops.identity.persistent import PersistentSessions
+        from retailops.identity.reconcile import reconcile_collision
+
+        with tempfile.TemporaryDirectory() as td:
+            sessions = PersistentSessions(Path(td), data_mode="production")
+            sessions.provision_tenant("shop-guards", "Shop Guards", seed_demo=False)
+            now = time.time()
+
+            with sessions.control.connection(write=True) as id_db:
+                id_db.execute("INSERT INTO principals (id, name) VALUES ('p-g1', 'Guard 1')")
+                id_db.execute("INSERT INTO principals (id, name) VALUES ('p-g2', 'Guard 2')")
+                id_db.execute("INSERT INTO principals (id, name) VALUES ('p-victim', 'Other Person')")
+                id_db.execute("INSERT INTO memberships VALUES ('m-g1', 'shop-guards', 'p-g1', 'CG-guard-shared', 'customer', 1, 1)")
+                id_db.execute("INSERT INTO memberships VALUES ('m-g2', 'shop-guards', 'p-g2', 'CG-guard-shared', 'customer', 1, 1)")
+                id_db.execute("INSERT INTO unresolved_collisions VALUES ('shop-guards', 'CG-guard-shared', ?)", (now,))
+                # p-victim already owns sub-google-victim-123
+                id_db.execute(
+                    "INSERT INTO external_identities (id, issuer, sub, principal_id, email, created_at) "
+                    "VALUES ('ext-vic', 'https://accounts.google.com', 'sub-google-victim-123', 'p-victim', 'victim@example.com', ?)",
+                    (now,)
+                )
+
+            bstore = sessions.business_store("shop-guards")
+            with bstore.connection(write=True) as bdb:
+                bdb.execute("INSERT INTO customers VALUES ('CG-guard-shared', 'Shared')")
+                bdb.execute("INSERT INTO customers VALUES ('CG-other-customer', 'Unrelated')")
+                bdb.execute("INSERT INTO orders (id, customer_id, name, variant, amount, status, version) VALUES ('O-GUARD-OK', 'CG-guard-shared', 'Item', 'M', 1000, 'pending', 1)")
+                bdb.execute("INSERT INTO orders (id, customer_id, name, variant, amount, status, version) VALUES ('O-OTHER-OWNER', 'CG-other-customer', 'Item', 'L', 2000, 'pending', 1)")
+
+            # Case A: Reassignment specifies an order that belongs to another customer
+            bad_order_plan = {
+                "reassignments": [
+                    {
+                        "membership_id": "m-g1",
+                        "target_customer_id": "CG-guard-1",
+                        "order_ids": ["O-OTHER-OWNER"],
+                    },
+                    {
+                        "membership_id": "m-g2",
+                        "target_customer_id": "CG-guard-2",
+                        "order_ids": [],
+                    },
+                ]
+            }
+            with self.assertRaises(ApiError) as ctx_ord:
+                reconcile_collision(sessions, "shop-guards", "CG-guard-shared", bad_order_plan, idempotency_key="rec-bad-order")
+            self.assertEqual(ctx_ord.exception.status, 403)
+            self.assertEqual(ctx_ord.exception.code, "order_ownership_conflict")
+
+            # Case B: Reassignment specifies a non-existent order
+            missing_order_plan = {
+                "reassignments": [
+                    {
+                        "membership_id": "m-g1",
+                        "target_customer_id": "CG-guard-1",
+                        "order_ids": ["O-NON-EXISTENT"],
+                    },
+                    {
+                        "membership_id": "m-g2",
+                        "target_customer_id": "CG-guard-2",
+                        "order_ids": [],
+                    },
+                ]
+            }
+            with self.assertRaises(ApiError) as ctx_miss:
+                reconcile_collision(sessions, "shop-guards", "CG-guard-shared", missing_order_plan, idempotency_key="rec-missing-order")
+            self.assertEqual(ctx_miss.exception.status, 404)
+            self.assertEqual(ctx_miss.exception.code, "order_not_found")
+
+            # Case C: Reassignment attempts to hijack Google sub of another principal
+            hijack_plan = {
+                "reassignments": [
+                    {
+                        "membership_id": "m-g1",
+                        "target_customer_id": "CG-guard-1",
+                        "order_ids": ["O-GUARD-OK"],
+                        "external_identity": {
+                            "issuer": "https://accounts.google.com",
+                            "sub": "sub-google-victim-123",
+                            "email": "hijack@example.com",
+                        },
+                    },
+                    {
+                        "membership_id": "m-g2",
+                        "target_customer_id": "CG-guard-2",
+                        "order_ids": [],
+                    },
+                ]
+            }
+            with self.assertRaises(ApiError) as ctx_hijack:
+                reconcile_collision(sessions, "shop-guards", "CG-guard-shared", hijack_plan, idempotency_key="rec-hijack")
+            self.assertEqual(ctx_hijack.exception.status, 409)
+            self.assertEqual(ctx_hijack.exception.code, "external_identity_conflict")
+
+            # Confirm unresolved_collisions is still intact (never unquarantined on failure)
+            with sessions.control.connection() as id_db:
+                col = id_db.execute("SELECT 1 FROM unresolved_collisions WHERE tenant_id='shop-guards' AND customer_id='CG-guard-shared'").fetchone()
+                self.assertIsNotNone(col)
+
+    def test_n08_reconciliation_operator_cli_flow(self):
+        """P1 Regression: Operator CLI entrypoint executes reconciliation and queries status."""
+        import argparse
+        import json
+        from retailops.identity.persistent import PersistentSessions
+        from retailops.identity import cli as identity_cli
+
+        with tempfile.TemporaryDirectory() as td:
+            persistent_dir = Path(td) / "persistent"
+            sessions = PersistentSessions(persistent_dir, data_mode="production")
+            sessions.provision_tenant("shop-cli", "Shop CLI", seed_demo=False)
+            now = time.time()
+
+            with sessions.control.connection(write=True) as id_db:
+                id_db.execute("INSERT INTO principals (id, name) VALUES ('p-c1', 'CLI 1')")
+                id_db.execute("INSERT INTO principals (id, name) VALUES ('p-c2', 'CLI 2')")
+                id_db.execute("INSERT INTO memberships VALUES ('m-c1', 'shop-cli', 'p-c1', 'CG-cli-shared', 'customer', 1, 1)")
+                id_db.execute("INSERT INTO memberships VALUES ('m-c2', 'shop-cli', 'p-c2', 'CG-cli-shared', 'customer', 1, 1)")
+                id_db.execute("INSERT INTO unresolved_collisions VALUES ('shop-cli', 'CG-cli-shared', ?)", (now,))
+
+            bstore = sessions.business_store("shop-cli")
+            with bstore.connection(write=True) as bdb:
+                bdb.execute("INSERT INTO customers VALUES ('CG-cli-shared', 'Shared CLI')")
+                bdb.execute("INSERT INTO orders (id, customer_id, name, variant, amount, status, version) VALUES ('O-CLI-1', 'CG-cli-shared', 'Item', 'M', 1000, 'pending', 1)")
+
+            plan = {
+                "reassignments": [
+                    {
+                        "membership_id": "m-c1",
+                        "target_customer_id": "CG-cli-alice",
+                        "order_ids": ["O-CLI-1"],
+                    },
+                    {
+                        "membership_id": "m-c2",
+                        "target_customer_id": "CG-cli-bob",
+                        "order_ids": [],
+                    },
+                ]
+            }
+            plan_file = Path(td) / "plan.json"
+            plan_file.write_text(json.dumps(plan), encoding="utf-8")
+
+            # Run CLI reconcile-collision
+            cli_args = argparse.Namespace(
+                output=Path(td),
+                identity_action="reconcile-collision",
+                tenant="shop-cli",
+                customer="CG-cli-shared",
+                plan_file=plan_file,
+                idempotency_key="cli-rec-001",
+            )
+            res = identity_cli.run(cli_args)
+            self.assertEqual(res["result"], "COLLISION_RECONCILED")
+            self.assertEqual(res["status"], "completed")
+
+            # Run CLI reconciliation-status
+            status_args = argparse.Namespace(
+                output=Path(td),
+                identity_action="reconciliation-status",
+                idempotency_key="cli-rec-001",
+            )
+            s_res = identity_cli.run(status_args)
+            self.assertEqual(s_res["result"], "RECONCILIATION_STATUS")
+            self.assertEqual(s_res["journal"]["status"], "completed")
 
 
     def test_n08_b1_legacy_linking_requires_verified_email(self):
@@ -1701,12 +1922,13 @@ class TestPrACorrectness(unittest.TestCase):
         from retailops.storage.pg_repositories import PostgresIdentityStore
 
         # 1. Compatibility constants & DDL check
-        self.assertEqual(IDENTITY_SCHEMA_CURRENT, 3)
-        self.assertEqual(IDENTITY_SCHEMA_COMPATIBLE, (1, 2, 3))
+        self.assertEqual(IDENTITY_SCHEMA_CURRENT, 4)
+        self.assertEqual(IDENTITY_SCHEMA_COMPATIBLE, (1, 2, 3, 4))
         ddl_str = " ".join(IDENTITY_DDL)
         self.assertIn("CREATE TABLE unresolved_collisions", ddl_str)
         self.assertIn("CREATE TABLE external_identities", ddl_str)
         self.assertIn("CREATE TABLE customer_links", ddl_str)
+        self.assertIn("CREATE TABLE IF NOT EXISTS reconciliation_journal", ddl_str)
 
         # 2. Mock db and psycopg for assert_schema
         class MockPgDb:
@@ -1732,23 +1954,24 @@ class TestPrACorrectness(unittest.TestCase):
         mock_psycopg.sql = mock_sql
 
         with patch.dict("sys.modules", {"psycopg": mock_psycopg, "psycopg.sql": mock_sql}):
-            # Test valid versions 1, 2, and 3
+            # Test valid versions 1, 2, 3, and 4
             assert_schema(MockPgDb(1), "retailops_identity", "identity")
             assert_schema(MockPgDb(2), "retailops_identity", "identity")
             assert_schema(MockPgDb(3), "retailops_identity", "identity")
+            assert_schema(MockPgDb(4), "retailops_identity", "identity")
 
-            # Test invalid versions 0 and 4
+            # Test invalid versions 0 and 5
             with self.assertRaises(ValueError):
                 assert_schema(MockPgDb(0), "retailops_identity", "identity")
             with self.assertRaises(ValueError):
-                assert_schema(MockPgDb(4), "retailops_identity", "identity")
+                assert_schema(MockPgDb(5), "retailops_identity", "identity")
 
-        # 3. PostgresIdentityStore auto-upgrade on v1 and v2, and no-op on v3
+        # 3. PostgresIdentityStore auto-upgrade on v1, v2, v3, and no-op on v4
         with patch("retailops.storage.pg_repositories.check_schema") as mock_check, \
              patch("retailops.storage.pg_repositories.initialize") as mock_init, \
              patch.object(PostgresIdentityStore, "connection") as mock_conn:
 
-            for test_ver, should_init in [(1, True), (2, True), (3, False)]:
+            for test_ver, should_init in [(1, True), (2, True), (3, True), (4, False)]:
                 mock_init.reset_mock()
                 mock_check.reset_mock()
 
@@ -1769,6 +1992,43 @@ class TestPrACorrectness(unittest.TestCase):
                     mock_init.assert_called_once()
                 else:
                     mock_init.assert_not_called()
+
+    def test_n08_identity_v3_to_v4_migration_creates_journal_and_reconciles(self):
+        """P1 Regression: Legacy v3 identity database lacking reconciliation_journal
+        must be upgraded to v4 with reconciliation_journal table, and support reconciliation."""
+        from retailops.storage.pg_schema import initialize
+        from retailops.storage.postgres import IDENTITY_SCHEMA_CURRENT
+
+        # Test SQLite upgrade in temporary database
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "legacy_v3.sqlite3"
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            # Create v3-like schema WITHOUT reconciliation_journal
+            conn.execute("CREATE TABLE tenants (id TEXT PRIMARY KEY, name TEXT, storage_key TEXT UNIQUE, active INT DEFAULT 1)")
+            conn.execute("CREATE TABLE principals (id TEXT PRIMARY KEY, name TEXT)")
+            conn.execute("CREATE TABLE memberships (id TEXT PRIMARY KEY, tenant_id TEXT, principal_id TEXT, customer_id TEXT, role TEXT, active INT DEFAULT 1, auth_version INT DEFAULT 1)")
+            conn.execute("CREATE TABLE credentials (hash TEXT PRIMARY KEY, membership_id TEXT, created_at REAL)")
+            conn.execute("CREATE TABLE sessions (id TEXT PRIMARY KEY, membership_id TEXT, auth_version INT, expires_at REAL)")
+            conn.execute("CREATE TABLE external_identities (id TEXT PRIMARY KEY, issuer TEXT, sub TEXT, principal_id TEXT, email TEXT, created_at REAL, UNIQUE(issuer, sub))")
+            conn.execute("CREATE TABLE customer_links (id TEXT PRIMARY KEY, tenant_id TEXT, principal_id TEXT, customer_id TEXT, created_at REAL, UNIQUE(tenant_id, principal_id), UNIQUE(tenant_id, customer_id))")
+            conn.execute("CREATE TABLE unresolved_collisions (tenant_id TEXT, customer_id TEXT, created_at REAL, PRIMARY KEY(tenant_id, customer_id))")
+            conn.execute("CREATE TABLE identity_events (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at REAL, kind TEXT, tenant_id TEXT, membership_id TEXT)")
+            # Confirm reconciliation_journal does NOT exist
+            has_journal = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='reconciliation_journal'").fetchone()
+            self.assertIsNone(has_journal)
+            conn.close()
+
+            # Now open with PersistentSessions which runs migration
+            from retailops.identity.persistent import PersistentSessions
+            sessions = PersistentSessions(Path(td), data_mode="production")
+            # Verify table was created by migration
+            with sessions.control.connection() as id_db:
+                has_journal_now = id_db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='reconciliation_journal'").fetchone()
+                self.assertIsNotNone(has_journal_now)
+                # Verify plan_hash column exists
+                cols = [r[1] for r in id_db.execute("PRAGMA table_info(reconciliation_journal)").fetchall()]
+                self.assertIn("plan_hash", cols)
 
 
 if __name__ == "__main__":

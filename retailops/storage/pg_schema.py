@@ -106,6 +106,7 @@ IDENTITY_DDL = [
         colliding_customer_id TEXT NOT NULL,
         status TEXT NOT NULL CHECK(status IN ('started', 'business_committed', 'identity_committed', 'completed')),
         plan_json TEXT NOT NULL,
+        plan_hash TEXT,
         error_message TEXT,
         created_at DOUBLE PRECISION NOT NULL,
         updated_at DOUBLE PRECISION NOT NULL)''',
@@ -200,10 +201,12 @@ def initialize(db, schema, component):
                         colliding_customer_id TEXT NOT NULL,
                         status TEXT NOT NULL CHECK(status IN ('started', 'business_committed', 'identity_committed', 'completed')),
                         plan_json TEXT NOT NULL,
+                        plan_hash TEXT,
                         error_message TEXT,
                         created_at DOUBLE PRECISION NOT NULL,
                         updated_at DOUBLE PRECISION NOT NULL)''',
                     'CREATE INDEX IF NOT EXISTS idx_reconciliation_journal_tenant ON reconciliation_journal(tenant_id, colliding_customer_id)',
+                    'ALTER TABLE reconciliation_journal ADD COLUMN IF NOT EXISTS plan_hash TEXT',
                 ):
                     db.raw.execute(statement)
                 db.execute("UPDATE retailops_schema SET version=? WHERE component='identity'", (IDENTITY_SCHEMA_CURRENT,))
@@ -243,10 +246,30 @@ def initialize(db, schema, component):
                         colliding_customer_id TEXT NOT NULL,
                         status TEXT NOT NULL CHECK(status IN ('started', 'business_committed', 'identity_committed', 'completed')),
                         plan_json TEXT NOT NULL,
+                        plan_hash TEXT,
                         error_message TEXT,
                         created_at DOUBLE PRECISION NOT NULL,
                         updated_at DOUBLE PRECISION NOT NULL)''',
                     'CREATE INDEX IF NOT EXISTS idx_reconciliation_journal_tenant ON reconciliation_journal(tenant_id, colliding_customer_id)',
+                    'ALTER TABLE reconciliation_journal ADD COLUMN IF NOT EXISTS plan_hash TEXT',
+                ):
+                    db.raw.execute(statement)
+                db.execute("UPDATE retailops_schema SET version=? WHERE component='identity'", (IDENTITY_SCHEMA_CURRENT,))
+                row = {'component': 'identity', 'version': IDENTITY_SCHEMA_CURRENT}
+            if row['version'] == 3:
+                for statement in (
+                    '''CREATE TABLE IF NOT EXISTS reconciliation_journal (
+                        id TEXT PRIMARY KEY,
+                        tenant_id TEXT NOT NULL REFERENCES tenants(id),
+                        colliding_customer_id TEXT NOT NULL,
+                        status TEXT NOT NULL CHECK(status IN ('started', 'business_committed', 'identity_committed', 'completed')),
+                        plan_json TEXT NOT NULL,
+                        plan_hash TEXT,
+                        error_message TEXT,
+                        created_at DOUBLE PRECISION NOT NULL,
+                        updated_at DOUBLE PRECISION NOT NULL)''',
+                    'CREATE INDEX IF NOT EXISTS idx_reconciliation_journal_tenant ON reconciliation_journal(tenant_id, colliding_customer_id)',
+                    'ALTER TABLE reconciliation_journal ADD COLUMN IF NOT EXISTS plan_hash TEXT',
                 ):
                     db.raw.execute(statement)
                 db.execute("UPDATE retailops_schema SET version=? WHERE component='identity'", (IDENTITY_SCHEMA_CURRENT,))

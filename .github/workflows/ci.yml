@@ -99,7 +99,9 @@ jobs:
           bash -n deploy/cutover-postgres.sh
           bash -n deploy/enable-pgvector.sh
           bash -n deploy/rollout-public-web.sh
+          bash -n deploy/switch-maintenance.sh
           docker run --rm --network none -e RETAILOPS_PUBLIC_HOST=retailops.example.com -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.11.4-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          docker run --rm --network none -e RETAILOPS_PUBLIC_HOST=retailops.example.com -v "$PWD/deploy/Caddyfile.maintenance:/etc/caddy/Caddyfile:ro" caddy:2.11.4-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
       - name: Build CPU-only baseline image
         run: docker build -t retailops:ci .
       - name: Verify packaged application and deployment helpers
