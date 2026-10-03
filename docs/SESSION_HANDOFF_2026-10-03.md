@@ -3,9 +3,9 @@
 > **Ngày ghi nhận:** 03/10/2026 (12:20 GMT+7)  
 > **Repository:** `tuteemovaixlong/CSKH_ban_le`  
 > **Nhánh hiện tại:** `feature/module-2.5-pr-a` (Target tích hợp: `main`)  
-> **Head Commit SHA:** Commit SHA cuối sau khi đồng bộ tài liệu và chạy CI toàn diện (CI xác minh code P1.1: Run 37128838055 trên `6e0363c`)  
-> **Kết quả kiểm thử cục bộ:** **477 tests, 428 PASS, 49 SKIP, 0 FAIL, 0 ERROR** (skip do không có PG local; các test PG chạy trên CI container)  
-> **Kết quả kiểm thử CI (GitHub Actions Run 37128838055):** host suite **477/477 PASS, 0 SKIP**; packaged container suite **476 PASS, 1 SKIP, 0 FAIL, 0 ERROR**, trên PostgreSQL 16 và Caddy live container thật  
+> **Head Commit SHA:** Commit SHA cuối sau khi đồng bộ tài liệu và chạy CI toàn diện (CI xác minh code P1.1 TOCTOU: Run 37132194550 trên `766a594`)  
+> **Kết quả kiểm thử cục bộ:** **479 tests, 429 PASS, 50 SKIP, 0 FAIL, 0 ERROR** (skip do không có PG local; các test PG chạy trên CI container)  
+> **Kết quả kiểm thử CI (GitHub Actions Run 37132194550):** host suite **479/479 PASS, 0 SKIP**; packaged container suite **478 PASS, 1 SKIP, 0 FAIL, 0 ERROR**, trên PostgreSQL 16 và Caddy live container thật  
 > **Cổng hợp đồng:** 4/4 cổng hợp đồng PASS 100% (`check_docs_contract.py`, `check_deployment_contract.py`, `check_eval_dataset.py`, `build_agent_notebook.py --check`)  
 > **Cam kết vận hành:** **Chưa merge vào `main`**, **chưa deploy lên EC2**, **chưa bắt đầu PR B**.  
 
@@ -51,6 +51,15 @@ Toàn bộ các blocker / findings kỹ thuật được nêu trong `docs/review
   - Bị từ chối $\rightarrow$ rollback cả dòng journal: dữ liệu không đổi, collision vẫn unresolved, key không kẹt; retry cùng key với plan hợp lệ hoàn tất.
   - Regression test SQLite + PostgreSQL qua `tests/reconcile_target_cases.py`.
 
+### 1.6. Blocker P1.1 (đóng nốt): Chặn TOCTOU Giữa Kiểm Tra Ownership Identity và Commit Business
+- **Vấn đề:** Sau preflight, principal khác vẫn có thể chiếm `target_customer_id` trước khi Business commit, khiến dữ liệu bị chuyển vào đích không còn hợp lệ.
+- **Giải pháp (code SHA `766a594`):**
+  - **Serialization:** transaction ghi Identity đã tuần tự hóa toàn cục (SQLite `BEGIN IMMEDIATE`, PostgreSQL advisory xact lock); reconciliation khóa thêm `memberships`/`customer_links`/`unresolved_collisions` ở chế độ `SHARE ROW EXCLUSIVE` trên PostgreSQL. Thứ tự khóa luôn là Identity → Business.
+  - **Reservation:** đích mới được ghi vào `unresolved_collisions` cùng transaction với journal ở Step 1. `create_membership` trả 409 `customer_reserved`; `get_or_create_google_member` không cấp cid đang reserved và trả 503 nếu link trỏ tới cid đang reserved. Migration/import chỉ dùng id sẵn có và bỏ qua id unresolved.
+  - **Step 2:** giữ lock Identity → kiểm tra lại journal/collision/reservation/ownership → kiểm tra Business (gồm `customers`, `conversation_feedback`) → chuyển dữ liệu → journal `business_committed` trong cùng transaction Identity. Nếu lỗi trước khi chuyển dữ liệu ở lần chạy mới, coordinator bù trừ: xóa journal và reservation, trả 409; dữ liệu không đổi, collision vẫn unresolved, key không kẹt.
+  - **Step 3:** kiểm tra lại ownership dưới lock rồi giải phóng reservation khi hoàn tất. Rủi ro còn lại (SQL ghi thô giữa Step 2 và Step 3) bị chặn fail-closed: journal `business_committed`, resume được sau khi gỡ xung đột.
+  - Test interleaving `tests/reconcile_interleaving_cases.py` cho SQLite (`test_n08_p11_reconciliation_toctou_target_taken_after_preflight_sqlite`) và PostgreSQL (`test_reconciliation_toctou_target_taken_after_preflight_on_postgres`), gồm 4 kiểu xâm nhập: membership, customer_link, dòng `customers`, dòng `conversation_feedback`. Cả hai đều `ok` trên CI Run 37132194550.
+
 ---
 
 ## 2. CHECKLIST VẬN HÀNH TIẾP THEO
@@ -75,7 +84,7 @@ Toàn bộ các blocker / findings kỹ thuật được nêu trong `docs/review
    ```bash
    python -B -X utf8 -m unittest discover -s tests -p "test_*.py"
    ```
-   *Kỳ vọng: 477 tests, 428 PASS, 49 SKIP, 0 FAIL, 0 ERROR (skip do không có PG local).*
+   *Kỳ vọng: 479 tests, 429 PASS, 50 SKIP, 0 FAIL, 0 ERROR (skip do không có PG local).*
 
 4. **Nhiệm vụ tiếp theo:**
    - Xem xét nghiệm thu PR A và ra quyết định merge vào `main` (khi người phụ trách phê duyệt).
