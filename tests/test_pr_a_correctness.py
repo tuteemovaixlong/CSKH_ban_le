@@ -1992,6 +1992,23 @@ class TestPrACorrectness(unittest.TestCase):
             sessions.provision_tenant("shop-p11", "Shop P11", seed_demo=False)
             reconcile_target_cases.run(self, sessions, "shop-p11")
 
+    def test_n08_p11_reconciliation_toctou_target_taken_after_preflight_sqlite(self):
+        """P1.1 TOCTOU (SQLite): another principal takes a target customer id after the Step 1
+        preflight. Cooperative writers are refused by the reservation; raw writers are caught by
+        the lock-held re-check before the Business commit (data unchanged across customers,
+        orders, conversations, agent_turns, conversation_feedback, proposals, business_events;
+        collision unresolved; journal released) or by the Step 3 re-check (fail-closed, resumable)."""
+        try:
+            import reconcile_interleaving_cases
+        except ImportError:
+            from tests import reconcile_interleaving_cases
+        from retailops.identity.persistent import PersistentSessions
+
+        with tempfile.TemporaryDirectory() as td:
+            sessions = PersistentSessions(Path(td), data_mode="production")
+            sessions.provision_tenant("shop-ilv", "Shop ILV", seed_demo=False)
+            reconcile_interleaving_cases.run(self, sessions, "shop-ilv")
+
 
     def test_n08_b1_legacy_linking_requires_verified_email(self):
         """N08-B1 Regression: Legacy email linking strictly requires email_verified=True.

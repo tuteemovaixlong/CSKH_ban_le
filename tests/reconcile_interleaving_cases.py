@@ -1,0 +1,281 @@
+"""Shared P1.1 TOCTOU regression scenario: another principal grabs a target customer id AFTER the
+Step 1 preflight of reconcile_collision(). Executed against both SQLite and PostgreSQL backends
+(see test_pr_a_correctness.py and test_postgres.py). Not collected directly by unittest.
+
+The interleaving is injected deterministically by wrapping sessions.control: the hook for the
+N-th Identity write transaction runs right before that transaction opens, i.e. after the
+previous one committed (#1 = Step 1 preflight/reservation, #2 = Step 2 lock, #3 = Step 3).
+"""
+import time
+
+from retailops.core import ApiError
+from retailops.identity.reconcile import (_validate_business_targets, get_reconciliation_status,
+                                          reconcile_collision)
+
+COLLIDING = 'CG-ilv-shared'
+TARGET_A = 'CG-ilv-alice'
+TARGET_B = 'CG-ilv-bob'
+INTRUDER_OWN = 'CG-ilv-intruder-own'
+KEY = 'rec-ilv-toctou'
+
+
+class _InterleavingControl:
+    def __init__(self, inner, hooks):
+        self._inner = inner
+        self._hooks = hooks
+        self.writes = 0
+
+    def connection(self, write=False):
+        if write:
+            self.writes += 1
+            hook = self._hooks.get(self.writes)
+            if hook:
+                hook()
+        return self._inner.connection(write=write)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+class InterleavingSessions:
+    def __init__(self, inner, hooks):
+        self._inner = inner
+        self.control = _InterleavingControl(inner.control, hooks)
+
+    def business_store(self, tenant_id):
+        return self._inner.business_store(tenant_id)
+
+
+def seed(sessions, tenant):
+    now = time.time()
+    with sessions.control.connection(write=True) as db:
+        for pid, name in (('p-ilv-a', 'ILV Alice'), ('p-ilv-b', 'ILV Bob'), ('p-ilv-intruder', 'ILV Intruder')):
+            db.execute('INSERT INTO principals (id, name) VALUES (?, ?)', (pid, name))
+        for mid, pid, cid in (('m-ilv-a', 'p-ilv-a', COLLIDING), ('m-ilv-b', 'p-ilv-b', COLLIDING),
+                              ('m-ilv-intruder', 'p-ilv-intruder', INTRUDER_OWN)):
+            db.execute(
+                'INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) '
+                "VALUES (?, ?, ?, ?, 'customer', 1, 1)", (mid, tenant, pid, cid))
+        db.execute('INSERT INTO customer_links (id, tenant_id, principal_id, customer_id, created_at) '
+                   'VALUES (?, ?, ?, ?, ?)', ('cl-ilv-intruder', tenant, 'p-ilv-intruder', INTRUDER_OWN, now))
+        db.execute('INSERT INTO unresolved_collisions (tenant_id, customer_id, created_at) VALUES (?, ?, ?)',
+                   (tenant, COLLIDING, now))
+    with sessions.business_store(tenant).connection(write=True) as b:
+        for cid, name in ((COLLIDING, 'ILV Shared'), (INTRUDER_OWN, 'ILV Intruder')):
+            b.execute('INSERT INTO customers (id, name) VALUES (?, ?)', (cid, name))
+        for oid, cid in (('O-ILV-A', COLLIDING), ('O-ILV-B', COLLIDING), ('O-ILV-INTRUDER', INTRUDER_OWN)):
+            b.execute("INSERT INTO orders (id, customer_id, name, variant, amount, status, version) "
+                      "VALUES (?, ?, 'Item', 'M', 1000, 'pending', 1)", (oid, cid))
+        for conv, cid, oid in (('conv-ilv-a', COLLIDING, 'O-ILV-A'), ('conv-ilv-intruder', INTRUDER_OWN, 'O-ILV-INTRUDER')):
+            b.execute('INSERT INTO conversations (id, customer_id, order_id, product_id, revision, expires_at) '
+                      'VALUES (?, ?, ?, NULL, 1, ?)', (conv, cid, oid, now + 3600))
+        b.execute('INSERT INTO agent_turns (conversation_id, customer_id, request_id, input_hash, messages, result, created_at) '
+                  'VALUES (?, ?, ?, ?, ?, ?, ?)', ('conv-ilv-a', COLLIDING, 'req-ilv-a', 'h-ilv', '[]', '{}', now))
+        b.execute('INSERT INTO conversation_feedback (conversation_id, customer_id, feedback_type, rating, created_at) '
+                  "VALUES (?, ?, 'turn_rating', 5, ?)", ('conv-ilv-a', COLLIDING, now))
+        b.execute('INSERT INTO proposals (id, customer_id, order_id, order_version, reason, expires_at) '
+                  'VALUES (?, ?, ?, 1, ?, ?)', ('prop-ilv-a', COLLIDING, 'O-ILV-A', 'ILV cancel', now + 3600))
+        b.execute('INSERT INTO business_events (customer_id, created_at, kind, order_id, payload) '
+                  "VALUES (?, ?, 'order_created', ?, '{}')", (COLLIDING, now, 'O-ILV-A'))
+
+
+def plan():
+    return {'reassignments': [
+        {'membership_id': 'm-ilv-a', 'target_customer_id': TARGET_A, 'target_customer_name': 'ILV Alice',
+         'order_ids': ['O-ILV-A'], 'conversation_ids': ['conv-ilv-a']},
+        {'membership_id': 'm-ilv-b', 'target_customer_id': TARGET_B, 'target_customer_name': 'ILV Bob',
+         'order_ids': ['O-ILV-B'], 'conversation_ids': []},
+    ]}
+
+
+def snapshot(sessions, tenant):
+    """Every customer-scoped row the reconciliation can touch (bound LIKE patterns for psycopg)."""
+    with sessions.control.connection() as db:
+        identity = {
+            'members': {r['id']: (r['customer_id'], r['auth_version'], r['active']) for r in db.execute(
+                'SELECT id, customer_id, auth_version, active FROM memberships WHERE id LIKE ?', ('m-ilv-%',)).fetchall()},
+            'links': {r['principal_id']: r['customer_id'] for r in db.execute(
+                'SELECT principal_id, customer_id FROM customer_links WHERE principal_id LIKE ?', ('p-ilv-%',)).fetchall()},
+            'unresolved': sorted(r['customer_id'] for r in db.execute(
+                'SELECT customer_id FROM unresolved_collisions WHERE tenant_id = ?', (tenant,)).fetchall()),
+        }
+    with sessions.business_store(tenant).connection() as b:
+        business = {
+            'customers': {r['id']: r['name'] for r in b.execute(
+                'SELECT id, name FROM customers WHERE id LIKE ?', ('CG-ilv-%',)).fetchall()},
+            'orders': {r['id']: r['customer_id'] for r in b.execute(
+                'SELECT id, customer_id FROM orders WHERE id LIKE ?', ('O-ILV-%',)).fetchall()},
+            'conversations': {r['id']: r['customer_id'] for r in b.execute(
+                'SELECT id, customer_id FROM conversations WHERE id LIKE ?', ('conv-ilv-%',)).fetchall()},
+            'agent_turns': {r['request_id']: r['customer_id'] for r in b.execute(
+                'SELECT request_id, customer_id FROM agent_turns WHERE request_id LIKE ?', ('req-ilv-%',)).fetchall()},
+            'conversation_feedback': sorted((r['conversation_id'], r['customer_id'], r['feedback_type']) for r in b.execute(
+                'SELECT conversation_id, customer_id, feedback_type FROM conversation_feedback WHERE conversation_id LIKE ?',
+                ('conv-ilv-%',)).fetchall()),
+            'proposals': {r['id']: r['customer_id'] for r in b.execute(
+                'SELECT id, customer_id FROM proposals WHERE id LIKE ?', ('prop-ilv-%',)).fetchall()},
+            'business_events': sorted((r['order_id'], r['customer_id'], r['kind']) for r in b.execute(
+                'SELECT order_id, customer_id, kind FROM business_events WHERE order_id LIKE ?', ('O-ILV-%',)).fetchall()),
+        }
+    return {'identity': identity, 'business': business}
+
+
+def _identity_write(sessions, statements):
+    with sessions.control.connection(write=True) as db:
+        for sql, params in statements:
+            db.execute(sql, params)
+
+
+def _business_write(sessions, tenant, statements):
+    with sessions.business_store(tenant).connection(write=True) as b:
+        for sql, params in statements:
+            b.execute(sql, params)
+
+
+def _intrusions(sessions, tenant):
+    """Non-cooperative writers (raw SQL that bypasses the repository) taking TARGET_A after the
+    preflight. Each entry: (apply, revert)."""
+    now = time.time()
+    return {
+        'membership_takeover': (
+            lambda: _identity_write(sessions, [(
+                'UPDATE memberships SET customer_id = ? WHERE id = ?', (TARGET_A, 'm-ilv-intruder'))]),
+            lambda: _identity_write(sessions, [(
+                'UPDATE memberships SET customer_id = ? WHERE id = ?', (INTRUDER_OWN, 'm-ilv-intruder'))]),
+        ),
+        'customer_link_takeover': (
+            lambda: _identity_write(sessions, [(
+                'UPDATE customer_links SET customer_id = ? WHERE tenant_id = ? AND principal_id = ?',
+                (TARGET_A, tenant, 'p-ilv-intruder'))]),
+            lambda: _identity_write(sessions, [(
+                'UPDATE customer_links SET customer_id = ? WHERE tenant_id = ? AND principal_id = ?',
+                (INTRUDER_OWN, tenant, 'p-ilv-intruder'))]),
+        ),
+        'business_customers_row': (
+            lambda: _business_write(sessions, tenant, [(
+                'INSERT INTO customers (id, name) VALUES (?, ?)', (TARGET_A, 'ILV Squatter'))]),
+            lambda: _business_write(sessions, tenant, [(
+                'DELETE FROM customers WHERE id = ?', (TARGET_A,))]),
+        ),
+        # PostgreSQL enforces customers(id) FKs, so the squatter row comes with its feedback row.
+        'business_feedback_row': (
+            lambda: _business_write(sessions, tenant, [
+                ('INSERT INTO customers (id, name) VALUES (?, ?)', (TARGET_A, 'ILV Squatter')),
+                ('INSERT INTO conversation_feedback (conversation_id, customer_id, feedback_type, rating, created_at) '
+                 "VALUES (?, ?, 'session_csat', 1, ?)", ('conv-ilv-intruder', TARGET_A, now)),
+            ]),
+            lambda: _business_write(sessions, tenant, [
+                ('DELETE FROM conversation_feedback WHERE customer_id = ?', (TARGET_A,)),
+                ('DELETE FROM customers WHERE id = ?', (TARGET_A,)),
+            ]),
+        ),
+    }
+
+
+def _assert_collision_blocked(case, sessions):
+    for mid in ('m-ilv-a', 'm-ilv-b'):
+        with case.assertRaises(ApiError) as blocked:
+            sessions.control.create_session_for_membership(mid, 3600, 10)
+        case.assertEqual((blocked.exception.status, blocked.exception.code), (503, 'collision_unresolved'))
+
+
+def run(case, sessions, tenant):
+    """case: unittest.TestCase. sessions: PersistentSessions or PostgresSessions."""
+    seed(sessions, tenant)
+    before = snapshot(sessions, tenant)
+    case.assertIn(COLLIDING, before['identity']['unresolved'])
+    case.assertNotIn(TARGET_A, before['identity']['unresolved'])
+
+    # 1. A raw writer takes TARGET_A between the preflight (Step 1) and the Business commit.
+    for label, (apply, revert) in _intrusions(sessions, tenant).items():
+        with case.subTest(intrusion=label):
+            seen = {}
+
+            def after_preflight(label=label, apply=apply):
+                with sessions.control.connection() as db:
+                    seen['reserved'] = {r['customer_id'] for r in db.execute(
+                        'SELECT customer_id FROM unresolved_collisions WHERE tenant_id = ?', (tenant,)).fetchall()}
+                # Cooperative writers must refuse the reserved id.
+                try:
+                    sessions.control.create_membership(tenant, f'p-ilv-coop-{label}', 'ILV Coop', TARGET_A, 'customer')
+                    seen['coop'] = 'accepted'
+                except ApiError as exc:
+                    seen['coop'] = (exc.status, exc.code)
+                apply()
+                seen['at_intrusion'] = snapshot(sessions, tenant)
+
+            with case.assertRaises(ApiError) as ctx:
+                reconcile_collision(InterleavingSessions(sessions, {2: after_preflight}), tenant, COLLIDING, plan(),
+                                    idempotency_key=KEY)
+            case.assertEqual((ctx.exception.status, ctx.exception.code), (409, 'target_customer_conflict'))
+            # The reservation was in place right after the preflight and was honoured.
+            case.assertTrue({TARGET_A, TARGET_B} <= seen['reserved'])
+            case.assertEqual(seen['coop'], (409, 'customer_reserved'))
+            after = snapshot(sessions, tenant)
+            # Stopped before moving data: every customer-scoped Business row (customers,
+            # orders, conversations, agent_turns, conversation_feedback, proposals,
+            # business_events) and every membership/link is exactly as the intruder left it.
+            case.assertEqual(after['business'], seen['at_intrusion']['business'])
+            case.assertEqual(after['identity']['members'], seen['at_intrusion']['identity']['members'])
+            case.assertEqual(after['identity']['links'], seen['at_intrusion']['identity']['links'])
+            # Collision stays unresolved, reservations are released, journal is not stuck.
+            case.assertEqual(after['identity']['unresolved'], before['identity']['unresolved'])
+            case.assertIsNone(get_reconciliation_status(sessions, KEY))
+            _assert_collision_blocked(case, sessions)
+            if label == 'business_feedback_row':
+                # The feedback row alone is foreign data even when the customers-row rule is off.
+                with sessions.business_store(tenant).connection() as b:
+                    with case.assertRaises(ApiError) as fb:
+                        _validate_business_targets(b, plan()['reassignments'], set(), fresh_run=False)
+                case.assertEqual(fb.exception.code, 'target_customer_conflict')
+            revert()
+            case.assertEqual(snapshot(sessions, tenant), before)
+
+    # 2. Cooperative writers during the window are refused/diverted; a raw membership takeover
+    #    after the Business commit is caught by the Step 3 re-check (fail-closed, resumable).
+    seen = {}
+
+    def before_step2():
+        try:
+            sessions.control.create_membership(tenant, 'p-ilv-coop-final', 'ILV Coop', TARGET_A, 'customer')
+            seen['coop'] = 'accepted'
+        except ApiError as exc:
+            seen['coop'] = (exc.status, exc.code)
+        _, seen['google_cid'] = sessions.control.get_or_create_google_member(
+            tenant, 'ilv.google@example.com', 'ILV Google', customer_id=TARGET_A, sub='sub-ilv-google')
+
+    takeover, undo_takeover = _intrusions(sessions, tenant)['membership_takeover']
+    with case.assertRaises(ApiError) as late:
+        reconcile_collision(InterleavingSessions(sessions, {2: before_step2, 3: takeover}), tenant, COLLIDING,
+                            plan(), idempotency_key=KEY)
+    case.assertEqual((late.exception.status, late.exception.code), (409, 'target_customer_conflict'))
+    case.assertEqual(seen['coop'], (409, 'customer_reserved'))
+    case.assertNotEqual(seen['google_cid'], TARGET_A)
+    case.assertEqual(get_reconciliation_status(sessions, KEY)['status'], 'business_committed')
+    mid_state = snapshot(sessions, tenant)
+    case.assertEqual(mid_state['identity']['members']['m-ilv-a'], before['identity']['members']['m-ilv-a'])
+    case.assertEqual(mid_state['identity']['members']['m-ilv-b'], before['identity']['members']['m-ilv-b'])
+    case.assertTrue({COLLIDING, TARGET_A, TARGET_B} <= set(mid_state['identity']['unresolved']))
+    _assert_collision_blocked(case, sessions)
+
+    undo_takeover()
+    result = reconcile_collision(sessions, tenant, COLLIDING, plan(), idempotency_key=KEY)
+    case.assertEqual(result['status'], 'completed')
+    case.assertEqual(get_reconciliation_status(sessions, KEY)['status'], 'completed')
+    final = snapshot(sessions, tenant)
+    ident, biz = final['identity'], final['business']
+    case.assertEqual(ident['members']['m-ilv-a'][0], TARGET_A)
+    case.assertEqual(ident['members']['m-ilv-b'][0], TARGET_B)
+    case.assertEqual(ident['members']['m-ilv-intruder'], before['identity']['members']['m-ilv-intruder'])
+    case.assertEqual(ident['links'], {'p-ilv-a': TARGET_A, 'p-ilv-b': TARGET_B, 'p-ilv-intruder': INTRUDER_OWN})
+    case.assertFalse({COLLIDING, TARGET_A, TARGET_B} & set(ident['unresolved']))
+    case.assertEqual(biz['customers'], {TARGET_A: 'ILV Alice', TARGET_B: 'ILV Bob', COLLIDING: 'ILV Shared',
+                                        INTRUDER_OWN: 'ILV Intruder'})
+    case.assertEqual(biz['orders'], {'O-ILV-A': TARGET_A, 'O-ILV-B': TARGET_B, 'O-ILV-INTRUDER': INTRUDER_OWN})
+    case.assertEqual(biz['conversations'], {'conv-ilv-a': TARGET_A, 'conv-ilv-intruder': INTRUDER_OWN})
+    case.assertEqual(biz['agent_turns'], {'req-ilv-a': TARGET_A})
+    case.assertEqual(biz['conversation_feedback'], [('conv-ilv-a', TARGET_A, 'turn_rating')])
+    case.assertEqual(biz['proposals'], {'prop-ilv-a': TARGET_A})
+    case.assertEqual(biz['business_events'], [('O-ILV-A', TARGET_A, 'order_created')])
+    sessions.control.create_session_for_membership('m-ilv-a', 3600, 10)
+    case.assertTrue(reconcile_collision(sessions, tenant, COLLIDING, plan(), idempotency_key=KEY).get('already_completed'))

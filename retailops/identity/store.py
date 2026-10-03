@@ -397,6 +397,11 @@ class IdentityStore:
                                (tenant_id, principal_id)).fetchone() is None,
                     409, 'membership_exists', 'Tài khoản đã thuộc cửa hàng này.')
             db.execute('INSERT INTO principals VALUES (?,?) ON CONFLICT DO NOTHING', (principal_id, name))
+            # P1.1 reservation: a customer id held in unresolved_collisions (ambiguous collision or a
+            # target reserved by a pending reconciliation) cannot be handed to another membership.
+            require(db.execute('SELECT 1 FROM unresolved_collisions WHERE tenant_id=? AND customer_id=?',
+                               (tenant_id, customer_id)).fetchone() is None,
+                    409, 'customer_reserved', 'Mã khách hàng đang bị khóa chờ đối soát; không thể gán cho tài khoản khác.')
             if role == 'customer':
                 existing_link = db.execute(
                     'SELECT principal_id FROM customer_links WHERE tenant_id=? AND customer_id=?',
@@ -617,6 +622,10 @@ class IdentityStore:
                                    (tenant_id, principal_id)).fetchone()
             if cust_link:
                 cid = cust_link['customer_id']
+                # P1.1 reservation: never materialise a membership on a reserved customer id.
+                if db.execute('SELECT 1 FROM unresolved_collisions WHERE tenant_id=? AND customer_id=?',
+                              (tenant_id, cid)).fetchone():
+                    require(False, 503, 'collision_unresolved', 'Tài khoản đang chờ xử lý va chạm dữ liệu.')
             else:
                 cid = customer_id or f"cust_{uuid.uuid4().hex}"
                 existing_cust = db.execute(

@@ -1074,6 +1074,15 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             from tests import reconcile_target_cases
         reconcile_target_cases.run(self, self.sessions, 'shop-a')
 
+    def test_reconciliation_toctou_target_taken_after_preflight_on_postgres(self):
+        """P1.1 TOCTOU (PostgreSQL): same interleaving scenario as the SQLite suite, including
+        LOCK TABLE serialization, reservation, compensation and the Step 3 re-check."""
+        try:
+            import reconcile_interleaving_cases
+        except ImportError:
+            from tests import reconcile_interleaving_cases
+        reconcile_interleaving_cases.run(self, self.sessions, 'shop-a')
+
 
 if __name__ == '__main__':
     unittest.main()
