@@ -83,7 +83,18 @@ def main():
             # Test Caddy maintenance mode switch through real Caddy container
             maint_caddy = (ROOT / 'deploy/Caddyfile.maintenance').read_text().replace('{$RETAILOPS_PUBLIC_HOST} {', '{$RETAILOPS_PUBLIC_HOST} {\n\ttls internal')
             (temp / 'Caddyfile').write_text(maint_caddy)
-            run(base + ['restart', 'caddy'])
+            try:
+                run(base + ['exec', '-T', 'caddy', 'caddy', 'reload', '--config', '/etc/caddy/Caddyfile'])
+            except Exception:
+                run(base + ['restart', 'caddy'])
+            for _ in range(20):
+                try:
+                    st_test, res_test = request('/auth/google/config')
+                    if st_test == 503 and res_test.get('error') == 'maintenance_mode':
+                        break
+                except Exception:
+                    pass
+                time.sleep(0.5)
             for path in ('/auth/google/config', '/auth/google/login', '/auth/google/callback'):
                 st, res = request(path)
                 assert st == 503 and res.get('error') == 'maintenance_mode', (path, st, res)
@@ -92,7 +103,18 @@ def main():
             # Restore standard Caddy configuration
             normal_caddy = (ROOT / 'deploy/Caddyfile').read_text().replace('{$RETAILOPS_PUBLIC_HOST} {', '{$RETAILOPS_PUBLIC_HOST} {\n\ttls internal')
             (temp / 'Caddyfile').write_text(normal_caddy)
-            run(base + ['restart', 'caddy'])
+            try:
+                run(base + ['exec', '-T', 'caddy', 'caddy', 'reload', '--config', '/etc/caddy/Caddyfile'])
+            except Exception:
+                run(base + ['restart', 'caddy'])
+            for _ in range(20):
+                try:
+                    st_norm, _ = request('/healthz')
+                    if st_norm == 200:
+                        break
+                except Exception:
+                    pass
+                time.sleep(0.5)
             print('PUBLIC_CADDY_MAINTENANCE_SWITCH_OK (real Caddy blocks 4 auth routes with 503 fail-closed)')
             # Provision through the packaged operator CLI, then switch the same HTTPS stack.
             admin = base+['exec','-T','web','python','-m','retailops','identity']
