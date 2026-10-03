@@ -143,23 +143,73 @@ def reconcile_collision(
             )
             current_status = "started"
 
-        # 1d. Validate memberships belong to tenant and colliding customer
+        # 1d. Identify all memberships belonging to colliding_customer_id in tenant
+        m_candidates = id_db.execute(
+            "SELECT id, principal_id, customer_id FROM memberships WHERE tenant_id = ? AND role = 'customer'",
+            (tenant_id,)
+        ).fetchall()
+        expected_collision_mids = set()
+        for cand in m_candidates:
+            cid = cand["customer_id"]
+            hash_key = f"{tenant_id}:{cand['principal_id']}:{colliding_customer_id}".encode()
+            cand_quarantine_cid = f"cust_{hashlib.sha256(hash_key).hexdigest()[:32]}"
+            if cid == colliding_customer_id or cid == cand_quarantine_cid:
+                expected_collision_mids.add(cand["id"])
+
+        plan_mids = [item.get("membership_id") for item in reassignments]
+        plan_mids_set = set(plan_mids)
+        if len(plan_mids) != len(plan_mids_set):
+            raise ApiError(400, "duplicate_membership_reassignment", "Plan contains duplicate membership reassignments.")
+
+        # Ensure all colliding memberships are covered in the plan
+        if expected_collision_mids:
+            missing_mids = expected_collision_mids - plan_mids_set
+            if missing_mids:
+                raise ApiError(
+                    400,
+                    "incomplete_membership_coverage",
+                    f"Reconciliation plan does not cover all memberships for colliding customer {colliding_customer_id}. Missing memberships: {sorted(missing_mids)}"
+                )
+
+        # Validate memberships belong to tenant and colliding customer
+        target_cids = set()
         for item in reassignments:
             mid = item.get("membership_id")
             tgt_cid = item.get("target_customer_id")
             require(bool(mid and tgt_cid), 400, "invalid_reassignment", "Each reassignment must specify membership_id and target_customer_id.")
+            target_cids.add(tgt_cid)
             m_row = id_db.execute(
                 "SELECT tenant_id, customer_id, principal_id FROM memberships WHERE id = ?",
                 (mid,)
             ).fetchone()
             require(bool(m_row), 404, "membership_not_found", f"Membership {mid} not found.")
             require(m_row["tenant_id"] == tenant_id, 400, "tenant_mismatch", f"Membership {mid} does not belong to tenant {tenant_id}.")
+
+            hash_key = f"{tenant_id}:{m_row['principal_id']}:{colliding_customer_id}".encode()
+            quarantine_cid_hash = f"cust_{hashlib.sha256(hash_key).hexdigest()[:32]}"
             require(
-                m_row["customer_id"] in (colliding_customer_id, tgt_cid),
+                m_row["customer_id"] in (colliding_customer_id, quarantine_cid_hash, tgt_cid),
                 400,
                 "membership_customer_mismatch",
                 f"Membership {mid} customer ({m_row['customer_id']}) does not match colliding customer {colliding_customer_id}."
             )
+
+            # Pre-check external_identity hijacking before touching business DB
+            ext = item.get("external_identity")
+            if ext:
+                issuer = ext.get("issuer", "https://accounts.google.com")
+                sub = ext.get("sub")
+                if sub:
+                    existing_ext = id_db.execute(
+                        "SELECT principal_id FROM external_identities WHERE issuer = ? AND sub = ?",
+                        (issuer, sub)
+                    ).fetchone()
+                    if existing_ext and existing_ext["principal_id"] != m_row["principal_id"]:
+                        raise ApiError(
+                            409,
+                            "external_identity_conflict",
+                            f"Identity {issuer}:{sub} is already linked to principal {existing_ext['principal_id']}. Cannot reassign to {m_row['principal_id']}."
+                        )
 
     # -------------------------------------------------------------
     # Step 2: Business DB Updates (Customers, Orders, Conversations)
@@ -172,30 +222,91 @@ def reconcile_collision(
             has_turns = _has_table(b_db, "agent_turns")
             has_feedback = _has_table(b_db, "conversation_feedback")
 
+            quarantine_cid = f"quarantine_{colliding_customer_id}"
+            source_cids = {colliding_customer_id, quarantine_cid}
+
+            # 2a. Pre-validate individual order and conversation ownership/existence
+            plan_order_ids = []
+            plan_conv_ids = []
             for item in reassignments:
                 tgt_cid = item["target_customer_id"]
-                tgt_name = item.get("target_customer_name", f"Customer {tgt_cid}")
-                # Ensure target customer record exists
-                b_db.execute(
-                    "INSERT INTO customers (id, name) VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET name = excluded.name",
-                    (tgt_cid, tgt_name)
-                )
-
-                # Reassign orders and associated proposals & business_events
-                order_ids = item.get("order_ids", [])
-                for oid in order_ids:
+                for oid in item.get("order_ids", []):
                     ord_row = b_db.execute("SELECT customer_id FROM orders WHERE id = ?", (oid,)).fetchone()
                     if not ord_row:
                         raise ApiError(404, "order_not_found", f"Order {oid} not found in tenant {tenant_id}.")
                     current_owner = ord_row["customer_id"]
-                    if current_owner != colliding_customer_id and current_owner != tgt_cid:
+                    if current_owner not in source_cids and current_owner != tgt_cid:
                         raise ApiError(
                             403,
                             "order_ownership_conflict",
                             f"Order {oid} is owned by {current_owner}, expected colliding owner {colliding_customer_id}."
                         )
-                    if current_owner == colliding_customer_id:
-                        cur = b_db.execute("UPDATE orders SET customer_id = ? WHERE id = ? AND customer_id = ?", (tgt_cid, oid, colliding_customer_id))
+                    plan_order_ids.append(oid)
+
+                for cid in item.get("conversation_ids", []):
+                    conv_row = b_db.execute("SELECT customer_id FROM conversations WHERE id = ?", (cid,)).fetchone()
+                    if not conv_row:
+                        raise ApiError(404, "conversation_not_found", f"Conversation {cid} not found in tenant {tenant_id}.")
+                    current_owner = conv_row["customer_id"]
+                    if current_owner not in source_cids and current_owner != tgt_cid:
+                        raise ApiError(
+                            403,
+                            "conversation_ownership_conflict",
+                            f"Conversation {cid} is owned by {current_owner}, expected colliding owner {colliding_customer_id}."
+                        )
+                    plan_conv_ids.append(cid)
+
+            # Check duplicates across reassignments
+            if len(plan_order_ids) != len(set(plan_order_ids)):
+                raise ApiError(400, "duplicate_order_reassignment", "Plan contains duplicate order reassignments across memberships.")
+            if len(plan_conv_ids) != len(set(plan_conv_ids)):
+                raise ApiError(400, "duplicate_conversation_reassignment", "Plan contains duplicate conversation reassignments across memberships.")
+
+            # 2b. Check complete coverage of all quarantined / colliding data
+            raw_orders = b_db.execute(
+                "SELECT id, customer_id FROM orders WHERE customer_id IN (?, ?)",
+                (colliding_customer_id, quarantine_cid)
+            ).fetchall()
+            quarantined_order_ids = {r["id"] for r in raw_orders}
+
+            raw_convs = b_db.execute(
+                "SELECT id, customer_id FROM conversations WHERE customer_id IN (?, ?)",
+                (colliding_customer_id, quarantine_cid)
+            ).fetchall()
+            quarantined_conv_ids = {r["id"] for r in raw_convs}
+
+            missing_orders = quarantined_order_ids - set(plan_order_ids)
+            if missing_orders:
+                raise ApiError(
+                    400,
+                    "incomplete_order_coverage",
+                    f"Reconciliation plan does not account for all quarantined orders for {colliding_customer_id}. Unassigned orders: {sorted(missing_orders)}"
+                )
+
+            missing_convs = quarantined_conv_ids - set(plan_conv_ids)
+            if missing_convs:
+                raise ApiError(
+                    400,
+                    "incomplete_conversation_coverage",
+                    f"Reconciliation plan does not account for all quarantined conversations for {colliding_customer_id}. Unassigned conversations: {sorted(missing_convs)}"
+                )
+
+            # 2c. Execute updates
+            for item in reassignments:
+                tgt_cid = item["target_customer_id"]
+                tgt_name = item.get("target_customer_name", f"Customer {tgt_cid}")
+                b_db.execute(
+                    "INSERT INTO customers (id, name) VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET name = excluded.name",
+                    (tgt_cid, tgt_name)
+                )
+
+                for oid in item.get("order_ids", []):
+                    ord_row = b_db.execute("SELECT customer_id FROM orders WHERE id = ?", (oid,)).fetchone()
+                    if ord_row and ord_row["customer_id"] in source_cids:
+                        cur = b_db.execute(
+                            "UPDATE orders SET customer_id = ? WHERE id = ? AND customer_id = ?",
+                            (tgt_cid, oid, ord_row["customer_id"])
+                        )
                         if getattr(cur, "rowcount", None) == 0:
                             raise ApiError(500, "order_update_failed", f"Failed to update owner for order {oid}.")
                     if has_proposals:
@@ -203,27 +314,22 @@ def reconcile_collision(
                     if has_events:
                         b_db.execute("UPDATE business_events SET customer_id = ? WHERE order_id = ?", (tgt_cid, oid))
 
-                # Reassign conversations and associated turns & feedback
-                conv_ids = item.get("conversation_ids", [])
-                for cid in conv_ids:
+                for cid in item.get("conversation_ids", []):
                     conv_row = b_db.execute("SELECT customer_id FROM conversations WHERE id = ?", (cid,)).fetchone()
-                    if not conv_row:
-                        raise ApiError(404, "conversation_not_found", f"Conversation {cid} not found in tenant {tenant_id}.")
-                    current_owner = conv_row["customer_id"]
-                    if current_owner != colliding_customer_id and current_owner != tgt_cid:
-                        raise ApiError(
-                            403,
-                            "conversation_ownership_conflict",
-                            f"Conversation {cid} is owned by {current_owner}, expected colliding owner {colliding_customer_id}."
+                    if conv_row and conv_row["customer_id"] in source_cids:
+                        cur = b_db.execute(
+                            "UPDATE conversations SET customer_id = ? WHERE id = ? AND customer_id = ?",
+                            (tgt_cid, cid, conv_row["customer_id"])
                         )
-                    if current_owner == colliding_customer_id:
-                        cur = b_db.execute("UPDATE conversations SET customer_id = ? WHERE id = ? AND customer_id = ?", (tgt_cid, cid, colliding_customer_id))
                         if getattr(cur, "rowcount", None) == 0:
                             raise ApiError(500, "conversation_update_failed", f"Failed to update owner for conversation {cid}.")
                     if has_turns:
                         b_db.execute("UPDATE agent_turns SET customer_id = ? WHERE conversation_id = ?", (tgt_cid, cid))
                     if has_feedback:
                         b_db.execute("UPDATE conversation_feedback SET customer_id = ? WHERE conversation_id = ?", (tgt_cid, cid))
+
+            # Clean up quarantine placeholder customer record if exists
+            b_db.execute("DELETE FROM customers WHERE id = ?", (quarantine_cid,))
 
         # Fault Injection Point 1a: Crash after Business commit but BEFORE journal update
         if fault_stage == "after_business_commit_before_journal":
@@ -248,6 +354,17 @@ def reconcile_collision(
         # Pre-execution fault injection (for compatibility)
         if fault_stage == "during_identity_commit":
             raise RuntimeError("Fault injected during identity DB commit: transaction will roll back")
+
+        # Collect all collision and temporary quarantine customer IDs to clean up from unresolved_collisions
+        del_cids = {colliding_customer_id, f"quarantine_{colliding_customer_id}"}
+        for item in reassignments:
+            mid = item["membership_id"]
+            m_prev = id_db.execute(
+                "SELECT customer_id FROM memberships WHERE id = ? AND tenant_id = ?",
+                (mid, tenant_id)
+            ).fetchone()
+            if m_prev and m_prev["customer_id"]:
+                del_cids.add(m_prev["customer_id"])
 
         for item in reassignments:
             mid = item["membership_id"]
@@ -314,10 +431,11 @@ def reconcile_collision(
             raise RuntimeError("Fault injected during identity commit after updates executed: transaction will roll back")
 
         # 3e. Remove from unresolved_collisions
-        id_db.execute(
-            "DELETE FROM unresolved_collisions WHERE tenant_id = ? AND customer_id = ?",
-            (tenant_id, colliding_customer_id)
-        )
+        for cid_to_del in del_cids:
+            id_db.execute(
+                "DELETE FROM unresolved_collisions WHERE tenant_id = ? AND customer_id = ?",
+                (tenant_id, cid_to_del)
+            )
 
         # 3f. Record identity audit event
         id_db.execute(

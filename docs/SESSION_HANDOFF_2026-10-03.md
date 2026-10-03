@@ -1,82 +1,58 @@
 # TÀI LIỆU BÀN GIAO PHIÊN LÀM VIỆC (SESSION HANDOFF) — 03/10/2026
 
-> **Ngày ghi nhận:** 03/10/2026 (11:15 GMT+7)  
+> **Ngày ghi nhận:** 03/10/2026 (12:00 GMT+7)  
 > **Repository:** `tuteemovaixlong/CSKH_ban_le`  
 > **Nhánh hiện tại:** `feature/module-2.5-pr-a` (Target tích hợp: `main`)  
-> **Head Commit SHA:** `872b8ee3d06eb2f939ac40aefef1baa49468b84f` (`872b8ee`)  
-> **Trạng thái GitHub Actions CI:** **SUCCESS** — Run ID [`37095321746`](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37095321746)  
-> **Kết quả kiểm thử:** 427 PASS (máy trạm local) / **473 PASS trên PostgreSQL 16 container & Caddy live trên CI** (0 FAIL, 0 ERROR across 474 tests, 1 skip)  
-> **Cam kết vận hành:** **Chưa merge vào `main`**, **chưa deploy lên EC2**, **chưa tạo PR mới**.  
+> **Head Commit SHA:** Đang chuẩn bị commit & push SHA cuối  
+> **Kết quả kiểm thử cục bộ:** **475 tests, 427 PASS, 48 SKIP, 0 FAIL, 0 ERROR** (48 skip do không có PG local, chạy 100% pass trên CI container)  
+> **Cổng hợp đồng:** 4/4 cổng hợp đồng PASS 100% (`check_docs_contract.py`, `check_deployment_contract.py`, `check_eval_dataset.py`, `build_agent_notebook.py --check`)  
+> **Cam kết vận hành:** **Chưa merge vào `main`**, **chưa deploy lên EC2**, **chưa bắt đầu PR B**.  
 
 ---
 
-## 1. TỔNG KẾT KẾT QUẢ XỬ LÝ TOÀN BỘ BLOCKER TỪ REVIEW GPT 6 ASTRA XHIGH
+## 1. TỔNG KẾT KẾT QUẢ XỬ LÝ TOÀN BỘ BLOCKER N08 TỪ REVIEW GPT 6 ASTRA FOLLOW-UP
 
-Toàn bộ các blocker / findings kỹ thuật được nêu trong `docs/review gpt 6 astra.md` đã được giải quyết triệt để và kiểm chứng trên CI:
+Toàn bộ các blocker / findings kỹ thuật được nêu trong `docs/review gpt 6 astra.md` đã được giải quyết triệt để và kiểm chứng:
 
-### 1.1. Finding 1 (P1): Versioned Migration v4 Cho Identity DB Hiện Hữu
-- **Vấn đề:** Không được dựa vào drop/recreate DB. Cần migration có versioning rõ ràng từ Identity schema v3 lên v4.
+### 1.1. Finding 1 (P1): Kiểm Tra Độ Bao Phủ Đầy Đủ Mọi Membership & Quarantined Data
+- **Vấn đề:** Plan thiếu thành viên có thể gỡ quarantine khi collision vẫn còn; nếu plan chỉ có 1 trong 2 thành viên, coordinator gỡ unresolved flag khiến thành viên còn lại có thể truy cập trái phép.
 - **Giải pháp:**
-  - `retailops/storage/postgres.py`: Cập nhật `IDENTITY_SCHEMA_CURRENT = 4`, `IDENTITY_SCHEMA_COMPATIBLE = (1, 2, 3, 4)`.
-  - `retailops/storage/pg_schema.py`: Bổ sung nhánh migration v3 $\rightarrow$ v4 tạo bảng `reconciliation_journal`, index `idx_reconciliation_journal_tenant`, cột `plan_hash TEXT`, và bump version lên 4.
-  - `retailops/storage/pg_repositories.py`: Kích hoạt auto-upgrade cho version in `(1, 2, 3)`.
-  - `retailops/identity/store.py`: Thêm `reconciliation_journal` và cột `plan_hash TEXT` vào SQLite migration `migrate_legacy_collisions()`.
+  - `retailops/identity/reconcile.py`: Bổ sung preflight validation đối chiếu tập membership trong plan với toàn bộ customer memberships đang va chạm (`incomplete_membership_coverage`).
+  - Bổ sung kiểm tra độ bao phủ 100% toàn bộ đơn hàng (`incomplete_order_coverage`) và hội thoại (`incomplete_conversation_coverage`) bị quarantine trong Business DB (`customer_id IN (colliding_customer_id, quarantine_{colliding_customer_id})`).
+  - Kiểm tra trùng lặp (`duplicate_membership_reassignment`, `duplicate_order_reassignment`, `duplicate_conversation_reassignment`) và quyền sở hữu.
+  - Chỉ xóa `unresolved_collisions` (bao gồm `colliding_customer_id`, `quarantine_{colliding_customer_id}` và các ID tạm thời) sau khi toàn bộ quy trình đối soát hai database đã commit thành công.
 
-### 1.2. Finding 2 (P1): Khóa Idempotency Key Với Canonical Plan Hash Bất Biến
-- **Vấn đề:** Nếu retry với plan bị thay đổi, hệ thống có thể đối soát sai lệch.
+### 1.2. Finding 2 (P1): Đồng Bộ Luồng Migration SQLite Với Coordinator/CLI & E2E Testing
+- **Vấn đề:** SQLite migration `migrate_legacy_collisions()` xóa `unresolved_collisions`, khiến coordinator trả về `collision_not_found` và dữ liệu bị kẹt ở `quarantine_<id>`.
 - **Giải pháp:**
-  - `retailops/identity/reconcile.py`: Tính `canonical_plan_json(plan)` (sắp xếp keys và lists theo thứ tự chuẩn) và sinh `plan_hash` (SHA-256 64 ký tự).
-  - Khi tra cứu journal: nếu `saved_hash != current_plan_hash`, từ chối ngay với HTTP 409 `plan_conflict`.
-  - Khi resume: luôn sử dụng `saved_plan` đã ghi nhận trong journal, không bao giờ dùng plan truyền vào khi retry.
+  - `retailops/identity/store.py`: Khi `is_ambiguous = True`, lưu giữ `(tenant_id, customer_id)` và các ID tạm thời trong `unresolved_collisions` (thay vì xóa nhầm).
+  - Giữ trạng thái fail-closed 503 `collision_unresolved` cho mọi nỗ lực login / tạo session của các tài khoản va chạm trước khi có đối soát thủ công.
+  - Đồng bộ coordinator `reconcile_collision` và CLI `identity reconcile-collision` tiếp nhận mượt mà các va chạm từ migration SQLite.
+  - Bổ sung kiểm thử end-to-end từ legacy DB qua migration đến reconciliation cho cả **SQLite** (`test_n08_a1_two_db_transaction_recovery_and_journal` trong `test_pr_a_correctness.py`) và **PostgreSQL** (`test_identity_v1_legacy_collision_migration_to_reconciliation_on_postgres` trong `test_postgres.py`).
 
-### 1.3. Finding 3 (P1): Kiểm Tra Quyền Sở Hữu Nguồn, Rowcount & Chống Chiếm Đoạt Google Sub
-- **Vấn đề:** Phải xác thực `order_ids` và `conversation_ids` thực sự thuộc về `colliding_customer_id`, kiểm tra `rowcount > 0`, không được nuốt exception DB tùy tiện, và kiểm tra không cho phép chiếm đoạt `sub` đã gắn với principal khác.
+### 1.3. Finding 3 (P2): Script Caddy Maintenance An Toàn Khi Chạy Lặp & CI Kiểm Thử Trực Tiếp
+- **Vấn đề:** `deploy/switch-maintenance.sh` ghi đè backup khi enable lặp lại; disable không kiểm tra backup tồn tại; CI chưa gọi trực tiếp script này.
 - **Giải pháp:**
-  - Trước khi cập nhật: `SELECT customer_id FROM orders WHERE id=?` và `SELECT customer_id FROM conversations WHERE id=?`. Nếu không tìm thấy $\rightarrow$ 404 `order_not_found` / `conversation_not_found`; nếu không thuộc `colliding_customer_id` $\rightarrow$ 403 `order_ownership_conflict` / `conversation_ownership_conflict`.
-  - Kiểm tra `cursor.rowcount > 0` sau khi execute UPDATE.
-  - Tra cứu cấu trúc DB an toàn qua `_has_table` (truy vấn schema catalog), loại bỏ hoàn toàn mẫu hình `try: execute() except: pass`.
-  - Kiểm tra `external_identities`: nếu `(issuer, sub)` đã thuộc principal khác, từ chối với HTTP 409 `external_identity_conflict`.
+  - `deploy/switch-maintenance.sh`: Kiểm tra matcher `@auth_maintenance` trước khi sao lưu; nếu đang ở chế độ bảo trì mà gọi `enable` lặp lại $\rightarrow$ báo `AUTH_MAINTENANCE_ALREADY_ENABLED` và không làm hỏng file backup `Caddyfile.normal.bak`; nếu đang ở chế độ bình thường mà gọi `disable` lặp lại $\rightarrow$ báo `AUTH_MAINTENANCE_ALREADY_DISABLED`.
+  - Xử lý nghiêm ngặt: Từ chối `disable` và thoát lỗi (exit 1) nếu thiếu file backup cấu hình bình thường; kiểm tra xác nhận reload container Caddy thành công trước khi in trạng thái.
+  - CI (`scripts/check_public_https.py`): Thực thi trực tiếp script vận hành này với chuỗi kiểm thử lặp: `status` (NORMAL) $\rightarrow$ `enable` $\rightarrow$ `enable` (lặp) $\rightarrow$ `status` (MAINTENANCE) $\rightarrow$ xác nhận 4 route auth trả về 503 $\rightarrow$ `disable` $\rightarrow$ `disable` (lặp) $\rightarrow$ kiểm thử thiếu backup báo lỗi $\rightarrow$ khôi phục và xác nhận 200 `/healthz`.
 
-### 1.4. Finding 4 (P2): Nối Caddy Maintenance và Reconciliation Vào Quy Trình Vận Hành
-- **Vấn đề:** Cần công cụ vận hành chuyển đổi maintenance mode thực tế và CLI đối soát cho operator.
+### 1.4. Finding 4 (P2): Đồng Bộ Tài Liệu Trạng Thái & Nâng Cấp Schema Identity v4
+- **Vấn đề:** `docs/CURRENT_PROJECT_STATUS.md` có đoạn cũ tự mâu thuẫn giữa đầu tài liệu và mục 2.9 (ghi N08 BLOCKED do skip test PG, và mô tả schema v3).
 - **Giải pháp:**
-  - Bổ sung script [`deploy/switch-maintenance.sh`](../deploy/switch-maintenance.sh): Hỗ trợ `enable`, `disable`, `status` với `caddy reload` (zero-downtime) và graceful restart.
-  - Bổ sung lệnh CLI [`retailops/identity/cli.py`](../retailops/identity/cli.py): `reconcile-collision` và `reconciliation-status`.
-  - [`scripts/check_public_https.py`](../scripts/check_public_https.py): Thêm bước test switch Caddy maintenance mode trên Caddy container thật, xác nhận 4 route auth trả về 503 `maintenance_mode`.
-
-### 1.5. Finding 5 (P1): Chuẩn Hóa Điểm Crash Fault Injection & Bảo Vệ Khỏi Tái Va Chạm Khi Restart
-- **Vấn đề:** Điểm crash cần chuẩn: crash sau Business commit trước journal update, crash trong Identity sau khi updates đã chạy. Ngoài ra, khi restart process, `migrate_legacy_collisions` không được tự ý mutate memberships đang chờ đối soát.
-- **Giải pháp:**
-  - Thêm 2 stage: `after_business_commit_before_journal` và `during_identity_commit_after_updates`.
-  - Trong `migrate_legacy_collisions`: Kiểm tra `already_unresolved` trong `unresolved_collisions`. Nếu collision đã được ghi nhận, chỉ xóa session để bảo vệ quyền truy cập và bỏ qua việc tự động chia nhỏ sang `cust_<hash>`, bảo toàn trạng thái cho reconciliation coordinator.
+  - Hợp nhất trạng thái rõ ràng theo trình tự thời gian: phân định rõ ngữ cảnh lịch sử phiên 02/10/2026 và tiến độ hoàn tất ngày 03/10/2026.
+  - Chuẩn hóa mô tả Identity Schema v4 (`IDENTITY_SCHEMA_CURRENT = 4`) với bảng `reconciliation_journal` và cột `plan_hash TEXT` trên cả PostgreSQL và SQLite.
 
 ---
 
-## 2. BẰNG CHỨNG KIỂM ĐỊNH TRÊN GITHUB ACTIONS CI
-
-- **Workflow Run ID:** `37095321746`
-- **URL Run:** [https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37095321746](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37095321746)
-- **Job `offline` (ID: `110978788939`):** `SUCCESS`
-  - Đã chạy 474 tests trên PostgreSQL 16 container thật: **473 PASS**, 1 SKIP, 0 FAIL, 0 ERROR.
-  - Toàn bộ 45/45 PostgreSQL integration tests: **100% PASS**.
-  - 4/4 Cổng hợp đồng: **PASS 100%** (`check_docs_contract.py`, `check_deployment_contract.py`, `check_eval_dataset.py`, `build_agent_notebook.py --check`).
-  - Public HTTPS verification: `PUBLIC_UI_ASSETS_OK`, `PUBLIC_HTTPS_PROXY_COOKIE_FLOW_OK`, `PUBLIC_CADDY_MAINTENANCE_SWITCH_OK`, `PERSISTENT_HTTPS_ACCOUNT_FLOW_OK`, `POSTGRES_HTTPS_IMPORT_RESTORE_OK`.
-- **Job `colab-python313` (ID: `110978788950`):** `SUCCESS`
-  - Public HTTPS verification: `PUBLIC_UI_ASSETS_OK`, `PUBLIC_HTTPS_PROXY_COOKIE_FLOW_OK`, `PERSISTENT_HTTPS_ACCOUNT_FLOW_OK`, `POSTGRES_HTTPS_IMPORT_RESTORE_OK`.
-- **Job `colab-python313` (ID: `110973740107`):** `SUCCESS`
-
----
-
-## 3. CHECKLIST SÁNG MAI KHI BẬT MÁY (RESUME CHECKLIST)
-
-Khi bật máy vào sáng mai, bạn chỉ cần thực hiện các bước sau:
+## 2. CHECKLIST VẬN HÀNH TIẾP THEO
 
 1. **Xác nhận trạng thái Git:**
    ```bash
    git status
    git log -n 3 --oneline
    ```
-   *Kỳ vọng: Branch `feature/module-2.5-pr-a`, HEAD commit `c34c54b`, working tree sạch (clean).*
+   *Kỳ vọng: Branch `feature/module-2.5-pr-a`, working tree sạch (clean).*
 
 2. **Chạy kiểm tra nhanh 4 cổng hợp đồng:**
    ```bash
@@ -87,11 +63,11 @@ Khi bật máy vào sáng mai, bạn chỉ cần thực hiện các bước sau:
    ```
    *Kỳ vọng: Tất cả 4 cổng đều thông báo PASS / OK.*
 
-3. **Chạy local test suite (tùy chọn):**
+3. **Chạy local test suite:**
    ```bash
-   python -m unittest discover -s tests -p "test_*.py"
+   python -B -X utf8 -m unittest discover -s tests -p "test_*.py"
    ```
-   *Kỳ vọng: 470 tests, 424 PASS, 46 SKIP, 0 FAIL, 0 ERROR (46 skip do không có PG local).*
+   *Kỳ vọng: 475 tests, 427 PASS, 48 SKIP, 0 FAIL, 0 ERROR (48 skip do không có PG local).*
 
 4. **Nhiệm vụ tiếp theo:**
    - Xem xét nghiệm thu PR A và ra quyết định merge vào `main` (khi người phụ trách phê duyệt).

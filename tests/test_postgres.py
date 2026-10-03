@@ -518,6 +518,89 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             ).fetchone()
             self.assertIsNotNone(has_col)
 
+    def test_identity_v1_legacy_collision_migration_to_reconciliation_on_postgres(self):
+        """P1 Integration: Legacy v1 PostgreSQL schema with collision migrates to v4 quarantine,
+        blocks colliding members with 503, and allows operator reconciliation to target accounts."""
+        now = time.time()
+        with transaction(DSN, write=True) as db:
+            db.execute("DROP TABLE IF EXISTS reconciliation_journal CASCADE")
+            db.execute("DROP TABLE IF EXISTS customer_links CASCADE")
+            db.execute("DROP TABLE IF EXISTS unresolved_collisions CASCADE")
+            db.execute("UPDATE retailops_schema SET version = 1 WHERE component = 'identity'")
+
+            db.execute("INSERT INTO tenants (id, name, storage_key, active) VALUES ('shop-mig-pg', 'Shop Mig PG', 'shop_mig_pg_store', 1) ON CONFLICT DO NOTHING")
+            db.execute("INSERT INTO principals (id, name) VALUES ('p-mig-1', 'Alice Mig') ON CONFLICT DO NOTHING")
+            db.execute("INSERT INTO principals (id, name) VALUES ('p-mig-2', 'Bob Mig') ON CONFLICT DO NOTHING")
+            db.execute(
+                "INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) "
+                "VALUES ('m-mig-1', 'shop-mig-pg', 'p-mig-1', 'CG-mig-shared', 'customer', 1, 1) ON CONFLICT DO NOTHING"
+            )
+            db.execute(
+                "INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) "
+                "VALUES ('m-mig-2', 'shop-mig-pg', 'p-mig-2', 'CG-mig-shared', 'customer', 1, 1) ON CONFLICT DO NOTHING"
+            )
+
+        # Setup business DB
+        b_store = PostgresBusinessStore(DSN, 'shop_mig_pg_store', create=True)
+        with b_store.connection(write=True) as b_db:
+            b_db.execute("INSERT INTO customers (id, name) VALUES ('CG-mig-shared', 'Shared Mig Customer') ON CONFLICT DO NOTHING")
+            b_db.execute(
+                "INSERT INTO orders (id, customer_id, name, variant, amount, status, version) "
+                "VALUES ('O-MIG-1', 'CG-mig-shared', 'Item Mig', 'L', 200000, 'pending', 1) ON CONFLICT DO NOTHING"
+            )
+            b_db.execute(
+                "INSERT INTO conversations (id, customer_id, order_id, product_id, revision, expires_at) "
+                "VALUES ('conv-mig-1', 'CG-mig-shared', 'O-MIG-1', 'P-1', 1, ?) ON CONFLICT DO NOTHING",
+                (now + 3600,)
+            )
+
+        # Startup auto-upgrades from v1 to v4:
+        pg_istore = PostgresIdentityStore(DSN, create=False)
+
+        # 1. Collision must be detected and stored in unresolved_collisions
+        with transaction(DSN) as db:
+            unres = db.execute("SELECT 1 FROM unresolved_collisions WHERE tenant_id='shop-mig-pg' AND customer_id='CG-mig-shared'").fetchone()
+            self.assertIsNotNone(unres)
+
+        # 2. Both members strictly fail-closed with 503 collision_unresolved
+        with self.assertRaises(ApiError) as ctx1:
+            pg_istore.create_session_for_membership('m-mig-1', 3600, 10)
+        self.assertEqual(ctx1.exception.status, 503)
+        self.assertEqual(ctx1.exception.code, "collision_unresolved")
+
+        # 3. Reconcile via coordinator
+        plan = {
+            "reassignments": [
+                {
+                    "membership_id": "m-mig-1",
+                    "target_customer_id": "CG-mig-alice",
+                    "target_customer_name": "Alice Mig Resolved",
+                    "order_ids": ["O-MIG-1"],
+                    "conversation_ids": ["conv-mig-1"],
+                },
+                {
+                    "membership_id": "m-mig-2",
+                    "target_customer_id": "CG-mig-bob",
+                    "target_customer_name": "Bob Mig Resolved",
+                    "order_ids": [],
+                    "conversation_ids": [],
+                },
+            ]
+        }
+        res = reconcile_collision(self.sessions, "shop-mig-pg", "CG-mig-shared", plan, idempotency_key="rec-mig-pg-ok")
+        self.assertEqual(res["status"], "completed")
+
+        # 4. Verify post-reconciliation: unresolved_collisions cleaned up
+        with transaction(DSN) as db:
+            unres_after = db.execute("SELECT 1 FROM unresolved_collisions WHERE tenant_id='shop-mig-pg' AND customer_id='CG-mig-shared'").fetchone()
+            self.assertIsNone(unres_after)
+
+        # Sessions now work cleanly
+        s1 = pg_istore.create_session_for_membership('m-mig-1', 3600, 10)
+        s2 = pg_istore.create_session_for_membership('m-mig-2', 3600, 10)
+        self.assertTrue(bool(s1))
+        self.assertTrue(bool(s2))
+
     def test_identity_rollback_policy_and_account_reconciliation(self):
         """PostgreSQL Integration: Rollback policy guard and two-database account reconciliation with journal.
 
@@ -651,6 +734,72 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             ]
         }
         idempotency_key = "rec-shop-a-shared"
+
+        # 4a. Preflight validation checks on PostgreSQL:
+        # - Reject plan with incomplete membership coverage
+        inc_mem_plan = {
+            "reassignments": [
+                {
+                    "membership_id": "m-rec-1",
+                    "target_customer_id": "CG-rec-alice",
+                    "order_ids": ["O-REC-001", "O-REC-002"],
+                    "conversation_ids": ["11111111-1111-1111-1111-111111111111"],
+                }
+            ]
+        }
+        with self.assertRaises(ApiError) as ctx_pg_mem:
+            reconcile_collision(self.sessions, "shop-a", "CG-rec-shared", inc_mem_plan, idempotency_key="rec-pg-inc-mem")
+        self.assertEqual(ctx_pg_mem.exception.status, 400)
+        self.assertEqual(ctx_pg_mem.exception.code, "incomplete_membership_coverage")
+
+        # - Reject plan with incomplete order coverage
+        inc_ord_plan = {
+            "reassignments": [
+                {
+                    "membership_id": "m-rec-1",
+                    "target_customer_id": "CG-rec-alice",
+                    "order_ids": ["O-REC-001"],
+                    "conversation_ids": ["11111111-1111-1111-1111-111111111111"],
+                },
+                {
+                    "membership_id": "m-rec-2",
+                    "target_customer_id": "CG-rec-bob",
+                    "order_ids": [],
+                    "conversation_ids": ["22222222-2222-2222-2222-222222222222"],
+                },
+            ]
+        }
+        with self.assertRaises(ApiError) as ctx_pg_ord:
+            reconcile_collision(self.sessions, "shop-a", "CG-rec-shared", inc_ord_plan, idempotency_key="rec-pg-inc-ord")
+        self.assertEqual(ctx_pg_ord.exception.status, 400)
+        self.assertEqual(ctx_pg_ord.exception.code, "incomplete_order_coverage")
+
+        # - Reject plan with incomplete conversation coverage
+        inc_conv_plan = {
+            "reassignments": [
+                {
+                    "membership_id": "m-rec-1",
+                    "target_customer_id": "CG-rec-alice",
+                    "order_ids": ["O-REC-001", "O-REC-002"],
+                    "conversation_ids": [],
+                },
+                {
+                    "membership_id": "m-rec-2",
+                    "target_customer_id": "CG-rec-bob",
+                    "order_ids": ["O-REC-003"],
+                    "conversation_ids": ["22222222-2222-2222-2222-222222222222"],
+                },
+            ]
+        }
+        with self.assertRaises(ApiError) as ctx_pg_conv:
+            reconcile_collision(self.sessions, "shop-a", "CG-rec-shared", inc_conv_plan, idempotency_key="rec-pg-inc-conv")
+        self.assertEqual(ctx_pg_conv.exception.status, 400)
+        self.assertEqual(ctx_pg_conv.exception.code, "incomplete_conversation_coverage")
+
+        # Verify fail-closed: unresolved_collisions still holds the collision on PostgreSQL
+        with transaction(DSN) as db:
+            col_check = db.execute("SELECT 1 FROM unresolved_collisions WHERE tenant_id='shop-a' AND customer_id='CG-rec-shared'").fetchone()
+            self.assertIsNotNone(col_check)
 
         # 5a. Fault Injection 1a: Crash after Business DB commit BEFORE journal update
         with self.assertRaises(RuntimeError) as fault1a:

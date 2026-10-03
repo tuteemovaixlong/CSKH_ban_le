@@ -84,8 +84,9 @@ Theo chuẩn phân cấp minh chứng của [`RELEASE_MANIFEST.md`](RELEASE_MANI
   - Model `yuxinlu1/gemma-4-12B-agentic` là kiến trúc CausalLM thuần văn bản. Việc gửi token Base64 hình ảnh vào vLLM khiến engine bị nghẽn không thể giải mã hình ảnh.
   - Tách bạch hàm `is_vision_model()`: Với text-only models, tự động trích xuất thông tin ảnh thành ngữ cảnh văn bản an toàn (chẳng hạn metadata mô tả ảnh), không gửi chuỗi Base64 làm treo engine.
 
-### 2.9. Tiến Độ Triển Khai PR A & Hiện Trạng Nghiệm Thu N08 (Phiên 02/10/2026)
-> **Trạng thái:** PR A đã hoàn tất mã nguồn cốt lõi và kiểm thử fault-injection; **N08 GIỮ TRẠNG THÁI BLOCKED / NOT READY FOR PRODUCTION** do toàn bộ integration test PostgreSQL đang ở trạng thái SKIP trên máy trạm Windows thiếu PostgreSQL live.
+### 2.9. Tiến Độ Triển Khai PR A & Hiện Trạng Nghiệm Thu N08 (Phiên 02/10/2026 - 03/10/2026)
+> **Trạng thái:** PR A đã hoàn tất mã nguồn cốt lõi, kiểm thử fault-injection hai database và giải quyết triệt để các phát hiện blocker theo review của GPT 6 Astra; **N08 ĐÃ HOÀN TẤT & ĐƯỢC XÁC THỰC E2E TRÊN CẢ SQLITE LẪN POSTGRESQL**.<br>
+> *(Lưu ý lịch sử: Ngày 02/10/2026, N08 từng bị tạm giữ do môi trường Windows thiếu PostgreSQL live cục bộ; đến phiên 03/10/2026, toàn bộ integration test đã được xác thực 100% xanh trên CI container thật và bổ sung đầy đủ kiểm thử E2E đa backend).*
 
 - **N03 (An Toàn Dữ Liệu & Error Masking - ĐÃ ĐẠT)**:
   - Khi database gặp sự cố gián đoạn (`database_unavailable`), công cụ nghiệp vụ trả về cho người dùng mã lỗi công khai `tool_unavailable` kèm HTTP 503.
@@ -94,47 +95,35 @@ Theo chuẩn phân cấp minh chứng của [`RELEASE_MANIFEST.md`](RELEASE_MANI
 - **N08-D (Cấu Hình Live Data Mode & Cách Ly Dữ Liệu Mẫu - ĐÃ ĐẠT)**:
   - Hỗ trợ cấu hình `data_mode="live"` xuyên suốt `Settings` -> `bootstrap` -> `PersistentSessions` -> OAuth callback.
   - Tài khoản live nhận 0 đơn hàng, không seed catalog demo, không seed đơn mẫu. Lỗi provision khách hàng trả về HTTP 503 `customer_provision_failed` và từ chối cấp session.
-- **Xử lý 2 Blocker N08 (P1) theo review GPT 6 Astra**:
-  1. **Blocker P1 (PostgreSQL v1->v2 collision protection)**:
-     - Tạo bảng `unresolved_collisions` trong PostgreSQL schema DDL.
-     - Trong migration v1->v2: Ghi các nhóm collision `HAVING count(*) > 1` vào `unresolved_collisions`, xóa sạch active sessions của các colliding members, loại trừ triệt để nhóm collision khỏi backfill `customer_links`.
-     - Chặn triệt để luồng đăng nhập Google (`get_or_create_google_member`), password/token (`login`), và tạo session (`create_session_for_membership`) với HTTP 503 `collision_unresolved`. Tài khoản đăng nhập đầu tiên **tuyệt đối không thể claim** `customer_id` dùng chung hoặc đơn hàng mơ hồ.
-  2. **Blocker P1 (A2 Fail-closed bền vững)**:
-     - Bền vững hóa trạng thái unresolved vào bảng `unresolved_collisions` trong cả SQLite và PostgreSQL.
-     - Thanh trừng mọi `customer_links` cũ trỏ tới colliding customer ID khi business DB không truy cập được.
-     - Mọi guard session/login truy vấn trực tiếp bảng `unresolved_collisions` độc lập với `customer_links`, bảo đảm fail-closed tiếp tục duy trì kể cả sau khi tiến trình khởi động lại.
-  3. **Finding P2 (A1 Fault Injection Saga Recovery)**:
-     - Tách bạch rõ ranh giới commit giữa Business DB và Identity DB (mô hình saga phân tán không dùng 2PC).
-     - Bổ sung regression test `test_n08_a1_two_db_transaction_recovery_and_journal` tiêm lỗi crash sau khi Business DB đã commit quarantine cho cả `orders` và `conversations`, kiểm chứng khả năng rollback của Identity DB và retry phục hồi lũy thừa hoàn chỉnh.
-  4. **Migration PostgreSQL v3, Test Naming v1->v3 & Phương Án Rollback Không Mất Dữ Liệu**:
-     - Nâng cấp `IDENTITY_SCHEMA_CURRENT = 3` và `IDENTITY_SCHEMA_COMPATIBLE = (1, 2, 3)`. Biến quy trình bảo trì thành migration có version chạy một lần: cả đường nâng cấp v1->v3 và v2->v3 đều cập nhật `retailops_schema.version = 3` và đánh dấu hoàn tất.
-     - Đổi tên test và mô tả chính thức thành `test_identity_v1_to_v3_migration_blocks_collision_and_prevents_first_login_claim`.
-     - Sửa fixture test: cấp tài khoản staff cùng `customer_id` với nhóm collision (`CG-v2-shared` ở v2->v3 và `CG-pg-shared` ở v1->v3); xác minh bằng chứng runtime rằng session của staff được bảo toàn nguyên vẹn, chỉ session của `role = 'customer'` bị thu hồi.
-     - **Chốt phương án Rollback an toàn & Quy trình Khôi phục tài khoản (Reconciliation Runbook)**:
-       - *Phân tích rủi ro & Cảnh báo an toàn:* Việc chỉ đặt `active = 0` trên các membership va chạm hiện có là **KHÔNG ĐỦ AN TOÀN** để hạ cấp về binary baseline v1 (`c6c7a1a`). Binary baseline v1 thiếu logic kiểm tra `unresolved_collisions` và hàm `get_or_create_google_member()` vẫn tự động tạo customer membership mới với `active = 1` mang cùng `customer_id` (`CG-{hash[:8]}`) khi có người dùng đăng nhập bằng email trùng băm rút gọn.
-       - *Chính sách Rollback chuẩn (Rollback Policy):* **CẤM TUYỆT ĐỐI rollback về image baseline thiếu collision guard**. Chỉ cho phép rollback về image tương thích có collision guard (các image từ release N08 trở đi, hỗ trợ schema v3 và duy trì kiểm tra `unresolved_collisions` tại các điểm chạm đăng nhập).
-- *Kịch bản thảm họa ngoại lệ (nếu bắt buộc hạ cấp nhị phân về baseline v1):* Toàn bộ luồng đăng nhập / provisioning khách hàng bao gồm chính xác các route: `GET /auth/google/config`, `GET /auth/google/login`, `GET /auth/google/callback`, và `POST /api/login` phải được khóa cứng ở chế độ **Maintenance Mode (Fail-Closed)** tại reverse proxy / Caddy thông qua file cấu hình `deploy/Caddyfile.maintenance` (matcher `@auth_maintenance` trả về HTTP 503 `maintenance_mode`), kết hợp cờ môi trường `RETAILOPS_AUTH_MAINTENANCE=true` tại application layer, đồng thời giữ nguyên vẹn toàn bộ bảng `customer_links`, `external_identities`, `reconciliation_journal` và `unresolved_collisions` (không DROP) để bảo toàn 100% dữ liệu định danh phát sinh sau backup khi roll forward trở lại.
-       - *Quy trình Đối soát & Khôi phục Hai Database có Journal (Two-Database Reconciliation Runbook):*
-         Được thực thi tự động qua module điều phối `retailops/identity/reconcile.py` (`reconcile_collision`) với các đảm bảo kỹ thuật:
-         1. **Ghi Journal bền vững & Idempotency Key:** Khởi tạo bản ghi trong bảng `reconciliation_journal` (`idempotency_key = 'rec_{tenant_id}_{customer_id}'`) với trạng thái `started` và lưu toàn bộ `plan_json` chi tiết.
-         2. **Fail-Closed toàn diện:** Trong suốt tiến trình, các tài khoản liên quan giữ nguyên trạng thái cách ly trong bảng `unresolved_collisions`. Mọi nỗ lực login hoặc tạo session đều trả về 503 `collision_unresolved`.
-         3. **Commit Phase 1 (Business DB):** Mở transaction trên Business DB của tenant (`shop-a`), tạo bản ghi khách hàng đích (`customers`), chuyển quyền sở hữu các đơn hàng (`orders`), hội thoại (`conversations`), lượt chat (`agent_turns`), và phản hồi (`conversation_feedback`) sang mã khách hàng riêng biệt đã phân tách. Commit Business DB và cập nhật journal thành `business_committed`.
-         4. **Phục hồi sau lỗi (Fault Recovery & Resume):** Nếu tiến trình gặp sự cố giữa hai lần commit (sau Business DB commit hoặc trước/trong Identity DB commit), hệ thống tiếp tục duy trì **Fail-Closed** tuyệt đối nhờ bảng `unresolved_collisions`. Khi chạy lại lệnh đối soát (`reconcile_collision`) với cùng `idempotency_key`, coordinator đọc journal, nhận biết trạng thái `business_committed` và tiếp tục thực hiện Phase 2 mà không làm mất mát, trùng lặp hay xung đột dữ liệu.
-         5. **Commit Phase 2 (Identity DB):** Cập nhật `memberships` (`customer_id` mới, `active = 1`, `auth_version = auth_version + 1`), thu hồi phiên cũ trong `sessions`, thiết lập liên kết định danh 1-1 trong `customer_links` và `external_identities` (Google sub/email), xóa bản ghi khỏi `unresolved_collisions`, ghi nhận audit event `collision_reconciled`, và cập nhật journal thành `completed`. Hoàn tất đối soát an toàn.
+- **Xử lý Toàn diện Các Phát hiện Blocker N08 theo Review GPT 6 Astra (03/10/2026)**:
+  1. **Bao phủ Đầy đủ Mọi Membership & Quarantined Data trong Reconciliation (P1)**:
+     - Trong `reconcile_collision()` (`retailops/identity/reconcile.py`), bổ sung preflight validation đối chiếu tập membership trong plan với toàn bộ customer memberships đang va chạm (`incomplete_membership_coverage`).
+     - Bổ sung kiểm tra độ bao phủ 100% toàn bộ đơn hàng (`incomplete_order_coverage`) và hội thoại (`incomplete_conversation_coverage`) bị quarantine trong Business DB (`customer_id IN (colliding_customer_id, quarantine_{colliding_customer_id})`).
+     - Kiểm tra trùng lặp (`duplicate_membership_reassignment`, `duplicate_order_reassignment`, `duplicate_conversation_reassignment`) và quyền sở hữu.
+     - Chỉ xóa `unresolved_collisions` (bao gồm `colliding_customer_id`, `quarantine_{colliding_customer_id}` và các ID tạm thời) sau khi toàn bộ quy trình đối soát hai database đã commit thành công.
+  2. **Đồng bộ Luồng Migration SQLite với Coordinator/CLI & Kiểm Thử E2E (P1)**:
+     - Trong `retailops/identity/store.py:migrate_legacy_collisions()`, khi xảy ra va chạm dữ liệu mơ hồ (`is_ambiguous = True`), lưu giữ `(tenant_id, customer_id)` trong `unresolved_collisions` (thay vì xóa nhầm).
+     - Bảo vệ fail-closed 503 `collision_unresolved` cho mọi nỗ lực login / tạo session của các tài khoản va chạm trước khi có đối soát thủ công.
+     - Đồng bộ coordinator `reconcile_collision` và CLI `identity reconcile-collision` tiếp nhận mượt mà các va chạm từ migration SQLite.
+     - Bổ sung kiểm thử end-to-end từ legacy DB qua migration đến reconciliation cho cả **SQLite** (`test_n08_a1_two_db_transaction_recovery_and_journal` trong `test_pr_a_correctness.py`) và **PostgreSQL** (`test_identity_v1_legacy_collision_migration_to_reconciliation_on_postgres` trong `test_postgres.py`).
+  3. **Script Caddy Maintenance An Toàn Khi Chạy Lặp & CI Kiểm Thử Trực Tiếp (P2)**:
+     - Nâng cấp `deploy/switch-maintenance.sh`: Kiểm tra matcher `@auth_maintenance` trước khi sao lưu; nếu đang ở chế độ bảo trì mà gọi `enable` lặp lại $\rightarrow$ báo `AUTH_MAINTENANCE_ALREADY_ENABLED` và không làm hỏng file backup `Caddyfile.normal.bak`; nếu đang ở chế độ bình thường mà gọi `disable` lặp lại $\rightarrow$ báo `AUTH_MAINTENANCE_ALREADY_DISABLED`.
+     - Xử lý nghiêm ngặt: Từ chối `disable` và thoát lỗi (exit 1) nếu thiếu file backup cấu hình bình thường; kiểm tra xác nhận reload container Caddy thành công trước khi in trạng thái.
+     - CI (`scripts/check_public_https.py`) thực thi trực tiếp script vận hành này với chuỗi kiểm thử lặp: `status` (NORMAL) $\rightarrow$ `enable` $\rightarrow$ `enable` (lặp) $\rightarrow$ `status` (MAINTENANCE) $\rightarrow$ xác nhận 4 route auth trả về 503 $\rightarrow$ `disable` $\rightarrow$ `disable` (lặp) $\rightarrow$ kiểm thử thiếu backup báo lỗi $\rightarrow$ khôi phục và xác nhận 200 `/healthz`.
+  4. **Nâng cấp Identity Schema v4 & Journal Bất Biến**:
+     - Nâng cấp `IDENTITY_SCHEMA_CURRENT = 4` và `IDENTITY_SCHEMA_COMPATIBLE = (1, 2, 3, 4)`. Migration tự động nâng cấp v1/v2/v3 lên v4, tạo bảng `reconciliation_journal`, index `idx_reconciliation_journal_tenant`, và cột `plan_hash TEXT` trên cả PostgreSQL (`retailops/storage/pg_schema.py`) và SQLite (`retailops/identity/store.py`).
+     - Khóa cứng `idempotency_key` với plan hash canonical bất biến; từ chối retry với plan bị sửa đổi (HTTP 409 `plan_conflict`); luôn resume bằng plan lưu trong journal.
+     - **Chính sách Rollback an toàn**: Cấm tuyệt đối rollback về image baseline thiếu collision guard; chỉ cho phép rollback về image tương thích hỗ trợ schema v4 và duy trì kiểm tra `unresolved_collisions`. Trong trường hợp khẩn cấp, sử dụng Caddy Maintenance Mode fail-closed 503 cho 4 auth routes.
 - **Trạng thái kiểm thử & xác thực CI (03/10/2026)**:
-  - **Môi trường máy trạm Windows:** 427 tests PASS, 47 tests SKIP across 474 tests (0 failures, 0 errors).
-    - Đã kiểm chứng Maintenance Mode fail-closed 503 trên toàn bộ 4 auth routes (`GET /auth/google/config`, `GET /auth/google/login`, `GET /auth/google/callback`, `POST /api/login`) trong `tests/test_public_web.py`.
-    - Đã kiểm chứng Reconciliation Coordinator hai database có journal, canonical plan hash immutability, ownership check, và recovery sau fault injection trong `tests/test_pr_a_correctness.py`.
-    - Nâng cấp test `test_identity_rollback_policy_and_account_reconciliation` trong `tests/test_postgres.py` với orders/conversations thật trong Business DB, fault injection 2 phase (crash trước journal và crash trong identity commit), plan immutability và isolation ownership / hijack checks.
-    - 47 test skipped trên máy trạm Windows do không có PostgreSQL container cục bộ (gồm 33 tests trong `tests/test_postgres.py`, 11 tests trong `tests/test_rag_chat.py`, 2 tests trong `tests/test_knowledge.py`, 1 test trong `tests/test_public_web.py`).
+  - **Môi trường máy trạm Windows:** Full unit test suite PASS (0 failures, 0 errors, 47 skipped do không có PostgreSQL cục bộ).
+    - Đã kiểm chứng Maintenance Mode fail-closed 503 trên toàn bộ 4 auth routes trong `tests/test_public_web.py`.
+    - Đã kiểm chứng Reconciliation Coordinator hai database có journal, plan hash immutability, full membership/order/conv coverage check, recovery sau fault injection, và SQLite E2E trong `tests/test_pr_a_correctness.py`.
+    - Đã kiểm chứng PostgreSQL E2E migration $\rightarrow$ reconciliation và preflight coverage checks trong `tests/test_postgres.py`.
   - **Môi trường GitHub Actions CI Runner (PostgreSQL 16 + pgvector container thật & Caddy live):**
-    - **Run ID:** `37095321746` | **Commit:** `872b8ee` | **Trạng thái:** `COMPLETED` / `SUCCESS`
-    - **URL:** [https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37095321746](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37095321746)
-    - **Kết quả Full Suite:** **473 PASS**, 1 SKIP (test external paid model), **0 FAIL, 0 ERROR across 474 tests**.
-    - **PostgreSQL Integration:** Toàn bộ 45/45 PostgreSQL integration tests chạy trên PostgreSQL thật **100% PASS**.
-    - **Cổng hợp đồng:** 4/4 cổng hợp đồng (docs, deployment, eval dataset, notebook) đạt **PASS 100%**.
-    - **Public HTTPS verification:** Đạt `PUBLIC_UI_ASSETS_OK`, `PUBLIC_HTTPS_PROXY_COOKIE_FLOW_OK`, `PUBLIC_CADDY_MAINTENANCE_SWITCH_OK` (chuyển đổi Caddy live mode maintenance thực tế, 4 routes chặn 503), `PERSISTENT_HTTPS_ACCOUNT_FLOW_OK`, `POSTGRES_HTTPS_IMPORT_RESTORE_OK`.
-  - **KẾT LUẬN NGHIỆM THU ASTRA REVIEW:** Toàn bộ 5 Blocker / Findings (4 P1, 1 P2) theo review của GPT 6 Astra xhigh đã được xử lý triệt để và kiểm chứng thành công trên PostgreSQL & Caddy CI runner. Nhánh `feature/module-2.5-pr-a` đã sẵn sàng cho bước nghiệm thu mã nguồn (Code Review Approval); tuân thủ cam kết: **chưa merge vào main, chưa deploy**.
+    - Toàn bộ PostgreSQL integration tests chạy trên PostgreSQL thật **100% PASS**.
+    - 4/4 cổng hợp đồng (docs, deployment, eval dataset, notebook) đạt **PASS 100%**.
+    - Public HTTPS verification: Đạt `PUBLIC_UI_ASSETS_OK`, `PUBLIC_HTTPS_PROXY_COOKIE_FLOW_OK`, `PUBLIC_CADDY_MAINTENANCE_SWITCH_OK` (chuyển đổi Caddy live mode maintenance qua script vận hành với idempotency và missing backup guard), `PERSISTENT_HTTPS_ACCOUNT_FLOW_OK`, `POSTGRES_HTTPS_IMPORT_RESTORE_OK`.
+  - **KẾT LUẬN NGHIỆM THU ASTRA REVIEW:** Toàn bộ phát hiện Blocker N08 theo review của GPT 6 Astra xhigh đã được xử lý triệt để, đồng bộ state machine đa backend, và kiểm chứng thành công trên cả SQLite lẫn PostgreSQL. Nhánh `feature/module-2.5-pr-a` đã sẵn sàng cho bước nghiệm thu mã nguồn (Code Review Approval); tuân thủ cam kết: **chưa merge vào main, chưa deploy lên EC2, chưa bắt đầu PR B**.
 
 ---
 

@@ -1273,7 +1273,7 @@ class TestPrACorrectness(unittest.TestCase):
                 self.assertIsNotNone(ev)
 
                 unres = id_db.execute("SELECT count(*) as cnt FROM unresolved_collisions WHERE tenant_id='t1'").fetchone()['cnt']
-                self.assertEqual(unres, 0)
+                self.assertGreaterEqual(unres, 1)
 
             # 6. Check business store: quarantined orders and conversations remain safe
             with bstore.connection() as bdb:
@@ -1284,6 +1284,148 @@ class TestPrACorrectness(unittest.TestCase):
 
             self.assertEqual(len(bstore.orders(m1["customer_id"])), 0)
             self.assertEqual(len(bstore.orders(m2["customer_id"])), 0)
+
+            # Pre-reconciliation guard: both members are strictly blocked with 503 collision_unresolved
+            with self.assertRaises(ApiError) as ctx_s1:
+                istore_clean.create_session_for_membership('m1', 3600, 10)
+            self.assertEqual(ctx_s1.exception.status, 503)
+            self.assertEqual(ctx_s1.exception.code, "collision_unresolved")
+
+            with self.assertRaises(ApiError) as ctx_s2:
+                istore_clean.create_session_for_membership('m2', 3600, 10)
+            self.assertEqual(ctx_s2.exception.status, 503)
+            self.assertEqual(ctx_s2.exception.code, "collision_unresolved")
+
+            # 7. End-to-End Operator Reconciliation from SQLite quarantine
+            from retailops.identity.reconcile import reconcile_collision
+            class MockSessions:
+                def __init__(self, control, bstore):
+                    self.control = control
+                    self._bstore = bstore
+                def business_store(self, tid):
+                    return self._bstore
+
+            sessions_wrapper = MockSessions(istore_clean, bstore)
+
+            # 7a. Reject plan with incomplete membership coverage
+            incomplete_member_plan = {
+                "reassignments": [
+                    {
+                        "membership_id": "m1",
+                        "target_customer_id": "CG-alice-rec",
+                        "order_ids": ["O-REC-01"],
+                        "conversation_ids": ["conv-shared-1"],
+                    }
+                ]
+            }
+            with self.assertRaises(ApiError) as ctx_mem:
+                reconcile_collision(sessions_wrapper, "t1", "CG-shared", incomplete_member_plan, idempotency_key="rec-sqlite-inc-mem")
+            self.assertEqual(ctx_mem.exception.status, 400)
+            self.assertEqual(ctx_mem.exception.code, "incomplete_membership_coverage")
+
+            # 7b. Reject plan with incomplete order coverage
+            incomplete_order_plan = {
+                "reassignments": [
+                    {
+                        "membership_id": "m1",
+                        "target_customer_id": "CG-alice-rec",
+                        "order_ids": [],
+                        "conversation_ids": ["conv-shared-1"],
+                    },
+                    {
+                        "membership_id": "m2",
+                        "target_customer_id": "CG-bob-rec",
+                        "order_ids": [],
+                        "conversation_ids": [],
+                    }
+                ]
+            }
+            with self.assertRaises(ApiError) as ctx_ord:
+                reconcile_collision(sessions_wrapper, "t1", "CG-shared", incomplete_order_plan, idempotency_key="rec-sqlite-inc-ord")
+            self.assertEqual(ctx_ord.exception.status, 400)
+            self.assertEqual(ctx_ord.exception.code, "incomplete_order_coverage")
+
+            # 7c. Reject plan with incomplete conversation coverage
+            incomplete_conv_plan = {
+                "reassignments": [
+                    {
+                        "membership_id": "m1",
+                        "target_customer_id": "CG-alice-rec",
+                        "order_ids": ["O-REC-01"],
+                        "conversation_ids": [],
+                    },
+                    {
+                        "membership_id": "m2",
+                        "target_customer_id": "CG-bob-rec",
+                        "order_ids": [],
+                        "conversation_ids": [],
+                    }
+                ]
+            }
+            with self.assertRaises(ApiError) as ctx_conv:
+                reconcile_collision(sessions_wrapper, "t1", "CG-shared", incomplete_conv_plan, idempotency_key="rec-sqlite-inc-conv")
+            self.assertEqual(ctx_conv.exception.status, 400)
+            self.assertEqual(ctx_conv.exception.code, "incomplete_conversation_coverage")
+
+            # Confirm unresolved_collisions still holds records
+            with istore_clean.connection() as id_db:
+                cnt_pre = id_db.execute("SELECT count(*) as cnt FROM unresolved_collisions WHERE tenant_id='t1'").fetchone()['cnt']
+                self.assertGreaterEqual(cnt_pre, 1)
+
+            # 7d. Complete valid reconciliation plan
+            valid_plan = {
+                "reassignments": [
+                    {
+                        "membership_id": "m1",
+                        "target_customer_id": "CG-alice-rec",
+                        "target_customer_name": "Alice Resolved",
+                        "order_ids": ["O-REC-01"],
+                        "conversation_ids": ["conv-shared-1"],
+                    },
+                    {
+                        "membership_id": "m2",
+                        "target_customer_id": "CG-bob-rec",
+                        "target_customer_name": "Bob Resolved",
+                        "order_ids": [],
+                        "conversation_ids": [],
+                    }
+                ]
+            }
+            rec_res = reconcile_collision(sessions_wrapper, "t1", "CG-shared", valid_plan, idempotency_key="rec-sqlite-e2e-ok")
+            self.assertEqual(rec_res["status"], "completed")
+
+            # 7e. Verify post-reconciliation state:
+            with istore_clean.connection() as id_db:
+                # unresolved_collisions completely cleaned up
+                unres_after = id_db.execute("SELECT count(*) as cnt FROM unresolved_collisions WHERE tenant_id='t1'").fetchone()['cnt']
+                self.assertEqual(unres_after, 0)
+                # memberships updated to target customer IDs
+                m1_after = id_db.execute("SELECT customer_id FROM memberships WHERE id='m1'").fetchone()
+                m2_after = id_db.execute("SELECT customer_id FROM memberships WHERE id='m2'").fetchone()
+                self.assertEqual(m1_after["customer_id"], "CG-alice-rec")
+                self.assertEqual(m2_after["customer_id"], "CG-bob-rec")
+
+            with bstore.connection() as bdb:
+                # Orders and conversations reassigned to Alice
+                ord_after = bdb.execute("SELECT customer_id FROM orders WHERE id='O-REC-01'").fetchone()
+                conv_after = bdb.execute("SELECT customer_id FROM conversations WHERE id='conv-shared-1'").fetchone()
+                self.assertEqual(ord_after["customer_id"], "CG-alice-rec")
+                self.assertEqual(conv_after["customer_id"], "CG-alice-rec")
+                # Quarantine customer record deleted
+                self.assertIsNone(bdb.execute("SELECT 1 FROM customers WHERE id='quarantine_CG-shared'").fetchone())
+
+            # Data isolation: Alice sees order, Bob does not
+            self.assertEqual(len(bstore.orders("CG-alice-rec")), 1)
+            self.assertEqual(len(bstore.orders("CG-bob-rec")), 0)
+            self.assertEqual(bstore.lookup("CG-alice-rec", "O-REC-01")["customer_id"], "CG-alice-rec")
+            with self.assertRaises(ApiError):
+                bstore.lookup("CG-bob-rec", "O-REC-01")
+
+            # Both members can now successfully create active sessions!
+            s1 = istore_clean.create_session_for_membership('m1', 3600, 10)
+            s2 = istore_clean.create_session_for_membership('m2', 3600, 10)
+            self.assertTrue(bool(s1))
+            self.assertTrue(bool(s2))
 
     def test_n08_a2_fail_closed_when_business_db_unavailable(self):
         """N08-A2 Regression: Fail-closed when business DB is unavailable or unmounted.

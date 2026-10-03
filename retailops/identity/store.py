@@ -237,6 +237,7 @@ def migrate_legacy_collisions(db, tenant_stores=None):
         # Business DB transaction is now committed. Execute Identity DB updates:
         if is_ambiguous:
             for m in members:
+                unresolved_collision_members.add(m['id'])
                 new_cid = new_cids[m['id']]
                 db.execute('UPDATE memberships SET customer_id=? WHERE id=?', (new_cid, m['id']))
                 db.execute('DELETE FROM sessions WHERE membership_id=?', (m['id'],))
@@ -245,12 +246,21 @@ def migrate_legacy_collisions(db, tenant_stores=None):
                     'VALUES (?,?,?,?,?) ON CONFLICT(tenant_id, principal_id) DO UPDATE SET customer_id=excluded.customer_id',
                     (str(uuid.uuid4()), t_id, m['principal_id'], new_cid, time.time())
                 )
+                db.execute(
+                    'INSERT INTO unresolved_collisions (tenant_id, customer_id, created_at) VALUES (?,?,?) '
+                    'ON CONFLICT(tenant_id, customer_id) DO NOTHING',
+                    (t_id, new_cid, time.time())
+                )
 
             db.execute(
                 'INSERT INTO identity_events(created_at, kind, tenant_id, membership_id) VALUES (?,?,?,?)',
                 (time.time(), 'collision_quarantined_reconciliation_required', t_id, None)
             )
-            db.execute('DELETE FROM unresolved_collisions WHERE tenant_id=? AND customer_id=?', (t_id, c_id))
+            db.execute(
+                'INSERT INTO unresolved_collisions (tenant_id, customer_id, created_at) VALUES (?,?,?) '
+                'ON CONFLICT(tenant_id, customer_id) DO NOTHING',
+                (t_id, c_id, time.time())
+            )
         else:
             for secondary in members[1:]:
                 new_cid = new_cids[secondary['id']]
