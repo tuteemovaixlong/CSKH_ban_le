@@ -141,10 +141,12 @@ def main():
             assert proc_fail.returncode != 0, f"Expected non-zero returncode when backup is missing, got {proc_fail.returncode}"
             assert 'Cannot disable maintenance mode' in proc_fail.stderr, proc_fail.stderr
 
-            # Restore normal Caddyfile manually so stack returns to normal
-            (temp / 'Caddyfile').write_text(orig_caddy)
-            run(['docker', 'compose', '-p', script_env['COMPOSE_PROJECT_NAME'], '-f', script_env['COMPOSE_FILE'], 'exec', '-T', 'caddy', 'caddy', 'reload', '--config', '/etc/caddy/Caddyfile'])
+            # Restore normal backup so script can disable maintenance mode cleanly
+            (temp / 'Caddyfile.normal.bak').write_text(orig_caddy)
+            out_dis_final = run(['bash', maint_script, 'disable'], env=script_env).strip()
+            assert 'AUTH_MAINTENANCE_DISABLED' in out_dis_final, out_dis_final
 
+            st_norm_code = None
             for _ in range(20):
                 try:
                     st_norm_code, _ = request('/healthz')
@@ -153,6 +155,7 @@ def main():
                 except Exception:
                     pass
                 time.sleep(0.5)
+            assert st_norm_code == 200, f"Expected 200 from /healthz after maintenance disabled, got {st_norm_code}"
             print('PUBLIC_CADDY_MAINTENANCE_SWITCH_OK (operational script tested with idempotency, missing backup failure, and real Caddy 503 fail-closed)')
             # Provision through the packaged operator CLI, then switch the same HTTPS stack.
             admin = base+['exec','-T','web','python','-m','retailops','identity']
