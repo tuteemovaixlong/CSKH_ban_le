@@ -6,9 +6,12 @@ The interleaving is injected deterministically by wrapping sessions.control: the
 N-th Identity write transaction runs right before that transaction opens, i.e. after the
 previous one committed (#1 = Step 1 preflight/reservation, #2 = Step 2 lock, #3 = Step 3).
 """
+import io
+import json
 import time
 
 from retailops.core import ApiError
+from retailops.http.public import PublicWeb
 from retailops.identity.reconcile import (_validate_business_targets, get_reconciliation_status,
                                           reconcile_collision)
 
@@ -172,6 +175,33 @@ def _intrusions(sessions, tenant):
     }
 
 
+def _request(web, path, cookie='', method='GET', body=None):
+    raw = json.dumps(body).encode() if body is not None else b''
+    env = {
+        'REQUEST_METHOD': method,
+        'PATH_INFO': path,
+        'QUERY_STRING': '',
+        'HTTP_HOST': 'retailops.example.com',
+        'HTTP_ORIGIN': 'https://retailops.example.com',
+        'HTTP_COOKIE': cookie,
+        'CONTENT_TYPE': 'application/json',
+        'CONTENT_LENGTH': str(len(raw)),
+        'wsgi.input': io.BytesIO(raw),
+    }
+    captured = {}
+
+    def start(status, headers):
+        captured['status'] = int(status.split()[0])
+        captured['headers'] = dict(headers)
+
+    resp_body = b''.join(web(env, start))
+    if captured.get('headers', {}).get('Content-Type', '').startswith('application/json'):
+        resp_data = json.loads(resp_body)
+    else:
+        resp_data = resp_body
+    return captured.get('status'), resp_data
+
+
 def _assert_collision_blocked(case, sessions):
     for mid in ('m-ilv-a', 'm-ilv-b'):
         with case.assertRaises(ApiError) as blocked:
@@ -234,6 +264,18 @@ def run(case, sessions, tenant):
     # 2. Cooperative writers during the window are refused/diverted; a raw membership takeover
     #    after the Business commit is caught by the Step 3 re-check (fail-closed, resumable).
     seen = {}
+    web = PublicWeb('https://retailops.example.com', sessions)
+
+    # Pre-takeover: intruder has an existing valid session issued before the intrusion
+    intruder_token = sessions.control.create_session_for_membership('m-ilv-intruder', 3600, 10)
+    intruder_cookie = f'{sessions.cookie_name}={intruder_token}'
+
+    # Before takeover, intruder session resolves normally and sees intruder's own orders
+    with sessions.resolve(intruder_cookie) as binding:
+        case.assertEqual(binding.customer_id, INTRUDER_OWN)
+    status, data = _request(web, '/api/orders', cookie=intruder_cookie)
+    case.assertEqual(status, 200)
+    case.assertEqual([o['id'] for o in data['orders']], ['O-ILV-INTRUDER'])
 
     def before_step2():
         try:
@@ -258,6 +300,22 @@ def run(case, sessions, tenant):
     case.assertTrue({COLLIDING, TARGET_A, TARGET_B} <= set(mid_state['identity']['unresolved']))
     _assert_collision_blocked(case, sessions)
 
+    # P1.1 regression: Pre-existing session must fail-closed after takeover while TARGET_A is unresolved.
+    # Intruder's session must NOT resolve and GET /api/orders must NOT return moved orders (O-ILV-A).
+    with case.assertRaises(ApiError) as res_err:
+        with sessions.resolve(intruder_cookie) as binding:
+            pass
+    case.assertEqual((res_err.exception.status, res_err.exception.code), (503, 'collision_unresolved'))
+
+    status, orders_after_takeover = _request(web, '/api/orders', cookie=intruder_cookie)
+    case.assertEqual(status, 503)
+    case.assertEqual(orders_after_takeover.get('error'), 'collision_unresolved')
+    case.assertNotIn('orders', orders_after_takeover)
+
+    # Collision and journal remain safe (unresolved, business_committed).
+    case.assertEqual(get_reconciliation_status(sessions, KEY)['status'], 'business_committed')
+    case.assertTrue({COLLIDING, TARGET_A, TARGET_B} <= set(snapshot(sessions, tenant)['identity']['unresolved']))
+
     undo_takeover()
     result = reconcile_collision(sessions, tenant, COLLIDING, plan(), idempotency_key=KEY)
     case.assertEqual(result['status'], 'completed')
@@ -277,5 +335,19 @@ def run(case, sessions, tenant):
     case.assertEqual(biz['conversation_feedback'], [('conv-ilv-a', TARGET_A, 'turn_rating')])
     case.assertEqual(biz['proposals'], {'prop-ilv-a': TARGET_A})
     case.assertEqual(biz['business_events'], [('O-ILV-A', TARGET_A, 'order_created')])
-    sessions.control.create_session_for_membership('m-ilv-a', 3600, 10)
+
+    # After completion and undo: intruder session resolves to INTRUDER_OWN again and sees only O-ILV-INTRUDER
+    with sessions.resolve(intruder_cookie) as binding:
+        case.assertEqual(binding.customer_id, INTRUDER_OWN)
+    status, data = _request(web, '/api/orders', cookie=intruder_cookie)
+    case.assertEqual(status, 200)
+    case.assertEqual([o['id'] for o in data['orders']], ['O-ILV-INTRUDER'])
+
+    # Alice can now create session and access her newly reconciled orders O-ILV-A
+    alice_secret = sessions.control.create_session_for_membership('m-ilv-a', 3600, 10)
+    alice_cookie = f'{sessions.cookie_name}={alice_secret}'
+    status, data = _request(web, '/api/orders', cookie=alice_cookie)
+    case.assertEqual(status, 200)
+    case.assertEqual([o['id'] for o in data['orders']], ['O-ILV-A'])
+
     case.assertTrue(reconcile_collision(sessions, tenant, COLLIDING, plan(), idempotency_key=KEY).get('already_completed'))
