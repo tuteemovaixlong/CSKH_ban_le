@@ -29,7 +29,7 @@ from retailops.identity.persistent import PersistentSessions
 from retailops.identity.postgres import PostgresSessions
 from retailops.identity.reconcile import get_reconciliation_status, reconcile_collision
 from retailops.storage.import_sqlite import import_snapshot
-from retailops.storage.pg_repositories import PostgresIdentityStore
+from retailops.storage.pg_repositories import PostgresBusinessStore, PostgresIdentityStore
 from retailops.storage.postgres import BUSINESS_SCHEMA_CURRENT, IDENTITY_SCHEMA, tenant_schema, transaction
 
 DSN = os.environ.get('RETAILOPS_TEST_DATABASE_URL', '')
