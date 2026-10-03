@@ -1976,6 +1976,22 @@ class TestPrACorrectness(unittest.TestCase):
             self.assertEqual(s_res["result"], "RECONCILIATION_STATUS")
             self.assertEqual(s_res["journal"]["status"], "completed")
 
+    def test_n08_p11_reconciliation_rejects_target_owned_by_other_principal_sqlite(self):
+        """P1.1 Regression (SQLite): a plan whose target_customer_id belongs to another principal,
+        is shared by two principals, is an unowned customer with foreign data, or is the colliding id
+        is rejected with 409 before any Business DB write; data is unchanged, the collision stays
+        unresolved, the journal is not bound, and a corrected retry with the same key completes."""
+        try:
+            import reconcile_target_cases
+        except ImportError:
+            from tests import reconcile_target_cases
+        from retailops.identity.persistent import PersistentSessions
+
+        with tempfile.TemporaryDirectory() as td:
+            sessions = PersistentSessions(Path(td), data_mode="production")
+            sessions.provision_tenant("shop-p11", "Shop P11", seed_demo=False)
+            reconcile_target_cases.run(self, sessions, "shop-p11")
+
 
     def test_n08_b1_legacy_linking_requires_verified_email(self):
         """N08-B1 Regression: Legacy email linking strictly requires email_verified=True.

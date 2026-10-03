@@ -1064,6 +1064,16 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         self.assertEqual(ctx_pg_hijack.exception.status, 409)
         self.assertEqual(ctx_pg_hijack.exception.code, "external_identity_conflict")
 
+    def test_reconciliation_rejects_target_owned_by_other_principal_on_postgres(self):
+        """P1.1 Regression (PostgreSQL): same scenario as the SQLite suite; mis-targeted plans are
+        rejected before any Business DB write, data unchanged, collision unresolved, journal not
+        bound, and a corrected retry with the same idempotency key completes."""
+        try:
+            import reconcile_target_cases
+        except ImportError:
+            from tests import reconcile_target_cases
+        reconcile_target_cases.run(self, self.sessions, 'shop-a')
+
 
 if __name__ == '__main__':
     unittest.main()

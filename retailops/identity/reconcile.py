@@ -9,6 +9,10 @@ Guarantees:
 2. Two-phase Saga with Persistent Journal: records 'started' -> 'business_committed' -> 'completed'.
 3. Idempotent & Resumable: bound to immutable canonical plan hash; safely resumes using saved plan.
 4. Data Integrity: validates owners, rowcounts, and prevents identity hijacking.
+5. Target Ownership (P1.1): every target_customer_id must be either new (no other principal's
+   membership/customer_link in the tenant and no Business DB data outside this plan) or proven to
+   belong to the reassigned principal; verified before any Business DB write and before the
+   journal row is committed, so a rejected plan leaves no data change and no stuck journal.
 """
 import hashlib
 import json
@@ -36,6 +40,101 @@ def _has_table(db, table_name: str) -> bool:
     # PostgreSQL
     row = db.execute("SELECT 1 FROM pg_tables WHERE schemaname = current_schema() AND tablename = ?", (table_name,)).fetchone()
     return bool(row)
+
+
+def _target_conflict(message: str) -> ApiError:
+    return ApiError(409, "target_customer_conflict", message)
+
+
+def _validate_target_ownership(
+    id_db,
+    tenant_id: str,
+    colliding_customer_id: str,
+    reassignments: List[Dict[str, Any]],
+    principal_by_mid: Dict[str, str],
+) -> set:
+    """Identity-side P1.1 guard. Returns the set of targets proven to belong to their principal.
+
+    Rejects (409 target_customer_conflict) when a target:
+    - is the ambiguous colliding id or its quarantine placeholder;
+    - is assigned to more than one principal inside the same plan;
+    - is referenced by a membership or customer_link of a different principal in the tenant.
+    """
+    forbidden = {colliding_customer_id, f"quarantine_{colliding_customer_id}"}
+    target_principal: Dict[str, str] = {}
+    proven = set()
+    for item in reassignments:
+        tgt = item["target_customer_id"]
+        pid = principal_by_mid[item["membership_id"]]
+        if tgt in forbidden:
+            raise _target_conflict(
+                f"Target customer {tgt} is the ambiguous colliding/quarantine id and cannot be a reconciliation target."
+            )
+        if target_principal.setdefault(tgt, pid) != pid:
+            raise _target_conflict(f"Target customer {tgt} is assigned to more than one principal in the plan.")
+        owners = {
+            r["principal_id"] for r in id_db.execute(
+                "SELECT principal_id FROM memberships WHERE tenant_id = ? AND customer_id = ?",
+                (tenant_id, tgt)
+            ).fetchall()
+        }
+        owners |= {
+            r["principal_id"] for r in id_db.execute(
+                "SELECT principal_id FROM customer_links WHERE tenant_id = ? AND customer_id = ?",
+                (tenant_id, tgt)
+            ).fetchall()
+        }
+        if owners - {pid}:
+            raise _target_conflict(
+                f"Target customer {tgt} already belongs to another principal in tenant {tenant_id}."
+            )
+        if pid in owners:
+            proven.add(tgt)
+    return proven
+
+
+def _validate_business_targets(b_db, reassignments: List[Dict[str, Any]], proven_targets: set) -> None:
+    """Business-side P1.1 guard for targets without identity proof.
+
+    An unproven target is only accepted as 'new' when it holds no Business DB data except the
+    rows this very reassignment moves to it (which happens when resuming after a partial commit).
+    """
+    has_proposals = _has_table(b_db, "proposals")
+    has_events = _has_table(b_db, "business_events")
+    has_turns = _has_table(b_db, "agent_turns")
+    for item in reassignments:
+        tgt = item["target_customer_id"]
+        if tgt in proven_targets:
+            continue
+        own_orders = set(item.get("order_ids", []))
+        own_convs = set(item.get("conversation_ids", []))
+        foreign = any(
+            r["id"] not in own_orders
+            for r in b_db.execute("SELECT id FROM orders WHERE customer_id = ?", (tgt,)).fetchall()
+        ) or any(
+            r["id"] not in own_convs
+            for r in b_db.execute("SELECT id FROM conversations WHERE customer_id = ?", (tgt,)).fetchall()
+        )
+        if not foreign and has_proposals:
+            foreign = any(
+                r["order_id"] not in own_orders
+                for r in b_db.execute("SELECT order_id FROM proposals WHERE customer_id = ?", (tgt,)).fetchall()
+            )
+        if not foreign and has_events:
+            foreign = any(
+                r["order_id"] not in own_orders
+                for r in b_db.execute("SELECT order_id FROM business_events WHERE customer_id = ?", (tgt,)).fetchall()
+            )
+        if not foreign and has_turns:
+            foreign = any(
+                r["conversation_id"] not in own_convs
+                for r in b_db.execute("SELECT conversation_id FROM agent_turns WHERE customer_id = ?", (tgt,)).fetchall()
+            )
+        if foreign:
+            raise _target_conflict(
+                f"Target customer {tgt} already holds business data outside this plan and is not proven "
+                f"to belong to the reassigned principal."
+            )
 
 
 def reconcile_collision(
@@ -173,6 +272,7 @@ def reconcile_collision(
 
         # Validate memberships belong to tenant and colliding customer
         target_cids = set()
+        principal_by_mid: Dict[str, str] = {}
         for item in reassignments:
             mid = item.get("membership_id")
             tgt_cid = item.get("target_customer_id")
@@ -184,6 +284,7 @@ def reconcile_collision(
             ).fetchone()
             require(bool(m_row), 404, "membership_not_found", f"Membership {mid} not found.")
             require(m_row["tenant_id"] == tenant_id, 400, "tenant_mismatch", f"Membership {mid} does not belong to tenant {tenant_id}.")
+            principal_by_mid[mid] = m_row["principal_id"]
 
             hash_key = f"{tenant_id}:{m_row['principal_id']}:{colliding_customer_id}".encode()
             quarantine_cid_hash = f"cust_{hashlib.sha256(hash_key).hexdigest()[:32]}"
@@ -211,12 +312,23 @@ def reconcile_collision(
                             f"Identity {issuer}:{sub} is already linked to principal {existing_ext['principal_id']}. Cannot reassign to {m_row['principal_id']}."
                         )
 
+        # 1e. P1.1 target ownership guard. Raised inside this transaction, so a rejected plan
+        # also rolls back the journal insert above: no data change and no stuck idempotency key.
+        proven_targets = _validate_target_ownership(
+            id_db, tenant_id, colliding_customer_id, reassignments, principal_by_mid
+        )
+        if current_status == "started":
+            with sessions.business_store(tenant_id).connection() as b_read:
+                _validate_business_targets(b_read, reassignments, proven_targets)
+
     # -------------------------------------------------------------
     # Step 2: Business DB Updates (Customers, Orders, Conversations)
     # -------------------------------------------------------------
     if current_status == "started":
         b_store = sessions.business_store(tenant_id)
         with b_store.connection(write=True) as b_db:
+            # Re-check target ownership under the Business write lock, before any write.
+            _validate_business_targets(b_db, reassignments, proven_targets)
             has_proposals = _has_table(b_db, "proposals")
             has_events = _has_table(b_db, "business_events")
             has_turns = _has_table(b_db, "agent_turns")
