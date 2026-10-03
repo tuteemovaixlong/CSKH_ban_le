@@ -2,7 +2,7 @@
 
 ## 1. Tổng quan
 
-Bản đồ working tree ngày 2026-10-02. Phạm vi: **64 file Python trong `retailops/` (8,437 dòng)** và **8 file `retailops_*.py` ở root (2,848 dòng)**.
+Metadata inventory được quét ngày 2026-10-02; trạng thái sơ đồ migration được cập nhật ngày 2026-10-03 từ status/CI report. Phạm vi lúc quét: **64 file Python trong `retailops/` (8,437 dòng)** và **8 file `retailops_*.py` ở root (2,848 dòng)**. Số dòng là snapshot inventory, không phải số đo sau các commit N08.
 
 Chỉ thu thập tên file, docstring cấp module, import statement và số dòng. Mô tả bên dưới tóm tắt docstring; quan hệ giữa module suy từ import. Bản đồ hỗ trợ chọn file đưa vào context, không xác nhận logic runtime hay trạng thái hoàn tất của plan.
 
@@ -335,38 +335,42 @@ sequenceDiagram
     H-->>C: HTTP response
 ```
 
-## 5. Identity migration v1/v2/v3
+## 5. Identity migration v1/v2/v3 → v4
 
-Sơ đồ áp dụng cho **PostgreSQL identity**, dựa trên review N08 hiện hành: v1 và v2 nâng trực tiếp lên v3; lần khởi động sau ở v3 bỏ qua migration. Khi lỗi trong transaction, rollback giữ version ban đầu. Rollback sau khi đã commit cần phương án rollout riêng; PostgreSQL integration vẫn chờ chạy thật. Đây là bản đồ trạng thái, không phải xác nhận nghiệm thu. State diagram dùng trạng thái nhóm tương đương subgraph.
+Đây là **Identity schema**, không phải Business schema (SQLite Business v3 / PostgreSQL Business v4 là hai version khác). `CURRENT_PROJECT_STATUS.md` ghi Identity schema v1/v2/v3 được nâng lên v4 trên SQLite và PostgreSQL, và báo 47/47 PostgreSQL integration tests PASS trong CI run `37098929081`. Bản đồ phản ánh báo cáo đó; không tự xác nhận trạng thái live production hay thay thế kiểm tra CI `head_sha`.
 
 ```mermaid
 stateDiagram-v2
-    state "PostgreSQL identity migration" as Upgrade {
-        state "Legacy schema v1" as V1
-        state "Existing schema v2" as V2
-        state "Create identity tables and mark collisions" as FromV1
-        state "Create collision markers and remove stale links" as FromV2
-        state "Revoke colliding customer sessions" as Revoke
-        state "Commit schema v3" as Commit
-        state "Rollback to original version" as Rollback
-        V1 --> FromV1: Startup upgrade
-        V2 --> FromV2: Startup upgrade
-        FromV1 --> Revoke
-        FromV2 --> Revoke
-        Revoke --> Commit: Transaction succeeds
-        FromV1 --> Rollback: Transaction error
-        FromV2 --> Rollback: Transaction error
-        Revoke --> Rollback: Transaction error
-        Commit --> Rollback: Commit fails
-    }
-    state "Schema v3" as V3
-    state "Collision account blocked" as Blocked
-    Commit --> V3: Commit succeeds
-    V3 --> V3: Restart / skip migration
-    V3 --> Blocked: Unresolved collision on login
-    note right of V3
-        Live PostgreSQL verification pending
-        Rollback after commit needs a rollout plan
+    [*] --> Legacy: existing Identity schema v1 / v2 / v3
+    state "Legacy Identity DB (v1/v2/v3)" as Legacy
+    state "SQLite migration" as SQLite
+    state "PostgreSQL migration" as PostgreSQL
+    state "Create reconciliation journal + plan_hash" as Journal
+    state "Mark collision unresolved / revoke affected sessions" as Guard
+    state "Identity v4" as V4
+    state "Collision unresolved; login/session fails closed" as Blocked
+    state "Operator supplies complete ownership plan" as Plan
+    state "Coordinator reconciles Business + Identity with journal" as Reconcile
+    state "Reconciled; account ownership isolated" as Complete
+    state "Migration transaction rolled back" as Rollback
+    Legacy --> SQLite: backend is SQLite
+    Legacy --> PostgreSQL: backend is PostgreSQL
+    SQLite --> Journal
+    PostgreSQL --> Journal
+    Journal --> Guard
+    Guard --> V4: migration commit
+    SQLite --> Rollback: transaction failure
+    PostgreSQL --> Rollback: transaction failure
+    Rollback --> Legacy: retry after recovery
+    V4 --> V4: restart / no-op
+    V4 --> Blocked: unresolved collision
+    Blocked --> Plan: manual review
+    Plan --> Reconcile: validate full coverage
+    Reconcile --> Complete: journal completes
+    Reconcile --> Blocked: partial failure / retry required
+    note right of Reconcile
+        CI verification is reported in CURRENT_PROJECT_STATUS.md.
+        The journal supports recovery; it is not distributed ACID.
     end note
 ```
 
@@ -413,5 +417,5 @@ Với câu hỏi mới: chọn một hàng ở bảng mục 6, mở file tương
 | Mốc | Thay đổi | Phạm vi / nguồn |
 | --- | --- | --- |
 | Bản đồ ban đầu, 2026-10-02 | Liệt kê 64 module trong `retailops/`, 8 file root, docstring/import, số dòng và bảng tra cứu. | Metadata file và `wc -l`; không audit logic. |
-| N08 trong working tree, 2026-10-02 | PostgreSQL identity v1/v2 → v3, marker collision và thu hồi session customer collision. | Theo review đã có; PostgreSQL runtime còn chờ kiểm chứng. |
+| N08 status refresh, 2026-10-03 | Identity schema v1/v2/v3 → v4 trên SQLite/PostgreSQL; journal, collision guard và coordinator reconciliation. | CI run `37098929081` và 47/47 PostgreSQL tests PASS được `CURRENT_PROJECT_STATUS.md` báo cáo; merge review còn pending SHA check. |
 | Bổ sung Mermaid | Thêm đúng 3 diagram: kiến trúc, chat sequence, identity migration; sắp xếp bản đồ theo cấu trúc mới. | 13 nút kiến trúc / 9 participant / 10 trạng thái kể cả nhóm; không đọc thêm code chi tiết. |

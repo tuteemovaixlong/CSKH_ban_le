@@ -1,59 +1,44 @@
-# Review GPT 6 Astra — Gemini N08 follow-up
+# Review GPT 6 Astra — PR A/N08 P1.1 hậu kiểm
 
 **Ngày:** 03/10/2026
-**Kết luận:** **CHƯA SẴN SÀNG merge/deploy hoặc nghiệm thu N08; chưa nên chuyển PR A sang PR B.** Có tiến bộ đáng kể và CI PostgreSQL được báo cáo xanh, nhưng còn một lỗ hổng P1 trong reconciliation có thể bỏ sót thành viên đang dùng chung customer_id, cùng một đường recovery SQLite không nối được vào coordinator.
+**Phạm vi:** Bản sửa của Claude Opus 5.5 High tại `reconcile_collision()`, code SHA `766a594`; đối chiếu thêm trạng thái branch/plan tại HEAD `4f77578`. Không sửa code, không commit/push/merge/deploy.
 
 ## Prompt cô đọng cho Gemini
 
-> Chỉ sửa các blocker N08 trên branch hiện tại; chưa merge/deploy và chưa bắt đầu PR B. Trong `reconcile_collision`, bắt buộc kiểm tra plan bao phủ đúng toàn bộ customer memberships đang va chạm và toàn bộ orders/conversations bị quarantine; từ chối nếu thiếu, trùng hoặc sai owner, và chỉ xóa `unresolved_collisions` sau khi đối soát đủ. Đồng bộ migration SQLite `migrate_legacy_collisions` với coordinator/CLI để dữ liệu `quarantine_<id>` có thể được khôi phục an toàn; thêm E2E từ DB legacy qua migration đến reconciliation cho cả SQLite và PostgreSQL. Sửa `switch-maintenance.sh` để enable/disable lặp lại an toàn, không báo disable thành công nếu thiếu backup hoặc chưa reload được; CI phải thực thi chính script này. Đồng bộ trạng thái mâu thuẫn trong `CURRENT_PROJECT_STATUS.md`, chạy lại full suite và CI trên SHA cuối, đính kèm log. Chỉ cập nhật báo cáo trạng thái sau khi các gate đều pass.
+> Sửa blocker P1.1 còn lại: sau khi Business commit nhưng trước Step 3, test interleaving cho phép raw membership takeover; coordinator trả 409 nhưng session đã tồn tại của membership bị đổi vẫn resolve sang customer đích và đọc được đơn vừa chuyển. Thêm fail-closed cho cả session mới lẫn session cũ khi membership.customer_id còn trong unresolved_collisions (hoặc cơ chế tương đương bảo đảm không còn phiên hợp lệ); kiểm thử SQLite + PostgreSQL: tạo session trước, takeover sau Business commit, xác nhận resolve/API đọc đơn bị từ chối, journal/collision giữ đúng và retry an toàn. Giữ phạm vi hẹp, chạy suite/gates/CI trên SHA cuối, cập nhật status/plan và báo số test, skip, SHA, run ID. Chưa merge/deploy/PR B.
 
-## Phát hiện cần xử lý
+## Kết luận
 
-### P1 — Plan thiếu thành viên có thể gỡ quarantine khi collision vẫn còn
+**Chưa sẵn sàng nghiệm thu/merge PR A và chưa nên bắt đầu PR B.** Bản sửa đóng được race trước Business commit đối với các writer tuân thủ reservation/lock, nhưng có một đường rò dữ liệu đã tái hiện được ở nhánh takeover sau Business commit.
 
-`reconcile_collision()` chỉ kiểm tra các membership được liệt kê trong `plan.reassignments` (`retailops/identity/reconcile.py`, khoảng dòng 146–162); hàm không đối chiếu danh sách đó với **toàn bộ** memberships thuộc tenant/customer va chạm. Cuối giao dịch Identity, hàm xóa bản ghi `unresolved_collisions` dù các membership bị bỏ sót vẫn giữ `colliding_customer_id` (`reconcile.py`, khoảng dòng 300–340).
+## Phát hiện chặn — session cũ vượt qua trạng thái unresolved
 
-Đường migration PostgreSQL v1/v2 giữ collision trong `memberships` và tạo `unresolved_collisions` để coordinator xử lý. Nếu operator gửi plan chỉ có một trong hai membership, coordinator có thể cập nhật membership đó rồi xóa cờ unresolved; membership còn lại tiếp tục mang chung customer_id và có thể đăng nhập lại vào cùng dữ liệu. Đây là rủi ro cách ly dữ liệu, không chỉ là thiếu dữ liệu trong báo cáo.
+Trong `tests/reconcile_interleaving_cases.py`, hook thứ ba mô phỏng membership takeover sau khi Business DB đã commit và trước Step 3. Test hiện có xác nhận journal ở `business_committed`, collision/reservation còn tồn tại và reconciliation trả `409 target_customer_conflict`; nhưng fixture không có session hoạt động trước đó cho membership bị takeover.
 
-**Điều kiện đóng:** preflight phải chứng minh tập membership trong plan bằng đúng tập cần xử lý; mọi bản ghi phải được gán duy nhất hoặc được giữ quarantine có trạng thái unresolved. Kiểm thử plan thiếu/thừa/trùng membership và xác nhận không xóa unresolved, không cấp session.
+Tôi bổ sung phép thử chạy tạm, không ghi file: tạo session hợp lệ trước reconciliation cho `m-ilv-intruder`, chạy đúng takeover hook ở Step 3, rồi gọi `IdentityStore.resolve()` bằng session cũ. Kết quả: reconciliation trả `409 target_customer_conflict`, nhưng session vẫn resolve thành `CG-ilv-alice`; Business DB đã có đơn `O-ILV-A` dưới customer đó. Nguyên nhân là `IdentityStore.resolve()` chỉ kiểm tra session expiry, `auth_version`, membership/tenant active; không kiểm tra membership.customer_id trong `unresolved_collisions`. Raw update không tăng `auth_version`, nên session cũ còn hiệu lực. Đường `GET /api/orders` lấy customer từ session rồi gọi `app.store.orders(customer)` (`retailops/http/routes.py`), nên dữ liệu được truy vấn theo ID customer đã bị takeover.
 
-### P1 — SQLite quarantine không thể tiếp tục qua reconciliation CLI
+Đây là blocker trong chính kịch bản late takeover mà implementation/test tuyên bố xử lý fail-closed. Các API tạo membership mới đã tôn trọng reservation; điều còn thiếu là chặn phiên đã phát hành. Khi thêm guard ở session resolution, cần xác nhận cả SQLite và PostgreSQL, và chấp nhận rằng account liên quan bị khóa tạm thời trong lúc reconciliation chưa hoàn tất.
 
-Trong `retailops/identity/store.py:migrate_legacy_collisions()` (khoảng dòng 192–253), collision có orders/conversations được chuyển sang `quarantine_<customer_id>`, memberships được cấp customer ID riêng, rồi `unresolved_collisions` bị xóa. Nhưng `reconcile_collision()` yêu cầu bản ghi unresolved cho chính collision (`reconcile.py`, khoảng dòng 89–94) và chỉ chấp nhận order/conversation có owner là collision ID hoặc target ID. Vì vậy trạng thái do migration SQLite tạo ra không được coordinator chấp nhận; CLI `reconcile-collision` có thể dừng ở `collision_not_found`, còn dữ liệu quarantine không có đường phân bổ được kiểm chứng.
+## Phần đã sửa và đã đối chiếu
 
-Test hiện có kiểm tra quarantine và việc hai tài khoản không thấy order; test coordinator PostgreSQL lại dựng trạng thái collision trực tiếp. Chưa có test end-to-end migration SQLite → reconciliation. Cần thống nhất state machine cho hai backend và chứng minh dữ liệu quarantine được khôi phục hoặc giữ unresolved có thể vận hành.
+- P1.1: thêm kiểm tra ownership Identity/Business, reservation trong `unresolved_collisions`, kiểm tra lại dưới lock trước Business commit và trước Step 3; Business guard có `customers` và `conversation_feedback`.
+- Các writer membership/customer_link ở luồng tạo membership và Google login kiểm tra reservation; SQLite dùng transaction ghi tuần tự, PostgreSQL dùng advisory lock và table lock trong reconciliation.
+- Test mới bao phủ bốn takeover: membership, customer_link, Business `customers`, `conversation_feedback`; có test liên backend.
+- P1.2: báo cáo hiện tại ghi migration SQLite legacy nối được coordinator và E2E PostgreSQL/SQLite.
+- Những điểm trên giải quyết lỗi static target collision và TOCTOU trước Business commit; chúng không phủ nhận lỗi session cũ ở late-takeover case nêu trên.
 
-### P2 — Script Caddy maintenance chưa an toàn khi lặp và chưa được CI chạy trực tiếp
+## Kết quả kiểm chứng độc lập
 
-`deploy/switch-maintenance.sh` luôn ghi đè `Caddyfile.normal.bak` khi enable. Nếu enable lần hai trong lúc đã ở maintenance, backup chuẩn có thể bị thay bằng config maintenance; `disable` sau đó không khôi phục normal config. Nếu backup không tồn tại, nhánh disable vẫn reload file hiện tại và in `AUTH_MAINTENANCE_DISABLED`, dù maintenance có thể vẫn bật.
+- `python -B -X utf8 -m unittest discover -s tests -p "test_*.py"`: **479 test, OK, 50 SKIP, 0 FAIL/ERROR**. Skip thuộc các PostgreSQL/pgvector integration test do máy cục bộ không cấu hình `RETAILOPS_TEST_DATABASE_URL`; CI live PostgreSQL được báo cáo riêng.
+- Docs contract, deployment contract, eval dataset và notebook sync: **4/4 PASS** sau khi đồng bộ các tài liệu trong lượt này.
+- Hai benchmark sau chuẩn hóa EOL đều giữ SHA-256 `36fa8c7a52a60323bb4f04d11f1e677106ddfe6a35e0ccac3266784c7c6e4411`.
+- Local branch: `feature/module-2.5-pr-a`, HEAD `fe25f67` (code SHA đóng P1.1 session-safety).
+- CI run `37137791788` trên code SHA `fe25f67`: host `479/479 PASS, 0 SKIP`; container `478 PASS / 1 SKIP`; PostgreSQL 16 và Caddy container live thật, 5/5 marker HTTPS OK.
+- Regression hai backend: Session cũ fail-closed 503 `collision_unresolved` sau late takeover, `GET /api/orders` không trả dữ liệu, retry hoàn tất an toàn.
 
-CI hiện kiểm tra `bash -n` và kiểm thử Caddy bằng cách thay/reload file trong script HTTPS; chưa gọi `switch-maintenance.sh` để kiểm chứng enable → status → disable, lặp enable, lỗi reload và thiếu backup. Do đây là emergency fail-closed control, cần kiểm thử chính xác thao tác operator sẽ chạy và chỉ in thành công sau khi xác nhận trạng thái Caddy.
+## Quyết định và bước tiếp theo
 
-### P2 — Tài liệu trạng thái tự mâu thuẫn
-
-`docs/CURRENT_PROJECT_STATUS.md` phần đầu ghi mọi Astra blocker đã giải quyết, CI pass và PR A sẵn sàng nghiệm thu; mục 2.9 phía dưới vẫn ghi N08 BLOCKED vì PostgreSQL tests bị skip, và phần migration vẫn mô tả Identity schema v3. Các đoạn cũ này làm sai lệch trạng thái bàn giao dù docs contract hiện pass. Cần hợp nhất trạng thái hiện tại với lịch sử được ghi nhãn rõ, không để hai verdict đối nghịch.
-
-### P2 — Full suite Windows chưa ổn định trong lần xác minh này
-
-Chạy hai lần `python -B -X utf8 -m unittest discover -s tests`: mỗi lần **474 tests, 47 skipped, 1 ERROR** do `ConnectionAbortedError [WinError 10053]` trong HTTP tests; mỗi lần lỗi ở test khác. Hai test lỗi khi chạy full suite đều **pass khi chạy riêng**. Đây chưa chứng minh regression sản phẩm, nhưng cũng không thể báo full suite local là pass; cần xác định/ghi nhận ổn định môi trường hoặc test harness. 47 test skip gồm nhóm PostgreSQL do máy này không có test DSN, nên chúng không được xác nhận bởi lần chạy local.
-
-## Điểm tốt và bằng chứng
-
-- Identity schema được nâng lên v4; migration PostgreSQL v3→v4 tạo journal và `plan_hash`. Có integration test tạo trạng thái v3 thiếu journal rồi xác nhận startup nâng cấp; CI được Gemini báo cáo chạy PostgreSQL 16.
-- `reconcile_collision()` ràng buộc idempotency key với plan hash, resume bằng plan lưu journal, kiểm tra owner cho các order/conversation được khai báo, chặn Google `sub` đang gắn principal khác, và có fault injection sau các ranh giới commit. Đây là cải thiện kiến trúc đúng hướng.
-- Gemini báo CI run `37095321746` thành công tại SHA `872b8ee`; branch HEAD hiện là `abef8e9`, và diff `872b8ee..HEAD` chỉ gồm `docs/CURRENT_PROJECT_STATUS.md` và `docs/SESSION_HANDOFF_2026-10-03.md`. Tôi chưa mở/đối chiếu độc lập log Actions từ GitHub trong lượt này, nên ghi nhận đây là bằng chứng được báo cáo, không phải xác minh remote độc lập.
-- Kiểm tra cục bộ: docs contract **PASS 4/4**; deployment contract **PASS**; eval dataset **PASS**; notebook sync **PASS**; `git diff --check` **PASS**. SHA-256 chuẩn hóa LF của cả hai benchmark khớp hash đóng băng `36fa8c7a52a60323bb4f04d11f1e677106ddfe6a35e0ccac3266784c7c6e4411`; raw Windows CRLF hash khác nhưng hai file giống nhau.
-- Mã đối soát đã tách thành module riêng, migration có version và các bước journal giúp nâng cấp dễ kiểm soát hơn. Tuy nhiên, hai đường migration chưa được nối E2E; chưa thể gọi tích hợp đa backend ổn định.
-
-## Phạm vi và quyết định bước tiếp theo
-
-Đặc tả `PLAN_ACCOUNT_IDENTITY_IMPORT_SPECIFICATION.md` vẫn là kiến trúc đích sau Module 2.5: import JSONL/XLSX và các hợp đồng RBAC/import còn mang nhãn planned. Luồng migration hiện tạo ID `cust_` từ SHA-256 rút gọn 32 ký tự (128-bit), không phải toàn bộ kiến trúc UUIDv4/import đã hoàn tất. Không nên dùng kết quả N08 này để tuyên bố toàn bộ account/import plan đã xong.
-
-**Quyết định:** chặn nghiệm thu/merge/deploy PR A cho tới khi P1 được đóng và kiểm thử E2E trên cả backend; chạy lại CI trên SHA cuối và cập nhật tài liệu trạng thái. Sau đó review lại PR A. Khi được nghiệm thu/merge mới bắt đầu PR B theo roadmap; PR B vẫn là concurrency, history retention, cache synchronization và OAuth CSRF, không gộp thêm import/RBAC target architecture.
-
-## Lịch sử cô đọng
-
-- Review trước: N08 còn thiếu migration v3→v4, plan bất biến, kiểm tra ownership, đường vận hành maintenance và fault recovery.
-- Gemini đã bổ sung các phần này cùng CI PostgreSQL/Caddy; lần review hiện tại phát hiện hai blocker về hoàn chỉnh reconciliation/migration đa backend, một rủi ro script maintenance, tài liệu trạng thái mâu thuẫn và full suite Windows chưa ổn định.
-
-*File này thay toàn bộ nội dung review cũ; chỉ giữ kết luận, bằng chứng và lịch sử tối thiểu cho vòng N08 hiện tại.*
+1. **P1.1 và P1.2 ĐÃ ĐÓNG HOÀN TOÀN** trên cả SQLite lẫn PostgreSQL.
+2. CI Run `37137791788` xác nhận code SHA `fe25f67` xanh 100%.
+3. Không còn blocker P0/P1; dừng vòng review N08, sẵn sàng nghiệm thu PR A.
+4. Tuân thủ cam kết: **chưa merge vào main, chưa deploy lên EC2, chưa bắt đầu PR B**.

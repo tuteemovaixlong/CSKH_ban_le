@@ -1,4 +1,6 @@
-# Kế hoạch Gemini — Cleanup đã review, bàn giao sửa N08
+# Lịch sử: Kế hoạch Gemini — Cleanup và bàn giao sửa N08
+
+> **SUPERSEDED — snapshot 02/10/2026.** Prompt và trạng thái “4 P1 còn mở” bên dưới không còn là chỉ dẫn hiện hành sau N08 CI report ngày 03/10/2026. Dùng [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md) và [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md) cho quyết định hiện tại; giữ file này làm lịch sử cleanup.
 
 Ngày: **2026-10-02**
 Bản rà soát đầu vào: [review_clear+project.md](review_clear+project.md)
