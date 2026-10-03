@@ -50,20 +50,21 @@ def plan(target_x1, target_x2):
 
 
 def snapshot(sessions, tenant):
+    # LIKE patterns are bound parameters: psycopg rejects a literal '%' in the SQL text.
     with sessions.control.connection() as db:
         members = {r['id']: (r['customer_id'], r['auth_version']) for r in db.execute(
-            "SELECT id, customer_id, auth_version FROM memberships WHERE id LIKE 'm-tgt-%'").fetchall()}
+            'SELECT id, customer_id, auth_version FROM memberships WHERE id LIKE ?', ('m-tgt-%',)).fetchall()}
         links = {r['principal_id']: r['customer_id'] for r in db.execute(
-            "SELECT principal_id, customer_id FROM customer_links WHERE principal_id LIKE 'p-tgt-%'").fetchall()}
+            'SELECT principal_id, customer_id FROM customer_links WHERE principal_id LIKE ?', ('p-tgt-%',)).fetchall()}
         unresolved = [r['customer_id'] for r in db.execute(
             'SELECT customer_id FROM unresolved_collisions WHERE tenant_id = ?', (tenant,)).fetchall()]
     with sessions.business_store(tenant).connection() as b:
         orders = {r['id']: r['customer_id'] for r in b.execute(
-            "SELECT id, customer_id FROM orders WHERE id LIKE 'O-TGT-%'").fetchall()}
+            'SELECT id, customer_id FROM orders WHERE id LIKE ?', ('O-TGT-%',)).fetchall()}
         convs = {r['id']: r['customer_id'] for r in b.execute(
-            "SELECT id, customer_id FROM conversations WHERE id LIKE 'conv-tgt-%'").fetchall()}
+            'SELECT id, customer_id FROM conversations WHERE id LIKE ?', ('conv-tgt-%',)).fetchall()}
         customers = {r['id']: r['name'] for r in b.execute(
-            "SELECT id, name FROM customers WHERE id LIKE 'CG-tgt-%'").fetchall()}
+            'SELECT id, name FROM customers WHERE id LIKE ?', ('CG-tgt-%',)).fetchall()}
     return {'members': members, 'links': links, 'unresolved': sorted(unresolved),
             'orders': orders, 'convs': convs, 'customers': customers}
 
