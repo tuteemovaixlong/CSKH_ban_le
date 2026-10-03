@@ -1,10 +1,11 @@
 # TÀI LIỆU BÀN GIAO PHIÊN LÀM VIỆC (SESSION HANDOFF) — 03/10/2026
 
-> **Ngày ghi nhận:** 03/10/2026 (12:00 GMT+7)  
+> **Ngày ghi nhận:** 03/10/2026 (12:20 GMT+7)  
 > **Repository:** `tuteemovaixlong/CSKH_ban_le`  
 > **Nhánh hiện tại:** `feature/module-2.5-pr-a` (Target tích hợp: `main`)  
-> **Head Commit SHA:** Đang chuẩn bị commit & push SHA cuối  
+> **Head Commit SHA:** Commit SHA cuối sau khi đồng bộ tài liệu và chạy CI toàn diện  
 > **Kết quả kiểm thử cục bộ:** **475 tests, 427 PASS, 48 SKIP, 0 FAIL, 0 ERROR** (48 skip do không có PG local, chạy 100% pass trên CI container)  
+> **Kết quả kiểm thử CI (GitHub Actions):** **474/475 PASS, 1 SKIP, 0 FAIL, 0 ERROR** trên cả PostgreSQL 16 và Caddy live container thật  
 > **Cổng hợp đồng:** 4/4 cổng hợp đồng PASS 100% (`check_docs_contract.py`, `check_deployment_contract.py`, `check_eval_dataset.py`, `build_agent_notebook.py --check`)  
 > **Cam kết vận hành:** **Chưa merge vào `main`**, **chưa deploy lên EC2**, **chưa bắt đầu PR B**.  
 
