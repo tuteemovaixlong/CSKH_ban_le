@@ -528,7 +528,7 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             db.execute("DROP TABLE IF EXISTS unresolved_collisions CASCADE")
             db.execute("UPDATE retailops_schema SET version = 1 WHERE component = 'identity'")
 
-            db.execute("INSERT INTO tenants (id, name, storage_key, active) VALUES ('shop-mig-pg', 'Shop Mig PG', 'shop_mig_pg_store', 1) ON CONFLICT DO NOTHING")
+            db.execute("INSERT INTO tenants (id, name, storage_key, active) VALUES ('shop-mig-pg', 'Shop Mig PG', '0123456789abcdef0123456789abcdef', 1) ON CONFLICT DO NOTHING")
             db.execute("INSERT INTO principals (id, name) VALUES ('p-mig-1', 'Alice Mig') ON CONFLICT DO NOTHING")
             db.execute("INSERT INTO principals (id, name) VALUES ('p-mig-2', 'Bob Mig') ON CONFLICT DO NOTHING")
             db.execute(
@@ -541,7 +541,7 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             )
 
         # Setup business DB
-        b_store = PostgresBusinessStore(DSN, 'shop_mig_pg_store', create=True)
+        b_store = PostgresBusinessStore(DSN, '0123456789abcdef0123456789abcdef', create=True)
         with b_store.connection(write=True) as b_db:
             b_db.execute("INSERT INTO customers (id, name) VALUES ('CG-mig-shared', 'Shared Mig Customer') ON CONFLICT DO NOTHING")
             b_db.execute(
