@@ -864,32 +864,39 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             self.assertEqual(cl_bob['customer_id'], 'CG-rec-bob')
 
         # 8g. Ownership & External Identity hijack protections on PostgreSQL:
+        with transaction(DSN, write=True) as db:
+            db.execute("INSERT INTO principals (id, name) VALUES ('p-rec-3', 'Charlie'), ('p-rec-4', 'Dave') ON CONFLICT DO NOTHING")
+            db.execute(
+                "INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) "
+                "VALUES ('m-rec-3', 'shop-a', 'p-rec-3', 'CG-rec-shared-2', 'customer', 1, 1), "
+                "       ('m-rec-4', 'shop-a', 'p-rec-4', 'CG-rec-shared-2', 'customer', 1, 1) ON CONFLICT DO NOTHING"
+            )
+            db.execute("INSERT INTO unresolved_collisions VALUES ('shop-a', 'CG-rec-shared-2', ?) ON CONFLICT DO NOTHING", (now,))
+
         bad_owner_plan = {
             "reassignments": [
                 {
-                    "membership_id": "m-rec-1",
-                    "target_customer_id": "CG-rec-alice-new",
-                    "order_ids": ["O-REC-003"],  # O-REC-003 belongs to Bob!
+                    "membership_id": "m-rec-3",
+                    "target_customer_id": "CG-rec-charlie",
+                    "order_ids": ["O-REC-003"],  # O-REC-003 belongs to Bob (CG-rec-bob), NOT CG-rec-shared-2!
                 },
                 {
-                    "membership_id": "m-rec-2",
-                    "target_customer_id": "CG-rec-bob-new",
+                    "membership_id": "m-rec-4",
+                    "target_customer_id": "CG-rec-dave",
                     "order_ids": [],
                 },
             ]
         }
-        with transaction(DSN, write=True) as db:
-            db.execute("INSERT INTO unresolved_collisions VALUES ('shop-a', 'CG-rec-alice', ?) ON CONFLICT DO NOTHING", (now,))
         with self.assertRaises(ApiError) as ctx_pg_owner:
-            reconcile_collision(restarted_pg_sessions, "shop-a", "CG-rec-alice", bad_owner_plan, idempotency_key="rec-pg-bad-owner")
+            reconcile_collision(restarted_pg_sessions, "shop-a", "CG-rec-shared-2", bad_owner_plan, idempotency_key="rec-pg-bad-owner")
         self.assertEqual(ctx_pg_owner.exception.status, 403)
         self.assertEqual(ctx_pg_owner.exception.code, "order_ownership_conflict")
 
         hijack_sub_plan = {
             "reassignments": [
                 {
-                    "membership_id": "m-rec-1",
-                    "target_customer_id": "CG-rec-alice-new",
+                    "membership_id": "m-rec-3",
+                    "target_customer_id": "CG-rec-charlie",
                     "order_ids": [],
                     "external_identity": {
                         "issuer": "https://accounts.google.com",
@@ -897,14 +904,14 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
                     },
                 },
                 {
-                    "membership_id": "m-rec-2",
-                    "target_customer_id": "CG-rec-bob-new",
+                    "membership_id": "m-rec-4",
+                    "target_customer_id": "CG-rec-dave",
                     "order_ids": [],
                 },
             ]
         }
         with self.assertRaises(ApiError) as ctx_pg_hijack:
-            reconcile_collision(restarted_pg_sessions, "shop-a", "CG-rec-alice", hijack_sub_plan, idempotency_key="rec-pg-hijack")
+            reconcile_collision(restarted_pg_sessions, "shop-a", "CG-rec-shared-2", hijack_sub_plan, idempotency_key="rec-pg-hijack")
         self.assertEqual(ctx_pg_hijack.exception.status, 409)
         self.assertEqual(ctx_pg_hijack.exception.code, "external_identity_conflict")
 
