@@ -1,63 +1,67 @@
 # TÀI LIỆU BÀN GIAO PHIÊN LÀM VIỆC (SESSION HANDOFF) — 03/10/2026
 
-> **Ngày ghi nhận:** 03/10/2026 (01:50 GMT+7)  
+> **Ngày ghi nhận:** 03/10/2026 (11:15 GMT+7)  
 > **Repository:** `tuteemovaixlong/CSKH_ban_le`  
 > **Nhánh hiện tại:** `feature/module-2.5-pr-a` (Target tích hợp: `main`)  
-> **Head Commit SHA:** `c34c54b4e682346340faf17a08db9a1d40a149b0` (`c34c54b`)  
-> **Trạng thái GitHub Actions CI:** **SUCCESS** — Run ID [`37047893366`](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37047893366)  
-> **Kết quả kiểm thử:** 424 PASS (máy trạm local) / **469 PASS trên PostgreSQL 16 container thật trên CI** (0 FAIL, 0 ERROR across 470 tests)  
+> **Head Commit SHA:** `872b8ee3d06eb2f939ac40aefef1baa49468b84f` (`872b8ee`)  
+> **Trạng thái GitHub Actions CI:** **SUCCESS** — Run ID [`37095321746`](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37095321746)  
+> **Kết quả kiểm thử:** 427 PASS (máy trạm local) / **473 PASS trên PostgreSQL 16 container & Caddy live trên CI** (0 FAIL, 0 ERROR across 474 tests, 1 skip)  
 > **Cam kết vận hành:** **Chưa merge vào `main`**, **chưa deploy lên EC2**, **chưa tạo PR mới**.  
 
 ---
 
-## 1. TỔNG KẾT KẾT QUẢ XỬ LÝ 3 BLOCKER N08 TỪ REVIEW
+## 1. TỔNG KẾT KẾT QUẢ XỬ LÝ TOÀN BỘ BLOCKER TỪ REVIEW GPT 6 ASTRA XHIGH
 
-Toàn bộ 3 blocker kỹ thuật được nêu trong `docs/review gpt 6 astra.md` đã được giải quyết triệt để và kiểm chứng trên CI:
+Toàn bộ các blocker / findings kỹ thuật được nêu trong `docs/review gpt 6 astra.md` đã được giải quyết triệt để và kiểm chứng trên CI:
 
-### 1.1. Blocker 1: Sửa Đúng Matcher & Handler Authentication Maintenance Mode
-- **Vấn đề:** Matcher trước đó không chặn hết các route OIDC config hoặc route login API tĩnh khi hệ thống ở trạng thái bảo trì/hạ cấp baseline.
+### 1.1. Finding 1 (P1): Versioned Migration v4 Cho Identity DB Hiện Hữu
+- **Vấn đề:** Không được dựa vào drop/recreate DB. Cần migration có versioning rõ ràng từ Identity schema v3 lên v4.
 - **Giải pháp:**
-  - File cấu hình Caddy [`deploy/Caddyfile.maintenance`](../deploy/Caddyfile.maintenance) với matcher `@auth_maintenance`:
-    Chặn đích danh 4 route đăng nhập: `GET /auth/google/config`, `GET /auth/google/login`, `GET /auth/google/callback`, và `POST /api/login`.
-    Trả về HTTP 503 JSON `{"code": "maintenance_mode", "message": "Authentication and login services are temporarily paused for maintenance."}`.
-  - Ứng dụng Python [`retailops/http/public.py`](../retailops/http/public.py): Kiểm tra chặt chẽ cờ `RETAILOPS_AUTH_MAINTENANCE` (so sánh nghiêm ngặt `is True` để tránh mock truthiness), trả về 503 fail-closed cho cả 4 route.
-  - Regression Test: `test_auth_maintenance_mode_blocks_all_login_routes_with_503` trong [`tests/test_public_web.py`](../tests/test_public_web.py) kiểm chứng cả 4 route.
+  - `retailops/storage/postgres.py`: Cập nhật `IDENTITY_SCHEMA_CURRENT = 4`, `IDENTITY_SCHEMA_COMPATIBLE = (1, 2, 3, 4)`.
+  - `retailops/storage/pg_schema.py`: Bổ sung nhánh migration v3 $\rightarrow$ v4 tạo bảng `reconciliation_journal`, index `idx_reconciliation_journal_tenant`, cột `plan_hash TEXT`, và bump version lên 4.
+  - `retailops/storage/pg_repositories.py`: Kích hoạt auto-upgrade cho version in `(1, 2, 3)`.
+  - `retailops/identity/store.py`: Thêm `reconciliation_journal` và cột `plan_hash TEXT` vào SQLite migration `migrate_legacy_collisions()`.
 
-### 1.2. Blocker 2: Two-Database Reconciliation có Journal, Idempotency & Fault Recovery
-- **Vấn đề:** Quá trình đối soát giữa Identity DB và Business DB cần có cơ chế journal ghi nhận từng bước, idempotency key để chạy lại an toàn và khả năng phục hồi nếu crash giữa 2 lần commit.
+### 1.2. Finding 2 (P1): Khóa Idempotency Key Với Canonical Plan Hash Bất Biến
+- **Vấn đề:** Nếu retry với plan bị thay đổi, hệ thống có thể đối soát sai lệch.
 - **Giải pháp:**
-  - Module điều phối [`retailops/identity/reconcile.py`](../retailops/identity/reconcile.py) triển khai quy trình 2-phase saga:
-    1. Ghi journal với trạng thái `started` kèm `idempotency_key`.
-    2. Commit Business DB (chuyển đổi quyền sở hữu `orders`, `conversations`, `agent_turns`, `conversation_feedback` và tạo khách hàng mới).
-    3. Cập nhật journal thành `business_committed`.
-    4. Commit Identity DB (cập nhật `memberships`, `customer_links`, `external_identities`, xóa `unresolved_collisions`).
-    5. Cập nhật journal thành `completed`.
-  - Bảng `reconciliation_journal` được thêm vào schema PostgreSQL ([`retailops/storage/pg_schema.py`](../retailops/storage/pg_schema.py)) và SQLite ([`retailops/identity/store.py`](../retailops/identity/store.py)).
-  - Hỗ trợ Idempotency: Khi gọi lại cùng `idempotency_key`, nếu đã `completed` thì trả về ngay lập tức mà không mutate.
-  - Hỗ trợ Phục hồi sau lỗi (Recovery & Resume): Nếu crash sau Business DB commit, lần chạy tiếp theo đọc journal nhận diện `business_committed`, an toàn bỏ qua phase Business DB và hoàn tất phase Identity DB.
-  - Unit Test: `test_n08_reconciliation_coordinator_journal_idempotency_and_recovery` trong [`tests/test_pr_a_correctness.py`](../tests/test_pr_a_correctness.py).
+  - `retailops/identity/reconcile.py`: Tính `canonical_plan_json(plan)` (sắp xếp keys và lists theo thứ tự chuẩn) và sinh `plan_hash` (SHA-256 64 ký tự).
+  - Khi tra cứu journal: nếu `saved_hash != current_plan_hash`, từ chối ngay với HTTP 409 `plan_conflict`.
+  - Khi resume: luôn sử dụng `saved_plan` đã ghi nhận trong journal, không bao giờ dùng plan truyền vào khi retry.
 
-### 1.3. Blocker 3: PostgreSQL Integration Test Với Orders/Conversations Thật & Fault Injection
-- **Vấn đề:** Cần kiểm thử tích hợp trên PostgreSQL thật với dữ liệu nghiệp vụ thật (orders, conversations), kiểm chứng fail-closed khi crash ở các mốc commit và phục hồi toàn vẹn.
+### 1.3. Finding 3 (P1): Kiểm Tra Quyền Sở Hữu Nguồn, Rowcount & Chống Chiếm Đoạt Google Sub
+- **Vấn đề:** Phải xác thực `order_ids` và `conversation_ids` thực sự thuộc về `colliding_customer_id`, kiểm tra `rowcount > 0`, không được nuốt exception DB tùy tiện, và kiểm tra không cho phép chiếm đoạt `sub` đã gắn với principal khác.
 - **Giải pháp:**
-  - Nâng cấp test `test_identity_rollback_policy_and_account_reconciliation` trong [`tests/test_postgres.py`](../tests/test_postgres.py):
-    - Dữ liệu thật: Tạo sản phẩm `P-REC-001`, đơn hàng thật `O-REC-001`, `O-REC-002` (Alice) và `O-REC-003` (Bob), phiên hội thoại thật UUID 36 ký tự `11111111-1111-1111-1111-111111111111` và `22222222-2222-2222-2222-222222222222` cùng `agent_turns`.
-    - Kiểm tra tiền đối soát: Cả 2 khách hàng bị khóa cứng với HTTP 503 `collision_unresolved`.
-    - Tiêm lỗi 1: Crash ngay sau Business DB commit $\rightarrow$ Journal là `business_committed`, Identity DB vẫn khóa 503 fail-closed.
-    - Tiêm lỗi 2: Crash trong lúc commit Identity DB $\rightarrow$ Identity DB rollback, vẫn khóa 503 fail-closed.
-    - Phục hồi: Chạy lại đối soát không kèm lỗi $\rightarrow$ Journal hoàn tất `completed`.
-    - Xác minh hậu đối soát: `unresolved_collisions` được gỡ bỏ; tạo session thành công cho Alice và Bob; kiểm tra cô lập dữ liệu 100% (Alice thấy đơn và hội thoại của mình, tra cứu đơn Bob ra 404; Bob thấy đơn và hội thoại của mình, tra cứu đơn Alice ra 404).
+  - Trước khi cập nhật: `SELECT customer_id FROM orders WHERE id=?` và `SELECT customer_id FROM conversations WHERE id=?`. Nếu không tìm thấy $\rightarrow$ 404 `order_not_found` / `conversation_not_found`; nếu không thuộc `colliding_customer_id` $\rightarrow$ 403 `order_ownership_conflict` / `conversation_ownership_conflict`.
+  - Kiểm tra `cursor.rowcount > 0` sau khi execute UPDATE.
+  - Tra cứu cấu trúc DB an toàn qua `_has_table` (truy vấn schema catalog), loại bỏ hoàn toàn mẫu hình `try: execute() except: pass`.
+  - Kiểm tra `external_identities`: nếu `(issuer, sub)` đã thuộc principal khác, từ chối với HTTP 409 `external_identity_conflict`.
+
+### 1.4. Finding 4 (P2): Nối Caddy Maintenance và Reconciliation Vào Quy Trình Vận Hành
+- **Vấn đề:** Cần công cụ vận hành chuyển đổi maintenance mode thực tế và CLI đối soát cho operator.
+- **Giải pháp:**
+  - Bổ sung script [`deploy/switch-maintenance.sh`](../deploy/switch-maintenance.sh): Hỗ trợ `enable`, `disable`, `status` với `caddy reload` (zero-downtime) và graceful restart.
+  - Bổ sung lệnh CLI [`retailops/identity/cli.py`](../retailops/identity/cli.py): `reconcile-collision` và `reconciliation-status`.
+  - [`scripts/check_public_https.py`](../scripts/check_public_https.py): Thêm bước test switch Caddy maintenance mode trên Caddy container thật, xác nhận 4 route auth trả về 503 `maintenance_mode`.
+
+### 1.5. Finding 5 (P1): Chuẩn Hóa Điểm Crash Fault Injection & Bảo Vệ Khỏi Tái Va Chạm Khi Restart
+- **Vấn đề:** Điểm crash cần chuẩn: crash sau Business commit trước journal update, crash trong Identity sau khi updates đã chạy. Ngoài ra, khi restart process, `migrate_legacy_collisions` không được tự ý mutate memberships đang chờ đối soát.
+- **Giải pháp:**
+  - Thêm 2 stage: `after_business_commit_before_journal` và `during_identity_commit_after_updates`.
+  - Trong `migrate_legacy_collisions`: Kiểm tra `already_unresolved` trong `unresolved_collisions`. Nếu collision đã được ghi nhận, chỉ xóa session để bảo vệ quyền truy cập và bỏ qua việc tự động chia nhỏ sang `cust_<hash>`, bảo toàn trạng thái cho reconciliation coordinator.
 
 ---
 
 ## 2. BẰNG CHỨNG KIỂM ĐỊNH TRÊN GITHUB ACTIONS CI
 
-- **Workflow Run ID:** `37047893366`
-- **URL Run:** [https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37047893366](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37047893366)
-- **Job `offline` (ID: `110973739806`):** `SUCCESS`
-  - Đã chạy 470 tests trên PostgreSQL 16 container thật: **469 PASS**, 1 SKIP, 0 FAIL, 0 ERROR.
+- **Workflow Run ID:** `37095321746`
+- **URL Run:** [https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37095321746](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37095321746)
+- **Job `offline` (ID: `110978788939`):** `SUCCESS`
+  - Đã chạy 474 tests trên PostgreSQL 16 container thật: **473 PASS**, 1 SKIP, 0 FAIL, 0 ERROR.
   - Toàn bộ 45/45 PostgreSQL integration tests: **100% PASS**.
   - 4/4 Cổng hợp đồng: **PASS 100%** (`check_docs_contract.py`, `check_deployment_contract.py`, `check_eval_dataset.py`, `build_agent_notebook.py --check`).
+  - Public HTTPS verification: `PUBLIC_UI_ASSETS_OK`, `PUBLIC_HTTPS_PROXY_COOKIE_FLOW_OK`, `PUBLIC_CADDY_MAINTENANCE_SWITCH_OK`, `PERSISTENT_HTTPS_ACCOUNT_FLOW_OK`, `POSTGRES_HTTPS_IMPORT_RESTORE_OK`.
+- **Job `colab-python313` (ID: `110978788950`):** `SUCCESS`
   - Public HTTPS verification: `PUBLIC_UI_ASSETS_OK`, `PUBLIC_HTTPS_PROXY_COOKIE_FLOW_OK`, `PERSISTENT_HTTPS_ACCOUNT_FLOW_OK`, `POSTGRES_HTTPS_IMPORT_RESTORE_OK`.
 - **Job `colab-python313` (ID: `110973740107`):** `SUCCESS`
 

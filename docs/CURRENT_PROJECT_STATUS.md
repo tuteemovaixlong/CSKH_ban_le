@@ -3,12 +3,12 @@
 > **Trạng thái:** ACTIVE OPERATIONAL STATUS & EVIDENCE REPORT<br>
 > **Audit basis / Documentation baseline reviewed:** `b93eb5a`<br>
 > **Application snapshot đối chiếu:** Nhánh `main` tại commit `c6c7a1a`<br>
-> **Kiểm thử & CI:** 424 unit tests PASS (0 failures, 0 errors, 46 skipped across 470 total tests cục bộ); GitHub Actions CI Run 37047893366 trên nhánh feature/module-2.5-pr-a (PostgreSQL 16 container thật): **469/470 PASS** (1 skip, 0 failures), 4/4 cổng hợp đồng PASS 100%<br>
+> **Kiểm thử & CI:** 427 unit tests PASS (0 failures, 0 errors, 47 skipped across 474 total tests cục bộ); GitHub Actions CI Run 37095321746 trên nhánh feature/module-2.5-pr-a (PostgreSQL 16 container thật & Caddy live): **473/474 PASS** (1 skip, 0 failures), 4/4 cổng hợp đồng PASS 100%<br>
 > **EC2 Host:** `retailops-dev` / `i-0fd116d8927d0e412` / **t3.large** (Sẵn sàng tắt máy sau phiên làm việc để tối ưu chi phí cloud)<br>
 > **Deploy status:** Container image build & live rolling deploy **PASS 100%**; sẵn sàng kích hoạt lại khi bật EC2<br>
 > **Lộ trình kỹ thuật tổng thể:** Xem chi tiết tại [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md)<br>
 > **Kế hoạch đợt build tiếp theo:** [PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT.md](PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT.md)<br>
-> **Báo cáo sự cố & bàn giao:** [INCIDENT_RECOVERY_2026-09-21.md](INCIDENT_RECOVERY_2026-09-21.md) và [SESSION_HANDOFF_2026-10-02.md](SESSION_HANDOFF_2026-10-02.md)
+> **Báo cáo sự cố & bàn giao:** [INCIDENT_RECOVERY_2026-09-21.md](INCIDENT_RECOVERY_2026-09-21.md) và [SESSION_HANDOFF_2026-10-03.md](SESSION_HANDOFF_2026-10-03.md)
 
 ---
 
@@ -20,7 +20,7 @@ Theo chuẩn phân cấp minh chứng của [`RELEASE_MANIFEST.md`](RELEASE_MANI
 | :--- | :--- | :--- | :--- | :--- |
 | **Module 1** | **Hệ Thống Lõi TMĐT, 6 SOPs & MCP Server** | **IMPLEMENTED** | **L1/L3 hỗn hợp** *(353+ tests PASS, Staff Desk & Manager SSOT healthy)* | Đã hoàn tất Phase 1.1 (Truthful UX) và Phase 1.2 (Store Manager Persistence & Shared Catalog SSOT: bảng `products`, `product_variants` vào PostgreSQL v4 / SQLite v3, đồng bộ `check_inventory`, `dispute_agent`, audit events toàn shop). Còn tồn đọng các ca rò rỉ context F04–F06. |
 | **Module 2** | **Đo Baseline Benchmark Cơ Sở & Ops Console** | **IMPLEMENTED** | **L1/L3 hỗn hợp** *(250 ca offline 100% Routing, 19/19 Ops Console tests OK)* | Hoàn tất Phase 1.3 (`PLAN_FIX_UI_03`): Bỏ chia 3 token, chi phí chưa đo để Unknown/None, chuẩn hóa nhãn E2E Request Latency, mở rộng allowlist Usage, bổ sung concurrency telemetry (`queue_wait_ms`, `in_flight_inferences`, `overload_429_count`). |
-| **Module 2.5** | **Kiểm Thử & Ổn Định Vận Hành (Quality Gate)** | **PR A IMPLEMENTED / N08 BLOCKERS RESOLVED & VERIFIED ON CI** | **L1 PASS (469 CI tests PASS / 45 PG tests PASS, Run ID 37047893366)** *([PLAN_MODULE_2_5_HARDENING_VERIFICATION.md](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md))* | **PR A và 3 Blocker N08 hoàn tất & verify trên CI:** Xử lý triệt để 3 blocker N08 theo review Astra (sửa matcher/handler 4 auth maintenance routes fail-closed 503; điều phối đối soát hai DB có `reconciliation_journal`, idempotency và recovery sau lỗi; mở rộng PostgreSQL test với orders/conversations thật, fault injection 2 phase và retry/resume). CI Run 37047893366 (commit `c34c54b`) đạt SUCCESS với 469 tests PASS trên PostgreSQL 16 container thật. Nhánh `feature/module-2.5-pr-a` sẵn sàng nghiệm thu; chưa merge `main`, chưa deploy. |
+| **Module 2.5** | **Kiểm Thử & Ổn Định Vận Hành (Quality Gate)** | **PR A IMPLEMENTED / ALL ASTRA BLOCKERS RESOLVED & VERIFIED ON CI** | **L1 PASS (473 CI tests PASS / 45 PG tests PASS, Run ID 37095321746)** *([PLAN_MODULE_2_5_HARDENING_VERIFICATION.md](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md))* | **PR A và 5 Blocker Astra hoàn tất & verify trên CI:** Xử lý triệt để 5 blocker theo review GPT 6 Astra xhigh (Identity DB v3->v4 versioned migration có `plan_hash`; khóa idempotency key với canonical plan hash bất biến; kiểm tra quyền sở hữu nguồn và chống chiếm đoạt sub; nối Caddy maintenance vào quy trình vận hành với `deploy/switch-maintenance.sh` và CLI; sửa fault injection crash trước journal và crash trong Identity commit, bảo vệ qua process restart). CI Run 37095321746 (commit `872b8ee`) đạt SUCCESS với 473 tests PASS trên PostgreSQL 16 và Caddy live container thật. Nhánh `feature/module-2.5-pr-a` sẵn sàng nghiệm thu; chưa merge `main`, chưa deploy. |
 | **Module 3** | **Webhook Facebook Messenger (Omnichannel)** | **PLANNED** | **Design-only** *([PLAN_OMNICHANNEL_INTEGRATION.md](PLAN_OMNICHANNEL_INTEGRATION.md))* | Chờ hoàn tất nghiệm thu Module 2.5 trước khi mở cổng webhook tiếp nhận tin nhắn từ Meta API (xếp vào Phase 5 Demo). |
 | **Module 4** | **Cổng Quét Mã QR Demo Live** | **PARTIAL** | **L3** *(HTTPS sslip.io, Web mobile responsive)* | Đã có hạ tầng web di động sẵn sàng cho demo; Chưa có module sinh mã QR động / thẻ QR demo (xếp vào Phase 5 Demo). |
 | **Module 5** | **Self-Hosted vLLM & Serving Model Agentic** | **IMPLEMENTED / PARTIAL** | **Runtime-dependent** *(Colab L4 vLLM + ngrok)* | Đã tối ưu CUDA Graphs, prefix caching, fp8 kv cache và xử lý an toàn ảnh text-only. Cần hoàn tất chuẩn hóa headroom và timeout gate ở Module 2.5 PR B. |
@@ -122,19 +122,19 @@ Theo chuẩn phân cấp minh chứng của [`RELEASE_MANIFEST.md`](RELEASE_MANI
          4. **Phục hồi sau lỗi (Fault Recovery & Resume):** Nếu tiến trình gặp sự cố giữa hai lần commit (sau Business DB commit hoặc trước/trong Identity DB commit), hệ thống tiếp tục duy trì **Fail-Closed** tuyệt đối nhờ bảng `unresolved_collisions`. Khi chạy lại lệnh đối soát (`reconcile_collision`) với cùng `idempotency_key`, coordinator đọc journal, nhận biết trạng thái `business_committed` và tiếp tục thực hiện Phase 2 mà không làm mất mát, trùng lặp hay xung đột dữ liệu.
          5. **Commit Phase 2 (Identity DB):** Cập nhật `memberships` (`customer_id` mới, `active = 1`, `auth_version = auth_version + 1`), thu hồi phiên cũ trong `sessions`, thiết lập liên kết định danh 1-1 trong `customer_links` và `external_identities` (Google sub/email), xóa bản ghi khỏi `unresolved_collisions`, ghi nhận audit event `collision_reconciled`, và cập nhật journal thành `completed`. Hoàn tất đối soát an toàn.
 - **Trạng thái kiểm thử & xác thực CI (03/10/2026)**:
-  - **Môi trường máy trạm Windows:** 424 tests PASS, 46 tests SKIP across 470 tests (0 failures, 0 errors).
+  - **Môi trường máy trạm Windows:** 427 tests PASS, 47 tests SKIP across 474 tests (0 failures, 0 errors).
     - Đã kiểm chứng Maintenance Mode fail-closed 503 trên toàn bộ 4 auth routes (`GET /auth/google/config`, `GET /auth/google/login`, `GET /auth/google/callback`, `POST /api/login`) trong `tests/test_public_web.py`.
-    - Đã kiểm chứng Reconciliation Coordinator hai database có journal, idempotency và recovery sau fault injection trong `tests/test_pr_a_correctness.py`.
-    - Nâng cấp test `test_identity_rollback_policy_and_account_reconciliation` trong `tests/test_postgres.py` với orders/conversations thật trong Business DB, fault injection sau business commit và retry/resume tự động.
-    - 46 test skipped trên máy trạm Windows do không có PostgreSQL container cục bộ (gồm 32 tests trong `tests/test_postgres.py`, 11 tests trong `tests/test_rag_chat.py`, 2 tests trong `tests/test_knowledge.py`, 1 test trong `tests/test_public_web.py`).
-  - **Môi trường GitHub Actions CI Runner (PostgreSQL 16 + pgvector container thật):**
-    - **Run ID:** `37047893366` | **Commit:** `c34c54b` | **Trạng thái:** `COMPLETED` / `SUCCESS`
-    - **URL:** [https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37047893366](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37047893366)
-    - **Kết quả Full Suite:** **469 PASS**, 1 SKIP (test external paid model), **0 FAIL, 0 ERROR across 470 tests**.
+    - Đã kiểm chứng Reconciliation Coordinator hai database có journal, canonical plan hash immutability, ownership check, và recovery sau fault injection trong `tests/test_pr_a_correctness.py`.
+    - Nâng cấp test `test_identity_rollback_policy_and_account_reconciliation` trong `tests/test_postgres.py` với orders/conversations thật trong Business DB, fault injection 2 phase (crash trước journal và crash trong identity commit), plan immutability và isolation ownership / hijack checks.
+    - 47 test skipped trên máy trạm Windows do không có PostgreSQL container cục bộ (gồm 33 tests trong `tests/test_postgres.py`, 11 tests trong `tests/test_rag_chat.py`, 2 tests trong `tests/test_knowledge.py`, 1 test trong `tests/test_public_web.py`).
+  - **Môi trường GitHub Actions CI Runner (PostgreSQL 16 + pgvector container thật & Caddy live):**
+    - **Run ID:** `37095321746` | **Commit:** `872b8ee` | **Trạng thái:** `COMPLETED` / `SUCCESS`
+    - **URL:** [https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37095321746](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37095321746)
+    - **Kết quả Full Suite:** **473 PASS**, 1 SKIP (test external paid model), **0 FAIL, 0 ERROR across 474 tests**.
     - **PostgreSQL Integration:** Toàn bộ 45/45 PostgreSQL integration tests chạy trên PostgreSQL thật **100% PASS**.
     - **Cổng hợp đồng:** 4/4 cổng hợp đồng (docs, deployment, eval dataset, notebook) đạt **PASS 100%**.
-    - **Public HTTPS verification:** Đạt `PUBLIC_UI_ASSETS_OK`, `PUBLIC_HTTPS_PROXY_COOKIE_FLOW_OK`, `PERSISTENT_HTTPS_ACCOUNT_FLOW_OK`, `POSTGRES_HTTPS_IMPORT_RESTORE_OK`.
-  - **KẾT LUẬN NGHIỆM THU N08:** Toàn bộ 3 Blocker N08 đã được xử lý và kiểm chứng thành công trên PostgreSQL CI runner. Nhánh `feature/module-2.5-pr-a` đã sẵn sàng cho bước nghiệm thu mã nguồn (Code Review Approval); tuân thủ cam kết: **chưa merge vào main, chưa deploy**.
+    - **Public HTTPS verification:** Đạt `PUBLIC_UI_ASSETS_OK`, `PUBLIC_HTTPS_PROXY_COOKIE_FLOW_OK`, `PUBLIC_CADDY_MAINTENANCE_SWITCH_OK` (chuyển đổi Caddy live mode maintenance thực tế, 4 routes chặn 503), `PERSISTENT_HTTPS_ACCOUNT_FLOW_OK`, `POSTGRES_HTTPS_IMPORT_RESTORE_OK`.
+  - **KẾT LUẬN NGHIỆM THU ASTRA REVIEW:** Toàn bộ 5 Blocker / Findings (4 P1, 1 P2) theo review của GPT 6 Astra xhigh đã được xử lý triệt để và kiểm chứng thành công trên PostgreSQL & Caddy CI runner. Nhánh `feature/module-2.5-pr-a` đã sẵn sàng cho bước nghiệm thu mã nguồn (Code Review Approval); tuân thủ cam kết: **chưa merge vào main, chưa deploy**.
 
 ---
 
