@@ -665,32 +665,32 @@ class IdentityStore:
                 WHERE s.id=? AND s.expires_at>? AND s.auth_version=m.auth_version AND m.active=1 AND t.active=1''',
                 (sid, time.time())).fetchone()
             require(row is not None, 401, 'session_expired', 'Phiên đã kết thúc hoặc quyền đã thay đổi. Vui lòng đăng nhập lại.')
-            # P1.1 session safety: existing sessions fail-closed when customer_id is unresolved
+            # P1.1 session safety: existing customer sessions fail-closed when customer_id is unresolved
             # (colliding, in quarantine, or reserved by an ongoing reconciliation).
-            try:
-                unres = db.execute(
-                    "SELECT 1 FROM unresolved_collisions WHERE tenant_id=? AND customer_id=?",
-                    (row['tenant_id'], row['customer_id'])
-                ).fetchone()
-            except Exception:
-                unres = None
-            if unres:
-                require(False, 503, 'collision_unresolved', 'Tài khoản đang chờ xử lý va chạm dữ liệu.')
-            try:
-                link_row = db.execute(
-                    "SELECT customer_id FROM customer_links WHERE tenant_id=? AND principal_id=?",
-                    (row['tenant_id'], row['principal_id'])
-                ).fetchone()
-                if link_row and link_row['customer_id'] != row['customer_id']:
-                    link_unres = db.execute(
-                        "SELECT 1 FROM unresolved_collisions WHERE tenant_id=? AND customer_id=?",
-                        (row['tenant_id'], link_row['customer_id'])
-                    ).fetchone()
-                    if link_unres:
-                        require(False, 503, 'collision_unresolved', 'Tài khoản đang chờ xử lý va chạm dữ liệu.')
-            except Exception:
-                pass
             if row['role'] == 'customer':
+                try:
+                    unres = db.execute(
+                        "SELECT 1 FROM unresolved_collisions WHERE tenant_id=? AND customer_id=?",
+                        (row['tenant_id'], row['customer_id'])
+                    ).fetchone()
+                except Exception:
+                    unres = None
+                if unres:
+                    require(False, 503, 'collision_unresolved', 'Tài khoản đang chờ xử lý va chạm dữ liệu.')
+                try:
+                    link_row = db.execute(
+                        "SELECT customer_id FROM customer_links WHERE tenant_id=? AND principal_id=?",
+                        (row['tenant_id'], row['principal_id'])
+                    ).fetchone()
+                    if link_row and link_row['customer_id'] != row['customer_id']:
+                        link_unres = db.execute(
+                            "SELECT 1 FROM unresolved_collisions WHERE tenant_id=? AND customer_id=?",
+                            (row['tenant_id'], link_row['customer_id'])
+                        ).fetchone()
+                        if link_unres:
+                            require(False, 503, 'collision_unresolved', 'Tài khoản đang chờ xử lý va chạm dữ liệu.')
+                except Exception:
+                    pass
                 col_cnt = db.execute(
                     "SELECT count(*) as total FROM memberships WHERE tenant_id=? AND customer_id=? AND role='customer'",
                     (row['tenant_id'], row['customer_id'])
