@@ -3,9 +3,9 @@
 > **Ngày ghi nhận:** 03/10/2026 (12:20 GMT+7)  
 > **Repository:** `tuteemovaixlong/CSKH_ban_le`  
 > **Nhánh hiện tại:** `feature/module-2.5-pr-a` (Target tích hợp: `main`)  
-> **Head Commit SHA:** Commit SHA cuối sau khi đồng bộ tài liệu và chạy CI toàn diện  
-> **Kết quả kiểm thử cục bộ:** **475 tests, 427 PASS, 48 SKIP, 0 FAIL, 0 ERROR** (48 skip do không có PG local, chạy 100% pass trên CI container)  
-> **Kết quả kiểm thử CI (GitHub Actions):** **474/475 PASS, 1 SKIP, 0 FAIL, 0 ERROR** trên cả PostgreSQL 16 và Caddy live container thật  
+> **Head Commit SHA:** Commit SHA cuối sau khi đồng bộ tài liệu và chạy CI toàn diện (CI xác minh code P1.1: Run 37128838055 trên `6e0363c`)  
+> **Kết quả kiểm thử cục bộ:** **477 tests, 428 PASS, 49 SKIP, 0 FAIL, 0 ERROR** (skip do không có PG local; các test PG chạy trên CI container)  
+> **Kết quả kiểm thử CI (GitHub Actions Run 37128838055):** host suite **477/477 PASS, 0 SKIP**; packaged container suite **476 PASS, 1 SKIP, 0 FAIL, 0 ERROR**, trên PostgreSQL 16 và Caddy live container thật  
 > **Cổng hợp đồng:** 4/4 cổng hợp đồng PASS 100% (`check_docs_contract.py`, `check_deployment_contract.py`, `check_eval_dataset.py`, `build_agent_notebook.py --check`)  
 > **Cam kết vận hành:** **Chưa merge vào `main`**, **chưa deploy lên EC2**, **chưa bắt đầu PR B**.  
 
@@ -44,6 +44,13 @@ Toàn bộ các blocker / findings kỹ thuật được nêu trong `docs/review
   - Hợp nhất trạng thái rõ ràng theo trình tự thời gian: phân định rõ ngữ cảnh lịch sử phiên 02/10/2026 và tiến độ hoàn tất ngày 03/10/2026.
   - Chuẩn hóa mô tả Identity Schema v4 (`IDENTITY_SCHEMA_CURRENT = 4`) với bảng `reconciliation_journal` và cột `plan_hash TEXT` trên cả PostgreSQL và SQLite.
 
+### 1.5. Blocker P1.1: Xác Minh Quyền Sở Hữu `target_customer_id` Trước Mọi Ghi Business DB
+- **Vấn đề:** Plan có thể gán nhầm đích sang customer đang thuộc principal/membership khác trong cùng tenant, khiến dữ liệu bị chuyển vào tài khoản của người khác.
+- **Giải pháp:**
+  - `retailops/identity/reconcile.py`: `_validate_target_ownership` (Identity) và `_validate_business_targets` (Business) chạy trong transaction Identity trước mọi ghi Business DB; từ chối HTTP 409 `target_customer_conflict`. Chỉ chấp nhận đích mới hoặc đích đã được chứng minh thuộc đúng principal (membership/customer_link). Kiểm tra Business được lặp lại dưới write lock.
+  - Bị từ chối $\rightarrow$ rollback cả dòng journal: dữ liệu không đổi, collision vẫn unresolved, key không kẹt; retry cùng key với plan hợp lệ hoàn tất.
+  - Regression test SQLite + PostgreSQL qua `tests/reconcile_target_cases.py`.
+
 ---
 
 ## 2. CHECKLIST VẬN HÀNH TIẾP THEO
@@ -68,7 +75,7 @@ Toàn bộ các blocker / findings kỹ thuật được nêu trong `docs/review
    ```bash
    python -B -X utf8 -m unittest discover -s tests -p "test_*.py"
    ```
-   *Kỳ vọng: 475 tests, 427 PASS, 48 SKIP, 0 FAIL, 0 ERROR (48 skip do không có PG local).*
+   *Kỳ vọng: 477 tests, 428 PASS, 49 SKIP, 0 FAIL, 0 ERROR (skip do không có PG local).*
 
 4. **Nhiệm vụ tiếp theo:**
    - Xem xét nghiệm thu PR A và ra quyết định merge vào `main` (khi người phụ trách phê duyệt).
