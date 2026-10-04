@@ -1,36 +1,97 @@
-# Review GPT 6 Astra — hậu kiểm Gemini N08 P1.1
+# Review GPT 6 Astra — Báo cáo nghiệm thu PR A / N08
 
 **Ngày:** 04/10/2026
-**Branch:** feature/module-2.5-pr-a
-**Code patch:** `c4e9976` (c4e99769ec46be3d8fe33d272527e9c73b3b0ad1)
-**Final docs tree đã qua CI:** `eebe8ed` (eebe8edefd52abb1af86e9e8bdf2173413c25fd1) — CI run 37197602401
-**Phạm vi:** Bản vá IdentityStore.resolve(), regression tests, N08 và các status/plan liên kết.
+**Branch:** `feature/module-2.5-pr-a` → `main`
+**Commit nghiệm thu:** `d38554e` (d38554e5465e81acd84a222f00438efe46ddd187)
+**CI nghiệm thu:** run 37198909762, head_sha = `d38554e`, **SUCCESS**
+**Kết luận:** **READY FOR MERGE** — merge là quyết định của owner; chưa merge, chưa deploy, chưa bắt đầu PR B.
 
-## Tóm tắt hiện trạng
+> Commit chứa chính báo cáo này chỉ thay đổi tài liệu. Theo quy ước, tài liệu không tự ghi SHA/run của commit chứa nó; CI của PR trên head mới là bằng chứng bổ sung, ghi trong PR.
 
-> **Trigger: N08-P11-RESOLVE-FAIL-CLOSED.**
-> - Đã sửa lỗi fail-open trong `IdentityStore.resolve()`: re-raise `ApiError`, log nội bộ và fail-closed 503 `collision_unresolved` trên mọi lỗi lookup safety.
-> - Đã bổ sung regression cho toàn bộ các vai trò non-customer (`staff`, `manager`, `viewer`) trong shared harness `tests/reconcile_interleaving_cases.py`.
-> - SQLite có bằng chứng kiểm thử cục bộ: PR A suite đạt 56/56 PASS; full suite đạt 429 PASS, 50 SKIP, 0 FAIL.
-> - PostgreSQL & pgvector integration tests chạy thật và PASS trên CI: run 37197602401 (head_sha `eebe8ed`, final tree) là bằng chứng canonical; run 37196429628 (`c4e9976`, code patch) là bằng chứng lịch sử.
-> - Kết quả CI 37197602401: **SUCCESS**. Host suite: 479/479 PASS (0 SKIP). Packaged container suite: 478 PASS, 1 SKIP (`test_colab_agent_notebook_sync` bỏ qua do `scripts/build_agent_notebook.py` không có trong image). Docs/eval/deployment/notebook gates xanh.
+## 1. Phạm vi đã fix
 
-## Kết luận & Quyết định
+| Nhóm | Hạng mục | Kết quả |
+| --- | --- | --- |
+| PR A correctness | F01 | Semantic/FAQ cache fail-closed theo query, context, lịch sử và provenance |
+| PR A correctness | F02 | Replay, snapshot và cache commit được serialize dưới conv_lock |
+| PR A correctness | F03 | Lỗi hạ tầng và HTTP 429 được chuẩn hóa, không thành “thành công giả” |
+| PR A correctness | F04 | Proposal hủy chỉ tạo khi đơn và eligibility hợp lệ |
+| PR A correctness | F05 | Đơn explicit mới quyết định product context |
+| PR A correctness | F06 | Tách size/color và bốn trạng thái tồn kho |
+| PR A correctness | F08a | Bot/UI không tuyên bố giao dịch chưa có backend thật |
+| PR A correctness | F11 | Catalog thiếu category không làm crash tìm kiếm |
+| N08 identity | Schema/guards | PostgreSQL identity v3, collision guard, journal v4, route maintenance có auth |
+| N08 identity | Reconciliation | Hai DB có journal/idempotency/recovery; kiểm tra target ownership; đóng TOCTOU bằng reservation + recheck dưới lock |
+| N08 P1.1 | Session safety | `IdentityStore.resolve()` re-raise `ApiError`; mọi lỗi lookup safety → 503 `collision_unresolved` (fail-closed) |
+| N08 P1.1 | Role regression | `staff`, `manager`, `viewer` resolve thành công, đúng role trong shared harness SQLite/PostgreSQL |
 
-**VERIFIED trên cả SQLite lẫn PostgreSQL CI; PR A đủ điều kiện chuyển sang review / nghiệm thu; merge là quyết định riêng, chưa merge main, chưa deploy EC2, chưa bắt đầu PR B.**
+Ngoài phạm vi, không thay đổi: frozen benchmark (SHA-256 LF `36fa8c7a52a60323bb4f04d11f1e677106ddfe6a35e0ccac3266784c7c6e4411`), schema Business (SQLite v3 / PostgreSQL v4), dataset, cấu hình deploy.
 
-1. **Sửa fail-open hợp lý:** `IdentityStore.resolve()` re-raise `ApiError` trước nhánh bắt `Exception`; lỗi safety lookup được log nội bộ rồi ánh xạ về HTTP 503 `collision_unresolved`. Đóng dứt điểm nhánh lỗi bị nuốt và lỗi lookup bị coi như không có collision.
-2. **Regression role viewer đã hoàn tất:** Shared harness `tests/reconcile_interleaving_cases.py` đã tạo và xác thực đầy đủ cả 3 vai trò non-customer (`staff`, `manager`, `viewer`) resolve thành công, đúng role (regression non-customer hiện không assert HTTP response mà assert Python `SessionBinding` có `application.role` tương ứng), kể cả khi có collision ID và dưới fault injection.
-3. **Bằng chứng SQLite cục bộ đạt chuẩn:** Chạy độc lập `tests/test_pr_a_correctness.py` đạt 56/56 PASS; full suite đạt 429 PASS, 50 SKIP, 0 FAIL/ERROR (50 tests SKIP gồm 36 tests trong `test_postgres.py`, 11 tests trong `test_rag_chat.py`, 2 tests trong `test_knowledge.py`, 1 test trong `test_public_web.py` do thiếu local DSN/Waitress).
-4. **PostgreSQL & pgvector đã kiểm chứng trên CI:** CI run 37197602401 trên final tree `eebe8ed` SUCCESS (CI run 37196429628 trên code patch `c4e9976` là lịch sử, cùng kết quả). Host suite chạy đủ 479/479 tests không skip; packaged container suite đạt 478 PASS / 1 SKIP (`test_colab_agent_notebook_sync` bỏ qua do không có `scripts/build_agent_notebook.py` trong image). Các tests PostgreSQL (late takeover, target ownership, rollback policy, journal v4, viewer permissions) đều PASS.
-5. **Cổng hợp đồng đạt 100%:** `check_docs_contract.py` (0 lỗi), `check_deployment_contract.py` (PASS), `check_eval_dataset.py` (PASS, 30 ca, benchmark giữ nguyên SHA-256), `build_agent_notebook.py --check` (PASS).
-6. **Quyết định:** N08 đã hoàn tất mọi điều kiện kỹ thuật. PR A đủ điều kiện nghiệm thu. Quyết định merge `main` là bước riêng; tuyệt đối chưa merge, chưa deploy lên EC2 và chưa bắt đầu PR B.
+## 2. Bằng chứng CI
+
+| Run | head_sha | Vai trò | Kết quả |
+| --- | --- | --- | --- |
+| 37198909762 | `d38554e` | **Nghiệm thu** | SUCCESS |
+| 37197602401 | `eebe8ed` | Final docs tree trước nghiệm thu | SUCCESS |
+| 37196429628 | `c4e9976` | Code patch N08-P11 (lịch sử) | SUCCESS |
+
+Chi tiết run 37198909762:
+
+- Job `offline`: success.
+  - Host suite: `Ran 479 tests … OK`, 0 SKIP; PostgreSQL và pgvector integration chạy thật.
+  - Packaged container suite: `Ran 479 tests … OK (skipped=1)`. Test bị skip là `test_colab_agent_notebook_sync`, vì image không chứa `scripts/build_agent_notebook.py`.
+  - Gates xanh: docs contract, `EVAL_DATASET_OK` (30 ca), `LIVE_E2E_CONTRACT_OK`, `AGENT_NOTEBOOK_SOURCE_SYNC_OK` và `DEPLOYMENT_CONTRACT_OK`.
+  - Kiểm tra HTTPS/proxy/cookie, persistent account và `POSTGRES_HTTPS_IMPORT_RESTORE_OK` đạt.
+- Job `colab-python313`: success (`COLAB_PY313_DEPENDENCIES_OK`).
+
+Bằng chứng local (SQLite): `tests/test_pr_a_correctness.py` đạt 56/56 PASS. Full suite: 429 PASS, 50 SKIP, 0 FAIL/ERROR.
+
+- Phân bổ 50 SKIP: 36 `test_postgres.py`, 11 `test_rag_chat.py`, 2 `test_knowledge.py`, 1 `test_public_web.py`.
+- Lý do skip: máy local không có PostgreSQL DSN/Waitress.
+- Local skip không được tính là PASS PostgreSQL. PostgreSQL chỉ được xác nhận bằng CI.
+
+## 3. Acceptance criteria
+
+- **AC-01..AC-08 (F01–F06, F08a, F11): PASS** theo các test hiện có trong `tests/test_pr_a_correctness.py` và CI ở trên. PASS ở đây là đạt contract unit/integration đã đặc tả; không có nghĩa đã kiểm chứng mọi tình huống E2E hoặc live LLM.
+- **AC-14, AC-15 (gates/CI): PASS.**
+- **AC-09..AC-13 (PR B): PENDING TEST.**
+
+## 4. Known limitations
+
+1. Collision chưa xác định chủ sở hữu vẫn bị **quarantine/unresolved**; session customer liên quan bị từ chối (503) cho đến khi operator đối soát có bằng chứng.
+2. Identity DB và Business DB **không có distributed ACID**. Journal, idempotency và recovery hỗ trợ fail-closed và resume, nhưng không bảo đảm atomic commit xuyên hai database.
+3. Regression non-customer assert `SessionBinding.application.role` ở tầng Python, chưa assert HTTP response.
+4. Chưa chạy live LLM/E2E cho các hạng mục PR A; không có số liệu benchmark/Phase 4.
+5. `agent_lock` tồn dư vẫn còn (dọn trong PR B, CONV-CLEANUP); ToolCache vẫn theo từng Application, chưa chia sẻ theo tenant (F13).
+6. Cache/lock chỉ bảo đảm trong một tiến trình; không suy ra tính nhất quán giữa nhiều pod.
+
+## 5. Bàn giao PR B (bắt đầu sau khi PR A được merge)
+
+Nguồn đặc tả: [Execution Handoff §6](PLAN_EXECUTION_HANDOFF_GPT6_ASTRA.md), [Runtime Efficiency](PLAN_RUNTIME_EFFICIENCY_CONCURRENCY.md), [Concurrency Sprint](PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT.md), [Module 2.5 §2.2](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md).
+
+| Mã | Mục tiêu | AC / test dự kiến |
+| --- | --- | --- |
+| F07 | Admission HTTP tối đa 6 chat trên Waitress 8 workers, đặt trước body/session/DB; conv_lock theo conversation; InferenceGate K=1/Q=5, timeout 10 s; 429 + `Retry-After: 5` | AC-09 |
+| F09 | Telemetry monotonic: `queue_wait_ms`, `provider_inference_ms`, E2E; giá trị chưa đo giữ null, không giả 0.0; kiểm cả producer và Ops importer | AC-10, `tests/test_inference_gate.py` |
+| F12 | Bỏ prune `agent_turns` LIMIT 6; prompt vẫn bounded; transcript API đủ lượt | AC-11, `tests/test_conversation_resume.py` |
+| F13 | ToolCache chia sẻ theo tenant/customer; epoch + CAS, discard stale in-flight write; bump sau mutation thành công | AC-12, `tests/test_business_api.py` |
+| SEC-01 | OAuth state gắn transient cookie (TTL 600 s, `Path=/auth/google`, Secure, HttpOnly, SameSite=Lax); atomic consume; lỗi 403 `invalid_oauth_state`; kiểm Set-Cookie trên HTTP response | AC-13, `tests/test_auth_google.py` |
+| CONV-CLEANUP | Xóa `self.agent_lock` ở Application và session backends sau khi admission + conv_lock + gate đã được test | Module 2.5 §2.2 |
+
+Ràng buộc PR B:
+
+- Không thêm migration DDL; giữ SQLite Business v3 / PostgreSQL Business v4.
+- Không sửa frozen benchmark.
+- Không đổi ma trận RBAC.
+- Gap đã biết: code hiện có `STATE_TTL_SECONDS = 900`, plan yêu cầu 600 s; PR B phải xử lý gap này và có test.
+
+**PR C (product_policy_links / schema v5): DEFERRED** — cần ADR riêng. Phase 4 (benchmark 250 ca, load matrix) vẫn pending sau PR B.
 
 ## Tài liệu liên quan
 
 - [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md)
 - [CURRENT_PROJECT_STATUS.md](CURRENT_PROJECT_STATUS.md)
 - [PLAN_MODULE_2_5_HARDENING_VERIFICATION.md](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md)
-- [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md)
 - [PLAN_EXECUTION_HANDOFF_GPT6_ASTRA.md](PLAN_EXECUTION_HANDOFF_GPT6_ASTRA.md)
+- [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md)
 - [SESSION_HANDOFF_2026-10-03.md](SESSION_HANDOFF_2026-10-03.md)
