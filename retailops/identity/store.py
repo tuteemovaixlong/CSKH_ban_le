@@ -1,5 +1,6 @@
 """Durable principals, memberships and revocable sessions; credentials stored as hashes."""
 import hashlib
+import logging
 import re
 import secrets
 import sqlite3
@@ -10,8 +11,11 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from retailops.business.permissions import ROLE_PERMISSIONS
-from retailops.core import require
+from retailops.core import ApiError, require
 from retailops.schema import migrate
+
+logger = logging.getLogger("retailops_identity")
+
 
 
 def initialize(db):
@@ -673,11 +677,9 @@ class IdentityStore:
                         "SELECT 1 FROM unresolved_collisions WHERE tenant_id=? AND customer_id=?",
                         (row['tenant_id'], row['customer_id'])
                     ).fetchone()
-                except Exception:
-                    unres = None
-                if unres:
-                    require(False, 503, 'collision_unresolved', 'Tài khoản đang chờ xử lý va chạm dữ liệu.')
-                try:
+                    if unres:
+                        require(False, 503, 'collision_unresolved', 'Tài khoản đang chờ xử lý va chạm dữ liệu.')
+
                     link_row = db.execute(
                         "SELECT customer_id FROM customer_links WHERE tenant_id=? AND principal_id=?",
                         (row['tenant_id'], row['principal_id'])
@@ -689,13 +691,18 @@ class IdentityStore:
                         ).fetchone()
                         if link_unres:
                             require(False, 503, 'collision_unresolved', 'Tài khoản đang chờ xử lý va chạm dữ liệu.')
-                except Exception:
-                    pass
-                col_cnt = db.execute(
-                    "SELECT count(*) as total FROM memberships WHERE tenant_id=? AND customer_id=? AND role='customer'",
-                    (row['tenant_id'], row['customer_id'])
-                ).fetchone()['total']
-                if col_cnt > 1:
+
+                    col_cnt = db.execute(
+                        "SELECT count(*) as total FROM memberships WHERE tenant_id=? AND customer_id=? AND role='customer'",
+                        (row['tenant_id'], row['customer_id'])
+                    ).fetchone()['total']
+                    if col_cnt > 1:
+                        require(False, 503, 'collision_unresolved', 'Tài khoản đang chờ xử lý va chạm dữ liệu.')
+                except ApiError:
+                    raise
+                except Exception as e:
+                    logger.error("Session safety check query failed for customer %s in tenant %s: %s",
+                                 row['customer_id'], row['tenant_id'], e)
                     require(False, 503, 'collision_unresolved', 'Tài khoản đang chờ xử lý va chạm dữ liệu.')
             return dict(row)
 

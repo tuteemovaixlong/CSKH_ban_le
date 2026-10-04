@@ -9,6 +9,7 @@ previous one committed (#1 = Step 1 preflight/reservation, #2 = Step 2 lock, #3 
 import io
 import json
 import time
+from contextlib import contextmanager
 
 from retailops.core import ApiError
 from retailops.http.public import PublicWeb
@@ -20,6 +21,46 @@ TARGET_A = 'CG-ilv-alice'
 TARGET_B = 'CG-ilv-bob'
 INTRUDER_OWN = 'CG-ilv-intruder-own'
 KEY = 'rec-ilv-toctou'
+
+
+class _FaultInjectionConnectionContext:
+    def __init__(self, orig_ctx, fault_fn):
+        self._orig_ctx = orig_ctx
+        self._fault_fn = fault_fn
+
+    def __enter__(self):
+        self._db = self._orig_ctx.__enter__()
+        return _FaultInjectionDB(self._db, self._fault_fn)
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return self._orig_ctx.__exit__(exc_type, exc_val, exc_tb)
+
+
+class _FaultInjectionDB:
+    def __init__(self, db, fault_fn):
+        self._db = db
+        self._fault_fn = fault_fn
+
+    def execute(self, statement, parameters=()):
+        self._fault_fn(statement, parameters)
+        return self._db.execute(statement, parameters)
+
+    def __getattr__(self, name):
+        return getattr(self._db, name)
+
+
+@contextmanager
+def inject_identity_fault(control, fault_fn):
+    orig_conn = control.connection
+
+    def patched_conn(write=False):
+        return _FaultInjectionConnectionContext(orig_conn(write=write), fault_fn)
+
+    control.connection = patched_conn
+    try:
+        yield
+    finally:
+        control.connection = orig_conn
 
 
 class _InterleavingControl:
@@ -351,3 +392,166 @@ def run(case, sessions, tenant):
     case.assertEqual([o['id'] for o in data['orders']], ['O-ILV-A'])
 
     case.assertTrue(reconcile_collision(sessions, tenant, COLLIDING, plan(), idempotency_key=KEY).get('already_completed'))
+
+    # 3. P1.1b: customer_links.customer_id differs from memberships.customer_id and is unresolved.
+    #    IdentityStore.resolve() must refuse with 503 collision_unresolved (ApiError not swallowed).
+    link_test_pid = 'p-ilv-link-mismatch'
+    link_test_mid = 'm-ilv-link-mismatch'
+    link_test_cid = 'CG-ilv-link-clean'
+    link_unres_target = 'CG-ilv-link-unresolved'
+
+    with sessions.control.connection(write=True) as db:
+        db.execute('INSERT INTO principals (id, name) VALUES (?, ?)', (link_test_pid, 'ILV Link Test'))
+        db.execute(
+            'INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) '
+            "VALUES (?, ?, ?, ?, 'customer', 1, 1)", (link_test_mid, tenant, link_test_pid, link_test_cid)
+        )
+        db.execute(
+            'INSERT INTO customer_links (id, tenant_id, principal_id, customer_id, created_at) VALUES (?, ?, ?, ?, ?)',
+            ('cl-ilv-mismatch', tenant, link_test_pid, link_unres_target, time.time())
+        )
+        db.execute(
+            'INSERT INTO unresolved_collisions (tenant_id, customer_id, created_at) VALUES (?, ?, ?)',
+            (tenant, link_unres_target, time.time())
+        )
+    with sessions.business_store(tenant).connection(write=True) as b:
+        b.execute('INSERT INTO customers (id, name) VALUES (?, ?)', (link_test_cid, 'ILV Link Clean'))
+        b.execute("INSERT INTO orders (id, customer_id, name, variant, amount, status, version) "
+                  "VALUES (?, ?, 'Link Order', 'M', 2000, 'pending', 1)", ('O-ILV-LINK', link_test_cid))
+
+    link_token = sessions.control.create_session_for_membership(link_test_mid, 3600, 10)
+    link_cookie = f'{sessions.cookie_name}={link_token}'
+
+    # Must fail-closed because customer_links points to unresolved customer ID
+    with case.assertRaises(ApiError) as link_err:
+        with sessions.resolve(link_cookie):
+            pass
+    case.assertEqual((link_err.exception.status, link_err.exception.code), (503, 'collision_unresolved'))
+
+    status, link_resp = _request(web, '/api/orders', cookie=link_cookie)
+    case.assertEqual(status, 503)
+    case.assertEqual(link_resp.get('error'), 'collision_unresolved')
+    case.assertNotIn('orders', link_resp)
+
+    # When unresolved_collisions entry is cleared, session resolves normally
+    with sessions.control.connection(write=True) as db:
+        db.execute('DELETE FROM unresolved_collisions WHERE tenant_id = ? AND customer_id = ?',
+                   (tenant, link_unres_target))
+
+    with sessions.resolve(link_cookie) as binding:
+        case.assertEqual(binding.customer_id, link_test_cid)
+    status, link_resp = _request(web, '/api/orders', cookie=link_cookie)
+    case.assertEqual(status, 200)
+    case.assertEqual([o['id'] for o in link_resp['orders']], ['O-ILV-LINK'])
+
+    # 4. P1.1d: Role non-customer (staff, manager, viewer) must not be blocked by customer unresolved collisions
+    staff_pid = 'p-ilv-staff-guard'
+    staff_mid = 'm-ilv-staff-guard'
+    staff_cid = 'CG-ilv-staff-collision'
+    mgr_pid = 'p-ilv-mgr-guard'
+    mgr_mid = 'm-ilv-mgr-guard'
+    viewer_pid = 'p-ilv-viewer-guard'
+    viewer_mid = 'm-ilv-viewer-guard'
+    viewer_cid = 'CG-ilv-viewer-collision'
+
+    with sessions.control.connection(write=True) as db:
+        db.execute('INSERT INTO principals (id, name) VALUES (?, ?)', (staff_pid, 'ILV Staff Member'))
+        db.execute('INSERT INTO principals (id, name) VALUES (?, ?)', (mgr_pid, 'ILV Manager Member'))
+        db.execute('INSERT INTO principals (id, name) VALUES (?, ?)', (viewer_pid, 'ILV Viewer Member'))
+        db.execute(
+            'INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) '
+            "VALUES (?, ?, ?, ?, 'staff', 1, 1)", (staff_mid, tenant, staff_pid, staff_cid)
+        )
+        db.execute(
+            'INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) '
+            "VALUES (?, ?, ?, ?, 'manager', 1, 1)", (mgr_mid, tenant, mgr_pid, 'mgr-clean-cid')
+        )
+        db.execute(
+            'INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) '
+            "VALUES (?, ?, ?, ?, 'viewer', 1, 1)", (viewer_mid, tenant, viewer_pid, viewer_cid)
+        )
+        # Even if staff_cid or viewer_cid is in unresolved_collisions, staff and viewer are not role='customer'
+        db.execute(
+            'INSERT INTO unresolved_collisions (tenant_id, customer_id, created_at) VALUES (?, ?, ?)',
+            (tenant, staff_cid, time.time())
+        )
+        db.execute(
+            'INSERT INTO unresolved_collisions (tenant_id, customer_id, created_at) VALUES (?, ?, ?)',
+            (tenant, viewer_cid, time.time())
+        )
+
+    staff_token = sessions.control.create_session_for_membership(staff_mid, 3600, 10)
+    staff_cookie = f'{sessions.cookie_name}={staff_token}'
+    with sessions.resolve(staff_cookie) as binding:
+        case.assertEqual(binding.principal_id, staff_pid)
+        case.assertEqual(binding.application.role, 'staff')
+
+    mgr_token = sessions.control.create_session_for_membership(mgr_mid, 3600, 10)
+    mgr_cookie = f'{sessions.cookie_name}={mgr_token}'
+    with sessions.resolve(mgr_cookie) as binding:
+        case.assertEqual(binding.principal_id, mgr_pid)
+        case.assertEqual(binding.application.role, 'manager')
+
+    viewer_token = sessions.control.create_session_for_membership(viewer_mid, 3600, 10)
+    viewer_cookie = f'{sessions.cookie_name}={viewer_token}'
+    with sessions.resolve(viewer_cookie) as binding:
+        case.assertEqual(binding.principal_id, viewer_pid)
+        case.assertEqual(binding.application.role, 'viewer')
+
+    # 5. P1.1c: Any query failure during safety checks must fail-closed 503 for customer,
+    #    while non-customer roles remain unaffected because they do not run the customer guard.
+    def fail_unres_lookup(statement, parameters=()):
+        if 'FROM unresolved_collisions' in statement:
+            raise RuntimeError('Simulated database failure during unresolved_collisions lookup')
+
+    with inject_identity_fault(sessions.control, fail_unres_lookup):
+        # Customer session fails closed
+        with case.assertRaises(ApiError) as query_err:
+            with sessions.resolve(alice_cookie):
+                pass
+        case.assertEqual((query_err.exception.status, query_err.exception.code), (503, 'collision_unresolved'))
+        status, query_resp = _request(web, '/api/orders', cookie=alice_cookie)
+        case.assertEqual(status, 503)
+        case.assertEqual(query_resp.get('error'), 'collision_unresolved')
+        case.assertNotIn('orders', query_resp)
+
+        # Staff, manager, and viewer sessions are unaffected by customer safety check query failures
+        with sessions.resolve(staff_cookie) as binding:
+            case.assertEqual(binding.principal_id, staff_pid)
+        with sessions.resolve(mgr_cookie) as binding:
+            case.assertEqual(binding.principal_id, mgr_pid)
+        with sessions.resolve(viewer_cookie) as binding:
+            case.assertEqual(binding.principal_id, viewer_pid)
+
+    def fail_link_lookup(statement, parameters=()):
+        if 'FROM customer_links' in statement:
+            raise RuntimeError('Simulated database failure during customer_links lookup')
+
+    with inject_identity_fault(sessions.control, fail_link_lookup):
+        with case.assertRaises(ApiError) as link_query_err:
+            with sessions.resolve(alice_cookie):
+                pass
+        case.assertEqual((link_query_err.exception.status, link_query_err.exception.code), (503, 'collision_unresolved'))
+        status, link_query_resp = _request(web, '/api/orders', cookie=alice_cookie)
+        case.assertEqual(status, 503)
+        case.assertEqual(link_query_resp.get('error'), 'collision_unresolved')
+
+    def fail_col_cnt_lookup(statement, parameters=()):
+        if 'FROM memberships' in statement and 'count(*)' in statement:
+            raise RuntimeError('Simulated database failure during memberships count lookup')
+
+    with inject_identity_fault(sessions.control, fail_col_cnt_lookup):
+        with case.assertRaises(ApiError) as col_query_err:
+            with sessions.resolve(alice_cookie):
+                pass
+        case.assertEqual((col_query_err.exception.status, col_query_err.exception.code), (503, 'collision_unresolved'))
+        status, col_query_resp = _request(web, '/api/orders', cookie=alice_cookie)
+        case.assertEqual(status, 503)
+        case.assertEqual(col_query_resp.get('error'), 'collision_unresolved')
+
+    # Without fault injection, Alice session resolves cleanly again
+    with sessions.resolve(alice_cookie) as binding:
+        case.assertEqual(binding.customer_id, TARGET_A)
+    status, ok_resp = _request(web, '/api/orders', cookie=alice_cookie)
+    case.assertEqual(status, 200)
+    case.assertEqual([o['id'] for o in ok_resp['orders']], ['O-ILV-A'])

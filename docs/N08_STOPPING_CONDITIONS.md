@@ -1,57 +1,45 @@
-# N08 — Điều kiện dừng và bàn giao PR B
+# N08 — Điều kiện dừng và phạm vi khắc phục P1.1
 
-**Cập nhật:** 03/10/2026 · **Branch:** `feature/module-2.5-pr-a`  
-**Code fix được CI xác minh:** `fe25f67` (CI Run ID `37137791788`)  
-**Phạm vi:** Nghiệm thu P1.1/P1.2 và late-takeover session safety; không mở lại audit N08 toàn diện.
+**Cập nhật:** 04/10/2026
+**Branch / HEAD được kiểm tra:** feature/module-2.5-pr-a / 4ef078e
+**Trigger:** N08-P11-RESOLVE-FAIL-CLOSED
+**Trạng thái:** LOCAL VERIFIED trên SQLite; PostgreSQL và CI trên SHA cuối còn chờ.
 
-## Trạng thái hiện tại
+## Kết quả hiện tại
 
-Full suite cục bộ chạy **479 tests: OK, 50 SKIP, 0 FAIL/ERROR**. Skip do PostgreSQL/pgvector integration cần `RETAILOPS_TEST_DATABASE_URL` (toàn bộ chạy đầy đủ trên CI container PostgreSQL 16 thật). Bốn gate docs/deployment/eval/notebook và hash chuẩn hóa của hai benchmark đạt PASS.
+IdentityStore.resolve() re-raise ApiError do safety guard phát ra; lỗi truy vấn guard được log nội bộ và trả 503 collision_unresolved. Regression trong tests/reconcile_interleaving_cases.py kiểm tra customer-link mismatch, lỗi ba loại lookup, late takeover, API orders không lộ dữ liệu, và đầy đủ toàn bộ các role non-customer (staff, manager, viewer).
 
-GitHub Actions CI run `37137791788` trên code SHA `fe25f67`: host suite **479/479 PASS, 0 SKIP**; container suite **478 PASS / 1 SKIP** và PostgreSQL 16 live container thật. Cả hai test hồi quy SQLite (`test_n08_p11_reconciliation_toctou_target_taken_after_preflight_sqlite`) và PostgreSQL (`test_reconciliation_toctou_target_taken_after_preflight_on_postgres`) đều PASS (`ok`), bao phủ cả pre-existing session safety, `resolve()` fail-closed 503 `collision_unresolved`, `GET /api/orders` không trả dữ liệu sau late takeover, và retry hoàn tất an toàn.
+Full suite cục bộ: **479 tests, 429 PASS, 50 SKIP, 0 FAIL/ERROR**. Trong đó 50 tests SKIP gồm 36 tests trong `tests/test_postgres.py` và 14 tests trong `tests/test_pgvector_rag.py` do thiếu PostgreSQL local DSN (`RETAILOPS_TEST_DATABASE_URL`). Lần chạy này **KHÔNG tuyên bố PostgreSQL PASS** cục bộ; kiểm thử PostgreSQL được ủy quyền xác thực trên GitHub Actions CI container.
 
-**Kết luận:** Cả P1.1 và P1.2 đã được giải quyết triệt để và kiểm chứng thành công trên cả hai backend. Không còn phát hiện P0/P1. Nhánh `feature/module-2.5-pr-a` sẵn sàng nghiệm thu PR A; chưa merge vào `main`, chưa deploy lên EC2, chưa bắt đầu PR B.
+Docs contract PASS 4/4 checks. Các lệnh check_deployment_contract.py, check_eval_dataset.py và build_agent_notebook.py --check cũng PASS. Cả hai benchmark giữ SHA-256 sau LF normalization: 36fa8c7a52a60323bb4f04d11f1e677106ddfe6a35e0ccac3266784c7c6e4411.
 
-## Các điều kiện dừng
+CI run 37137791788 trên code SHA fe25f67 là evidence lịch sử trước bản vá hiện tại; không dùng làm bằng chứng cho working tree này.
 
-| Gate | Tiêu chí đóng | Bằng chứng/trạng thái |
+## Điều kiện dừng
+
+| Gate | Bằng chứng hiện có | Trạng thái |
 | --- | --- | --- |
-| **P1.1 — Ownership, reservation và session safety** | Mọi target ownership conflict fail closed; reservations chặn writer hợp lệ; takeover sau Business commit không cho cả phiên mới lẫn phiên cũ truy cập customer đang unresolved; journal có thể resume an toàn. Có regression SQLite + PostgreSQL, gồm một session hợp lệ được tạo trước takeover. | **PASS** — `IdentityStore.resolve()` kiểm tra `unresolved_collisions` và membership collision cho `role == 'customer'`, fail-closed 503 `collision_unresolved`. Regression `reconcile_interleaving_cases.py` trên cả SQLite và PostgreSQL: session tạo trước takeover bị từ chối 503, `GET /api/orders` không trả dữ liệu; collision và journal an toàn (`business_committed`); retry hoàn tất và dữ liệu hợp lệ. CI Run `37137791788` PASS trên `fe25f67`. |
-| **P1.2 — SQLite migration → coordinator** | Migration giữ collision unresolved; coordinator/CLI nhận và reconcile được; login/session fail closed cho đến hoàn tất; E2E từ legacy DB qua migration. | **PASS** — Migration giữ unresolved, coordinator nhận diện mượt mà, login/session fail-closed 503 cho đến khi reconcile xong; E2E chạy trên cả SQLite và PostgreSQL. CI Run `37137791788` PASS trên `fe25f67`. |
-| **CI / tài liệu** | Full suite và gate liên quan xanh trên commit code cuối; docs phản ánh đúng SHA, kết quả và giới hạn. | **PASS** — Local suite 479 OK / 50 SKIP; CI Run `37137791788` host 479/479 PASS, container 478 PASS / 1 SKIP; 4/4 cổng hợp đồng PASS 100%; docs phản ánh chính xác code SHA `fe25f67`. |
+| P1.1a — Late takeover/session cũ | Shared regression chạy local qua SQLite; CI cũ trên fe25f67 không bao gồm patch hiện tại. | SQLite local PASS; final CI pending |
+| P1.1b — customer_links trỏ tới customer unresolved | Regression mới trong shared harness; PublicWeb không trả orders. | SQLite local PASS; PostgreSQL pending CI |
+| P1.1c — lỗi safety lookup | Fault injection cho unresolved_collisions, customer_links và membership count; trả fail-closed 503. | SQLite local PASS; PostgreSQL pending CI |
+| P1.1d — ranh giới role | Staff, manager và viewer đã có regression đầy đủ trong shared harness; resolve bình thường, không bị cản trở bởi customer collisions. | SQLite local PASS; PostgreSQL pending CI |
+| P1.2 — SQLite migration/coordinator | Có CI evidence lịch sử trên fe25f67. | Historical PASS; xác nhận lại trong final CI |
+| CI cuối và đồng bộ docs | Full suite và PostgreSQL integration xanh trên cùng SHA cuối; docs khớp evidence. | PENDING |
 
-**Điều kiện dừng vòng N08:** ĐÃ ĐẠT. P1.1 session-safety regression và P1.2 đạt trên cả SQLite và PostgreSQL, CI đạt SUCCESS trên code SHA `fe25f67`, không còn blocker P0/P1. Sẵn sàng nghiệm thu PR A.
+**Điều kiện dừng N08 chưa đạt để nghiệm thu PR A.** SQLite suite và các cổng hợp đồng cục bộ đã đạt, nhưng PR A chỉ được đánh dấu sẵn sàng sau khi GitHub Actions CI chạy full suite trên PostgreSQL container đạt xanh 100% trên đúng SHA cuối của commit. PR B chỉ bắt đầu sau khi PR A được nghiệm thu/merge theo quyết định riêng.
 
-## Known limitations được chấp nhận sau khi gates đạt
+## Trigger và phạm vi Gemini
 
-| Giới hạn | Cách xử lý |
-| --- | --- |
-| Collision chưa xác định được chủ sở hữu | Giữ unresolved/quarantine; không suy đoán mapping; yêu cầu operator cung cấp bằng chứng. |
-| Identity DB và Business DB không có distributed ACID | Journal/idempotency/recovery giữ fail-closed và cho phép resume; không tuyên bố atomic commit xuyên hai DB. |
-| Rollback về binary không hiểu guard/schema Identity v4 | Chỉ rollback bản tương thích; nếu không chắc, bật maintenance mode và theo runbook. |
-| PR B chưa triển khai | Admission/concurrency, history, ToolCache invalidation, telemetry và OAuth hardening còn theo kế hoạch PR B. |
-| Candidate chưa merge/deploy | Merge sau review và CI SHA khớp; deploy là gate riêng. |
+**Trigger bắt buộc:** N08-P11-RESOLVE-FAIL-CLOSED
 
-Không mở rộng scope N08 ngoài blocker session-safety này trừ khi có bằng chứng mới về rò dữ liệu, corruption hoặc lỗi bảo mật nghiêm trọng. Không thực hiện commit/push/merge/deploy chỉ vì tài liệu có trạng thái READY.
+**Đọc trước:** Tài liệu này, PLAN_MODULE_2_5_HARDENING_VERIFICATION.md, PLAN_EXECUTION_HANDOFF_GPT6_ASTRA.md, retailops/identity/store.py, retailops/core.py, retailops/http/routes.py, tests/reconcile_interleaving_cases.py, tests/test_pr_a_correctness.py và tests/test_postgres.py.
 
-## Quỹ đạo
+**Cho phép sửa:** Regression tests trong tests/reconcile_interleaving_cases.py và test wrappers hiện có. Chỉ sửa retailops/identity/store.py nếu test chứng minh còn lỗi thực tế. Notebook chỉ đồng bộ nếu nguồn thay đổi. Cập nhật status docs sau khi có kết quả.
 
-```mermaid
-flowchart LR
-    P11["P1.1: reservation + recheck<br/>+ fail-closed resolve (PASS)"] --> CI["CI run 37137791788<br/>trên code SHA fe25f67"]
-    P12["P1.2: migration → coordinator<br/>(PASS)"] --> CI
-    CI --> Review["Review cuối: 0 blocker P0/P1"]
-    Review --> Merge["Nghiệm thu / merge PR A"]
-    Merge --> PRB["Bắt đầu PR B"]
-```
+**Ngoài phạm vi:** PR B, schema/migration, benchmark/dataset, cấu hình deploy, merge/deploy, hoặc tệp ngoài allowlist nếu chưa review phạm vi.
 
-## Bằng chứng nghiệm thu đã ghi nhận
+## Known limitations
 
-- **Code SHA xác minh:** `fe25f67` (CI Actions Run ID: `37137791788`, `head_sha` khớp `fe25f67bec05430face0446b0e42fe50556f48dd`).
-- **Kết quả kiểm thử:**
-  - Cục bộ: 479 tests (429 PASS, 50 SKIP, 0 FAIL, 0 ERROR; skip do không có PG local).
-  - CI Runner (PostgreSQL 16 container thật & Caddy live): host suite **479/479 PASS, 0 SKIP**; container suite **478 PASS / 1 SKIP, 0 FAIL**.
-  - 4/4 cổng hợp đồng PASS 100%.
-  - 5/5 marker HTTPS PASS (`PUBLIC_UI_ASSETS_OK`, `PUBLIC_HTTPS_PROXY_COOKIE_FLOW_OK`, `PUBLIC_CADDY_MAINTENANCE_SWITCH_OK`, `PERSISTENT_HTTPS_ACCOUNT_FLOW_OK`, `POSTGRES_HTTPS_IMPORT_RESTORE_OK`).
-- **Regression session cũ:** `reconcile_interleaving_cases.py` trên cả SQLite và PostgreSQL chứng minh pre-existing session bị từ chối fail-closed 503 `collision_unresolved`, `GET /api/orders` không trả dữ liệu sau late takeover, collision và journal không kẹt, retry với key cũ hoàn tất an toàn.
-- **Cam kết vận hành:** Nhánh `feature/module-2.5-pr-a` sẵn sàng nghiệm thu PR A; **chưa merge vào main, chưa deploy lên EC2, chưa bắt đầu PR B**.
+- Collision chưa xác định chủ sở hữu tiếp tục ở quarantine/unresolved cho đến khi có bằng chứng từ operator.
+- Identity DB và Business DB không có distributed ACID; journal/idempotency/recovery hỗ trợ fail-closed và resume, không đảm bảo atomic commit xuyên hai database.
+- PR B chưa triển khai; concurrency, history retention, ToolCache invalidation, telemetry và OAuth hardening tiếp tục pending.

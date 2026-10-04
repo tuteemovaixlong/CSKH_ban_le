@@ -1,8 +1,8 @@
 # KẾ HOẠCH MODULE 2.5: SYSTEM HARDENING, CONTEXT INTEGRITY & VERIFICATION QUALITY GATE
 
 > **Mã kế hoạch:** `PLAN_MODULE_2_5_HARDENING_VERIFICATION`
-> **Trạng thái:** PR A/N08 CI PASS trên code SHA `fe25f67` (CI Run ID `37137791788`); P1.1 (session safety fail-closed) và P1.2 đã đóng triệt để. Sẵn sàng nghiệm thu PR A; PR B chưa bắt đầu.
-> **Phiên bản:** 1.4 (2026-10-03)
+> **Trạng thái:** PR A/N08 LOCAL VERIFIED trên SQLite; 479 tests local (429 PASS, 50 SKIP, 0 FAIL); PostgreSQL tests (36 skip local) và CI trên SHA cuối còn chờ. Đã hoàn tất regression role viewer. Xem N08_STOPPING_CONDITIONS.md.
+> **Phiên bản:** 1.5 (2026-10-04)
 > **Audit basis / Documentation baseline reviewed:** `c30ff1d`
 > **Mục tiêu:** Thiết lập chốt chặn kiểm thử & ổn định vận hành thực tế (Quality Gate) giữa Module 2 (Baseline & Ops Console) và Module 3 (Omnichannel Meta Webhook). Khắc phục dứt điểm 13 hạng mục kỹ thuật (F01–F07, F08a, F09, F11–F13, SEC-01) được kiểm chứng độc lập. Mỗi hạng mục chuẩn hóa đầy đủ: tệp/hàm liên quan, hành vi mong đợi, test tương ứng và trạng thái kiểm chứng.
 > **Tham chiếu lộ trình:** [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md) · [PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT.md](PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT.md) · [PLAN_PR_A_CONTEXT_CACHE_DISPUTE.md](PLAN_PR_A_CONTEXT_CACHE_DISPUTE.md)
@@ -197,9 +197,13 @@ Mọi hạng mục bắt buộc chuẩn hóa theo 4 thuộc tính: **Tệp & Hà
 
 ### 2.3. N08 Account Identity — Handoff Giới Hạn
 
-P1.2 (SQLite legacy migration nối coordinator) và P1.1 (ownership guard, reservations, TOCTOU recheck, và session fail-closed safety) đã hoàn tất và đạt PASS trong CI run `37137791788` trên code SHA `fe25f67` (host 479/479 PASS; container 478 PASS / 1 SKIP; PostgreSQL integration chạy trên CI). `IdentityStore.resolve()` kiểm tra `unresolved_collisions` và membership collision cho `role == 'customer'`, đảm bảo phiên cũ/mới đều bị từ chối 503 `collision_unresolved` khi tài khoản còn va chạm hoặc đích đang đối soát, ngăn chặn triệt để rò rỉ dữ liệu sau late takeover. Sau khi đối soát hoàn tất, retry cùng key khôi phục an toàn. Điều kiện dừng và giới hạn bằng chứng chi tiết tại [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).
+Trigger N08-P11-RESOLVE-FAIL-CLOSED đã sửa hai nhánh fail-open trong IdentityStore.resolve(): ApiError từ customer-link guard được re-raise; lỗi safety lookup được log nội bộ và ánh xạ thành 503 collision_unresolved. Regression mới trong shared harness chạy local qua SQLite cho customer-link mismatch, fault injection, late takeover, PublicWeb orders không lộ dữ liệu, và toàn bộ role non-customer (staff, manager, viewer).
 
-Identity schema v4 là một version riêng; không nhầm với SQLite Business v3 / PostgreSQL Business v4 ở AC-14. Không còn blocker P0/P1; sẵn sàng nghiệm thu PR A; sau merge mới bắt đầu PR B.
+Bằng chứng hiện tại là local-only cho code patch: full suite 479 tests, 429 PASS, 50 SKIP (36 tests trong test_postgres.py và 14 tests trong test_pgvector_rag.py bị skip do thiếu PostgreSQL test database cục bộ). Lần chạy local này không tuyên bố PostgreSQL PASS. CI run 37137791788 trên fe25f67 là lịch sử, không xác minh patch hiện tại. Xem N08_STOPPING_CONDITIONS.md để biết trigger và điều kiện dừng.
+
+PR A chưa được nghiệm thu; không bắt đầu PR B cho đến khi PostgreSQL CI xanh 100% trên đúng SHA cuối, và status docs khớp bằng chứng.
+
+Identity schema v4 là version riêng; không nhầm với SQLite Business v3 / PostgreSQL Business v4 ở AC-14.
 
 ### 2.4. Các Hạng Mục Hoãn Triển Khai (Deferred / Out of Scope)
 
@@ -244,6 +248,5 @@ Identity schema v4 là một version riêng; không nhầm với SQLite Business
 | **AC-11** | Chat History Retention (F12) | Lịch sử chat không bị xóa cứng LIMIT 6 trong DB; F5 và API `GET /api/conversations/{id}/messages` trả về đầy đủ toàn bộ các lượt chat transcript. | `tests/test_conversation_resume.py` | `PENDING TEST` |
 | **AC-12** | Multi-tenant Cache Sync & Race (F13) | Manager đổi đơn qua `POST /api/manager/orders/update-status` $\rightarrow$ invalidate shared `ToolCache` theo tenant; discard stale writes in-flight qua epoch. | `tests/test_business_api.py` | `PENDING TEST` |
 | **AC-13** | OAuth CSRF Protection (SEC-01) | Callback Google OAuth thiếu hoặc không khớp transient cookie (`Secure; HttpOnly; SameSite=Lax`) bị từ chối HTTP 403 `invalid_oauth_state`. | `tests/test_auth_google.py` | `PENDING TEST` |
-| **AC-14** | Business Schema Backend SSOT | Giữ SQLite Business v3 và PostgreSQL Business v4; bảo vệ `warranty_days` của P-603; không thêm Business migration v5 trong PR A/B. Identity schema v4 là version độc lập, theo mục 2.3/N08. | `tests/test_schema_migration.py` (SQLite)<br/>`tests/test_postgres.py` (PostgreSQL) | `CI PASS VERIFIED — run 37137791788 on code SHA fe25f67; host 479/479 PASS, container 478 PASS / 1 SKIP, PostgreSQL integration included.` |
-| **AC-15** | Doc Contract Integrity | 4/4 cổng hợp đồng tài liệu và triển khai đạt PASS 100%. | `scripts/check_docs_contract.py` | `VERIFIED (4/4 gates pass)` |
-
+| **AC-14** | Business Schema Backend SSOT | Giữ SQLite Business v3 và PostgreSQL Business v4; bảo vệ `warranty_days` của P-603; không thêm Business migration v5 trong PR A/B. Identity schema v4 là version độc lập, theo mục 2.3/N08. | `tests/test_schema_migration.py` (SQLite)<br/>`tests/test_postgres.py` (PostgreSQL) | Historical CI evidence only on fe25f67; rerun final SHA before acceptance. |
+| **AC-15** | Doc Contract Integrity | 4/4 cổng hợp đồng tài liệu và triển khai đạt PASS 100%. | `scripts/check_docs_contract.py` | Local docs contract PASS 4/4 on 2026-10-04; final CI pending. |

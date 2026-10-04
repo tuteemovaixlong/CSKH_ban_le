@@ -1,44 +1,34 @@
-# Review GPT 6 Astra — PR A/N08 P1.1 hậu kiểm
+# Review GPT 6 Astra — hậu kiểm Gemini N08 P1.1
 
-**Ngày:** 03/10/2026
-**Phạm vi:** Bản sửa của Claude Opus 5.5 High tại `reconcile_collision()`, code SHA `766a594`; đối chiếu thêm trạng thái branch/plan tại HEAD `4f77578`. Không sửa code, không commit/push/merge/deploy.
+**Ngày:** 04/10/2026
+**Branch / HEAD:** feature/module-2.5-pr-a / 4ef078e (uncommitted changes in working tree)
+**Phạm vi:** Bản vá IdentityStore.resolve(), regression tests, N08 và các status/plan liên kết.
 
-## Prompt cô đọng cho Gemini
+## Tóm tắt hiện trạng
 
-> Sửa blocker P1.1 còn lại: sau khi Business commit nhưng trước Step 3, test interleaving cho phép raw membership takeover; coordinator trả 409 nhưng session đã tồn tại của membership bị đổi vẫn resolve sang customer đích và đọc được đơn vừa chuyển. Thêm fail-closed cho cả session mới lẫn session cũ khi membership.customer_id còn trong unresolved_collisions (hoặc cơ chế tương đương bảo đảm không còn phiên hợp lệ); kiểm thử SQLite + PostgreSQL: tạo session trước, takeover sau Business commit, xác nhận resolve/API đọc đơn bị từ chối, journal/collision giữ đúng và retry an toàn. Giữ phạm vi hẹp, chạy suite/gates/CI trên SHA cuối, cập nhật status/plan và báo số test, skip, SHA, run ID. Chưa merge/deploy/PR B.
+> **Trigger: N08-P11-RESOLVE-FAIL-CLOSED.**
+> - Đã sửa lỗi fail-open trong `IdentityStore.resolve()`: re-raise `ApiError`, log nội bộ và fail-closed 503 `collision_unresolved` trên mọi lỗi lookup safety.
+> - Đã bổ sung regression cho toàn bộ các vai trò non-customer (`staff`, `manager`, `viewer`) trong shared harness `tests/reconcile_interleaving_cases.py`.
+> - SQLite có bằng chứng kiểm thử cục bộ: PR A suite đạt 56/56 PASS; full suite đạt 429 PASS, 50 SKIP, 0 FAIL.
+> - PostgreSQL tests bị SKIP ở môi trường local (36 tests trong `tests/test_postgres.py` và 14 tests trong `tests/test_pgvector_rag.py` do không có `RETAILOPS_TEST_DATABASE_URL`). **Không tuyên bố PostgreSQL PASS ở local.**
+> - CI PostgreSQL trên đúng SHA cuối: **PENDING**. Chỉ đánh dấu nghiệm thu PR A sau khi GitHub Actions CI chạy full suite trên PostgreSQL container đạt xanh 100%.
 
-## Kết luận
+## Kết luận & Quyết định
 
-**Chưa sẵn sàng nghiệm thu/merge PR A và chưa nên bắt đầu PR B.** Bản sửa đóng được race trước Business commit đối với các writer tuân thủ reservation/lock, nhưng có một đường rò dữ liệu đã tái hiện được ở nhánh takeover sau Business commit.
+**Local verified trên SQLite; PR A chưa nghiệm thu, chưa merge main, chưa bắt đầu PR B.**
 
-## Phát hiện chặn — session cũ vượt qua trạng thái unresolved
+1. **Sửa fail-open hợp lý:** `IdentityStore.resolve()` re-raise `ApiError` trước nhánh bắt `Exception`; lỗi safety lookup được log nội bộ rồi ánh xạ về HTTP 503 `collision_unresolved`. Đóng dứt điểm nhánh lỗi bị nuốt và lỗi lookup bị coi như không có collision.
+2. **Regression role viewer đã hoàn tất:** Shared harness `tests/reconcile_interleaving_cases.py` đã tạo và xác thực đầy đủ cả 3 vai trò non-customer (`staff`, `manager`, `viewer`) resolve thành công, đúng role (regression non-customer hiện không assert HTTP response mà assert Python `SessionBinding` có `application.role` tương ứng), kể cả khi có collision ID và dưới fault injection.
+3. **Bằng chứng SQLite cục bộ đạt chuẩn:** Chạy độc lập `tests/test_pr_a_correctness.py` đạt 56/56 PASS; full suite đạt 429 PASS, 50 SKIP, 0 FAIL/ERROR.
+4. **PostgreSQL chưa được xem là đã kiểm chứng ở local:** 50 tests SKIP (36 trong `test_postgres.py`, 14 trong `test_pgvector_rag.py`). Không tuyên bố PostgreSQL PASS khi test bị skip. Cần chạy CI GitHub Actions container trên đúng commit SHA cuối.
+5. **Cổng hợp đồng đạt 100%:** `check_docs_contract.py` (0 lỗi), `check_deployment_contract.py` (PASS), `check_eval_dataset.py` (PASS, 30 ca, benchmark giữ nguyên SHA-256), `build_agent_notebook.py --check` (PASS).
+6. **Kế hoạch tiếp theo:** Commit bản vá sạch, đưa đúng SHA lên GitHub để chạy workflow CI (PostgreSQL 16 container); chỉ nghiệm thu PR A sau khi CI xanh; sau khi PR A được merge mới bắt đầu PR B.
 
-Trong `tests/reconcile_interleaving_cases.py`, hook thứ ba mô phỏng membership takeover sau khi Business DB đã commit và trước Step 3. Test hiện có xác nhận journal ở `business_committed`, collision/reservation còn tồn tại và reconciliation trả `409 target_customer_conflict`; nhưng fixture không có session hoạt động trước đó cho membership bị takeover.
+## Tài liệu liên quan
 
-Tôi bổ sung phép thử chạy tạm, không ghi file: tạo session hợp lệ trước reconciliation cho `m-ilv-intruder`, chạy đúng takeover hook ở Step 3, rồi gọi `IdentityStore.resolve()` bằng session cũ. Kết quả: reconciliation trả `409 target_customer_conflict`, nhưng session vẫn resolve thành `CG-ilv-alice`; Business DB đã có đơn `O-ILV-A` dưới customer đó. Nguyên nhân là `IdentityStore.resolve()` chỉ kiểm tra session expiry, `auth_version`, membership/tenant active; không kiểm tra membership.customer_id trong `unresolved_collisions`. Raw update không tăng `auth_version`, nên session cũ còn hiệu lực. Đường `GET /api/orders` lấy customer từ session rồi gọi `app.store.orders(customer)` (`retailops/http/routes.py`), nên dữ liệu được truy vấn theo ID customer đã bị takeover.
-
-Đây là blocker trong chính kịch bản late takeover mà implementation/test tuyên bố xử lý fail-closed. Các API tạo membership mới đã tôn trọng reservation; điều còn thiếu là chặn phiên đã phát hành. Khi thêm guard ở session resolution, cần xác nhận cả SQLite và PostgreSQL, và chấp nhận rằng account liên quan bị khóa tạm thời trong lúc reconciliation chưa hoàn tất.
-
-## Phần đã sửa và đã đối chiếu
-
-- P1.1: thêm kiểm tra ownership Identity/Business, reservation trong `unresolved_collisions`, kiểm tra lại dưới lock trước Business commit và trước Step 3; Business guard có `customers` và `conversation_feedback`.
-- Các writer membership/customer_link ở luồng tạo membership và Google login kiểm tra reservation; SQLite dùng transaction ghi tuần tự, PostgreSQL dùng advisory lock và table lock trong reconciliation.
-- Test mới bao phủ bốn takeover: membership, customer_link, Business `customers`, `conversation_feedback`; có test liên backend.
-- P1.2: báo cáo hiện tại ghi migration SQLite legacy nối được coordinator và E2E PostgreSQL/SQLite.
-- Những điểm trên giải quyết lỗi static target collision và TOCTOU trước Business commit; chúng không phủ nhận lỗi session cũ ở late-takeover case nêu trên.
-
-## Kết quả kiểm chứng độc lập
-
-- `python -B -X utf8 -m unittest discover -s tests -p "test_*.py"`: **479 test, OK, 50 SKIP, 0 FAIL/ERROR**. Skip thuộc các PostgreSQL/pgvector integration test do máy cục bộ không cấu hình `RETAILOPS_TEST_DATABASE_URL`; CI live PostgreSQL được báo cáo riêng.
-- Docs contract, deployment contract, eval dataset và notebook sync: **4/4 PASS** sau khi đồng bộ các tài liệu trong lượt này.
-- Hai benchmark sau chuẩn hóa EOL đều giữ SHA-256 `36fa8c7a52a60323bb4f04d11f1e677106ddfe6a35e0ccac3266784c7c6e4411`.
-- Local branch: `feature/module-2.5-pr-a`, HEAD `fe25f67` (code SHA đóng P1.1 session-safety).
-- CI run `37137791788` trên code SHA `fe25f67`: host `479/479 PASS, 0 SKIP`; container `478 PASS / 1 SKIP`; PostgreSQL 16 và Caddy container live thật, 5/5 marker HTTPS OK.
-- Regression hai backend: Session cũ fail-closed 503 `collision_unresolved` sau late takeover, `GET /api/orders` không trả dữ liệu, retry hoàn tất an toàn.
-
-## Quyết định và bước tiếp theo
-
-1. **P1.1 và P1.2 ĐÃ ĐÓNG HOÀN TOÀN** trên cả SQLite lẫn PostgreSQL.
-2. CI Run `37137791788` xác nhận code SHA `fe25f67` xanh 100%.
-3. Không còn blocker P0/P1; dừng vòng review N08, sẵn sàng nghiệm thu PR A.
-4. Tuân thủ cam kết: **chưa merge vào main, chưa deploy lên EC2, chưa bắt đầu PR B**.
+- [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md)
+- [CURRENT_PROJECT_STATUS.md](CURRENT_PROJECT_STATUS.md)
+- [PLAN_MODULE_2_5_HARDENING_VERIFICATION.md](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md)
+- [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md)
+- [PLAN_EXECUTION_HANDOFF_GPT6_ASTRA.md](PLAN_EXECUTION_HANDOFF_GPT6_ASTRA.md)
+- [SESSION_HANDOFF_2026-10-03.md](SESSION_HANDOFF_2026-10-03.md)

@@ -3,7 +3,7 @@
 > **Trạng thái:** ACTIVE OPERATIONAL STATUS & EVIDENCE REPORT<br>
 > **Audit basis / Documentation baseline reviewed:** `b93eb5a`<br>
 > **Application snapshot đối chiếu:** Nhánh `main` tại commit `c6c7a1a`<br>
-> **Kiểm thử & CI:** 429 unit tests PASS (0 failures, 0 errors, 50 skipped across 479 total tests cục bộ; skip do không có PostgreSQL local); GitHub Actions CI Run 37137791788 trên nhánh feature/module-2.5-pr-a, code SHA `fe25f67` (PostgreSQL 16 container thật & Caddy live): host suite **479/479 PASS, 0 SKIP**; packaged container suite **478 PASS / 1 SKIP trên 479 tests** (0 failures), 4/4 cổng hợp đồng PASS 100%<br>
+> **Kiểm thử & CI:** Đã sửa fail-open trong `IdentityStore.resolve()`; regression bao phủ customer-link mismatch, fault injection 3 loại lookup, late takeover và toàn bộ role non-customer (`staff`, `manager`, `viewer`). Bằng chứng SQLite local: 56/56 ca PR A đạt PASS, full suite đạt 429 PASS / 50 SKIP / 0 FAIL (không tuyên bố PostgreSQL PASS local do test bị skip). PostgreSQL CI trên SHA cuối vẫn pending. Xem [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).<br>
 > **EC2 Host:** `retailops-dev` / `i-0fd116d8927d0e412` / **t3.large** (Sẵn sàng tắt máy sau phiên làm việc để tối ưu chi phí cloud)<br>
 > **Deploy status:** Main baseline đã có container build/live rolling deploy PASS; candidate `feature/module-2.5-pr-a` chưa deploy lên EC2 theo mục 2.9; instance sẵn sàng kích hoạt lại khi bật.<br>
 > **Lộ trình kỹ thuật tổng thể:** Xem chi tiết tại [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md)<br>
@@ -20,7 +20,7 @@ Theo chuẩn phân cấp minh chứng của [`RELEASE_MANIFEST.md`](RELEASE_MANI
 | :--- | :--- | :--- | :--- | :--- |
 | **Module 1** | **Hệ Thống Lõi TMĐT, 6 SOPs & MCP Server** | **IMPLEMENTED** | **L1/L3 hỗn hợp** *(353+ tests PASS, Staff Desk & Manager SSOT healthy)* | Đã hoàn tất Phase 1.1 (Truthful UX) và Phase 1.2 (Store Manager Persistence & Shared Catalog SSOT: bảng `products`, `product_variants` vào PostgreSQL v4 / SQLite v3, đồng bộ `check_inventory`, `dispute_agent`, audit events toàn shop). Còn tồn đọng các ca rò rỉ context F04–F06. |
 | **Module 2** | **Đo Baseline Benchmark Cơ Sở & Ops Console** | **IMPLEMENTED** | **L1/L3 hỗn hợp** *(250 ca offline 100% Routing, 19/19 Ops Console tests OK)* | Hoàn tất Phase 1.3 (`PLAN_FIX_UI_03`): Bỏ chia 3 token, chi phí chưa đo để Unknown/None, chuẩn hóa nhãn E2E Request Latency, mở rộng allowlist Usage, bổ sung concurrency telemetry (`queue_wait_ms`, `in_flight_inferences`, `overload_429_count`). |
-| **Module 2.5** | **Kiểm Thử & Ổn Định Vận Hành (Quality Gate)** | **PR A IMPLEMENTED / ALL ASTRA BLOCKERS & P1.1 RESOLVED & VERIFIED ON CI** | **L1 CI PASS (host 479/479 PASS; container 478 PASS, 1 SKIP; Run ID 37137791788 trên code SHA `fe25f67`)** *([PLAN_MODULE_2_5_HARDENING_VERIFICATION.md](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md))* | **PR A và Blocker N08 / P1.1 hoàn tất & verify trên CI:** Xử lý triệt để các phát hiện theo review GPT 6 Astra xhigh (preflight check bao phủ 100% memberships, orders, conversations; SQLite migration giữ unresolved_collisions và fail-closed 503; script Caddy maintenance idempotent và phục hồi an toàn; kiểm thử E2E cả SQLite lẫn PostgreSQL; P1.1: target ownership guard, reservation, lock-held recheck và `IdentityStore.resolve()` fail-closed 503 `collision_unresolved` cho mọi phiên cũ/mới khi customer_id chưa giải quyết xong, ngăn chặn rò rỉ dữ liệu qua late takeover). CI Run 37137791788 đạt SUCCESS (host 479/479 PASS; container 478 PASS / 1 SKIP), PostgreSQL 16 và Caddy live container thật. Nhánh `feature/module-2.5-pr-a` sẵn sàng nghiệm thu PR A; chưa merge `main`, chưa deploy. |
+| **Module 2.5** | **Kiểm Thử & Ổn Định Vận Hành (Quality Gate)** | **PR A LOCAL VERIFIED; CHỜ CI/NGHIỆM THU** | **56/56 PR A, 429 PASS / 50 SKIP local SQLite; chờ CI PostgreSQL trên SHA cuối** *([PLAN_MODULE_2_5_HARDENING_VERIFICATION.md](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md))* | Đã sửa fail-closed trong `IdentityStore.resolve()`; regression bao phủ customer-link mismatch, fault injection, late takeover và các role `staff`, `manager`, `viewer`. Test PostgreSQL local bị skip nên không tuyên bố pass local. Chưa nghiệm thu/merge PR A, chưa deploy EC2, chưa bắt đầu PR B. Xem [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md). |
 | **Module 3** | **Webhook Facebook Messenger (Omnichannel)** | **PLANNED** | **Design-only** *([PLAN_OMNICHANNEL_INTEGRATION.md](PLAN_OMNICHANNEL_INTEGRATION.md))* | Chờ hoàn tất nghiệm thu Module 2.5 trước khi mở cổng webhook tiếp nhận tin nhắn từ Meta API (xếp vào Phase 5 Demo). |
 | **Module 4** | **Cổng Quét Mã QR Demo Live** | **PARTIAL** | **L3** *(HTTPS sslip.io, Web mobile responsive)* | Đã có hạ tầng web di động sẵn sàng cho demo; Chưa có module sinh mã QR động / thẻ QR demo (xếp vào Phase 5 Demo). |
 | **Module 5** | **Self-Hosted vLLM & Serving Model Agentic** | **IMPLEMENTED / PARTIAL** | **Runtime-dependent** *(Colab L4 vLLM + ngrok)* | Đã tối ưu CUDA Graphs, prefix caching, fp8 kv cache và xử lý an toàn ảnh text-only. Cần hoàn tất chuẩn hóa headroom và timeout gate ở Module 2.5 PR B. |
@@ -84,9 +84,9 @@ Theo chuẩn phân cấp minh chứng của [`RELEASE_MANIFEST.md`](RELEASE_MANI
   - Model `yuxinlu1/gemma-4-12B-agentic` là kiến trúc CausalLM thuần văn bản. Việc gửi token Base64 hình ảnh vào vLLM khiến engine bị nghẽn không thể giải mã hình ảnh.
   - Tách bạch hàm `is_vision_model()`: Với text-only models, tự động trích xuất thông tin ảnh thành ngữ cảnh văn bản an toàn (chẳng hạn metadata mô tả ảnh), không gửi chuỗi Base64 làm treo engine.
 
-### 2.9. Tiến Độ Triển Khai PR A & Hiện Trạng Nghiệm Thu N08 (Phiên 02/10/2026 - 03/10/2026)
-> **Trạng thái:** Các sửa cốt lõi P1.1/P1.2 và CI được báo cáo PASS trên SQLite/PostgreSQL; review độc lập mới nhất phát hiện session cũ chưa fail-closed ở late-takeover case, nên **N08 CHƯA ĐƯỢC NGHIỆM THU**.<br>
-> *(Lưu ý lịch sử: Ngày 02/10/2026, N08 từng bị tạm giữ do môi trường Windows thiếu PostgreSQL live cục bộ; đến phiên 03/10/2026, toàn bộ integration test đã được xác thực 100% xanh trên CI container thật và bổ sung đầy đủ kiểm thử E2E đa backend).*
+### 2.9. Tiến Độ Triển Khai PR A & Hiện Trạng Nghiệm Thu N08 (Phiên 02/10/2026 - 04/10/2026)
+> **Trạng thái:** PR A LOCAL VERIFIED trên SQLite; P1.1 fail-closed đã sửa và đạt kiểm thử cục bộ; viewer regression đã hoàn tất. **PostgreSQL CI trên SHA cuối vẫn pending; PR A chưa nghiệm thu**. Xem [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).<br>
+> *(Lưu ý lịch sử: Ngày 02/10/2026, N08 từng bị tạm giữ do môi trường Windows thiếu PostgreSQL live cục bộ; đến phiên 03/10/2026, toàn bộ integration test đã được xác thực 100% xanh trên CI container thật `fe25f67`. Sau đó review phát hiện guard session fail-open, trigger `N08-P11-RESOLVE-FAIL-CLOSED` đã đóng dứt điểm lỗ hổng này vào 04/10/2026).*
 
 - **N03 (An Toàn Dữ Liệu & Error Masking - ĐÃ ĐẠT)**:
   - Khi database gặp sự cố gián đoạn (`database_unavailable`), công cụ nghiệp vụ trả về cho người dùng mã lỗi công khai `tool_unavailable` kèm HTTP 503.
@@ -102,7 +102,14 @@ Theo chuẩn phân cấp minh chứng của [`RELEASE_MANIFEST.md`](RELEASE_MANI
      - Kiểm tra trùng lặp (`duplicate_membership_reassignment`, `duplicate_order_reassignment`, `duplicate_conversation_reassignment`) và quyền sở hữu.
      - Chỉ xóa `unresolved_collisions` (bao gồm `colliding_customer_id`, `quarantine_{colliding_customer_id}` và các ID tạm thời) sau khi toàn bộ quy trình đối soát hai database đã commit thành công.
   2. **Đồng bộ Luồng Migration SQLite với Coordinator/CLI & Kiểm Thử E2E (P1)**:
-     - Trong `retailops/identity/store.py:migrate_legacy_collisions()`, khi xảy ra va chạm dữ liệu mơ hồ (`is_ambiguous = True`), lưu giữ `(tenant_id, customer_id)` trong `unresolved_collisions` (thay vì    4. **Nâng cấp Identity Schema v4 & Journal Bất Biến**:
+     - Trong `retailops/identity/store.py:migrate_legacy_collisions()`, khi xảy ra va chạm dữ liệu mơ hồ (`is_ambiguous = True`), lưu giữ `(tenant_id, customer_id)` trong `unresolved_collisions` (thay vì xóa nhầm).
+     - Giữ trạng thái fail-closed 503 `collision_unresolved` cho mọi nỗ lực login / tạo session của các tài khoản va chạm trước khi có đối soát thủ công.
+     - Đồng bộ coordinator `reconcile_collision` và CLI `identity reconcile-collision` tiếp nhận mượt mà các va chạm từ migration SQLite.
+     - Kiểm thử end-to-end từ legacy DB qua migration đến reconciliation cho cả SQLite và PostgreSQL.
+  3. **Script Caddy Maintenance An Toàn Khi Chạy Lặp & CI Kiểm Thử Trực Tiếp (P2)**:
+     - `deploy/switch-maintenance.sh`: Kiểm tra matcher `@auth_maintenance` trước khi sao lưu; chống ghi đè hỏng backup khi enable/disable lặp.
+     - CI (`scripts/check_public_https.py`): Thực thi trực tiếp script với chuỗi kiểm thử lặp đầy đủ.
+  4. **Nâng cấp Identity Schema v4 & Journal Bất Biến**:
       - Nâng cấp `IDENTITY_SCHEMA_CURRENT = 4` và `IDENTITY_SCHEMA_COMPATIBLE = (1, 2, 3, 4)`. Migration tự động nâng cấp v1/v2/v3 lên v4, tạo bảng `reconciliation_journal`, index `idx_reconciliation_journal_tenant`, và cột `plan_hash TEXT` trên cả PostgreSQL (`retailops/storage/pg_schema.py`) và SQLite (`retailops/identity/store.py`).
       - Khóa cứng `idempotency_key` với plan hash canonical bất biến; từ chối retry với plan bị sửa đổi (HTTP 409 `plan_conflict`); luôn resume bằng plan lưu trong journal.
       - **Chính sách Rollback an toàn**: Cấm tuyệt đối rollback về image baseline thiếu collision guard; chỉ cho phép rollback về image tương thích hỗ trợ schema v4 và duy trì kiểm tra `unresolved_collisions`. Trong trường hợp khẩn cấp, sử dụng Caddy Maintenance Mode fail-closed 503 cho 4 auth routes.
@@ -110,23 +117,17 @@ Theo chuẩn phân cấp minh chứng của [`RELEASE_MANIFEST.md`](RELEASE_MANI
       - `retailops/identity/reconcile.py` (`_validate_target_ownership`, `_validate_business_targets`): trong transaction Identity (sau khi chèn journal), từ chối HTTP 409 `target_customer_conflict` nếu đích là colliding/quarantine id, bị gán cho >1 principal trong plan, đang thuộc membership/customer_link của principal khác trong cùng tenant, hoặc (khi chưa được chứng minh thuộc đúng principal) đã có dữ liệu Business DB ngoài phạm vi plan. Kiểm tra Business được chạy lại dưới write lock trước khi ghi.
       - Khi bị từ chối, transaction Identity rollback cả dòng journal: dữ liệu không đổi, collision vẫn `unresolved` (503 `collision_unresolved`), idempotency key không bị kẹt và retry với plan hợp lệ hoàn tất bình thường.
       - Regression test dùng chung `tests/reconcile_target_cases.py`: SQLite (`test_n08_p11_reconciliation_rejects_target_owned_by_other_principal_sqlite`) và PostgreSQL (`test_reconciliation_rejects_target_owned_by_other_principal_on_postgres`).
-   6. **P1.1 (đóng hoàn toàn) — Chặn TOCTOU và bảo vệ an toàn phiên (Session Safety)** (code SHA `fe25f67`):
+   6. **P1.1 — Chặn TOCTOU và bảo vệ an toàn phiên (Đã sửa fail-closed & bổ sung viewer regression)**:
       - **Serialization:** mọi transaction ghi Identity đã tuần tự hóa toàn cục (SQLite `BEGIN IMMEDIATE`; PostgreSQL `pg_advisory_xact_lock`). Reconciliation còn khóa thêm `memberships`, `customer_links`, `unresolved_collisions` ở chế độ `SHARE ROW EXCLUSIVE` trên PostgreSQL. Thứ tự khóa luôn là Identity → Business (giống migration legacy) nên không có deadlock.
       - **Reservation:** sau khi kiểm tra ownership ở Step 1, các `target_customer_id` mới được ghi vào sổ `unresolved_collisions` cùng transaction với journal. Mọi luồng ghi membership/customer_link hợp lệ đều tuân thủ sổ này: `create_membership` (mọi role) trả 409 `customer_reserved`; `get_or_create_google_member` không cấp cid đang reserved và trả 503 `collision_unresolved` nếu customer_link trỏ tới cid đang reserved. `migrate_legacy_collisions`, migration `pg_schema` và `import_sqlite` (chỉ vào DB rỗng) chỉ dùng id sẵn có của membership và bỏ qua id unresolved. Lần chạy mới gặp đích đang bị giữ sẽ trả 409 `target_customer_conflict`.
       - **Kiểm tra lại dưới lock trước khi commit Business (Step 2):** mở transaction ghi Identity (giữ lock) → `_recheck_identity_under_lock` (journal vẫn `started` cùng plan hash, collision vẫn còn, reservation còn đủ, ownership hợp lệ) → mở transaction ghi Business → `_validate_business_targets` (gồm `customers` và `conversation_feedback`) → chuyển dữ liệu → cập nhật journal `business_committed` ngay trong transaction Identity đó. Nếu lỗi xảy ra trước khi chuyển dữ liệu ở lần chạy mới, coordinator bù trừ ngay trong transaction Identity: xóa journal và reservation (409 `reconciliation_state_changed` / `target_customer_conflict`). Kết quả: dữ liệu không đổi, collision vẫn unresolved, key không bị kẹt.
-      - **Session Safety Fail-Closed (`IdentityStore.resolve`):** khi resolve session của customer (`role == 'customer'`), kiểm tra bắt buộc `unresolved_collisions` (cả `customer_id` của membership lẫn `customer_id` trong `customer_links` nếu khác) và kiểm tra va chạm membership (`col_cnt > 1`). Nếu tài khoản hoặc customer đích đang unresolved $\rightarrow$ từ chối ngay lập tức HTTP 503 `collision_unresolved`. Phiên nhân viên/quản lý (`role != 'customer'`) được bảo toàn và phân tách độc lập.
-      - **Step 3:** kiểm tra lại ownership dưới lock trước khi gán membership/link; khi hoàn tất thì giải phóng reservation. Nếu raw SQL chen vào giữa Step 2 và Step 3 (late takeover), Step 3 bắt lỗi 409, journal giữ `business_committed`, collision vẫn unresolved; phiên cũ của tài khoản bị takeover lập tức nhận 503 `collision_unresolved` và API `GET /api/orders` không trả dữ liệu (không lộ order đã chuyển). Sau khi gỡ takeover, resume cùng key hoàn tất bình thường và dữ liệu trả về chính xác.
-      - **Regression test hai backend:** `tests/reconcile_interleaving_cases.py` tích hợp kiểm thử phiên pre-existing, gọi `PublicWeb` `GET /api/orders` trước takeover (200), trong late takeover (503 `collision_unresolved`, 0 orders), và sau hoàn tất (200). Đã kiểm chứng PASS trên cả SQLite (`test_n08_p11_reconciliation_toctou_target_taken_after_preflight_sqlite`) và PostgreSQL (`test_reconciliation_toctou_target_taken_after_preflight_on_postgres`).
-- **Trạng thái kiểm thử & xác thực CI (03/10/2026)**:
-  - **Môi trường máy trạm Windows:** Local test suite: 429 PASS, 50 SKIP, 0 FAIL/ERROR trên 479 tests; nguyên nhân từng SKIP cần tham chiếu output của lần chạy tương ứng.
-    - Đã kiểm chứng Maintenance Mode fail-closed 503 trên toàn bộ 4 auth routes trong `tests/test_public_web.py`.
-    - Đã kiểm chứng Reconciliation Coordinator hai database có journal, plan hash immutability, full membership/order/conv coverage check, recovery sau fault injection, và SQLite E2E trong `tests/test_pr_a_correctness.py`.
-    - Đã kiểm chứng PostgreSQL E2E migration $\rightarrow$ reconciliation và preflight coverage checks trong `tests/test_postgres.py`.
-  - **Môi trường GitHub Actions CI Runner (PostgreSQL 16 + pgvector container thật & Caddy live):**
-    - CI Run 37137791788 (code SHA `fe25f67`): host suite **479/479 PASS, 0 SKIP** — toàn bộ PostgreSQL integration tests chạy trên PostgreSQL thật, gồm test migration collision sang reconciliation E2E, regression P1.1 và test interleaving TOCTOU P1.1 (SQLite + PostgreSQL đều `ok`); packaged container suite 478 PASS / 1 SKIP (notebook builder không đóng gói trong image).
-    - 4/4 cổng hợp đồng (docs, deployment, eval dataset, notebook) đạt **PASS 100%**.
-    - Public HTTPS verification: Đạt `PUBLIC_UI_ASSETS_OK`, `PUBLIC_HTTPS_PROXY_COOKIE_FLOW_OK`, `PUBLIC_CADDY_MAINTENANCE_SWITCH_OK` (chuyển đổi Caddy live mode maintenance qua script vận hành với idempotency, missing backup guard, và khôi phục sạch sẽ), `PERSISTENT_HTTPS_ACCOUNT_FLOW_OK`, `POSTGRES_HTTPS_IMPORT_RESTORE_OK`.
-  - **KẾT LUẬN NGHIỆM THU ASTRA REVIEW & P1.1:** Toàn bộ phát hiện Blocker N08 và P1.1 theo review của GPT 6 Astra xhigh (bao gồm late takeover và pre-existing session safety) đã được xử lý triệt để, đồng bộ state machine đa backend, và kiểm chứng thành công trên cả SQLite lẫn PostgreSQL thật. Nhánh `feature/module-2.5-pr-a` đã sẵn sàng cho bước nghiệm thu mã nguồn (Code Review Approval); tuân thủ cam kết: **chưa merge vào main, chưa deploy lên EC2, chưa bắt đầu PR B**.
+      - **Session Safety guard đã khắc phục (`IdentityStore.resolve`):** theo trigger `N08-P11-RESOLVE-FAIL-CLOSED`, bọc kiểm tra an toàn trong khối fail-closed; không nuốt `ApiError`; nếu `customer_links.customer_id` trỏ tới customer unresolved, từ chối ngay 503 `collision_unresolved`; mọi lỗi truy vấn safety (bảng/DB lỗi) đều fail-closed 503 an toàn và ghi log nội bộ. Role non-customer (`staff`, `manager`, `viewer`) resolve bình thường, không bị ảnh hưởng.
+      - **Step 3:** recheck ownership dưới lock và giữ journal `business_committed` khi late takeover; kịch bản membership-ID unresolved hiện có regression cho session cũ, API `GET /api/orders` và retry. Đã bổ sung regression mismatch customer-link và fault injection query-failure cho `resolve()`.
+      - **Regression test hai backend:** `tests/reconcile_interleaving_cases.py` tích hợp kiểm thử 4 nội dung: (1) late takeover 503 orders + retry safe; (2) customer_links mismatch unresolved 503; (3) query failure fail-closed 503; (4) non-customer roles (`staff`, `manager`, `viewer`) unaffected. Chạy đạt 100% OK trên local test suite.
+- **Trạng thái kiểm thử & xác thực CI (04/10/2026)**:
+  - **Môi trường máy trạm Windows:** Local test suite: **429 PASS, 50 SKIP, 0 FAIL/ERROR** trên 479 tests (36 tests `tests/test_postgres.py` và 14 tests `tests/test_pgvector_rag.py` skip do không có DSN local); bộ test PR A chạy độc lập đạt **56/56 PASS**; 4/4 cổng hợp đồng (docs, deployment, eval dataset, notebook) đạt **PASS 100%**. **Không tuyên bố PostgreSQL PASS local.**
+  - **Môi trường GitHub Actions CI Runner (PostgreSQL 16 + pgvector container thật & Caddy live):** CI Run 37137791788 trên `fe25f67` là bằng chứng lịch sử; CI run mới trên đúng SHA cuối của commit đang chờ kích hoạt.
+  - **KẾT LUẬN HIỆN TẠI:** Blocker P1.1 fail-closed đã được xử lý và kiểm chứng cục bộ trên SQLite; viewer regression đã được bổ sung. PR A chưa sẵn sàng nghiệm thu; chưa merge vào main, chưa deploy lên EC2, chưa bắt đầu PR B cho đến khi CI trên SHA cuối xác nhận đạt 100% xanh.
 
 ---
 
@@ -140,7 +141,7 @@ Hệ thống tuân thủ nghiêm ngặt lộ trình phụ thuộc kỹ thuật 7
   - PR 1.2: [PLAN_FIX_UI_02_MANAGER_PERSISTENCE.md](PLAN_FIX_UI_02_MANAGER_PERSISTENCE.md) (**ĐÃ HOÀN THÀNH** — Merged main `a6ec080`, CI/CD stabilized `d7ce461`).
   - PR 1.3: [PLAN_FIX_UI_03_OPSCONSOLE_INTEGRITY.md](PLAN_FIX_UI_03_OPSCONSOLE_INTEGRITY.md) (**ĐÃ HOÀN THÀNH** — Truthful Telemetry & Concurrency telemetry merged).
 * **Module 2.5 (Quality Gate)**: System Hardening & Verification ([PLAN_MODULE_2_5_HARDENING_VERIFICATION.md](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md))
-  - **PR A**: Context, Cache & Dispute Correctness + Account Identity N08 (**ĐÃ HOÀN THÀNH TOÀN BỘ BLOCKER N08 & P1.1 SESSION SAFETY** — CI Run 37137791788 trên code SHA `fe25f67` pass 100%, sẵn sàng review nghiệm thu; chưa merge main, chưa deploy EC2, chưa bắt đầu PR B).
+  - **PR A**: Context, Cache & Dispute Correctness + Account Identity N08 (**LOCAL VERIFIED; ACCEPTANCE PENDING CI** — P1.1 đã có fix fail-closed và regression đầy đủ trong shared harness; SQLite local pass 56/56 PR A. Chỉ PostgreSQL CI trên SHA cuối còn pending. Chưa nghiệm thu/merge, chưa deploy EC2, chưa bắt đầu PR B).
   - **PR B**: Concurrency, Headroom & Truthful Telemetry (Khắc phục F07, F09, BUG-01, BUG-04).
   - **PR C**: Relational Knowledge & Clean Schema Migration (Khắc phục F10; chính thức thay thế Apache AGE trên EC2 bằng SQL Relational Linkage).
 * **Phase 4**: Đo lường thực nghiệm khoa học (Concurrency load test, Đối kháng Gemma-4 vs DeepSeek API trên 250 ca) phục vụ Chương 4 Luận văn.
@@ -193,16 +194,22 @@ sudo python3 /opt/retailops/live-e2e.py --mode smoke
 
 ---
 
-## 5. TRẠNG THÁI BÀN GIAO PHIÊN LÀM VIỆC & KẾ HOẠCH SÁNG MAI (HANDOFF FOR NEXT MORNING)
+## 5. LƯU TRỮ LỊCH SỬ BÀN GIAO PHIÊN CŨ (HISTORICAL ARCHIVE — SUPERSEDED)
 
-### 5.1. Tóm Tắt Trạng Thái Lưu Trữ
+> **Cảnh báo supersede (04/10/2026):** Toàn bộ Mục 5 dưới đây là tài liệu lưu trữ lịch sử của phiên làm việc cũ khi HEAD commit còn ở `c34c54b` và suite 470 tests.
+> **Các thông số cũ trong mục này (commit `c34c54b`, working tree "clean", CI run `37047893366`, test count 470) ĐÃ BỊ SUPERSEDE HOÀN TOÀN** và KHÔNG phản ánh trạng thái hiện hành:
+> - Hiện tại working tree trên nhánh `feature/module-2.5-pr-a` có các file uncommitted modified (chưa clean).
+> - Full suite hiện hành gồm 479 tests (429 PASS, 50 SKIP local).
+> - Nguồn trạng thái chính thức và điều kiện dừng hiện hành: xem Mục 1, Mục 2.9 của tài liệu này và [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).
+
+### 5.1. Tóm Tắt Trạng Thái Lưu Trữ (Lịch sử commit `c34c54b` — ĐÃ SUPERSEDE)
 - **Nhánh Git:** `feature/module-2.5-pr-a`
-- **Head Commit:** `c34c54b4e682346340faf17a08db9a1d40a149b0` (`c34c54b`)
-- **Trạng thái working tree:** Clean (100% đã commit và push lên `origin/feature/module-2.5-pr-a`).
-- **Trạng thái CI:** GitHub Actions Run ID `37047893366` **SUCCESS** (Job `offline` và Job `colab-python313` đều xanh).
+- **Head Commit (lịch sử đã supersede):** `c34c54b4e682346340faf17a08db9a1d40a149b0` (`c34c54b`; không phải HEAD hiện hành)
+- **Trạng thái working tree (lịch sử đã supersede):** Clean tại commit `c34c54b` (hiện tại working tree có các file uncommitted modified, chưa clean)
+- **Trạng thái CI (lịch sử đã supersede):** GitHub Actions Run ID `37047893366` **SUCCESS** (đã supersede bởi run `37137791788` và hiện tại chờ CI run trên SHA cuối)
 - **Cam kết tuân thủ:** Chưa merge vào nhánh `main`, chưa deploy lên EC2, chưa tạo PR mới.
 
-### 5.2. Các Hạng Mục N08 Đã Xử Lý Dứt Điểm
+### 5.2. Các Hạng Mục N08 Đã Xử Lý Dứt Điểm (Giai đoạn đầu)
 1. **Blocker 1 (Auth Maintenance Mode):**
    - Proxy Caddy: `deploy/Caddyfile.maintenance` chặn đích danh 4 route: `GET /auth/google/config`, `GET /auth/google/login`, `GET /auth/google/callback`, `POST /api/login` trả về HTTP 503 JSON `maintenance_mode`.
    - App layer: `retailops/http/public.py` kiểm tra `RETAILOPS_AUTH_MAINTENANCE` chặt chẽ (`is True`), trả về 503 fail-closed.
@@ -219,13 +226,14 @@ sudo python3 /opt/retailops/live-e2e.py --mode smoke
    - Tiêm lỗi sau Business DB commit và trong Identity DB commit; xác minh trạng thái fail-closed 503 `collision_unresolved`.
    - Thực thi retry/resume tự động và xác minh 100% tính cô lập dữ liệu (Alice và Bob chỉ xem được tài nguyên của mình, tra cứu chéo trả về 404 Not Found).
 
-### 5.3. Hướng Dẫn Sáng Mai Bật Máy Làm Tiếp
+### 5.3. Hướng Dẫn Bật Máy Làm Tiếp (Tài liệu lưu trữ lịch sử — ĐÃ SUPERSEDE)
+*(Ghi chú: Toàn bộ hướng dẫn và kỳ vọng dưới đây là lịch sử phiên cũ; không sử dụng để kiểm tra hiện trạng vì HEAD commit, working-tree và test count đều đã thay đổi).*
 1. **Kiểm tra trạng thái repository:**
    ```bash
    git status
    git log -n 3 --oneline
    ```
-   *(Xác nhận đang ở nhánh `feature/module-2.5-pr-a` tại commit `c34c54b`, working tree clean)*
+   *(Lưu ý lịch sử: Đây là hướng dẫn cũ của commit `c34c54b`; không áp dụng cho working tree hiện tại đang có uncommitted changes)*
 2. **Kiểm tra nhanh 4 cổng hợp đồng:**
    ```bash
    python scripts/check_docs_contract.py
@@ -238,7 +246,6 @@ sudo python3 /opt/retailops/live-e2e.py --mode smoke
    ```bash
    python -m unittest discover -s tests -p "test_*.py"
    ```
-   *(Kỳ vọng: 470 tests, 424 PASS, 46 SKIP, 0 FAIL, 0 ERROR)*
+   *(Kỳ vọng lịch sử: 470 tests cũ; hiện tại test suite là 479 tests)*
 4. **Bước tiếp theo theo lộ trình dự án:**
-   - Xem xét nghiệm thu PR A (Code Review & Merge Decision vào `main`).
-   - Bắt đầu triển khai **Module 2.5 PR B** (Concurrency, Headroom & Truthful Telemetry theo kế hoạch [PLAN_MODULE_2_5_HARDENING_VERIFICATION.md](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md)).
+   - Chạy CI trên SHA cuối và hoàn tất nghiệm thu PR A sau khi CI xanh; PR B chưa bắt đầu.
