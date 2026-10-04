@@ -2,7 +2,7 @@
 
 > **Trạng thái:** ACTIVE OPERATIONAL STATUS & EVIDENCE REPORT<br>
 > **Rà soát toàn diện trước đây:** tài liệu `b93eb5a`, application snapshot `main` tại `c6c7a1a` (lịch sử, không đại diện trạng thái PR hiện tại).<br>
-> **Đồng bộ PR A/N08 ngày 2026-10-04:** PR [#34](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/34), head `ee78b41`, đang mở và mergeable. CI [37202690835](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37202690835): host 479/479 PASS, container 478 PASS / 1 SKIP, `colab-python313` PASS. Ops Console [37202690842](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37202690842): PostgreSQL 19/19 PASS, portable Windows/Ubuntu PASS. Chưa merge, deploy hoặc bắt đầu PR B; quyết định merge thuộc owner. Các run 37197602401/37196429628 là lịch sử.<br>
+> **Đồng bộ Module 2.5 ngày 2026-10-04:** PR #34 đã merged tại 47ba72a. PR #35 đang mở ở head 166e289; CI 37210000459 và Ops Console 37210000480 xanh. Review yêu cầu sửa SEC-01 browser binding/exchange status và F09 null semantics; AC-09 P99 cần Waitress load evidence. Chưa merge/deploy PR B. Chi tiết tại <a href="review%20gpt%206%20astra.md">review gpt 6 astra.md</a>.
 > **EC2 Host:** `retailops-dev` / `i-0fd116d8927d0e412` / **t3.large** (Sẵn sàng tắt máy sau phiên làm việc để tối ưu chi phí cloud)<br>
 > **Deploy status:** Main baseline đã có container build/live rolling deploy PASS; candidate `feature/module-2.5-pr-a` chưa deploy lên EC2 theo mục 2.9; instance sẵn sàng kích hoạt lại khi bật.<br>
 > **Lộ trình kỹ thuật tổng thể:** Xem chi tiết tại [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md)<br>
@@ -19,7 +19,7 @@ Theo chuẩn phân cấp minh chứng của [`RELEASE_MANIFEST.md`](RELEASE_MANI
 | :--- | :--- | :--- | :--- | :--- |
 | **Module 1** | **Hệ Thống Lõi TMĐT, 6 SOPs & MCP Server** | **IMPLEMENTED** | **L1/L3 hỗn hợp** *(353+ tests PASS, Staff Desk & Manager SSOT healthy)* | Đã hoàn tất Phase 1.1 (Truthful UX) và Phase 1.2 (Store Manager Persistence & Shared Catalog SSOT: bảng `products`, `product_variants` vào PostgreSQL v4 / SQLite v3, đồng bộ `check_inventory`, `dispute_agent`, audit events toàn shop). Còn tồn đọng các ca rò rỉ context F04–F06. |
 | **Module 2** | **Đo Baseline Benchmark Cơ Sở & Ops Console** | **IMPLEMENTED** | **L1/L3 hỗn hợp** *(250 ca offline 100% Routing, 19/19 Ops Console tests OK)* | Hoàn tất Phase 1.3 (`PLAN_FIX_UI_03`): Bỏ chia 3 token, chi phí chưa đo để Unknown/None, chuẩn hóa nhãn E2E Request Latency, mở rộng allowlist Usage, bổ sung concurrency telemetry (`queue_wait_ms`, `in_flight_inferences`, `overload_429_count`). |
-| **Module 2.5** | **Kiểm Thử & Ổn Định Vận Hành (Quality Gate)** | **PR A/N08: CHECKS XANH, SẴN SÀNG OWNER MERGE; CHƯA MERGED** | **PR #34 head ee78b41; CI 37202690835 và Ops Console 37202690842 đều SUCCESS** *([PLAN_MODULE_2_5_HARDENING_VERIFICATION.md](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md))* | CI xác nhận host 479/479, container 478 + 1 skip, Colab PASS; PostgreSQL 19/19 và portable Windows/Ubuntu PASS. PR #34 open/mergeable; chưa merge hoặc deploy. PR B chỉ bắt đầu sau khi PR A được merge. Xem [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md). |
+| **Module 2.5** | **Kiểm Thử & Ổn Định Vận Hành (Quality Gate)** | **PR A/N08 MERGED; PR B/#35 REVIEW BLOCKED — FIXES REQUIRED BEFORE MERGE** | **PR #34 merge 47ba72a; PR #35 head 166e289; CI xanh nhưng review còn findings** | SEC-01 state unbound và exchange status, F09 missing telemetry fallback cần sửa; AC-09 P99 chưa chạy qua Waitress thật. Chưa merge/deploy PR B. Xem <a href="review%20gpt%206%20astra.md">review gpt 6 astra.md</a>. |
 | **Module 3** | **Webhook Facebook Messenger (Omnichannel)** | **PLANNED** | **Design-only** *([PLAN_OMNICHANNEL_INTEGRATION.md](PLAN_OMNICHANNEL_INTEGRATION.md))* | Chờ hoàn tất nghiệm thu Module 2.5 trước khi mở cổng webhook tiếp nhận tin nhắn từ Meta API (xếp vào Phase 5 Demo). |
 | **Module 4** | **Cổng Quét Mã QR Demo Live** | **PARTIAL** | **L3** *(HTTPS sslip.io, Web mobile responsive)* | Đã có hạ tầng web di động sẵn sàng cho demo; Chưa có module sinh mã QR động / thẻ QR demo (xếp vào Phase 5 Demo). |
 | **Module 5** | **Self-Hosted vLLM & Serving Model Agentic** | **IMPLEMENTED / PARTIAL** | **Runtime-dependent** *(Colab L4 vLLM + ngrok)* | Đã tối ưu CUDA Graphs, prefix caching, fp8 kv cache và xử lý an toàn ảnh text-only. Cần hoàn tất chuẩn hóa headroom và timeout gate ở Module 2.5 PR B. |
@@ -84,7 +84,7 @@ Theo chuẩn phân cấp minh chứng của [`RELEASE_MANIFEST.md`](RELEASE_MANI
   - Tách bạch hàm `is_vision_model()`: Với text-only models, tự động trích xuất thông tin ảnh thành ngữ cảnh văn bản an toàn (chẳng hạn metadata mô tả ảnh), không gửi chuỗi Base64 làm treo engine.
 
 ### 2.9. Tiến Độ Triển Khai PR A & Hiện Trạng Nghiệm Thu N08 (Phiên 02/10/2026 - 04/10/2026)
-> **Trạng thái:** PR A VERIFIED trên cả SQLite local lẫn PostgreSQL CI (code patch `c4e9976`; CI run 37197602401 SUCCESS trên final tree `eebe8ed`); **ĐỦ ĐIỀU KIỆN CHUYỂN SANG REVIEW / NGHIỆM THU PR A**. Quyết định merge main là bước riêng; PR B chưa bắt đầu. Xem [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).<br>
+> **Trạng thái:** PR A/N08 đã merge tại 47ba72a. PR B/#35: đánh giá độc lập yêu cầu sửa trước merge; không đánh dấu hoàn tất chỉ vì CI xanh. SEC-01/F09 cần sửa, AC-09 P99 cần Waitress load evidence. Chưa merge/deploy PR B. Xem <a href="review%20gpt%206%20astra.md">review gpt 6 astra.md</a>.<br>
 > *(Lưu ý lịch sử: Ngày 02/10/2026, N08 từng bị tạm giữ do môi trường Windows thiếu PostgreSQL live cục bộ; đến phiên 03/10/2026, toàn bộ integration test đã được xác thực 100% xanh trên CI container thật `fe25f67`. Sau đó review phát hiện guard session fail-open, trigger `N08-P11-RESOLVE-FAIL-CLOSED` đã đóng dứt điểm lỗ hổng này vào 04/10/2026).*
 
 - **N03 (An Toàn Dữ Liệu & Error Masking - ĐÃ ĐẠT)**:
@@ -126,7 +126,7 @@ Theo chuẩn phân cấp minh chứng của [`RELEASE_MANIFEST.md`](RELEASE_MANI
 - **Trạng thái kiểm thử & xác thực CI (04/10/2026)**:
   - **Môi trường máy trạm Windows:** Local test suite: **429 PASS, 50 SKIP, 0 FAIL/ERROR** trên 479 tests (50 tests SKIP gồm 36 tests `tests/test_postgres.py`, 11 tests `tests/test_rag_chat.py`, 2 tests `tests/test_knowledge.py`, 1 test `tests/test_public_web.py` do thiếu DSN/Waitress local); bộ test PR A chạy độc lập đạt **56/56 PASS**; 4/4 cổng hợp đồng (docs, deployment, eval dataset, notebook) đạt **PASS 100%**.
   - **Môi trường GitHub Actions CI Runner (PostgreSQL 16 + pgvector container thật & Caddy live):** CI run 37197602401 (head_sha `eebe8ed`, final tree) đạt **SUCCESS**; CI run 37196429628 trên code patch `c4e9976` là bằng chứng lịch sử với cùng kết quả. Run 37197602401: Host suite đạt **479/479 PASS (0 SKIP)**; packaged container suite đạt **478 PASS / 1 SKIP** (`test_colab_agent_notebook_sync` bỏ qua do không có `scripts/build_agent_notebook.py` trong image); live HTTPS deployment đạt `POSTGRES_HTTPS_IMPORT_RESTORE_OK`.
-  - **KẾT LUẬN HIỆN TẠI:** Blocker P1.1 fail-closed, role boundary, fault injection và toàn bộ PostgreSQL integration tests đã được xác minh thành công. PR A đủ điều kiện chuyển sang bước review / nghiệm thu code; chưa merge vào main, chưa deploy lên EC2, chưa bắt đầu PR B.
+  - **KẾT LUẬN HIỆN TẠI:** P1.1/N08 đã được merge trong PR #34 tại 47ba72a. PR #35 đang mở và CI xanh, nhưng review còn B-01/B-02/B-04; AC-09 SLO chưa có Waitress load test. PR B chưa được chấp thuận merge/deploy.
 
 ---
 
@@ -247,4 +247,4 @@ sudo python3 /opt/retailops/live-e2e.py --mode smoke
    ```
    *(Kỳ vọng lịch sử: 470 tests cũ; hiện tại test suite là 479 tests)*
 4. **Bước tiếp theo theo lộ trình dự án:**
-   - (Hiện hành) CI trên final tree `eebe8ed` đã SUCCESS (run 37197602401); bước tiếp theo là review / nghiệm thu PR A; PR B chưa bắt đầu.
+   - (Hiện hành) PR #34 merged tại 47ba72a; PR #35 head 166e289 có CI xanh nhưng đánh giá độc lập yêu cầu sửa trước merge. Không merge PR B cho tới khi các finding và test gap được xử lý.

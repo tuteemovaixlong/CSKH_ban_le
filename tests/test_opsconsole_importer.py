@@ -70,9 +70,11 @@ class OpsConsoleImporterTests(unittest.TestCase):
             self.assertEqual(model_case["trace"]["provider_inference_ms"], 135.0)
             self.assertEqual(model_case["trace"]["queue_wait_ms"], 10.0)
 
-            # 3. Missing provider_inference_ms falls back to latency_ms
+            # 3. Missing provider_inference_ms or queue_wait_ms remains None (null), never falsified
             legacy_case = case_results["case_no_inference_telemetry"]
-            self.assertEqual(legacy_case["trace"]["provider_inference_ms"], 80.0)
+            self.assertIsNone(legacy_case["trace"]["provider_inference_ms"])
+            self.assertIsNone(legacy_case["trace"]["queue_wait_ms"])
+            self.assertEqual(legacy_case["trace"]["latency_ms"], 80.0)
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 

@@ -153,7 +153,7 @@ class PublicWeb:
             try:
                 user_info = exchange_code_for_user_info(code, self.origin)
             except ValueError as e:
-                require(False, 400, 'oauth_exchange_failed', str(e), headers=err_headers)
+                require(False, 502, 'oauth_exchange_failed', str(e), headers=err_headers)
 
             role = resolve_role_from_email(user_info['email'])
             is_live = getattr(self.sessions, 'data_mode', None) in ('production', 'live')

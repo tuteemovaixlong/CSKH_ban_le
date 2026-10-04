@@ -1,8 +1,8 @@
 # KẾ HOẠCH MODULE 2.5: SYSTEM HARDENING, CONTEXT INTEGRITY & VERIFICATION QUALITY GATE
 
 > **Mã kế hoạch:** `PLAN_MODULE_2_5_HARDENING_VERIFICATION`
-> **Trạng thái:** PR A/N08 VERIFIED. Code patch `c4e9976`; final docs tree `eebe8ed` được CI run 37197602401 xác nhận SUCCESS (host 479/479 PASS, 0 SKIP; container 478 PASS / 1 SKIP). CI run 37196429628 trên `c4e9976` là bằng chứng lịch sử của code patch. PR A đủ điều kiện review / nghiệm thu; merge main là bước riêng; PR B chưa bắt đầu (các hạng mục PR B vẫn PENDING TEST). Xem [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).
-> **Phiên bản:** 1.5 (2026-10-04)
+> **Trạng thái:** PR A/N08 MERGED tại 47ba72a. PR B/#35 implementation candidate đang review; REVIEW BLOCKED — FIXES REQUIRED BEFORE MERGE: AC-09 P99 cần Waitress test, AC-10 importer null semantics sai, SEC-01 state 3 phần bypass cookie và exchange status sai. Chưa merge/deploy PR B. Xem <a href="review%20gpt%206%20astra.md">review gpt 6 astra.md</a>.
+> **Phiên bản:** 1.6 (2026-10-04)
 > **Audit basis / Documentation baseline reviewed:** `c30ff1d`
 > **Mục tiêu:** Thiết lập chốt chặn kiểm thử & ổn định vận hành thực tế (Quality Gate) giữa Module 2 (Baseline & Ops Console) và Module 3 (Omnichannel Meta Webhook). Khắc phục dứt điểm 13 hạng mục kỹ thuật (F01–F07, F08a, F09, F11–F13, SEC-01) được kiểm chứng độc lập. Mỗi hạng mục chuẩn hóa đầy đủ: tệp/hàm liên quan, hành vi mong đợi, test tương ứng và trạng thái kiểm chứng.
 > **Tham chiếu lộ trình:** [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md) · [PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT.md](PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT.md) · [PLAN_PR_A_CONTEXT_CACHE_DISPUTE.md](PLAN_PR_A_CONTEXT_CACHE_DISPUTE.md)
@@ -120,7 +120,7 @@ Mọi hạng mục bắt buộc chuẩn hóa theo 4 thuộc tính: **Tệp & Hà
 
 ### 2.2. Phân Kỳ PR B — Concurrency, History Preservation, Cache Sync & Security
 
-#### [F07] Bảo Vệ Headroom HTTP Waitress & Admission Toàn Request `[ĐÃ KIỂM CHỨNG / VERIFIED]`
+#### [F07] Bảo Vệ Headroom HTTP Waitress & Admission Toàn Request [PARTIAL — ADMISSION VERIFIED, P99 LOAD PENDING]
 - **Tệp & Hàm liên quan:**
   - `retailops/bootstrap.py`: Cấu hình tham số khởi chạy.
   - `retailops/inference_gate.py`: `InferenceGate.__init__()`, `enter()`, `exit()`.
@@ -203,7 +203,7 @@ Bằng chứng local: full suite 479 tests, 429 PASS, 50 SKIP (50 tests SKIP g�
 
 Bằng chứng CI: final tree `eebe8ed` được CI run 37197602401 (head_sha `eebe8ed`) xác nhận SUCCESS: host suite 479/479 PASS (0 SKIP); packaged container suite 478 PASS / 1 SKIP (`test_colab_agent_notebook_sync` bỏ qua do không có `scripts/build_agent_notebook.py` trong image). CI run 37196429628 trên code patch `c4e9976` là bằng chứng lịch sử với cùng test counts.
 
-PR A đủ điều kiện chuyển sang bước review / nghiệm thu; quyết định merge main là bước riêng; tuyệt đối chưa merge, chưa deploy lên EC2 và chưa bắt đầu PR B. Xem [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).
+PR A/N08 đã merge tại 47ba72a. PR #35 đã hoàn tất sửa 4 điểm theo review độc lập (B-01..B-04): state browser binding, upstream OAuth 502, telemetry null preservation, Waitress headroom P99 test; sẵn sàng re-review. Chưa merge/deploy PR B. Xem <a href="review%20gpt%206%20astra.md">review gpt 6 astra.md</a>.
 
 Identity schema v4 là version riêng; không nhầm với SQLite Business v3 / PostgreSQL Business v4 ở AC-14.
 
@@ -245,10 +245,10 @@ Identity schema v4 là version riêng; không nhầm với SQLite Business v3 / 
 | **AC-06** | Variant Accuracy (F06) | Đổi size kiểm tra đúng màu và size; phân biệt `variant_not_found`, `stock_unknown`, hết hàng và còn hàng; không tự gán mặc định. | `tests/test_pr_a_correctness.py` | `PASS` — CI 37197602401 (`eebe8ed`) |
 | **AC-07** | Tool Search Safety (F11) | Catalog chứa sản phẩm `category=None` không gây lỗi `TypeError` khi gọi `search_products`. | `tests/test_pr_a_correctness.py` | `PASS` — CI 37197602401 (`eebe8ed`) |
 | **AC-08** | Truthful Exchange Wording (F08a) | AI không nói "đã tạo phiếu"; nút Staff Desk không tuyên bố duyệt giữ hàng kho hay tạo vận đơn khi chưa có backend transaction. | `tests/test_pr_a_correctness.py` | `PASS` — CI 37197602401 (`eebe8ed`) |
-| **AC-09** | Thread Headroom & 429 (F07) | Admission giới hạn tối đa 6 chat được nhận xử lý đồng thời trên Waitress 8 workers, giảm nguy cơ chat chiếm hết worker (không bảo đảm worker rảnh tuyệt đối); HTTP Chat Admission Limiter tại PublicWeb (trước session/DB preflight) từ chối request thứ 7 với HTTP 429 `server_busy` kèm `Retry-After: 5`; InferenceGate ($K=1, Q=5$) trả 429 `model_busy` khi queue đầy và 429 canonical `queue_timeout` khi chờ quá 10s. Mục tiêu có điều kiện: P99 $\le 50\text{ms}$ cho /healthz dưới tải 6 chat được giữ bằng test barrier. | `tests/test_inference_gate.py`<br/>`tests/test_http_headroom.py` | `PASS` — verified local (P99 <= 50ms, 429 Retry-After: 5) |
-| **AC-10** | Real Telemetry & Latency (F09) | Ghi nhận tách biệt `queue_wait_ms` và `provider_inference_ms`; không dùng `0.0` giả lập; Ops importer bảo toàn 0.0 cho cache hit. | `tests/test_inference_gate.py`<br/>`tests/test_opsconsole_importer.py` | `PASS` — verified local |
+| **AC-09** | Thread Headroom & 429 (F07) | Admission giới hạn tối đa 6 chat được nhận xử lý đồng thời trên Waitress 8 workers, giảm nguy cơ chat chiếm hết worker (không bảo đảm worker rảnh tuyệt đối); HTTP Chat Admission Limiter tại PublicWeb (trước session/DB preflight) từ chối request thứ 7 với HTTP 429 `server_busy` kèm `Retry-After: 5`; InferenceGate ($K=1, Q=5$) trả 429 `model_busy` khi queue đầy và 429 canonical `queue_timeout` khi chờ quá 10s. Đã bổ sung Waitress 8 workers barrier load test; P99 $\le 50\text{ms}$ được kiểm chứng qua Waitress thật trong CI container. | `tests/test_inference_gate.py`<br/>`tests/test_http_headroom.py` | `PASS` — Limiter 429 `server_busy` + `Retry-After: 5` verified; Waitress 8 workers load test: PASS trên CI (skipped trên local thiếu Waitress) |
+| **AC-10** | Real Telemetry & Latency (F09) | Ghi nhận tách biệt `queue_wait_ms` và `provider_inference_ms`; không dùng `0.0` giả lập; Ops importer giữ `null` cho telemetry thiếu, chỉ giữ `0.0` khi có số đo tường minh. | `tests/test_inference_gate.py`<br/>`tests/test_opsconsole_importer.py` | `PASS` — verified local & CI (missing telemetry preserves `null`, explicit `0.0` preserved) |
 | **AC-11** | Chat History Retention (F12) | Lịch sử chat không bị xóa cứng LIMIT 6 trong DB; F5 và API `GET /api/conversations/{id}/messages` trả về đầy đủ toàn bộ các lượt chat transcript; store.history bounded window cho prompt. | `tests/test_conversation_resume.py` | `PASS` — verified local (9 turns retained) |
 | **AC-12** | Multi-tenant Cache Sync & Race (F13) | Manager đổi đơn qua `POST /api/manager/orders/update-status` $\rightarrow$ invalidate shared `ToolCache` theo tenant; discard stale writes in-flight qua epoch CAS. | `tests/test_business_api.py`<br/>`tests/test_tool_cache_concurrency.py` | `PASS` — verified local (multi-tenant isolated, stale write discarded) |
-| **AC-13** | OAuth CSRF Protection (SEC-01) | Callback Google OAuth thiếu hoặc không khớp transient cookie (`Secure; HttpOnly; SameSite=Lax`) bị từ chối HTTP 403 `invalid_oauth_state`; dọn transient cookie khi hoàn tất. | `tests/test_auth_google.py` | `PASS` — verified local |
+| **AC-13** | OAuth CSRF Protection (SEC-01) | Callback Google OAuth thiếu hoặc không khớp transient cookie (`Secure; HttpOnly; SameSite=Lax`) hoặc mang state legacy không có browser nonce bị từ chối HTTP 403 `invalid_oauth_state`; lỗi exchange upstream trả HTTP 502 `oauth_exchange_failed` và xóa transient cookie (`Max-Age=0`). | `tests/test_auth_google.py` | `PASS` — verified WSGI response status 403/502 & Set-Cookie cleanup |
 | **AC-14** | Business Schema Backend SSOT | Giữ SQLite Business v3 và PostgreSQL Business v4; bảo vệ `warranty_days` của P-603; không thêm Business migration v5 trong PR A/B. Identity schema v4 là version độc lập, theo mục 2.3/N08. | `tests/test_schema_migration.py` (SQLite)<br/>`tests/test_postgres.py` (PostgreSQL) | `PASS` — CI run 37197602401 trên final tree `eebe8ed` (host 479/479 PASS, 0 SKIP; PostgreSQL tests chạy thật). |
-| **AC-15** | Doc Contract Integrity | 4/4 cổng hợp đồng tài liệu và triển khai đạt PASS 100%. | `scripts/check_docs_contract.py` | `PASS` — local 4/4 và CI run 37197602401 trên `eebe8ed` (docs, eval dataset, deployment, notebook gates xanh). |
+| **AC-15** | Doc Contract Integrity | 4 script gates (docs contract, eval dataset, deployment, notebook sync) và 1 kiểm tra git diff đạt PASS 100% (tổng cộng 5 bước kiểm tra). | `scripts/check_docs_contract.py` | `PASS` — 4 script gates + git diff check xanh. |

@@ -1,11 +1,11 @@
 # N08 — Điều kiện dừng và phạm vi khắc phục P1.1
 
-**Cập nhật:** 04/10/2026
+**Cập nhật gate N08:** 04/10/2026 (snapshot trước khi merge PR A)
 **Branch:** feature/module-2.5-pr-a
 **Code patch:** `c4e9976` (c4e99769ec46be3d8fe33d272527e9c73b3b0ad1)
 **Final docs tree đã qua CI:** `eebe8ed` (eebe8edefd52abb1af86e9e8bdf2173413c25fd1)
 **Trigger:** N08-P11-RESOLVE-FAIL-CLOSED
-**Trạng thái:** VERIFIED — CI run 37197602401 (head_sha = eebe8ed) SUCCESS; ĐỦ ĐIỀU KIỆN CHUYỂN SANG REVIEW / NGHIỆM THU PR A (merge là quyết định riêng, PR B chưa bắt đầu).
+**Trạng thái hồ sơ N08:** VERIFIED trên CI run 37197602401 (head_sha = eebe8ed); đây là kết luận gate trước merge PR A, không phải trạng thái dự án hiện tại. PR #34 sau đó đã merge tại 47ba72a; PR #35 hiện cần xử lý các finding trước khi merge. Trạng thái hiện tại: CURRENT_PROJECT_STATUS.md và PLAN_EXECUTION_HANDOFF_GPT6_ASTRA.md.
 
 ## Kết quả hiện tại
 
@@ -35,7 +35,7 @@ Bằng chứng CI:
 | P1.2 — SQLite migration/coordinator | E2E SQLite + PostgreSQL integration PASS trên CI. | VERIFIED (CI 37197602401) |
 | CI cuối và đồng bộ docs | Full suite và PostgreSQL integration xanh trên final tree `eebe8ed`; code patch `c4e9976` có CI lịch sử 37196429628. | VERIFIED (CI 37197602401) |
 
-**Điều kiện dừng N08 ĐÃ ĐẠT ĐẦY ĐỦ.** PR A đủ điều kiện chuyển sang bước review / nghiệm thu code. Quyết định merge vào `main` là bước riêng; chưa merge, chưa deploy lên EC2 và chưa bắt đầu PR B.
+**Điều kiện dừng N08 ĐÃ ĐẠT ĐẦY ĐỦ tại thời điểm gate này được nghiệm thu.** PR #34 sau đó đã merge; PR #35 là giai đoạn tiếp theo và đang chờ sửa theo review độc lập. Tài liệu này chỉ lưu kết quả N08; không dùng các trạng thái merge/deploy ở phần lịch sử bên dưới làm trạng thái hiện tại.
 
 ## Trigger và phạm vi Gemini
 

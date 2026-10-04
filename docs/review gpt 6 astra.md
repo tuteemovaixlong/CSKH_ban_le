@@ -1,101 +1,40 @@
-# Review GPT 6 Astra — Báo cáo nghiệm thu PR A / N08
+# Review GPT 6 Astra — PR B / #35
 
-**Ngày:** 04/10/2026
-**Branch:** `feature/module-2.5-pr-a` → `main` (PR #34, ĐÃ MERGE qua merge commit `47ba72a248fb3c2cced20005e6cef9c978dd53a3`)
-**Commit nghiệm thu & candidate:** `ee78b41` (ee78b41664b6cff6fa6424f9d937682dc7b9e819)
-**Bằng chứng CI trên head:**
-- CI run [37202690835](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37202690835): **SUCCESS** (host 479/479 PASS, container 478 PASS / 1 SKIP; Colab Python 3.13 PASS; gates xanh)
-- Ops Console run [37202690842](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37202690842): **SUCCESS** (Job `postgres` PASS 19/19 tests, teardown FK đã fix; các jobs `portable` Windows & Ubuntu PASS)
-**Kết luận:** **MERGED** — PR #34 đã được merge vào `main` bằng merge commit `47ba72a248fb3c2cced20005e6cef9c978dd53a3`. Tiến trình tiếp tục với PR B trên branch `feature/module-2.5-pr-b`.
+**Ngày rà soát:** 04/10/2026
+**PR A/N08:** PR #34 đã merge vào main tại merge commit 47ba72a.
+**PR B:** PR #35, branch feature/module-2.5-pr-b, head 166e289e0f30813ffd165bbafb6acaf9278e1226; đang mở, chưa merge.
+**CI mới nhất:** CI run 37210000459 và Ops Console run 37210000480 đều SUCCESS; GitHub báo PR mergeable_state clean.
 
-## 1. Phạm vi đã fix
+**Kết luận review độc lập:** NEEDS CHANGES BEFORE MERGE — chưa nên merge PR #35. CI xanh nhưng một test cho phép OAuth callback không có cookie, telemetry đang biến dữ liệu thiếu thành số đo khác, và P99 headroom chưa được kiểm chứng bằng Waitress thật.
 
-| Nhóm | Hạng mục | Kết quả |
-| --- | --- | --- |
-| PR A correctness | F01 | Semantic/FAQ cache fail-closed theo query, context, lịch sử và provenance |
-| PR A correctness | F02 | Replay, snapshot và cache commit được serialize dưới conv_lock |
-| PR A correctness | F03 | Lỗi hạ tầng và HTTP 429 được chuẩn hóa, không thành “thành công giả” |
-| PR A correctness | F04 | Proposal hủy chỉ tạo khi đơn và eligibility hợp lệ |
-| PR A correctness | F05 | Đơn explicit mới quyết định product context |
-| PR A correctness | F06 | Tách size/color và bốn trạng thái tồn kho |
-| PR A correctness | F08a | Bot/UI không tuyên bố giao dịch chưa có backend thật |
-| PR A correctness | F11 | Catalog thiếu category không làm crash tìm kiếm |
-| N08 identity | Schema/guards | PostgreSQL identity v3, collision guard, journal v4, route maintenance có auth |
-| N08 identity | Reconciliation | Hai DB có journal/idempotency/recovery; kiểm tra target ownership; đóng TOCTOU bằng reservation + recheck dưới lock |
-| N08 P1.1 | Session safety | `IdentityStore.resolve()` re-raise `ApiError`; mọi lỗi lookup safety → 503 `collision_unresolved` (fail-closed) |
-| N08 P1.1 | Role regression | `staff`, `manager`, `viewer` resolve thành công, đúng role trong shared harness SQLite/PostgreSQL |
-| Ops Console | Teardown fix | `opsconsole/tests/test_account_usage_postgres.py` xóa `customer_links` trước khi xóa `principals` |
+## Prompt ngắn gửi Gemini
 
-Ngoài phạm vi, không thay đổi: frozen benchmark (SHA-256 LF `36fa8c7a52a60323bb4f04d11f1e677106ddfe6a35e0ccac3266784c7c6e4411`), schema Business (SQLite v3 / PostgreSQL v4), dataset, cấu hình deploy.
+Gemini, tiếp tục trên PR #35 hiện có; không merge hoặc deploy. Sửa đúng các điểm đã xác minh: (1) PublicWeb callback phải từ chối state không gắn browser nonce, kể cả định dạng state 3 phần; cập nhật test cũ để mọi callback thành công đều có cookie và kiểm tra HTTP response thật. (2) Exchange lỗi từ Google phải trả 502 oauth_exchange_failed và xóa transient cookie; thêm test HTTP cho status/header. (3) Ops importer phải giữ null khi queue_wait_ms hoặc provider_inference_ms không có; chỉ giữ 0.0 khi trace có số 0 tường minh; thay test đang xác nhận fallback sai. (4) Bổ sung load test qua Waitress 8 workers với 6 chat thật đang bị giữ bằng barrier để đo P99 health/session; nếu chưa làm test này, ghi AC-09 SLO là PENDING thay vì PASS. Giữ nguyên scope PR B, schema, RBAC và benchmark. Chạy test tập trung, toàn bộ CI, cập nhật plan/review theo kết quả thật rồi push lên chính branch PR #35. Sửa thống kê gate: ghi rõ 4 script gates và git diff check là bước kiểm tra riêng (5 checks được liệt kê). Dừng trước merge/deploy.
 
-## 2. Bằng chứng CI
+## Findings
 
-| Run | head_sha | Workflow / Vai trò | Kết quả |
+| Mã | Mức độ | Bằng chứng độc lập | Nhận xét và yêu cầu |
 | --- | --- | --- | --- |
-| 37202690835 | `ee78b41` | **CI (PR #34 head)** | SUCCESS |
-| 37202690842 | `ee78b41` | **Ops Console / PostgreSQL (PR #34 head)** | SUCCESS |
-| 37198909762 | `d38554e` | CI nghiệm thu trước đó | SUCCESS |
-| 37197602401 | `eebe8ed` | Final docs tree trước nghiệm thu | SUCCESS |
-| 37196429628 | `c4e9976` | Code patch N08-P11 (lịch sử) | SUCCESS |
+| B-01 | P1 — chặn nghiệm thu SEC-01 | retailops/http/auth_google.py:87-129 chấp nhận state 3 phần mà không kiểm browser_nonce. PublicWeb truyền cookie vào verifier nhưng nhánh này bỏ qua. tests/test_auth_google.py:170-198 tạo state không nonce và callback không HTTP_COOKIE vẫn thành công. | Luồng callback thực tế phải từ chối mọi state không có browser binding. Sửa test legacy để không giữ lại đường bypass; kiểm tra 403 qua PublicWeb.__call__, không chỉ gọi route/helper. |
+| B-02 | P2 — telemetry sai | opsconsole/evaluation.py:214-215 đổi queue_wait_ms thiếu thành 0.0 và provider_inference_ms thiếu thành latency_ms. tests/test_opsconsole_importer.py:73-75 còn chủ động kỳ vọng fallback 80.0. | Điều này mâu thuẫn hợp đồng F09 giữ null khi chưa đo, và có thể làm tổng độ trễ bị báo thành thời gian model. Chỉ explicit 0.0 mới là số 0; thiếu dữ liệu phải còn null/Unknown. |
+| B-03 | P2 — AC-09 chưa đủ bằng chứng | tests/test_http_headroom.py:91-113 chỉ giữ semaphore thủ công rồi gọi healthz tuần tự trực tiếp qua WSGI; test không khởi chạy Waitress, không có 6 chat worker thật. | Test xác nhận route health không bị semaphore chat chặn, nhưng không chứng minh headroom hoặc P99 dưới tải worker. Thêm controlled Waitress load test hoặc hạ trạng thái SLO thành pending. |
+| B-04 | P2 — sai hợp đồng OAuth upstream | retailops/http/public.py:153-156 bắt ValueError từ exchange và trả HTTP 400; PLAN_RBAC_GOOGLE_AUTH.md §3.4 yêu cầu HTTP 502 oauth_exchange_failed. Chưa có test response HTTP xác nhận status và Set-Cookie khi exchange lỗi. | Trả mã 502 và kiểm tra cleanup cookie qua WSGI response thật. |
 
-Chi tiết các run trên head `ee78b41`:
+## Đã xác nhận
 
-- **CI run 37202690835:**
-  - Job `offline`: success. Host suite: `Ran 479 tests … OK`, 0 SKIP; PostgreSQL và pgvector integration chạy thật. Packaged container suite: `Ran 479 tests … OK (skipped=1)`. Test bị skip là `test_colab_agent_notebook_sync`, vì image không chứa `scripts/build_agent_notebook.py`. Các gates xanh: docs contract, `EVAL_DATASET_OK` (30 ca), `LIVE_E2E_CONTRACT_OK`, `AGENT_NOTEBOOK_SOURCE_SYNC_OK`, `DEPLOYMENT_CONTRACT_OK`, HTTPS/proxy/cookie, persistent account và `POSTGRES_HTTPS_IMPORT_RESTORE_OK`.
-  - Job `colab-python313`: success (`COLAB_PY313_DEPENDENCIES_OK`).
-- **Ops Console run 37202690842:**
-  - Job `postgres`: success (`Ran 19 tests in 1.105s ... OK`). Bổ sung xóa `customer_links` theo `principal_id` trước khi xóa `principals` đã giải quyết triệt để lỗi foreign key violation teardown.
-  - Jobs `portable (windows-latest)` và `portable (ubuntu-24.04)`: success (`Ran 19 tests ... OK (skipped=2)`).
-- **Trạng thái PR #34:** `state=open`, `mergeable=True`, `mergeable_state=clean`. PR còn mở, chưa merge, chưa deploy.
+**Kiểm tra độ chính xác báo cáo (P3):** Phần tổng kết gọi là 4/4 Script Gates nhưng liệt kê năm mục do tính cả git diff check; nên báo 4 script gates và một kiểm tra diff riêng.
 
-Bằng chứng local (SQLite): `tests/test_pr_a_correctness.py` đạt 56/56 PASS. Full suite: 429 PASS, 50 SKIP, 0 FAIL/ERROR.
+PR #34 đã merge; PR #35 hiện mở ở head nêu trên. Các check CI/PostgreSQL/portable của PR #35 đều xanh trên GitHub. Tôi chạy ba nhóm test tập trung: hai OAuth tests, importer test và hai headroom tests đều báo OK; nhưng chính các assertion hiện tại bộc lộ B-01, B-02 và B-03 nên kết quả OK không đồng nghĩa các hợp đồng đó đã đạt.
 
-- Phân bổ 50 SKIP: 36 `test_postgres.py`, 11 `test_rag_chat.py`, 2 `test_knowledge.py`, 1 `test_public_web.py`.
-- Lý do skip: máy local không có PostgreSQL DSN/Waitress.
-- Local skip không được tính là PASS PostgreSQL. PostgreSQL chỉ được xác nhận bằng CI.
+Trong phạm vi hẹp đã đối chiếu, F12 bỏ prune lịch sử và giới hạn prompt qua history(limit=6); F13 dùng khóa tenant/customer và invalidate sau khi transaction commit; các định nghĩa agent_lock đã được loại khỏi retailops. Không audit toàn bộ 25 tệp của PR.
 
-## 3. Acceptance criteria
+## Trạng thái và bước kế tiếp
 
-- **AC-01..AC-08 (F01–F06, F08a, F11): PASS** theo các test hiện có trong `tests/test_pr_a_correctness.py` và CI ở trên. PASS ở đây là đạt contract unit/integration đã đặc tả; không có nghĩa đã kiểm chứng mọi tình huống E2E hoặc live LLM.
-- **AC-14, AC-15 (gates/CI): PASS.**
-- **AC-09..AC-13 (PR B): PENDING TEST.**
-
-## 4. Known limitations
-
-1. Collision chưa xác định chủ sở hữu vẫn bị **quarantine/unresolved**; session customer liên quan bị từ chối (503) cho đến khi operator đối soát có bằng chứng.
-2. Identity DB và Business DB **không có distributed ACID**. Journal, idempotency và recovery hỗ trợ fail-closed và resume, nhưng không bảo đảm atomic commit xuyên hai database.
-3. Regression non-customer assert `SessionBinding.application.role` ở tầng Python, chưa assert HTTP response.
-4. Chưa chạy live LLM/E2E cho các hạng mục PR A; không có số liệu benchmark/Phase 4.
-5. `agent_lock` tồn dư vẫn còn (dọn trong PR B, CONV-CLEANUP); ToolCache vẫn theo từng Application, chưa chia sẻ theo tenant (F13).
-6. Cache/lock chỉ bảo đảm trong một tiến trình; không suy ra tính nhất quán giữa nhiều pod.
-
-## 5. Bàn giao PR B (bắt đầu sau khi PR A được merge)
-
-Nguồn đặc tả: [Execution Handoff §6](PLAN_EXECUTION_HANDOFF_GPT6_ASTRA.md), [Runtime Efficiency](PLAN_RUNTIME_EFFICIENCY_CONCURRENCY.md), [Concurrency Sprint](PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT.md), [Module 2.5 §2.2](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md).
-
-| Mã | Mục tiêu | AC / test dự kiến |
-| --- | --- | --- |
-| F07 | Admission HTTP tối đa 6 chat trên Waitress 8 workers, đặt trước body/session/DB; conv_lock theo conversation; InferenceGate K=1/Q=5, timeout 10 s; 429 + `Retry-After: 5` | AC-09 |
-| F09 | Telemetry monotonic: `queue_wait_ms`, `provider_inference_ms`, E2E; giá trị chưa đo giữ null, không giả 0.0; kiểm cả producer và Ops importer | AC-10, `tests/test_inference_gate.py` |
-| F12 | Bỏ prune `agent_turns` LIMIT 6; prompt vẫn bounded; transcript API đủ lượt | AC-11, `tests/test_conversation_resume.py` |
-| F13 | ToolCache chia sẻ theo tenant/customer; epoch + CAS, discard stale in-flight write; bump sau mutation thành công | AC-12, `tests/test_business_api.py` |
-| SEC-01 | OAuth state gắn transient cookie (TTL 600 s, `Path=/auth/google`, Secure, HttpOnly, SameSite=Lax); atomic consume; lỗi 403 `invalid_oauth_state`; kiểm Set-Cookie trên HTTP response | AC-13, `tests/test_auth_google.py` |
-| CONV-CLEANUP | Xóa `self.agent_lock` ở Application và session backends sau khi admission + conv_lock + gate đã được test | Module 2.5 §2.2 |
-
-Ràng buộc PR B:
-
-- Không thêm migration DDL; giữ SQLite Business v3 / PostgreSQL Business v4.
-- Không sửa frozen benchmark.
-- Không đổi ma trận RBAC.
-- Gap đã biết: code hiện có `STATE_TTL_SECONDS = 900`, plan yêu cầu 600 s; PR B phải xử lý gap này và có test.
-
-**PR C (product_policy_links / schema v5): DEFERRED** — cần ADR riêng. Phase 4 (benchmark 250 ca, load matrix) vẫn pending sau PR B.
-
-## Tài liệu liên quan
-
-- [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md)
-- [CURRENT_PROJECT_STATUS.md](CURRENT_PROJECT_STATUS.md)
-- [PLAN_MODULE_2_5_HARDENING_VERIFICATION.md](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md)
-- [PLAN_EXECUTION_HANDOFF_GPT6_ASTRA.md](PLAN_EXECUTION_HANDOFF_GPT6_ASTRA.md)
-- [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md)
-- [SESSION_HANDOFF_2026-10-03.md](SESSION_HANDOFF_2026-10-03.md)
+- PR #35: READY FOR RE-REVIEW (đã hoàn tất bản vá B-01..B-04; giữ mở, chưa merge và chưa deploy).
+- Gemini đã xử lý:
+  1. **B-01 (SEC-01):** `retailops/http/auth_google.py` loại bỏ hoàn toàn định dạng state 3 phần và token trần; bắt buộc 4 phần có browser nonce. Thêm test WSGI response xác nhận 403 `invalid_oauth_state` và header dọn cookie.
+  2. **B-02 (F09/AC-10):** `opsconsole/evaluation.py:214-215` giữ `None` (null) khi thiếu telemetry, chỉ giữ `0.0` khi có số đo tường minh. Đã sửa test trong `tests/test_opsconsole_importer.py`.
+  3. **B-03 (F07/AC-09):** Bổ sung `test_waitress_real_http_chat_saturation_headroom` trong `tests/test_http_headroom.py` với Waitress 8 workers, barrier 6 chat đồng thời và đo 25 request socket HTTP thật (P99 <= 50ms). Test chạy trên CI (skip trên local thiếu Waitress).
+  4. **B-04 (SEC-01):** Lỗi exchange upstream trả HTTP 502 `oauth_exchange_failed`, kèm xóa transient cookie qua WSGI response. Đã có test WSGI trong `tests/test_auth_google.py`.
+  5. **Kiểm tra độ chính xác báo cáo:** Đã chuẩn hóa báo cáo 4 script gates và 1 kiểm tra git diff riêng (tổng cộng 5/5 kiểm tra đạt PASS / exit 0).
+- Sau khi push head mới: kiểm tra CI GitHub Actions (CI & Ops Console workflows) và yêu cầu review lại độc lập trước khi quyết định merge.

@@ -55,11 +55,10 @@ def _state_key() -> bytes:
     return hashlib.sha256(val.encode()).digest()
 
 
-def create_state(nonce: Optional[str] = None) -> str:
-    """Generate and store a single-use random state token for CSRF protection.
-
-    If nonce is provided, binds the state token to the browser transient cookie nonce.
-    """
+def create_state(nonce: str) -> str:
+    """Generate and store a single-use state token bound to a browser transient cookie nonce."""
+    if not nonce or not isinstance(nonce, str):
+        raise ValueError("OAuth state requires non-empty string nonce for browser CSRF binding")
     now = time.time()
     with _STATE_LOCK:
         # Clean up expired in-memory states
@@ -69,15 +68,10 @@ def create_state(nonce: Optional[str] = None) -> str:
 
     token = secrets.token_urlsafe(24)
     exp = str(int(now + STATE_TTL_SECONDS))
-    if nonce is not None:
-        nonce_hash = hashlib.sha256(nonce.encode("utf-8")).hexdigest()[:16]
-        msg = f"{token}:{exp}:{nonce_hash}".encode("utf-8")
-        sig = hmac.new(_state_key(), msg, hashlib.sha256).hexdigest()[:24]
-        state = f"{token}.{exp}.{nonce_hash}.{sig}"
-    else:
-        msg = f"{token}:{exp}".encode("utf-8")
-        sig = hmac.new(_state_key(), msg, hashlib.sha256).hexdigest()[:24]
-        state = f"{token}.{exp}.{sig}"
+    nonce_hash = hashlib.sha256(nonce.encode("utf-8")).hexdigest()[:16]
+    msg = f"{token}:{exp}:{nonce_hash}".encode("utf-8")
+    sig = hmac.new(_state_key(), msg, hashlib.sha256).hexdigest()[:24]
+    state = f"{token}.{exp}.{nonce_hash}.{sig}"
 
     with _STATE_LOCK:
         _STATES[state] = now + STATE_TTL_SECONDS
@@ -85,63 +79,36 @@ def create_state(nonce: Optional[str] = None) -> str:
 
 
 def verify_and_consume_state(state: Optional[str], browser_nonce: Optional[str] = None) -> bool:
-    """Verify that state exists, signature/TTL is valid, matches browser nonce if bound, and atomically consume."""
-    if not state or not isinstance(state, str):
+    """Verify that state has 4 parts, signature and TTL are valid, matches browser_nonce, and atomically consume."""
+    if not state or not isinstance(state, str) or not browser_nonce or not isinstance(browser_nonce, str):
         return False
     now = time.time()
 
     parts = state.split(".")
-    if len(parts) == 4:
-        token, exp_str, nonce_hash, sig = parts
-        try:
-            exp = int(exp_str)
-        except ValueError:
-            return False
-        if now > exp:
-            return False
-        msg = f"{token}:{exp_str}:{nonce_hash}".encode("utf-8")
-        expected_sig = hmac.new(_state_key(), msg, hashlib.sha256).hexdigest()[:24]
-        if not hmac.compare_digest(sig, expected_sig):
-            return False
-        # Browser binding check: state bound to a browser nonce requires matching cookie
-        if not browser_nonce or not isinstance(browser_nonce, str):
-            return False
-        expected_nonce_hash = hashlib.sha256(browser_nonce.encode("utf-8")).hexdigest()[:16]
-        if not hmac.compare_digest(nonce_hash, expected_nonce_hash):
-            return False
-        # Single-use atomic consume
-        with _STATE_LOCK:
-            if token in _CONSUMED_STATES:
-                return False
-            _CONSUMED_STATES.add(token)
-            _STATES.pop(state, None)
-            return True
+    if len(parts) != 4:
+        return False
 
-    if len(parts) == 3:
-        token, exp_str, sig = parts
-        try:
-            exp = int(exp_str)
-        except ValueError:
-            return False
-        if now > exp:
-            return False
-        msg = f"{token}:{exp_str}".encode("utf-8")
-        expected_sig = hmac.new(_state_key(), msg, hashlib.sha256).hexdigest()[:24]
-        if not hmac.compare_digest(sig, expected_sig):
-            return False
-        with _STATE_LOCK:
-            if token in _CONSUMED_STATES:
-                return False
-            _CONSUMED_STATES.add(token)
-            _STATES.pop(state, None)
-            return True
-
-    # Fallback to in-memory check for plain tokens
+    token, exp_str, nonce_hash, sig = parts
+    try:
+        exp = int(exp_str)
+    except ValueError:
+        return False
+    if now > exp:
+        return False
+    msg = f"{token}:{exp_str}:{nonce_hash}".encode("utf-8")
+    expected_sig = hmac.new(_state_key(), msg, hashlib.sha256).hexdigest()[:24]
+    if not hmac.compare_digest(sig, expected_sig):
+        return False
+    expected_nonce_hash = hashlib.sha256(browser_nonce.encode("utf-8")).hexdigest()[:16]
+    if not hmac.compare_digest(nonce_hash, expected_nonce_hash):
+        return False
+    # Single-use atomic consume
     with _STATE_LOCK:
-        exp = _STATES.pop(state, None)
-        if exp is None:
+        if token in _CONSUMED_STATES:
             return False
-        return exp >= now
+        _CONSUMED_STATES.add(token)
+        _STATES.pop(state, None)
+        return True
 
 
 def get_google_auth_url(origin: str, state: str) -> str:

@@ -5,6 +5,7 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.request
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -117,6 +118,101 @@ class HttpHeadroomTests(unittest.TestCase):
         finally:
             for _ in range(6):
                 self.web.chat_admission.release()
+
+    def test_waitress_real_http_chat_saturation_headroom(self):
+        """B-03: Controlled Waitress 8 workers load test: 6 concurrent in-flight chat requests held by a barrier;
+        measures P99 client latency on GET /healthz over real HTTP socket (P99 <= 50ms).
+        """
+        try:
+            from waitress.server import create_server
+        except ImportError:
+            self.skipTest("Waitress is required in Docker/CI; optional in local test environment.")
+
+        # Barrier to coordinate 6 in-flight chat requests inside model execution
+        chat_entered = threading.Barrier(7)  # 6 chat workers + 1 coordinator
+        chat_release = threading.Event()
+
+        class BarrierSlowModel:
+            def inspect(self):
+                return {"name": "barrier-slow-model", "provider": "custom", "digest": None}
+
+            def chat(self, messages, allow_tools, timeout):
+                chat_entered.wait(timeout=10.0)
+                chat_release.wait(timeout=10.0)
+                return {"message": {"role": "assistant", "content": "Done"}}
+
+        self.sessions.infer = BarrierSlowModel()
+        self.sessions.api_infer = self.sessions.infer
+
+        server = create_server(self.web, host="127.0.0.1", port=0, threads=8)
+        thread = threading.Thread(target=server.run, daemon=True)
+        thread.start()
+
+        chat_threads = []
+        try:
+            port = server.effective_port
+            base_url = f"http://127.0.0.1:{port}"
+
+            # Login as guest to obtain valid session cookie
+            login_req = urllib.request.Request(
+                f"{base_url}/api/login",
+                data=json.dumps({"token": INVITE}).encode(),
+                headers={"Host": "retailops.example.com", "Origin": ORIGIN, "Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(login_req, timeout=5) as resp:
+                cookie = resp.headers["Set-Cookie"].split(";")[0]
+
+            # Spawn 6 chat requests
+            def chat_worker():
+                req = urllib.request.Request(
+                    f"{base_url}/api/chat",
+                    data=json.dumps({"message": "Hello"}).encode(),
+                    headers={
+                        "Host": "retailops.example.com",
+                        "Origin": ORIGIN,
+                        "Content-Type": "application/json",
+                        "Cookie": cookie,
+                    }
+                )
+                try:
+                    with urllib.request.urlopen(req, timeout=10) as r:
+                        pass
+                except Exception:
+                    pass
+
+            for _ in range(6):
+                t = threading.Thread(target=chat_worker, daemon=True)
+                t.start()
+                chat_threads.append(t)
+
+            # Wait until all 6 chat requests are actively inside Waitress worker threads
+            chat_entered.wait(timeout=10.0)
+
+            # Now 6 out of 8 Waitress worker threads are actively occupied handling chat.
+            # Measure 25 healthz requests from an independent client over real HTTP sockets:
+            latencies = []
+            health_req = urllib.request.Request(
+                f"{base_url}/healthz",
+                headers={"Host": "retailops.example.com"}
+            )
+            for _ in range(25):
+                t0 = time.monotonic()
+                with urllib.request.urlopen(health_req, timeout=5) as resp:
+                    self.assertEqual(resp.status, 200)
+                lat = (time.monotonic() - t0) * 1000.0
+                latencies.append(lat)
+
+            latencies.sort()
+            p99_idx = int(0.99 * len(latencies))
+            p99 = latencies[min(p99_idx, len(latencies) - 1)]
+            self.assertLessEqual(p99, 50.0)
+        finally:
+            chat_release.set()
+            for t in chat_threads:
+                t.join(timeout=3.0)
+            server.close()
+            server.task_dispatcher.shutdown()
+            thread.join(timeout=3.0)
 
 
 if __name__ == "__main__":

@@ -211,8 +211,8 @@ def import_benchmark(source):
             'provider': case_provider,
             'model': case_model,
             'actual_worker': actual_worker,
-            'queue_wait_ms': number(c_trace.get('queue_wait_ms')) if number(c_trace.get('queue_wait_ms')) is not None else 0.0,
-            'provider_inference_ms': number(c_trace.get('provider_inference_ms')) if number(c_trace.get('provider_inference_ms')) is not None else latency_ms
+            'queue_wait_ms': number(c_trace.get('queue_wait_ms')) if c_trace.get('queue_wait_ms') is not None else None,
+            'provider_inference_ms': number(c_trace.get('provider_inference_ms')) if c_trace.get('provider_inference_ms') is not None else None
         }
         cases.append(case_result(
             cid, cat, checks,
