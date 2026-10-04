@@ -23,7 +23,8 @@ from retailops.business.cache import SemanticCache, ToolCache, is_cacheable_quer
 from retailops.inference_gate import InferenceGate, GatedGateway
 
 class Application:
-    def __init__(self, store, tokens, infer=None, api_infer=None, api_daily_limit=20, *, role='customer', orchestrator=None):
+    def __init__(self, store, tokens, infer=None, api_infer=None, api_daily_limit=20, *, role='customer', orchestrator=None,
+                 tenant_id=None, tool_cache=None):
         if role not in ROLE_PERMISSIONS:
             raise ValueError('Unknown application role.')
         self.role, self.permissions = role, ROLE_PERMISSIONS[role]
@@ -36,10 +37,10 @@ class Application:
         self.default_provider = 'custom'
         self.catalog = Catalog(store=self.store)
         self.inference_gate = getattr(self, 'inference_gate', None) or InferenceGate()
-        self.agent_lock = threading.Lock()
         self.overload_429_count = 0
         self.semantic_cache = SemanticCache(min_similarity=0.65)
-        self.tool_cache = ToolCache(default_ttl=180.0)
+        self.tenant_id = tenant_id or 'default'
+        self.tool_cache = tool_cache if tool_cache is not None else ToolCache(default_ttl=180.0)
         self.internal_events = []
         if orchestrator is None:
             infer_cls = getattr(getattr(infer, '__class__', None), '__name__', '')
@@ -144,10 +145,6 @@ class Application:
         gateway = self.infer if provider_id == 'custom' else self.api_infer if provider_id == 'api' else None
         require(gateway is not None, 503, 'model_offline',
                 'Model chưa kết nối. Bạn vẫn có thể dùng các nút tra đơn và yêu cầu hủy.')
-        if self.agent_lock.locked():
-            self.overload_429_count += 1
-            raise ApiError(429, 'model_busy',
-                           'Model đang xử lý một cuộc trò chuyện khác. Bạn thử lại sau nhé.')
         conv_key = f"{customer}:{snapshot['id']}"
         conv_lock = self.inference_gate.get_conversation_lock(conv_key)
         if not conv_lock.acquire(blocking=False):
@@ -279,7 +276,9 @@ class Application:
                 nonlocal tool_execution_count
                 tool_execution_count += 1
                 tools_called_in_turn.append(name)
-                cached_res = self.tool_cache.get(customer, name, arguments)
+                tenant_id = getattr(self, 'tenant_id', 'default') or 'default'
+                read_epoch = self.tool_cache.get_epoch(tenant_id, customer)
+                cached_res = self.tool_cache.get(tenant_id, customer, name, arguments)
                 if cached_res is not None:
                     # F04: Maintain freshness and evidence registration on cache hit
                     if name in ('get_order', 'read_order') and isinstance(cached_res, dict) and 'order' in cached_res:
@@ -321,9 +320,9 @@ class Application:
                         bound.shipment = None
                     return {'error': exc.code, 'message': exc.message}
                 if name in ('cancel_order', 'confirm_cancellation', 'update_shipping_address'):
-                    self.tool_cache.invalidate(customer)
+                    self.tool_cache.invalidate(tenant_id, customer)
                 elif name not in ('request_human_support', 'prepare_cancellation'):
-                    self.tool_cache.set(customer, name, arguments, res)
+                    self.tool_cache.set(tenant_id, customer, name, arguments, res, read_epoch=read_epoch)
                 return res
 
             def capture():
@@ -370,7 +369,7 @@ class Application:
                       'model_used': answer['trace'].get('model_responses', answer['trace'].get('model_calls', 0)) > 0,
                       'context': bound.context, 'trace': answer['trace'], 'provider_id': provider_id, 'replayed': False}
             result['trace']['queue_wait_ms'] = getattr(gated_gateway, 'total_queue_wait_ms', 0.0)
-            result['trace'].setdefault('provider_inference_ms', answer['trace'].get('latency_ms', 0.0))
+            result['trace']['provider_inference_ms'] = getattr(gated_gateway, 'total_provider_inference_ms', 0.0)
             result['trace'].setdefault('graph_retrieval_ms', 0.0)
             result['trace'].setdefault('rag_retrieval_ms', 0.0)
             result['trace'].setdefault('db_ms', 0.0)

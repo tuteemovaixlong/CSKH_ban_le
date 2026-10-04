@@ -206,6 +206,131 @@ class GoogleAuthHTTPRoutesTests(unittest.TestCase):
                 self.assertEqual(s_status, 200)
                 self.assertEqual(s_body.get('role'), 'customer')
 
+    def test_oauth_csrf_state_binding(self):
+        """Canonical test for SEC-01 / AC-13: OAuth state browser cookie binding, atomic consume, multi-tab safety."""
+        from urllib.parse import parse_qs, urlsplit
+        from retailops.core import ApiError
+
+        with patch.dict(os.environ, {"GOOGLE_CLIENT_ID": "cid", "GOOGLE_CLIENT_SECRET": "sec"}):
+            # 1. Login sets transient cookie and binds nonce into state
+            login_env = {
+                'REQUEST_METHOD': 'GET',
+                'PATH_INFO': '/auth/google/login',
+                'HTTP_HOST': 'retailops.example.com',
+            }
+            status, _, _, headers = self.web.route(login_env)
+            self.assertEqual(status, 302)
+            headers_dict = dict(headers)
+            set_cookie = headers_dict.get('Set-Cookie', '')
+            self.assertIn('retailops_oauth_transient=', set_cookie)
+            self.assertIn('Path=/auth/google', set_cookie)
+            self.assertIn('Max-Age=600', set_cookie)
+
+            # Extract nonce from cookie
+            cookie_part = [p for p in headers if p[0] == 'Set-Cookie' and 'retailops_oauth_transient=' in p[1]][0][1]
+            nonce_val = cookie_part.split(';')[0].split('=')[1]
+
+            # Extract state from redirect location
+            loc = headers_dict['Location']
+            query = parse_qs(urlsplit(loc).query)
+            state_val = query['state'][0]
+            parts = state_val.split('.')
+            self.assertEqual(len(parts), 4)
+
+            # 2. Callback with matching cookie succeeds and deletes transient cookie
+            self.mock_sessions.login_google.return_value = 'sec_' + 'K' * 39
+            with patch('retailops.http.auth_google.exchange_code_for_user_info') as mock_exchange:
+                mock_exchange.return_value = {
+                    'email': 'valid.user@gmail.com',
+                    'name': 'Valid User',
+                    'sub': 'google-valid'
+                }
+                cb_env = {
+                    'REQUEST_METHOD': 'GET',
+                    'PATH_INFO': '/auth/google/callback',
+                    'QUERY_STRING': f'code=code123&state={state_val}',
+                    'HTTP_HOST': 'retailops.example.com',
+                    'HTTP_COOKIE': f'retailops_oauth_transient={nonce_val}',
+                }
+                cb_status, _, _, cb_headers = self.web.route(cb_env)
+                self.assertEqual(cb_status, 302)
+                # Verify transient cookie cleanup header
+                cleanup_cookies = [v for k, v in cb_headers if k == 'Set-Cookie' and 'retailops_oauth_transient=' in v]
+                self.assertTrue(len(cleanup_cookies) >= 1)
+                self.assertIn('Max-Age=0', cleanup_cookies[0])
+
+            # 3. Single-use: Replaying the same state fails with 403 invalid_oauth_state
+            with self.assertRaises(ApiError) as ctx:
+                self.web.route(cb_env)
+            self.assertEqual(ctx.exception.status, 403)
+            self.assertEqual(ctx.exception.code, 'invalid_oauth_state')
+
+            # 4. Callback missing cookie fails with 403
+            state2 = auth_google.create_state(nonce='dummy_nonce')
+            cb_no_cookie = {
+                'REQUEST_METHOD': 'GET',
+                'PATH_INFO': '/auth/google/callback',
+                'QUERY_STRING': f'code=code123&state={state2}',
+                'HTTP_HOST': 'retailops.example.com',
+            }
+            with self.assertRaises(ApiError) as ctx:
+                self.web.route(cb_no_cookie)
+            self.assertEqual(ctx.exception.status, 403)
+            self.assertEqual(ctx.exception.code, 'invalid_oauth_state')
+
+            # 5. Callback with mismatched cookie fails with 403
+            cb_mismatched = {
+                'REQUEST_METHOD': 'GET',
+                'PATH_INFO': '/auth/google/callback',
+                'QUERY_STRING': f'code=code123&state={state2}',
+                'HTTP_HOST': 'retailops.example.com',
+                'HTTP_COOKIE': 'retailops_oauth_transient=wrong_nonce_val',
+            }
+            with self.assertRaises(ApiError) as ctx:
+                self.web.route(cb_mismatched)
+            self.assertEqual(ctx.exception.status, 403)
+            self.assertEqual(ctx.exception.code, 'invalid_oauth_state')
+
+            # 6. Multi-tab safety: Tab A login -> Tab B login -> late Tab A callback -> Tab B callback
+            nonce_a = 'tab_a_nonce_12345'
+            state_a = auth_google.create_state(nonce_a)
+            nonce_b = 'tab_b_nonce_67890'
+            state_b = auth_google.create_state(nonce_b)
+
+            # Tab A callback arrives, but browser cookie currently holds Tab B's nonce
+            late_tab_a_env = {
+                'REQUEST_METHOD': 'GET',
+                'PATH_INFO': '/auth/google/callback',
+                'QUERY_STRING': f'code=code_a&state={state_a}',
+                'HTTP_HOST': 'retailops.example.com',
+                'HTTP_COOKIE': f'retailops_oauth_transient={nonce_b}',
+            }
+            with self.assertRaises(ApiError) as ctx:
+                self.web.route(late_tab_a_env)
+            self.assertEqual(ctx.exception.status, 403)
+            # Crucial: Error response must NOT clean up cookie of Tab B
+            self.assertFalse(any('retailops_oauth_transient' in h[1] for h in ctx.exception.headers))
+
+            # Now Tab B callback arrives with matching nonce_b -> it MUST succeed!
+            with patch('retailops.http.auth_google.exchange_code_for_user_info') as mock_exchange:
+                mock_exchange.return_value = {
+                    'email': 'tab.b@gmail.com',
+                    'name': 'Tab B',
+                    'sub': 'google-tab-b'
+                }
+                tab_b_env = {
+                    'REQUEST_METHOD': 'GET',
+                    'PATH_INFO': '/auth/google/callback',
+                    'QUERY_STRING': f'code=code_b&state={state_b}',
+                    'HTTP_HOST': 'retailops.example.com',
+                    'HTTP_COOKIE': f'retailops_oauth_transient={nonce_b}',
+                }
+                status_b, _, _, headers_b = self.web.route(tab_b_env)
+                self.assertEqual(status_b, 302)
+                cleanup_b = [v for k, v in headers_b if k == 'Set-Cookie' and 'retailops_oauth_transient=' in v]
+                self.assertTrue(len(cleanup_b) >= 1)
+                self.assertIn('Max-Age=0', cleanup_b[0])
+
 
 if __name__ == '__main__':
     unittest.main()

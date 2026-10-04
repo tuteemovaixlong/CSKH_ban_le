@@ -1,6 +1,9 @@
 """HTTPS WSGI adapter; session backend supplies authenticated business bindings."""
+import hmac
 import json
 import os
+import secrets
+import threading
 from http import HTTPStatus
 from urllib.parse import urlsplit
 from agent_protocol import PROTOCOL
@@ -17,18 +20,32 @@ class PublicWeb:
         self.origin = public_origin(origin)
         self.host = urlsplit(origin).hostname
         self.sessions = sessions
+        self.chat_admission = threading.BoundedSemaphore(6)
 
     def __call__(self, environ, start_response):
         extra, mime = [], 'application/json; charset=utf-8'
+        acquired_chat = False
+        method = environ.get('REQUEST_METHOD')
+        path = environ.get('PATH_INFO', '')
         try:
+            if method == 'POST' and path == '/api/chat':
+                if not self.chat_admission.acquire(blocking=False):
+                    raise ApiError(429, 'server_busy', 'Máy chủ đang bận xử lý hội thoại khác. Vui lòng thử lại sau giây lát.',
+                                   headers=[('Retry-After', '5')])
+                acquired_chat = True
             status, result, mime, extra = self.route(environ)
         except ApiError as exc:
             status, result = exc.status, {'error': exc.code, 'message': exc.message,
                                          **({'trace': exc.trace} if exc.trace else {})}
+            if exc.headers:
+                extra.extend(exc.headers)
         except (ValueError, TypeError, UnicodeError):
             status, result = 400, {'error': 'bad_request', 'message': 'Yêu cầu không hợp lệ.'}
         except Exception:
             status, result = 500, {'error': 'internal_error', 'message': 'Không hoàn tất yêu cầu. Hãy tải lại trạng thái.'}
+        finally:
+            if acquired_chat:
+                self.chat_admission.release()
         payload = result if isinstance(result, bytes) else json.dumps(result, ensure_ascii=False).encode()
         headers = [('Content-Type', mime), ('Content-Length', str(len(payload))), ('Cache-Control', 'no-store'),
                    ('X-Content-Type-Options', 'nosniff'), ('Referrer-Policy', 'no-referrer'),
@@ -90,34 +107,59 @@ class PublicWeb:
         if path == '/auth/google/login' and method == 'GET':
             from retailops.http.auth_google import is_google_auth_configured, create_state, get_google_auth_url
             require(is_google_auth_configured(), 503, 'google_auth_not_configured', 'Đăng nhập Google chưa được cấu hình trên máy chủ.')
-            state = create_state()
+            nonce = secrets.token_hex(16)
+            state = create_state(nonce)
             redirect_url = get_google_auth_url(self.origin, state)
+            headers.append(('Set-Cookie', f'retailops_oauth_transient={nonce}; Path=/auth/google; Secure; HttpOnly; SameSite=Lax; Max-Age=600'))
             headers.append(('Location', redirect_url))
             return 302, b'', 'text/html; charset=utf-8', headers
 
         if path == '/auth/google/callback' and method == 'GET':
+            import hashlib
             import urllib.parse
             from retailops.http.auth_google import (
                 verify_and_consume_state, exchange_code_for_user_info, resolve_role_from_email
             )
+            # Parse transient nonce cookie
+            cookie_header = env.get('HTTP_COOKIE', '')
+            transient_nonce = None
+            if cookie_header:
+                for part in cookie_header.split(';'):
+                    if '=' in part:
+                        k, v = part.strip().split('=', 1)
+                        if k == 'retailops_oauth_transient':
+                            transient_nonce = v
+                            break
+
             query_str = env.get('QUERY_STRING', '')
             query_params = urllib.parse.parse_qs(query_str)
             code = query_params.get('code', [''])[0]
             state = query_params.get('state', [''])[0]
 
-            require(code and state, 400, 'missing_oauth_params', 'Thiếu thông tin xác thực từ Google.')
-            require(verify_and_consume_state(state), 403, 'invalid_oauth_state', 'Phiên xác thực đã hết hạn hoặc không hợp lệ.')
+            # Multi-tab safety: check if state matches this browser cookie nonce
+            state_matches_cookie = False
+            parts = state.split('.') if state else []
+            if len(parts) == 4 and transient_nonce:
+                expected_nh = hashlib.sha256(transient_nonce.encode('utf-8')).hexdigest()[:16]
+                if hmac.compare_digest(parts[2], expected_nh):
+                    state_matches_cookie = True
+
+            clean_cookie_header = ('Set-Cookie', 'retailops_oauth_transient=; Path=/auth/google; Secure; HttpOnly; SameSite=Lax; Max-Age=0')
+            err_headers = [clean_cookie_header] if state_matches_cookie else []
+
+            require(code and state, 400, 'missing_oauth_params', 'Thiếu thông tin xác thực từ Google.', headers=err_headers)
+            require(verify_and_consume_state(state, browser_nonce=transient_nonce), 403, 'invalid_oauth_state', 'Phiên xác thực đã hết hạn hoặc không hợp lệ.', headers=err_headers)
 
             try:
                 user_info = exchange_code_for_user_info(code, self.origin)
             except ValueError as e:
-                require(False, 400, 'oauth_exchange_failed', str(e))
+                require(False, 400, 'oauth_exchange_failed', str(e), headers=err_headers)
 
             role = resolve_role_from_email(user_info['email'])
             is_live = getattr(self.sessions, 'data_mode', None) in ('production', 'live')
             email_verified = bool(user_info.get('email_verified', False))
             if is_live and not email_verified:
-                require(False, 400, 'unverified_email', 'Tài khoản Google chưa được xác minh email.')
+                require(False, 400, 'unverified_email', 'Tài khoản Google chưa được xác minh email.', headers=err_headers)
 
             secret = self.sessions.login_google(
                 user_info['email'],
@@ -127,6 +169,8 @@ class PublicWeb:
                 email_verified=email_verified,
                 live=is_live
             )
+            if transient_nonce:
+                headers.append(clean_cookie_header)
             headers.append(('Set-Cookie', f'{self.sessions.cookie_name}={secret}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age={self.sessions.session_seconds}'))
             headers.append(('Location', '/'))
             return 302, b'', 'text/html; charset=utf-8', headers

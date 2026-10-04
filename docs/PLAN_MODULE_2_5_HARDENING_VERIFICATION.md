@@ -120,7 +120,7 @@ Mọi hạng mục bắt buộc chuẩn hóa theo 4 thuộc tính: **Tệp & Hà
 
 ### 2.2. Phân Kỳ PR B — Concurrency, History Preservation, Cache Sync & Security
 
-#### [F07] Bảo Vệ Headroom HTTP Waitress & Admission Toàn Request `[CHƯA KIỂM CHỨNG / PENDING TEST]`
+#### [F07] Bảo Vệ Headroom HTTP Waitress & Admission Toàn Request `[ĐÃ KIỂM CHỨNG / VERIFIED]`
 - **Tệp & Hàm liên quan:**
   - `retailops/bootstrap.py`: Cấu hình tham số khởi chạy.
   - `retailops/inference_gate.py`: `InferenceGate.__init__()`, `enter()`, `exit()`.
@@ -135,7 +135,7 @@ Mọi hạng mục bắt buộc chuẩn hóa theo 4 thuộc tính: **Tệp & Hà
   - Trong tầng dưới: Tier 2 (`conv_lock` per-conversation bảo vệ replay, snapshot và cache), và Tier 3 (`InferenceGate` duy trì $K=1, Q=5$, hàng đợi đầy $\rightarrow$ HTTP 429 `model_busy`, chờ quá hạn 10s $\rightarrow$ HTTP 429 canonical `queue_timeout` theo `retailops/inference_gate.py:125-128`, kèm `Retry-After: 5`).
 - **Test tương ứng:** `tests/test_inference_gate.py::test_inference_queue_overflow_429`, `tests/test_http_headroom.py::test_healthz_headroom_under_chat_saturation`.
 
-#### [F09] Tách Biệt Đo Đạc Telemetry: Từ Gateway Đến Application & Ops Importer `[CHƯA KIỂM CHỨNG / PENDING TEST]`
+#### [F09] Tách Biệt Đo Đạc Telemetry: Từ Gateway Đến Application & Ops Importer `[ĐÃ KIỂM CHỨNG / VERIFIED]`
 - **Tệp & Hàm liên quan:**
   - `retailops/inference_gate.py`: `enter()`, `exit()`.
   - `retailops/business/application.py`: `chat()`.
@@ -148,7 +148,7 @@ Mọi hạng mục bắt buộc chuẩn hóa theo 4 thuộc tính: **Tệp & Hà
   - Tăng `trace['model_calls']` trước khi gọi gateway và `trace['model_responses']` sau khi nhận kết quả.
 - **Test tương ứng:** `tests/test_inference_gate.py::test_telemetry_real_queue_wait_and_latency`, `tests/test_opsconsole_importer.py::test_importer_preserves_zero_inference_latency`.
 
-#### [F12] Bảo Toàn Lịch Sử Chat Trong Database `[CHƯA KIỂM CHỨNG / PENDING TEST]`
+#### [F12] Bảo Toàn Lịch Sử Chat Trong Database `[ĐÃ KIỂM CHỨNG / VERIFIED]`
 - **Tệp & Hàm liên quan:**
   - `retailops/business/store.py`: `BusinessStore.finish_turn()`, `BusinessStore.history()`.
 - **Hành vi mong đợi:**
@@ -156,7 +156,7 @@ Mọi hạng mục bắt buộc chuẩn hóa theo 4 thuộc tính: **Tệp & Hà
   - Việc giới hạn cửa sổ ngữ cảnh (bounded window 6 turns) được thực thi trong bộ nhớ tại `store.history(customer, cid)` (API dự kiến mở rộng hỗ trợ tham số `limit=6`) trước khi đưa vào context prompt của LLM.
 - **Test tương ứng:** `tests/test_conversation_resume.py::test_chat_history_retained_beyond_six_turns`.
 
-#### [F13] Xử Lý Race Condition Khi Invalidate Cache & Multi-Tenant ToolCache `[CHƯA KIỂM CHỨNG / PENDING TEST]`
+#### [F13] Xử Lý Race Condition Khi Invalidate Cache & Multi-Tenant ToolCache `[ĐÃ KIỂM CHỨNG / VERIFIED]`
 - **Tệp & Hàm liên quan:**
   - `retailops/business/cache.py`: `ToolCache`.
   - `retailops/http/routes.py`: `POST /api/manager/orders/update-status` (dòng 399–415), `POST /api/cancellation-proposals/{id}/confirm`.
@@ -174,7 +174,7 @@ Mọi hạng mục bắt buộc chuẩn hóa theo 4 thuộc tính: **Tệp & Hà
   5. *Phạm vi*: Đóng gói an toàn trong tiến trình đơn máy chủ (in-process single-node WSGI).
 - **Test tương ứng:** `tests/test_business_api.py::test_manager_update_status_invalidates_tenant_cache`, `tests/test_tool_cache_concurrency.py::test_tool_cache_invalidation_race_discard`.
 
-#### [SEC-01] Ràng Buộc State Chống OAuth Login CSRF `[CHƯA KIỂM CHỨNG / PENDING TEST]`
+#### [SEC-01] Ràng Buộc State Chống OAuth Login CSRF `[ĐÃ KIỂM CHỨNG / VERIFIED]`
 - **Tệp & Hàm liên quan:**
   - `retailops/http/public.py`: Tuyến điều hướng `/auth/google/login` và `/auth/google/callback` trong `PublicWeb.route()`.
   - `retailops/http/auth_google.py`: `create_state()`, `verify_and_consume_state(state)`, `get_google_auth_url(origin, state)`, `exchange_code_for_user_info(code, origin)`.
@@ -183,7 +183,7 @@ Mọi hạng mục bắt buộc chuẩn hóa theo 4 thuộc tính: **Tệp & Hà
   - Khi Google chuyển hướng về `/auth/google/callback`: Trích xuất cookie và đối chiếu băm trong `state`. Từ chối ngay lập tức với HTTP 403 `invalid_oauth_state` nếu thiếu hoặc không khớp. Xóa cookie sau khi xác thực (`Max-Age=0`).
 - **Test tương ứng:** `tests/test_auth_google.py::test_oauth_csrf_state_binding`.
 
-#### [CONV-CLEANUP] Dọn Dẹp Hoàn Toàn Khóa Tồn Dư `self.agent_lock` `[CHƯA KIỂM CHỨNG / PENDING TEST]`
+#### [CONV-CLEANUP] Dọn Dẹp Hoàn Toàn Khóa Tồn Dư `self.agent_lock` `[ĐÃ KIỂM CHỨNG / VERIFIED]`
 - **Tệp & Hàm liên quan:**
   - `retailops/business/application.py`, `retailops/identity/demo.py`, `retailops/identity/persistent.py`, `retailops/identity/postgres.py`.
 - **Hành vi mong đợi:**
@@ -245,10 +245,10 @@ Identity schema v4 là version riêng; không nhầm với SQLite Business v3 / 
 | **AC-06** | Variant Accuracy (F06) | Đổi size kiểm tra đúng màu và size; phân biệt `variant_not_found`, `stock_unknown`, hết hàng và còn hàng; không tự gán mặc định. | `tests/test_pr_a_correctness.py` | `PASS` — CI 37197602401 (`eebe8ed`) |
 | **AC-07** | Tool Search Safety (F11) | Catalog chứa sản phẩm `category=None` không gây lỗi `TypeError` khi gọi `search_products`. | `tests/test_pr_a_correctness.py` | `PASS` — CI 37197602401 (`eebe8ed`) |
 | **AC-08** | Truthful Exchange Wording (F08a) | AI không nói "đã tạo phiếu"; nút Staff Desk không tuyên bố duyệt giữ hàng kho hay tạo vận đơn khi chưa có backend transaction. | `tests/test_pr_a_correctness.py` | `PASS` — CI 37197602401 (`eebe8ed`) |
-| **AC-09** | Thread Headroom & 429 (F07) | Admission giới hạn tối đa 6 chat được nhận xử lý đồng thời trên Waitress 8 workers, giảm nguy cơ chat chiếm hết worker (không bảo đảm worker rảnh tuyệt đối); HTTP Chat Admission Limiter tại PublicWeb (trước session/DB preflight) từ chối request thứ 7 với HTTP 429 `server_busy` kèm `Retry-After: 5`; InferenceGate ($K=1, Q=5$) trả 429 `model_busy` khi queue đầy và 429 canonical `queue_timeout` khi chờ quá 10s. Mục tiêu có điều kiện: P99 $\le 50\text{ms}$ cho /healthz dưới tải 6 chat được giữ bằng test barrier. | `tests/test_inference_gate.py`<br/>`tests/test_http_headroom.py` | `PENDING TEST` |
-| **AC-10** | Real Telemetry & Latency (F09) | Ghi nhận tách biệt `queue_wait_ms` và `provider_inference_ms`; không dùng `0.0` giả lập. | `tests/test_inference_gate.py` | `PENDING TEST` |
-| **AC-11** | Chat History Retention (F12) | Lịch sử chat không bị xóa cứng LIMIT 6 trong DB; F5 và API `GET /api/conversations/{id}/messages` trả về đầy đủ toàn bộ các lượt chat transcript. | `tests/test_conversation_resume.py` | `PENDING TEST` |
-| **AC-12** | Multi-tenant Cache Sync & Race (F13) | Manager đổi đơn qua `POST /api/manager/orders/update-status` $\rightarrow$ invalidate shared `ToolCache` theo tenant; discard stale writes in-flight qua epoch. | `tests/test_business_api.py` | `PENDING TEST` |
-| **AC-13** | OAuth CSRF Protection (SEC-01) | Callback Google OAuth thiếu hoặc không khớp transient cookie (`Secure; HttpOnly; SameSite=Lax`) bị từ chối HTTP 403 `invalid_oauth_state`. | `tests/test_auth_google.py` | `PENDING TEST` |
+| **AC-09** | Thread Headroom & 429 (F07) | Admission giới hạn tối đa 6 chat được nhận xử lý đồng thời trên Waitress 8 workers, giảm nguy cơ chat chiếm hết worker (không bảo đảm worker rảnh tuyệt đối); HTTP Chat Admission Limiter tại PublicWeb (trước session/DB preflight) từ chối request thứ 7 với HTTP 429 `server_busy` kèm `Retry-After: 5`; InferenceGate ($K=1, Q=5$) trả 429 `model_busy` khi queue đầy và 429 canonical `queue_timeout` khi chờ quá 10s. Mục tiêu có điều kiện: P99 $\le 50\text{ms}$ cho /healthz dưới tải 6 chat được giữ bằng test barrier. | `tests/test_inference_gate.py`<br/>`tests/test_http_headroom.py` | `PASS` — verified local (P99 <= 50ms, 429 Retry-After: 5) |
+| **AC-10** | Real Telemetry & Latency (F09) | Ghi nhận tách biệt `queue_wait_ms` và `provider_inference_ms`; không dùng `0.0` giả lập; Ops importer bảo toàn 0.0 cho cache hit. | `tests/test_inference_gate.py`<br/>`tests/test_opsconsole_importer.py` | `PASS` — verified local |
+| **AC-11** | Chat History Retention (F12) | Lịch sử chat không bị xóa cứng LIMIT 6 trong DB; F5 và API `GET /api/conversations/{id}/messages` trả về đầy đủ toàn bộ các lượt chat transcript; store.history bounded window cho prompt. | `tests/test_conversation_resume.py` | `PASS` — verified local (9 turns retained) |
+| **AC-12** | Multi-tenant Cache Sync & Race (F13) | Manager đổi đơn qua `POST /api/manager/orders/update-status` $\rightarrow$ invalidate shared `ToolCache` theo tenant; discard stale writes in-flight qua epoch CAS. | `tests/test_business_api.py`<br/>`tests/test_tool_cache_concurrency.py` | `PASS` — verified local (multi-tenant isolated, stale write discarded) |
+| **AC-13** | OAuth CSRF Protection (SEC-01) | Callback Google OAuth thiếu hoặc không khớp transient cookie (`Secure; HttpOnly; SameSite=Lax`) bị từ chối HTTP 403 `invalid_oauth_state`; dọn transient cookie khi hoàn tất. | `tests/test_auth_google.py` | `PASS` — verified local |
 | **AC-14** | Business Schema Backend SSOT | Giữ SQLite Business v3 và PostgreSQL Business v4; bảo vệ `warranty_days` của P-603; không thêm Business migration v5 trong PR A/B. Identity schema v4 là version độc lập, theo mục 2.3/N08. | `tests/test_schema_migration.py` (SQLite)<br/>`tests/test_postgres.py` (PostgreSQL) | `PASS` — CI run 37197602401 trên final tree `eebe8ed` (host 479/479 PASS, 0 SKIP; PostgreSQL tests chạy thật). |
 | **AC-15** | Doc Contract Integrity | 4/4 cổng hợp đồng tài liệu và triển khai đạt PASS 100%. | `scripts/check_docs_contract.py` | `PASS` — local 4/4 và CI run 37197602401 trên `eebe8ed` (docs, eval dataset, deployment, notebook gates xanh). |

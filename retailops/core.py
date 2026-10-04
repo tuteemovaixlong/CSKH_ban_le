@@ -8,15 +8,16 @@ REASONS = {"ordered_by_mistake": "Tôi đặt nhầm", "no_longer_needed": "Tôi
 STATUSES = {"pending": "Chờ xử lý", "delivered": "Đã giao", "cancelled": "Đã hủy"}
 
 class ApiError(Exception):
-    def __init__(self, status, code, message, trace=None):
+    def __init__(self, status, code, message, trace=None, headers=None):
         self.status, self.code, self.message = status, code, message
         self.trace = trace
+        self.headers = list(headers) if headers else []
         super().__init__(message)
 
 
-def require(condition, status, code, message):
+def require(condition, status, code, message, headers=None):
     if not condition:
-        raise ApiError(status, code, message)
+        raise ApiError(status, code, message, headers=headers)
 
 
 def fields(body, expected):

@@ -18,7 +18,8 @@ class PostgresSessions(PersistentSessions):
         self.infer, self.api_infer = infer, api_infer
         self.api_daily_limit, self.capacity = api_daily_limit, capacity
         self.inference_gate = InferenceGate()
-        self.agent_lock, self.lock = threading.Lock(), threading.RLock()
+        self.lock = threading.RLock()
+        self.tool_caches = {}
         self.apps = OrderedDict()
         self.purge()
 

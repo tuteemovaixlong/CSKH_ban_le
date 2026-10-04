@@ -1,12 +1,12 @@
 # Review GPT 6 Astra — Báo cáo nghiệm thu PR A / N08
 
 **Ngày:** 04/10/2026
-**Branch:** `feature/module-2.5-pr-a` → `main` (PR #34, đang mở, chưa merge/deploy)
+**Branch:** `feature/module-2.5-pr-a` → `main` (PR #34, ĐÃ MERGE qua merge commit `47ba72a248fb3c2cced20005e6cef9c978dd53a3`)
 **Commit nghiệm thu & candidate:** `ee78b41` (ee78b41664b6cff6fa6424f9d937682dc7b9e819)
 **Bằng chứng CI trên head:**
 - CI run [37202690835](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37202690835): **SUCCESS** (host 479/479 PASS, container 478 PASS / 1 SKIP; Colab Python 3.13 PASS; gates xanh)
 - Ops Console run [37202690842](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37202690842): **SUCCESS** (Job `postgres` PASS 19/19 tests, teardown FK đã fix; các jobs `portable` Windows & Ubuntu PASS)
-**Kết luận:** **READY FOR MERGE** — PR #34 còn mở, đủ điều kiện kỹ thuật; quyết định merge thuộc về owner; chưa merge vào `main`, chưa deploy EC2, chưa bắt đầu PR B.
+**Kết luận:** **MERGED** — PR #34 đã được merge vào `main` bằng merge commit `47ba72a248fb3c2cced20005e6cef9c978dd53a3`. Tiến trình tiếp tục với PR B trên branch `feature/module-2.5-pr-b`.
 
 ## 1. Phạm vi đã fix
 

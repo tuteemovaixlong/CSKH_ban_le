@@ -189,7 +189,7 @@ class ConversationTests(unittest.TestCase):
             self.chat('date')
         history = self.store.history('C-001', self.cid)
         validate_messages(history + [{'role': 'user', 'content': 'next'}])
-        self.assertEqual(self.count('agent_turns'), 6)
+        self.assertEqual(self.count('agent_turns'), 9)
         self.assertLessEqual(len(history), 16)
         self.assertLessEqual(sum(len(m['content']) for m in history), 4500)
 
@@ -211,12 +211,15 @@ class ConversationTests(unittest.TestCase):
         self.assertEqual(self.count('agent_turns'), 0)
         self.assertEqual(self.store.conversation('C-001', self.cid)['order_id'], 'O-102')
 
-    def test_busy_rejected_and_lock_released_after_error(self):
-        self.app.agent_lock.acquire()
+    def test_conversation_serialization_no_agent_lock(self):
+        self.assertFalse(hasattr(self.app, 'agent_lock'))
+        conv_key = f"C-001:{self.cid}"
+        conv_lock = self.app.inference_gate.get_conversation_lock(conv_key)
+        self.assertTrue(conv_lock.acquire(blocking=False))
         try:
             self.assert_error('model_busy', lambda: self.chat('hello'))
         finally:
-            self.app.agent_lock.release()
+            conv_lock.release()
         self.model.replies = [response(''), response('Recovered')]
         self.assert_error('agent_response_failed', lambda: self.chat('hello'))
         self.assertEqual(self.chat('hello')['message'], 'Recovered')

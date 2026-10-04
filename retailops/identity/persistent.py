@@ -9,6 +9,7 @@ from pathlib import Path
 
 from retailops.account_usage import AccountQuotaStore
 from retailops.business.application import Application
+from retailops.business.cache import ToolCache
 from retailops.business.store import BusinessStore
 from retailops.core import require
 from retailops.identity.contracts import SessionBinding
@@ -31,7 +32,8 @@ class PersistentSessions:
         self.infer, self.api_infer = infer, api_infer
         self.api_daily_limit, self.capacity = api_daily_limit, capacity
         self.inference_gate = InferenceGate()
-        self.agent_lock, self.lock = threading.Lock(), threading.RLock()
+        self.lock = threading.RLock()
+        self.tool_caches = {}
         self.apps = OrderedDict()
         self.purge()
 
@@ -116,12 +118,16 @@ class PersistentSessions:
         self.control.rate('session:'+sid, 60)
         self.check_storage(member)
         key = (member['id'], member['auth_version'])
+        tenant_id = member['tenant_id']
         with self.lock:
+            if tenant_id not in self.tool_caches:
+                self.tool_caches[tenant_id] = ToolCache(default_ttl=180.0)
+            tool_cache = self.tool_caches[tenant_id]
             if key not in self.apps:
-                app = Application(self.business_store(member['tenant_id']), {}, self.infer, self.api_infer,
-                                  self.api_daily_limit, role=member['role'])
+                app = Application(self.business_store(tenant_id), {}, self.infer, self.api_infer,
+                                  self.api_daily_limit, role=member['role'],
+                                  tenant_id=tenant_id, tool_cache=tool_cache)
                 app.quota_store = AccountQuotaStore(self.control, member['id'])
-                app.agent_lock = self.agent_lock
                 app.inference_gate = getattr(self, 'inference_gate', None) or InferenceGate()
                 app.default_provider = 'api' if self.api_infer is not None else 'custom'
                 self.apps[key] = app
