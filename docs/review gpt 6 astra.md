@@ -3,10 +3,9 @@
 **Ngày:** 04/10/2026
 **Branch:** `feature/module-2.5-pr-a` → `main`
 **Commit nghiệm thu:** `d38554e` (d38554e5465e81acd84a222f00438efe46ddd187)
-**CI nghiệm thu:** run 37198909762, head_sha = `d38554e`, **SUCCESS**
-**Kết luận:** **READY FOR MERGE** — merge là quyết định của owner; chưa merge, chưa deploy, chưa bắt đầu PR B.
+**Kết luận:** **BLOCKED** cho đến khi PostgreSQL CI xanh — merge là quyết định của owner; chưa merge, chưa deploy, chưa bắt đầu PR B.
 
-> Commit chứa chính báo cáo này chỉ thay đổi tài liệu. Theo quy ước, tài liệu không tự ghi SHA/run của commit chứa nó; CI của PR trên head mới là bằng chứng bổ sung, ghi trong PR.
+> **Ghi chú hiện trạng:** Workflow Ops Console (`ops-console.yml`) job `postgres` từng gặp lỗi teardown Foreign Key (`customer_links_principal_id_fkey`) tại `opsconsole/tests/test_account_usage_postgres.py`. Bản vá đã bổ sung xóa `customer_links` trước khi xóa `principals`. Trạng thái nghiệm thu được giữ là **BLOCKED** cho đến khi toàn bộ checks CI/Ops Console trên PostgreSQL của PR #34 xanh hoàn toàn.
 
 ## 1. Phạm vi đã fix
 

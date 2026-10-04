@@ -96,6 +96,7 @@ class AccountUsagePostgresTests(unittest.TestCase):
                 db.execute("DELETE FROM retailops_identity.credentials WHERE membership_id=%s", (membership,))
                 db.execute("DELETE FROM retailops_identity.identity_events WHERE tenant_id=%s OR membership_id=%s", (tenant_id, membership))
                 db.execute("DELETE FROM retailops_identity.memberships WHERE id=%s", (membership,))
+                db.execute("DELETE FROM retailops_identity.customer_links WHERE principal_id=%s", (principal_id,))
                 db.execute("DELETE FROM retailops_identity.principals WHERE id=%s", (principal_id,))
                 db.execute("DELETE FROM retailops_identity.tenants WHERE id=%s", (tenant['id'],))
 
