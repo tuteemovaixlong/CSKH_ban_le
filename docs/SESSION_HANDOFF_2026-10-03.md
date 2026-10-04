@@ -1,6 +1,6 @@
 # TÀI LIỆU BÀN GIAO PHIÊN LÀM VIỆC (SESSION HANDOFF) — 03/10/2026
 
-> **Ghi chú supersede ngày 04/10/2026:** Đây là snapshot lịch sử cho code SHA fe25f67 và CI run 37137791788. Kết quả đó không xác minh patch N08 mới trong working tree HEAD 4ef078e. Hiện local suite đạt 429 PASS / 50 SKIP trên SQLite; viewer regression đã được bổ sung; chỉ PostgreSQL CI trên SHA cuối còn pending. Nguồn trạng thái hiện hành: [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md) và [CURRENT_PROJECT_STATUS.md](CURRENT_PROJECT_STATUS.md).
+> **Ghi chú supersede ngày 04/10/2026:** Đây là snapshot lịch sử cho code SHA fe25f67 và CI run 37137791788. Phiên làm việc 04/10/2026 đã hoàn tất trigger N08-P11-RESOLVE-FAIL-CLOSED (commit SHA `c4e9976`), và GitHub Actions CI Run 37196429628 đã xác nhận SUCCESS (Xanh 100%) cho cả SQLite lẫn PostgreSQL. PR A đủ điều kiện chuyển sang review / nghiệm thu; PR B chưa bắt đầu. Nguồn trạng thái hiện hành: [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md) và [CURRENT_PROJECT_STATUS.md](CURRENT_PROJECT_STATUS.md).
 
 
 > **Ngày ghi nhận:** 03/10/2026 (12:20 GMT+7)
@@ -117,7 +117,12 @@ Toàn bộ các phát hiện Blocker N08 (P1.1, P1.2) theo review của GPT 6 As
    - Bảo toàn test late takeover hai backend SQLite và PostgreSQL (Gate P1.1a).
 
 3. **Kết quả kiểm chứng cục bộ:**
-   - Full test suite: **479 tests, 429 PASS, 50 SKIP, 0 FAIL, 0 ERROR** (50 tests SKIP gồm 36 tests trong `tests/test_postgres.py` và 14 tests trong `tests/test_pgvector_rag.py` do thiếu local DSN).
-   - **Không tuyên bố PostgreSQL PASS ở lần chạy cục bộ này**; kiểm thử PostgreSQL được ủy quyền xác thực trên GitHub Actions CI container.
+   - Full test suite: **479 tests, 429 PASS, 50 SKIP, 0 FAIL, 0 ERROR** (50 tests SKIP gồm 36 tests trong `tests/test_postgres.py`, 11 tests trong `tests/test_rag_chat.py`, 2 tests trong `tests/test_knowledge.py`, 1 test trong `tests/test_public_web.py` do thiếu PostgreSQL local DSN và Waitress).
+   - Kiểm thử PostgreSQL/pgvector được ủy quyền xác thực trên GitHub Actions CI container.
    - 4 cổng hợp đồng: PASS 100% (`check_docs_contract.py`, `check_deployment_contract.py`, `check_eval_dataset.py`, `build_agent_notebook.py --check`).
-   - Tuân thủ nghiêm ngặt điều kiện dừng N08: Không commit, không push, không merge, không deploy, không chạm schema/migration/benchmark/config. PR A chỉ được đánh dấu sẵn sàng sau khi CI PostgreSQL xanh trên đúng SHA cuối.
+
+4. **Kết quả xác thực trên GitHub Actions CI (Run 37196429628 trên commit `c4e9976`):**
+   - Host suite: **479/479 PASS, 0 SKIP, 0 FAIL, 0 ERROR** trên live PostgreSQL 16 và pgvector container.
+   - Packaged container suite: **478 PASS, 1 SKIP, 0 FAIL, 0 ERROR** (`test_colab_agent_notebook_sync` bỏ qua do không có `scripts/build_agent_notebook.py` trong image).
+   - Live HTTPS deployment & Caddy maintenance: PASS.
+   - **Quyết định:** N08 hoàn tất đầy đủ. PR A đủ điều kiện chuyển sang bước review / nghiệm thu code. Tuyệt đối chưa merge main, chưa deploy EC2, chưa bắt đầu PR B.

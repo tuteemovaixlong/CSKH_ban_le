@@ -78,9 +78,9 @@ Các tài liệu có nhãn superseded/post-thesis chỉ làm bối cảnh. Câu 
 
 ## 5. PR A/N08 — trạng thái nghiệm thu
 
-Bản vá mới xử lý hai đường fail-open trong IdentityStore.resolve(): ApiError được re-raise, lỗi truy vấn safety được log nội bộ và trả 503 collision_unresolved. Local full suite xác nhận 479 tests: 429 PASS, 50 SKIP, 0 FAIL/ERROR. Trong tests/test_postgres.py, 36 tests SKIP vì thiếu PostgreSQL test database. Do đó, P1.1b/c/d hiện local verified trên SQLite; chưa được xác nhận trên PostgreSQL.
+Bản vá mới xử lý hai đường fail-open trong IdentityStore.resolve(): ApiError được re-raise, lỗi truy vấn safety được log nội bộ và trả 503 collision_unresolved. Local full suite xác nhận 479 tests: 429 PASS, 50 SKIP, 0 FAIL/ERROR (50 tests SKIP gồm 36 test_postgres, 11 test_rag_chat, 2 test_knowledge, 1 test_public_web do thiếu PostgreSQL local DSN/Waitress).
 
-Role regression đã bao phủ toàn bộ staff, manager và viewer trong shared harness; SQLite có bằng chứng local pass (56/56 PR A). CI run 37137791788 trên fe25f67 là lịch sử, trước patch mới. **PR A chưa nghiệm thu, PR B chưa bắt đầu.** Chỉ PostgreSQL CI trên SHA cuối còn pending; xem chi tiết trigger, allowlist và stopping gates tại N08_STOPPING_CONDITIONS.md.
+Role regression đã bao phủ toàn bộ staff, manager và viewer trong shared harness; SQLite có bằng chứng local pass (56/56 PR A). GitHub Actions CI Run 37196429628 trên commit SHA `c4e9976` đã xác nhận SUCCESS (Xanh 100%): host suite 479/479 PASS (0 SKIP); container suite 478 PASS / 1 SKIP (`test_colab_agent_notebook_sync` bỏ qua do không có `scripts/build_agent_notebook.py` trong image). **PR A đủ điều kiện chuyển sang review / nghiệm thu; quyết định merge main là bước riêng; PR B chưa bắt đầu.** Xem chi tiết trigger, allowlist và stopping gates tại [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).
 
 ### Các hợp đồng PR A phải giữ
 
@@ -213,10 +213,10 @@ Hash LF-normalized của cả hai bộ frozen:
 
 ## 10. Việc nên làm ngay
 
-1. Viewer regression đã có trong shared role-boundary harness (SQLite local test PASS); chỉ PostgreSQL CI trên SHA cuối còn pending.
-2. Chạy full test suite và bốn script gates; ghi rõ SKIP là chưa kiểm chứng.
-3. Chạy CI có PostgreSQL trên đúng SHA cuối và lưu run ID/head SHA.
-4. Sau khi các gate đạt, review/nghiệm thu PR A; quyết định merge là bước riêng.
+1. Viewer regression đã có trong shared harness; SQLite local test PASS.
+2. Full test suite và 4 script gates đã hoàn tất và PASS 100%.
+3. GitHub Actions CI Run 37196429628 trên commit `c4e9976` đã xác nhận SUCCESS (Host 479/479 PASS, Container 478 PASS / 1 SKIP).
+4. PR A đủ điều kiện chuyển sang review / nghiệm thu; quyết định merge main là bước riêng.
 5. Chỉ sau khi PR A được chấp thuận/merge mới bắt đầu PR B.
 
 ## 11. Sơ đồ Mermaid tổng thể: request, cache, concurrency và OAuth
@@ -333,4 +333,4 @@ flowchart LR
 4. **Ranh giới agent_lock được chia theo giai đoạn.** PR A giữ kiểm tra tạm thời để bảo vệ flow cache/turn; PR B mới dọn hoàn toàn agent_lock và thay bằng admission + conv_lock + InferenceGate. Sơ đồ gán conv_lock cho vùng giao nhau và admission/gate cho PR B để phản ánh thứ tự này.
 5. **Error 429 chỉ áp dụng cho concurrency gates.** Fail-closed của Semantic Cache, provenance hoặc OAuth trả về bypass/không lưu hoặc lỗi 403/502; chúng không phải 429. Các mã 429 trong sơ đồ chỉ thuộc Tier 1 admission, Tier 2 conversation lock và Tier 3 model gate.
 6. **OAuth cleanup trên lỗi cần response headers thật.** Các plan yêu cầu tuple response có Set-Cookie; khi triển khai phải kiểm tra HTTP response thực tế, không chỉ trạng thái nội bộ. Sơ đồ thể hiện cleanup ở nhánh exchange lỗi và sau khi cấp session.
-7. **Ghi chú lịch sử:** Tại review ngày 03/10, P1.1 session-safety còn BLOCKED do resolver fail-open. Patch ngày 04/10 đã xử lý nhánh này locally và bổ sung viewer regression; chỉ PostgreSQL CI trên SHA cuối còn pending theo N08_STOPPING_CONDITIONS.md. PR B chưa bắt đầu.
+7. **Ghi chú lịch sử:** Tại review ngày 03/10, P1.1 session-safety còn BLOCKED do resolver fail-open. Patch ngày 04/10 đã xử lý nhánh này locally, bổ sung viewer regression; GitHub Actions CI Run 37196429628 trên commit `c4e9976` đã xác nhận SUCCESS (Xanh 100%) trên PostgreSQL container. PR A đủ điều kiện chuyển sang review / nghiệm thu; PR B chưa bắt đầu. Xem [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).

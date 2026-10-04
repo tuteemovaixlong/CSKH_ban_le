@@ -1,7 +1,7 @@
 # KẾ HOẠCH MODULE 2.5: SYSTEM HARDENING, CONTEXT INTEGRITY & VERIFICATION QUALITY GATE
 
 > **Mã kế hoạch:** `PLAN_MODULE_2_5_HARDENING_VERIFICATION`
-> **Trạng thái:** PR A/N08 LOCAL VERIFIED trên SQLite; 479 tests local (429 PASS, 50 SKIP, 0 FAIL); PostgreSQL tests (36 skip local) và CI trên SHA cuối còn chờ. Đã hoàn tất regression role viewer. Xem N08_STOPPING_CONDITIONS.md.
+> **Trạng thái:** PR A/N08 VERIFIED trên SQLite local và PostgreSQL CI Container (CI Run 37196429628 SUCCESS trên commit `c4e9976`: Host 479/479 PASS 0 SKIP, Container 478 PASS / 1 SKIP). PR A đủ điều kiện chuyển sang review / nghiệm thu; merge main là bước riêng; PR B chưa bắt đầu. Xem [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).
 > **Phiên bản:** 1.5 (2026-10-04)
 > **Audit basis / Documentation baseline reviewed:** `c30ff1d`
 > **Mục tiêu:** Thiết lập chốt chặn kiểm thử & ổn định vận hành thực tế (Quality Gate) giữa Module 2 (Baseline & Ops Console) và Module 3 (Omnichannel Meta Webhook). Khắc phục dứt điểm 13 hạng mục kỹ thuật (F01–F07, F08a, F09, F11–F13, SEC-01) được kiểm chứng độc lập. Mỗi hạng mục chuẩn hóa đầy đủ: tệp/hàm liên quan, hành vi mong đợi, test tương ứng và trạng thái kiểm chứng.
@@ -199,9 +199,11 @@ Mọi hạng mục bắt buộc chuẩn hóa theo 4 thuộc tính: **Tệp & Hà
 
 Trigger N08-P11-RESOLVE-FAIL-CLOSED đã sửa hai nhánh fail-open trong IdentityStore.resolve(): ApiError từ customer-link guard được re-raise; lỗi safety lookup được log nội bộ và ánh xạ thành 503 collision_unresolved. Regression mới trong shared harness chạy local qua SQLite cho customer-link mismatch, fault injection, late takeover, PublicWeb orders không lộ dữ liệu, và toàn bộ role non-customer (staff, manager, viewer).
 
-Bằng chứng hiện tại là local-only cho code patch: full suite 479 tests, 429 PASS, 50 SKIP (36 tests trong test_postgres.py và 14 tests trong test_pgvector_rag.py bị skip do thiếu PostgreSQL test database cục bộ). Lần chạy local này không tuyên bố PostgreSQL PASS. CI run 37137791788 trên fe25f67 là lịch sử, không xác minh patch hiện tại. Xem N08_STOPPING_CONDITIONS.md để biết trigger và điều kiện dừng.
+Bằng chứng local: full suite 479 tests, 429 PASS, 50 SKIP (50 tests SKIP gồm 36 tests `tests/test_postgres.py`, 11 tests `tests/test_rag_chat.py`, 2 tests `tests/test_knowledge.py`, 1 test `tests/test_public_web.py` do thiếu PostgreSQL local DSN và Waitress).
 
-PR A chưa được nghiệm thu; không bắt đầu PR B cho đến khi PostgreSQL CI xanh 100% trên đúng SHA cuối, và status docs khớp bằng chứng.
+Bằng chứng CI: GitHub Actions CI Run 37196429628 trên commit `c4e9976` đã xác nhận SUCCESS (Xanh 100%): host suite 479/479 PASS (0 SKIP); packaged container suite 478 PASS / 1 SKIP (`test_colab_agent_notebook_sync` bỏ qua do không có `scripts/build_agent_notebook.py` trong image). Toàn bộ các kiểm thử PostgreSQL và pgvector đều đạt chuẩn.
+
+PR A đủ điều kiện chuyển sang bước review / nghiệm thu; quyết định merge main là bước riêng; tuyệt đối chưa merge, chưa deploy lên EC2 và chưa bắt đầu PR B. Xem [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).
 
 Identity schema v4 là version riêng; không nhầm với SQLite Business v3 / PostgreSQL Business v4 ở AC-14.
 
