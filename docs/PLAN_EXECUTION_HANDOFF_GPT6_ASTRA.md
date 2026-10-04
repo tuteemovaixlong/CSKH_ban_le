@@ -1,9 +1,9 @@
 # Bàn giao triển khai Module 2.5 — GPT 6 Astra
 
 Ngày cập nhật trạng thái: **04/10/2026 — Asia/Bangkok**.
-Trạng thái hiện tại: **N08 LOCAL VERIFIED trên SQLite; PR A chưa nghiệm thu.** Full suite 479 tests (429 PASS, 50 SKIP; không tuyên bố PostgreSQL PASS khi test skip local). Viewer regression đã bổ sung. Final CI trên PostgreSQL SHA cuối còn chờ. Xem N08_STOPPING_CONDITIONS.md.
+Trạng thái hiện tại: **N08 VERIFIED; PR A đủ điều kiện review / nghiệm thu (merge là quyết định riêng).** Code patch `c4e9976` (c4e99769ec46be3d8fe33d272527e9c73b3b0ad1); final docs tree `eebe8ed` (eebe8edefd52abb1af86e9e8bdf2173413c25fd1) được CI run 37197602401 xác nhận SUCCESS (head_sha = eebe8ed; host 479/479 PASS, 0 SKIP; container 478 PASS / 1 SKIP). CI run 37196429628 trên `c4e9976` là bằng chứng lịch sử cho code patch. Local: 479 tests, 429 PASS, 50 SKIP. Xem [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).
 Working snapshot: branch `feature/module-2.5-pr-a`.
-Quỹ đạo: **trigger `N08-P11-RESOLVE-FAIL-CLOSED` hoàn tất → regression SQLite/PostgreSQL hoàn tất → suite/gates PASS → CI trên đúng SHA cuối → nghiệm thu PR A → merge theo quyết định riêng → PR B → implementation verification → Phase 4 benchmark**.
+Quỹ đạo: **trigger `N08-P11-RESOLVE-FAIL-CLOSED` hoàn tất → regression SQLite/PostgreSQL hoàn tất → suite/gates PASS → CI trên SHA cuối PASS → review / nghiệm thu PR A (tiếp theo) → merge theo quyết định riêng → PR B → implementation verification → Phase 4 benchmark**.
 Nguồn quyết định/lịch sử: `docs/review gpt 6 astra.md`; điều kiện dừng hiện hành: [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).
 
 ## 1. Mục đích và ranh giới trạng thái
@@ -13,15 +13,15 @@ Mốc **14/14 mục R01–R14** chỉ xác nhận đặc tả tài liệu tại 
 | Mốc | Trạng thái lúc bàn giao | Điều kiện chuyển |
 | --- | --- | --- |
 | PLAN_READY_TO_IMPLEMENT | **ĐẠT — mốc lịch sử 01/10/2026** | Các đặc tả A/B đã sẵn sàng tại baseline lúc đó |
-| N08_P1_GATES | **LOCAL VERIFIED trên SQLite** | 429 PASS / 50 SKIP local; viewer test đã bổ sung; final PostgreSQL CI còn chờ. Run cũ trên fe25f67 là historical. |
-| PR_A_ACCEPTED | **CHỜ CI SHA CUỐI** | Cần CI trên đúng SHA cuối để hoàn tất nghiệm thu; chưa merge main |
+| N08_P1_GATES | **VERIFIED** | Local 429 PASS / 50 SKIP; CI 37196429628 trên code patch `c4e9976` (lịch sử) và CI 37197602401 trên final tree `eebe8ed` đều SUCCESS. Run trên fe25f67 là historical. |
+| PR_A_ACCEPTED | **ĐỦ ĐIỀU KIỆN REVIEW / NGHIỆM THU** | Kỹ thuật đã đạt; chờ quyết định review/nghiệm thu; merge main là bước riêng, chưa thực hiện |
 | PR_B | Chưa bắt đầu | Bắt đầu sau khi PR A được nghiệm thu/merge |
 | IMPLEMENTATION_VERIFIED | Pending | A/B có đủ evidence theo acceptance và backend được hỗ trợ |
 | SCIENTIFIC_EVALUATION_COMPLETE | Pending | Có kết quả frozen benchmark và load matrix Phase 4 |
 
 READY chỉ áp dụng cho **Module 2.5 PR A/B**. Các plan nghiên cứu, post-thesis hoặc superseded không được coi là cùng đạt READY chỉ vì file bàn giao này tồn tại.
 
-> **Phân định kế hoạch và thực thi:** PLAN_READY_TO_IMPLEMENT là mốc lịch sử về chất lượng tài liệu. Patch mới xử lý fail-open trong resolver và đã pass local suite trên SQLite với 429 PASS. 50 tests SKIP gồm 36 test_postgres.py và 14 test_pgvector_rag.py do không có database chuyên dụng; lần chạy này KHÔNG tuyên bố PostgreSQL PASS. Viewer regression đã được bổ sung đầy đủ. PR A chỉ được đánh dấu sẵn sàng nghiệm thu sau khi CI PostgreSQL xanh trên SHA cuối. Chưa merge/deploy và chưa bắt đầu PR B.
+> **Phân định kế hoạch và thực thi:** PLAN_READY_TO_IMPLEMENT là mốc lịch sử về chất lượng tài liệu. Patch resolver fail-closed (`c4e9976`) pass local suite với 429 PASS / 50 SKIP; 50 SKIP gồm 36 `tests/test_postgres.py`, 11 `tests/test_rag_chat.py`, 2 `tests/test_knowledge.py`, 1 `tests/test_public_web.py` (thiếu PostgreSQL/pgvector DSN hoặc Waitress local) — local không tuyên bố PostgreSQL PASS. PostgreSQL/pgvector được xác minh trên CI: run 37197602401 (head_sha `eebe8ed`) host suite 479/479 PASS, 0 SKIP. PR A đủ điều kiện review / nghiệm thu. Chưa merge/deploy và chưa bắt đầu PR B.
 
 ## 2. Baseline chính xác được duyệt
 
@@ -78,9 +78,14 @@ Các tài liệu có nhãn superseded/post-thesis chỉ làm bối cảnh. Câu 
 
 ## 5. PR A/N08 — trạng thái nghiệm thu
 
-Bản vá mới xử lý hai đường fail-open trong IdentityStore.resolve(): ApiError được re-raise, lỗi truy vấn safety được log nội bộ và trả 503 collision_unresolved. Local full suite xác nhận 479 tests: 429 PASS, 50 SKIP, 0 FAIL/ERROR (50 tests SKIP gồm 36 test_postgres, 11 test_rag_chat, 2 test_knowledge, 1 test_public_web do thiếu PostgreSQL local DSN/Waitress).
+Bản vá (code patch `c4e9976`) xử lý hai đường fail-open trong IdentityStore.resolve(): ApiError được re-raise, lỗi truy vấn safety được log nội bộ và trả 503 collision_unresolved. Local full suite xác nhận 479 tests: 429 PASS, 50 SKIP, 0 FAIL/ERROR (50 tests SKIP gồm 36 test_postgres, 11 test_rag_chat, 2 test_knowledge, 1 test_public_web do thiếu PostgreSQL local DSN/Waitress).
 
-Role regression đã bao phủ toàn bộ staff, manager và viewer trong shared harness; SQLite có bằng chứng local pass (56/56 PR A). GitHub Actions CI Run 37196429628 trên commit SHA `c4e9976` đã xác nhận SUCCESS (Xanh 100%): host suite 479/479 PASS (0 SKIP); container suite 478 PASS / 1 SKIP (`test_colab_agent_notebook_sync` bỏ qua do không có `scripts/build_agent_notebook.py` trong image). **PR A đủ điều kiện chuyển sang review / nghiệm thu; quyết định merge main là bước riêng; PR B chưa bắt đầu.** Xem chi tiết trigger, allowlist và stopping gates tại [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).
+Role regression đã bao phủ toàn bộ staff, manager và viewer trong shared harness; SQLite có bằng chứng local pass (56/56 PR A). Bằng chứng CI:
+
+- **Final tree:** CI run 37197602401, head_sha `eebe8ed` (eebe8edefd52abb1af86e9e8bdf2173413c25fd1), SUCCESS — host suite 479/479 PASS (0 SKIP); container suite 478 PASS / 1 SKIP (`test_colab_agent_notebook_sync` bỏ qua do không có `scripts/build_agent_notebook.py` trong image).
+- **Code patch (lịch sử):** CI run 37196429628 trên `c4e9976`, SUCCESS với cùng test counts.
+
+**PR A đủ điều kiện chuyển sang review / nghiệm thu; quyết định merge main là bước riêng; PR B chưa bắt đầu.** Xem chi tiết trigger, allowlist và stopping gates tại [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).
 
 ### Các hợp đồng PR A phải giữ
 
@@ -215,31 +220,31 @@ Hash LF-normalized của cả hai bộ frozen:
 
 1. Viewer regression đã có trong shared harness; SQLite local test PASS.
 2. Full test suite và 4 script gates đã hoàn tất và PASS 100%.
-3. GitHub Actions CI Run 37196429628 trên commit `c4e9976` đã xác nhận SUCCESS (Host 479/479 PASS, Container 478 PASS / 1 SKIP).
-4. PR A đủ điều kiện chuyển sang review / nghiệm thu; quyết định merge main là bước riêng.
+3. CI run 37197602401 trên final tree `eebe8ed` SUCCESS (host 479/479 PASS, container 478 PASS / 1 SKIP); CI run 37196429628 trên code patch `c4e9976` là bằng chứng lịch sử.
+4. Bước tiếp theo: review / nghiệm thu PR A; quyết định merge main là bước riêng.
 5. Chỉ sau khi PR A được chấp thuận/merge mới bắt đầu PR B.
 
 ## 11. Sơ đồ Mermaid tổng thể: request, cache, concurrency và OAuth
 
 ### 11.1. Tình hình dự án hiện tại
 
-Sơ đồ này là snapshot review ngày 03/10/2026 và đã được supersede về trạng thái bởi N08_STOPPING_CONDITIONS.md ngày 04/10/2026. CI cũ trên fe25f67 không bao phủ patch resolver hiện tại.
+Trạng thái ngày 04/10/2026 theo N08_STOPPING_CONDITIONS.md: fix resolver và CI trên SHA cuối đã hoàn tất; bước tiếp theo là review / nghiệm thu PR A. CI cũ trên fe25f67 là lịch sử.
 
 ```mermaid
 flowchart LR
-    N08["P1.2 reported PASS<br/>P1.1 resolver fail-open"] --> Fix["Fix swallowed ApiError + lookup failure<br/>+ SQLite/PG regression"]
-    Fix --> SHA["CI trên SHA fix cuối"]
+    N08["P1.2 PASS<br/>P1.1 resolver fail-open (03/10)"] --> Fix["Fix swallowed ApiError + lookup failure<br/>+ SQLite/PG regression<br/>code patch c4e9976"]
+    Fix --> SHA["CI 37197602401 trên final tree eebe8ed<br/>SUCCESS"]
     SHA --> Review["Code review / nghiệm thu PR A"]
-    Review --> Merge["Merge PR A"]
+    Review --> Merge["Merge PR A (quyết định riêng)"]
     Merge --> PRB["PR B: concurrency, history, cache, OAuth, telemetry"]
     PRB --> Verify["Implementation verification"]
     Verify --> Phase4["Phase 4: frozen benchmark + load matrix"]
     Limit["Known limitations: manual reconciliation; journal/recovery; chưa deploy candidate"] -. "được ghi nhận khi merge" .-> Merge
-    classDef reported fill:#fff2cc,stroke:#bf9000,color:#222
+    classDef done fill:#d9ead3,stroke:#38761d,color:#222
     classDef pending fill:#fce4d6,stroke:#c65911,color:#222
     classDef next fill:#d9eaf7,stroke:#3d85c6,color:#222
-    class N08 reported
-    class SHA,Review,Merge pending
+    class N08,Fix,SHA done
+    class Review,Merge pending
     class PRB,Verify,Phase4 next
 ```
 
@@ -333,4 +338,4 @@ flowchart LR
 4. **Ranh giới agent_lock được chia theo giai đoạn.** PR A giữ kiểm tra tạm thời để bảo vệ flow cache/turn; PR B mới dọn hoàn toàn agent_lock và thay bằng admission + conv_lock + InferenceGate. Sơ đồ gán conv_lock cho vùng giao nhau và admission/gate cho PR B để phản ánh thứ tự này.
 5. **Error 429 chỉ áp dụng cho concurrency gates.** Fail-closed của Semantic Cache, provenance hoặc OAuth trả về bypass/không lưu hoặc lỗi 403/502; chúng không phải 429. Các mã 429 trong sơ đồ chỉ thuộc Tier 1 admission, Tier 2 conversation lock và Tier 3 model gate.
 6. **OAuth cleanup trên lỗi cần response headers thật.** Các plan yêu cầu tuple response có Set-Cookie; khi triển khai phải kiểm tra HTTP response thực tế, không chỉ trạng thái nội bộ. Sơ đồ thể hiện cleanup ở nhánh exchange lỗi và sau khi cấp session.
-7. **Ghi chú lịch sử:** Tại review ngày 03/10, P1.1 session-safety còn BLOCKED do resolver fail-open. Patch ngày 04/10 đã xử lý nhánh này locally, bổ sung viewer regression; GitHub Actions CI Run 37196429628 trên commit `c4e9976` đã xác nhận SUCCESS (Xanh 100%) trên PostgreSQL container. PR A đủ điều kiện chuyển sang review / nghiệm thu; PR B chưa bắt đầu. Xem [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).
+7. **Ghi chú lịch sử:** Tại review ngày 03/10, P1.1 session-safety còn BLOCKED do resolver fail-open. Patch ngày 04/10 đã xử lý nhánh này locally, bổ sung viewer regression; CI run 37196429628 trên code patch `c4e9976` (lịch sử) và CI run 37197602401 trên final tree `eebe8ed` đều SUCCESS trên PostgreSQL container. PR A đủ điều kiện chuyển sang review / nghiệm thu; PR B chưa bắt đầu. Xem [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).

@@ -3,7 +3,7 @@
 > **Trạng thái:** ACTIVE OPERATIONAL STATUS & EVIDENCE REPORT<br>
 > **Audit basis / Documentation baseline reviewed:** `b93eb5a`<br>
 > **Application snapshot đối chiếu:** Nhánh `main` tại commit `c6c7a1a`<br>
-> **Kiểm thử & CI:** Đã sửa fail-open trong `IdentityStore.resolve()`; regression bao phủ customer-link mismatch, fault injection 3 loại lookup, late takeover và toàn bộ role non-customer (`staff`, `manager`, `viewer`). Local suite đạt 429 PASS / 50 SKIP (36 test_postgres, 11 test_rag_chat, 2 test_knowledge, 1 test_public_web do thiếu PostgreSQL local DSN/Waitress). GitHub Actions CI Run 37196429628 trên commit `c4e9976` đã xác nhận SUCCESS (Xanh 100%): host suite 479/479 PASS (0 SKIP); container suite 478 PASS / 1 SKIP. PR A đủ điều kiện chuyển sang review / nghiệm thu; merge là quyết định riêng; PR B chưa bắt đầu. Xem [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).<br>
+> **Kiểm thử & CI:** Đã sửa fail-open trong `IdentityStore.resolve()`; regression bao phủ customer-link mismatch, fault injection 3 loại lookup, late takeover và toàn bộ role non-customer (`staff`, `manager`, `viewer`). Local suite đạt 429 PASS / 50 SKIP (36 test_postgres, 11 test_rag_chat, 2 test_knowledge, 1 test_public_web do thiếu PostgreSQL local DSN/Waitress). Code patch `c4e9976`; final docs tree `eebe8ed` được CI run 37197602401 xác nhận SUCCESS (head_sha = eebe8ed): host suite 479/479 PASS (0 SKIP); container suite 478 PASS / 1 SKIP. CI run 37196429628 trên `c4e9976` là bằng chứng lịch sử của code patch. PR A đủ điều kiện chuyển sang review / nghiệm thu; merge là quyết định riêng; PR B chưa bắt đầu. Xem [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).<br>
 > **EC2 Host:** `retailops-dev` / `i-0fd116d8927d0e412` / **t3.large** (Sẵn sàng tắt máy sau phiên làm việc để tối ưu chi phí cloud)<br>
 > **Deploy status:** Main baseline đã có container build/live rolling deploy PASS; candidate `feature/module-2.5-pr-a` chưa deploy lên EC2 theo mục 2.9; instance sẵn sàng kích hoạt lại khi bật.<br>
 > **Lộ trình kỹ thuật tổng thể:** Xem chi tiết tại [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md)<br>
@@ -20,7 +20,7 @@ Theo chuẩn phân cấp minh chứng của [`RELEASE_MANIFEST.md`](RELEASE_MANI
 | :--- | :--- | :--- | :--- | :--- |
 | **Module 1** | **Hệ Thống Lõi TMĐT, 6 SOPs & MCP Server** | **IMPLEMENTED** | **L1/L3 hỗn hợp** *(353+ tests PASS, Staff Desk & Manager SSOT healthy)* | Đã hoàn tất Phase 1.1 (Truthful UX) và Phase 1.2 (Store Manager Persistence & Shared Catalog SSOT: bảng `products`, `product_variants` vào PostgreSQL v4 / SQLite v3, đồng bộ `check_inventory`, `dispute_agent`, audit events toàn shop). Còn tồn đọng các ca rò rỉ context F04–F06. |
 | **Module 2** | **Đo Baseline Benchmark Cơ Sở & Ops Console** | **IMPLEMENTED** | **L1/L3 hỗn hợp** *(250 ca offline 100% Routing, 19/19 Ops Console tests OK)* | Hoàn tất Phase 1.3 (`PLAN_FIX_UI_03`): Bỏ chia 3 token, chi phí chưa đo để Unknown/None, chuẩn hóa nhãn E2E Request Latency, mở rộng allowlist Usage, bổ sung concurrency telemetry (`queue_wait_ms`, `in_flight_inferences`, `overload_429_count`). |
-| **Module 2.5** | **Kiểm Thử & Ổn Định Vận Hành (Quality Gate)** | **PR A VERIFIED; ĐỦ ĐIỀU KIỆN REVIEW/NGHIỆM THU** | **CI Run 37196429628 SUCCESS trên c4e9976; Host 479/479 PASS (0 SKIP), Container 478 PASS / 1 SKIP** *([PLAN_MODULE_2_5_HARDENING_VERIFICATION.md](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md))* | Đã sửa fail-closed trong `IdentityStore.resolve()`; regression bao phủ customer-link mismatch, fault injection, late takeover và các role `staff`, `manager`, `viewer`. Đã kiểm chứng 100% trên cả SQLite local lẫn PostgreSQL CI. PR A sẵn sàng review nghiệm thu; merge main là bước riêng; chưa deploy EC2, chưa bắt đầu PR B. Xem [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md). |
+| **Module 2.5** | **Kiểm Thử & Ổn Định Vận Hành (Quality Gate)** | **PR A VERIFIED; ĐỦ ĐIỀU KIỆN REVIEW/NGHIỆM THU** | **CI run 37197602401 SUCCESS trên final tree eebe8ed (code patch c4e9976); Host 479/479 PASS (0 SKIP), Container 478 PASS / 1 SKIP** *([PLAN_MODULE_2_5_HARDENING_VERIFICATION.md](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md))* | Đã sửa fail-closed trong `IdentityStore.resolve()`; regression bao phủ customer-link mismatch, fault injection, late takeover và các role `staff`, `manager`, `viewer`. Đã kiểm chứng 100% trên cả SQLite local lẫn PostgreSQL CI. PR A sẵn sàng review nghiệm thu; merge main là bước riêng; chưa deploy EC2, chưa bắt đầu PR B. Xem [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md). |
 | **Module 3** | **Webhook Facebook Messenger (Omnichannel)** | **PLANNED** | **Design-only** *([PLAN_OMNICHANNEL_INTEGRATION.md](PLAN_OMNICHANNEL_INTEGRATION.md))* | Chờ hoàn tất nghiệm thu Module 2.5 trước khi mở cổng webhook tiếp nhận tin nhắn từ Meta API (xếp vào Phase 5 Demo). |
 | **Module 4** | **Cổng Quét Mã QR Demo Live** | **PARTIAL** | **L3** *(HTTPS sslip.io, Web mobile responsive)* | Đã có hạ tầng web di động sẵn sàng cho demo; Chưa có module sinh mã QR động / thẻ QR demo (xếp vào Phase 5 Demo). |
 | **Module 5** | **Self-Hosted vLLM & Serving Model Agentic** | **IMPLEMENTED / PARTIAL** | **Runtime-dependent** *(Colab L4 vLLM + ngrok)* | Đã tối ưu CUDA Graphs, prefix caching, fp8 kv cache và xử lý an toàn ảnh text-only. Cần hoàn tất chuẩn hóa headroom và timeout gate ở Module 2.5 PR B. |
@@ -85,7 +85,7 @@ Theo chuẩn phân cấp minh chứng của [`RELEASE_MANIFEST.md`](RELEASE_MANI
   - Tách bạch hàm `is_vision_model()`: Với text-only models, tự động trích xuất thông tin ảnh thành ngữ cảnh văn bản an toàn (chẳng hạn metadata mô tả ảnh), không gửi chuỗi Base64 làm treo engine.
 
 ### 2.9. Tiến Độ Triển Khai PR A & Hiện Trạng Nghiệm Thu N08 (Phiên 02/10/2026 - 04/10/2026)
-> **Trạng thái:** PR A VERIFIED trên cả SQLite local lẫn PostgreSQL CI (Run 37196429628 SUCCESS trên commit `c4e9976`); **ĐỦ ĐIỀU KIỆN CHUYỂN SANG REVIEW / NGHIỆM THU PR A**. Quyết định merge main là bước riêng; PR B chưa bắt đầu. Xem [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).<br>
+> **Trạng thái:** PR A VERIFIED trên cả SQLite local lẫn PostgreSQL CI (code patch `c4e9976`; CI run 37197602401 SUCCESS trên final tree `eebe8ed`); **ĐỦ ĐIỀU KIỆN CHUYỂN SANG REVIEW / NGHIỆM THU PR A**. Quyết định merge main là bước riêng; PR B chưa bắt đầu. Xem [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).<br>
 > *(Lưu ý lịch sử: Ngày 02/10/2026, N08 từng bị tạm giữ do môi trường Windows thiếu PostgreSQL live cục bộ; đến phiên 03/10/2026, toàn bộ integration test đã được xác thực 100% xanh trên CI container thật `fe25f67`. Sau đó review phát hiện guard session fail-open, trigger `N08-P11-RESOLVE-FAIL-CLOSED` đã đóng dứt điểm lỗ hổng này vào 04/10/2026).*
 
 - **N03 (An Toàn Dữ Liệu & Error Masking - ĐÃ ĐẠT)**:
@@ -126,7 +126,7 @@ Theo chuẩn phân cấp minh chứng của [`RELEASE_MANIFEST.md`](RELEASE_MANI
       - **Regression test hai backend:** `tests/reconcile_interleaving_cases.py` tích hợp kiểm thử 4 nội dung: (1) late takeover 503 orders + retry safe; (2) customer_links mismatch unresolved 503; (3) query failure fail-closed 503; (4) non-customer roles (`staff`, `manager`, `viewer`) unaffected. Chạy đạt 100% OK trên local test suite.
 - **Trạng thái kiểm thử & xác thực CI (04/10/2026)**:
   - **Môi trường máy trạm Windows:** Local test suite: **429 PASS, 50 SKIP, 0 FAIL/ERROR** trên 479 tests (50 tests SKIP gồm 36 tests `tests/test_postgres.py`, 11 tests `tests/test_rag_chat.py`, 2 tests `tests/test_knowledge.py`, 1 test `tests/test_public_web.py` do thiếu DSN/Waitress local); bộ test PR A chạy độc lập đạt **56/56 PASS**; 4/4 cổng hợp đồng (docs, deployment, eval dataset, notebook) đạt **PASS 100%**.
-  - **Môi trường GitHub Actions CI Runner (PostgreSQL 16 + pgvector container thật & Caddy live):** CI Run 37196429628 trên commit `c4e9976` đạt **SUCCESS (Xanh 100%)**: Host suite đạt **479/479 PASS (0 SKIP)**; packaged container suite đạt **478 PASS / 1 SKIP** (`test_colab_agent_notebook_sync` bỏ qua do không có `scripts/build_agent_notebook.py` trong image); live HTTPS deployment đạt `POSTGRES_HTTPS_IMPORT_RESTORE_OK`.
+  - **Môi trường GitHub Actions CI Runner (PostgreSQL 16 + pgvector container thật & Caddy live):** CI run 37197602401 (head_sha `eebe8ed`, final tree) đạt **SUCCESS**; CI run 37196429628 trên code patch `c4e9976` là bằng chứng lịch sử với cùng kết quả. Run 37197602401: Host suite đạt **479/479 PASS (0 SKIP)**; packaged container suite đạt **478 PASS / 1 SKIP** (`test_colab_agent_notebook_sync` bỏ qua do không có `scripts/build_agent_notebook.py` trong image); live HTTPS deployment đạt `POSTGRES_HTTPS_IMPORT_RESTORE_OK`.
   - **KẾT LUẬN HIỆN TẠI:** Blocker P1.1 fail-closed, role boundary, fault injection và toàn bộ PostgreSQL integration tests đã được xác minh thành công. PR A đủ điều kiện chuyển sang bước review / nghiệm thu code; chưa merge vào main, chưa deploy lên EC2, chưa bắt đầu PR B.
 
 ---
@@ -141,7 +141,7 @@ Hệ thống tuân thủ nghiêm ngặt lộ trình phụ thuộc kỹ thuật 7
   - PR 1.2: [PLAN_FIX_UI_02_MANAGER_PERSISTENCE.md](PLAN_FIX_UI_02_MANAGER_PERSISTENCE.md) (**ĐÃ HOÀN THÀNH** — Merged main `a6ec080`, CI/CD stabilized `d7ce461`).
   - PR 1.3: [PLAN_FIX_UI_03_OPSCONSOLE_INTEGRITY.md](PLAN_FIX_UI_03_OPSCONSOLE_INTEGRITY.md) (**ĐÃ HOÀN THÀNH** — Truthful Telemetry & Concurrency telemetry merged).
 * **Module 2.5 (Quality Gate)**: System Hardening & Verification ([PLAN_MODULE_2_5_HARDENING_VERIFICATION.md](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md))
-  - **PR A**: Context, Cache & Dispute Correctness + Account Identity N08 (**VERIFIED; ĐỦ ĐIỀU KIỆN REVIEW / NGHIỆM THU** — P1.1 đã có fix fail-closed và regression đầy đủ trong shared harness; SQLite local pass 56/56 PR A; GitHub Actions CI Run 37196429628 trên `c4e9976` đạt SUCCESS 100% trên PostgreSQL container. PR A sẵn sàng nghiệm thu; merge main là bước riêng; chưa deploy EC2, chưa bắt đầu PR B).
+  - **PR A**: Context, Cache & Dispute Correctness + Account Identity N08 (**VERIFIED; ĐỦ ĐIỀU KIỆN REVIEW / NGHIỆM THU** — P1.1 đã có fix fail-closed và regression đầy đủ trong shared harness; SQLite local pass 56/56 PR A; CI run 37197602401 trên final tree `eebe8ed` (code patch `c4e9976`) đạt SUCCESS trên PostgreSQL container. PR A sẵn sàng nghiệm thu; merge main là bước riêng; chưa deploy EC2, chưa bắt đầu PR B).
   - **PR B**: Concurrency, Headroom & Truthful Telemetry (Khắc phục F07, F09, BUG-01, BUG-04).
   - **PR C**: Relational Knowledge & Clean Schema Migration (Khắc phục F10; chính thức thay thế Apache AGE trên EC2 bằng SQL Relational Linkage).
 * **Phase 4**: Đo lường thực nghiệm khoa học (Concurrency load test, Đối kháng Gemma-4 vs DeepSeek API trên 250 ca) phục vụ Chương 4 Luận văn.
@@ -198,15 +198,15 @@ sudo python3 /opt/retailops/live-e2e.py --mode smoke
 
 > **Cảnh báo supersede (04/10/2026):** Toàn bộ Mục 5 dưới đây là tài liệu lưu trữ lịch sử của phiên làm việc cũ khi HEAD commit còn ở `c34c54b` và suite 470 tests.
 > **Các thông số cũ trong mục này (commit `c34c54b`, working tree "clean", CI run `37047893366`, test count 470) ĐÃ BỊ SUPERSEDE HOÀN TOÀN** và KHÔNG phản ánh trạng thái hiện hành:
-> - Hiện tại working tree trên nhánh `feature/module-2.5-pr-a` có các file uncommitted modified (chưa clean).
+> - Trạng thái hiện hành của nhánh `feature/module-2.5-pr-a`: code patch `c4e9976`, final docs tree `eebe8ed` (CI run 37197602401 SUCCESS). Không dùng thông tin HEAD/working tree trong mục này.
 > - Full suite hiện hành gồm 479 tests (429 PASS, 50 SKIP local).
 > - Nguồn trạng thái chính thức và điều kiện dừng hiện hành: xem Mục 1, Mục 2.9 của tài liệu này và [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).
 
 ### 5.1. Tóm Tắt Trạng Thái Lưu Trữ (Lịch sử commit `c34c54b` — ĐÃ SUPERSEDE)
 - **Nhánh Git:** `feature/module-2.5-pr-a`
 - **Head Commit (lịch sử đã supersede):** `c34c54b4e682346340faf17a08db9a1d40a149b0` (`c34c54b`; không phải HEAD hiện hành)
-- **Trạng thái working tree (lịch sử đã supersede):** Clean tại commit `c34c54b` (hiện tại working tree có các file uncommitted modified, chưa clean)
-- **Trạng thái CI (lịch sử đã supersede):** GitHub Actions Run ID `37047893366` **SUCCESS** (đã supersede bởi run `37137791788` và hiện tại chờ CI run trên SHA cuối)
+- **Trạng thái working tree (lịch sử đã supersede):** Clean tại commit `c34c54b` (không phản ánh trạng thái hiện hành)
+- **Trạng thái CI (lịch sử đã supersede):** GitHub Actions Run ID `37047893366` **SUCCESS** (đã supersede bởi run `37137791788`, rồi bởi CI run 37197602401 trên `eebe8ed`)
 - **Cam kết tuân thủ:** Chưa merge vào nhánh `main`, chưa deploy lên EC2, chưa tạo PR mới.
 
 ### 5.2. Các Hạng Mục N08 Đã Xử Lý Dứt Điểm (Giai đoạn đầu)
@@ -233,7 +233,7 @@ sudo python3 /opt/retailops/live-e2e.py --mode smoke
    git status
    git log -n 3 --oneline
    ```
-   *(Lưu ý lịch sử: Đây là hướng dẫn cũ của commit `c34c54b`; không áp dụng cho working tree hiện tại đang có uncommitted changes)*
+   *(Lưu ý lịch sử: Đây là hướng dẫn cũ của commit `c34c54b`; không áp dụng cho trạng thái hiện hành)*
 2. **Kiểm tra nhanh 4 cổng hợp đồng:**
    ```bash
    python scripts/check_docs_contract.py
@@ -248,4 +248,4 @@ sudo python3 /opt/retailops/live-e2e.py --mode smoke
    ```
    *(Kỳ vọng lịch sử: 470 tests cũ; hiện tại test suite là 479 tests)*
 4. **Bước tiếp theo theo lộ trình dự án:**
-   - Chạy CI trên SHA cuối và hoàn tất nghiệm thu PR A sau khi CI xanh; PR B chưa bắt đầu.
+   - (Hiện hành) CI trên final tree `eebe8ed` đã SUCCESS (run 37197602401); bước tiếp theo là review / nghiệm thu PR A; PR B chưa bắt đầu.

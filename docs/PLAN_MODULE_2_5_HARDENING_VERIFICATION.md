@@ -1,7 +1,7 @@
 # KẾ HOẠCH MODULE 2.5: SYSTEM HARDENING, CONTEXT INTEGRITY & VERIFICATION QUALITY GATE
 
 > **Mã kế hoạch:** `PLAN_MODULE_2_5_HARDENING_VERIFICATION`
-> **Trạng thái:** PR A/N08 VERIFIED trên SQLite local và PostgreSQL CI Container (CI Run 37196429628 SUCCESS trên commit `c4e9976`: Host 479/479 PASS 0 SKIP, Container 478 PASS / 1 SKIP). PR A đủ điều kiện chuyển sang review / nghiệm thu; merge main là bước riêng; PR B chưa bắt đầu. Xem [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).
+> **Trạng thái:** PR A/N08 VERIFIED. Code patch `c4e9976`; final docs tree `eebe8ed` được CI run 37197602401 xác nhận SUCCESS (host 479/479 PASS, 0 SKIP; container 478 PASS / 1 SKIP). CI run 37196429628 trên `c4e9976` là bằng chứng lịch sử của code patch. PR A đủ điều kiện review / nghiệm thu; merge main là bước riêng; PR B chưa bắt đầu (các hạng mục PR B vẫn PENDING TEST). Xem [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).
 > **Phiên bản:** 1.5 (2026-10-04)
 > **Audit basis / Documentation baseline reviewed:** `c30ff1d`
 > **Mục tiêu:** Thiết lập chốt chặn kiểm thử & ổn định vận hành thực tế (Quality Gate) giữa Module 2 (Baseline & Ops Console) và Module 3 (Omnichannel Meta Webhook). Khắc phục dứt điểm 13 hạng mục kỹ thuật (F01–F07, F08a, F09, F11–F13, SEC-01) được kiểm chứng độc lập. Mỗi hạng mục chuẩn hóa đầy đủ: tệp/hàm liên quan, hành vi mong đợi, test tương ứng và trạng thái kiểm chứng.
@@ -38,7 +38,7 @@ Mọi hạng mục bắt buộc chuẩn hóa theo 4 thuộc tính: **Tệp & Hà
 
 ### 2.1. Phân Kỳ PR A — Context, Cache, Dispute Correctness, Tool Safety & Truthful Boundary
 
-#### [F01] An Toàn Cache 3 Yếu Tố (Tri-Factor Cache Safety) `[CHƯA KIỂM CHỨNG / PENDING TEST]`
+#### [F01] An Toàn Cache 3 Yếu Tố (Tri-Factor Cache Safety) `[ĐÃ KIỂM CHỨNG — PR A, CI 37197602401]`
 - **Tệp & Hàm liên quan:**
   - `retailops/business/cache.py`: `is_cacheable_query(text)`.
   - `retailops/business/application.py`: `chat()` (dòng kiểm tra Semantic Cache lookup và store).
@@ -48,7 +48,7 @@ Mọi hạng mục bắt buộc chuẩn hóa theo 4 thuộc tính: **Tệp & Hà
   3. *Lớp 3 (Response Provenance Guard - Nguồn gốc phản hồi)*: Cờ thực thi công cụ đọc trực tiếp từ `tools_called = answer['trace'].get('tools', [])` và `tool_count = answer['trace'].get('tool_count', len(tools_called))` (hoặc graph state `state.get('tool_count', 0)`). **TUYỆT ĐỐI CẤM LƯU VÀO SEMANTIC CACHE** nếu turn đã gọi bất kỳ tool nào (`len(tools_called) > 0` hoặc `tool_count > 0`, kể cả read tools như `get_current_time`, `get_order`, `search_knowledge`), hoặc có truy vấn tri thức RAG (`bound.knowledge.searches`), trích dẫn `sources`, hoặc `bound.versions`.
 - **Test tương ứng:** `tests/test_pr_a_correctness.py::test_f01_cross_product_cache_leak`, `tests/test_pr_a_correctness.py::test_f01_tool_execution_provenance_guard`.
 
-#### [F02] Tuần Tự Hóa & Tái Thẩm Định Snapshot Khi Cache-Hit `[CHƯA KIỂM CHỨNG / PENDING TEST]`
+#### [F02] Tuần Tự Hóa & Tái Thẩm Định Snapshot Khi Cache-Hit `[ĐÃ KIỂM CHỨNG — PR A, CI 37197602401]`
 - **Tệp & Hàm liên quan:**
   - `retailops/business/application.py`: `chat()`.
   - `retailops/inference_gate.py`: `get_conversation_lock(conv_key)`.
@@ -63,7 +63,7 @@ Mọi hạng mục bắt buộc chuẩn hóa theo 4 thuộc tính: **Tệp & Hà
      - Bước store tuân thủ Response Provenance Guard: Trong codebase hiện tại, `run_multiagent` (`graph.py:164`) không trả về `tool_count` mặc định và luồng `human-support` (`graph.py:154`) nằm ngoài trace thông thường; PR A/B dự kiến bổ sung đếm tool tại biên thực thi `Application.execute()`. Áp dụng nguyên tắc fail-closed: nếu trace thiếu hoặc chưa xác thực, tuyệt đối không coi là 0 tool $\rightarrow$ từ chối lưu cache.
 - **Test tương ứng:** `tests/test_pr_a_correctness.py::test_f02_cache_hit_under_lock`, `tests/test_pr_a_correctness.py::test_f02_snapshot_revalidation_under_lock`.
 
-#### [F03] Chuẩn Hóa Ranh Giới Lỗi Hạ Tầng & Re-raise Ngoại Lệ `[CHƯA KIỂM CHỨNG / PENDING TEST]`
+#### [F03] Chuẩn Hóa Ranh Giới Lỗi Hạ Tầng & Re-raise Ngoại Lệ `[ĐÃ KIỂM CHỨNG — PR A, CI 37197602401]`
 - **Tệp & Hàm liên quan:**
   - `retailops/business/application.py`: `execute(name, arguments)`.
   - `retailops/workflow/subagents/dispute_agent.py`: `run_dispute_agent()`.
@@ -74,7 +74,7 @@ Mọi hạng mục bắt buộc chuẩn hóa theo 4 thuộc tính: **Tệp & Hà
   3. Trong `store.py:connection()`: Bọc `sqlite3.OperationalError` thành `ApiError(503, 'database_unavailable')`.
 - **Test tương ứng:** `tests/test_pr_a_correctness.py::test_f03_infrastructure_error_execute`, `tests/test_pr_a_correctness.py::test_f03_db_outage_storage_boundary`.
 
-#### [F04] Kiểm Tra Toàn Diện Kết Quả Tool Hủy Đơn `[CHƯA KIỂM CHỨNG / PENDING TEST]`
+#### [F04] Kiểm Tra Toàn Diện Kết Quả Tool Hủy Đơn `[ĐÃ KIỂM CHỨNG — PR A, CI 37197602401]`
 - **Tệp & Hàm liên quan:**
   - `retailops/workflow/subagents/dispute_agent.py`: Khối xử lý `prepare_cancellation`.
   - `retailops_tools.py`: `prepare_cancellation(order_id)`.
@@ -83,14 +83,14 @@ Mọi hạng mục bắt buộc chuẩn hóa theo 4 thuộc tính: **Tệp & Hà
   - Với đơn hàng đã giao (`delivered`), tool trả `eligible=False` $\rightarrow$ Tuyệt đối KHÔNG tạo `action_proposal.cancel_order`; giải thích trung thực đơn đã giao không thể hủy.
 - **Test tương ứng:** `tests/test_pr_a_correctness.py::test_f04_cancellation_delivered_order_rejected`.
 
-#### [F05] Phân Giải Thứ Tự Ưu Tiên Đơn Hàng Mới `[CHƯA KIỂM CHỨNG / PENDING TEST]`
+#### [F05] Phân Giải Thứ Tự Ưu Tiên Đơn Hàng Mới `[ĐÃ KIỂM CHỨNG — PR A, CI 37197602401]`
 - **Tệp & Hàm liên quan:**
   - `retailops/workflow/subagents/dispute_agent.py`: Khối trích xuất mã đơn và sản phẩm.
 - **Hành vi mong đợi:**
   - Khi khách đang xem đơn O-101 và chat đề cập đơn O-102: Mã đơn explicit trong tin nhắn hiện tại thắng tuyệt đối $\rightarrow$ Gọi `get_order('O-102')` và trích xuất `product_id` từ đơn mới này; không dùng `bound_context.product_id` của đơn O-101 cũ.
 - **Test tương ứng:** `tests/test_pr_a_correctness.py::test_f05_new_explicit_order_beats_stale_focus`.
 
-#### [F06] Phân Loại Tồn Kho Biến Thể Chính Xác `[CHƯA KIỂM CHỨNG / PENDING TEST]`
+#### [F06] Phân Loại Tồn Kho Biến Thể Chính Xác `[ĐÃ KIỂM CHỨNG — PR A, CI 37197602401]`
 - **Tệp & Hàm liên quan:**
   - `retailops/workflow/subagents/dispute_agent.py`: Khối xử lý đổi size / check inventory.
 - **Hành vi mong đợi:**
@@ -98,7 +98,7 @@ Mọi hạng mục bắt buộc chuẩn hóa theo 4 thuộc tính: **Tệp & Hà
   - Phân biệt rõ 4 trạng thái: (1) `variant_not_found` (biến thể không có trong catalog), (2) `stock_unknown` (catalog có hàng nhưng trường `stock=None`), (3) `stock == 0` (hết hàng), (4) `stock > 0` (còn hàng).
 - **Test tương ứng:** `tests/test_pr_a_correctness.py::test_f06_variant_not_found`, `tests/test_pr_a_correctness.py::test_f06_stock_unknown`.
 
-#### [F08a] Ranh Giới Ngôn Từ Đổi Hàng Trung Thực (Truthful Wording) `[CHƯA KIỂM CHỨNG / PENDING TEST]`
+#### [F08a] Ranh Giới Ngôn Từ Đổi Hàng Trung Thực (Truthful Wording) `[ĐÃ KIỂM CHỨNG — PR A, CI 37197602401]`
 - **Tệp & Hàm liên quan:**
   - `retailops/workflow/subagents/dispute_agent.py`.
   - `web/app.js`: `approveExchange1to1()`, `approveExchangeSize()`.
@@ -108,7 +108,7 @@ Mọi hạng mục bắt buộc chuẩn hóa theo 4 thuộc tính: **Tệp & Hà
   - Staff Desk: Đổi nhãn nút sang "Xác nhận tiếp nhận Đổi hàng"; gửi phản hồi tiếp nhận qua chat; KHÔNG tuyên bố duyệt thành công, giữ kho tổng hay tạo vận đơn bưu cục.
 - **Test tương ứng:** `tests/test_pr_a_correctness.py::test_f08a_truthful_ai_wording`, `tests/test_pr_a_correctness.py::test_f08a_staff_button_wording`.
 
-#### [F11] An Toàn Duyệt Catalog Khi Thiếu Category `[CHƯA KIỂM CHỨNG / PENDING TEST]`
+#### [F11] An Toàn Duyệt Catalog Khi Thiếu Category `[ĐÃ KIỂM CHỨNG — PR A, CI 37197602401]`
 - **Tệp & Hàm liên quan:**
   - `retailops_tools.py`: `search_products(query)`.
 - **Hành vi mong đợi:**
@@ -201,7 +201,7 @@ Trigger N08-P11-RESOLVE-FAIL-CLOSED đã sửa hai nhánh fail-open trong Identi
 
 Bằng chứng local: full suite 479 tests, 429 PASS, 50 SKIP (50 tests SKIP gồm 36 tests `tests/test_postgres.py`, 11 tests `tests/test_rag_chat.py`, 2 tests `tests/test_knowledge.py`, 1 test `tests/test_public_web.py` do thiếu PostgreSQL local DSN và Waitress).
 
-Bằng chứng CI: GitHub Actions CI Run 37196429628 trên commit `c4e9976` đã xác nhận SUCCESS (Xanh 100%): host suite 479/479 PASS (0 SKIP); packaged container suite 478 PASS / 1 SKIP (`test_colab_agent_notebook_sync` bỏ qua do không có `scripts/build_agent_notebook.py` trong image). Toàn bộ các kiểm thử PostgreSQL và pgvector đều đạt chuẩn.
+Bằng chứng CI: final tree `eebe8ed` được CI run 37197602401 (head_sha `eebe8ed`) xác nhận SUCCESS: host suite 479/479 PASS (0 SKIP); packaged container suite 478 PASS / 1 SKIP (`test_colab_agent_notebook_sync` bỏ qua do không có `scripts/build_agent_notebook.py` trong image). CI run 37196429628 trên code patch `c4e9976` là bằng chứng lịch sử với cùng test counts.
 
 PR A đủ điều kiện chuyển sang bước review / nghiệm thu; quyết định merge main là bước riêng; tuyệt đối chưa merge, chưa deploy lên EC2 và chưa bắt đầu PR B. Xem [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).
 
@@ -237,18 +237,18 @@ Identity schema v4 là version riêng; không nhầm với SQLite Business v3 / 
 
 | Mã | Nội dung Nghiệm thu | Hành vi Kỳ vọng | File Kiểm thử | Trạng thái |
 | :---: | :--- | :--- | :--- | :---: |
-| **AC-01** | Cache Context Isolation (F01) | Hội thoại P-603 không làm rò rỉ cache sang P-602; câu hỏi có context động bypass cache 100%; turn gọi bất kỳ tool nào không được ghi cache. | `tests/test_pr_a_correctness.py` | `PENDING TEST` |
-| **AC-02** | Serialization & Snapshot Reval (F02) | Turn AI/cache trên `/api/chat` commit an toàn dưới `conv_lock`; dưới lock reload snapshot DB (`store.conversation`) trước khi accept cache hit; loser nhận HTTP 429. | `tests/test_pr_a_correctness.py` | `PENDING TEST` |
-| **AC-03** | No Error Swallowing (F03) | Lỗi hạ tầng (5xx, 429, timeout) được re-raise thành HTTP 503/429; không nuốt thành "không tìm thấy đơn" hay "shop đã ghi nhận". | `tests/test_pr_a_correctness.py` | `PENDING TEST` |
-| **AC-04** | Truthful Proposals (F04) | Đơn hàng `delivered` không thể tạo đề xuất hủy và không mở bảng xác nhận hủy trên giao diện. | `tests/test_pr_a_correctness.py` | `PENDING TEST` |
-| **AC-05** | Order/Product Precedence (F05) | Đổi sang đơn mới trong hội thoại thì thông tin sản phẩm và bảo hành trích xuất từ đơn mới. | `tests/test_pr_a_correctness.py` | `PENDING TEST` |
-| **AC-06** | Variant Accuracy (F06) | Đổi size kiểm tra đúng màu và size; phân biệt `variant_not_found`, `stock_unknown`, hết hàng và còn hàng; không tự gán mặc định. | `tests/test_pr_a_correctness.py` | `PENDING TEST` |
-| **AC-07** | Tool Search Safety (F11) | Catalog chứa sản phẩm `category=None` không gây lỗi `TypeError` khi gọi `search_products`. | `tests/test_pr_a_correctness.py` | `PENDING TEST` |
-| **AC-08** | Truthful Exchange Wording (F08a) | AI không nói "đã tạo phiếu"; nút Staff Desk không tuyên bố duyệt giữ hàng kho hay tạo vận đơn khi chưa có backend transaction. | `tests/test_pr_a_correctness.py` | `PENDING TEST` |
+| **AC-01** | Cache Context Isolation (F01) | Hội thoại P-603 không làm rò rỉ cache sang P-602; câu hỏi có context động bypass cache 100%; turn gọi bất kỳ tool nào không được ghi cache. | `tests/test_pr_a_correctness.py` | `PASS` — CI 37197602401 (`eebe8ed`) |
+| **AC-02** | Serialization & Snapshot Reval (F02) | Turn AI/cache trên `/api/chat` commit an toàn dưới `conv_lock`; dưới lock reload snapshot DB (`store.conversation`) trước khi accept cache hit; loser nhận HTTP 429. | `tests/test_pr_a_correctness.py` | `PASS` — CI 37197602401 (`eebe8ed`) |
+| **AC-03** | No Error Swallowing (F03) | Lỗi hạ tầng (5xx, 429, timeout) được re-raise thành HTTP 503/429; không nuốt thành "không tìm thấy đơn" hay "shop đã ghi nhận". | `tests/test_pr_a_correctness.py` | `PASS` — CI 37197602401 (`eebe8ed`) |
+| **AC-04** | Truthful Proposals (F04) | Đơn hàng `delivered` không thể tạo đề xuất hủy và không mở bảng xác nhận hủy trên giao diện. | `tests/test_pr_a_correctness.py` | `PASS` — CI 37197602401 (`eebe8ed`) |
+| **AC-05** | Order/Product Precedence (F05) | Đổi sang đơn mới trong hội thoại thì thông tin sản phẩm và bảo hành trích xuất từ đơn mới. | `tests/test_pr_a_correctness.py` | `PASS` — CI 37197602401 (`eebe8ed`) |
+| **AC-06** | Variant Accuracy (F06) | Đổi size kiểm tra đúng màu và size; phân biệt `variant_not_found`, `stock_unknown`, hết hàng và còn hàng; không tự gán mặc định. | `tests/test_pr_a_correctness.py` | `PASS` — CI 37197602401 (`eebe8ed`) |
+| **AC-07** | Tool Search Safety (F11) | Catalog chứa sản phẩm `category=None` không gây lỗi `TypeError` khi gọi `search_products`. | `tests/test_pr_a_correctness.py` | `PASS` — CI 37197602401 (`eebe8ed`) |
+| **AC-08** | Truthful Exchange Wording (F08a) | AI không nói "đã tạo phiếu"; nút Staff Desk không tuyên bố duyệt giữ hàng kho hay tạo vận đơn khi chưa có backend transaction. | `tests/test_pr_a_correctness.py` | `PASS` — CI 37197602401 (`eebe8ed`) |
 | **AC-09** | Thread Headroom & 429 (F07) | Admission giới hạn tối đa 6 chat được nhận xử lý đồng thời trên Waitress 8 workers, giảm nguy cơ chat chiếm hết worker (không bảo đảm worker rảnh tuyệt đối); HTTP Chat Admission Limiter tại PublicWeb (trước session/DB preflight) từ chối request thứ 7 với HTTP 429 `server_busy` kèm `Retry-After: 5`; InferenceGate ($K=1, Q=5$) trả 429 `model_busy` khi queue đầy và 429 canonical `queue_timeout` khi chờ quá 10s. Mục tiêu có điều kiện: P99 $\le 50\text{ms}$ cho /healthz dưới tải 6 chat được giữ bằng test barrier. | `tests/test_inference_gate.py`<br/>`tests/test_http_headroom.py` | `PENDING TEST` |
 | **AC-10** | Real Telemetry & Latency (F09) | Ghi nhận tách biệt `queue_wait_ms` và `provider_inference_ms`; không dùng `0.0` giả lập. | `tests/test_inference_gate.py` | `PENDING TEST` |
 | **AC-11** | Chat History Retention (F12) | Lịch sử chat không bị xóa cứng LIMIT 6 trong DB; F5 và API `GET /api/conversations/{id}/messages` trả về đầy đủ toàn bộ các lượt chat transcript. | `tests/test_conversation_resume.py` | `PENDING TEST` |
 | **AC-12** | Multi-tenant Cache Sync & Race (F13) | Manager đổi đơn qua `POST /api/manager/orders/update-status` $\rightarrow$ invalidate shared `ToolCache` theo tenant; discard stale writes in-flight qua epoch. | `tests/test_business_api.py` | `PENDING TEST` |
 | **AC-13** | OAuth CSRF Protection (SEC-01) | Callback Google OAuth thiếu hoặc không khớp transient cookie (`Secure; HttpOnly; SameSite=Lax`) bị từ chối HTTP 403 `invalid_oauth_state`. | `tests/test_auth_google.py` | `PENDING TEST` |
-| **AC-14** | Business Schema Backend SSOT | Giữ SQLite Business v3 và PostgreSQL Business v4; bảo vệ `warranty_days` của P-603; không thêm Business migration v5 trong PR A/B. Identity schema v4 là version độc lập, theo mục 2.3/N08. | `tests/test_schema_migration.py` (SQLite)<br/>`tests/test_postgres.py` (PostgreSQL) | Historical CI evidence only on fe25f67; rerun final SHA before acceptance. |
-| **AC-15** | Doc Contract Integrity | 4/4 cổng hợp đồng tài liệu và triển khai đạt PASS 100%. | `scripts/check_docs_contract.py` | Local docs contract PASS 4/4 on 2026-10-04; final CI pending. |
+| **AC-14** | Business Schema Backend SSOT | Giữ SQLite Business v3 và PostgreSQL Business v4; bảo vệ `warranty_days` của P-603; không thêm Business migration v5 trong PR A/B. Identity schema v4 là version độc lập, theo mục 2.3/N08. | `tests/test_schema_migration.py` (SQLite)<br/>`tests/test_postgres.py` (PostgreSQL) | `PASS` — CI run 37197602401 trên final tree `eebe8ed` (host 479/479 PASS, 0 SKIP; PostgreSQL tests chạy thật). |
+| **AC-15** | Doc Contract Integrity | 4/4 cổng hợp đồng tài liệu và triển khai đạt PASS 100%. | `scripts/check_docs_contract.py` | `PASS` — local 4/4 và CI run 37197602401 trên `eebe8ed` (docs, eval dataset, deployment, notebook gates xanh). |

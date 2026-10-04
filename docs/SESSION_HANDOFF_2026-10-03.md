@@ -1,6 +1,6 @@
 # TÀI LIỆU BÀN GIAO PHIÊN LÀM VIỆC (SESSION HANDOFF) — 03/10/2026
 
-> **Ghi chú supersede ngày 04/10/2026:** Đây là snapshot lịch sử cho code SHA fe25f67 và CI run 37137791788. Phiên làm việc 04/10/2026 đã hoàn tất trigger N08-P11-RESOLVE-FAIL-CLOSED (commit SHA `c4e9976`), và GitHub Actions CI Run 37196429628 đã xác nhận SUCCESS (Xanh 100%) cho cả SQLite lẫn PostgreSQL. PR A đủ điều kiện chuyển sang review / nghiệm thu; PR B chưa bắt đầu. Nguồn trạng thái hiện hành: [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md) và [CURRENT_PROJECT_STATUS.md](CURRENT_PROJECT_STATUS.md).
+> **Ghi chú supersede ngày 04/10/2026:** Đây là snapshot lịch sử cho code SHA fe25f67 và CI run 37137791788. Phiên làm việc 04/10/2026 đã hoàn tất trigger N08-P11-RESOLVE-FAIL-CLOSED (code patch `c4e9976`); final docs tree `eebe8ed` được CI run 37197602401 xác nhận SUCCESS (host 479/479 PASS, 0 SKIP; container 478 PASS / 1 SKIP). CI run 37196429628 trên `c4e9976` là bằng chứng lịch sử của code patch. PR A đủ điều kiện chuyển sang review / nghiệm thu; PR B chưa bắt đầu. Nguồn trạng thái hiện hành: [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md) và [CURRENT_PROJECT_STATUS.md](CURRENT_PROJECT_STATUS.md).
 
 
 > **Ngày ghi nhận:** 03/10/2026 (12:20 GMT+7)
@@ -97,9 +97,9 @@ Toàn bộ các phát hiện Blocker N08 (P1.1, P1.2) theo review của GPT 6 As
    *Kết quả: 479 tests, 429 PASS, 50 SKIP, 0 FAIL, 0 ERROR (PostgreSQL/pgvector integration skip do không có DSN local).*
 
 4. **Nhiệm vụ tiếp theo:**
-   - Thực thi trigger `N08-P11-RESOLVE-FAIL-CLOSED`: đã hoàn tất cục bộ (xem Mục 3).
-   - Đẩy commit lên GitHub Actions CI để kiểm thử đầy đủ PostgreSQL 16 container trên đúng SHA cuối.
-   - Chỉ sau khi CI PostgreSQL xanh mới review nghiệm thu PR A. Sau khi PR A được merge, mới bắt đầu **Module 2.5 PR B** theo [PLAN_MODULE_2_5_HARDENING_VERIFICATION.md](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md).
+   - Trigger `N08-P11-RESOLVE-FAIL-CLOSED`: đã hoàn tất (xem Mục 3–4).
+   - CI PostgreSQL trên SHA cuối: đã SUCCESS (run 37197602401 trên `eebe8ed`).
+   - Bước tiếp theo: review / nghiệm thu PR A; merge main là quyết định riêng. Sau khi PR A được merge, mới bắt đầu **Module 2.5 PR B** theo [PLAN_MODULE_2_5_HARDENING_VERIFICATION.md](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md).
 
 ---
 
@@ -121,7 +121,7 @@ Toàn bộ các phát hiện Blocker N08 (P1.1, P1.2) theo review của GPT 6 As
    - Kiểm thử PostgreSQL/pgvector được ủy quyền xác thực trên GitHub Actions CI container.
    - 4 cổng hợp đồng: PASS 100% (`check_docs_contract.py`, `check_deployment_contract.py`, `check_eval_dataset.py`, `build_agent_notebook.py --check`).
 
-4. **Kết quả xác thực trên GitHub Actions CI (Run 37196429628 trên commit `c4e9976`):**
+4. **Kết quả xác thực trên GitHub Actions CI (canonical: run 37197602401, head_sha `eebe8ed`; lịch sử: run 37196429628 trên code patch `c4e9976`, cùng kết quả):**
    - Host suite: **479/479 PASS, 0 SKIP, 0 FAIL, 0 ERROR** trên live PostgreSQL 16 và pgvector container.
    - Packaged container suite: **478 PASS, 1 SKIP, 0 FAIL, 0 ERROR** (`test_colab_agent_notebook_sync` bỏ qua do không có `scripts/build_agent_notebook.py` trong image).
    - Live HTTPS deployment & Caddy maintenance: PASS.
