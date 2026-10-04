@@ -1,5 +1,6 @@
 """HTTPS WSGI adapter; session backend supplies authenticated business bindings."""
 import json
+import os
 from http import HTTPStatus
 from urllib.parse import urlsplit
 from agent_protocol import PROTOCOL
@@ -55,6 +56,16 @@ class PublicWeb:
         require(host == self.host or loopback_health, 403, 'invalid_host', 'Địa chỉ web không hợp lệ.')
         require(method in ('GET', 'POST'), 405, 'method_not_allowed', 'Phương thức không được hỗ trợ.')
         require(not env.get('QUERY_STRING') or path == '/auth/google/callback', 400, 'unexpected_query', 'Đường dẫn không nhận tham số truy vấn.')
+
+        # Emergency maintenance mode check for auth and provisioning routes
+        if path in ('/auth/google/config', '/auth/google/login', '/auth/google/callback') or (path == '/api/login' and method == 'POST'):
+            is_maintenance = (
+                os.environ.get('RETAILOPS_AUTH_MAINTENANCE', '').strip().lower() in ('1', 'true', 'yes')
+                or getattr(self, 'auth_maintenance', False) is True
+                or getattr(self.sessions, 'auth_maintenance', False) is True
+            )
+            require(not is_maintenance, 503, 'maintenance_mode',
+                    'Hệ thống xác thực đang bảo trì để đối soát dữ liệu.')
         if path == '/healthz' and method == 'GET':
             self.sessions.check_health()
             return 200, {'status': 'ok', 'scope': 'synthetic-demo', 'version': VERSION,
@@ -103,7 +114,19 @@ class PublicWeb:
                 require(False, 400, 'oauth_exchange_failed', str(e))
 
             role = resolve_role_from_email(user_info['email'])
-            secret = self.sessions.login_google(user_info['email'], user_info['name'], role=role)
+            is_live = getattr(self.sessions, 'data_mode', None) in ('production', 'live')
+            email_verified = bool(user_info.get('email_verified', False))
+            if is_live and not email_verified:
+                require(False, 400, 'unverified_email', 'Tài khoản Google chưa được xác minh email.')
+
+            secret = self.sessions.login_google(
+                user_info['email'],
+                user_info['name'],
+                role=role,
+                sub=user_info.get('sub'),
+                email_verified=email_verified,
+                live=is_live
+            )
             headers.append(('Set-Cookie', f'{self.sessions.cookie_name}={secret}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age={self.sessions.session_seconds}'))
             headers.append(('Location', '/'))
             return 302, b'', 'text/html; charset=utf-8', headers

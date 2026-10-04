@@ -123,12 +123,18 @@ def call_model(gateway, messages, allow_tools, deadline, trace, *, allowed_tools
         trace['reported_cost_usd'] = None
         trace['usage_incomplete'] = True
         err_entry = {'code': code, 'call': trace['model_calls']}
+        http_status = getattr(exc, 'http_status', None)
         if isinstance(exc, AgentError) and isinstance(exc.trace, dict):
             for k in ('http_status', 'error_kind', 'stage', 'upstream_code'):
                 if k in exc.trace:
                     err_entry[k] = exc.trace[k]
+            if not http_status:
+                http_status = exc.trace.get('http_status')
         trace.setdefault('model_errors', []).append(err_entry)
-        raise AgentError(code, 'Không nhận được phản hồi hợp lệ từ model. Vui lòng thử lại.', trace) from None
+        agent_err = AgentError(code, 'Không nhận được phản hồi hợp lệ từ model. Vui lòng thử lại.', trace)
+        if http_status:
+            agent_err.http_status = http_status
+        raise agent_err from None
     trace['model_responses'] += 1
     trace['prompt_tokens'] = trace.get('prompt_tokens', 0) + (response.get('prompt_eval_count') or 0)
     trace['generated_tokens'] = trace.get('generated_tokens', 0) + (response.get('eval_count') or 0)
@@ -161,6 +167,11 @@ def run_read_worker(state, execute, gateway, *, prompt, allowed_tools, render,
         try:
             message = call_model(gateway, messages, allow, deadline, trace, allowed_tools=allowed_tools)
         except AgentError as exc:
+            http_status = getattr(exc, 'http_status', None) or (exc.trace.get('http_status') if isinstance(exc.trace, dict) else None)
+            is_infra_error = (http_status in (429, 500, 502, 503, 504) or
+                              exc.code in ('api_rate_limited', 'model_busy', 'api_unavailable', 'agent_timeout'))
+            if is_infra_error:
+                raise
             final = render(records) if records else None
             if not final:
                 raise
@@ -228,7 +239,9 @@ def run_read_worker(state, execute, gateway, *, prompt, allowed_tools, render,
                 try:
                     result = execute(name, args)
                 except ApiError as exc:
-                    result = {'error': exc.code if exc.status < 500 else 'tool_unavailable'}
+                    if exc.status == 429 or exc.status >= 500:
+                        raise
+                    result = {'error': exc.code}
                 except (RuntimeError, ValueError, OSError, KeyError, TypeError):
                     result = {'error': 'tool_unavailable'}
             if not isinstance(result, dict):

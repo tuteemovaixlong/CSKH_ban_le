@@ -102,7 +102,7 @@ class GuestSessions:
                            (sid, self.invite_hash, time.time() + SESSION_SECONDS))
             return secret
 
-    def login_google(self, email, name, role='customer'):
+    def login_google(self, email, name, role='customer', sub=None, **kwargs):
         self.rate('login', 15)
         with self.lock:
             self.purge()

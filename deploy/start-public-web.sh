@@ -64,13 +64,14 @@ container_id=$(docker create --network none "$image_ref")
 staging_dir=$(mktemp -d /opt/retailops/https-setup.XXXXXX)
 cleanup() { docker rm "$container_id" >/dev/null 2>&1 || true; rm -rf "$staging_dir"; }
 trap cleanup EXIT
-for name in compose.public.yaml Caddyfile; do
+for name in compose.public.yaml Caddyfile Caddyfile.maintenance; do
   docker cp "$container_id:/app/deploy/$name" "$staging_dir/$name"
 done
 # Validate imports/config without API calls, paid inference or modifying the owner DB.
 docker run --rm --network none --entrypoint python "$image_ref" -c 'import retailops_public,waitress; print("PUBLIC_IMAGE_OK")'
 docker pull caddy:2.11.4-alpine
 docker run --rm --network none -e "RETAILOPS_PUBLIC_HOST=$PUBLIC_HOSTNAME" -v "$staging_dir/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.11.4-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+docker run --rm --network none -e "RETAILOPS_PUBLIC_HOST=$PUBLIC_HOSTNAME" -v "$staging_dir/Caddyfile.maintenance:/etc/caddy/Caddyfile:ro" caddy:2.11.4-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 python3 - "$PUBLIC_HOSTNAME" "$staging_dir/public.env" <<'PY'
 from pathlib import Path
 import re,secrets,sys
@@ -96,7 +97,7 @@ Path(destination).write_text(''.join(key+'='+value+'\n' for key,value in values.
 PY
 if [[ -f public.env ]]; then
   backup_dir=$(mktemp -d /opt/retailops/https-config-backup.XXXXXX)
-  for name in public.env compose.public.yaml Caddyfile; do
+  for name in public.env compose.public.yaml Caddyfile Caddyfile.maintenance; do
     if [[ -f "$name" ]]; then cp -p "$name" "$backup_dir/"; fi
   done
   printf 'Previous HTTPS config saved at %s\n' "$backup_dir"
@@ -104,6 +105,7 @@ fi
 install -m 0600 "$staging_dir/public.env" public.env
 install -m 0644 "$staging_dir/compose.public.yaml" compose.public.yaml
 install -m 0644 "$staging_dir/Caddyfile" Caddyfile
+install -m 0644 "$staging_dir/Caddyfile.maintenance" Caddyfile.maintenance
 chmod 0600 api.env inference.env
 install -d -o 10001 -g 10001 artifacts/public-guests
 docker compose --project-name retailops-web --env-file deployed.env --env-file public.env -f compose.public.yaml config --quiet

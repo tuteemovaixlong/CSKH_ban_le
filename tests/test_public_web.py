@@ -12,6 +12,8 @@ import urllib.request
 from pathlib import Path
 from unittest.mock import patch
 
+ROOT = Path(__file__).resolve().parents[1]
+
 from retailops_api import BusinessStore
 from retailops_public import COOKIE, GuestSessions, PublicWeb, create_application, public_origin
 
@@ -178,6 +180,61 @@ class PublicTests(unittest.TestCase):
                 self.assertEqual(len(json.load(response)['orders']), 2)
         finally:
             server.close(); server.task_dispatcher.shutdown(); thread.join(timeout=3)
+
+    def test_auth_maintenance_mode_blocks_all_login_routes_with_503(self):
+        """Blocker P1: Emergency auth maintenance mode fail-closed across all auth endpoints.
+
+        Endpoints tested:
+        1. GET /auth/google/config -> 503 maintenance_mode
+        2. GET /auth/google/login -> 503 maintenance_mode
+        3. GET /auth/google/callback -> 503 maintenance_mode
+        4. POST /api/login -> 503 maintenance_mode
+        5. Verify non-auth endpoint (/healthz) remains operational (200 OK)
+        6. Verify deploy/Caddyfile.maintenance contains the exact matcher directives.
+        """
+        # Test Caddyfile.maintenance static contract
+        caddy_maint_path = ROOT / 'deploy' / 'Caddyfile.maintenance'
+        self.assertTrue(caddy_maint_path.is_file(), 'deploy/Caddyfile.maintenance must exist.')
+        caddy_text = caddy_maint_path.read_text(encoding='utf-8')
+        self.assertIn('@auth_maintenance', caddy_text)
+        for route in ('/auth/google/config', '/auth/google/login', '/auth/google/callback', '/api/login'):
+            self.assertIn(route, caddy_text)
+        self.assertIn('503', caddy_text)
+        self.assertIn('maintenance_mode', caddy_text)
+
+        # Test WSGI application adapter under maintenance mode
+        with patch.dict(os.environ, {'RETAILOPS_AUTH_MAINTENANCE': 'true'}):
+            # 1. Google Auth Config
+            status, body, headers = self.request('/auth/google/config')
+            self.assertEqual(status, 503)
+            self.assertEqual(body.get('error'), 'maintenance_mode')
+
+            # 2. Google Auth Login
+            status, body, headers = self.request('/auth/google/login')
+            self.assertEqual(status, 503)
+            self.assertEqual(body.get('error'), 'maintenance_mode')
+
+            # 3. Google Auth Callback (with query params)
+            status, body, headers = self.request(
+                '/auth/google/callback',
+                QUERY_STRING='code=dummy_auth_code&state=dummy_auth_state'
+            )
+            self.assertEqual(status, 503)
+            self.assertEqual(body.get('error'), 'maintenance_mode')
+
+            # 4. Token / password login
+            status, body, headers = self.request('/api/login', {'token': INVITE})
+            self.assertEqual(status, 503)
+            self.assertEqual(body.get('error'), 'maintenance_mode')
+
+            # 5. Non-auth route remains accessible (e.g. /healthz on loopback)
+            status, body, headers = self.request(
+                '/healthz',
+                HTTP_HOST='127.0.0.1:8000',
+                REMOTE_ADDR='127.0.0.1'
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(body.get('status'), 'ok')
 
 
 if __name__ == '__main__':

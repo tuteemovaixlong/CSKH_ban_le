@@ -140,6 +140,10 @@ def check_links_and_markdown_rules() -> List[str]:
             if target.startswith("#"):
                 continue
 
+            if re.search(r"^[A-Za-z]:[/\\]", target):
+                errors.append(f"{rel_doc}: Contains forbidden local drive path '{target}'. Use relative paths.")
+                continue
+
             # Strip anchor query if present
             path_part = target.split("#")[0].split("?")[0]
             if not path_part:

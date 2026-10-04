@@ -1,23 +1,27 @@
 # Bàn giao triển khai Module 2.5 — GPT 6 Astra
 
-Ngày chốt: **01/10/2026 — Asia/Bangkok**.
-Trạng thái: **PLAN_READY_TO_IMPLEMENT**.
-Thứ tự: **PR A → PR B → nghiệm thu implementation → Phase 4 benchmark**.
-Nguồn quyết định: `docs/review gpt 6 astra.md`.
+Ngày cập nhật trạng thái: **04/10/2026 — Asia/Bangkok**.
+Trạng thái hiện tại: **N08 VERIFIED; PR A đủ điều kiện review / nghiệm thu (merge là quyết định riêng).** Code patch `c4e9976` (c4e99769ec46be3d8fe33d272527e9c73b3b0ad1); final docs tree `eebe8ed` (eebe8edefd52abb1af86e9e8bdf2173413c25fd1) được CI run 37197602401 xác nhận SUCCESS (head_sha = eebe8ed; host 479/479 PASS, 0 SKIP; container 478 PASS / 1 SKIP). CI run 37196429628 trên `c4e9976` là bằng chứng lịch sử cho code patch. Local: 479 tests, 429 PASS, 50 SKIP. Xem [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).
+Working snapshot: branch `feature/module-2.5-pr-a`.
+Quỹ đạo: **trigger `N08-P11-RESOLVE-FAIL-CLOSED` hoàn tất → regression SQLite/PostgreSQL hoàn tất → suite/gates PASS → CI trên SHA cuối PASS → review / nghiệm thu PR A (tiếp theo) → merge theo quyết định riêng → PR B → implementation verification → Phase 4 benchmark**.
+Nguồn quyết định/lịch sử: `docs/review gpt 6 astra.md`; điều kiện dừng hiện hành: [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).
 
 ## 1. Mục đích và ranh giới trạng thái
 
-Đợt chỉnh kế hoạch kết thúc với **14/14 mục review R01–R14 đã đóng**, không còn P0/P1/P2 chặn triển khai Module 2.5 trong phạm vi đã review. File này bàn giao việc phải làm tiếp; nó không xác nhận các tính năng đã được code.
+Mốc **14/14 mục R01–R14** chỉ xác nhận đặc tả tài liệu tại thời điểm trước, không thay thế kiểm chứng runtime. N08 hiện được đánh giá theo bằng chứng local và final-CI tại N08_STOPPING_CONDITIONS.md.
 
 | Mốc | Trạng thái lúc bàn giao | Điều kiện chuyển |
 | --- | --- | --- |
-| PLAN_READY_TO_IMPLEMENT | **ĐẠT** | Các đặc tả A/B nhất quán, kiểm tra tài liệu đạt |
-| PR_A_VERIFIED | Chưa thực hiện trong đợt review | Test correctness, implementation và regression đạt theo scope A |
-| PR_B_VERIFIED | Chưa thực hiện trong đợt review | Acceptance concurrency/history/cache/OAuth/telemetry đạt sau khi tích hợp A |
-| IMPLEMENTATION_VERIFIED | Pending | Đủ bằng chứng A/B, backend được hỗ trợ và CI bắt buộc |
-| SCIENTIFIC_EVALUATION_COMPLETE | Pending | Đủ kết quả frozen benchmark và load matrix theo thiết kế Phase 4 |
+| PLAN_READY_TO_IMPLEMENT | **ĐẠT — mốc lịch sử 01/10/2026** | Các đặc tả A/B đã sẵn sàng tại baseline lúc đó |
+| N08_P1_GATES | **VERIFIED** | Local 429 PASS / 50 SKIP; CI 37196429628 trên code patch `c4e9976` (lịch sử) và CI 37197602401 trên final tree `eebe8ed` đều SUCCESS. Run trên fe25f67 là historical. |
+| PR_A_ACCEPTED | **ĐỦ ĐIỀU KIỆN REVIEW / NGHIỆM THU** | Kỹ thuật đã đạt; chờ quyết định review/nghiệm thu; merge main là bước riêng, chưa thực hiện |
+| PR_B | Chưa bắt đầu | Bắt đầu sau khi PR A được nghiệm thu/merge |
+| IMPLEMENTATION_VERIFIED | Pending | A/B có đủ evidence theo acceptance và backend được hỗ trợ |
+| SCIENTIFIC_EVALUATION_COMPLETE | Pending | Có kết quả frozen benchmark và load matrix Phase 4 |
 
 READY chỉ áp dụng cho **Module 2.5 PR A/B**. Các plan nghiên cứu, post-thesis hoặc superseded không được coi là cùng đạt READY chỉ vì file bàn giao này tồn tại.
+
+> **Phân định kế hoạch và thực thi:** PLAN_READY_TO_IMPLEMENT là mốc lịch sử về chất lượng tài liệu. Patch resolver fail-closed (`c4e9976`) pass local suite với 429 PASS / 50 SKIP; 50 SKIP gồm 36 `tests/test_postgres.py`, 11 `tests/test_rag_chat.py`, 2 `tests/test_knowledge.py`, 1 `tests/test_public_web.py` (thiếu PostgreSQL/pgvector DSN hoặc Waitress local) — local không tuyên bố PostgreSQL PASS. PostgreSQL/pgvector được xác minh trên CI: run 37197602401 (head_sha `eebe8ed`) host suite 479/479 PASS, 0 SKIP. PR A đủ điều kiện review / nghiệm thu. Chưa merge/deploy và chưa bắt đầu PR B.
 
 ## 2. Baseline chính xác được duyệt
 
@@ -72,13 +76,16 @@ Các tài liệu có nhãn superseded/post-thesis chỉ làm bối cảnh. Câu 
 
 **Ngoài scope:** PR C/product_policy_links, migration DDL mới, durable exchange F08b, transcript pagination Phase 5–6, ASGI, horizontal scaling, GraphRAG production và fine-tuning. Giữ SQLite Business v3 / PostgreSQL Business v4.
 
-## 5. Bước đầu tiên: Chuẩn bị baseline và triển khai PR A
+## 5. PR A/N08 — trạng thái nghiệm thu
 
-1. Đọc review và PR A; xác nhận baseline thực tế, các sửa đang có và phạm vi test.
-2. Ghi snapshot tài liệu đã được duyệt theo quy trình repository. Tách thay đổi tài liệu khỏi thay đổi implementation để dễ review; không xóa sửa của người khác.
-3. Dùng nhánh theo quy ước `codex/` hoặc quy ước người dùng chỉ định. Bắt đầu A trước vì A/B cùng chạm Application/cache.
-4. Tạo `tests/test_pr_a_correctness.py` theo 30 scenario đã đặc tả. Bổ sung assertion history/provenance cần thiết vào các scenario liên quan; không sửa frozen dataset để làm test xanh.
-5. Xác nhận test tái hiện hành vi sai ở baseline; sau đó sửa code theo từng nhóm và chạy lại.
+Bản vá (code patch `c4e9976`) xử lý hai đường fail-open trong IdentityStore.resolve(): ApiError được re-raise, lỗi truy vấn safety được log nội bộ và trả 503 collision_unresolved. Local full suite xác nhận 479 tests: 429 PASS, 50 SKIP, 0 FAIL/ERROR (50 tests SKIP gồm 36 test_postgres, 11 test_rag_chat, 2 test_knowledge, 1 test_public_web do thiếu PostgreSQL local DSN/Waitress).
+
+Role regression đã bao phủ toàn bộ staff, manager và viewer trong shared harness; SQLite có bằng chứng local pass (56/56 PR A). Bằng chứng CI:
+
+- **Final tree:** CI run 37197602401, head_sha `eebe8ed` (eebe8edefd52abb1af86e9e8bdf2173413c25fd1), SUCCESS — host suite 479/479 PASS (0 SKIP); container suite 478 PASS / 1 SKIP (`test_colab_agent_notebook_sync` bỏ qua do không có `scripts/build_agent_notebook.py` trong image).
+- **Code patch (lịch sử):** CI run 37196429628 trên `c4e9976`, SUCCESS với cùng test counts.
+
+**PR A đủ điều kiện chuyển sang review / nghiệm thu; quyết định merge main là bước riêng; PR B chưa bắt đầu.** Xem chi tiết trigger, allowlist và stopping gates tại [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).
 
 ### Các hợp đồng PR A phải giữ
 
@@ -211,14 +218,41 @@ Hash LF-normalized của cả hai bộ frozen:
 
 ## 10. Việc nên làm ngay
 
-**Bắt đầu PR A ở lượt được yêu cầu triển khai**, từ test tái hiện correctness và cache/provenance. Chưa cần tiếp tục nhiều vòng chỉnh kiến trúc plan, cũng chưa nên nhảy sang benchmark hoặc mở rộng hạ tầng.
-
-Review hiện tại chỉ ghi hai tài liệu: thay thế file review và tạo file bàn giao này. Không có code/config/dataset được sửa; chưa commit/push/deploy.
----
+1. Viewer regression đã có trong shared harness; SQLite local test PASS.
+2. Full test suite và 4 script gates đã hoàn tất và PASS 100%.
+3. CI run 37197602401 trên final tree `eebe8ed` SUCCESS (host 479/479 PASS, container 478 PASS / 1 SKIP); CI run 37196429628 trên code patch `c4e9976` là bằng chứng lịch sử.
+4. Bước tiếp theo: review / nghiệm thu PR A; quyết định merge main là bước riêng.
+5. Chỉ sau khi PR A được chấp thuận/merge mới bắt đầu PR B.
 
 ## 11. Sơ đồ Mermaid tổng thể: request, cache, concurrency và OAuth
 
-Sơ đồ dưới đây tổng hợp trạng thái mục tiêu của PR A và PR B. Màu xanh lá là PR A, xanh dương là PR B, màu cam là điểm giao nhau hoặc cần phối hợp. Nhánh màu đỏ là fail-closed hoặc lỗi HTTP.
+### 11.1. Tình hình dự án hiện tại
+
+Trạng thái ngày 04/10/2026 theo N08_STOPPING_CONDITIONS.md: fix resolver và CI trên SHA cuối đã hoàn tất; bước tiếp theo là review / nghiệm thu PR A. CI cũ trên fe25f67 là lịch sử.
+
+```mermaid
+flowchart LR
+    N08["P1.2 PASS<br/>P1.1 resolver fail-open (03/10)"] --> Fix["Fix swallowed ApiError + lookup failure<br/>+ SQLite/PG regression<br/>code patch c4e9976"]
+    Fix --> SHA["CI 37197602401 trên final tree eebe8ed<br/>SUCCESS"]
+    SHA --> Review["Code review / nghiệm thu PR A"]
+    Review --> Merge["Merge PR A (quyết định riêng)"]
+    Merge --> PRB["PR B: concurrency, history, cache, OAuth, telemetry"]
+    PRB --> Verify["Implementation verification"]
+    Verify --> Phase4["Phase 4: frozen benchmark + load matrix"]
+    Limit["Known limitations: manual reconciliation; journal/recovery; chưa deploy candidate"] -. "được ghi nhận khi merge" .-> Merge
+    classDef done fill:#d9ead3,stroke:#38761d,color:#222
+    classDef pending fill:#fce4d6,stroke:#c65911,color:#222
+    classDef next fill:#d9eaf7,stroke:#3d85c6,color:#222
+    class N08,Fix,SHA done
+    class Review,Merge pending
+    class PRB,Verify,Phase4 next
+```
+
+### 11.2. Kiến trúc đích sau khi tích hợp PR A và PR B
+
+Màu xanh lá là phần PR A/N08 đã triển khai theo status report; xanh dương là công việc PR B chưa bắt đầu; màu cam là điểm ghép giữa hai phần. Màu đỏ biểu thị fail-closed hoặc lỗi HTTP. Đây là sơ đồ kiến trúc theo kế hoạch, không phải bằng chứng rằng các hạng mục PR B đang chạy.
+
+
 
 ~~~mermaid
 flowchart LR
@@ -287,7 +321,7 @@ flowchart LR
     class EConv error;
 ~~~
 
-### 11.1. Đối chiếu với từng plan
+### 11.3. Đối chiếu với từng plan
 
 | Plan | Phần khớp trong sơ đồ | Kết quả đối chiếu |
 | --- | --- | --- |
@@ -296,7 +330,7 @@ flowchart LR
 | [PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT.md](PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT.md) | Ba tầng concurrency, ToolCache tenant/customer scope, cache_epoch và CAS discard, OAuth verify → binding → atomic consume → exchange → session, F12 history. | **Khớp với một giới hạn cần ghi chú:** epoch/CAS được đặc tả cho **ToolCache**, không phải Semantic Cache. |
 | [PLAN_RBAC_GOOGLE_AUTH.md](PLAN_RBAC_GOOGLE_AUTH.md) | Cookie transient, HMAC/TTL, browser binding, atomic consume, exchange, issue session/cleanup, RBAC session tiếp nhận sau OAuth. | **Khớp ở mức mục tiêu SEC-01.** Các test OAuth vẫn pending trong Module 2.5; trạng thái “IMPLEMENTED & ACTIVE” của tài liệu RBAC là trạng thái core OAuth/UI, không thay thế hardening SEC-01. |
 
-### 11.2. Mâu thuẫn và khoảng trống được phát hiện
+### 11.4. Mâu thuẫn và khoảng trống được phát hiện
 
 1. **Semantic Cache epoch/CAS chưa có đặc tả.** Các plan chỉ quy định cache_epoch + compare-and-set cho **ToolCache** trong F13. Semantic Cache chỉ có điều kiện fail-closed, lookup/store dưới conv_lock và provenance guard. Vì vậy node Semantic Cache được đánh dấu epoch/CAS: GAP in plans; không được triển khai epoch/CAS cho Semantic Cache chỉ dựa trên sơ đồ này.
 2. **OAuth TTL giữa plan và mã nguồn hiện tại chưa đồng nhất.** RBAC/Sprint yêu cầu TTL 600 giây, còn retailops/http/auth_google.py tại baseline hiện có STATE_TTL_SECONDS = 900. Đây là khoảng cách plan → code phải xử lý và kiểm thử trong PR B; sơ đồ dùng 600 giây theo hợp đồng plan.
@@ -304,5 +338,4 @@ flowchart LR
 4. **Ranh giới agent_lock được chia theo giai đoạn.** PR A giữ kiểm tra tạm thời để bảo vệ flow cache/turn; PR B mới dọn hoàn toàn agent_lock và thay bằng admission + conv_lock + InferenceGate. Sơ đồ gán conv_lock cho vùng giao nhau và admission/gate cho PR B để phản ánh thứ tự này.
 5. **Error 429 chỉ áp dụng cho concurrency gates.** Fail-closed của Semantic Cache, provenance hoặc OAuth trả về bypass/không lưu hoặc lỗi 403/502; chúng không phải 429. Các mã 429 trong sơ đồ chỉ thuộc Tier 1 admission, Tier 2 conversation lock và Tier 3 model gate.
 6. **OAuth cleanup trên lỗi cần response headers thật.** Các plan yêu cầu tuple response có Set-Cookie; khi triển khai phải kiểm tra HTTP response thực tế, không chỉ trạng thái nội bộ. Sơ đồ thể hiện cleanup ở nhánh exchange lỗi và sau khi cấp session.
-7. **Sơ đồ là target architecture, chưa phải runtime evidence.** Các node PR A/PR B vẫn có trạng thái implementation/test pending trong plan; việc sơ đồ đầy đủ không chuyển các acceptance sang PASS.
-
+7. **Ghi chú lịch sử:** Tại review ngày 03/10, P1.1 session-safety còn BLOCKED do resolver fail-open. Patch ngày 04/10 đã xử lý nhánh này locally, bổ sung viewer regression; CI run 37196429628 trên code patch `c4e9976` (lịch sử) và CI run 37197602401 trên final tree `eebe8ed` đều SUCCESS trên PostgreSQL container. PR A đủ điều kiện chuyển sang review / nghiệm thu; PR B chưa bắt đầu. Xem [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).

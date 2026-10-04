@@ -10,8 +10,10 @@ from retailops.inference_gate import InferenceGate
 
 
 class PostgresSessions(PersistentSessions):
-    def __init__(self, dsn, infer=None, api_infer=None, api_daily_limit=20, capacity=50):
+    def __init__(self, dsn, infer=None, api_infer=None, api_daily_limit=20, capacity=50, data_mode=None):
         self.dsn = dsn
+        if data_mode is not None:
+            self.data_mode = data_mode
         self.control = PostgresIdentityStore(dsn)
         self.infer, self.api_infer = infer, api_infer
         self.api_daily_limit, self.capacity = api_daily_limit, capacity

@@ -80,6 +80,83 @@ def main():
             assert request('/api/logout',{})[0] == 200
             assert request('/api/orders')[0] == 401
             print('PUBLIC_HTTPS_PROXY_COOKIE_FLOW_OK (temporary test CA; no public certificate or paid inference)')
+            # Test Caddy maintenance mode switch via operational script with repeated execution
+            orig_caddy = (temp / 'Caddyfile').read_text()
+            maint_caddy = (ROOT / 'deploy/Caddyfile.maintenance').read_text().replace('{$RETAILOPS_PUBLIC_HOST} {', '{$RETAILOPS_PUBLIC_HOST} {\n\ttls internal')
+            (temp / 'Caddyfile.maintenance').write_text(maint_caddy)
+            maint_script = str(ROOT / 'deploy/switch-maintenance.sh')
+            script_env = dict(
+                os.environ,
+                RETAILOPS_DIR=str(temp),
+                COMPOSE_PROJECT_NAME='retailops-https-ci-' + str(os.getpid()),
+                COMPOSE_FILE=str(temp / 'compose.public.yaml')
+            )
+            # 1. Initial status check
+            st_before = run(['bash', maint_script, 'status'], env=script_env).strip()
+            assert 'NORMAL_MODE_ACTIVE' in st_before, st_before
+
+            # 2. Enable maintenance mode via script
+            out_en = run(['bash', maint_script, 'enable'], env=script_env).strip()
+            assert 'AUTH_MAINTENANCE_ENABLED' in out_en, out_en
+
+            # 3. Repeated enable (test idempotency)
+            out_en_rep = run(['bash', maint_script, 'enable'], env=script_env).strip()
+            assert 'AUTH_MAINTENANCE_ALREADY_ENABLED' in out_en_rep, out_en_rep
+
+            st_maint = run(['bash', maint_script, 'status'], env=script_env).strip()
+            assert 'MAINTENANCE_MODE_ACTIVE' in st_maint, st_maint
+
+            for _ in range(20):
+                try:
+                    st_test, res_test = request('/auth/google/config')
+                    if st_test == 503 and res_test.get('error') == 'maintenance_mode':
+                        break
+                except Exception:
+                    pass
+                time.sleep(0.5)
+            for path in ('/auth/google/config', '/auth/google/login', '/auth/google/callback'):
+                st, res = request(path)
+                assert st == 503 and res.get('error') == 'maintenance_mode', (path, st, res)
+            st_login, res_login = request('/api/login', {'token': INVITE})
+            assert st_login == 503 and res_login.get('error') == 'maintenance_mode', (st_login, res_login)
+
+            # 4. Disable maintenance mode via script
+            out_dis = run(['bash', maint_script, 'disable'], env=script_env).strip()
+            assert 'AUTH_MAINTENANCE_DISABLED' in out_dis, out_dis
+
+            # 5. Repeated disable (test idempotency)
+            out_dis_rep = run(['bash', maint_script, 'disable'], env=script_env).strip()
+            assert 'AUTH_MAINTENANCE_ALREADY_DISABLED' in out_dis_rep, out_dis_rep
+
+            st_norm = run(['bash', maint_script, 'status'], env=script_env).strip()
+            assert 'NORMAL_MODE_ACTIVE' in st_norm, st_norm
+
+            # 6. Test missing backup failure handling
+            out_en_for_fail = run(['bash', maint_script, 'enable'], env=script_env).strip()
+            assert 'AUTH_MAINTENANCE_ENABLED' in out_en_for_fail, out_en_for_fail
+            (temp / 'Caddyfile.normal.bak').unlink(missing_ok=True)
+            (temp / 'Caddyfile.normal').unlink(missing_ok=True)
+            import subprocess
+            proc_fail = subprocess.run(['bash', maint_script, 'disable'], env=script_env, capture_output=True, text=True)
+            assert proc_fail.returncode != 0, f"Expected non-zero returncode when backup is missing, got {proc_fail.returncode}"
+            assert 'Cannot disable maintenance mode' in proc_fail.stderr, proc_fail.stderr
+
+            # Restore normal backup so script can disable maintenance mode cleanly
+            (temp / 'Caddyfile.normal.bak').write_text(orig_caddy)
+            out_dis_final = run(['bash', maint_script, 'disable'], env=script_env).strip()
+            assert 'AUTH_MAINTENANCE_DISABLED' in out_dis_final, out_dis_final
+
+            st_norm_code = None
+            for _ in range(20):
+                try:
+                    st_norm_code, _ = request('/healthz')
+                    if st_norm_code == 200:
+                        break
+                except Exception:
+                    pass
+                time.sleep(0.5)
+            assert st_norm_code == 200, f"Expected 200 from /healthz after maintenance disabled, got {st_norm_code}"
+            print('PUBLIC_CADDY_MAINTENANCE_SWITCH_OK (operational script tested with idempotency, missing backup failure, and real Caddy 503 fail-closed)')
             # Provision through the packaged operator CLI, then switch the same HTTPS stack.
             admin = base+['exec','-T','web','python','-m','retailops','identity']
             run(admin+['init-tenant','--tenant','ci-shop','--name','CI shop','--seed-demo'])

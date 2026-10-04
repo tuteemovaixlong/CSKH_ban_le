@@ -13,7 +13,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from contextlib import contextmanager
 from pathlib import Path
-from retailops.core import REASONS, fields, require
+from retailops.core import ApiError, REASONS, fields, require
 from retailops.schema import migrate
 from retailops.business.schema import initialize as initialize_schema
 
@@ -69,19 +69,32 @@ class BusinessStore:
         # Only explicit construction may create a database. A lost mount must not
         # silently create a blank database while a cached repository is in use.
         uri = self.path.resolve().as_uri() + ('?mode=rwc' if create else '?mode=rw')
-        db = sqlite3.connect(uri, uri=True, timeout=5)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA foreign_keys=ON")
+        db = None
         try:
+            db = sqlite3.connect(uri, uri=True, timeout=5)
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA foreign_keys=ON")
             if write:
                 db.execute("BEGIN IMMEDIATE")
             yield db
             db.commit()
+        except sqlite3.OperationalError as exc:
+            if db:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+            raise ApiError(503, 'database_unavailable', 'Cơ sở dữ liệu tạm thời gián đoạn. Vui lòng thử lại sau ít phút.') from exc
         except Exception:
-            db.rollback()
+            if db:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
             raise
         finally:
-            db.close()
+            if db is not None:
+                db.close()
 
     def seed(self):
         # Conflict handling preserves cancelled orders across process/container restarts.
@@ -219,8 +232,15 @@ class BusinessStore:
     @staticmethod
     def _row_to_product(row):
         d = dict(row)
-        aliases = json.loads(d['aliases']) if isinstance(d['aliases'], str) else (d['aliases'] or [])
-        variants = json.loads(d['variants']) if isinstance(d['variants'], str) else (d['variants'] or [])
+        raw_aliases = json.loads(d['aliases']) if isinstance(d['aliases'], str) else d['aliases']
+        if isinstance(raw_aliases, (list, tuple)):
+            aliases = [str(a) for a in raw_aliases if a is not None]
+        elif isinstance(raw_aliases, str):
+            aliases = [raw_aliases]
+        else:
+            aliases = []
+        raw_variants = json.loads(d['variants']) if isinstance(d['variants'], str) else d['variants']
+        variants = raw_variants if isinstance(raw_variants, list) else []
         extra = json.loads(d.get('extra_data') or '{}') if isinstance(d.get('extra_data'), str) else (d.get('extra_data') or {})
         return {
             'id': d['id'],
@@ -260,7 +280,10 @@ class BusinessStore:
         require(name, 400, "invalid_product_name", "Tên sản phẩm không được để trống.")
 
         now = time.time()
-        aliases = json.dumps(p.get("aliases", [name.lower(), pid.lower()]), ensure_ascii=False)
+        raw_aliases = p.get("aliases")
+        if not isinstance(raw_aliases, (list, tuple)):
+            raw_aliases = [name.lower(), pid.lower()]
+        aliases = json.dumps([str(a) for a in raw_aliases if a is not None], ensure_ascii=False)
         category = p.get("category")
         price = p.get("price")
         stock = p.get("stock")
@@ -327,7 +350,8 @@ class BusinessStore:
 
             if "aliases" in updates:
                 cols.append("aliases=?")
-                params.append(json.dumps(updates["aliases"], ensure_ascii=False))
+                raw_al = updates["aliases"] if isinstance(updates["aliases"], (list, tuple)) else []
+                params.append(json.dumps([str(a) for a in raw_al if a is not None], ensure_ascii=False))
 
             existing_vars = db.execute("SELECT * FROM product_variants WHERE product_id=?", (pid,)).fetchall()
             existing_map = {r["variant_name"]: dict(r) for r in existing_vars}
@@ -589,6 +613,14 @@ class BusinessStore:
         require(row['expires_at'] > time.time(), 409, 'conversation_expired', 'Cuộc trò chuyện đã hết hạn. Hãy bấm Cuộc trò chuyện mới.')
         return dict(row)
 
+    def has_turns(self, customer, cid) -> bool:
+        require(isinstance(cid, str) and re.fullmatch(r'[a-f0-9-]{36}', cid),
+                400, 'invalid_conversation', 'Mã cuộc trò chuyện không hợp lệ.')
+        with self.connection() as db:
+            row = db.execute('SELECT 1 FROM agent_turns WHERE conversation_id=? AND customer_id=? LIMIT 1',
+                             (cid, customer)).fetchone()
+            return row is not None
+
     def remember(self, customer, snapshot, oid, pid):
         if snapshot is None:
             return
@@ -612,6 +644,12 @@ class BusinessStore:
             # The answer is explicitly an old result. Never reopen a stale cancel card.
             return {**result, 'replayed': True, 'action': 'reply'}
         return None
+
+    def get_graph_run(self, run_id):
+        with self.connection() as db:
+            row = db.execute('''SELECT id,customer_id,fingerprint,seed,expires_at,lease_owner,lease_until
+                FROM graph_runs WHERE id=?''', (run_id,)).fetchone()
+            return dict(row) if row else None
 
     def history(self, customer, cid):
         with self.connection() as db:

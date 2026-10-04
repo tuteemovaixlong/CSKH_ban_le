@@ -169,11 +169,15 @@ def exchange_code_for_user_info(code: str, origin: str) -> Dict[str, str]:
     if not email:
         raise ValueError("Tài khoản Google không cung cấp email.")
 
+    raw_verified = profile.get("email_verified")
+    is_verified = (raw_verified is True) or (isinstance(raw_verified, str) and raw_verified.lower() == "true")
+
     return {
         "email": email,
         "name": profile.get("name", "").strip() or email.split("@")[0],
         "sub": str(profile.get("sub", "")),
         "picture": profile.get("picture", ""),
+        "email_verified": is_verified,
     }
 
 

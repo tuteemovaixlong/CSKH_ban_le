@@ -22,10 +22,12 @@ class PersistentSessions:
     session_seconds = 8 * 3600
     data_mode = 'persistent-demo'
 
-    def __init__(self, directory, infer=None, api_infer=None, api_daily_limit=20, capacity=50):
+    def __init__(self, directory, infer=None, api_infer=None, api_daily_limit=20, capacity=50, data_mode=None):
         self.directory = Path(directory)
         self.directory.mkdir(parents=True, exist_ok=True)
-        self.control = IdentityStore(self.directory/'identity.sqlite3')
+        if data_mode is not None:
+            self.data_mode = data_mode
+        self.control = IdentityStore(self.directory/'identity.sqlite3', tenant_stores=self.business_store, data_mode=data_mode)
         self.infer, self.api_infer = infer, api_infer
         self.api_daily_limit, self.capacity = api_daily_limit, capacity
         self.inference_gate = InferenceGate()
@@ -57,32 +59,39 @@ class PersistentSessions:
     def login(self, token):
         return self.control.login(token, self.session_seconds, self.capacity)
 
-    def login_google(self, email, name, role='customer'):
+    def login_google(self, email, name, role='customer', sub=None, issuer='https://accounts.google.com', email_verified=False, live=False):
         with self.control.connection() as db:
             row = db.execute('SELECT id FROM tenants WHERE active=1 ORDER BY id LIMIT 1').fetchone()
         require(row is not None, 503, 'no_active_tenant', 'Chưa có cửa hàng nào hoạt động trên hệ thống.')
         tenant_id = row['id']
-        mid, cid = self.control.get_or_create_google_member(tenant_id, email, name, role=role)
+        is_live = live or getattr(self, 'data_mode', None) in ('production', 'live')
+        mid, cid = self.control.get_or_create_google_member(
+            tenant_id, email, name, role=role, sub=sub, issuer=issuer, email_verified=email_verified, live=is_live
+        )
         try:
             bstore = self.business_store(tenant_id)
             with bstore.connection(write=True) as bdb:
-                bstore.seed_catalog(bdb)
+                if not is_live:
+                    bstore.seed_catalog(bdb)
                 bdb.execute("INSERT INTO customers VALUES (?,?) ON CONFLICT DO NOTHING", (cid, name or email))
-                existing = bdb.execute("SELECT 1 FROM orders WHERE customer_id=? LIMIT 1", (cid,)).fetchone()
-                if not existing:
-                    # Seed 3 representative orders with valid IDs (e.g. O-700101, O-700102, O-700103)
-                    seed_base = 700000 + (abs(hash(cid)) % 200000)
-                    sample_orders = [
-                        (f"O-{seed_base + 1}", cid, "Áo sơ mi lụa công sở", "Trắng / M", 450000, "pending", 1, None, "P-601"),
-                        (f"O-{seed_base + 2}", cid, "Quần tây ống đứng tôn dáng", "Đen / L", 520000, "delivered", 1, None, "P-602"),
-                        (f"O-{seed_base + 3}", cid, "Giày lười da bò cao cấp", "Nâu / 41", 890000, "delivered", 1, None, "P-603"),
-                    ]
-                    for ord_row in sample_orders:
-                        bdb.execute("""INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id)
-                                       VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING""", ord_row)
+                if not is_live and getattr(self, 'seed_sample_orders', True):
+                    existing = bdb.execute("SELECT 1 FROM orders WHERE customer_id=? LIMIT 1", (cid,)).fetchone()
+                    if not existing:
+                        # Seed 3 representative orders with valid IDs (e.g. O-700101, O-700102, O-700103)
+                        seed_base = 700000 + (abs(hash(cid)) % 200000)
+                        sample_orders = [
+                            (f"O-{seed_base + 1}", cid, "Áo sơ mi lụa công sở", "Trắng / M", 450000, "pending", 1, None, "P-601"),
+                            (f"O-{seed_base + 2}", cid, "Quần tây ống đứng tôn dáng", "Đen / L", 520000, "delivered", 1, None, "P-602"),
+                            (f"O-{seed_base + 3}", cid, "Giày lười da bò cao cấp", "Nâu / 41", 890000, "delivered", 1, None, "P-603"),
+                        ]
+                        for ord_row in sample_orders:
+                            bdb.execute("""INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id)
+                                           VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING""", ord_row)
         except Exception as ex:
             import logging
-            logging.getLogger("retailops_identity").warning("Failed to seed sample orders for Google user: %s", ex)
+            logging.getLogger("retailops_identity").error("Failed to provision customer in business store: %s", ex)
+            if is_live:
+                require(False, 503, 'customer_provision_failed', 'Không thể khởi tạo dữ liệu tài khoản khách hàng.')
         return self.control.create_session_for_membership(mid, self.session_seconds, self.capacity)
 
     def cookie_id(self, header):
