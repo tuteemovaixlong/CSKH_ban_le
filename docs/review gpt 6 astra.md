@@ -2,8 +2,8 @@
 
 **Ngày rà soát:** 04/10/2026
 **PR A/N08:** PR #34 đã merge vào main tại merge commit 47ba72a.
-**PR B:** PR #35, branch feature/module-2.5-pr-b, head 166e289e0f30813ffd165bbafb6acaf9278e1226; đang mở, chưa merge.
-**CI mới nhất:** CI run 37210000459 và Ops Console run 37210000480 đều SUCCESS; GitHub báo PR mergeable_state clean.
+**PR B:** PR #35, branch feature/module-2.5-pr-b, head 20a12eb2f25d2be2a8d7dad31e82a21d940c60a4; đang mở, chưa merge.
+**CI mới nhất:** CI run 37216262557 (host 493/493 PASS, 0 SKIP; container 492 PASS / 1 SKIP; Colab Python 3.13 PASS; Waitress load test PASS) và Ops Console run 37216262548 (PostgreSQL 19/19 PASS, Windows/Ubuntu portable PASS) đều SUCCESS; GitHub báo PR mergeable_state clean.
 
 **Kết luận review độc lập:** NEEDS CHANGES BEFORE MERGE — chưa nên merge PR #35. CI xanh nhưng một test cho phép OAuth callback không có cookie, telemetry đang biến dữ liệu thiếu thành số đo khác, và P99 headroom chưa được kiểm chứng bằng Waitress thật.
 
@@ -30,11 +30,15 @@ Trong phạm vi hẹp đã đối chiếu, F12 bỏ prune lịch sử và giới
 
 ## Trạng thái và bước kế tiếp
 
-- PR #35: READY FOR RE-REVIEW (đã hoàn tất bản vá B-01..B-04; giữ mở, chưa merge và chưa deploy).
-- Gemini đã xử lý:
-  1. **B-01 (SEC-01):** `retailops/http/auth_google.py` loại bỏ hoàn toàn định dạng state 3 phần và token trần; bắt buộc 4 phần có browser nonce. Thêm test WSGI response xác nhận 403 `invalid_oauth_state` và header dọn cookie.
+- PR #35: READY FOR RE-REVIEW (đã hoàn tất bản vá B-01..B-04 trên head `20a12eb`; giữ mở, chưa merge và chưa deploy).
+- Bằng chứng CI trên head `20a12eb`:
+  - CI run 37216262557: **SUCCESS** (host 493/493 PASS, 0 SKIP; container 492 PASS / 1 SKIP; Colab Python 3.13 PASS; Waitress load test PASS)
+  - Ops Console run 37216262548: **SUCCESS** (PostgreSQL 19/19 PASS, Windows/Ubuntu portable PASS)
+  - Trạng thái PR #35: `state=open`, `mergeable=True`, `mergeable_state=clean`, `merged=False`.
+- Gemini đã xử lý đầy đủ 4 điểm review:
+  1. **B-01 (SEC-01):** `retailops/http/auth_google.py` loại bỏ hoàn toàn định dạng state 3 phần và token trần; bắt buộc 4 phần có browser nonce. Thêm test WSGI response xác nhận 403 `invalid_oauth_state` và header dọn cookie (`tests/test_auth_google.py`).
   2. **B-02 (F09/AC-10):** `opsconsole/evaluation.py:214-215` giữ `None` (null) khi thiếu telemetry, chỉ giữ `0.0` khi có số đo tường minh. Đã sửa test trong `tests/test_opsconsole_importer.py`.
-  3. **B-03 (F07/AC-09):** Bổ sung `test_waitress_real_http_chat_saturation_headroom` trong `tests/test_http_headroom.py` với Waitress 8 workers, barrier 6 chat đồng thời và đo 25 request socket HTTP thật (P99 <= 50ms). Test chạy trên CI (skip trên local thiếu Waitress).
+  3. **B-03 (F07/AC-09):** Bổ sung `test_waitress_real_http_chat_saturation_headroom` trong `tests/test_http_headroom.py` với Waitress 8 workers, 6 session guest và conversation riêng biệt, barrier/queue coordination giữ 6 chat worker in-flight và đo 25 request socket HTTP thật xác nhận P99 <= 50ms. Test đã chạy thật và PASS trên CI container (CI run 37216262557).
   4. **B-04 (SEC-01):** Lỗi exchange upstream trả HTTP 502 `oauth_exchange_failed`, kèm xóa transient cookie qua WSGI response. Đã có test WSGI trong `tests/test_auth_google.py`.
   5. **Kiểm tra độ chính xác báo cáo:** Đã chuẩn hóa báo cáo 4 script gates và 1 kiểm tra git diff riêng (tổng cộng 5/5 kiểm tra đạt PASS / exit 0).
-- Sau khi push head mới: kiểm tra CI GitHub Actions (CI & Ops Console workflows) và yêu cầu review lại độc lập trước khi quyết định merge.
+- Kính chuyển reviewer độc lập rà soát lại trước quyết định merge. Dừng trước merge/deploy.
