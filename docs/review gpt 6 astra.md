@@ -1,11 +1,12 @@
 # Review GPT 6 Astra — Báo cáo nghiệm thu PR A / N08
 
 **Ngày:** 04/10/2026
-**Branch:** `feature/module-2.5-pr-a` → `main`
-**Commit nghiệm thu:** `d38554e` (d38554e5465e81acd84a222f00438efe46ddd187)
-**Kết luận:** **BLOCKED** cho đến khi PostgreSQL CI xanh — merge là quyết định của owner; chưa merge, chưa deploy, chưa bắt đầu PR B.
-
-> **Ghi chú hiện trạng:** Workflow Ops Console (`ops-console.yml`) job `postgres` từng gặp lỗi teardown Foreign Key (`customer_links_principal_id_fkey`) tại `opsconsole/tests/test_account_usage_postgres.py`. Bản vá đã bổ sung xóa `customer_links` trước khi xóa `principals`. Trạng thái nghiệm thu được giữ là **BLOCKED** cho đến khi toàn bộ checks CI/Ops Console trên PostgreSQL của PR #34 xanh hoàn toàn.
+**Branch:** `feature/module-2.5-pr-a` → `main` (PR #34, đang mở, chưa merge/deploy)
+**Commit nghiệm thu & candidate:** `ee78b41` (ee78b41664b6cff6fa6424f9d937682dc7b9e819)
+**Bằng chứng CI trên head:**
+- CI run [37202690835](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37202690835): **SUCCESS** (host 479/479 PASS, container 478 PASS / 1 SKIP; Colab Python 3.13 PASS; gates xanh)
+- Ops Console run [37202690842](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37202690842): **SUCCESS** (Job `postgres` PASS 19/19 tests, teardown FK đã fix; các jobs `portable` Windows & Ubuntu PASS)
+**Kết luận:** **READY FOR MERGE** — PR #34 còn mở, đủ điều kiện kỹ thuật; quyết định merge thuộc về owner; chưa merge vào `main`, chưa deploy EC2, chưa bắt đầu PR B.
 
 ## 1. Phạm vi đã fix
 
@@ -23,25 +24,29 @@
 | N08 identity | Reconciliation | Hai DB có journal/idempotency/recovery; kiểm tra target ownership; đóng TOCTOU bằng reservation + recheck dưới lock |
 | N08 P1.1 | Session safety | `IdentityStore.resolve()` re-raise `ApiError`; mọi lỗi lookup safety → 503 `collision_unresolved` (fail-closed) |
 | N08 P1.1 | Role regression | `staff`, `manager`, `viewer` resolve thành công, đúng role trong shared harness SQLite/PostgreSQL |
+| Ops Console | Teardown fix | `opsconsole/tests/test_account_usage_postgres.py` xóa `customer_links` trước khi xóa `principals` |
 
 Ngoài phạm vi, không thay đổi: frozen benchmark (SHA-256 LF `36fa8c7a52a60323bb4f04d11f1e677106ddfe6a35e0ccac3266784c7c6e4411`), schema Business (SQLite v3 / PostgreSQL v4), dataset, cấu hình deploy.
 
 ## 2. Bằng chứng CI
 
-| Run | head_sha | Vai trò | Kết quả |
+| Run | head_sha | Workflow / Vai trò | Kết quả |
 | --- | --- | --- | --- |
-| 37198909762 | `d38554e` | **Nghiệm thu** | SUCCESS |
+| 37202690835 | `ee78b41` | **CI (PR #34 head)** | SUCCESS |
+| 37202690842 | `ee78b41` | **Ops Console / PostgreSQL (PR #34 head)** | SUCCESS |
+| 37198909762 | `d38554e` | CI nghiệm thu trước đó | SUCCESS |
 | 37197602401 | `eebe8ed` | Final docs tree trước nghiệm thu | SUCCESS |
 | 37196429628 | `c4e9976` | Code patch N08-P11 (lịch sử) | SUCCESS |
 
-Chi tiết run 37198909762:
+Chi tiết các run trên head `ee78b41`:
 
-- Job `offline`: success.
-  - Host suite: `Ran 479 tests … OK`, 0 SKIP; PostgreSQL và pgvector integration chạy thật.
-  - Packaged container suite: `Ran 479 tests … OK (skipped=1)`. Test bị skip là `test_colab_agent_notebook_sync`, vì image không chứa `scripts/build_agent_notebook.py`.
-  - Gates xanh: docs contract, `EVAL_DATASET_OK` (30 ca), `LIVE_E2E_CONTRACT_OK`, `AGENT_NOTEBOOK_SOURCE_SYNC_OK` và `DEPLOYMENT_CONTRACT_OK`.
-  - Kiểm tra HTTPS/proxy/cookie, persistent account và `POSTGRES_HTTPS_IMPORT_RESTORE_OK` đạt.
-- Job `colab-python313`: success (`COLAB_PY313_DEPENDENCIES_OK`).
+- **CI run 37202690835:**
+  - Job `offline`: success. Host suite: `Ran 479 tests … OK`, 0 SKIP; PostgreSQL và pgvector integration chạy thật. Packaged container suite: `Ran 479 tests … OK (skipped=1)`. Test bị skip là `test_colab_agent_notebook_sync`, vì image không chứa `scripts/build_agent_notebook.py`. Các gates xanh: docs contract, `EVAL_DATASET_OK` (30 ca), `LIVE_E2E_CONTRACT_OK`, `AGENT_NOTEBOOK_SOURCE_SYNC_OK`, `DEPLOYMENT_CONTRACT_OK`, HTTPS/proxy/cookie, persistent account và `POSTGRES_HTTPS_IMPORT_RESTORE_OK`.
+  - Job `colab-python313`: success (`COLAB_PY313_DEPENDENCIES_OK`).
+- **Ops Console run 37202690842:**
+  - Job `postgres`: success (`Ran 19 tests in 1.105s ... OK`). Bổ sung xóa `customer_links` theo `principal_id` trước khi xóa `principals` đã giải quyết triệt để lỗi foreign key violation teardown.
+  - Jobs `portable (windows-latest)` và `portable (ubuntu-24.04)`: success (`Ran 19 tests ... OK (skipped=2)`).
+- **Trạng thái PR #34:** `state=open`, `mergeable=True`, `mergeable_state=clean`. PR còn mở, chưa merge, chưa deploy.
 
 Bằng chứng local (SQLite): `tests/test_pr_a_correctness.py` đạt 56/56 PASS. Full suite: 429 PASS, 50 SKIP, 0 FAIL/ERROR.
 
