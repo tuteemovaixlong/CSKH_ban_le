@@ -139,6 +139,9 @@ class HttpHeadroomTests(unittest.TestCase):
             def __init__(self, gate):
                 self.gate = gate
 
+            def for_turn(self):
+                return self
+
             def inspect(self):
                 return {"name": "barrier-slow-model", "provider": "custom", "digest": None}
 
@@ -168,22 +171,35 @@ class HttpHeadroomTests(unittest.TestCase):
             port = server.effective_port
             base_url = f"http://127.0.0.1:{port}"
 
-            # Login 6 distinct guest sessions to avoid per-conversation lock serialization
-            cookies = []
-            for _ in range(6):
+            # Login 6 distinct guest sessions and create a conversation for each
+            sessions_info = []
+            for i in range(6):
                 login_req = urllib.request.Request(
                     f"{base_url}/api/login",
                     data=json.dumps({"token": INVITE}).encode(),
                     headers={"Host": "retailops.example.com", "Origin": ORIGIN, "Content-Type": "application/json"}
                 )
                 with http.open(login_req, timeout=5) as resp:
-                    cookies.append(resp.headers["Set-Cookie"].split(";")[0])
+                    c = resp.headers["Set-Cookie"].split(";")[0]
+
+                conv_req = urllib.request.Request(
+                    f"{base_url}/api/conversations",
+                    data=json.dumps({}).encode(),
+                    headers={"Host": "retailops.example.com", "Origin": ORIGIN, "Content-Type": "application/json", "Cookie": c}
+                )
+                with http.open(conv_req, timeout=5) as resp:
+                    cid = json.loads(resp.read().decode())["conversation_id"]
+                sessions_info.append((c, cid))
 
             # Spawn 6 chat requests across the 6 distinct sessions
-            def chat_worker(worker_cookie):
+            def chat_worker(worker_cookie, conv_id, idx):
                 req = urllib.request.Request(
                     f"{base_url}/api/chat",
-                    data=json.dumps({"message": "Hello"}).encode(),
+                    data=json.dumps({
+                        "text": "Hello",
+                        "conversation_id": conv_id,
+                        "request_id": f"req_headroom_w_{idx:04d}_abcdef123456",
+                    }).encode(),
                     headers={
                         "Host": "retailops.example.com",
                         "Origin": ORIGIN,
@@ -198,7 +214,8 @@ class HttpHeadroomTests(unittest.TestCase):
                     pass
 
             for i in range(6):
-                t = threading.Thread(target=chat_worker, args=(cookies[i],), daemon=True)
+                c, cid = sessions_info[i]
+                t = threading.Thread(target=chat_worker, args=(c, cid, i), daemon=True)
                 t.start()
                 chat_threads.append(t)
 
