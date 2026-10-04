@@ -128,20 +128,34 @@ class HttpHeadroomTests(unittest.TestCase):
         except ImportError:
             self.skipTest("Waitress is required in Docker/CI; optional in local test environment.")
 
-        # Barrier to coordinate 6 in-flight chat requests inside model execution
-        chat_entered = threading.Barrier(7)  # 6 chat workers + 1 coordinator
+        # Barrier coordination:
+        # Request 1 enters the model and waits until all other 5 chat requests are admitted
+        # and queued in InferenceGate (K=1, Q=5), ensuring exactly 6 Waitress worker threads
+        # are actively holding in-flight chat requests simultaneously.
+        chat_entered = threading.Event()
         chat_release = threading.Event()
 
         class BarrierSlowModel:
+            def __init__(self, gate):
+                self.gate = gate
+
             def inspect(self):
                 return {"name": "barrier-slow-model", "provider": "custom", "digest": None}
 
             def chat(self, messages, allow_tools, timeout):
-                chat_entered.wait(timeout=10.0)
-                chat_release.wait(timeout=10.0)
-                return {"message": {"role": "assistant", "content": "Done"}}
+                if not chat_release.is_set():
+                    t0 = time.monotonic()
+                    while self.gate.queue_size < 5 and (time.monotonic() - t0) < 5.0:
+                        time.sleep(0.01)
+                    chat_entered.set()
+                    chat_release.wait(timeout=10.0)
+                return {
+                    "message": {"role": "assistant", "content": "Done"},
+                    "eval_count": 1,
+                    "prompt_eval_count": 5,
+                }
 
-        self.sessions.infer = BarrierSlowModel()
+        self.sessions.infer = BarrierSlowModel(self.sessions.inference_gate)
         self.sessions.api_infer = self.sessions.infer
 
         server = create_server(self.web, host="127.0.0.1", port=0, threads=8)
@@ -150,20 +164,23 @@ class HttpHeadroomTests(unittest.TestCase):
 
         chat_threads = []
         try:
+            http = urllib.request.build_opener(urllib.request.ProxyHandler({}))
             port = server.effective_port
             base_url = f"http://127.0.0.1:{port}"
 
-            # Login as guest to obtain valid session cookie
-            login_req = urllib.request.Request(
-                f"{base_url}/api/login",
-                data=json.dumps({"token": INVITE}).encode(),
-                headers={"Host": "retailops.example.com", "Origin": ORIGIN, "Content-Type": "application/json"}
-            )
-            with urllib.request.urlopen(login_req, timeout=5) as resp:
-                cookie = resp.headers["Set-Cookie"].split(";")[0]
+            # Login 6 distinct guest sessions to avoid per-conversation lock serialization
+            cookies = []
+            for _ in range(6):
+                login_req = urllib.request.Request(
+                    f"{base_url}/api/login",
+                    data=json.dumps({"token": INVITE}).encode(),
+                    headers={"Host": "retailops.example.com", "Origin": ORIGIN, "Content-Type": "application/json"}
+                )
+                with http.open(login_req, timeout=5) as resp:
+                    cookies.append(resp.headers["Set-Cookie"].split(";")[0])
 
-            # Spawn 6 chat requests
-            def chat_worker():
+            # Spawn 6 chat requests across the 6 distinct sessions
+            def chat_worker(worker_cookie):
                 req = urllib.request.Request(
                     f"{base_url}/api/chat",
                     data=json.dumps({"message": "Hello"}).encode(),
@@ -171,22 +188,22 @@ class HttpHeadroomTests(unittest.TestCase):
                         "Host": "retailops.example.com",
                         "Origin": ORIGIN,
                         "Content-Type": "application/json",
-                        "Cookie": cookie,
+                        "Cookie": worker_cookie,
                     }
                 )
                 try:
-                    with urllib.request.urlopen(req, timeout=10) as r:
-                        pass
+                    with http.open(req, timeout=10) as r:
+                        r.read()
                 except Exception:
                     pass
 
-            for _ in range(6):
-                t = threading.Thread(target=chat_worker, daemon=True)
+            for i in range(6):
+                t = threading.Thread(target=chat_worker, args=(cookies[i],), daemon=True)
                 t.start()
                 chat_threads.append(t)
 
-            # Wait until all 6 chat requests are actively inside Waitress worker threads
-            chat_entered.wait(timeout=10.0)
+            # Wait until all 6 chat requests are actively in-flight inside Waitress worker threads
+            self.assertTrue(chat_entered.wait(timeout=10.0))
 
             # Now 6 out of 8 Waitress worker threads are actively occupied handling chat.
             # Measure 25 healthz requests from an independent client over real HTTP sockets:
@@ -197,7 +214,7 @@ class HttpHeadroomTests(unittest.TestCase):
             )
             for _ in range(25):
                 t0 = time.monotonic()
-                with urllib.request.urlopen(health_req, timeout=5) as resp:
+                with http.open(health_req, timeout=5) as resp:
                     self.assertEqual(resp.status, 200)
                 lat = (time.monotonic() - t0) * 1000.0
                 latencies.append(lat)
