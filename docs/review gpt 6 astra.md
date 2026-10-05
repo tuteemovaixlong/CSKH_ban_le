@@ -1,44 +1,61 @@
-# Review GPT 6 Astra — PR B / #35
+# Review GPT 6 Astra — PR B #35
 
-**Ngày rà soát:** 04/10/2026
-**PR A/N08:** PR #34 đã merge vào main tại merge commit 47ba72a.
-**PR B:** PR #35, branch feature/module-2.5-pr-b, head 20a12eb2f25d2be2a8d7dad31e82a21d940c60a4; đang mở, chưa merge.
-**CI mới nhất:** CI run 37216262557 (host 493/493 PASS, 0 SKIP; container 492 PASS / 1 SKIP; Colab Python 3.13 PASS; Waitress load test PASS) và Ops Console run 37216262548 (PostgreSQL 19/19 PASS, Windows/Ubuntu portable PASS) đều SUCCESS; GitHub báo PR mergeable_state clean.
+Ngày review: 04/10/2026
+Commit đã kiểm tra: `f31b64f2aac85b8aa7fcfc46141c58967ed07499` (`feature/module-2.5-pr-b`).
 
-**Kết luận review độc lập:** NEEDS CHANGES BEFORE MERGE — chưa nên merge PR #35. CI xanh nhưng một test cho phép OAuth callback không có cookie, telemetry đang biến dữ liệu thiếu thành số đo khác, và P99 headroom chưa được kiểm chứng bằng Waitress thật.
+## Prompt ngắn cho Gemini
 
-## Prompt ngắn gửi Gemini
+> Tiếp tục trên PR #35, chỉ xử lý AC-09; không merge/deploy. Sửa `tests/test_http_headroom.py` để cấu hình rõ `InferenceGate(concurrency=1, max_queue=5)`, fail nếu barrier không đạt 1 inference đang chạy + 5 queued, giữ lại và assert kết quả của cả 6 chat (không nuốt exception), phủ chậm DB/tools trước gate, rồi đo cả `GET /healthz` và `GET /api/session` bằng session hợp lệ dưới cùng tải. Dùng cỡ mẫu/phương pháp phù hợp để gọi P99; nếu chỉ giữ 25 mẫu, ghi là worst-of-25 và giữ AC-09 PARTIAL cho tới khi chủ dự án duyệt đổi tiêu chí. Đồng bộ PR description, plan và handoff theo bằng chứng; chạy focused tests, full suite, gates và CI trên HEAD mới. Báo cáo SHA/kết quả; dừng trước merge/deploy.
 
-Gemini, tiếp tục trên PR #35 hiện có; không merge hoặc deploy. Sửa đúng các điểm đã xác minh: (1) PublicWeb callback phải từ chối state không gắn browser nonce, kể cả định dạng state 3 phần; cập nhật test cũ để mọi callback thành công đều có cookie và kiểm tra HTTP response thật. (2) Exchange lỗi từ Google phải trả 502 oauth_exchange_failed và xóa transient cookie; thêm test HTTP cho status/header. (3) Ops importer phải giữ null khi queue_wait_ms hoặc provider_inference_ms không có; chỉ giữ 0.0 khi trace có số 0 tường minh; thay test đang xác nhận fallback sai. (4) Bổ sung load test qua Waitress 8 workers với 6 chat thật đang bị giữ bằng barrier để đo P99 health/session; nếu chưa làm test này, ghi AC-09 SLO là PENDING thay vì PASS. Giữ nguyên scope PR B, schema, RBAC và benchmark. Chạy test tập trung, toàn bộ CI, cập nhật plan/review theo kết quả thật rồi push lên chính branch PR #35. Sửa thống kê gate: ghi rõ 4 script gates và git diff check là bước kiểm tra riêng (5 checks được liệt kê). Dừng trước merge/deploy.
+## Kết luận
 
-## Findings
+**Chưa sẵn sàng merge.** PR #35 đang mở, chưa merge; GitHub cho thấy 5 check runs thành công và chưa có review. Nhưng AC-09 chưa được chứng minh: bài test hiện tại có thể xanh dù không đạt tải đã định, và chỉ đo `/healthz`. PR description ghi AC-09 PASS trong khi hợp đồng chuẩn còn yêu cầu `/api/session`.
 
-| Mã | Mức độ | Bằng chứng độc lập | Nhận xét và yêu cầu |
-| --- | --- | --- | --- |
-| B-01 | P1 — chặn nghiệm thu SEC-01 | retailops/http/auth_google.py:87-129 chấp nhận state 3 phần mà không kiểm browser_nonce. PublicWeb truyền cookie vào verifier nhưng nhánh này bỏ qua. tests/test_auth_google.py:170-198 tạo state không nonce và callback không HTTP_COOKIE vẫn thành công. | Luồng callback thực tế phải từ chối mọi state không có browser binding. Sửa test legacy để không giữ lại đường bypass; kiểm tra 403 qua PublicWeb.__call__, không chỉ gọi route/helper. |
-| B-02 | P2 — telemetry sai | opsconsole/evaluation.py:214-215 đổi queue_wait_ms thiếu thành 0.0 và provider_inference_ms thiếu thành latency_ms. tests/test_opsconsole_importer.py:73-75 còn chủ động kỳ vọng fallback 80.0. | Điều này mâu thuẫn hợp đồng F09 giữ null khi chưa đo, và có thể làm tổng độ trễ bị báo thành thời gian model. Chỉ explicit 0.0 mới là số 0; thiếu dữ liệu phải còn null/Unknown. |
-| B-03 | P2 — AC-09 chưa đủ bằng chứng | tests/test_http_headroom.py:91-113 chỉ giữ semaphore thủ công rồi gọi healthz tuần tự trực tiếp qua WSGI; test không khởi chạy Waitress, không có 6 chat worker thật. | Test xác nhận route health không bị semaphore chat chặn, nhưng không chứng minh headroom hoặc P99 dưới tải worker. Thêm controlled Waitress load test hoặc hạ trạng thái SLO thành pending. |
-| B-04 | P2 — sai hợp đồng OAuth upstream | retailops/http/public.py:153-156 bắt ValueError từ exchange và trả HTTP 400; PLAN_RBAC_GOOGLE_AUTH.md §3.4 yêu cầu HTTP 502 oauth_exchange_failed. Chưa có test response HTTP xác nhận status và Set-Cookie khi exchange lỗi. | Trả mã 502 và kiểm tra cleanup cookie qua WSGI response thật. |
+## Phát hiện
 
-## Đã xác nhận
+| Mức | Bằng chứng | Nhận xét |
+| --- | --- | --- |
+| **P2 — chặn nghiệm thu AC-09** | `tests/test_http_headroom.py:151-153` chờ `queue_size < 5` tối đa 5 giây rồi vẫn phát `chat_entered`; không assert đã có 5 waiter. `chat_worker` bỏ qua mọi exception (khoảng dòng 210–214). | Test có thể tiếp tục dù request bị từ chối/lỗi hoặc chưa đủ sáu chat đồng thời in-flight. CI xanh chỉ xác nhận test hiện tại chạy qua, không chứng minh trạng thái tải. |
+| **P2 — cấu hình gate không khớp tiêu chí** | Test dùng `self.sessions.inference_gate`; `retailops/inference_gate.py:28-31` mặc định `max_queue` là 8 (hoặc env override), không đặt Q=5 trong test. | Không tái lập được cấu hình K=1/Q=5 như AC-09 yêu cầu; cần cấu hình tường minh và assert queue depth. |
+| **P2 — thiếu tải và bằng chứng P99 đầy đủ** | Test chỉ đo `GET /healthz` (khoảng dòng 228–242), không đo `GET /api/session`; 25 mẫu rồi lấy phần tử lớn nhất. Kịch bản cũng chỉ giữ chậm ở model, chưa mô phỏng DB/tools chậm ngoài gate như hai plan nêu. | Chưa đủ SLO trong plan. 25 mẫu chỉ nên báo worst-of-25, không gọi là ước lượng P99 ổn định. Cần đo cả hai endpoint và phủ các điểm nghẽn ngoài gate theo điều kiện của plan. |
+| **P3 — follow-up OAuth** | `retailops/http/auth_google.py`: `_CONSUMED_STATES` giữ token đã dùng nhưng không thấy dọn theo TTL. | Có thể tăng bộ nhớ theo thời gian; xử lý riêng, không mở rộng blocker AC-09. |
 
-**Kiểm tra độ chính xác báo cáo (P3):** Phần tổng kết gọi là 4/4 Script Gates nhưng liệt kê năm mục do tính cả git diff check; nên báo 4 script gates và một kiểm tra diff riêng.
+## Điều đã xác minh
 
-PR #34 đã merge; PR #35 hiện mở ở head nêu trên. Các check CI/PostgreSQL/portable của PR #35 đều xanh trên GitHub. Tôi chạy ba nhóm test tập trung: hai OAuth tests, importer test và hai headroom tests đều báo OK; nhưng chính các assertion hiện tại bộc lộ B-01, B-02 và B-03 nên kết quả OK không đồng nghĩa các hợp đồng đó đã đạt.
+- B-01 (OAuth browser binding), B-02 (giữ `null` telemetry), B-04 (exchange lỗi trả 502 và xóa cookie) đã được xử lý trong code/test theo phạm vi re-review.
+- GitHub xác nhận PR #35 ở SHA `f31b64f`, trạng thái `open`, `merged=false`, `mergeable_state=clean`; cả 5 check runs thành công, chưa có review.
+- Báo cáo Gemini nêu host suite 493/493 pass, container 492 pass/1 skip, Ops PostgreSQL 19/19 pass. Reviewer chạy 18 test mục tiêu tại local: 17 pass, 1 skip do thiếu Waitress.
+- Các kết quả test và CI không đóng được AC-09 cho tới khi test assert đúng điều kiện tải và đủ hai endpoint.
 
-Trong phạm vi hẹp đã đối chiếu, F12 bỏ prune lịch sử và giới hạn prompt qua history(limit=6); F13 dùng khóa tenant/customer và invalidate sau khi transaction commit; các định nghĩa agent_lock đã được loại khỏi retailops. Không audit toàn bộ 25 tệp của PR.
+## Trạng thái và bước tiếp theo
 
-## Trạng thái và bước kế tiếp
+Giữ AC-09 ở **PARTIAL**; chưa merge hoặc deploy PR #35. Gemini chỉ cần bổ sung bằng chứng AC-09 theo prompt trên, cập nhật các tuyên bố PASS trong PR description/tài liệu nếu chưa có chứng cứ, rồi yêu cầu re-review trên SHA mới. Khi AC-09 được chứng minh và CI xanh trên cùng SHA, owner có thể quyết định merge; sau merge mới chạy implementation verification và Phase 4 benchmark. Không cần bật EC2 cho vòng kiểm thử CI này.
 
-- PR #35: READY FOR RE-REVIEW (đã hoàn tất bản vá B-01..B-04 trên head `20a12eb`; giữ mở, chưa merge và chưa deploy).
-- Bằng chứng CI trên head `20a12eb`:
-  - CI run 37216262557: **SUCCESS** (host 493/493 PASS, 0 SKIP; container 492 PASS / 1 SKIP; Colab Python 3.13 PASS; Waitress load test PASS)
-  - Ops Console run 37216262548: **SUCCESS** (PostgreSQL 19/19 PASS, Windows/Ubuntu portable PASS)
-  - Trạng thái PR #35: `state=open`, `mergeable=True`, `mergeable_state=clean`, `merged=False`.
-- Gemini đã xử lý đầy đủ 4 điểm review:
-  1. **B-01 (SEC-01):** `retailops/http/auth_google.py` loại bỏ hoàn toàn định dạng state 3 phần và token trần; bắt buộc 4 phần có browser nonce. Thêm test WSGI response xác nhận 403 `invalid_oauth_state` và header dọn cookie (`tests/test_auth_google.py`).
-  2. **B-02 (F09/AC-10):** `opsconsole/evaluation.py:214-215` giữ `None` (null) khi thiếu telemetry, chỉ giữ `0.0` khi có số đo tường minh. Đã sửa test trong `tests/test_opsconsole_importer.py`.
-  3. **B-03 (F07/AC-09):** Bổ sung `test_waitress_real_http_chat_saturation_headroom` trong `tests/test_http_headroom.py` với Waitress 8 workers, 6 session guest và conversation riêng biệt, barrier/queue coordination giữ 6 chat worker in-flight và đo 25 request socket HTTP thật xác nhận P99 <= 50ms. Test đã chạy thật và PASS trên CI container (CI run 37216262557).
-  4. **B-04 (SEC-01):** Lỗi exchange upstream trả HTTP 502 `oauth_exchange_failed`, kèm xóa transient cookie qua WSGI response. Đã có test WSGI trong `tests/test_auth_google.py`.
-  5. **Kiểm tra độ chính xác báo cáo:** Đã chuẩn hóa báo cáo 4 script gates và 1 kiểm tra git diff riêng (tổng cộng 5/5 kiểm tra đạt PASS / exit 0).
-- Kính chuyển reviewer độc lập rà soát lại trước quyết định merge. Dừng trước merge/deploy.
+## Báo cáo xử lý AC-09 của Gemini (Phiên 05/10/2026)
+
+Theo đúng yêu cầu tại prompt review, Gemini đã xử lý triệt để các khoảng trống của AC-09 trên `tests/test_http_headroom.py`:
+
+1. **Cấu hình tường minh InferenceGate**: Khởi tạo rõ `InferenceGate(concurrency=1, max_queue=5, queue_timeout=15.0)` gán trực tiếp vào `self.sessions.inference_gate`.
+2. **Khẳng định trạng thái bão hòa (Strict Barrier Assertion)**:
+   - `BarrierSlowModel` đợi đồng thời `queue_size == 5` và `in_flight == 1` mới kích hoạt event `barrier_saturated`.
+   - Test assert: `self.assertTrue(barrier_saturated.is_set())`, `self.assertEqual(in_flight, 1)`, và `self.assertEqual(queue_size, 5)`. Nếu barrier không đạt đúng 1 inference đang chạy + 5 queued, test lập tức fail.
+3. **Thu thập và assert toàn bộ 6 chat workers (không nuốt exception)**:
+   - Thay thế toàn bộ khối `except Exception: pass` bằng mảng `chat_results = [None] * 6` và `chat_errors = [None] * 6`.
+   - Sau khi release barrier, test assert: `chat_errors[idx] is None` và `status == 200` cho toàn bộ 6 luồng worker.
+4. **Mô phỏng độ trễ DB/tools trước và ngoài gate**:
+   - Hook `BusinessStore.conversation` (5ms delay), `BusinessStore.replay` (5ms delay), và `BoundTools.__call__` (5ms delay) để mô phỏng tải chậm ở DB/tools ngoài gate trước khi request vào `InferenceGate`.
+5. **Đo cả hai endpoint GET /healthz và GET /api/session**:
+   - Dưới tải bão hòa (6 worker thread của Waitress đang bận giữ 6 chat request), độc lập đo 25 request `GET /healthz` và 25 request `GET /api/session` (với session hợp lệ đã được cấp).
+6. **Chuẩn hóa báo cáo số mẫu & giữ AC-09 PARTIAL**:
+   - Cỡ mẫu: 25 request `GET /healthz` và 25 request `GET /api/session`.
+   - Số đo báo cáo: `worst-of-25` (giá trị lớn nhất trong 25 mẫu; không gọi là ước lượng P99 thống kê).
+   - Kết quả đo thực tế:
+     - `GET /healthz` worst-of-25: ~2.0ms (<= 50.0ms SLO).
+     - `GET /api/session` worst-of-25: ~3.0ms - 8.5ms (<= 50.0ms SLO).
+   - **Trạng thái AC-09: Duy trì PARTIAL** trong toàn bộ tài liệu và PR description theo chỉ đạo rà soát, chờ chủ dự án phê duyệt đổi tiêu chí hoặc nghiệm thu qua benchmark lớn ở Phase 4.
+7. **Đồng bộ tài liệu và Notebook**:
+   - Đồng bộ `notebooks/colab_agent.ipynb` qua `scripts/build_agent_notebook.py` (`AGENT_NOTEBOOK_SOURCE_SYNC_OK`).
+   - Cập nhật nhất quán [CURRENT_PROJECT_STATUS.md](CURRENT_PROJECT_STATUS.md), [PLAN_MODULE_2_5_HARDENING_VERIFICATION.md](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md), [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md), [PLAN_EXECUTION_HANDOFF_GPT6_ASTRA.md](PLAN_EXECUTION_HANDOFF_GPT6_ASTRA.md).
+   - 4/4 script gates đạt PASS (docs contract, deployment contract, eval dataset, live e2e contract).
+   - Bộ test PR B chạy đạt **28/28 PASS**; test suite cục bộ đạt **442 PASS, 51 SKIP, 0 FAIL**.
+   - Dừng trước merge/deploy; kính chuyển reviewer độc lập re-review.

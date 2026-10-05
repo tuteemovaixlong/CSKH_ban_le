@@ -90,7 +90,7 @@ Mọi hạng mục bắt buộc chuẩn hóa theo 4 thuộc tính: **Tệp & Hà
     1. *Tầng HTTP Request (Tier 1)*: Bounded Chat Admission Limiter tại `PublicWeb` (trước session/DB preflight; tối đa 6 request đồng thời chiếm thread, non-blocking acquire $\rightarrow$ loser nhận ngay 429 `server_busy` kèm `Retry-After: 5`).
     2. *Tầng Hội thoại (Tier 2)*: `conv_lock` non-blocking theo từng conversation key (bảo vệ replay, snapshot và semantic cache; loser nhận ngay 429 `model_busy`).
     3. *Tầng Model I/O (Tier 3)*: `InferenceGate` cấp permit GPU chỉ trong thời gian gọi model thật ($K=1, Q=5$, chờ quá 10s $\rightarrow$ HTTP 429 canonical `queue_timeout` kèm `Retry-After: 5`).
-- **Test tương ứng:** `tests/test_inference_gate.py::test_inference_queue_overflow_429`, `tests/test_conversation.py::test_conversation_serialization_no_agent_lock`, `tests/test_http_headroom.py::test_healthz_latency_under_saturated_chat_load`.
+- **Test tương ứng:** `tests/test_inference_gate.py::test_inference_queue_overflow_429`, `tests/test_conversation.py::test_conversation_serialization_no_agent_lock`, `tests/test_http_headroom.py::test_waitress_real_http_chat_saturation_headroom`. Test Waitress đã cấu hình rõ InferenceGate(concurrency=1, max_queue=5), assert barrier 1 model + 5 queued, không nuốt lỗi worker, mô phỏng chậm DB/tools ngoài gate và đo cả /healthz và /api/session (worst-of-25 <= 50ms). Giữ AC-09 PARTIAL chờ chủ dự án duyệt tiêu chí.
 
 ### 3.2. Phần Relational Knowledge: Bảng `product_policy_links` (HOÃN — DEFERRED / FUTURE ADR)
 - **Định vị & Quyết định Kiến trúc:**
