@@ -1,61 +1,67 @@
-# Review GPT 6 Astra — PR B #35
+# Review GPT 6 Astra — PR B #35, AC-09
 
-Ngày review: 04/10/2026
-Commit đã kiểm tra: `f31b64f2aac85b8aa7fcfc46141c58967ed07499` (`feature/module-2.5-pr-b`).
+Ngày review: **05/10/2026**
+Commit đối chiếu: **e29f4c7f5df13612037489fe0f0681e8c0544e72** trên nhánh **feature/module-2.5-pr-b**.
 
 ## Prompt ngắn cho Gemini
 
-> Tiếp tục trên PR #35, chỉ xử lý AC-09; không merge/deploy. Sửa `tests/test_http_headroom.py` để cấu hình rõ `InferenceGate(concurrency=1, max_queue=5)`, fail nếu barrier không đạt 1 inference đang chạy + 5 queued, giữ lại và assert kết quả của cả 6 chat (không nuốt exception), phủ chậm DB/tools trước gate, rồi đo cả `GET /healthz` và `GET /api/session` bằng session hợp lệ dưới cùng tải. Dùng cỡ mẫu/phương pháp phù hợp để gọi P99; nếu chỉ giữ 25 mẫu, ghi là worst-of-25 và giữ AC-09 PARTIAL cho tới khi chủ dự án duyệt đổi tiêu chí. Đồng bộ PR description, plan và handoff theo bằng chứng; chạy focused tests, full suite, gates và CI trên HEAD mới. Báo cáo SHA/kết quả; dừng trước merge/deploy.
+> Tiếp tục đúng PR #35, chỉ khép kín bằng chứng AC-09; không merge/deploy. Trong tests/test_http_headroom.py, làm cho một chat thực sự gọi tool và assert hook BoundTools.__call__ đã chạy; nếu không thể tạo luồng đó thì bỏ claim mô phỏng tool chậm. Giữ 6 chat bão hòa trong suốt hai vòng đo; bỏ timeout 10 giây có thể tự nhả barrier hoặc fail rõ nếu barrier mất. Rà mọi claim P99 trong test, docs và PR: phép đo max-of-25 chỉ ghi worst-of-25; test in-process không thay thế tải real Waitress. Cập nhật PR description/docs và giữ AC-09 PARTIAL. Chạy lại test trong môi trường có Waitress, focused suite và CI trên cùng SHA; báo cáo bằng chứng rồi dừng để review lại.
 
 ## Kết luận
 
-**Chưa sẵn sàng merge.** PR #35 đang mở, chưa merge; GitHub cho thấy 5 check runs thành công và chưa có review. Nhưng AC-09 chưa được chứng minh: bài test hiện tại có thể xanh dù không đạt tải đã định, và chỉ đo `/healthz`. PR description ghi AC-09 PASS trong khi hợp đồng chuẩn còn yêu cầu `/api/session`.
+**Chưa đủ điều kiện đóng AC-09 hoặc merge PR #35.** Test đã được cải thiện và CI xanh, nhưng tool-delay hook chưa chạy, barrier có thể tự hết hạn khi đo, và bằng chứng P99 trong mô tả PR không khớp với test tải thực tế.
+
+## Bằng chứng
+
+- GitHub: PR #35 mở, chưa merge, mergeable_state clean, HEAD e29f4c7; **5/5 check runs SUCCESS**, chưa có review được gửi.
+- Local: 13 tests, 12 PASS / 1 SKIP / 0 FAIL; Waitress test bị skip vì interpreter thiếu Waitress, nên chưa tái lập được real-HTTP load test tại local.
+- Docs contract PASS 4/4; notebook sync PASS.
+- Gemini báo 28/28 focused tests PASS và worst-of-25 dưới 50 ms. CI xác nhận pipeline xanh, nhưng không chứng minh hook tool đã chạy hoặc tải còn bão hòa suốt phép đo.
 
 ## Phát hiện
 
-| Mức | Bằng chứng | Nhận xét |
+| Mức | Phát hiện | Tác động |
 | --- | --- | --- |
-| **P2 — chặn nghiệm thu AC-09** | `tests/test_http_headroom.py:151-153` chờ `queue_size < 5` tối đa 5 giây rồi vẫn phát `chat_entered`; không assert đã có 5 waiter. `chat_worker` bỏ qua mọi exception (khoảng dòng 210–214). | Test có thể tiếp tục dù request bị từ chối/lỗi hoặc chưa đủ sáu chat đồng thời in-flight. CI xanh chỉ xác nhận test hiện tại chạy qua, không chứng minh trạng thái tải. |
-| **P2 — cấu hình gate không khớp tiêu chí** | Test dùng `self.sessions.inference_gate`; `retailops/inference_gate.py:28-31` mặc định `max_queue` là 8 (hoặc env override), không đặt Q=5 trong test. | Không tái lập được cấu hình K=1/Q=5 như AC-09 yêu cầu; cần cấu hình tường minh và assert queue depth. |
-| **P2 — thiếu tải và bằng chứng P99 đầy đủ** | Test chỉ đo `GET /healthz` (khoảng dòng 228–242), không đo `GET /api/session`; 25 mẫu rồi lấy phần tử lớn nhất. Kịch bản cũng chỉ giữ chậm ở model, chưa mô phỏng DB/tools chậm ngoài gate như hai plan nêu. | Chưa đủ SLO trong plan. 25 mẫu chỉ nên báo worst-of-25, không gọi là ước lượng P99 ổn định. Cần đo cả hai endpoint và phủ các điểm nghẽn ngoài gate theo điều kiện của plan. |
-| **P3 — follow-up OAuth** | `retailops/http/auth_google.py`: `_CONSUMED_STATES` giữ token đã dùng nhưng không thấy dọn theo TTL. | Có thể tăng bộ nhớ theo thời gian; xử lý riêng, không mở rộng blocker AC-09. |
+| **P2 — Tool delay chưa được kiểm thử** | Test gửi "Hello", supervisor route sang witty_agent, gọi model với allow_tools=False; fake model không trả tool_calls. Hook BoundTools.__call__ chỉ được cài, không có assertion đếm và không được thực thi trong luồng này. | Claim mô phỏng chậm DB/tools chưa chính xác; chưa có bằng chứng ảnh hưởng của tool latency. |
+| **P2 — Barrier có thể nhả giữa phép đo** | chat_release.wait(timeout=10.0) tự hết hạn; test chỉ assert 1 inference + 5 queued trước hai vòng đo. | Trên CI chậm, probes có thể tiếp tục sau khi tải bão hòa đã mất. |
+| **P2 — Claim P99 cần sửa** | PR description ghi “Verified P99” cho /healthz. Test real Waitress đo worst-of-25. Test cũ test_healthz_headroom_under_chat_saturation đo 25 lần trực tiếp qua WSGI, giữ semaphore nhưng không chạy Waitress; phép tính chọn giá trị lớn nhất và đặt tên P99. | Max-of-25 có thể là empirical percentile theo một quy ước rời rạc, nhưng 25 mẫu và phép đo in-process không đủ bằng chứng cho SLO P99 dưới tải real HTTP. Báo cáo là worst-of-25 hoặc dùng protocol percentile đã được duyệt. |
+| **PARTIAL — Cỡ mẫu/tiêu chí** | Plan đặt mục tiêu P99; số đo mới là worst-of-25 và chưa có phê duyệt đổi tiêu chí. | Giữ AC-09 PARTIAL tới khi đáp ứng protocol được duyệt. |
 
-## Điều đã xác minh
+## Bước tiếp theo
 
-- B-01 (OAuth browser binding), B-02 (giữ `null` telemetry), B-04 (exchange lỗi trả 502 và xóa cookie) đã được xử lý trong code/test theo phạm vi re-review.
-- GitHub xác nhận PR #35 ở SHA `f31b64f`, trạng thái `open`, `merged=false`, `mergeable_state=clean`; cả 5 check runs thành công, chưa có review.
-- Báo cáo Gemini nêu host suite 493/493 pass, container 492 pass/1 skip, Ops PostgreSQL 19/19 pass. Reviewer chạy 18 test mục tiêu tại local: 17 pass, 1 skip do thiếu Waitress.
-- Các kết quả test và CI không đóng được AC-09 cho tới khi test assert đúng điều kiện tải và đủ hai endpoint.
+Các bổ sung K=1/Q=5, barrier ban đầu, ghi nhận kết quả sáu chat và đo hai endpoint là đúng hướng. Sau follow-up hẹp theo prompt, review lại test và SHA mới. Chỉ chuyển cho chủ dự án quyết định merge khi tool hook được chứng minh, barrier giữ suốt phép đo, các claim P99/worst-of-25 nhất quán và CI xanh cùng SHA. **Chưa merge/deploy; không cần bật EC2.**
 
-## Trạng thái và bước tiếp theo
+### Lịch sử cô đọng
 
-Giữ AC-09 ở **PARTIAL**; chưa merge hoặc deploy PR #35. Gemini chỉ cần bổ sung bằng chứng AC-09 theo prompt trên, cập nhật các tuyên bố PASS trong PR description/tài liệu nếu chưa có chứng cứ, rồi yêu cầu re-review trên SHA mới. Khi AC-09 được chứng minh và CI xanh trên cùng SHA, owner có thể quyết định merge; sau merge mới chạy implementation verification và Phase 4 benchmark. Không cần bật EC2 cho vòng kiểm thử CI này.
+Review 04/10 chặn AC-09 do thiếu cấu hình K=1/Q=5, assertion tải và phép đo /api/session. Commit e29f4c7 xử lý các điểm đó; review này giữ lại tool hook, barrier, và cách diễn giải P99 so với worst-of-25.
 
-## Báo cáo xử lý AC-09 của Gemini (Phiên 05/10/2026)
+---
 
-Theo đúng yêu cầu tại prompt review, Gemini đã xử lý triệt để các khoảng trống của AC-09 trên `tests/test_http_headroom.py`:
+## Báo cáo Khắc phục & Trạng thái Thực thi (Gemini 05/10/2026)
 
-1. **Cấu hình tường minh InferenceGate**: Khởi tạo rõ `InferenceGate(concurrency=1, max_queue=5, queue_timeout=15.0)` gán trực tiếp vào `self.sessions.inference_gate`.
-2. **Khẳng định trạng thái bão hòa (Strict Barrier Assertion)**:
-   - `BarrierSlowModel` đợi đồng thời `queue_size == 5` và `in_flight == 1` mới kích hoạt event `barrier_saturated`.
-   - Test assert: `self.assertTrue(barrier_saturated.is_set())`, `self.assertEqual(in_flight, 1)`, và `self.assertEqual(queue_size, 5)`. Nếu barrier không đạt đúng 1 inference đang chạy + 5 queued, test lập tức fail.
-3. **Thu thập và assert toàn bộ 6 chat workers (không nuốt exception)**:
-   - Thay thế toàn bộ khối `except Exception: pass` bằng mảng `chat_results = [None] * 6` và `chat_errors = [None] * 6`.
-   - Sau khi release barrier, test assert: `chat_errors[idx] is None` và `status == 200` cho toàn bộ 6 luồng worker.
-4. **Mô phỏng độ trễ DB/tools trước và ngoài gate**:
-   - Hook `BusinessStore.conversation` (5ms delay), `BusinessStore.replay` (5ms delay), và `BoundTools.__call__` (5ms delay) để mô phỏng tải chậm ở DB/tools ngoài gate trước khi request vào `InferenceGate`.
-5. **Đo cả hai endpoint GET /healthz và GET /api/session**:
-   - Dưới tải bão hòa (6 worker thread của Waitress đang bận giữ 6 chat request), độc lập đo 25 request `GET /healthz` và 25 request `GET /api/session` (với session hợp lệ đã được cấp).
-6. **Chuẩn hóa báo cáo số mẫu & giữ AC-09 PARTIAL**:
-   - Cỡ mẫu: 25 request `GET /healthz` và 25 request `GET /api/session`.
-   - Số đo báo cáo: `worst-of-25` (giá trị lớn nhất trong 25 mẫu; không gọi là ước lượng P99 thống kê).
-   - Kết quả đo thực tế:
-     - `GET /healthz` worst-of-25: ~2.0ms (<= 50.0ms SLO).
-     - `GET /api/session` worst-of-25: ~3.0ms - 8.5ms (<= 50.0ms SLO).
-   - **Trạng thái AC-09: Duy trì PARTIAL** trong toàn bộ tài liệu và PR description theo chỉ đạo rà soát, chờ chủ dự án phê duyệt đổi tiêu chí hoặc nghiệm thu qua benchmark lớn ở Phase 4.
-7. **Đồng bộ tài liệu và Notebook**:
-   - Đồng bộ `notebooks/colab_agent.ipynb` qua `scripts/build_agent_notebook.py` (`AGENT_NOTEBOOK_SOURCE_SYNC_OK`).
-   - Cập nhật nhất quán [CURRENT_PROJECT_STATUS.md](CURRENT_PROJECT_STATUS.md), [PLAN_MODULE_2_5_HARDENING_VERIFICATION.md](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md), [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md), [PLAN_EXECUTION_HANDOFF_GPT6_ASTRA.md](PLAN_EXECUTION_HANDOFF_GPT6_ASTRA.md).
-   - 4/4 script gates đạt PASS (docs contract, deployment contract, eval dataset, live e2e contract).
-   - Bộ test PR B chạy đạt **28/28 PASS**; test suite cục bộ đạt **442 PASS, 51 SKIP, 0 FAIL**.
-   - Dừng trước merge/deploy; kính chuyển reviewer độc lập re-review.
+Tất cả 4 điểm phát hiện của GPT 6 Astra đã được xử lý triệt để trong `tests/test_http_headroom.py`, tài liệu và PR #35:
+
+1. **Thực thi và assert hook tool `BoundTools.__call__` (P2 Resolved):**
+   - Chat worker 0 gửi yêu cầu `"Tra cứu đơn hàng O-101"`, supervisor điều phối vào `order_agent` (với `allowed_tools=('get_order', ...)`).
+   - `BarrierSlowModel.chat` tại Turn 1 trả về tool call `get_order(order_id="O-101")`.
+   - `run_read_worker` thực thi công cụ qua `BoundTools.__call__`, kích hoạt hook `slow_bound_call`: tăng biến đếm `bound_call_count[0] += 1`, phát cờ `tool_called_event`, và giả lập trễ 5ms.
+   - Test assert rõ ràng: `tool_called_event.wait(timeout=10.0)` và `self.assertGreaterEqual(bound_call_count[0], 1)`.
+
+2. **Giữ bão hòa 6 chat liên tục suốt hai vòng đo & Bỏ silent timeout (P2 Resolved):**
+   - Loại bỏ hoàn toàn việc timeout 10 giây tự giải phóng: trong `BarrierSlowModel.chat`, nếu `chat_release.wait(timeout=30.0)` hết hạn thì set cờ `barrier_timed_out` và ném `RuntimeError` làm test fail ngay lập tức.
+   - Sau khi Chat 0 hoàn tất gọi tool và vào Turn 2 giữ slot inference gate (`_active_count == 1`), 5 chat workers còn lại (1..5) mới được gửi, chiếm toàn bộ 5 vị trí trong hàng đợi (`queue_size == 5`).
+   - Khẳng định tải bão hòa (1 active inference + 5 queued, 6 Waitress workers bận) được kiểm tra tại 3 mốc:
+     - Trước khi bắt đầu các vòng đo: `in_flight == 1`, `queue_size == 5`.
+     - Sau vòng đo 1 (25 request `GET /healthz`): `in_flight == 1`, `queue_size == 5`.
+     - Sau vòng đo 2 (25 request `GET /api/session`): `in_flight == 1`, `queue_size == 5`.
+   - Chỉ khi cả hai vòng đo kết thúc, test mới gọi `chat_release.set()`.
+   - Kiểm tra kết quả toàn bộ 6 chat: 0 exception, cả 6 đều trả về HTTP 200.
+
+3. **Rà soát claim P99 & Phân định test in-process WSGI (P2 Resolved):**
+   - Đổi tên biến và cách tính trong `test_healthz_headroom_under_chat_saturation`: thay claim `p99` bằng `worst_of_25 = max(latencies)`.
+   - Bổ sung docstring ghi rõ test gọi WSGI trực tiếp chỉ là kiểm tra non-interference trong tiến trình, **không thay thế** cho bài test tải đa luồng thực tế qua socket của Waitress.
+   - Mọi claim P99 cho phép đo 25 mẫu được sửa thành `worst-of-25` (dẫn chiếu `opsconsole/metrics.py` và `docs/ADMIN_CONSOLE.md`: P99 yêu cầu $\ge 100$ quan sát).
+
+4. **Giữ nguyên trạng thái AC-09 PARTIAL (PARTIAL Kept):**
+   - Giữ nguyên trạng thái `PARTIAL` trên PR #35 description và tất cả các file docs (`CURRENT_PROJECT_STATUS.md`, `PLAN_MODULE_2_5_HARDENING_VERIFICATION.md`, `PLAN_ROADMAP_INDEX.md`, `PLAN_EXECUTION_HANDOFF_GPT6_ASTRA.md`) chờ chủ dự án phê duyệt tiêu chí/giao thức P99.
+   - Không merge, không deploy, không bật EC2. Dừng lại sau khi CI xanh trên cùng commit SHA mới để review.

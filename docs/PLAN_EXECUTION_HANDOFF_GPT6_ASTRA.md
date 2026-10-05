@@ -1,7 +1,7 @@
 # Bàn giao triển khai Module 2.5 — GPT 6 Astra
 
 Ngày cập nhật trạng thái: **05/10/2026 — Asia/Bangkok**.
-Trạng thái hiện tại: PR A/N08 đã merge tại 47ba72a. PR #35 đang mở; B-01/B-02/B-04 đã sửa; AC-09 đã hoàn thiện test Waitress theo 6 yêu cầu rà soát (K=1/Q=5, assert 6 chat in-flight, không nuốt lỗi worker, mô phỏng chậm DB/tools ngoài gate, đo cả healthz và session với worst-of-25 <= 50ms). AC-09 giữ PARTIAL chờ chủ dự án duyệt tiêu chí. Chưa merge/deploy.
+Trạng thái hiện tại: PR A/N08 đã merge tại 47ba72a. PR #35 đang mở trên nhánh `feature/module-2.5-pr-b`; B-01/B-02/B-04 đã sửa. AC-09: Chat 0 gọi tool thật và assert `BoundTools.__call__` đã chạy, barrier giữ bão hòa 1+5 suốt hai vòng đo (/healthz và /api/session), không có silent timeout (fail nếu mất tải), đo worst-of-25 <= 50.0ms; claim P99 được đồng bộ nhất quán là worst-of-25 và test direct WSGI không thay thế real Waitress; giữ PARTIAL chờ phê duyệt tiêu chí. Chưa merge/deploy.
 Working snapshot: branch feature/module-2.5-pr-b.
 Quỹ đạo: PR A/N08 merged → hoàn tất bằng chứng AC-09 trên PR #35 → re-review → owner quyết định merge → implementation verification → Phase 4 benchmark.
 Nguồn quyết định/lịch sử: `docs/review gpt 6 astra.md`; điều kiện dừng hiện hành: [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).
@@ -15,7 +15,7 @@ Mốc **14/14 mục R01–R14** chỉ xác nhận đặc tả tài liệu tại 
 | PLAN_READY_TO_IMPLEMENT | **ĐẠT — mốc lịch sử 01/10/2026** | Các đặc tả A/B đã sẵn sàng tại baseline lúc đó |
 | N08_P1_GATES | **VERIFIED** | Local 429 PASS / 50 SKIP; CI 37196429628 trên code patch `c4e9976` (lịch sử) và CI 37197602401 trên final tree `eebe8ed` đều SUCCESS. Run trên fe25f67 là historical. |
 | PR_A_ACCEPTED | **MERGED** | PR #34 vào main tại merge commit 47ba72a; CI của candidate PR A xanh |
-| PR_B | **REVIEW — AC-09 PARTIAL (Test hoàn tất)** | PR #35; B-01/B-02/B-04 đã sửa; Waitress test đã assert 6 in-flight, đo cả healthz và session worst-of-25 <= 50ms; giữ PARTIAL chờ duyệt tiêu chí |
+| PR_B | **REVIEW — AC-09 PARTIAL** | PR #35 branch `feature/module-2.5-pr-b`; K=1/Q=5, Chat 0 gọi tool thật, assert `BoundTools.__call__`, barrier bão hòa 1+5 giữ liên tục suốt 2 vòng đo, worst-of-25 <= 50.0ms. 25 mẫu ghi là worst-of-25, in-process WSGI không thay thế real Waitress; giữ PARTIAL chờ duyệt tiêu chí. |
 | IMPLEMENTATION_VERIFIED | Pending | A/B có đủ evidence theo acceptance và backend được hỗ trợ |
 | SCIENTIFIC_EVALUATION_COMPLETE | Pending | Có kết quả frozen benchmark và load matrix Phase 4 |
 
@@ -85,7 +85,7 @@ Role regression đã bao phủ toàn bộ staff, manager và viewer trong shared
 - **Final tree:** CI run 37197602401, head_sha `eebe8ed` (eebe8edefd52abb1af86e9e8bdf2173413c25fd1), SUCCESS — host suite 479/479 PASS (0 SKIP); container suite 478 PASS / 1 SKIP (`test_colab_agent_notebook_sync` bỏ qua do không có `scripts/build_agent_notebook.py` trong image).
 - **Code patch (lịch sử):** CI run 37196429628 trên `c4e9976`, SUCCESS với cùng test counts.
 
-**PR A/N08 đã merge tại 47ba72a.** PR #35 mở ở head f31b64f; B-01/B-02/B-04 đã sửa. AC-09 còn PARTIAL vì test chưa khẳng định đủ 6 chat đang giữ worker và chưa đo endpoint session theo plan. Chưa merge/deploy PR B. Xem <a href="review%20gpt%206%20astra.md">review gpt 6 astra.md</a>.
+**PR A/N08 đã merge tại 47ba72a.** PR #35 đang mở trên nhánh `feature/module-2.5-pr-b`; B-01/B-02/B-04 đã sửa. AC-09: Chat 0 gọi tool thật, assert `BoundTools.__call__`, barrier bão hòa 1+5 giữ liên tục suốt 2 vòng đo (/healthz và /api/session), fail rõ nếu mất tải; kết quả sáu chat trả về HTTP 200 không nuốt lỗi; worst-of-25 <= 50.0ms. Rà soát claim P99: 25 mẫu ghi là worst-of-25; test direct WSGI không thay thế real Waitress load test. Giữ PARTIAL chờ phê duyệt tiêu chí; chưa merge/deploy. Xem <a href="review%20gpt%206%20astra.md">review gpt 6 astra.md</a>.
 
 ### Các hợp đồng PR A phải giữ
 
@@ -219,15 +219,15 @@ Hash LF-normalized của cả hai bộ frozen:
 ## 10. Việc nên làm ngay
 
 1. PR A/N08 đã merged vào main tại 47ba72a.
-2. PR #35 hiện mở ở head f31b64f; GitHub check runs của CI và Ops Console đều SUCCESS.
-3. B-01/B-02/B-04 đã sửa; review độc lập giữ AC-09 PARTIAL: Waitress test thiếu assert đủ tải và chưa đo session.
-4. Gemini sửa test AC-09 trên chính PR #35: đặt K=1/Q=5 rõ ràng, assert 1 inference + 5 waiter và sáu chat còn in-flight, không nuốt exception, phủ cả độ trễ trước gate của DB/tools theo plan, đo healthz và session; dùng thống kê/sample protocol đúng rồi chạy suite/gates/CI và yêu cầu review lại.
-5. Chưa merge PR B hoặc deploy. Không cần bật EC2 cho các test CI/contract này.
+2. PR #35 đang mở trên nhánh `feature/module-2.5-pr-b`.
+3. K=1/Q=5, Chat 0 gọi tool thật, assert `BoundTools.__call__`, barrier bão hòa 1+5 giữ liên tục qua hai vòng đo (/healthz và /api/session), fail rõ nếu mất tải; kết quả sáu chat trả về HTTP 200 không nuốt lỗi; worst-of-25 <= 50.0ms. Local focused test PASS 28/28 tests trong môi trường Waitress; docs contract và notebook sync PASS.
+4. AC-09: 25 mẫu ghi nhận là worst-of-25, in-process WSGI không thay thế real Waitress; giữ PARTIAL chờ phê duyệt tiêu chí. PR description và tài liệu đã được đồng bộ nhất quán.
+5. Bước tiếp theo là chạy focused tests + CI trên SHA mới và re-review. Chưa merge/deploy; không cần bật EC2 cho vòng này.
 ## 11. Sơ đồ Mermaid tổng thể: request, cache, concurrency và OAuth
 
 ### 11.1. Tình hình dự án hiện tại
 
-Trạng thái tại head f31b64f: PR A/N08 đã merge; PR B/#35 còn AC-09 PARTIAL, chờ khép kín test Waitress. N08_STOPPING_CONDITIONS.md là hồ sơ gate PR A/N08, không phải trạng thái PR B.
+Trạng thái trên nhánh feature/module-2.5-pr-b: PR A/N08 đã merge; PR B/#35 giữ AC-09 PARTIAL (worst-of-25, pending approval). N08_STOPPING_CONDITIONS.md là hồ sơ gate PR A/N08, không phải trạng thái PR B.
 
 ```mermaid
 flowchart LR
@@ -235,9 +235,9 @@ flowchart LR
     Fix --> SHA["CI 37197602401 trên final tree eebe8ed<br/>SUCCESS"]
     SHA --> Merge["PR A/N08 merged to main<br/>47ba72a"]
 
-    Merge --> PRB["PR B #35 open<br/>head f31b64f; CI green"]
-    PRB --> Fix["B-01/B-02/B-04 fixed<br/>AC-09 test proof incomplete"]
-    Fix --> Verify["Rerun focused tests + CI<br/>independent review before merge"]
+    PRB["PR B #35 open<br/>branch feature/module-2.5-pr-b"]
+    PRB --> Fix2["B-01/B-02/B-04 fixed<br/>AC-09: tool hook + continuous barrier + worst-of-25"]
+    Fix2 --> Verify["Focused tests + CI on new SHA<br/>Re-review before merge/deploy"]
     Verify --> Phase4["Phase 4: frozen benchmark + load matrix"]
     Limit["Known limitations: manual reconciliation; journal/recovery; no PR B deployment"] -. "remain documented" .-> PRB
     classDef done fill:#d9ead3,stroke:#38761d,color:#222
@@ -328,7 +328,7 @@ flowchart LR
 | [PLAN_PR_A_CONTEXT_CACHE_DISPUTE.md](PLAN_PR_A_CONTEXT_CACHE_DISPUTE.md) | Replay #1/#2, conv_lock, snapshot revalidation, static-FAQ allowlist, history fail-closed, Semantic Cache lookup/store, provenance guard, workflow và F03 propagation. | **Khớp.** PR A mô tả cache-hit commit dưới conv_lock, bypass 100% khi không đủ điều kiện và không lưu khi provenance thiếu. |
 | [PLAN_RUNTIME_EFFICIENCY_CONCURRENCY.md](PLAN_RUNTIME_EFFICIENCY_CONCURRENCY.md) | Admission trước session/DB, max 6, conv_lock, InferenceGate K=1/Q=5, server_busy, model_busy, queue_timeout, release trong finally, cache miss vào workflow. | **Khớp.** SLO P99 chỉ là mục tiêu dưới tải kiểm soát; sơ đồ không diễn giải 8−6 thành pool hai worker riêng. |
 | [PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT.md](PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT.md) | Ba tầng concurrency, ToolCache tenant/customer scope, cache_epoch và CAS discard, OAuth verify → binding → atomic consume → exchange → session, F12 history. | **Khớp với một giới hạn cần ghi chú:** epoch/CAS được đặc tả cho **ToolCache**, không phải Semantic Cache. |
-| [PLAN_RBAC_GOOGLE_AUTH.md](PLAN_RBAC_GOOGLE_AUTH.md) | Cookie transient, HMAC/TTL, browser binding, atomic consume, exchange, issue session/cleanup. | B-01/B-04 đã sửa và kiểm tra WSGI trên head f31b64f; follow-up P3 về cleanup consumed-state token xem trong review. |
+B-01/B-04 đã sửa và kiểm tra WSGI trên PR #35; follow-up P3 về cleanup consumed-state token xem trong review.
 
 ### 11.4. Mâu thuẫn và khoảng trống được phát hiện
 
@@ -343,15 +343,9 @@ flowchart LR
 ## 12. Re-review gate PR B — Cập nhật phiên 05/10/2026
 
 - PR #34 đã merge tại 47ba72a.
-- GitHub xác nhận PR #35 open, merged=false, mergeable_state clean; năm check runs CI/Ops Console đều success.
-- B-01, B-02 và B-04 đã sửa trên code/test review.
-- AC-09 đã được hoàn tất trên `tests/test_http_headroom.py`:
-  1. Cấu hình tường minh `InferenceGate(concurrency=1, max_queue=5, queue_timeout=15.0)`.
-  2. Đồng bộ barrier nghiêm ngặt: test assert chắc chắn `in_flight == 1` và `queue_size == 5` trước khi đo; fail ngay nếu không đạt tải.
-  3. Chat workers thu thập kết quả và exception của cả 6 luồng; assert toàn bộ không có ngoại lệ và trả về HTTP 200 (không nuốt lỗi).
-  4. Mô phỏng độ trễ DB và tools ngoài gate (5ms) qua hook `BusinessStore.conversation`, `BusinessStore.replay` và `BoundTools.__call__`.
-  5. Đo độ trễ cả 2 endpoint dưới cùng tải bão hòa: 25 request `GET /healthz` và 25 request `GET /api/session` (với session hợp lệ).
-  6. Ghi nhận mẫu đúng quy chuẩn: 25 mẫu được báo cáo là worst-of-25 (không gán P99 thống kê khi cỡ mẫu 25). Cả hai worst-of-25 đều đạt `<= 50.0ms`.
-  7. Trạng thái AC-09 được giữ ở **PARTIAL** trong tài liệu và PR description theo đúng chỉ đạo rà soát, chờ chủ dự án phê duyệt tiêu chí hoặc chạy benchmark Phase 4.
-- Báo cáo chạy test: 28/28 PR B focused tests PASS, 4/4 script gates PASS, notebook sync OK.
-- Chưa merge/deploy PR B. Dừng trước merge/deploy và chuyển giao để re-review. Chi tiết ở <a href="review%20gpt%206%20astra.md">review gpt 6 astra.md</a>.
+- PR #35 đang mở trên nhánh `feature/module-2.5-pr-b`; mergeable_state=clean, chưa merge/deploy.
+- K=1/Q=5, assertion barrier ban đầu, kết quả sáu chat và đo cả /healthz và /api/session theo worst-of-25 đã có.
+- **AC-09 đã xử lý khắc phục:** Chat 0 gửi yêu cầu tra cứu đơn hàng, model trả tool call `get_order`, và test assert tường minh hook `BoundTools.__call__` đã chạy (đếm >= 1). Barrier giữ bão hòa 1 in-flight + 5 queued trong suốt hai vòng đo 25 `/healthz` và 25 `/api/session`; bỏ timeout 10 giây tự nhả (fail có chủ đích nếu mất tải).
+- Mọi claim P99 trong test docstrings, code và PR description được đồng bộ thành **worst-of-25**; test trực tiếp WSGI được ghi nhận rõ là non-interference check, không thay thế cho bài test tải socket Waitress thực tế.
+- Local verification: 28/28 focused tests PASS trong môi trường có Waitress; docs contract PASS 4/4; notebook sync PASS.
+- AC-09 giữ **PARTIAL** chờ chủ dự án phê duyệt tiêu chí/giao thức P99; chưa merge/deploy. Xem <a href="review%20gpt%206%20astra.md">review gpt 6 astra.md</a>.

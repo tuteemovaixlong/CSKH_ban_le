@@ -70,7 +70,7 @@ flowchart TD
 
 Mọi hạng mục bắt buộc chuẩn hóa theo 4 thuộc tính: **Tệp & Hàm liên quan**, **Hành vi mong đợi**, **Test tương ứng**, và **Trạng thái**.
 
-### 3.1. Phần Concurrency: Dọn Dẹp `InferenceGate` & Bảo Đảm Headroom Toàn Request (F07) `[CHƯA KIỂM CHỨNG / PENDING TEST]`
+### 3.1. Phần Concurrency: Dọn Dẹp InferenceGate & Bảo Đảm Headroom Toàn Request (F07) [PARTIAL — TEST PRESENT, COVERAGE/PROTOCOL PENDING]
 - **Tệp & Hàm liên quan:**
   - `retailops/bootstrap.py`: Cấu hình tham số Waitress (8 threads) và hàng đợi.
   - `retailops/inference_gate.py`: `InferenceGate.__init__()`, `enter()`, `exit()`, `get_conversation_lock()`.
@@ -85,12 +85,12 @@ Mọi hạng mục bắt buộc chuẩn hóa theo 4 thuộc tính: **Tệp & Hà
       $$\text{MAX\_INFLIGHT\_CHAT\_HANDLERS} \le \text{WAITRESS\_THREADS (8)} - \text{RESERVED\_THREADS (2)} = 6$$
     * Token request được acquire không chặn (`blocking=False`) ngay khi vừa nhận request tại adapter; nếu đã có 6 chat requests đang chiếm luồng, request thứ 7 bị từ chối ngay lập tức với HTTP 429 canonical error `server_busy` (kèm header `Retry-After: 5`) mà không động tới DB hay session store, giải phóng token trong khối `finally` của `PublicWeb`.
     * Ngân sách 6 chat requests áp dụng chung cho tổng các provider. **Admission giới hạn tối đa 6 chat được nhận xử lý đồng thời trên Waitress 8 workers, giảm nguy cơ chat chiếm hết worker; không bảo đảm luôn có hai worker rảnh hoặc một pool riêng.**
-    * **Mục tiêu nghiệm thu có điều kiện (Conditional Acceptance SLO)**: Trong kịch bản kiểm thử tải có kiểm soát (cấu hình 1 tiến trình / 8 workers, 6 chat request được giữ đồng thời bằng test barrier, giả lập DB/tools/model chậm, tài nguyên hệ thống không bị cạn kiệt), độ trễ P99 của `GET /healthz` và `GET /api/session` đạt $\le 50\text{ms}$. Phân biệt rạch ròi giữa tải bão hòa 6 chat được nhận xử lý với bão hòa do flood request bị từ chối hoặc DB bị khóa; không suy diễn độ trễ endpoint từ phép trừ số học $8 - 6$.
+    * **Mục tiêu nghiệm thu có điều kiện (Conditional Acceptance SLO)**: Trong kịch bản kiểm thử tải có kiểm soát (1 tiến trình / 8 workers, 6 chat request được giữ bằng barrier, có độ trễ DB/tools/model và tài nguyên không cạn), độ trễ P99 của `GET /healthz` và `GET /api/session` đạt $\le 50\text{ms}$. Phân biệt tải bão hòa 6 chat với flood request bị từ chối hoặc DB bị khóa; không suy diễn từ phép trừ $8 - 6$. Phép đo 25 mẫu ghi nhận là worst-of-25, không thay thế SLO P99; test in-process WSGI là non-interference check, không thay thế real Waitress socket load test. Giữ AC-09 PARTIAL chờ phê duyệt tiêu chí/giao thức P99.
   - **Phân định rõ ràng mô hình đồng bộ 3 tầng (3-tier concurrency)**:
     1. *Tầng HTTP Request (Tier 1)*: Bounded Chat Admission Limiter tại `PublicWeb` (trước session/DB preflight; tối đa 6 request đồng thời chiếm thread, non-blocking acquire $\rightarrow$ loser nhận ngay 429 `server_busy` kèm `Retry-After: 5`).
     2. *Tầng Hội thoại (Tier 2)*: `conv_lock` non-blocking theo từng conversation key (bảo vệ replay, snapshot và semantic cache; loser nhận ngay 429 `model_busy`).
-    3. *Tầng Model I/O (Tier 3)*: `InferenceGate` cấp permit GPU chỉ trong thời gian gọi model thật ($K=1, Q=5$, chờ quá 10s $\rightarrow$ HTTP 429 canonical `queue_timeout` kèm `Retry-After: 5`).
-- **Test tương ứng:** `tests/test_inference_gate.py::test_inference_queue_overflow_429`, `tests/test_conversation.py::test_conversation_serialization_no_agent_lock`, `tests/test_http_headroom.py::test_waitress_real_http_chat_saturation_headroom`. Test Waitress đã cấu hình rõ InferenceGate(concurrency=1, max_queue=5), assert barrier 1 model + 5 queued, không nuốt lỗi worker, mô phỏng chậm DB/tools ngoài gate và đo cả /healthz và /api/session (worst-of-25 <= 50ms). Giữ AC-09 PARTIAL chờ chủ dự án duyệt tiêu chí.
+    3. *Tầng Model I/O (Tier 3)*: `InferenceGate` cấp permit GPU chỉ trong thời gian gọi model thật ($K=1, Q=5$, chờ quá 30s $\rightarrow$ HTTP 429 canonical `queue_timeout` kèm `Retry-After: 5`).
+- **Test tương ứng:** `tests/test_inference_gate.py::test_inference_queue_overflow_429`, `tests/test_conversation.py::test_conversation_serialization_no_agent_lock`, `tests/test_http_headroom.py::test_waitress_real_http_chat_saturation_headroom`. Test cấu hình InferenceGate(concurrency=1, max_queue=5), Chat 0 gọi tool thật và assert `BoundTools.__call__` đã chạy, barrier bão hòa 1+5 giữ liên tục suốt 2 vòng đo (/healthz và /api/session), fail rõ nếu mất tải; kết quả sáu chat trả về HTTP 200 không nuốt lỗi; worst-of-25 <= 50.0ms. Giữ AC-09 PARTIAL.
 
 ### 3.2. Phần Relational Knowledge: Bảng `product_policy_links` (HOÃN — DEFERRED / FUTURE ADR)
 - **Định vị & Quyết định Kiến trúc:**
