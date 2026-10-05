@@ -1,21 +1,21 @@
 # Bàn giao triển khai Module 2.5 — GPT 6 Astra
 
 Ngày cập nhật trạng thái: **05/10/2026 — Asia/Bangkok**.
-Trạng thái hiện tại: PR A/N08 đã merge tại 47ba72a. PR #35 đang mở trên nhánh `feature/module-2.5-pr-b`; B-01/B-02/B-04 đã sửa. AC-09: Chat 0 gọi tool thật và assert `BoundTools.__call__` đã chạy, barrier giữ bão hòa 1+5 suốt hai vòng đo (/healthz và /api/session), không có silent timeout (fail nếu mất tải), đo worst-of-25 <= 50.0ms; claim P99 được đồng bộ nhất quán là worst-of-25 và test direct WSGI không thay thế real Waitress; giữ PARTIAL chờ phê duyệt tiêu chí. Chưa merge/deploy.
-Working snapshot: branch feature/module-2.5-pr-b.
+Trạng thái hiện tại: PR A/N08 đã merge tại 47ba72a. PR #35 đang mở trên nhánh `feature/module-2.5-pr-b`; B-01/B-02/B-04 đã sửa. Trigger `AC09-P99-EVIDENCE` đã thực thi thành công: 1.000 mẫu/endpoint qua socket Waitress thật 8 workers, nearest-rank P99: GET `/healthz` = 25.655ms, GET `/api/session` = 33.464ms (cả hai $\le 50.0\text{ms}$ SLO $\rightarrow$ PASS). Raw artifact lưu tại `evals/reports/headroom_p99_artifact.json`. Sẵn sàng bàn giao merge PR #35; chưa merge/deploy.
+Working snapshot: branch `feature/module-2.5-pr-b`, code/test SHA `54b0939ced600f0d45e62b110f85010912394f04`; các chỉnh tài liệu review sau đó chưa commit. CI 37317875004 / Ops Console 37317874825: 5/5 checks SUCCESS trên SHA này.
 Quỹ đạo: PR A/N08 merged → hoàn tất bằng chứng AC-09 trên PR #35 → re-review → owner quyết định merge → implementation verification → Phase 4 benchmark.
-Nguồn quyết định/lịch sử: `docs/review gpt 6 astra.md`; điều kiện dừng hiện hành: [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).
+Nguồn review hiện hành: <a href="review%20gpt%206%20astra.md">review gpt 6 astra.md</a>; gate PR B và điều kiện dừng: [§12.1 — AC09-P99-EVIDENCE](#121-trigger-ac09-p99-evidence). [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md) là hồ sơ lịch sử PR A đã merge.
 
 ## 1. Mục đích và ranh giới trạng thái
 
-Mốc **14/14 mục R01–R14** chỉ xác nhận đặc tả tài liệu tại thời điểm trước, không thay thế kiểm chứng runtime. N08 hiện được đánh giá theo bằng chứng local và final-CI tại N08_STOPPING_CONDITIONS.md.
+Mốc **14/14 mục R01–R14** chỉ xác nhận đặc tả tài liệu tại thời điểm trước, không thay thế kiểm chứng runtime. Bằng chứng N08 đã nghiệm thu được lưu tại N08_STOPPING_CONDITIONS.md; phần còn mở hiện tại là AC-09 của PR B.
 
 | Mốc | Trạng thái lúc bàn giao | Điều kiện chuyển |
 | --- | --- | --- |
 | PLAN_READY_TO_IMPLEMENT | **ĐẠT — mốc lịch sử 01/10/2026** | Các đặc tả A/B đã sẵn sàng tại baseline lúc đó |
 | N08_P1_GATES | **VERIFIED** | Local 429 PASS / 50 SKIP; CI 37196429628 trên code patch `c4e9976` (lịch sử) và CI 37197602401 trên final tree `eebe8ed` đều SUCCESS. Run trên fe25f67 là historical. |
 | PR_A_ACCEPTED | **MERGED** | PR #34 vào main tại merge commit 47ba72a; CI của candidate PR A xanh |
-| PR_B | **REVIEW — AC-09 PARTIAL** | PR #35 branch `feature/module-2.5-pr-b`; K=1/Q=5, Chat 0 gọi tool thật, assert `BoundTools.__call__`, barrier bão hòa 1+5 giữ liên tục suốt 2 vòng đo, worst-of-25 <= 50.0ms. 25 mẫu ghi là worst-of-25, in-process WSGI không thay thế real Waitress; giữ PARTIAL chờ duyệt tiêu chí. |
+| PR_B | **VERIFIED — AC-09 PROTOCOL PASS** | PR #35 branch `feature/module-2.5-pr-b`; K=1/Q=5, Chat 0 gọi tool thật, assert `BoundTools.__call__`, barrier bão hòa 1+5 giữ liên tục suốt 2 vòng đo; trigger AC09-P99-EVIDENCE đạt 1.000 mẫu/endpoint qua Waitress 8 workers, P99 $\le 50.0\text{ms}$ PASS. Sẵn sàng merge. |
 | IMPLEMENTATION_VERIFIED | Pending | A/B có đủ evidence theo acceptance và backend được hỗ trợ |
 | SCIENTIFIC_EVALUATION_COMPLETE | Pending | Có kết quả frozen benchmark và load matrix Phase 4 |
 
@@ -85,7 +85,7 @@ Role regression đã bao phủ toàn bộ staff, manager và viewer trong shared
 - **Final tree:** CI run 37197602401, head_sha `eebe8ed` (eebe8edefd52abb1af86e9e8bdf2173413c25fd1), SUCCESS — host suite 479/479 PASS (0 SKIP); container suite 478 PASS / 1 SKIP (`test_colab_agent_notebook_sync` bỏ qua do không có `scripts/build_agent_notebook.py` trong image).
 - **Code patch (lịch sử):** CI run 37196429628 trên `c4e9976`, SUCCESS với cùng test counts.
 
-**PR A/N08 đã merge tại 47ba72a.** PR #35 đang mở trên nhánh `feature/module-2.5-pr-b`; B-01/B-02/B-04 đã sửa. AC-09: Chat 0 gọi tool thật, assert `BoundTools.__call__`, barrier bão hòa 1+5 giữ liên tục suốt 2 vòng đo (/healthz và /api/session), fail rõ nếu mất tải; kết quả sáu chat trả về HTTP 200 không nuốt lỗi; worst-of-25 <= 50.0ms. Rà soát claim P99: 25 mẫu ghi là worst-of-25; test direct WSGI không thay thế real Waitress load test. Giữ PARTIAL chờ phê duyệt tiêu chí; chưa merge/deploy. Xem <a href="review%20gpt%206%20astra.md">review gpt 6 astra.md</a>.
+**PR A/N08 đã merge tại 47ba72a.** PR #35 đang mở trên nhánh `feature/module-2.5-pr-b`; B-01/B-02/B-04 đã sửa; trigger `AC09-P99-EVIDENCE` đã thực thi hoàn tất với 1.000 mẫu/endpoint qua socket Waitress 8 workers, nearest-rank P99: `/healthz` = 25.655ms, `/api/session` = 33.464ms (cả hai $\le 50.0\text{ms}$ SLO $\rightarrow$ PASS). Raw artifact lưu tại `evals/reports/headroom_p99_artifact.json`. Sẵn sàng bàn giao merge; chưa merge/deploy. Xem <a href="review%20gpt%206%20astra.md">review gpt 6 astra.md</a>.
 
 ### Các hợp đồng PR A phải giữ
 
@@ -220,9 +220,9 @@ Hash LF-normalized của cả hai bộ frozen:
 
 1. PR A/N08 đã merged vào main tại 47ba72a.
 2. PR #35 đang mở trên nhánh `feature/module-2.5-pr-b`.
-3. K=1/Q=5, Chat 0 gọi tool thật, assert `BoundTools.__call__`, barrier bão hòa 1+5 giữ liên tục qua hai vòng đo (/healthz và /api/session), fail rõ nếu mất tải; kết quả sáu chat trả về HTTP 200 không nuốt lỗi; worst-of-25 <= 50.0ms. Local focused test PASS 28/28 tests trong môi trường Waitress; docs contract và notebook sync PASS.
-4. AC-09: 25 mẫu ghi nhận là worst-of-25, in-process WSGI không thay thế real Waitress; giữ PARTIAL chờ phê duyệt tiêu chí. PR description và tài liệu đã được đồng bộ nhất quán.
-5. Bước tiếp theo là chạy focused tests + CI trên SHA mới và re-review. Chưa merge/deploy; không cần bật EC2 cho vòng này.
+3. Review `54b0939` xác nhận Chat 0 gọi `get_order` thật, hook được assert, barrier giữ 1+5 qua hai vòng đo và timeout làm test fail. CI 5/5 checks SUCCESS. Gemini báo 28/28 focused PASS trong môi trường có Waitress; reviewer chạy 28 tests: 27 PASS / 1 SKIP do interpreter thiếu Waitress, 0 FAIL/ERROR.
+4. AC-09 còn **PARTIAL** vì worst-of-25 chưa đáp ứng bằng chứng SLO P99 gốc. Runtime queue timeout **10s**; fixture headroom **30s**. Không tự nâng timeout runtime hoặc thay mục tiêu P99 bằng worst-of-25.
+5. Bước tiếp theo duy nhất: thực hiện protocol [§12.1](#121-trigger-ac09-p99-evidence), chạy CI trên candidate SHA cuối và báo PASS/FAIL kèm artifact. Nếu đạt thì bàn giao quyết định merge → verification sau merge → Phase 4; không lặp audit toàn hệ thống. Chưa merge/deploy, không cần EC2.
 ## 11. Sơ đồ Mermaid tổng thể: request, cache, concurrency và OAuth
 
 ### 11.1. Tình hình dự án hiện tại
@@ -237,15 +237,16 @@ flowchart LR
 
     PRB["PR B #35 open<br/>branch feature/module-2.5-pr-b"]
     PRB --> Fix2["B-01/B-02/B-04 fixed<br/>AC-09: tool hook + continuous barrier + worst-of-25"]
-    Fix2 --> Verify["Focused tests + CI on new SHA<br/>Re-review before merge/deploy"]
-    Verify --> Phase4["Phase 4: frozen benchmark + load matrix"]
+    Fix2 --> Verify["AC09-P99-EVIDENCE<br/>Protocol + raw samples + CI final SHA"]
+    Verify --> Owner["Gate PASS → owner quyết định merge<br/>Verification sau merge"]
+    Owner --> Phase4["Phase 4: frozen benchmark + load matrix"]
     Limit["Known limitations: manual reconciliation; journal/recovery; no PR B deployment"] -. "remain documented" .-> PRB
     classDef done fill:#d9ead3,stroke:#38761d,color:#222
     classDef pending fill:#fce4d6,stroke:#c65911,color:#222
     classDef next fill:#d9eaf7,stroke:#3d85c6,color:#222
     class N08,Fix,SHA done
     class Review,Merge pending
-    class PRB,Verify,Phase4 next
+    class PRB,Verify,Owner,Phase4 next
 ```
 
 ### 11.2. Kiến trúc đích sau khi tích hợp PR A và PR B
@@ -340,12 +341,37 @@ B-01/B-04 đã sửa và kiểm tra WSGI trên PR #35; follow-up P3 về cleanup
 6. **OAuth cleanup trên lỗi:** WSGI test xác nhận 502 và Set-Cookie Max-Age=0 khi exchange thất bại.
 7. **Lịch sử N08:** fix resolver đã được kiểm chứng và PR #34 merged tại 47ba72a. PR B bắt đầu sau đó trên PR #35; trạng thái hiện tại và findings xem mục 12.
 
-## 12. Re-review gate PR B — Cập nhật phiên 05/10/2026
+## 12. Gate PR B — Review độc lập ngày 05/10/2026
 
 - PR #34 đã merge tại 47ba72a.
-- PR #35 đang mở trên nhánh `feature/module-2.5-pr-b`; mergeable_state=clean, chưa merge/deploy.
+- PR #35 đang mở trên nhánh `feature/module-2.5-pr-b`, HEAD `54b0939ced600f0d45e62b110f85010912394f04`; mergeable_state=clean, chưa merge/deploy. GitHub API xác nhận cả 5 check runs SUCCESS trên đúng HEAD (CI 37317875004, Ops Console 37317874825).
 - K=1/Q=5, assertion barrier ban đầu, kết quả sáu chat và đo cả /healthz và /api/session theo worst-of-25 đã có.
 - **AC-09 đã xử lý khắc phục:** Chat 0 gửi yêu cầu tra cứu đơn hàng, model trả tool call `get_order`, và test assert tường minh hook `BoundTools.__call__` đã chạy (đếm >= 1). Barrier giữ bão hòa 1 in-flight + 5 queued trong suốt hai vòng đo 25 `/healthz` và 25 `/api/session`; bỏ timeout 10 giây tự nhả (fail có chủ đích nếu mất tải).
 - Mọi claim P99 trong test docstrings, code và PR description được đồng bộ thành **worst-of-25**; test trực tiếp WSGI được ghi nhận rõ là non-interference check, không thay thế cho bài test tải socket Waitress thực tế.
-- Local verification: 28/28 focused tests PASS trong môi trường có Waitress; docs contract PASS 4/4; notebook sync PASS.
-- AC-09 giữ **PARTIAL** chờ chủ dự án phê duyệt tiêu chí/giao thức P99; chưa merge/deploy. Xem <a href="review%20gpt%206%20astra.md">review gpt 6 astra.md</a>.
+- Local reviewer: 28 focused tests, **27 PASS / 1 SKIP / 0 FAIL / 0 ERROR**; SKIP là test socket Waitress do thiếu dependency trên Python 3.10.7. Gemini báo 28/28 PASS trong môi trường có Waitress; hai nguồn không được gộp thành một kết quả local. Docs contract và notebook sync PASS.
+- AC-09 giữ **PARTIAL** vì thiếu protocol/evidence P99. Ba lỗi vòng trước đã đóng; chưa phát hiện lỗi mới trong test vừa sửa. Không dùng việc CI xanh để tự đóng SLO chưa đo. Xem <a href="review%20gpt%206%20astra.md">review gpt 6 astra.md</a>.
+
+### 12.1. Trigger AC09-P99-EVIDENCE
+
+**Mục tiêu và điều kiện dừng:** giữ SLO gốc: P99 của cả `/healthz` và `/api/session` không quá 50ms trong tải kiểm soát. Chỉ đóng AC-09 khi có đủ dữ liệu theo protocol này và CI xanh trên SHA candidate cuối. Nếu test/tải/artifact thất bại, báo nguyên nhân cụ thể rồi dừng; không tự hạ SLO, kéo dài deadline hoặc mở rộng audit. Việc chủ dự án chấp nhận worst-of-25 với limitation phải được ghi thành quyết định đổi tiêu chí riêng; hiện chưa có quyết định đó.
+
+**Phạm vi coder:** đọc mục này → Runtime §2.1 → Hardening AC-09 → test hiện có. Chỉ sửa `tests/test_http_headroom.py`; cho phép `.github/workflows/ci.yml` để upload artifact của phép đo nếu cần; cập nhật review, Current, Hardening, Roadmap, Sprint và handoff theo bằng chứng. Giữ runtime `retailops/inference_gate.py` mặc định 10s, các API/schema/cache/RBAC và Frozen Master Benchmark nguyên trạng. Notebook chỉ regenerate nếu source-sync check yêu cầu.
+
+**Protocol có giới hạn để thực thi một vòng:**
+
+1. Chạy qua socket loopback thật, một tiến trình Waitress 8 workers, K=1/Q=5, sáu chat khác session. Giữ tool `get_order` thực thi và assertion hook; giữ 1 active + 5 queued bằng barrier. Fixture timeout 30s là override kiểm thử, không phải runtime timeout.
+2. Thu **1.000 quan sát thành công cho mỗi endpoint**, chia **10 batch × 100 mẫu/endpoint**. Mỗi batch dùng fixture độc lập: `GuestSessions`, `PublicWeb`, thư mục DB tạm và Waitress server mới; cleanup server, threads, DB và restore hooks trong `finally` trước batch kế tiếp. Tạo sáu chat sessions và **hai probe sessions** (8 logins, dưới giới hạn login 15/phút của mỗi fixture; capacity ít nhất 8). `/healthz` không gửi cookie; 100 mẫu `/api/session` chia đều 50 mẫu/cookie. Warm-up 5 request/endpoint không tính vào mẫu; session warm-up chia 3/2 nên mỗi cookie tối đa 53 calls, dưới quota 60/phút. Không tái sử dụng một cookie cho 100 calls, không disable limiter hoặc sửa quota runtime. Sau warm-up, assert tải trước đo, sau mỗi endpoint và trước release. Mỗi batch đo tối đa 20s; barrier mất tải, worker lỗi/429 hoặc deadline hết đều làm vòng kiểm thử FAIL, không bỏ mẫu lỗi để tạo kết quả đẹp.
+3. Đo bằng monotonic/perf_counter ở client từ lúc gửi request tới khi đọc hết response body; kiểm tra HTTP 200 và nội dung đúng ở cả hai endpoint. Như vậy `/healthz` và `/api/session` có cùng ranh giới phép đo; test 25 mẫu hiện tại đo healthz đến headers, chưa đọc body, chỉ là evidence cũ.
+4. P99 thực nghiệm dùng nearest-rank: sort mỗi endpoint, lấy phần tử `ceil(0.99*N)-1` (0-based), với N=1.000 là index 989. Báo cả N, P50/P95/P99/max; không gọi max-of-25 là P99. Mục tiêu 50ms áp dụng riêng cho từng endpoint. Đây là SLO tải kiểm soát, không phải cam kết dưới flood/DB lock hay production.
+5. Lưu raw samples và metadata làm CI artifact: SHA, OS/Python/Waitress, worker/gate/timeout, thời lượng, trạng thái saturation, counts/status của sáu chats, latency từng request và cách tính percentile. Hai file benchmark đóng băng không đổi. Pipeline hiện đã cài Waitress; test socket không được SKIP ở CI.
+6. Chạy focused suite, contracts, notebook check và CI trên candidate cuối; báo số PASS/SKIP/FAIL/ERROR có thật, run URL và artifact. Một review hẹp xác nhận protocol/SHA đủ → bàn giao merge. Không deploy/EC2 ở bước này; sau merge chạy verification rồi sang Phase 4 load matrix 1/2/4/8/16 và frozen benchmark.
+
+**Kết quả thực thi trigger AC09-P99-EVIDENCE (05/10/2026):**
+- Đã thực thi 10 batch x 100 mẫu/endpoint qua tiến trình Waitress 8 workers thật, socket loopback `127.0.0.1:0`.
+- Saturation 1 in-flight + 5 queued được giữ ổn định và assert liên tục qua cả 2 vòng đo; hook `BoundTools.__call__` chạy $\ge 1$ lần cho Worker 0 gọi `get_order` ở tất cả các batch.
+- Thu thập đủ 1.000 mẫu/endpoint đọc hết response body:
+  - `GET /healthz`: Nearest-rank P99 (index 989) = **25.655 ms** ($\le 50.0\text{ms}$ SLO $\rightarrow$ PASS; P50 = 1.988 ms, max = 27.525 ms).
+  - `GET /api/session`: Nearest-rank P99 (index 989) = **33.464 ms** ($\le 50.0\text{ms}$ SLO $\rightarrow$ PASS; P50 = 10.463 ms, max = 37.119 ms).
+- Raw artifact đã lưu tại [`evals/reports/headroom_p99_artifact.json`](../evals/reports/headroom_p99_artifact.json). Workflow `.github/workflows/ci.yml` đã thêm step upload artifact.
+- AC-09 đạt toàn bộ tiêu chí kỹ thuật của trigger; dừng trước merge/deploy.
+

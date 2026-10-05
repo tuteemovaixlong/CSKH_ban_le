@@ -91,6 +91,14 @@ jobs:
           python3 -m pip install --only-binary=:all: --require-hashes -r requirements-web.txt -r requirements-postgres.txt -r requirements-graph.txt
           python3 scripts/prepare_test_pgvector.py
           python3 -m unittest discover -s tests -v
+      - name: Save headroom P99 measurement artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: headroom-p99-artifact-${{ github.sha }}
+          path: evals/reports/headroom_p99_artifact.json
+          retention-days: 14
+          if-no-files-found: ignore
       - name: Validate HTTPS, PostgreSQL and rollout deployment scripts
         run: |
           python3 scripts/check_deployment_contract.py
