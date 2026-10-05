@@ -548,9 +548,17 @@ class HttpHeadroomTests(unittest.TestCase):
         }
 
         artifact_path = Path(__file__).resolve().parents[1] / "evals" / "reports" / "headroom_p99_artifact.json"
-        artifact_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(artifact_path, "w", encoding="utf-8") as f:
-            json.dump(artifact_payload, f, indent=2)
+        try:
+            artifact_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(artifact_path, "w", encoding="utf-8") as f:
+                json.dump(artifact_payload, f, indent=2)
+        except (PermissionError, OSError):
+            fallback_dir = Path("/data") if Path("/data").is_dir() else Path(tempfile.gettempdir())
+            try:
+                with open(fallback_dir / "headroom_p99_artifact.json", "w", encoding="utf-8") as f:
+                    json.dump(artifact_payload, f, indent=2)
+            except (PermissionError, OSError):
+                pass
 
         self.assertLessEqual(
             health_stats["p99_ms"], 50.0,
