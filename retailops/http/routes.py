@@ -411,7 +411,8 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 db.execute("UPDATE orders SET status=?, version=version+1 WHERE id=?", (new_status, oid))
                 app.store.log(db, row["customer_id"], "order_status_updated_by_manager", oid, new_status=new_status, previous_status=cur_status)
             if hasattr(app, 'tool_cache'):
-                app.tool_cache.invalidate(row["customer_id"])
+                tenant_id = getattr(binding, 'tenant_id', None) or getattr(app, 'tenant_id', 'default')
+                app.tool_cache.invalidate(tenant_id=tenant_id, customer=row["customer_id"])
             return (200, {"status": "ok", "order_id": oid, "new_status": new_status, "message": f"Đã cập nhật trạng thái đơn {oid} sang {new_status}."})
         m = re.fullmatch(r"/api/cancellation-proposals/([a-f0-9-]{36})/(confirm|dismiss)", path)
         if m:
@@ -419,7 +420,8 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             if m[2] == "confirm":
                 res = approval.confirm(app, customer, m[1], body, idempotency_key)
                 if hasattr(app, 'tool_cache'):
-                    app.tool_cache.invalidate(customer)
+                    tenant_id = getattr(binding, 'tenant_id', None) or getattr(app, 'tenant_id', 'default')
+                    app.tool_cache.invalidate(tenant_id=tenant_id, customer=customer)
                 return (200, res)
             fields(body, set())
             return (200, approval.dismiss(app, customer, m[1]))

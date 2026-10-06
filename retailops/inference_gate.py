@@ -99,6 +99,7 @@ class InferenceGate:
                     429,
                     "model_busy",
                     "Hệ thống đang phục vụ tối đa lượt yêu cầu. Vui lòng thử lại sau giây lát.",
+                    headers=[("Retry-After", "5")],
                 )
 
             self._queue.append(event)
@@ -126,6 +127,7 @@ class InferenceGate:
                 429,
                 "queue_timeout",
                 "Thời gian chờ suy luận model quá hạn. Vui lòng thử lại.",
+                headers=[("Retry-After", "5")],
             )
 
         return wait_ms
@@ -157,6 +159,7 @@ class GatedGateway:
         self._gate = gate
         self._trace = trace
         self.total_queue_wait_ms = 0.0
+        self.total_provider_inference_ms = 0.0
 
     def __getattr__(self, name):
         return getattr(self._target, name)
@@ -169,6 +172,7 @@ class GatedGateway:
                     self._trace.get("queue_wait_ms", 0.0) + wait_ms, 2
                 )
                 self._trace["in_flight_inferences"] = self._gate.in_flight
+                self._trace["model_calls"] = self._trace.get("model_calls", 0) + 1
             remaining_timeout = timeout
             if timeout is not None and isinstance(timeout, (int, float)):
                 remaining_timeout = timeout - (wait_ms / 1000.0)
@@ -178,7 +182,19 @@ class GatedGateway:
                         "deadline_exceeded",
                         "Thời gian chờ suy luận đã vượt quá thời hạn cho phép.",
                     )
-            return self._target.chat(messages, allow_tools, remaining_timeout)
+            t0 = time.monotonic()
+            try:
+                res = self._target.chat(messages, allow_tools, remaining_timeout)
+                if self._trace is not None and isinstance(self._trace, dict):
+                    self._trace["model_responses"] = self._trace.get("model_responses", 0) + 1
+                return res
+            finally:
+                infer_ms = round((time.monotonic() - t0) * 1000.0, 2)
+                self.total_provider_inference_ms = round(self.total_provider_inference_ms + infer_ms, 2)
+                if self._trace is not None and isinstance(self._trace, dict):
+                    self._trace["provider_inference_ms"] = round(
+                        self._trace.get("provider_inference_ms", 0.0) + infer_ms, 2
+                    )
 
     def chat_scoped(self, messages, allow_tools: bool, timeout: float, allowed_tools):
         scoped = getattr(self._target, "chat_scoped", None)
@@ -189,6 +205,7 @@ class GatedGateway:
                     self._trace.get("queue_wait_ms", 0.0) + wait_ms, 2
                 )
                 self._trace["in_flight_inferences"] = self._gate.in_flight
+                self._trace["model_calls"] = self._trace.get("model_calls", 0) + 1
             remaining_timeout = timeout
             if timeout is not None and isinstance(timeout, (int, float)):
                 remaining_timeout = timeout - (wait_ms / 1000.0)
@@ -198,6 +215,19 @@ class GatedGateway:
                         "deadline_exceeded",
                         "Thời gian chờ suy luận đã vượt quá thời hạn cho phép.",
                     )
-            if callable(scoped):
-                return scoped(messages, allow_tools, remaining_timeout, allowed_tools)
-            return self._target.chat(messages, allow_tools, remaining_timeout)
+            t0 = time.monotonic()
+            try:
+                if callable(scoped):
+                    res = scoped(messages, allow_tools, remaining_timeout, allowed_tools)
+                else:
+                    res = self._target.chat(messages, allow_tools, remaining_timeout)
+                if self._trace is not None and isinstance(self._trace, dict):
+                    self._trace["model_responses"] = self._trace.get("model_responses", 0) + 1
+                return res
+            finally:
+                infer_ms = round((time.monotonic() - t0) * 1000.0, 2)
+                self.total_provider_inference_ms = round(self.total_provider_inference_ms + infer_ms, 2)
+                if self._trace is not None and isinstance(self._trace, dict):
+                    self._trace["provider_inference_ms"] = round(
+                        self._trace.get("provider_inference_ms", 0.0) + infer_ms, 2
+                    )

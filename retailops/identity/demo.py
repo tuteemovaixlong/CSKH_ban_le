@@ -39,7 +39,6 @@ class GuestSessions:
         self.capacity = capacity
         self.lock = threading.RLock()
         self.inference_gate = InferenceGate()
-        self.agent_lock = threading.Lock()
         self.apps, self.active = {}, {}
         # All guests share this persistent quota. Owner business.sqlite3 is untouched.
         self.control = BusinessStore(self.directory / 'control.sqlite3')
@@ -147,7 +146,6 @@ class GuestSessions:
                 store.seed()
                 app = Application(store, {}, self.infer, self.api_infer, self.api_daily_limit)
                 app.quota_store = self.control
-                app.agent_lock = self.agent_lock
                 app.inference_gate = self.inference_gate
                 app.default_provider = 'api' if self.api_infer is not None else 'custom'
                 self.apps[sid] = app

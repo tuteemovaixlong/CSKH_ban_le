@@ -4,6 +4,8 @@
 > **Snapshot đối chiếu:** Commit `c30ff1d` trên nhánh `main`.
 > **Audit basis / Documentation baseline reviewed:** `c30ff1d` · **Application verified:** `c30ff1d`
 > **Phân kỳ thực thi:** Tích hợp trực tiếp vào **Module 2.5 PR B** (Concurrency & Runtime Hardening), kế thừa nền tảng FIX 01–FIX 04 của Phase 1. GraphRAG v6.2 và Schema v5 (PR C) đã được hoãn sang Future ADR.
+> **Đồng bộ ngày 06/10/2026:** PR #35 HEAD `5188dc0`; **AC-09 VERIFIED — P99 & ARTIFACT-INTEGRITY GATES PASSED**. Artifact CI [run 37415921867](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37415921867), ID `11390854372`: 10 batch × 100 mẫu/endpoint, nearest-rank P99 (hiển thị làm tròn) `/healthz` **0.836ms**, `/api/session` **5.764ms**; assertion dùng float gốc, đều $\le 50$ms; 60 chat HTTP 200, mọi batch có tool hook và saturation 1+5; bước kiểm tra độc lập `Validate headroom P99 measurement artifact integrity` PASS; 5/5 check-runs completed/success. Trigger AC09-ARTIFACT-INTEGRITY đã hoàn tất; dừng trước merge/deploy, sẵn sàng bàn giao chủ dự án review merge. Xem [handoff §12.2](PLAN_EXECUTION_HANDOFF_GPT6_ASTRA.md#122-trigger-ac09-artifact-integrity).
+
 
 ---
 
@@ -12,7 +14,7 @@
 1. **Snapshot Lịch Sử (`fd24e36`)**:
    - Trước đây, `PersistentSessions` ([retailops/identity/persistent.py](../retailops/identity/persistent.py#L30)) và `PostgresSessions` ([retailops/identity/postgres.py](../retailops/identity/postgres.py#L17)) định nghĩa `self.agent_lock = threading.Lock()`.
    - Trong `Application.chat()`, `agent_lock.acquire(blocking=False)` bao trùm toàn bộ hàm `chat()`, khiến 1 model call đang chạy làm nghẽn toàn bộ khách hàng khác trên server Waitress 8 threads.
-2. **Hiện Trạng Baseline Tại HEAD (`c30ff1d` / `d01f729`)**:
+2. **Baseline lịch sử (`c30ff1d` / `d01f729`, không phải HEAD PR B hiện tại)**:
    - `Application.chat()` ([retailops/business/application.py:172](../retailops/business/application.py#L172)) đã chuyển `agent_lock` sang chỉ kiểm tra `if self.agent_lock.locked():` (fast rejection), và đồng bộ hóa phiên bằng `conv_lock` per-conversation cùng `InferenceGate`/`GatedGateway` cho model permits.
    - **Tồn dư cần dọn sạch trong PR B**: Xóa bỏ hoàn toàn biến `self.agent_lock` trong `application.py` và identity sessions; thay thế bằng cơ chế Full-Request Chat Admission Limiter kết hợp với `InferenceGate` (admission giới hạn tối đa 6 chat được nhận xử lý đồng thời trên Waitress 8 workers, giảm nguy cơ chat chiếm hết worker; không bảo đảm luôn có hai worker rảnh hoặc một pool riêng).
 

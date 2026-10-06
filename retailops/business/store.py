@@ -651,10 +651,10 @@ class BusinessStore:
                 FROM graph_runs WHERE id=?''', (run_id,)).fetchone()
             return dict(row) if row else None
 
-    def history(self, customer, cid):
+    def history(self, customer, cid, limit=6):
         with self.connection() as db:
             rows = db.execute('''SELECT messages FROM agent_turns WHERE conversation_id=? AND customer_id=?
-                ORDER BY id DESC LIMIT 6''', (cid, customer)).fetchall()
+                ORDER BY id DESC LIMIT ?''', (cid, customer, limit)).fetchall()
         turns, characters, count = [], 0, 0
         preserved_recent_image = False
         for row in rows:
@@ -736,10 +736,6 @@ class BusinessStore:
             row = cursor.fetchone()
             turn_id = row['id'] if row and 'id' in row else (row[0] if row else getattr(cursor, 'lastrowid', None))
             result['turn_id'] = turn_id
-            # Prune turns beyond 6 to satisfy bounded conversation history contract
-            db.execute('''DELETE FROM agent_turns WHERE conversation_id=? AND id NOT IN
-                (SELECT id FROM agent_turns WHERE conversation_id=? ORDER BY id DESC LIMIT 6)''',
-                (snapshot['id'], snapshot['id']))
             self.log(db, customer, 'agent_replied', context['order_id'], trace=result['trace'])
             return turn_id
 

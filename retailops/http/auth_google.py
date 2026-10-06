@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import secrets
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -15,7 +16,8 @@ logger = logging.getLogger(__name__)
 
 # Ephemeral CSRF state store: state -> expiry_timestamp
 _STATES: Dict[str, float] = {}
-STATE_TTL_SECONDS = 900  # 15 minutes
+_STATE_LOCK = threading.Lock()
+STATE_TTL_SECONDS = 600  # 10 minutes (per RFC 6749 and SEC-01 spec)
 
 
 def _clean_env(name: str) -> str:
@@ -53,54 +55,60 @@ def _state_key() -> bytes:
     return hashlib.sha256(val.encode()).digest()
 
 
-def create_state() -> str:
-    """Generate and store a single-use random state token for CSRF protection."""
+def create_state(nonce: str) -> str:
+    """Generate and store a single-use state token bound to a browser transient cookie nonce."""
+    if not nonce or not isinstance(nonce, str):
+        raise ValueError("OAuth state requires non-empty string nonce for browser CSRF binding")
     now = time.time()
-    # Clean up expired in-memory states
-    expired = [k for k, exp in _STATES.items() if exp < now]
-    for k in expired:
-        _STATES.pop(k, None)
+    with _STATE_LOCK:
+        # Clean up expired in-memory states
+        expired = [k for k, exp in _STATES.items() if exp < now]
+        for k in expired:
+            _STATES.pop(k, None)
 
     token = secrets.token_urlsafe(24)
     exp = str(int(now + STATE_TTL_SECONDS))
-    msg = f"{token}:{exp}".encode("utf-8")
+    nonce_hash = hashlib.sha256(nonce.encode("utf-8")).hexdigest()[:16]
+    msg = f"{token}:{exp}:{nonce_hash}".encode("utf-8")
     sig = hmac.new(_state_key(), msg, hashlib.sha256).hexdigest()[:24]
-    state = f"{token}.{exp}.{sig}"
-    _STATES[state] = now + STATE_TTL_SECONDS
+    state = f"{token}.{exp}.{nonce_hash}.{sig}"
+
+    with _STATE_LOCK:
+        _STATES[state] = now + STATE_TTL_SECONDS
     return state
 
 
-def verify_and_consume_state(state: Optional[str]) -> bool:
-    """Verify that state exists and has not expired, then immediately invalidate it."""
-    if not state or not isinstance(state, str):
+def verify_and_consume_state(state: Optional[str], browser_nonce: Optional[str] = None) -> bool:
+    """Verify that state has 4 parts, signature and TTL are valid, matches browser_nonce, and atomically consume."""
+    if not state or not isinstance(state, str) or not browser_nonce or not isinstance(browser_nonce, str):
         return False
     now = time.time()
 
-    # Check HMAC signed format: token.exp.sig
     parts = state.split(".")
-    if len(parts) == 3:
-        token, exp_str, sig = parts
-        try:
-            exp = int(exp_str)
-        except ValueError:
-            return False
-        if now > exp:
-            return False
-        msg = f"{token}:{exp_str}".encode("utf-8")
-        expected_sig = hmac.new(_state_key(), msg, hashlib.sha256).hexdigest()[:24]
-        if not hmac.compare_digest(sig, expected_sig):
-            return False
+    if len(parts) != 4:
+        return False
+
+    token, exp_str, nonce_hash, sig = parts
+    try:
+        exp = int(exp_str)
+    except ValueError:
+        return False
+    if now > exp:
+        return False
+    msg = f"{token}:{exp_str}:{nonce_hash}".encode("utf-8")
+    expected_sig = hmac.new(_state_key(), msg, hashlib.sha256).hexdigest()[:24]
+    if not hmac.compare_digest(sig, expected_sig):
+        return False
+    expected_nonce_hash = hashlib.sha256(browser_nonce.encode("utf-8")).hexdigest()[:16]
+    if not hmac.compare_digest(nonce_hash, expected_nonce_hash):
+        return False
+    # Single-use atomic consume
+    with _STATE_LOCK:
         if token in _CONSUMED_STATES:
             return False
         _CONSUMED_STATES.add(token)
         _STATES.pop(state, None)
         return True
-
-    # Fallback to in-memory check for plain tokens
-    exp = _STATES.pop(state, None)
-    if exp is None:
-        return False
-    return exp >= now
 
 
 def get_google_auth_url(origin: str, state: str) -> str:

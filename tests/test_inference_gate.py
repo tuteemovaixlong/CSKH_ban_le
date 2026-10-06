@@ -62,11 +62,16 @@ class InferenceGateTests(unittest.TestCase):
             gate.enter()
         self.assertEqual(ctx.exception.status, 429)
         self.assertEqual(ctx.exception.code, "model_busy")
+        self.assertIn(('Retry-After', '5'), ctx.exception.headers)
 
         # Cleanup
         gate.exit()
         gate.exit()
         gate.exit()
+
+    def test_inference_queue_overflow_429(self):
+        """Canonical test name matching AC-09 specification."""
+        self.test_queue_overflow_raises_429_model_busy()
 
     def test_queue_timeout_raises_429_queue_timeout(self):
         gate = InferenceGate(concurrency=1, max_queue=2, queue_timeout=0.05)
@@ -79,6 +84,7 @@ class InferenceGateTests(unittest.TestCase):
 
         self.assertEqual(ctx.exception.status, 429)
         self.assertEqual(ctx.exception.code, "queue_timeout")
+        self.assertIn(('Retry-After', '5'), ctx.exception.headers)
         self.assertGreaterEqual(elapsed, 0.04)
         gate.exit()
 
@@ -200,6 +206,27 @@ class InferenceGateTests(unittest.TestCase):
                 gated.chat([{"role": "user", "content": "hi"}], False, 2.0)
             self.assertEqual(ctx.exception.status, 504)
             self.assertEqual(ctx.exception.code, "deadline_exceeded")
+
+    def test_telemetry_real_queue_wait_and_latency(self):
+        """Canonical test name matching AC-10 specification for F09 telemetry."""
+        gate = InferenceGate(concurrency=1, max_queue=2, queue_timeout=2.0)
+        target = FakeGateway(reply="hello", delay=0.02)
+        trace = {}
+        gated = GatedGateway(target, gate, trace=trace)
+
+        # Call 1
+        gated.chat([{"role": "user", "content": "msg 1"}], False, 10.0)
+        self.assertEqual(trace["model_calls"], 1)
+        self.assertEqual(trace["model_responses"], 1)
+        self.assertGreaterEqual(trace["provider_inference_ms"], 15.0)
+        self.assertGreaterEqual(gated.total_provider_inference_ms, 15.0)
+        prev_infer_ms = gated.total_provider_inference_ms
+
+        # Call 2 (accumulates N >= 0 model calls)
+        gated.chat_scoped([{"role": "user", "content": "msg 2"}], False, 10.0, None)
+        self.assertEqual(trace["model_calls"], 2)
+        self.assertEqual(trace["model_responses"], 2)
+        self.assertGreater(gated.total_provider_inference_ms, prev_infer_ms)
 
 
 if __name__ == "__main__":

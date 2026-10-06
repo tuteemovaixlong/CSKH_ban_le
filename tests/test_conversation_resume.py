@@ -148,6 +148,39 @@ class TestConversationResume(unittest.TestCase):
         self.assertEqual(ctx.exception.status, 403)
         self.assertEqual(ctx.exception.code, "permission_denied")
 
+    def test_chat_history_retained_beyond_six_turns(self):
+        """Canonical test for F12 / AC-11: chat history beyond 6 turns is retained in DB."""
+        conv_res = self.app.new_conversation("C-001", {"provider_id": "custom"})
+        cid = conv_res["conversation_id"]
+
+        # Run 8 turns
+        for i in range(1, 9):
+            self.model.replies = [{
+                "message": {"role": "assistant", "content": f"Trả lời lượt {i}"},
+                "done_reason": "stop"
+            }]
+            res = self.app.chat("C-001", {
+                "text": f"Câu hỏi lượt {i}",
+                "conversation_id": cid,
+                "request_id": f"req-retention-{i:03d}-12345678"
+            })
+            self.assertEqual(res["message"], f"Trả lời lượt {i}")
+
+        # 1. Verify in DB: all 8 turns are stored in agent_turns (no DELETE LIMIT 6)
+        with self.store.connection() as db:
+            row = db.execute("SELECT count(*) as cnt FROM agent_turns WHERE conversation_id=?", (cid,)).fetchone()
+            self.assertEqual(row["cnt"], 8)
+
+        # 2. Verify transcript API: GET /api/conversations/{id}/messages returns all 8 turns
+        status, transcript = api_result(self.app, "C-001", "GET", f"/api/conversations/{cid}/messages")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(transcript["turns"]), 8)
+
+        # 3. Verify store.history(customer, cid, limit=6) returns bounded window (at most 6 turns)
+        bounded_history = self.store.history("C-001", cid, limit=6)
+        self.assertLessEqual(len(bounded_history), 12)
+        self.assertTrue(any("Câu hỏi lượt 8" in m.get("content", "") for m in bounded_history))
+
 
 if __name__ == "__main__":
     unittest.main()

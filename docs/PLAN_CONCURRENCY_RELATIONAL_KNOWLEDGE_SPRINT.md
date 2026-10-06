@@ -1,8 +1,9 @@
 # KẾ HOẠCH TRIỂN KHAI: RUNTIME CONCURRENCY, DATA INTEGRITY & AUTH SECURITY SPRINT
 
 > **Mã kế hoạch:** `PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT`
-> **Trạng thái:** CANONICAL PR B SPEC — implementation waits for PR A/N08 acceptance; current P1.1 gate is documented in `N08_STOPPING_CONDITIONS.md`.
-> **Phiên bản:** 1.2 (2026-10-01)
+> **Trạng thái:** CANONICAL PR B SPEC — PR A/N08 merged `47ba72a`; #35 HEAD `5188dc0`. **AC-09 VERIFIED — P99 & ARTIFACT-INTEGRITY GATES PASSED**. CI measurement & artifact integrity đã verified; sẵn sàng bàn giao owner review merge.
+> **Phiên bản:** 1.4 (2026-10-06)
+> **Trạng thái nghiệm thu hiện hành:** [Hardening §4](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md#4-tiêu-chí-nghiệm-thu-toàn-diện-acceptance-criteria). Trigger: [AC09-ARTIFACT-INTEGRITY](PLAN_EXECUTION_HANDOFF_GPT6_ASTRA.md#122-trigger-ac09-artifact-integrity) đã hoàn thành. Cả hai workflow CI [run 37415921867](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37415921867) và Ops Console [run 37415921878](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37415921878) trả `completed/success`. Check/job API có 5/5 `completed/success` (`portable windows-latest`, `portable ubuntu-24.04`, `offline`, `postgres`, `colab-python313`). Dừng trước merge/deploy.
 > **Mục tiêu:** Hoàn thiện kiến trúc Bounded Concurrency (Phase 3: InferenceGate, conv_lock), Bảo toàn Lịch sử Chat (F12), Đồng bộ Cache Multi-tenant theo Tenant Scope (F13) và Bảo mật Xác thực OAuth (SEC-01). Phần SQL Relational Knowledge (PR C / Schema v5 / `product_policy_links`) chính thức HOÃN (DEFERRED / Future ADR) vì Schema v4 đã có sẵn thuộc tính bảo hành `warranty_days`.
 > **Cơ sở đối chiếu mã nguồn:** Commit baseline `070e042` trên nhánh `main` (kế thừa test suite lịch sử; mục tiêu sau khi hoàn thành PR A và PR B là đạt 415+ tests PASS bao phủ toàn diện các ca mới).
 
@@ -68,9 +69,11 @@ flowchart TD
 
 ## 3. Danh Mục Các Thay Đổi Cụ Thể Trong Mã Nguồn
 
+Các hành vi dưới đây là hợp đồng đích của sprint. Nhãn `PENDING TEST` còn giữ trong snapshot trước triển khai không đại diện trạng thái hiện hành; xem ma trận Hardening được liên kết ở đầu file. AC-09 đã VERIFIED trên CI candidate `5188dc0`; không dùng số test mục tiêu lịch sử để nghiệm thu candidate.
+
 Mọi hạng mục bắt buộc chuẩn hóa theo 4 thuộc tính: **Tệp & Hàm liên quan**, **Hành vi mong đợi**, **Test tương ứng**, và **Trạng thái**.
 
-### 3.1. Phần Concurrency: Dọn Dẹp `InferenceGate` & Bảo Đảm Headroom Toàn Request (F07) `[CHƯA KIỂM CHỨNG / PENDING TEST]`
+### 3.1. Phần Concurrency: Dọn Dẹp InferenceGate & Bảo Đảm Headroom Toàn Request (F07) [VERIFIED — AC-09]
 - **Tệp & Hàm liên quan:**
   - `retailops/bootstrap.py`: Cấu hình tham số Waitress (8 threads) và hàng đợi.
   - `retailops/inference_gate.py`: `InferenceGate.__init__()`, `enter()`, `exit()`, `get_conversation_lock()`.
@@ -85,12 +88,12 @@ Mọi hạng mục bắt buộc chuẩn hóa theo 4 thuộc tính: **Tệp & Hà
       $$\text{MAX\_INFLIGHT\_CHAT\_HANDLERS} \le \text{WAITRESS\_THREADS (8)} - \text{RESERVED\_THREADS (2)} = 6$$
     * Token request được acquire không chặn (`blocking=False`) ngay khi vừa nhận request tại adapter; nếu đã có 6 chat requests đang chiếm luồng, request thứ 7 bị từ chối ngay lập tức với HTTP 429 canonical error `server_busy` (kèm header `Retry-After: 5`) mà không động tới DB hay session store, giải phóng token trong khối `finally` của `PublicWeb`.
     * Ngân sách 6 chat requests áp dụng chung cho tổng các provider. **Admission giới hạn tối đa 6 chat được nhận xử lý đồng thời trên Waitress 8 workers, giảm nguy cơ chat chiếm hết worker; không bảo đảm luôn có hai worker rảnh hoặc một pool riêng.**
-    * **Mục tiêu nghiệm thu có điều kiện (Conditional Acceptance SLO)**: Trong kịch bản kiểm thử tải có kiểm soát (cấu hình 1 tiến trình / 8 workers, 6 chat request được giữ đồng thời bằng test barrier, giả lập DB/tools/model chậm, tài nguyên hệ thống không bị cạn kiệt), độ trễ P99 của `GET /healthz` và `GET /api/session` đạt $\le 50\text{ms}$. Phân biệt rạch ròi giữa tải bão hòa 6 chat được nhận xử lý với bão hòa do flood request bị từ chối hoặc DB bị khóa; không suy diễn độ trễ endpoint từ phép trừ số học $8 - 6$.
+    * **Mục tiêu nghiệm thu có điều kiện (Conditional Acceptance SLO)**: Một tiến trình / Waitress 8 workers, sáu chat được giữ bằng barrier, độ trễ DB/tools/model tổng hợp, P99 mỗi endpoint ≤50ms. Artifact CI [run 37415921867](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37415921867), ID `11390854372`: 10 batch × 100 mẫu/endpoint, nearest-rank P99 unrounded float đạt SLO $\le 50$ms; 60 chat HTTP 200, mọi batch có tool hook và saturation 1+5; bước kiểm tra độc lập `Validate headroom P99 measurement artifact integrity` PASS; 5/5 check-runs completed/success. **AC-09 VERIFIED — P99 & ARTIFACT-INTEGRITY GATES PASSED**; không suy diễn thành production SLO.
   - **Phân định rõ ràng mô hình đồng bộ 3 tầng (3-tier concurrency)**:
     1. *Tầng HTTP Request (Tier 1)*: Bounded Chat Admission Limiter tại `PublicWeb` (trước session/DB preflight; tối đa 6 request đồng thời chiếm thread, non-blocking acquire $\rightarrow$ loser nhận ngay 429 `server_busy` kèm `Retry-After: 5`).
     2. *Tầng Hội thoại (Tier 2)*: `conv_lock` non-blocking theo từng conversation key (bảo vệ replay, snapshot và semantic cache; loser nhận ngay 429 `model_busy`).
-    3. *Tầng Model I/O (Tier 3)*: `InferenceGate` cấp permit GPU chỉ trong thời gian gọi model thật ($K=1, Q=5$, chờ quá 10s $\rightarrow$ HTTP 429 canonical `queue_timeout` kèm `Retry-After: 5`).
-- **Test tương ứng:** `tests/test_inference_gate.py::test_inference_queue_overflow_429`, `tests/test_conversation.py::test_conversation_serialization_no_agent_lock`, `tests/test_http_headroom.py::test_healthz_latency_under_saturated_chat_load`.
+    3. *Tầng Model I/O (Tier 3)*: `InferenceGate` cấp permit GPU chỉ trong thời gian gọi model thật ($K=1, Q=5$, timeout runtime mặc định **10s** $\rightarrow$ HTTP 429 canonical `queue_timeout` kèm `Retry-After: 5`). Override **30s** chỉ dành cho fixture headroom test, không phải thay đổi runtime contract.
+- **Test tương ứng:** `tests/test_inference_gate.py`, `tests/test_http_headroom.py`; P99 measurement & artifact integrity CI đã verified (run 37415921867). AC-09 VERIFIED; sẵn sàng bàn giao owner merge.
 
 ### 3.2. Phần Relational Knowledge: Bảng `product_policy_links` (HOÃN — DEFERRED / FUTURE ADR)
 - **Định vị & Quyết định Kiến trúc:**
@@ -99,7 +102,7 @@ Mọi hạng mục bắt buộc chuẩn hóa theo 4 thuộc tính: **Tệp & Hà
   - **Giữ nguyên SQLite Business v3 và PostgreSQL Business v4** cho cả PR A và PR B; không thêm bất kỳ lệnh migration DDL nào.
   - Hoãn bảng `product_policy_links` làm Future ADR cho giai đoạn sau khi cần quan hệ đa chiều phức tạp.
 
-### 3.3. Phần Data Integrity: Bảo Toàn Lịch Sử Chat (F12) `[CHƯA KIỂM CHỨNG / PENDING TEST]`
+### 3.3. Phần Data Integrity: Bảo Toàn Lịch Sử Chat (F12) `[VERIFIED — AC-11]`
 - **Tệp & Hàm liên quan:**
   - `retailops/business/store.py`: `finish_turn()`, `history()`.
 - **Hành vi mong đợi:**
@@ -108,7 +111,7 @@ Mọi hạng mục bắt buộc chuẩn hóa theo 4 thuộc tính: **Tệp & Hà
   - Chuyển logic giới hạn cửa sổ ngữ cảnh (bounded window 6 lượt) sang hàm `store.history(customer, cid)` (API dự kiến mở rộng hỗ trợ tham số `limit=6`) khi nạp context gửi vào prompt của LLM.
 - **Test tương ứng:** `tests/test_conversation_resume.py::test_chat_history_retained_beyond_six_turns`.
 
-### 3.4. Phần Cache Sync & Xử Lý Race Condition Khi Invalidate (F13) `[CHƯA KIỂM CHỨNG / PENDING TEST]`
+### 3.4. Phần Cache Sync & Xử Lý Race Condition Khi Invalidate (F13) `[VERIFIED — AC-12]`
 - **Tệp & Hàm liên quan:**
   - `retailops/business/cache.py`: `ToolCache`.
   - `retailops/http/routes.py`: `POST /api/manager/orders/update-status` (dòng 399–415).
@@ -125,7 +128,7 @@ Mọi hạng mục bắt buộc chuẩn hóa theo 4 thuộc tính: **Tệp & Hà
   5. *Phạm vi*: Đóng gói an toàn trong tiến trình đơn máy chủ (in-process single-node WSGI).
 - **Test tương ứng:** `tests/test_business_api.py::test_manager_update_status_invalidates_tenant_cache`, `tests/test_tool_cache_concurrency.py::test_tool_cache_invalidation_race_discard`.
 
-### 3.5. Phần Bảo Mật Xác Thực: Chống OAuth Login CSRF (SEC-01) `[CHƯA KIỂM CHỨNG / PENDING TEST]`
+### 3.5. Phần Bảo Mật Xác Thực: Chống OAuth Login CSRF (SEC-01) `[VERIFIED — AC-13]`
 - **Tệp & Hàm liên quan:**
   - `retailops/http/auth_google.py`: Quản lý state OAuth, ký HMAC, verify và atomic consume state.
   - `retailops/http/public.py`: Tuyến điều phối `/auth/google/login` và `/auth/google/callback` trong `PublicWeb.route()`.
@@ -146,7 +149,7 @@ Mọi hạng mục bắt buộc chuẩn hóa theo 4 thuộc tính: **Tệp & Hà
      - **Cơ chế Trả Set-Cookie Header Khi Lỗi**: Trong `retailops/http/public.py:20–35` (`PublicWeb.__call__`), để cookie cleanup thực sự được gửi tới trình duyệt trên các luồng lỗi, route callback trả về tuple phản hồi chuẩn: `(status, error_body, "text/html; charset=utf-8", [("Set-Cookie", "retailops_oauth_transient=; Path=/auth/google; Max-Age=0; Secure; HttpOnly; SameSite=Lax")])`. Tuyệt đối không redirect mù quáng khi gặp vi phạm bảo mật.
 - **Test tương ứng:** `tests/test_auth_google.py::test_oauth_csrf_state_binding`, `tests/test_auth_google.py::test_oauth_tampered_state_rejected`, `tests/test_auth_google.py::test_oauth_expired_state_rejected`, `tests/test_auth_google.py::test_oauth_cookie_cleanup_on_error`.
 
-### 3.6. Phần Telemetry Thật: Từ Gateway Đến Application & Ops Importer (F09) `[CHƯA KIỂM CHỨNG / PENDING TEST]`
+### 3.6. Phần Telemetry Thật: Từ Gateway Đến Application & Ops Importer (F09) `[VERIFIED — AC-10]`
 - **Tệp & Hàm liên quan:**
   - `retailops/inference_gate.py`: `enter()`, `exit()`.
   - `retailops/business/application.py`: `chat()`.
@@ -169,6 +172,8 @@ Mọi hạng mục bắt buộc chuẩn hóa theo 4 thuộc tính: **Tệp & Hà
 ---
 
 ## 4. Ma Trận Nghiệm Thu (Verification Criteria)
+
+**Snapshot thiết kế trước triển khai:** các hàng C/D/S/K dưới đây giữ tiêu chí và nhãn của baseline lịch sử. Trạng thái nghiệm thu PR A/B hiện hành nằm tại [ma trận AC-01–AC-15](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md#4-tiêu-chí-nghiệm-thu-toàn-diện-acceptance-criteria); AC-09 VERIFIED, không mở lại N08 từ các nhãn pending lịch sử này.
 
 | Mã | Kịch bản kiểm thử | Hành vi kỳ vọng | File kiểm thử | Trạng thái |
 | :---: | :--- | :--- | :--- | :---: |

@@ -1,11 +1,10 @@
 # BÁO CÁO TIẾN ĐỘ & TRẠNG THÁI HỆ THỐNG RETAILOPS 2026
 
 > **Trạng thái:** ACTIVE OPERATIONAL STATUS & EVIDENCE REPORT<br>
-> **Audit basis / Documentation baseline reviewed:** `b93eb5a`<br>
-> **Application snapshot đối chiếu:** Nhánh `main` tại commit `c6c7a1a`<br>
-> **Kiểm thử & CI:** Đã sửa fail-open trong `IdentityStore.resolve()`; regression bao phủ customer-link mismatch, fault injection 3 loại lookup, late takeover và toàn bộ role non-customer (`staff`, `manager`, `viewer`). Local suite đạt 429 PASS / 50 SKIP (36 test_postgres, 11 test_rag_chat, 2 test_knowledge, 1 test_public_web do thiếu PostgreSQL local DSN/Waitress). Code patch `c4e9976`; final docs tree `eebe8ed` được CI run 37197602401 xác nhận SUCCESS (head_sha = eebe8ed): host suite 479/479 PASS (0 SKIP); container suite 478 PASS / 1 SKIP. CI run 37196429628 trên `c4e9976` là bằng chứng lịch sử của code patch. PR A đủ điều kiện chuyển sang review / nghiệm thu; merge là quyết định riêng; PR B chưa bắt đầu. Xem [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).<br>
+> **Rà soát toàn diện trước đây:** tài liệu `b93eb5a`, application snapshot `main` tại `c6c7a1a` (lịch sử, không đại diện trạng thái PR hiện tại).<br>
+> **Đồng bộ Module 2.5 ngày 2026-10-06:** PR #34 merged tại `47ba72a`. PR #35 HEAD `5188dc0`; **AC-09 VERIFIED — P99 & ARTIFACT-INTEGRITY GATES PASSED**. Artifact CI [run 37415921867](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37415921867), ID `11390854372`: 10 batch × 100 mẫu/endpoint, nearest-rank P99 unrounded float đạt SLO $\le 50$ms; 60 chat HTTP 200, tool hook và saturation 1+5; bước kiểm tra độc lập `Validate headroom P99 measurement artifact integrity` PASS; 5/5 check-runs completed/success; chưa merge/deploy; sẵn sàng bàn giao chủ dự án review merge. Xem <a href="review%20gpt%206%20astra.md">review hiện hành</a>.
 > **EC2 Host:** `retailops-dev` / `i-0fd116d8927d0e412` / **t3.large** (Sẵn sàng tắt máy sau phiên làm việc để tối ưu chi phí cloud)<br>
-> **Deploy status:** Main baseline đã có container build/live rolling deploy PASS; candidate `feature/module-2.5-pr-a` chưa deploy lên EC2 theo mục 2.9; instance sẵn sàng kích hoạt lại khi bật.<br>
+> **Deploy status:** Baseline lịch sử đã có container build/live rolling deploy PASS; PR A/N08 đã merge trong Git, không suy ra đã deploy. PR B/#35 chưa deploy; review này không thực hiện kiểm tra EC2 live.<br>
 > **Lộ trình kỹ thuật tổng thể:** Xem chi tiết tại [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md)<br>
 > **Kế hoạch đợt build tiếp theo:** [PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT.md](PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT.md)<br>
 > **Báo cáo sự cố & bàn giao:** [INCIDENT_RECOVERY_2026-09-21.md](INCIDENT_RECOVERY_2026-09-21.md) và [SESSION_HANDOFF_2026-10-03.md](SESSION_HANDOFF_2026-10-03.md)
@@ -18,12 +17,12 @@ Theo chuẩn phân cấp minh chứng của [`RELEASE_MANIFEST.md`](RELEASE_MANI
 
 | Module | Tên Module | Mức Triển Khai | Cấp Minh Chứng (Evidence) | Tồn Đọng Kỹ Thuật Chính (Gaps) |
 | :--- | :--- | :--- | :--- | :--- |
-| **Module 1** | **Hệ Thống Lõi TMĐT, 6 SOPs & MCP Server** | **IMPLEMENTED** | **L1/L3 hỗn hợp** *(353+ tests PASS, Staff Desk & Manager SSOT healthy)* | Đã hoàn tất Phase 1.1 (Truthful UX) và Phase 1.2 (Store Manager Persistence & Shared Catalog SSOT: bảng `products`, `product_variants` vào PostgreSQL v4 / SQLite v3, đồng bộ `check_inventory`, `dispute_agent`, audit events toàn shop). Còn tồn đọng các ca rò rỉ context F04–F06. |
+| **Module 1** | **Hệ Thống Lõi TMĐT, 6 SOPs & MCP Server** | **IMPLEMENTED** | **L1/L3 hỗn hợp** *(353+ tests PASS là bằng chứng lịch sử; không xác nhận live hiện tại)* | Đã hoàn tất Phase 1.1 (Truthful UX) và Phase 1.2 (Store Manager Persistence & Shared Catalog SSOT: bảng `products`, `product_variants` vào PostgreSQL v4 / SQLite v3, đồng bộ `check_inventory`, `dispute_agent`, audit events toàn shop). F04–F06 đã được kiểm chứng trong PR A/#34 merged; AC-09 của PR B đã VERIFIED trong candidate; bước tiếp theo là merge/verification trên main. |
 | **Module 2** | **Đo Baseline Benchmark Cơ Sở & Ops Console** | **IMPLEMENTED** | **L1/L3 hỗn hợp** *(250 ca offline 100% Routing, 19/19 Ops Console tests OK)* | Hoàn tất Phase 1.3 (`PLAN_FIX_UI_03`): Bỏ chia 3 token, chi phí chưa đo để Unknown/None, chuẩn hóa nhãn E2E Request Latency, mở rộng allowlist Usage, bổ sung concurrency telemetry (`queue_wait_ms`, `in_flight_inferences`, `overload_429_count`). |
-| **Module 2.5** | **Kiểm Thử & Ổn Định Vận Hành (Quality Gate)** | **PR A VERIFIED; ĐỦ ĐIỀU KIỆN REVIEW/NGHIỆM THU** | **CI run 37197602401 SUCCESS trên final tree eebe8ed (code patch c4e9976); Host 479/479 PASS (0 SKIP), Container 478 PASS / 1 SKIP** *([PLAN_MODULE_2_5_HARDENING_VERIFICATION.md](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md))* | Đã sửa fail-closed trong `IdentityStore.resolve()`; regression bao phủ customer-link mismatch, fault injection, late takeover và các role `staff`, `manager`, `viewer`. Đã kiểm chứng 100% trên cả SQLite local lẫn PostgreSQL CI. PR A sẵn sàng review nghiệm thu; merge main là bước riêng; chưa deploy EC2, chưa bắt đầu PR B. Xem [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md). |
+| **Module 2.5** | **Kiểm Thử & Ổn Định Vận Hành (Quality Gate)** | **AC-09 VERIFIED — READY FOR OWNER MERGE REVIEW** | **PR #34 merged; #35 HEAD `5188dc0`** | CI run 37415921867 PASS, Artifact ID 11390854372 đã xác minh integrity; 5/5 check runs completed/success; dừng trước merge/deploy. |
 | **Module 3** | **Webhook Facebook Messenger (Omnichannel)** | **PLANNED** | **Design-only** *([PLAN_OMNICHANNEL_INTEGRATION.md](PLAN_OMNICHANNEL_INTEGRATION.md))* | Chờ hoàn tất nghiệm thu Module 2.5 trước khi mở cổng webhook tiếp nhận tin nhắn từ Meta API (xếp vào Phase 5 Demo). |
 | **Module 4** | **Cổng Quét Mã QR Demo Live** | **PARTIAL** | **L3** *(HTTPS sslip.io, Web mobile responsive)* | Đã có hạ tầng web di động sẵn sàng cho demo; Chưa có module sinh mã QR động / thẻ QR demo (xếp vào Phase 5 Demo). |
-| **Module 5** | **Self-Hosted vLLM & Serving Model Agentic** | **IMPLEMENTED / PARTIAL** | **Runtime-dependent** *(Colab L4 vLLM + ngrok)* | Đã tối ưu CUDA Graphs, prefix caching, fp8 kv cache và xử lý an toàn ảnh text-only. Cần hoàn tất chuẩn hóa headroom và timeout gate ở Module 2.5 PR B. |
+| **Module 5** | **Self-Hosted vLLM & Serving Model Agentic** | **IMPLEMENTED / PARTIAL** | **Runtime-dependent** *(Colab L4 vLLM + ngrok)* | Đã tối ưu CUDA Graphs, prefix caching, fp8 kv cache và xử lý an toàn ảnh text-only. Headroom/timeout gate đã VERIFIED trong PR B candidate; cần merge và verification trước evaluation model live. |
 | **Module 6** | **Đo Lường Evaluation Đối Chứng Luận Văn** | **PARTIAL** | **L1 offline (250 ca) + Runtime note EC2** | Offline Benchmark 250 ca đạt 100.0%; Full Live Benchmark 250 ca trên EC2 và đối chứng DeepSeek sẽ thực thi tại Phase 4 Scientific Evaluation sau Module 2.5. |
 
 ---
@@ -84,8 +83,8 @@ Theo chuẩn phân cấp minh chứng của [`RELEASE_MANIFEST.md`](RELEASE_MANI
   - Model `yuxinlu1/gemma-4-12B-agentic` là kiến trúc CausalLM thuần văn bản. Việc gửi token Base64 hình ảnh vào vLLM khiến engine bị nghẽn không thể giải mã hình ảnh.
   - Tách bạch hàm `is_vision_model()`: Với text-only models, tự động trích xuất thông tin ảnh thành ngữ cảnh văn bản an toàn (chẳng hạn metadata mô tả ảnh), không gửi chuỗi Base64 làm treo engine.
 
-### 2.9. Tiến Độ Triển Khai PR A & Hiện Trạng Nghiệm Thu N08 (Phiên 02/10/2026 - 04/10/2026)
-> **Trạng thái:** PR A VERIFIED trên cả SQLite local lẫn PostgreSQL CI (code patch `c4e9976`; CI run 37197602401 SUCCESS trên final tree `eebe8ed`); **ĐỦ ĐIỀU KIỆN CHUYỂN SANG REVIEW / NGHIỆM THU PR A**. Quyết định merge main là bước riêng; PR B chưa bắt đầu. Xem [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md).<br>
+### 2.9. Tiến Độ Triển Khai PR A & Hiện Trạng Nghiệm Thu N08 (Phiên 02/10/2026 - 05/10/2026)
+> **Trạng thái:** PR A/N08 merged `47ba72a`; PR #35 HEAD `5188dc0`. **AC-09 VERIFIED — P99 & ARTIFACT-INTEGRITY GATES PASSED**. Artifact CI [run 37415921867](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37415921867), ID `11390854372`: 10 batch × 100 mẫu/endpoint, nearest-rank P99 unrounded float đạt SLO $\le 50$ms; 60 chat HTTP 200, mọi batch có tool hook và saturation 1+5; bước kiểm tra độc lập `Validate headroom P99 measurement artifact integrity` PASS; 5/5 check-runs completed/success; chưa merge/deploy; sẵn sàng bàn giao chủ dự án review merge. Xem <a href="review%20gpt%206%20astra.md">review hiện hành</a>.
 > *(Lưu ý lịch sử: Ngày 02/10/2026, N08 từng bị tạm giữ do môi trường Windows thiếu PostgreSQL live cục bộ; đến phiên 03/10/2026, toàn bộ integration test đã được xác thực 100% xanh trên CI container thật `fe25f67`. Sau đó review phát hiện guard session fail-open, trigger `N08-P11-RESOLVE-FAIL-CLOSED` đã đóng dứt điểm lỗ hổng này vào 04/10/2026).*
 
 - **N03 (An Toàn Dữ Liệu & Error Masking - ĐÃ ĐẠT)**:
@@ -124,10 +123,12 @@ Theo chuẩn phân cấp minh chứng của [`RELEASE_MANIFEST.md`](RELEASE_MANI
       - **Session Safety guard đã khắc phục (`IdentityStore.resolve`):** theo trigger `N08-P11-RESOLVE-FAIL-CLOSED`, bọc kiểm tra an toàn trong khối fail-closed; không nuốt `ApiError`; nếu `customer_links.customer_id` trỏ tới customer unresolved, từ chối ngay 503 `collision_unresolved`; mọi lỗi truy vấn safety (bảng/DB lỗi) đều fail-closed 503 an toàn và ghi log nội bộ. Role non-customer (`staff`, `manager`, `viewer`) resolve bình thường, không bị ảnh hưởng.
       - **Step 3:** recheck ownership dưới lock và giữ journal `business_committed` khi late takeover; kịch bản membership-ID unresolved hiện có regression cho session cũ, API `GET /api/orders` và retry. Đã bổ sung regression mismatch customer-link và fault injection query-failure cho `resolve()`.
       - **Regression test hai backend:** `tests/reconcile_interleaving_cases.py` tích hợp kiểm thử 4 nội dung: (1) late takeover 503 orders + retry safe; (2) customer_links mismatch unresolved 503; (3) query failure fail-closed 503; (4) non-customer roles (`staff`, `manager`, `viewer`) unaffected. Chạy đạt 100% OK trên local test suite.
-- **Trạng thái kiểm thử & xác thực CI (04/10/2026)**:
-  - **Môi trường máy trạm Windows:** Local test suite: **429 PASS, 50 SKIP, 0 FAIL/ERROR** trên 479 tests (50 tests SKIP gồm 36 tests `tests/test_postgres.py`, 11 tests `tests/test_rag_chat.py`, 2 tests `tests/test_knowledge.py`, 1 test `tests/test_public_web.py` do thiếu DSN/Waitress local); bộ test PR A chạy độc lập đạt **56/56 PASS**; 4/4 cổng hợp đồng (docs, deployment, eval dataset, notebook) đạt **PASS 100%**.
-  - **Môi trường GitHub Actions CI Runner (PostgreSQL 16 + pgvector container thật & Caddy live):** CI run 37197602401 (head_sha `eebe8ed`, final tree) đạt **SUCCESS**; CI run 37196429628 trên code patch `c4e9976` là bằng chứng lịch sử với cùng kết quả. Run 37197602401: Host suite đạt **479/479 PASS (0 SKIP)**; packaged container suite đạt **478 PASS / 1 SKIP** (`test_colab_agent_notebook_sync` bỏ qua do không có `scripts/build_agent_notebook.py` trong image); live HTTPS deployment đạt `POSTGRES_HTTPS_IMPORT_RESTORE_OK`.
-  - **KẾT LUẬN HIỆN TẠI:** Blocker P1.1 fail-closed, role boundary, fault injection và toàn bộ PostgreSQL integration tests đã được xác minh thành công. PR A đủ điều kiện chuyển sang bước review / nghiệm thu code; chưa merge vào main, chưa deploy lên EC2, chưa bắt đầu PR B.
+- **Trạng thái kiểm thử & xác thực CI (06/10/2026)**:
+  - **Bằng chứng lịch sử:** snapshot `24ec244d` (run 37326589577) từng đạt P99 1.005/3.538ms nhưng chưa có fail-closed artifact check.
+  - **Snapshot được reviewer đối chiếu:** HEAD `5188dc0838c12d5c1e3fcfc3edacaba4422c6905` (docs sync), code patch `8ba66c8`. Reviewer focused: **6 tests = 4 PASS / 2 SKIP / 0 FAIL / 0 ERROR**; hai SKIP do thiếu Waitress. Gemini báo 6 PASS / 0 SKIP ở môi trường có Waitress; không gộp hai nguồn.
+  - **GitHub Actions:** Cả hai workflow CI [run 37415921867](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37415921867) và Ops Console [run 37415921878](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37415921878) đều đạt `completed/success`. Tất cả 5/5 check runs API (`portable windows`, `portable ubuntu`, `offline`, `postgres`, `colab-python313`) đều `completed/success`.
+  - **Artifact CI:** ID `11390854372`, tên `headroom-p99-artifact-c2d65fffe76bcc9284fedf0072ec4e381f29d95f`. Bước `Validate headroom P99 measurement artifact integrity` chạy độc lập kiểm tra đầy đủ 10 batches × 100 mẫu/endpoint (1.000 samples), 60 chat HTTP 200, tool hook, bão hòa 1+5, unrounded P99 $\le 50$ms. Provenance synthetic merge SHA `c2d65fffe76bcc9284fedf0072ec4e381f29d95f` có parents `47ba72a` và `5188dc0` khớp 100% git tree candidate.
+  - **KẾT LUẬN HIỆN TẠI:** **AC-09 VERIFIED — P99 & ARTIFACT-INTEGRITY GATES PASSED**. Trigger `AC09-ARTIFACT-INTEGRITY` đã đóng hoàn tất. Sẵn sàng bàn giao chủ dự án duyệt merge PR #35 → verification sau merge trên main → Phase 4. Không deploy/EC2 ở bước này.
 
 ---
 
@@ -141,9 +142,9 @@ Hệ thống tuân thủ nghiêm ngặt lộ trình phụ thuộc kỹ thuật 7
   - PR 1.2: [PLAN_FIX_UI_02_MANAGER_PERSISTENCE.md](PLAN_FIX_UI_02_MANAGER_PERSISTENCE.md) (**ĐÃ HOÀN THÀNH** — Merged main `a6ec080`, CI/CD stabilized `d7ce461`).
   - PR 1.3: [PLAN_FIX_UI_03_OPSCONSOLE_INTEGRITY.md](PLAN_FIX_UI_03_OPSCONSOLE_INTEGRITY.md) (**ĐÃ HOÀN THÀNH** — Truthful Telemetry & Concurrency telemetry merged).
 * **Module 2.5 (Quality Gate)**: System Hardening & Verification ([PLAN_MODULE_2_5_HARDENING_VERIFICATION.md](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md))
-  - **PR A**: Context, Cache & Dispute Correctness + Account Identity N08 (**VERIFIED; ĐỦ ĐIỀU KIỆN REVIEW / NGHIỆM THU** — P1.1 đã có fix fail-closed và regression đầy đủ trong shared harness; SQLite local pass 56/56 PR A; CI run 37197602401 trên final tree `eebe8ed` (code patch `c4e9976`) đạt SUCCESS trên PostgreSQL container. PR A sẵn sàng nghiệm thu; merge main là bước riêng; chưa deploy EC2, chưa bắt đầu PR B).
-  - **PR B**: Concurrency, Headroom & Truthful Telemetry (Khắc phục F07, F09, BUG-01, BUG-04).
-  - **PR C**: Relational Knowledge & Clean Schema Migration (Khắc phục F10; chính thức thay thế Apache AGE trên EC2 bằng SQL Relational Linkage).
+  - **PR A**: Context, Cache & Dispute Correctness + Account Identity N08 (MERGED — PR #34 tại 47ba72a; CI nghiệm thu PR A đã hoàn tất).
+  - **PR B**: Concurrency, Headroom & Truthful Telemetry (#35 HEAD `5188dc0`; **AC-09 VERIFIED — P99 & ARTIFACT-INTEGRITY GATES PASSED**; sẵn sàng bàn giao chủ dự án review merge).
+  - **PR C**: Relational Knowledge & Clean Schema Migration — **DEFERRED / Future ADR**, ngoài phạm vi PR B và không chặn bước đo Phase 4.
 * **Phase 4**: Đo lường thực nghiệm khoa học (Concurrency load test, Đối kháng Gemma-4 vs DeepSeek API trên 250 ca) phục vụ Chương 4 Luận văn.
 * **Phase 5**: Demo Enhancements (Facebook Messenger Webhook & Cổng QR Live).
 * **Phase 6**: Post-Thesis Scaling (Distillation, LoRA Fine-Tuning, AWS Multi-AZ).
@@ -246,6 +247,7 @@ sudo python3 /opt/retailops/live-e2e.py --mode smoke
    ```bash
    python -m unittest discover -s tests -p "test_*.py"
    ```
-   *(Kỳ vọng lịch sử: 470 tests cũ; hiện tại test suite là 479 tests)*
+   *(Số 470/479 tests là lịch sử; ghi số tests thực tế cùng SHA của mỗi lần chạy, không đặt làm kết quả HEAD hiện hành.)*
 4. **Bước tiếp theo theo lộ trình dự án:**
-   - (Hiện hành) CI trên final tree `eebe8ed` đã SUCCESS (run 37197602401); bước tiếp theo là review / nghiệm thu PR A; PR B chưa bắt đầu.
+   - (Hiện hành) PR #34 merged `47ba72a`; PR #35 HEAD `5188dc0`. CI P99 và artifact integrity đã verified (run 37415921867, artifact 11390854372). Sẵn sàng bàn giao owner merge → verification sau merge trên main → Phase 4. Không cần bật EC2.
+

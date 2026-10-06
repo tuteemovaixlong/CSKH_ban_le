@@ -254,9 +254,10 @@ class SemanticCache:
 
 
 class ToolCache:
-    """Short-term read cache for deterministic business tools (get_order, get_product).
+    """Short-term read cache for deterministic business tools (get_order, search_knowledge).
     
-    Automatically invalidates customer orders when a mutation tool runs.
+    Supports multi-tenant scoping, epoch tracking, and Compare-and-Set (CAS) to prevent
+    in-flight stale writes from overwriting invalidated cache entries.
     """
 
     CACHEABLE_TOOLS = {'get_order', 'search_knowledge'}
@@ -265,16 +266,61 @@ class ToolCache:
     def __init__(self, default_ttl: float = 180.0):
         self.default_ttl = default_ttl
         self._cache: Dict[str, Dict[str, Any]] = {}
+        self._epochs: Dict[Tuple[str, str], int] = {}
         self._lock = threading.Lock()
 
-    def _key(self, customer: str, tool_name: str, arguments: Dict[str, Any]) -> str:
-        args_str = json.dumps(arguments, sort_keys=True, separators=(',', ':'))
-        return f"{customer}:{tool_name}:{args_str}"
+    def _normalize_tenant_cust(self, tenant_or_cust: Optional[str], cust_or_none: Optional[str] = None) -> Tuple[str, Optional[str]]:
+        if cust_or_none is not None:
+            return str(tenant_or_cust or 'default'), str(cust_or_none)
+        return 'default', str(tenant_or_cust) if tenant_or_cust else None
 
-    def get(self, customer: str, tool_name: str, arguments: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _key(self, tenant_id: str, customer: str, tool_name: str, arguments: Dict[str, Any]) -> str:
+        args_str = json.dumps(arguments, sort_keys=True, separators=(',', ':'))
+        return f"{tenant_id}:{customer}:{tool_name}:{args_str}"
+
+    def get_epoch(self, tenant_id: Optional[str] = None, customer: Optional[str] = None) -> int:
+        t, c = self._normalize_tenant_cust(tenant_id, customer)
+        if c is None:
+            return 0
+        with self._lock:
+            return self._epochs.get((t, c), 0)
+
+    def bump_epoch(self, tenant_id: Optional[str] = None, customer: Optional[str] = None) -> int:
+        """Bump epoch for (tenant, customer) and invalidate corresponding cache entries."""
+        t, c = self._normalize_tenant_cust(tenant_id, customer)
+        with self._lock:
+            if c is not None:
+                new_epoch = self._epochs.get((t, c), 0) + 1
+                self._epochs[(t, c)] = new_epoch
+            else:
+                for (cur_t, cur_c) in list(self._epochs.keys()):
+                    if cur_t == t:
+                        self._epochs[(cur_t, cur_c)] = self._epochs.get((cur_t, cur_c), 0) + 1
+                new_epoch = 0
+
+            keys_to_delete = []
+            for k, v in self._cache.items():
+                if v.get('tenant_id') == t:
+                    if c is None or v.get('customer') == c:
+                        keys_to_delete.append(k)
+            for k in keys_to_delete:
+                del self._cache[k]
+            return self._epochs.get((t, c), 0) if c is not None else new_epoch
+
+    def get(self, *args, **kwargs) -> Optional[Dict[str, Any]]:
+        # Supports get(tenant_id, customer, tool_name, arguments) OR get(customer, tool_name, arguments)
+        if len(args) == 4:
+            tenant_id, customer, tool_name, arguments = args
+        elif len(args) == 3:
+            tenant_id = kwargs.get('tenant_id', 'default')
+            customer, tool_name, arguments = args
+        else:
+            raise TypeError("ToolCache.get takes 3 or 4 positional arguments")
+
+        tenant_id = str(tenant_id or 'default')
         if tool_name not in self.CACHEABLE_TOOLS:
             return None
-        key = self._key(customer, tool_name, arguments)
+        key = self._key(tenant_id, customer, tool_name, arguments)
         now = time.time()
         with self._lock:
             item = self._cache.get(key)
@@ -285,46 +331,102 @@ class ToolCache:
                 del self._cache[key]
         return None
 
-    def set(self, customer: str, tool_name: str, arguments: Dict[str, Any], result: Dict[str, Any],
-            ttl: Optional[float] = None) -> None:
+    def set(self, *args, **kwargs) -> bool:
+        # Supports set(tenant_id, customer, tool_name, arguments, result, ttl=None, read_epoch=None)
+        # OR set(customer, tool_name, arguments, result, ttl=None, read_epoch=None, tenant_id='default')
+        ttl = kwargs.get('ttl')
+        read_epoch = kwargs.get('read_epoch')
+        if len(args) >= 5:
+            if isinstance(args[2], str):
+                tenant_id, customer, tool_name, arguments, result = args[:5]
+                if len(args) > 5 and ttl is None:
+                    ttl = args[5]
+                if len(args) > 6 and read_epoch is None:
+                    read_epoch = args[6]
+            else:
+                tenant_id = kwargs.get('tenant_id', 'default')
+                customer, tool_name, arguments, result = args[:4]
+                if len(args) > 4 and ttl is None:
+                    ttl = args[4]
+                if len(args) > 5 and read_epoch is None:
+                    read_epoch = args[5]
+        elif len(args) == 4:
+            tenant_id = kwargs.get('tenant_id', 'default')
+            customer, tool_name, arguments, result = args
+        else:
+            raise TypeError("ToolCache.set requires at least 4 arguments")
+
+        tenant_id = str(tenant_id or 'default')
         if tool_name not in self.CACHEABLE_TOOLS or not isinstance(result, dict):
-            return
+            return False
         if result.get('error'):
-            return  # Do not cache error responses
-        key = self._key(customer, tool_name, arguments)
+            return False  # Do not cache error responses
+
         now = time.time()
         duration = ttl if ttl is not None else self.default_ttl
+        key = self._key(tenant_id, customer, tool_name, arguments)
         with self._lock:
+            current_epoch = self._epochs.get((tenant_id, customer), 0)
+            if read_epoch is not None and read_epoch != current_epoch:
+                # Discard stale in-flight write (CAS failed)!
+                return False
             self._cache[key] = {
                 'result': result,
                 'expires_at': now + duration,
                 'hits': 0,
-                'customer': customer
+                'customer': customer,
+                'tenant_id': tenant_id,
+                'epoch': current_epoch
             }
+            return True
 
-    def invalidate(self, customer: str, order_id: Optional[str] = None) -> int:
-        """Invalidate cache entries for a customer upon mutation."""
+    def invalidate(self, *args, **kwargs) -> int:
+        order_id = kwargs.get('order_id')
+        tenant_id = kwargs.get('tenant_id')
+        customer = kwargs.get('customer')
+
+        if len(args) == 3:
+            tenant_id, customer, order_id = args
+        elif len(args) == 2:
+            if isinstance(args[1], str) and args[1].startswith('O-'):
+                customer, order_id = args
+                tenant_id = tenant_id or 'default'
+            else:
+                tenant_id, customer = args
+        elif len(args) == 1:
+            customer = args[0]
+            tenant_id = tenant_id or 'default'
+
+        tenant_id = str(tenant_id or 'default')
         removed = 0
         with self._lock:
+            if customer is not None:
+                self._epochs[(tenant_id, customer)] = self._epochs.get((tenant_id, customer), 0) + 1
+            else:
+                for (cur_t, cur_c) in list(self._epochs.keys()):
+                    if cur_t == tenant_id:
+                        self._epochs[(cur_t, cur_c)] = self._epochs.get((cur_t, cur_c), 0) + 1
+
             keys_to_delete = []
             for k, v in self._cache.items():
-                if v.get('customer') == customer:
-                    if order_id is None or order_id in k:
-                        keys_to_delete.append(k)
+                if v.get('tenant_id') == tenant_id:
+                    if customer is None or v.get('customer') == customer:
+                        if order_id is None or order_id in k:
+                            keys_to_delete.append(k)
             for k in keys_to_delete:
                 del self._cache[k]
                 removed += 1
         return removed
 
-    def invalidate_product(self, product_id: Optional[str] = None) -> int:
-        """Invalidate cached product entries upon catalog mutation."""
+    def invalidate_product(self, tenant_id: Optional[str] = None, product_id: Optional[str] = None) -> int:
         removed = 0
         with self._lock:
             keys_to_delete = []
             for k, v in self._cache.items():
-                if ':get_product:' in k or ':list_products:' in k:
-                    if product_id is None or (product_id and product_id in k):
-                        keys_to_delete.append(k)
+                if tenant_id is None or v.get('tenant_id') == tenant_id:
+                    if ':get_product:' in k or ':list_products:' in k:
+                        if product_id is None or (product_id and product_id in k):
+                            keys_to_delete.append(k)
             for k in keys_to_delete:
                 del self._cache[k]
                 removed += 1
@@ -333,3 +435,4 @@ class ToolCache:
     def clear(self):
         with self._lock:
             self._cache.clear()
+            self._epochs.clear()

@@ -206,13 +206,13 @@ def import_benchmark(source):
             'token_usage_available': token_usage_available,
             'reported_cost_usd': reported_cost_usd,
             'tools': tools,
+            'extra_tools': extra_tools,
             'request_mode': expected_mode if is_pass else 'unknown',
             'provider': case_provider,
             'model': case_model,
             'actual_worker': actual_worker,
-            'extra_tools': extra_tools,
-            'queue_wait_ms': number(c_trace.get('queue_wait_ms')) or 0.0,
-            'provider_inference_ms': number(c_trace.get('provider_inference_ms')) or latency_ms
+            'queue_wait_ms': number(c_trace.get('queue_wait_ms')) if c_trace.get('queue_wait_ms') is not None else None,
+            'provider_inference_ms': number(c_trace.get('provider_inference_ms')) if c_trace.get('provider_inference_ms') is not None else None
         }
         cases.append(case_result(
             cid, cat, checks,

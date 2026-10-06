@@ -97,6 +97,37 @@ class BusinessTests(unittest.TestCase):
         self.store.confirm('C-001', first['proposal_id'], {'confirmed': True}, 'a'*32)
         self.assert_error('idempotency_conflict', lambda: self.store.confirm('C-001', second['proposal_id'], {'confirmed': True}, 'a'*32))
 
+    def test_manager_update_status_invalidates_tenant_cache(self):
+        """Canonical test for F13 / AC-12: POST /api/manager/orders/update-status invalidates tenant cache."""
+        from retailops.business.cache import ToolCache
+        from retailops.http.routes import api_result
+
+        tool_cache = ToolCache(default_ttl=180.0)
+        app_mgr = Application(self.store, {}, role='manager', tenant_id='T-001', tool_cache=tool_cache)
+
+        order_args = {'order_id': 'O-101'}
+        tool_cache.set('T-001', 'C-001', 'get_order', order_args,
+                       {'order': {'id': 'O-101', 'status': 'pending', 'version': 1}})
+        tool_cache.set('T-002', 'C-001', 'get_order', order_args,
+                       {'order': {'id': 'O-101', 'status': 'delivered', 'version': 1}})
+
+        self.assertEqual(tool_cache.get_epoch('T-001', 'C-001'), 0)
+        self.assertEqual(tool_cache.get_epoch('T-002', 'C-001'), 0)
+
+        status, body = api_result(app_mgr, 'C-001', 'POST', '/api/manager/orders/update-status',
+                                  {'order_id': 'O-101', 'status': 'delivered'})
+        self.assertEqual(status, 200)
+        self.assertEqual(body['new_status'], 'delivered')
+
+        # T-001 cache invalidated and epoch bumped
+        self.assertIsNone(tool_cache.get('T-001', 'C-001', 'get_order', order_args))
+        self.assertEqual(tool_cache.get_epoch('T-001', 'C-001'), 1)
+
+        # T-002 cache remains untouched (cross-tenant isolation)
+        self.assertIsNotNone(tool_cache.get('T-002', 'C-001', 'get_order', order_args))
+        self.assertEqual(tool_cache.get_epoch('T-002', 'C-001'), 0)
+
+
 class HttpTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

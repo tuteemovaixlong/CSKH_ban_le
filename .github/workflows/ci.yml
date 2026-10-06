@@ -87,10 +87,91 @@ jobs:
           node tests/test_public_session.js
           RETAILOPS_UI_TEST_MODE=persistent node tests/test_public_session.js
       - name: Unit, pgvector and HTTP contract tests (no model, no secrets)
+        env:
+          RETAILOPS_HEADROOM_ARTIFACT_PATH: ${{ runner.temp }}/headroom_p99_artifact.json
         run: |
+          rm -f "${{ runner.temp }}/headroom_p99_artifact.json"
           python3 -m pip install --only-binary=:all: --require-hashes -r requirements-web.txt -r requirements-postgres.txt -r requirements-graph.txt
           python3 scripts/prepare_test_pgvector.py
           python3 -m unittest discover -s tests -v
+      - name: Validate headroom P99 measurement artifact integrity
+        env:
+          HEADROOM_ARTIFACT_PATH: ${{ runner.temp }}/headroom_p99_artifact.json
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import json, math, os, sys
+          from pathlib import Path
+
+          artifact_path = Path(os.environ.get("HEADROOM_ARTIFACT_PATH", ""))
+          if not artifact_path.is_file():
+              print(f"FAIL: Headroom artifact not found at {artifact_path}", file=sys.stderr)
+              sys.exit(1)
+
+          try:
+              data = json.loads(artifact_path.read_text(encoding="utf-8"))
+          except Exception as exc:
+              print(f"FAIL: Artifact is not valid JSON: {exc}", file=sys.stderr)
+              sys.exit(1)
+
+          expected_sha = os.environ.get("EXPECTED_SHA", "").strip()
+          actual_sha = str(data.get("commit_sha", "")).strip()
+          if expected_sha and actual_sha != expected_sha:
+              print(f"FAIL: commit_sha mismatch! expected={expected_sha}, actual={actual_sha}", file=sys.stderr)
+              sys.exit(1)
+
+          assert data.get("protocol") == "AC09-P99-EVIDENCE", f"Unexpected protocol: {data.get('protocol')}"
+          assert data.get("configuration", {}).get("total_batches") == 10, "Configuration total_batches != 10"
+          assert data.get("configuration", {}).get("total_samples_per_endpoint") == 1000, "total_samples_per_endpoint != 1000"
+
+          batches = data.get("batches")
+          if not isinstance(batches, list) or len(batches) != 10:
+              print(f"FAIL: batches must be list of 10 items, got {len(batches) if isinstance(batches, list) else type(batches)}", file=sys.stderr)
+              sys.exit(1)
+
+          for idx, b in enumerate(batches):
+              assert b.get("batch_index") == idx, f"Batch {idx} wrong index {b.get('batch_index')}"
+              assert b.get("healthz_samples") == 100, f"Batch {idx} healthz_samples != 100"
+              assert b.get("session_samples") == 100, f"Batch {idx} session_samples != 100"
+              assert b.get("saturation_confirmed") is True, f"Batch {idx} saturation_confirmed is not True"
+              assert b.get("bound_calls_count", 0) >= 1, f"Batch {idx} bound_calls_count < 1"
+              statuses = b.get("worker_statuses", [])
+              assert len(statuses) == 6 and all(s == 200 for s in statuses), f"Batch {idx} worker statuses != [200]*6 ({statuses})"
+
+          raw = data.get("raw_samples", {})
+          health_samples = raw.get("healthz_ms", [])
+          session_samples = raw.get("api_session_ms", [])
+          assert len(health_samples) == 1000, f"raw healthz_ms count != 1000 ({len(health_samples)})"
+          assert len(session_samples) == 1000, f"raw api_session_ms count != 1000 ({len(session_samples)})"
+
+          summary = data.get("summary", {})
+          assert summary.get("saturation_verified") is True, "summary saturation_verified is not True"
+          assert summary.get("tool_hook_executed") is True, "summary tool_hook_executed is not True"
+
+          h_sum = summary.get("healthz", {})
+          s_sum = summary.get("api_session", {})
+          assert h_sum.get("n") == 1000, f"healthz n != 1000 ({h_sum.get('n')})"
+          assert s_sum.get("n") == 1000, f"api_session n != 1000 ({s_sum.get('n')})"
+          assert h_sum.get("slo_50ms_met") is True, f"healthz slo_50ms_met is not True ({h_sum})"
+          assert s_sum.get("slo_50ms_met") is True, f"api_session slo_50ms_met is not True ({s_sum})"
+
+          s_health = sorted(health_samples)
+          s_session = sorted(session_samples)
+          p99_idx = math.ceil(0.99 * 1000) - 1
+          p99_h_raw = s_health[p99_idx]
+          p99_s_raw = s_session[p99_idx]
+          assert p99_h_raw <= 50.0, f"Computed raw healthz P99 {p99_h_raw}ms exceeds 50.0ms SLO"
+          assert p99_s_raw <= 50.0, f"Computed raw api_session P99 {p99_s_raw}ms exceeds 50.0ms SLO"
+
+          print(f"HEADROOM_ARTIFACT_INTEGRITY_OK: {actual_sha} (healthz P99={p99_h_raw:.3f}ms, session P99={p99_s_raw:.3f}ms)")
+          PY
+      - name: Save headroom P99 measurement artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: headroom-p99-artifact-${{ github.sha }}
+          path: ${{ runner.temp }}/headroom_p99_artifact.json
+          retention-days: 14
+          if-no-files-found: error
       - name: Validate HTTPS, PostgreSQL and rollout deployment scripts
         run: |
           python3 scripts/check_deployment_contract.py
