@@ -44,6 +44,65 @@ class SlowModelFixture:
         }
 
 
+
+def calc_headroom_percentiles(latencies):
+    s = sorted(latencies)
+    n = len(s)
+    p50_idx = math.ceil(0.50 * n) - 1
+    p95_idx = math.ceil(0.95 * n) - 1
+    p99_idx = math.ceil(0.99 * n) - 1
+    p99_raw_ms = float(s[p99_idx])
+    return {
+        "n": n,
+        "p99_raw_ms": p99_raw_ms,
+        "min_ms": round(s[0], 3),
+        "p50_ms": round(s[p50_idx], 3),
+        "p95_ms": round(s[p95_idx], 3),
+        "p99_ms": round(p99_raw_ms, 3),
+        "max_ms": round(s[-1], 3),
+        "mean_ms": round(sum(s) / n, 3),
+    }
+
+
+def save_headroom_artifact(payload: dict) -> Path:
+    explicit = os.environ.get("RETAILOPS_HEADROOM_ARTIFACT_PATH")
+    candidate_paths = []
+    if explicit:
+        candidate_paths.append(Path(explicit))
+    runner_temp = os.environ.get("RUNNER_TEMP")
+    if runner_temp:
+        candidate_paths.append(Path(runner_temp) / "headroom_p99_artifact.json")
+    if Path("/data").is_dir() and os.access("/data", os.W_OK):
+        candidate_paths.append(Path("/data") / "headroom_p99_artifact.json")
+    candidate_paths.append(Path(tempfile.gettempdir()) / "headroom_p99_artifact.json")
+
+    seen = set()
+    unique_candidates = []
+    for p in candidate_paths:
+        try:
+            p_resolved = p.resolve()
+        except Exception:
+            p_resolved = p
+        if p_resolved not in seen:
+            seen.add(p_resolved)
+            unique_candidates.append(p)
+
+    errors = []
+    for target in unique_candidates:
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with open(target, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+            print(f"[HEADROOM ARTIFACT] Successfully written to: {target}", flush=True)
+            return target
+        except (PermissionError, OSError) as exc:
+            errors.append(f"{target}: {exc}")
+
+    raise RuntimeError(
+        f"Failed to write headroom P99 artifact to any candidate path: {'; '.join(errors)}"
+    )
+
+
 class HttpHeadroomTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -135,109 +194,114 @@ class HttpHeadroomTests(unittest.TestCase):
                 self.web.chat_admission.release()
 
     def _run_waitress_batch(self, batch_idx, http):
-        batch_temp = tempfile.TemporaryDirectory()
-        batch_dir = Path(batch_temp.name) / "public-guests"
-        sessions = GuestSessions(batch_dir, INVITE, api_daily_limit=100)
-        web = PublicWeb(ORIGIN, sessions)
-        sessions.inference_gate = InferenceGate(concurrency=1, max_queue=5, queue_timeout=30.0)
+        batch_temp = None
+        server = None
+        server_thread = None
+        chat_threads = []
+        chat_results = [None] * 6
+        chat_errors = [None] * 6
+        chat_release = threading.Event()
+        hooks_patched = False
 
         orig_conversation = BusinessStore.conversation
         orig_replay = BusinessStore.replay
         orig_bound_call = BoundTools.__call__
 
-        bound_call_count = [0]
-        tool_called_event = threading.Event()
+        try:
+            batch_temp = tempfile.TemporaryDirectory()
+            batch_dir = Path(batch_temp.name) / "public-guests"
+            sessions = GuestSessions(batch_dir, INVITE, api_daily_limit=100)
+            web = PublicWeb(ORIGIN, sessions)
+            sessions.inference_gate = InferenceGate(concurrency=1, max_queue=5, queue_timeout=30.0)
 
-        def slow_conversation(store_self, customer, cid):
-            time.sleep(0.005)
-            return orig_conversation(store_self, customer, cid)
+            bound_call_count = [0]
+            tool_called_event = threading.Event()
 
-        def slow_replay(store_self, customer, cid, req_id, digest):
-            time.sleep(0.005)
-            return orig_replay(store_self, customer, cid, req_id, digest)
+            def slow_conversation(store_self, customer, cid):
+                time.sleep(0.005)
+                return orig_conversation(store_self, customer, cid)
 
-        def slow_bound_call(tools_self, name, arguments):
-            bound_call_count[0] += 1
-            tool_called_event.set()
-            time.sleep(0.005)
-            return orig_bound_call(tools_self, name, arguments)
+            def slow_replay(store_self, customer, cid, req_id, digest):
+                time.sleep(0.005)
+                return orig_replay(store_self, customer, cid, req_id, digest)
 
-        BusinessStore.conversation = slow_conversation
-        BusinessStore.replay = slow_replay
-        BoundTools.__call__ = slow_bound_call
+            def slow_bound_call(tools_self, name, arguments):
+                bound_call_count[0] += 1
+                tool_called_event.set()
+                time.sleep(0.005)
+                return orig_bound_call(tools_self, name, arguments)
 
-        chat_entered = threading.Event()
-        worker_0_holding = threading.Event()
-        chat_release = threading.Event()
-        barrier_saturated = threading.Event()
-        barrier_timed_out = threading.Event()
+            BusinessStore.conversation = slow_conversation
+            BusinessStore.replay = slow_replay
+            BoundTools.__call__ = slow_bound_call
+            hooks_patched = True
 
-        class BarrierSlowModel:
-            def __init__(self, gate):
-                self.gate = gate
+            chat_entered = threading.Event()
+            worker_0_holding = threading.Event()
+            barrier_saturated = threading.Event()
+            barrier_timed_out = threading.Event()
 
-            def for_turn(self):
-                return self
+            class BarrierSlowModel:
+                def __init__(self, gate):
+                    self.gate = gate
 
-            def inspect(self):
-                return {"name": "barrier-slow-model", "provider": "custom", "digest": None}
+                def for_turn(self):
+                    return self
 
-            def chat(self, messages, allow_tools, timeout):
-                if allow_tools and not tool_called_event.is_set():
+                def inspect(self):
+                    return {"name": "barrier-slow-model", "provider": "custom", "digest": None}
+
+                def chat(self, messages, allow_tools, timeout):
+                    if allow_tools and not tool_called_event.is_set():
+                        return {
+                            "message": {
+                                "role": "assistant",
+                                "content": "",
+                                "tool_calls": [
+                                    {
+                                        "id": "call_order_001",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "get_order",
+                                            "arguments": {"order_id": "O-101"},
+                                        },
+                                    }
+                                ],
+                            },
+                            "eval_count": 1,
+                            "prompt_eval_count": 5,
+                        }
+
+                    if not chat_release.is_set():
+                        worker_0_holding.set()
+                        t0 = time.monotonic()
+                        while (self.gate.queue_size < 5 or self.gate.in_flight < 1) and (time.monotonic() - t0) < 15.0:
+                            time.sleep(0.01)
+                        if self.gate.queue_size == 5 and self.gate.in_flight == 1:
+                            barrier_saturated.set()
+                        chat_entered.set()
+
+                        if not chat_release.wait(timeout=30.0):
+                            barrier_timed_out.set()
+                            raise RuntimeError(
+                                f"Barrier timed out waiting for chat_release after 30s! "
+                                f"(in_flight={self.gate.in_flight}, queue_size={self.gate.queue_size})"
+                            )
+
                     return {
-                        "message": {
-                            "role": "assistant",
-                            "content": "",
-                            "tool_calls": [
-                                {
-                                    "id": "call_order_001",
-                                    "type": "function",
-                                    "function": {
-                                        "name": "get_order",
-                                        "arguments": {"order_id": "O-101"},
-                                    },
-                                }
-                            ],
-                        },
+                        "message": {"role": "assistant", "content": "Done"},
                         "eval_count": 1,
                         "prompt_eval_count": 5,
                     }
 
-                if not chat_release.is_set():
-                    worker_0_holding.set()
-                    t0 = time.monotonic()
-                    while (self.gate.queue_size < 5 or self.gate.in_flight < 1) and (time.monotonic() - t0) < 15.0:
-                        time.sleep(0.01)
-                    if self.gate.queue_size == 5 and self.gate.in_flight == 1:
-                        barrier_saturated.set()
-                    chat_entered.set()
+            sessions.infer = BarrierSlowModel(sessions.inference_gate)
+            sessions.api_infer = sessions.infer
 
-                    if not chat_release.wait(timeout=30.0):
-                        barrier_timed_out.set()
-                        raise RuntimeError(
-                            f"Barrier timed out waiting for chat_release after 30s! "
-                            f"(in_flight={self.gate.in_flight}, queue_size={self.gate.queue_size})"
-                        )
+            from waitress.server import create_server
+            server = create_server(web, host="127.0.0.1", port=0, threads=8)
+            server_thread = threading.Thread(target=server.run, daemon=True)
+            server_thread.start()
 
-                return {
-                    "message": {"role": "assistant", "content": "Done"},
-                    "eval_count": 1,
-                    "prompt_eval_count": 5,
-                }
-
-        sessions.infer = BarrierSlowModel(sessions.inference_gate)
-        sessions.api_infer = sessions.infer
-
-        from waitress.server import create_server
-        server = create_server(web, host="127.0.0.1", port=0, threads=8)
-        server_thread = threading.Thread(target=server.run, daemon=True)
-        server_thread.start()
-
-        chat_threads = []
-        chat_results = [None] * 6
-        chat_errors = [None] * 6
-
-        try:
             port = server.effective_port
             base_url = f"http://127.0.0.1:{port}"
 
@@ -400,17 +464,40 @@ class HttpHeadroomTests(unittest.TestCase):
             batch_duration = time.monotonic() - batch_t0
 
         finally:
-            BusinessStore.conversation = orig_conversation
-            BusinessStore.replay = orig_replay
-            BoundTools.__call__ = orig_bound_call
+            if hooks_patched:
+                BusinessStore.conversation = orig_conversation
+                BusinessStore.replay = orig_replay
+                BoundTools.__call__ = orig_bound_call
 
             chat_release.set()
             for t in chat_threads:
-                t.join(timeout=10.0)
-            server.close()
-            server.task_dispatcher.shutdown()
-            server_thread.join(timeout=3.0)
-            batch_temp.cleanup()
+                try:
+                    t.join(timeout=10.0)
+                except Exception:
+                    pass
+
+            if server is not None:
+                try:
+                    server.close()
+                except Exception:
+                    pass
+                try:
+                    if hasattr(server, "task_dispatcher"):
+                        server.task_dispatcher.shutdown()
+                except Exception:
+                    pass
+
+            if server_thread is not None:
+                try:
+                    server_thread.join(timeout=3.0)
+                except Exception:
+                    pass
+
+            if batch_temp is not None:
+                try:
+                    batch_temp.cleanup()
+                except Exception:
+                    pass
 
         for idx in range(6):
             self.assertIsNone(chat_errors[idx], f"Batch {batch_idx}: worker {idx} error {chat_errors[idx]}")
@@ -465,24 +552,8 @@ class HttpHeadroomTests(unittest.TestCase):
         self.assertEqual(len(all_health_latencies), 1000, f"Expected 1000 /healthz samples, got {len(all_health_latencies)}")
         self.assertEqual(len(all_session_latencies), 1000, f"Expected 1000 /api/session samples, got {len(all_session_latencies)}")
 
-        def calc_percentiles(latencies):
-            s = sorted(latencies)
-            n = len(s)
-            p50_idx = math.ceil(0.50 * n) - 1
-            p95_idx = math.ceil(0.95 * n) - 1
-            p99_idx = math.ceil(0.99 * n) - 1
-            return {
-                "n": n,
-                "min_ms": round(s[0], 3),
-                "p50_ms": round(s[p50_idx], 3),
-                "p95_ms": round(s[p95_idx], 3),
-                "p99_ms": round(s[p99_idx], 3),
-                "max_ms": round(s[-1], 3),
-                "mean_ms": round(sum(s) / n, 3),
-            }
-
-        health_stats = calc_percentiles(all_health_latencies)
-        session_stats = calc_percentiles(all_session_latencies)
+        health_stats = calc_headroom_percentiles(all_health_latencies)
+        session_stats = calc_headroom_percentiles(all_session_latencies)
 
         commit_sha = os.environ.get("GITHUB_SHA")
         if not commit_sha:
@@ -533,42 +604,83 @@ class HttpHeadroomTests(unittest.TestCase):
                 "tool_hook_executed": True,
                 "healthz": {
                     **health_stats,
-                    "slo_50ms_met": health_stats["p99_ms"] <= 50.0,
+                    "slo_50ms_met": bool(health_stats["p99_raw_ms"] <= 50.0),
                 },
                 "api_session": {
                     **session_stats,
-                    "slo_50ms_met": session_stats["p99_ms"] <= 50.0,
+                    "slo_50ms_met": bool(session_stats["p99_raw_ms"] <= 50.0),
                 },
             },
             "batches": batches_meta,
             "raw_samples": {
-                "healthz_ms": [round(x, 3) for x in all_health_latencies],
-                "api_session_ms": [round(x, 3) for x in all_session_latencies],
+                "healthz_ms": [float(x) for x in all_health_latencies],
+                "api_session_ms": [float(x) for x in all_session_latencies],
             },
         }
 
-        artifact_path = Path(__file__).resolve().parents[1] / "evals" / "reports" / "headroom_p99_artifact.json"
         try:
-            artifact_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(artifact_path, "w", encoding="utf-8") as f:
-                json.dump(artifact_payload, f, indent=2)
-        except (PermissionError, OSError):
-            fallback_dir = Path("/data") if Path("/data").is_dir() else Path(tempfile.gettempdir())
-            try:
-                with open(fallback_dir / "headroom_p99_artifact.json", "w", encoding="utf-8") as f:
-                    json.dump(artifact_payload, f, indent=2)
-            except (PermissionError, OSError):
-                pass
+            saved_path = save_headroom_artifact(artifact_payload)
+        except Exception as exc:
+            self.fail(f"Headroom P99 artifact writer failed: {exc}")
 
         self.assertLessEqual(
-            health_stats["p99_ms"], 50.0,
-            f"GET /healthz empirical nearest-rank P99 ({health_stats['p99_ms']}ms) exceeded 50.0ms SLO"
+            health_stats["p99_raw_ms"], 50.0,
+            f"GET /healthz empirical nearest-rank P99 ({health_stats['p99_raw_ms']:.6f}ms, display={health_stats['p99_ms']}ms) exceeded 50.0ms SLO"
         )
         self.assertLessEqual(
-            session_stats["p99_ms"], 50.0,
-            f"GET /api/session empirical nearest-rank P99 ({session_stats['p99_ms']}ms) exceeded 50.0ms SLO"
+            session_stats["p99_raw_ms"], 50.0,
+            f"GET /api/session empirical nearest-rank P99 ({session_stats['p99_raw_ms']:.6f}ms, display={session_stats['p99_ms']}ms) exceeded 50.0ms SLO"
         )
+
+    def test_percentile_unrounded_boundary_fails_slo(self):
+        """P3 regression: assert that a raw P99 of 50.0004ms fails the <= 50.0ms SLO,
+        even though round(p99, 3) displays as 50.0ms.
+        """
+        # 989 samples at 1.0ms + 11 samples at 50.0004ms -> N=1000, idx 989 is 50.0004ms
+        latencies = [1.0] * 989 + [50.0004] * 11
+        stats = calc_headroom_percentiles(latencies)
+        self.assertEqual(stats["n"], 1000)
+        self.assertEqual(stats["p99_ms"], 50.0)  # rounded for display
+        self.assertAlmostEqual(stats["p99_raw_ms"], 50.0004, places=6)
+        self.assertGreater(stats["p99_raw_ms"], 50.0)
+        slo_met = bool(stats["p99_raw_ms"] <= 50.0)
+        self.assertFalse(slo_met, "Unrounded raw P99 of 50.0004ms must NOT meet 50.0ms SLO")
+
+    def test_artifact_writer_failure_fails_closed(self):
+        """P2 regression: save_headroom_artifact must raise RuntimeError when writing
+        fails to all candidate paths, ensuring fail-closed gate behavior.
+        """
+        bad_dir = Path(tempfile.gettempdir()) / "non_existent_unwritable_dir_12345" / "sub"
+        with unittest.mock.patch.dict(os.environ, {"RETAILOPS_HEADROOM_ARTIFACT_PATH": str(bad_dir / "art.json")}):
+            with unittest.mock.patch("builtins.open", side_effect=PermissionError("Permission denied")):
+                with self.assertRaises(RuntimeError) as ctx:
+                    save_headroom_artifact({"protocol": "AC09-P99-EVIDENCE"})
+                self.assertIn("Failed to write headroom P99 artifact", str(ctx.exception))
+
+    def test_waitress_batch_setup_failure_cleanup(self):
+        """P3 regression: verify that if server creation or setup fails,
+        patched hooks and temporary files are safely cleaned up.
+        """
+        orig_conv = BusinessStore.conversation
+        orig_rep = BusinessStore.replay
+        orig_bound = BoundTools.__call__
+
+        try:
+            import waitress
+        except ImportError:
+            self.skipTest("Waitress is required for setup failure cleanup test")
+
+        with unittest.mock.patch("waitress.server.create_server", side_effect=RuntimeError("simulated setup failure")):
+            http = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            with self.assertRaises(RuntimeError):
+                self._run_waitress_batch(99, http)
+
+        # Verify hooks were safely restored in finally
+        self.assertIs(BusinessStore.conversation, orig_conv)
+        self.assertIs(BusinessStore.replay, orig_rep)
+        self.assertIs(BoundTools.__call__, orig_bound)
 
 
 if __name__ == "__main__":
     unittest.main()
+

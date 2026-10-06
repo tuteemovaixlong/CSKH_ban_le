@@ -4,7 +4,7 @@
 > **Snapshot đối chiếu:** Commit `c30ff1d` trên nhánh `main`.
 > **Audit basis / Documentation baseline reviewed:** `c30ff1d` · **Application verified:** `c30ff1d`
 > **Phân kỳ thực thi:** Tích hợp trực tiếp vào **Module 2.5 PR B** (Concurrency & Runtime Hardening), kế thừa nền tảng FIX 01–FIX 04 của Phase 1. GraphRAG v6.2 và Schema v5 (PR C) đã được hoãn sang Future ADR.
-> **Đồng bộ ngày 05/10/2026:** các snapshot baseline dưới đây là lịch sử. PR B/#35 đã thực thi thành công trigger [handoff §12.1](PLAN_EXECUTION_HANDOFF_GPT6_ASTRA.md#121-trigger-ac09-p99-evidence) (1.000 mẫu/endpoint qua Waitress 8 workers thật, nearest-rank P99: `/healthz` = 25.655ms, `/api/session` = 33.464ms $\le 50.0\text{ms}$ SLO $\rightarrow$ PASS). Raw artifact lưu tại `evals/reports/headroom_p99_artifact.json`. Sẵn sàng bàn giao owner quyết định merge PR #35.
+> **Đồng bộ ngày 05/10/2026:** PR #35 HEAD `24ec244d`; **AC-09 PARTIAL — P99 VERIFIED / ARTIFACT-INTEGRITY PENDING**. Artifact CI [run 37326589577](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37326589577), ID `11351818526`: 10 batch × 100 mẫu/endpoint, nearest-rank P99 `/healthz` **1.005ms**, `/api/session` **3.538ms**, đều dưới 50ms; 60 chat HTTP 200, mọi batch có tool hook và saturation 1+5. Artifact mang synthetic merge SHA `3b30fed4572969b2815dd99506bd265ac19d9f83`, có parent candidate `24ec244d4adf7f8983401f4023ff9fc08d58963f` và cùng Git tree. Đây là provenance hợp lệ cho candidate; không yêu cầu SHA merge thử bằng PR head. Điều kiện đóng: output mới có provenance hợp lệ, lỗi ghi/upload fail-closed, assertion P99 chưa round, cleanup toàn vòng đời và checks CI completed/success; xem [handoff §12.2](PLAN_EXECUTION_HANDOFF_GPT6_ASTRA.md#122-trigger-ac09-artifact-integrity).
 
 
 ---
