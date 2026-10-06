@@ -46,3 +46,25 @@ Trước khi viết review, đã đối chiếu Current, Runtime, Sprint, Harden
 **Đi tiếp:** [PRB-MERGE-POSTVERIFY](PLAN_EXECUTION_HANDOFF_GPT6_ASTRA.md#123-trigger-prb-merge-postverify). Commit/push docs đã đồng bộ, kiểm HEAD cuối và CI/artifact hợp lệ → merge PR #35 bằng SHA guard → verification trên main → bàn giao Phase 4 frozen benchmark và load matrix 1/2/4/8/16. Không bật EC2 cho merge/CI; model live chỉ ở bước evaluation được chuẩn bị riêng. Nếu code/base thay đổi ngoài phạm vi docs, kiểm diff mới; không gán evidence cũ cho patch khác.
 
 Lịch sử cô đọng: `54b0939` tool/barrier; `234e165` protocol; `24ec244` fallback có khoảng trống integrity; `8ba66c8` đóng writer/P99/cleanup; `5188dc0` docs sync + CI/artifact cuối VERIFIED. **Kết thúc vòng review/fix AC-09 tại mốc này.**
+
+---
+
+## 5. Hoàn Thành PRB-MERGE-POSTVERIFY & Nghiệm Thu Merge Main (06/10/2026)
+
+Trigger [PRB-MERGE-POSTVERIFY](PLAN_EXECUTION_HANDOFF_GPT6_ASTRA.md#123-trigger-prb-merge-postverify) đã hoàn thành trọn vẹn:
+1. **Commit & Push Docs Reviewer:** Commit `e7dbd8afaf794309b6aef2cf0c89d1319980b280` được đẩy lên `feature/module-2.5-pr-b`.
+2. **CI Pre-Merge Trên HEAD `e7dbd8a`:**
+   - CI [run 37417868824](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37417868824) và Ops Console [run 37417868854](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37417868854) đều `completed/success`.
+   - 5/5 check-runs green (`offline`, `portable windows-latest`, `portable ubuntu-24.04`, `colab-python313`, `postgres`).
+   - Candidate artifact ID [11391313922](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37417868824/artifacts/11391313922): 10×100 mẫu/endpoint, raw P99 `/healthz` **0.796ms**, `/api/session` **5.520ms**, đều $\le 50$ms SLO.
+3. **Merge PR #35 Bằng SHA Guard:**
+   - Base commit: `47ba72a248fb3c2cced20005e6cef9c978dd53a3`
+   - Head SHA guard: `e7dbd8afaf794309b6aef2cf0c89d1319980b280`
+   - Merge Commit SHA: [`b3a0ccd72c1d025b3af567486943123bf3e05526`](https://github.com/tuteemovaixlong/CSKH_ban_le/commit/b3a0ccd72c1d025b3af567486943123bf3e05526) (`merged: true`).
+4. **Post-Merge Verification Trên `main` (`b3a0ccd`):**
+   - CI [run 37418383578](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37418383578) và Ops Console [run 37418383604](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37418383604) trả `completed/success`.
+   - 5/5 test suites completed/success (`offline`, `colab-python313`, `portable (windows-latest)`, `portable (ubuntu-24.04)`, `postgres`). Bước EC2 deploy bỏ qua/fail an toàn vì instance `retailops-dev` đang dừng.
+   - Post-merge artifact ID [11392265139](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37418383578/artifacts/11392265139) (`headroom-p99-artifact-b3a0ccd72c1d025b3af567486943123bf3e05526`): 10×100 mẫu, raw P99 `/healthz` **0.865ms**, `/api/session` **5.987ms**, đều $\le 50$ms SLO; bước độc lập validate artifact integrity PASS.
+5. **Bàn Giao Chính Thức Phase 4:**
+   - Module 2.5 Hardening (PR A + PR B) chính thức **ĐÓNG (10/10 AC VERIFIED PASS)**.
+   - Sẵn sàng bàn giao Phase 4: Frozen benchmark evaluation và ma trận tải đồng thời (1/2/4/8/16 concurrency).

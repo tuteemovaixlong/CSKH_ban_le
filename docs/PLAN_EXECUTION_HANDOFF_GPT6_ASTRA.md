@@ -1,23 +1,23 @@
 # Bàn giao triển khai Module 2.5 — GPT 6 Astra
 
 Ngày cập nhật trạng thái: **06/10/2026 — Asia/Bangkok**.
-Trạng thái hiện tại: PR A/N08 merged `47ba72a`; PR #35 HEAD `5188dc0`. **AC-09 VERIFIED — P99 & ARTIFACT-INTEGRITY GATES PASSED**. Artifact CI [run 37415921867](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37415921867), ID `11390854372`: 10 batch × 100 mẫu/endpoint, nearest-rank P99 (hiển thị làm tròn) `/healthz` **0.836ms**, `/api/session` **5.764ms**; assertion dùng float gốc, đều $\le 50$ms; 60 chat HTTP 200, mọi batch có tool hook và saturation 1+5; bước kiểm tra độc lập `Validate headroom P99 measurement artifact integrity` PASS; 5/5 check-runs completed/success; dừng trước merge/deploy, sẵn sàng bàn giao owner review merge.
-Working snapshot đã reviewer xác minh: branch `feature/module-2.5-pr-b`, HEAD `5188dc0838c12d5c1e3fcfc3edacaba4422c6905` (docs sync), code patch `8ba66c8`. CI [37415921867](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37415921867) và Ops Console [37415921878](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37415921878): 5/5 check-runs `completed/success` trên HEAD `5188dc0`. Các sửa docs sau review hiện chưa commit; không gán snapshot này cho một code patch tương lai.
-Quỹ đạo: PR A/N08 merged → AC09-ARTIFACT-INTEGRITY (DONE) → owner quyết định merge PR #35 → verification sau merge trên main → Phase 4.
-Nguồn review hiện hành: <a href="review%20gpt%206%20astra.md">review gpt 6 astra.md</a>. AC-09 đã đóng [§12.2](#122-trigger-ac09-artifact-integrity); bước hiện tại [§12.3 — PRB-MERGE-POSTVERIFY](#123-trigger-prb-merge-postverify). [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md) là hồ sơ PR A đã merge.
+Trạng thái hiện tại: PR A/N08 merged `47ba72a`; PR B/#35 merged tại `b3a0ccd72c1d025b3af567486943123bf3e05526`. **PR B MERGED & POSTMERGE VERIFIED**. Artifact CI main [run 37418383578](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37418383578), ID `11392265139`: 10 batch × 100 mẫu/endpoint, nearest-rank P99 unrounded float đạt SLO $\le 50$ms; 60 chat HTTP 200, mọi batch có tool hook và saturation 1+5; 5/5 CI check-runs trên main completed/success; Ops Console [run 37418383604](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37418383604) completed/success. Module 2.5 đã hoàn tất, chuyển giao Phase 4.
+Working snapshot: branch `main`, merge commit `b3a0ccd72c1d025b3af567486943123bf3e05526`. CI [37418383578](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37418383578) và Ops Console [37418383604](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37418383604): 5/5 check-runs `completed/success` trên merge SHA.
+Quỹ đạo: PR A/N08 merged → PR B merged → Post-merge Verification trên main SUCCESS → Chuyển giao Phase 4 Scientific Evaluation.
+Nguồn review hiện hành: <a href="review%20gpt%206%20astra.md">review gpt 6 astra.md</a>. AC-09 đã đóng [§12.2](#122-trigger-ac09-artifact-integrity); [§12.3 — PRB-MERGE-POSTVERIFY](#123-trigger-prb-merge-postverify) đã hoàn thành. [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md) là hồ sơ PR A đã merge.
 
 ## 1. Mục đích và ranh giới trạng thái
 
-Mốc **14/14 mục R01–R14** chỉ xác nhận đặc tả tài liệu tại thời điểm trước, không thay thế kiểm chứng runtime. Bằng chứng N08 đã nghiệm thu được lưu tại N08_STOPPING_CONDITIONS.md; AC-09 PR B đã VERIFIED; merge và verification trên main còn pending.
+Mốc **14/14 mục R01–R14** chỉ xác nhận đặc tả tài liệu tại thời điểm trước, không thay thế kiểm chứng runtime. Bằng chứng N08 đã nghiệm thu được lưu tại N08_STOPPING_CONDITIONS.md; PR B đã MERGED và VERIFIED trên main.
 
 | Mốc | Trạng thái lúc bàn giao | Điều kiện chuyển |
 | --- | --- | --- |
 | PLAN_READY_TO_IMPLEMENT | **ĐẠT — mốc lịch sử 01/10/2026** | Các đặc tả A/B đã sẵn sàng tại baseline lúc đó |
 | N08_P1_GATES | **VERIFIED** | Local 429 PASS / 50 SKIP; CI 37196429628 trên code patch `c4e9976` (lịch sử) và CI 37197602401 trên final tree `eebe8ed` đều SUCCESS. Run trên fe25f67 là historical. |
 | PR_A_ACCEPTED | **MERGED** | PR #34 vào main tại merge commit 47ba72a; CI của candidate PR A xanh |
-| PR_B | **AC-09 VERIFIED — READY FOR OWNER MERGE REVIEW** | #35 HEAD `5188dc0`; CI P99 0.836/5.764ms và artifact integrity đã verified. Check-runs 5/5 completed/success. Dừng trước merge/deploy. |
-| IMPLEMENTATION_VERIFIED | Pending | A/B có đủ evidence theo acceptance và backend được hỗ trợ |
-| SCIENTIFIC_EVALUATION_COMPLETE | Pending | Có kết quả frozen benchmark và load matrix Phase 4 |
+| PR_B | **MERGED & POSTMERGE VERIFIED** | PR #35 merged tại `b3a0ccd72c1d025b3af567486943123bf3e05526`. CI main run 37418383578 PASS, Artifact ID 11392265139. 5/5 CI check-runs completed/success. |
+| IMPLEMENTATION_VERIFIED | **VERIFIED** | Module 2.5 PR A + PR B đã merge vào main, full suites, PostgreSQL integration, headroom P99 unrounded float đạt SLO. |
+| SCIENTIFIC_EVALUATION_COMPLETE | Pending | Sẵn sàng cho Phase 4: frozen benchmark 250 ca và load matrix 1/2/4/8/16 |
 
 READY chỉ áp dụng cho **Module 2.5 PR A/B**. Các plan nghiên cứu, post-thesis hoặc superseded không được coi là cùng đạt READY chỉ vì file bàn giao này tồn tại.
 
@@ -85,7 +85,7 @@ Role regression đã bao phủ toàn bộ staff, manager và viewer trong shared
 - **Final tree:** CI run 37197602401, head_sha `eebe8ed` (eebe8edefd52abb1af86e9e8bdf2173413c25fd1), SUCCESS — host suite 479/479 PASS (0 SKIP); container suite 478 PASS / 1 SKIP (`test_colab_agent_notebook_sync` bỏ qua do không có `scripts/build_agent_notebook.py` trong image).
 - **Code patch (lịch sử):** CI run 37196429628 trên `c4e9976`, SUCCESS với cùng test counts.
 
-**PR A/N08 merged `47ba72a`.** PR #35 HEAD `5188dc0`; **AC-09 VERIFIED — P99 & ARTIFACT-INTEGRITY GATES PASSED**. Artifact CI [run 37415921867](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37415921867), ID `11390854372`: 10 batch × 100 mẫu/endpoint, nearest-rank P99 unrounded float đạt SLO $\le 50$ms; 60 chat HTTP 200, mọi batch có tool hook và saturation 1+5; bước kiểm tra độc lập `Validate headroom P99 measurement artifact integrity` PASS; 5/5 check-runs completed/success. Trigger §12.2 đã hoàn tất; dừng trước merge/deploy, sẵn sàng bàn giao owner review merge.
+**PR A/N08 merged `47ba72a`. PR B/#35 merged `b3a0ccd`.** **PR B MERGED & POSTMERGE VERIFIED**. Artifact CI main [run 37418383578](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37418383578), ID `11392265139`: 10 batch × 100 mẫu/endpoint, nearest-rank P99 unrounded float đạt SLO $\le 50$ms; 60 chat HTTP 200, mọi batch có tool hook và saturation 1+5; 5/5 CI check-runs trên main completed/success. Trigger §12.3 đã hoàn tất; chuyển giao Phase 4.
 
 ### Các hợp đồng PR A phải giữ
 
@@ -219,15 +219,15 @@ Hash LF-normalized của cả hai bộ frozen:
 ## 10. Việc nên làm ngay
 
 1. PR A/N08 đã merged vào main tại 47ba72a.
-2. PR #35 đang mở trên nhánh `feature/module-2.5-pr-b`.
-3. Review HEAD `5188dc0`: Artifact [11390854372](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37415921867/artifacts/11390854372): 10×100 mẫu/endpoint, raw nearest-rank P99 `/healthz` 0.835676ms, `/api/session` 5.763931ms (hiển thị 0.836/5.764ms), 60/60 chat HTTP 200, saturation/tool hook đủ 10 batch. Artifact SHA `c2d65fffe76bcc9284fedf0072ec4e381f29d95f` có parents base/HEAD và cùng Git tree. Reviewer local 4 PASS / 2 SKIP do thiếu Waitress; báo cáo Gemini 6 PASS được giữ riêng.
-4. **AC-09 VERIFIED — P99 & ARTIFACT-INTEGRITY GATES PASSED**. Runtime timeout **10s**, fixture **30s**. Lỗi fail-open artifact writer/uploader, assertion làm tròn và setup cleanup đã được đóng dứt điểm với 3 regression tests.
-5. AC-09 đủ điều kiện dừng; thực hiện [§12.3 PRB-MERGE-POSTVERIFY](#123-trigger-prb-merge-postverify). Merge/verification trên main chưa thực hiện; không mở lại audit hoặc deploy trong bước này.
+2. PR B/#35 đã merged vào main tại b3a0ccd72c1d025b3af567486943123bf3e05526 với SHA guard e7dbd8a.
+3. Post-merge verification trên main: CI [run 37418383578](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37418383578), Artifact ID [11392265139](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37418383578/artifacts/11392265139): 10×100 mẫu/endpoint, nearest-rank P99 unrounded float đạt SLO $\le 50$ms; 60/60 chat HTTP 200, saturation/tool hook đủ 10 batch; 5/5 check-runs CI completed/success.
+4. **PR B MERGED & POSTMERGE VERIFIED**. Runtime timeout **10s**, fixture **30s**.
+5. Trigger [§12.3 PRB-MERGE-POSTVERIFY](#123-trigger-prb-merge-postverify) hoàn thành xuất sắc; bàn giao sang Phase 4 Scientific Evaluation.
 ## 11. Sơ đồ Mermaid tổng thể: request, cache, concurrency và OAuth
 
 ### 11.1. Tình hình dự án hiện tại
 
-Trạng thái trên `feature/module-2.5-pr-b`: PR A/N08 merged; PR B/#35 **AC-09 VERIFIED — P99 & ARTIFACT-INTEGRITY GATES PASSED**. N08_STOPPING_CONDITIONS.md là hồ sơ PR A, không phải gate PR B.
+Trạng thái trên `main`: PR A/N08 merged `47ba72a`; PR B/#35 **MERGED & POSTMERGE VERIFIED** tại `b3a0ccd`. Module 2.5 hoàn tất.
 
 ```mermaid
 flowchart LR
@@ -450,3 +450,32 @@ B-01/B-04 đã sửa và kiểm tra WSGI trên PR #35; follow-up P3 về cleanup
 5. CI trên main và verification đạt → cập nhật Current/Roadmap/handoff thành PR B MERGED + POSTMERGE VERIFIED bằng bằng chứng thật. Commit cập nhật trạng thái theo workflow repo, không ghi MERGED trước thao tác. Bàn giao Phase 4 với model/provider/dataset/runtime manifest cố định, frozen 250 ca và load matrix 1/2/4/8/16 theo các plan eval hiện có.
 
 **Điều kiện dừng:** PR #35 merged, merge SHA verified, CI trên main success, artifact/protocol/contracts đúng, docs nhất quán → kết thúc Module 2.5 integration và chuyển Phase 4. Nếu chỉ merge thành công nhưng verification chưa đạt, ghi POSTMERGE VERIFICATION PENDING và báo lỗi cụ thể; không mở rộng fix không liên quan. Không deploy/EC2 hoặc chạy paid/live-model benchmark trong trigger này.
+
+**Báo cáo thực thi Trigger PRB-MERGE-POSTVERIFY (06/10/2026):**
+
+1. **Đẩy HEAD cuối của branch PR B (`e7dbd8a`):**
+   - Commit `e7dbd8afaf794309b6aef2cf0c89d1319980b280` đẩy lên `origin/feature/module-2.5-pr-b`.
+   - CI [run 37417868824](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37417868824) và Ops Console [run 37417868854](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37417868854) hoàn tất `completed / success`.
+   - 5/5 check-runs xanh (`offline`, `portable windows-latest`, `portable ubuntu-24.04`, `colab-python313`, `postgres`).
+   - Artifact ID `11391313922`, synthetic merge `45c131c33d9df1eefd8fc36cf394b3dc647e2760` có parents `47ba72a` và `e7dbd8a`, Git tree trùng khớp 100%.
+
+2. **Thực hiện merge PR #35 bằng SHA guard:**
+   - URL: [PR #35](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/35).
+   - Base commit: `47ba72a248fb3c2cced20005e6cef9c978dd53a3`.
+   - Head SHA guard: `e7dbd8afaf794309b6aef2cf0c89d1319980b280`.
+   - Trạng thái merge: `merged: true`, Merge commit SHA: [`b3a0ccd72c1d025b3af567486943123bf3e05526`](https://github.com/tuteemovaixlong/CSKH_ban_le/commit/b3a0ccd72c1d025b3af567486943123bf3e05526).
+
+3. **Xác minh hậu merge (Post-merge Verification trên `main`):**
+   - CI [run 37418383578](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37418383578) trên `main` đạt `completed / success`.
+   - Ops Console [run 37418383604](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37418383604) trên `main` đạt `completed / success`.
+   - 5/5 CI test suites / check-runs completed & success:
+     * `offline`: completed / success (bao gồm docs contracts, deployment contract, eval dataset, live E2E, headroom artifact integrity validator, unit/pgvector/HTTP contract tests).
+     * `colab-python313`: completed / success.
+     * `portable (windows-latest)`: completed / success.
+     * `portable (ubuntu-24.04)`: completed / success.
+     * `postgres`: completed / success.
+   - Artifact CI trên main: ID `11392265139`, tên `headroom-p99-artifact-b3a0ccd72c1d025b3af567486943123bf3e05526` xác nhận 10 batches × 100 samples/endpoint, nearest-rank unrounded float P99 $\le 50$ms.
+
+4. **Kết luận & Bàn giao:**
+   - Module 2.5 (System Hardening & Verification Quality Gate) chính thức **HOÀN TẤT & ĐÃ MERGE VÀO MAIN**.
+   - Chuyển giao toàn bộ hệ thống sang **Phase 4: Scientific Evaluation** (Khung đánh giá đối kháng Gemma-4 vs DeepSeek API trên frozen master benchmark 250 ca và load matrix concurrency 1/2/4/8/16).
