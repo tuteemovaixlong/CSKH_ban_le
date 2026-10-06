@@ -1,9 +1,9 @@
 # KẾ HOẠCH TRIỂN KHAI: RUNTIME CONCURRENCY, DATA INTEGRITY & AUTH SECURITY SPRINT
 
 > **Mã kế hoạch:** `PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT`
-> **Trạng thái:** CANONICAL PR B SPEC — PR A/N08 merged `47ba72a`; #35 HEAD `8ba66c8`. **AC-09 VERIFIED — P99 & ARTIFACT-INTEGRITY GATES PASSED**. CI measurement & artifact integrity đã verified; sẵn sàng bàn giao owner review merge.
+> **Trạng thái:** CANONICAL PR B SPEC — PR A/N08 merged `47ba72a`; #35 HEAD `5188dc0`. **AC-09 VERIFIED — P99 & ARTIFACT-INTEGRITY GATES PASSED**. CI measurement & artifact integrity đã verified; sẵn sàng bàn giao owner review merge.
 > **Phiên bản:** 1.4 (2026-10-06)
-> **Trạng thái nghiệm thu hiện hành:** [Hardening §4](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md#4-tiêu-chí-nghiệm-thu-toàn-diện-acceptance-criteria). Trigger: [AC09-ARTIFACT-INTEGRITY](PLAN_EXECUTION_HANDOFF_GPT6_ASTRA.md#122-trigger-ac09-artifact-integrity) đã hoàn thành. Cả hai workflow CI [run 37415015592](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37415015592) và Ops Console [run 37415015585](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37415015585) trả `completed/success`. Check/job API có 5/5 `completed/success` (`portable windows-latest`, `portable ubuntu-24.04`, `offline`, `postgres`, `colab-python313`). Dừng trước merge/deploy.
+> **Trạng thái nghiệm thu hiện hành:** [Hardening §4](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md#4-tiêu-chí-nghiệm-thu-toàn-diện-acceptance-criteria). Trigger: [AC09-ARTIFACT-INTEGRITY](PLAN_EXECUTION_HANDOFF_GPT6_ASTRA.md#122-trigger-ac09-artifact-integrity) đã hoàn thành. Cả hai workflow CI [run 37415921867](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37415921867) và Ops Console [run 37415921878](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37415921878) trả `completed/success`. Check/job API có 5/5 `completed/success` (`portable windows-latest`, `portable ubuntu-24.04`, `offline`, `postgres`, `colab-python313`). Dừng trước merge/deploy.
 > **Mục tiêu:** Hoàn thiện kiến trúc Bounded Concurrency (Phase 3: InferenceGate, conv_lock), Bảo toàn Lịch sử Chat (F12), Đồng bộ Cache Multi-tenant theo Tenant Scope (F13) và Bảo mật Xác thực OAuth (SEC-01). Phần SQL Relational Knowledge (PR C / Schema v5 / `product_policy_links`) chính thức HOÃN (DEFERRED / Future ADR) vì Schema v4 đã có sẵn thuộc tính bảo hành `warranty_days`.
 > **Cơ sở đối chiếu mã nguồn:** Commit baseline `070e042` trên nhánh `main` (kế thừa test suite lịch sử; mục tiêu sau khi hoàn thành PR A và PR B là đạt 415+ tests PASS bao phủ toàn diện các ca mới).
 
@@ -69,11 +69,11 @@ flowchart TD
 
 ## 3. Danh Mục Các Thay Đổi Cụ Thể Trong Mã Nguồn
 
-Các hành vi dưới đây là hợp đồng đích của sprint. Nhãn `PENDING TEST` còn giữ trong snapshot trước triển khai không đại diện trạng thái hiện hành; xem ma trận Hardening được liên kết ở đầu file. AC-09 đã VERIFIED trên CI candidate `8ba66c8`; không dùng số test mục tiêu lịch sử để nghiệm thu candidate.
+Các hành vi dưới đây là hợp đồng đích của sprint. Nhãn `PENDING TEST` còn giữ trong snapshot trước triển khai không đại diện trạng thái hiện hành; xem ma trận Hardening được liên kết ở đầu file. AC-09 đã VERIFIED trên CI candidate `5188dc0`; không dùng số test mục tiêu lịch sử để nghiệm thu candidate.
 
 Mọi hạng mục bắt buộc chuẩn hóa theo 4 thuộc tính: **Tệp & Hàm liên quan**, **Hành vi mong đợi**, **Test tương ứng**, và **Trạng thái**.
 
-### 3.1. Phần Concurrency: Dọn Dẹp InferenceGate & Bảo Đảm Headroom Toàn Request (F07) [PARTIAL — P99 VERIFIED, ARTIFACT INTEGRITY PENDING]
+### 3.1. Phần Concurrency: Dọn Dẹp InferenceGate & Bảo Đảm Headroom Toàn Request (F07) [VERIFIED — AC-09]
 - **Tệp & Hàm liên quan:**
   - `retailops/bootstrap.py`: Cấu hình tham số Waitress (8 threads) và hàng đợi.
   - `retailops/inference_gate.py`: `InferenceGate.__init__()`, `enter()`, `exit()`, `get_conversation_lock()`.
@@ -88,12 +88,12 @@ Mọi hạng mục bắt buộc chuẩn hóa theo 4 thuộc tính: **Tệp & Hà
       $$\text{MAX\_INFLIGHT\_CHAT\_HANDLERS} \le \text{WAITRESS\_THREADS (8)} - \text{RESERVED\_THREADS (2)} = 6$$
     * Token request được acquire không chặn (`blocking=False`) ngay khi vừa nhận request tại adapter; nếu đã có 6 chat requests đang chiếm luồng, request thứ 7 bị từ chối ngay lập tức với HTTP 429 canonical error `server_busy` (kèm header `Retry-After: 5`) mà không động tới DB hay session store, giải phóng token trong khối `finally` của `PublicWeb`.
     * Ngân sách 6 chat requests áp dụng chung cho tổng các provider. **Admission giới hạn tối đa 6 chat được nhận xử lý đồng thời trên Waitress 8 workers, giảm nguy cơ chat chiếm hết worker; không bảo đảm luôn có hai worker rảnh hoặc một pool riêng.**
-    * **Mục tiêu nghiệm thu có điều kiện (Conditional Acceptance SLO)**: Một tiến trình / Waitress 8 workers, sáu chat được giữ bằng barrier, độ trễ DB/tools/model tổng hợp, P99 mỗi endpoint ≤50ms. Artifact CI [run 37415015592](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37415015592), ID `11390129084`: 10 batch × 100 mẫu/endpoint, nearest-rank P99 unrounded float đạt SLO $\le 50$ms; 60 chat HTTP 200, mọi batch có tool hook và saturation 1+5; bước kiểm tra độc lập `Validate headroom P99 measurement artifact integrity` PASS; 5/5 check-runs completed/success. **AC-09 VERIFIED — P99 & ARTIFACT-INTEGRITY GATES PASSED**; không suy diễn thành production SLO.
+    * **Mục tiêu nghiệm thu có điều kiện (Conditional Acceptance SLO)**: Một tiến trình / Waitress 8 workers, sáu chat được giữ bằng barrier, độ trễ DB/tools/model tổng hợp, P99 mỗi endpoint ≤50ms. Artifact CI [run 37415921867](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37415921867), ID `11390854372`: 10 batch × 100 mẫu/endpoint, nearest-rank P99 unrounded float đạt SLO $\le 50$ms; 60 chat HTTP 200, mọi batch có tool hook và saturation 1+5; bước kiểm tra độc lập `Validate headroom P99 measurement artifact integrity` PASS; 5/5 check-runs completed/success. **AC-09 VERIFIED — P99 & ARTIFACT-INTEGRITY GATES PASSED**; không suy diễn thành production SLO.
   - **Phân định rõ ràng mô hình đồng bộ 3 tầng (3-tier concurrency)**:
     1. *Tầng HTTP Request (Tier 1)*: Bounded Chat Admission Limiter tại `PublicWeb` (trước session/DB preflight; tối đa 6 request đồng thời chiếm thread, non-blocking acquire $\rightarrow$ loser nhận ngay 429 `server_busy` kèm `Retry-After: 5`).
     2. *Tầng Hội thoại (Tier 2)*: `conv_lock` non-blocking theo từng conversation key (bảo vệ replay, snapshot và semantic cache; loser nhận ngay 429 `model_busy`).
     3. *Tầng Model I/O (Tier 3)*: `InferenceGate` cấp permit GPU chỉ trong thời gian gọi model thật ($K=1, Q=5$, timeout runtime mặc định **10s** $\rightarrow$ HTTP 429 canonical `queue_timeout` kèm `Retry-After: 5`). Override **30s** chỉ dành cho fixture headroom test, không phải thay đổi runtime contract.
-- **Test tương ứng:** `tests/test_inference_gate.py`, `tests/test_http_headroom.py`; P99 measurement & artifact integrity CI đã verified (run 37415015592). AC-09 VERIFIED; sẵn sàng bàn giao owner merge.
+- **Test tương ứng:** `tests/test_inference_gate.py`, `tests/test_http_headroom.py`; P99 measurement & artifact integrity CI đã verified (run 37415921867). AC-09 VERIFIED; sẵn sàng bàn giao owner merge.
 
 ### 3.2. Phần Relational Knowledge: Bảng `product_policy_links` (HOÃN — DEFERRED / FUTURE ADR)
 - **Định vị & Quyết định Kiến trúc:**

@@ -2,10 +2,10 @@
 
 > **Trạng thái:** ACTIVE STRATEGIC ROADMAP
 > **Mức độ minh chứng (Evidence):** Roadmap và CI snapshot; không phải xác nhận production readiness.
-> **Đồng bộ Module 2.5:** PR #34 merged `47ba72a`; #35 HEAD `8ba66c8`. **AC-09 VERIFIED — P99 & ARTIFACT-INTEGRITY GATES PASSED**. CI run 37415015592 PASS, Artifact ID 11390129084 đã verified tính toàn vẹn mẫu và unrounded P99 $\le 50$ms; 5/5 check-runs xanh; dừng trước merge/deploy, sẵn sàng bàn giao owner review merge.
+> **Đồng bộ Module 2.5:** PR #34 merged `47ba72a`; #35 HEAD `5188dc0`. **AC-09 VERIFIED — P99 & ARTIFACT-INTEGRITY GATES PASSED**. CI run 37415921867 PASS, Artifact ID 11390854372 đã verified tính toàn vẹn mẫu và unrounded P99 $\le 50$ms; 5/5 check-runs xanh; dừng trước merge/deploy, sẵn sàng bàn giao owner review merge.
 > **Phạm vi đồng bộ:** kiểm tra trạng thái PR và các code path liên quan đến góp ý LLM/RAG; không phải audit toàn hệ thống hoặc đánh giá chất lượng model live.
 > **Ngày rà soát & đồng bộ:** 2026-10-06
-> **Candidate đã review:** PR #35 HEAD `8ba66c8`; artifact CI candidate cuối có synthetic merge SHA `2ac01ee9...` khớp git tree với candidate `8ba66c8`. Đã đóng hoàn tất trigger AC09-ARTIFACT-INTEGRITY.
+> **Candidate đã review:** PR #35 HEAD `5188dc0`; artifact CI candidate cuối có synthetic merge SHA `c2d65fff...` khớp git tree với candidate `5188dc0`. Đã đóng hoàn tất trigger AC09-ARTIFACT-INTEGRITY.
 > **Báo cáo tiến độ vận hành mới nhất:** Xem tại [CURRENT_PROJECT_STATUS.md](CURRENT_PROJECT_STATUS.md)
 
 ---
@@ -40,11 +40,11 @@ flowchart TD
 
 ## 2. Ma Trận Trạng Thái Kỹ Thuật (18 Kế Hoạch Hiện Hữu + 2 Kế Hoạch Đề Xuất)
 
-Bảng đối chiếu toàn diện giữa tài liệu thiết kế và hiện trạng mã nguồn thực tế tại snapshot baseline `d01f729` / `c30ff1d` (các mốc FIX01..04 ghi nhận lịch sử tại `fd24e36`):
+Bảng dưới giữ các mốc baseline lịch sử `d01f729` / `c30ff1d`; hàng Module 2.5 và những mục được nêu rõ PR B candidate đã cập nhật theo snapshot `5188dc0`. Không gán trạng thái candidate thành đã deploy.
 
 | Mã Kế Hoạch | Tên Kế Hoạch / Module | Trạng Thái Trong Repo | Trạng Thái Kỹ Thuật Thật | Hiện Trạng Đối Chiếu Code Thật (`d01f729`) |
 | :--- | :--- | :--- | :--- | :--- |
-| **[PLAN_FIX_UI_04](PLAN_FIX_UI_04_CHAT_HISTORY_RESUME.md)** | Chat History Auto-Resume & Session Memory | IMPLEMENTED | **IMPLEMENTED (Resume Complete / Retention >6 Turns Pending F12)** | **Hoàn tất Resume:** Backend `GET /api/conversations`, client auto-resume khi F5 trong `web/app.js`, sidebar history, dialog, test `tests/test_conversation_resume.py` (4/4 PASS cho resume $\le 6$ turns). Không prune theo cửa sổ 6 lượt trong DB chờ F12 trong PR B. |
+| **[PLAN_FIX_UI_04](PLAN_FIX_UI_04_CHAT_HISTORY_RESUME.md)** | Chat History Auto-Resume & Session Memory | IMPLEMENTED | **RESUME COMPLETE / F12 VERIFIED IN PR B CANDIDATE** | Resume đã có trong main. Candidate PR #35 triển khai retention >6 turns, AC-11 VERIFIED; prompt vẫn bounded 6 lượt. Không gọi retention đã merged/deployed trước khi PR #35 được tích hợp. |
 | **[PLAN_DATA_COLLECTION_FLYWHEEL](PLAN_DATA_COLLECTION_FLYWHEEL.md)** | Thu Thập Dữ Liệu Hội Thoại & Phản Hồi | IMPLEMENTED (Core Complete) | **IMPLEMENTED (Core Complete) / MAINTENANCE** | **Hoàn tất core:** Bảng `conversation_feedback`, route `POST /api/feedback`, UI Like/Dislike, CSAT popup, script `scripts/export_tuning_dataset.py`, test `tests/test_feedback.py` (6/6 PASS). |
 | **[PLAN_REMEDIATION_GPT6_AUDIT](PLAN_REMEDIATION_GPT6_AUDIT.md)** | Khắc Phục Sau Đợt Rà Soát GPT-6 | Pending (Section 3) | **SUPERSEDED / HISTORICAL AUDIT** | **Kiểm toán lịch sử:** State machine guard (`routes.py:249`), băm Base64 ảnh F11 (`application.py:111`), ticket handoff F06, cache freshness F04, KPI động đã xong trong `tests/test_audit_remediation.py`. Catalog DB persistence chuyển duy nhất sang FIX02. |
 | **[PLAN_ADMIN_REMEDIATION_MASTER](PLAN_ADMIN_REMEDIATION_MASTER.md)** | Master Remediation Giao Diện Quản Trị & Dữ Liệu | PARTIALLY IMPLEMENTED | **HISTORICAL PHASE 1 BASELINE (FIX01..FIX04 COMPLETE)** | Tài liệu điều phối tổng thể Phase 1: Toàn bộ FIX01 (Truthful UX), FIX02 (Catalog DB SSOT `a6ec080`), FIX03 (Telemetry Integrity `d7ce461`) và FIX04 (History Resume) đã hoàn tất và tích hợp vào baseline `main`. |
@@ -61,7 +61,7 @@ Bảng đối chiếu toàn diện giữa tài liệu thiết kế và hiện tr
 | **[PLAN_OMNICHANNEL_INTEGRATION](PLAN_OMNICHANNEL_INTEGRATION.md)** | Webhook Facebook Messenger & Meta Handover | PLANNED | **PLANNED LATER (Phase 5 Demo)** | Mở rộng kênh tương tác thực tế sau khi hoàn thành đo đạc khoa học. |
 | **[PLAN_DEEPSEEK_DISTILLATION](PLAN_DEEPSEEK_DISTILLATION.md)** | Sinh Dữ Liệu Tổng Hợp Đa Lượt & ChatML | PLANNED | **PLANNED LATER (Phase 6 Post-thesis)** | Pipeline sinh dữ liệu distillation phục vụ fine-tuning. |
 | **[PLAN_FINE_TUNING_SERVING](PLAN_FINE_TUNING_SERVING.md)** | Huấn Luyện LoRA Unsloth & Serving vLLM | PLANNED | **PLANNED LATER (Phase 6 Post-thesis)** | Đóng gói mô hình chuyên biệt cho môi trường tự host. |
-| **[PLAN_MODULE_2_5_HARDENING_VERIFICATION](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md)** | Quality Gate: System Hardening & Context Integrity | Active | **AC-09 VERIFIED — READY FOR OWNER MERGE REVIEW** | PR A/N08 merged; PR B/#35 HEAD `8ba66c8`. Protocol CI 10×100 samples/endpoint có unrounded P99 $\le 50$ms verified; CI run 37415015592 PASS, artifact 11390129084 integrity PASS; 5/5 check-runs xanh. Sẵn sàng bàn giao owner merge; dừng trước merge/deploy. |
+| **[PLAN_MODULE_2_5_HARDENING_VERIFICATION](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md)** | Quality Gate: System Hardening & Context Integrity | Active | **AC-09 VERIFIED — READY FOR OWNER MERGE REVIEW** | PR A/N08 merged; PR B/#35 HEAD `5188dc0`. Protocol CI 10×100 samples/endpoint có unrounded P99 $\le 50$ms verified; CI run 37415921867 PASS, artifact 11390854372 integrity PASS; 5/5 check-runs xanh. Sẵn sàng bàn giao owner merge; dừng trước merge/deploy. |
 | **[PLAN_GRAPHRAG_AGE](PLAN_GRAPHRAG_AGE.md)** | GraphRAG Apache AGE trên PostgreSQL 16 (v6.2) | Research Only | **ACADEMIC RESEARCH / OFFLINE CONTAINER** | **ADR Quyết định:** Hoãn cài extension C Apache AGE trên EC2 production để tránh rủi ro sập host đơn; chuyển sang lưu trữ phục vụ nghiên cứu độc lập và benchmark container A/B offline. Production sử dụng SQL Relational Linkage. |
 | **[PLAN_RUNTIME_EFFICIENCY_CONCURRENCY](PLAN_RUNTIME_EFFICIENCY_CONCURRENCY.md)** | Runtime Efficiency & Bounded Concurrency | Active Target | **INTEGRATED INTO MODULE 2.5 PR B** | Tích hợp vào Module 2.5 PR B: InferenceGate, Headroom Waitress $Q \le 5$, header Retry-After: 5, dọn lock tàn dư. |
 | **[PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT](PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT.md)** | Kế Hoạch Sprint Gộp Concurrency & Relational | Active | **CANONICAL SPRINT SPEC** | Đặc tả kỹ thuật chi tiết của Module 2.5 PR B (triển khai tuần tự sau PR A; PR C hoãn làm Future ADR trên nền SQLite v3 / PostgreSQL v4). |
@@ -83,10 +83,10 @@ Bảng đối chiếu toàn diện giữa tài liệu thiết kế và hiện tr
 - Xem chi tiết tại [PLAN_MODULE_2_5_HARDENING_VERIFICATION.md](PLAN_MODULE_2_5_HARDENING_VERIFICATION.md).
 - Triển khai theo thứ tự tuần tự: **PR A trước**, sau đó tích hợp **PR B** (do cả hai cùng chạm vào `retailops/business/application.py` và cơ chế cache); **PR C được hoãn lại** làm Future ADR:
   1. **PR A (Context, Cache & Dispute Correctness + N08)**: PR #34 đã merged vào main tại 47ba72a; CI và PostgreSQL checks xanh. PR #35 (PR B) đang mở trên nhánh `feature/module-2.5-pr-b`.
-  2. **PR B (Concurrency, Headroom, History, Cache Sync & Telemetry)**: HEAD `8ba66c8`; **AC-09 VERIFIED — P99 & ARTIFACT-INTEGRITY GATES PASSED**. Đã hoàn tất trigger [AC09-ARTIFACT-INTEGRITY](PLAN_EXECUTION_HANDOFF_GPT6_ASTRA.md#122-trigger-ac09-artifact-integrity): output mới fail-closed, assert P99 chưa round, cleanup setup. CI run 37415015592 PASS, artifact 11390129084 verified, 5/5 check-runs completed/success. Sẵn sàng bàn giao owner merge → verification sau merge → Phase 4. Không deploy/EC2.
+  2. **PR B (Concurrency, Headroom, History, Cache Sync & Telemetry)**: HEAD `5188dc0`; **AC-09 VERIFIED — P99 & ARTIFACT-INTEGRITY GATES PASSED**. Đã hoàn tất trigger [AC09-ARTIFACT-INTEGRITY](PLAN_EXECUTION_HANDOFF_GPT6_ASTRA.md#122-trigger-ac09-artifact-integrity): output mới fail-closed, assert P99 chưa round, cleanup setup. CI run 37415921867 PASS, artifact 11390854372 verified, 5/5 check-runs completed/success. Sẵn sàng bàn giao owner merge → verification sau merge → Phase 4. Không deploy/EC2.
   3. **PR C (Relational Linkage & Clean Migration - HOÃN / DEFERRED)**: Hoãn triển khai trong Module 2.5; giữ SQLite Business v3 (hàm `migrate(db, component, initialize)` tại `retailops/schema.py:4, 11` với `component == "business"` đặt `target = 3`) và PostgreSQL Business v4 (`BUSINESS_SCHEMA_CURRENT = 4`). Cột `warranty_days` trong bảng `products` của cả hai backend đã có sẵn (P-603 180 ngày). Giữ thiết kế DDL `product_policy_links` làm Future ADR cho giai đoạn sau.
 
-- **Bước kế tiếp có giới hạn:** trigger [AC09-ARTIFACT-INTEGRITY](PLAN_EXECUTION_HANDOFF_GPT6_ASTRA.md#122-trigger-ac09-artifact-integrity) đã hoàn thành, CI và artifact candidate cuối đã verified (run 37415015592, artifact 11390129084). Sẵn sàng bàn giao owner merge → verification main → Phase 4. Không mở audit mới, không bật EC2.
+- **Bước kế tiếp có giới hạn:** [PRB-MERGE-POSTVERIFY](PLAN_EXECUTION_HANDOFF_GPT6_ASTRA.md#123-trigger-prb-merge-postverify). AC-09 đã đạt; commit docs đã đồng bộ → CI/artifact HEAD cuối → merge PR #35 → verification main → Phase 4. Không lặp audit, không deploy/EC2.
 
 ### Giai Đoạn 3: LLM/RAG & Multimodal Quality Gate (trước pilot hoặc đổi kiến trúc)
 

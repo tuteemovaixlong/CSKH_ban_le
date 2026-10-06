@@ -1,60 +1,48 @@
 # Review GPT 6 Astra — PR B #35 / AC-09
 
-Ngày review: **06/10/2026**. Phạm vi hẹp: phần Gemini triển khai `AC09-ARTIFACT-INTEGRITY` trên candidate `8ba66c8cedafe849ff8377323779366d7b559eff`; không audit toàn hệ thống.
+Ngày review: **06/10/2026 — Asia/Bangkok**. Phạm vi hẹp: xác minh `AC09-ARTIFACT-INTEGRITY`, code patch `8ba66c8`, HEAD gồm docs sync `5188dc0838c12d5c1e3fcfc3edacaba4422c6905`. Không audit toàn hệ thống.
 
 ## Prompt cô đọng cho Gemini
 
-> Trigger `AC09-ARTIFACT-INTEGRITY`: đọc handoff §12.2 và review hiện hành. Chỉ sửa `tests/test_http_headroom.py`, `.github/workflows/ci.yml` và docs liên quan: dùng output mới ở vị trí ghi được (CI/RUNNER_TEMP, Colab /data), fail khi không ghi/không có artifact, validate SHA/mẫu/metadata; so SLO bằng P99 chưa round và cleanup cả setup. Giữ protocol 10×100, SLO 50ms, runtime timeout 10s. Commit/push branch hiện tại, chạy CI, xác minh artifact trên candidate cuối (chấp nhận synthetic merge đã đối chiếu parents/tree), đồng bộ docs. Báo PASS/SKIP/FAIL, run/artifact URL; dừng trước merge/deploy, không mở audit mới.
+> Thực hiện trigger `PRB-MERGE-POSTVERIFY` theo handoff §12.3. AC-09 đã VERIFIED. Giữ các sửa docs của reviewer, commit/push lên branch hiện tại; kiểm CI và artifact của HEAD cuối, rồi merge PR #35 vào main bằng SHA guard. Chạy/đối chiếu verification trên merge SHA, gồm PostgreSQL, headroom và contracts; đồng bộ trạng thái bằng run/commit thực tế. Không đổi code/schema/model/dataset, không mở lại AC-09, không deploy/EC2. Báo merge SHA, PASS/SKIP/FAIL và links; verification đạt thì bàn giao Phase 4.
 
 ## Kết luận
 
-**AC-09 VERIFIED — P99 & ARTIFACT-INTEGRITY GATES PASSED**. **Phép đo P99 và tính toàn vẹn artifact trên candidate `8ba66c8` đã được xác minh độc lập, đạt SLO unrounded float $\le 50.0$ms, 5/5 check-runs xanh**. Đường ghi/upload fail-closed, assert float gốc, cleanup cả setup đã hoàn tất. Sẵn sàng bàn giao chủ dự án review merge PR #35.
+**AC-09 VERIFIED — READY FOR MERGE**. **Điều kiện dừng của vòng sửa AC-09 đã đạt; không còn lỗi chặn trong phạm vi được review.** Chuyển sang merge PR #35 và kiểm chứng trên main theo [handoff §12.3](PLAN_EXECUTION_HANDOFF_GPT6_ASTRA.md#123-trigger-prb-merge-postverify); không yêu cầu thêm vòng sửa harness.
 
-## Bằng chứng độc lập
+## Bằng chứng reviewer xác minh độc lập
 
 | Hạng mục | Kết quả |
 | --- | --- |
-| Branch / HEAD | `feature/module-2.5-pr-b` / `8ba66c8cedafe849ff8377323779366d7b559eff` (`8ba66c8`) |
-| PR #35 | Mở, chưa merge; base main `47ba72a`; mergeable_state `clean` |
-| Local focused test | `python -B -X utf8 -m unittest tests.test_http_headroom`: **6 tests = 6 PASS / 0 SKIP / 0 FAIL / 0 ERROR** (18.5s). Đã bổ sung 3 regression tests cho fail-closed writer, unrounded boundary 50.0004ms fail, và setup failure cleanup. |
-| CI | Hai workflow CI [37415015592](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37415015592) và Ops Console [37415015585](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37415015585) trả `completed/success`. Check/job API có 5/5 `completed/success` (`portable windows-latest`, `portable ubuntu-24.04`, `offline`, `postgres`, `colab-python313`). |
-| Artifact CI | ID `11390129084`, tên `headroom-p99-artifact-2ac01ee9ac73974ec7f6cd2a9970efa5266c2a58`; bước `Validate headroom P99 measurement artifact integrity` kiểm tra độc lập và upload fail-closed (bỏ `always()`, `if-no-files-found: error`). |
-| Provenance | Artifact mang synthetic merge SHA `2ac01ee9ac73974ec7f6cd2a9970efa5266c2a58`, có parents `47ba72a` (base main) và `8ba66c8` (PR candidate HEAD), Git tree trùng khớp 100% với candidate `8ba66c8`. Đây là provenance hợp lệ cho candidate. |
-| Protocol | 10 batch độc lập, 1.000 mẫu mỗi endpoint; đủ 100 mẫu/endpoint/batch, 60/60 chat HTTP 200, tool hook và saturation xác nhận ở cả 10 batch. |
-| P99 | Tính lại nearest-rank index 989 từ samples trong artifact: `/healthz` **0.999ms**, `/api/session` **3.468ms** (unrounded float); khớp summary, đạt $\le 50$ms. |
-| Contracts | Docs PASS 4/4; deployment, eval dataset, live-E2E, notebook sync và diff check PASS. |
+| Git | `feature/module-2.5-pr-b`, HEAD `5188dc0838c12d5c1e3fcfc3edacaba4422c6905`; code patch `8ba66c8`, commit `5188dc0` chỉ đồng bộ docs. Working tree sạch trước review; reviewer chỉ sửa docs. |
+| PR #35 | API xác nhận open, chưa merge, mergeable_state `clean`; base main `47ba72a248fb3c2cced20005e6cef9c978dd53a3`. |
+| CI trên HEAD cuối | CI [37415921867](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37415921867) và Ops Console [37415921878](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37415921878): 5/5 check-runs `completed/success` trên HEAD `5188dc0`. Cả hai workflow `completed/success`; gồm offline, Colab Python 3.13, Windows, Ubuntu và PostgreSQL. |
+| Artifact mới | Artifact [11390854372](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37415921867/artifacts/11390854372): 10×100 mẫu/endpoint, raw nearest-rank P99 `/healthz` 0.835676ms, `/api/session` 5.763931ms (hiển thị 0.836/5.764ms), 60/60 chat HTTP 200, saturation/tool hook đủ 10 batch. Reviewer tải ZIP, parse JSON và tính lại index 989 từ float gốc; P99 khớp summary, đều ≤50ms. |
+| Provenance | SHA artifact `c2d65fffe76bcc9284fedf0072ec4e381f29d95f` là merge thử của GitHub, parents là base `47ba72a` và HEAD `5188dc0`; Git tree trùng HEAD. Đây là evidence của candidate cuối, không phải JSON checkout cũ. |
+| Môi trường CI measurement | Linux, Python 3.12.3, Waitress 3.0.2; 8 workers, K=1/Q=5, runtime timeout 10s / fixture 30s; 1.000 samples mỗi endpoint. |
+| Local reviewer | `python -B -X utf8 -m unittest tests.test_http_headroom`: **6 tests = 4 PASS / 2 SKIP / 0 FAIL / 0 ERROR**. Hai SKIP thật vì interpreter reviewer thiếu Waitress: socket-load và setup-cleanup. Gemini báo 6 PASS ở môi trường có Waitress; hai nguồn được ghi riêng. |
+| Checks sau đồng bộ docs | Docs contract **PASS 4/4**; deployment, eval dataset, live-E2E contract, notebook sync, `git diff --check` PASS. Hai frozen benchmark giữ hash theo validator. |
 
-[CI run](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37415015592) · [Ops Console run](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37415015585) · [Artifact](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37415015592/artifacts/11390129084).
+## Ba phát hiện vòng trước đã đóng
 
-## Các phát hiện đã đóng (Resolved Findings)
+| Phát hiện | Đối chiếu code / CI | Kết luận |
+| --- | --- | --- |
+| P2 artifact cũ / nuốt lỗi ghi | `tests/test_http_headroom.py:67` raise `RuntimeError` khi mọi đường ghi lỗi; CI xoá output ở runner.temp trước suite, validate đúng đường/SHA/counts/raw P99; upload sau success và thiếu file là error. Fallback ngoài CI giữ hỗ trợ source Colab read-only. | **ĐÓNG**. File checkout không còn là output CI. |
+| P3 assertion P99 đã round | Helper giữ `p99_raw_ms`; assertion và `slo_50ms_met` dùng float gốc; raw samples giữ precision. Regression 50.0004ms cho kết quả không đạt SLO. | **ĐÓNG**. |
+| P3 setup bỏ cleanup | `_run_waitress_batch` có `try/finally` bao cả setup, khôi phục hooks và cleanup tài nguyên đã tạo. Có fault-injection `create_server` failure regression; CI chạy thành công. | **ĐÓNG**. |
 
-### P2 — Ghi/upload artifact có thể chấp nhận file cũ (ĐÃ ĐÓNG)
+Notebook là bundle được regenerate; `--check` PASS. Vòng này không có thay đổi runtime API/schema/RBAC/cache/model từ patch mới.
 
-- **Biện pháp khắc phục:**
-  - `tests/test_http_headroom.py`: hàm `save_headroom_artifact` ghi vào vị trí writable theo thứ tự `RETAILOPS_HEADROOM_ARTIFACT_PATH` -> `RUNNER_TEMP` -> `/data` -> `tempdir`. Bỏ nuốt lỗi `pass`; nếu không thể ghi được thì raise `RuntimeError` khiến test fail-closed ngay lập tức. Đã có regression test `test_artifact_writer_failure_fails_closed`.
-  - `.github/workflows/ci.yml`: biến `RETAILOPS_HEADROOM_ARTIFACT_PATH: ${{ runner.temp }}/headroom_p99_artifact.json` xóa file cũ trước khi chạy. Thêm bước `Validate headroom P99 measurement artifact integrity` kiểm tra độc lập cấu trúc, SHA, sample counts, saturation và unrounded P99. Bước upload bỏ `if: always()` và đặt `if-no-files-found: error`. Không upload JSON checkout tracked trong repo.
+## Giới hạn và ghi chú không chặn
 
-### P3 — SLO so sánh P99 đã round (ĐÃ ĐÓNG)
+- P99 đã đạt trong tải tổng hợp loopback có kiểm soát; chưa phải production SLO hoặc kết quả model/RAG live. `/api/session` có max **91.778ms**; SLO là P99, không phải mỗi request ≤50ms, nên không phải failure của tiêu chí hiện tại.
+- Docstring `tests/test_http_headroom.py:530` còn nhắc đường `evals/reports`; code thực tế dùng temp. Đây là nit mô tả không ảnh hưởng gate, để chỉnh khi chạm file lần sau; không mở thêm vòng fix.
+- Nâng cấp embedding/reranker/OCR và đánh giá chất lượng LLM thuộc roadmap sau verification; chưa bảo đảm các tích hợp tương lai không vỡ. Cần baseline evaluation trước khi đổi kiến trúc.
 
-- **Biện pháp khắc phục:**
-  - `calc_headroom_percentiles` tính và lưu `p99_raw_ms` dưới dạng unrounded float; assertion `slo_50ms_met` so sánh trực tiếp float gốc này với 50.0ms. Chỉ round 3 chữ số cho hiển thị (`p99_ms`). `raw_samples` bảo toàn độ chính xác float. Đã có regression test `test_percentile_unrounded_boundary_fails_slo` xác nhận case 50.0004ms bị từ chối SLO.
+## Đồng bộ và bàn giao
 
-### P3 — Setup lỗi có thể bỏ cleanup (ĐÃ ĐÓNG)
+Trước khi viết review, đã đối chiếu Current, Runtime, Sprint, Hardening, Roadmap và Handoff. Reviewer sửa các heading PARTIAL còn sót, lời gọi AC-09 là gate mở, SHA/evidence cũ gán như hiện hành và sơ đồ trạng thái; số đo lịch sử được ghi rõ mốc. Không sửa runtime/test/config, không commit/push/merge/deploy trong vòng review này.
 
-- **Biện pháp khắc phục:**
-  - `_run_waitress_batch` bọc toàn bộ khối setup và batch execution trong `try ... finally` an toàn; từng tài nguyên (`hooks_patched`, `server`, `server_thread`, `batch_temp`, `chat_threads`, `chat_release`) được cleanup và restore độc lập trong `finally`. Đã có regression test `test_waitress_batch_setup_failure_cleanup` xác minh hooks và temp dir được phục hồi hoàn chỉnh kể cả khi setup lỗi.
+**Đi tiếp:** [PRB-MERGE-POSTVERIFY](PLAN_EXECUTION_HANDOFF_GPT6_ASTRA.md#123-trigger-prb-merge-postverify). Commit/push docs đã đồng bộ, kiểm HEAD cuối và CI/artifact hợp lệ → merge PR #35 bằng SHA guard → verification trên main → bàn giao Phase 4 frozen benchmark và load matrix 1/2/4/8/16. Không bật EC2 cho merge/CI; model live chỉ ở bước evaluation được chuẩn bị riêng. Nếu code/base thay đổi ngoài phạm vi docs, kiểm diff mới; không gán evidence cũ cho patch khác.
 
-## Những phần đã đạt và giới hạn
-
-Đã đạt ở phạm vi harness: six-chat admission, K=1/Q=5, thực thi `get_order` thật, barrier giữ tải qua warm-up/hai endpoint, đo tới hết body, fixture mới và hai probe cookies tránh rate limit. Runtime timeout vẫn 10s, fixture override 30s.
-
-Đây là số đo loopback dưới tải tổng hợp có kiểm soát; chưa chứng minh production SLO, flood reject, DB lock toàn cục hoặc model live. Vòng review này không phát hiện thay đổi API/schema/cache/RBAC; các sửa đã làm chỉ thuộc harness/CI/docs. Chưa có đủ bằng chứng để bảo đảm mọi nâng cấp tương lai không vỡ; Phase 4 sẽ đánh giá chất lượng/tải trước khi chọn nâng cấp embedding/reranker/OCR.
-
-## Đồng bộ tài liệu và điều kiện dừng
-
-Đã đối chiếu Current, Runtime, Sprint, Hardening, Roadmap và Handoff: cập nhật candidate `8ba66c8`, CI run `37415015592`, artifact ID `11390129084`, xác nhận đóng toàn bộ findings P2 và P3. Toàn bộ 5/5 check-runs CI hoàn tất thành công và docs/contracts khớp evidence.
-
-**Điều kiện dừng thỏa mãn**: Đã dừng trước merge/deploy, không mở rộng audit. Bàn giao chủ dự án duyệt merge PR #35 → verification sau merge trên main → Phase 4.
-
-Lịch sử cô đọng: `54b0939` đóng tool/barrier; `234e165` thêm protocol 1.000 mẫu; `24ec244` thêm fallback output nhưng nuốt lỗi; `8ba66c8` hoàn tất fail-closed artifact pipeline, unrounded assertion, và setup cleanup. Review này không merge/deploy.
-
+Lịch sử cô đọng: `54b0939` tool/barrier; `234e165` protocol; `24ec244` fallback có khoảng trống integrity; `8ba66c8` đóng writer/P99/cleanup; `5188dc0` docs sync + CI/artifact cuối VERIFIED. **Kết thúc vòng review/fix AC-09 tại mốc này.**
