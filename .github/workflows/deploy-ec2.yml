@@ -13,8 +13,27 @@ concurrency:
   group: deploy-retailops-demo
   cancel-in-progress: false
 jobs:
-  deploy:
+  filter:
     if: github.ref == 'refs/heads/main' && vars.RETAILOPS_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    outputs:
+      deploy_eligible: ${{ steps.guard.outputs.deploy_eligible }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Check deployment eligibility based on changed files
+        id: guard
+        run: |
+          python3 scripts/check_deploy_eligibility.py \
+            --event-name "${{ github.event_name }}" \
+            --before "${{ github.event.before }}" \
+            --sha "${{ github.sha }}"
+
+  deploy:
+    needs: filter
+    if: github.ref == 'refs/heads/main' && vars.RETAILOPS_DEPLOY_ENABLED == 'true' && needs.filter.outputs.deploy_eligible == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     environment: demo

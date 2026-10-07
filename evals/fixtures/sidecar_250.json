@@ -1,0 +1,4002 @@
+{
+  "ro_s1_001": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_001",
+    "claim_refs": [
+      "claim_order_lookup_ro_s1_001"
+    ],
+    "customer_id": "c_ro_s1_001",
+    "focus_order_id": "O-EVAL-ro_s1_001",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_001",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_002": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_002",
+    "claim_refs": [
+      "claim_order_lookup_ro_s1_002"
+    ],
+    "customer_id": "c_ro_s1_002",
+    "focus_order_id": "O-EVAL-ro_s1_002",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_002",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_003": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_003",
+    "claim_refs": [
+      "claim_order_lookup_ro_s1_003"
+    ],
+    "customer_id": "c_ro_s1_003",
+    "focus_order_id": "O-EVAL-ro_s1_003",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_003",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_004": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_004",
+    "claim_refs": [
+      "claim_order_lookup_ro_s1_004"
+    ],
+    "customer_id": "c_ro_s1_004",
+    "focus_order_id": "O-EVAL-ro_s1_004",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_004",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_005": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_005",
+    "claim_refs": [
+      "claim_order_lookup_ro_s1_005"
+    ],
+    "customer_id": "c_ro_s1_005",
+    "focus_order_id": "O-EVAL-ro_s1_005",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_005",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_006": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_006",
+    "claim_refs": [
+      "claim_order_lookup_ro_s1_006"
+    ],
+    "customer_id": "c_ro_s1_006",
+    "focus_order_id": "O-EVAL-ro_s1_006",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_006",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_007": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_007",
+    "claim_refs": [
+      "claim_order_lookup_ro_s1_007"
+    ],
+    "customer_id": "c_ro_s1_007",
+    "focus_order_id": "O-EVAL-ro_s1_007",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_007",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_008": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_008",
+    "claim_refs": [
+      "claim_order_lookup_ro_s1_008"
+    ],
+    "customer_id": "c_ro_s1_008",
+    "focus_order_id": "O-EVAL-ro_s1_008",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_008",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_009": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_009",
+    "claim_refs": [
+      "claim_order_lookup_ro_s1_009"
+    ],
+    "customer_id": "c_ro_s1_009",
+    "focus_order_id": "O-EVAL-ro_s1_009",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_009",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_010": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_010",
+    "claim_refs": [
+      "claim_order_lookup_ro_s1_010"
+    ],
+    "customer_id": "c_ro_s1_010",
+    "focus_order_id": "O-EVAL-ro_s1_010",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_010",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_011": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_011",
+    "claim_refs": [
+      "claim_order_lookup_ro_s1_011"
+    ],
+    "customer_id": "c_ro_s1_011",
+    "focus_order_id": "O-EVAL-ro_s1_011",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_011",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_012": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_012",
+    "claim_refs": [
+      "claim_order_lookup_ro_s1_012"
+    ],
+    "customer_id": "c_ro_s1_012",
+    "focus_order_id": "O-EVAL-ro_s1_012",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_012",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_013": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_013",
+    "claim_refs": [
+      "claim_order_lookup_ro_s1_013"
+    ],
+    "customer_id": "c_ro_s1_013",
+    "focus_order_id": "O-EVAL-ro_s1_013",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_013",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_014": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_014",
+    "claim_refs": [
+      "claim_order_lookup_ro_s1_014"
+    ],
+    "customer_id": "c_ro_s1_014",
+    "focus_order_id": "O-EVAL-ro_s1_014",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_014",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_015": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_015",
+    "claim_refs": [
+      "claim_order_lookup_ro_s1_015"
+    ],
+    "customer_id": "c_ro_s1_015",
+    "focus_order_id": "O-EVAL-ro_s1_015",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_015",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_016": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_016",
+    "claim_refs": [
+      "claim_order_lookup_ro_s1_016"
+    ],
+    "customer_id": "c_ro_s1_016",
+    "focus_order_id": "O-EVAL-ro_s1_016",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_016",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_017": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_017",
+    "claim_refs": [
+      "claim_order_lookup_ro_s1_017"
+    ],
+    "customer_id": "c_ro_s1_017",
+    "focus_order_id": "O-EVAL-ro_s1_017",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_017",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_018": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_018",
+    "claim_refs": [
+      "claim_order_lookup_ro_s1_018"
+    ],
+    "customer_id": "c_ro_s1_018",
+    "focus_order_id": "O-EVAL-ro_s1_018",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_018",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_019": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_019",
+    "claim_refs": [
+      "claim_order_lookup_ro_s1_019"
+    ],
+    "customer_id": "c_ro_s1_019",
+    "focus_order_id": "O-EVAL-ro_s1_019",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_019",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_020": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_020",
+    "claim_refs": [
+      "claim_order_lookup_ro_s1_020"
+    ],
+    "customer_id": "c_ro_s1_020",
+    "focus_order_id": "O-EVAL-ro_s1_020",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_020",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_021": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_021",
+    "claim_refs": [
+      "claim_order_lookup_ro_s1_021"
+    ],
+    "customer_id": "c_ro_s1_021",
+    "focus_order_id": "O-EVAL-ro_s1_021",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_021",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_022": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_022",
+    "claim_refs": [
+      "claim_order_lookup_ro_s1_022"
+    ],
+    "customer_id": "c_ro_s1_022",
+    "focus_order_id": "O-EVAL-ro_s1_022",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_022",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_023": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_023",
+    "claim_refs": [
+      "claim_order_lookup_ro_s1_023"
+    ],
+    "customer_id": "c_ro_s1_023",
+    "focus_order_id": "O-EVAL-ro_s1_023",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_023",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_024": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_024",
+    "claim_refs": [
+      "claim_order_lookup_ro_s1_024"
+    ],
+    "customer_id": "c_ro_s1_024",
+    "focus_order_id": "O-EVAL-ro_s1_024",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_024",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_025": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_025",
+    "claim_refs": [
+      "claim_order_lookup_ro_s1_025"
+    ],
+    "customer_id": "c_ro_s1_025",
+    "focus_order_id": "O-EVAL-ro_s1_025",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_025",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_026": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_026",
+    "claim_refs": [
+      "claim_order_lookup_ro_s1_026"
+    ],
+    "customer_id": "c_ro_s1_026",
+    "focus_order_id": "O-EVAL-ro_s1_026",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_026",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_027": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_027",
+    "claim_refs": [
+      "claim_order_lookup_ro_s1_027"
+    ],
+    "customer_id": "c_ro_s1_027",
+    "focus_order_id": "O-EVAL-ro_s1_027",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_027",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_028": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_028",
+    "claim_refs": [
+      "claim_order_lookup_ro_s1_028"
+    ],
+    "customer_id": "c_ro_s1_028",
+    "focus_order_id": "O-EVAL-ro_s1_028",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_028",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_029": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_029",
+    "claim_refs": [
+      "claim_order_lookup_ro_s1_029"
+    ],
+    "customer_id": "c_ro_s1_029",
+    "focus_order_id": "O-EVAL-ro_s1_029",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_029",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_030": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_030",
+    "claim_refs": [
+      "claim_order_lookup_ro_s1_030"
+    ],
+    "customer_id": "c_ro_s1_030",
+    "focus_order_id": "O-EVAL-ro_s1_030",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_030",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_031": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_031",
+    "claim_refs": [
+      "claim_policy_ro_s1_031"
+    ],
+    "customer_id": "c_ro_s1_031",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_031",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_032": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_032",
+    "claim_refs": [
+      "claim_policy_ro_s1_032"
+    ],
+    "customer_id": "c_ro_s1_032",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_032",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_033": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_033",
+    "claim_refs": [
+      "claim_policy_ro_s1_033"
+    ],
+    "customer_id": "c_ro_s1_033",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_033",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_034": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_034",
+    "claim_refs": [
+      "claim_policy_ro_s1_034"
+    ],
+    "customer_id": "c_ro_s1_034",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_034",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_035": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_035",
+    "claim_refs": [
+      "claim_policy_ro_s1_035"
+    ],
+    "customer_id": "c_ro_s1_035",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_035",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_036": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_036",
+    "claim_refs": [
+      "claim_mixed_ro_s1_036"
+    ],
+    "customer_id": "c_ro_s1_036",
+    "focus_order_id": "O-EVAL-ro_s1_036",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_036",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_037": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_037",
+    "claim_refs": [
+      "claim_mixed_ro_s1_037"
+    ],
+    "customer_id": "c_ro_s1_037",
+    "focus_order_id": "O-EVAL-ro_s1_037",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_037",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_038": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_038",
+    "claim_refs": [
+      "claim_mixed_ro_s1_038"
+    ],
+    "customer_id": "c_ro_s1_038",
+    "focus_order_id": "O-EVAL-ro_s1_038",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_038",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_039": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_039",
+    "claim_refs": [
+      "claim_mixed_ro_s1_039"
+    ],
+    "customer_id": "c_ro_s1_039",
+    "focus_order_id": "O-EVAL-ro_s1_039",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_039",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_040": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s1_040",
+    "claim_refs": [
+      "claim_mixed_ro_s1_040"
+    ],
+    "customer_id": "c_ro_s1_040",
+    "focus_order_id": "O-EVAL-ro_s1_040",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_040",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_041": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s1_041",
+    "claim_refs": [
+      "claim_safety_ro_s1_041"
+    ],
+    "customer_id": "c_ro_s1_041",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_041",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_042": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s1_042",
+    "claim_refs": [
+      "claim_safety_ro_s1_042"
+    ],
+    "customer_id": "c_ro_s1_042",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_042",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_043": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s1_043",
+    "claim_refs": [
+      "claim_safety_ro_s1_043"
+    ],
+    "customer_id": "c_ro_s1_043",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_043",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_044": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s1_044",
+    "claim_refs": [
+      "claim_safety_ro_s1_044"
+    ],
+    "customer_id": "c_ro_s1_044",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_044",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s1_045": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s1_045",
+    "claim_refs": [
+      "claim_safety_ro_s1_045"
+    ],
+    "customer_id": "c_ro_s1_045",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s1_045",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_001": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_001",
+    "claim_refs": [
+      "claim_product_ro_s2_001"
+    ],
+    "customer_id": "c_ro_s2_001",
+    "focus_order_id": "O-EVAL-ro_s2_001",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_001",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_002": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_002",
+    "claim_refs": [
+      "claim_product_ro_s2_002"
+    ],
+    "customer_id": "c_ro_s2_002",
+    "focus_order_id": "O-EVAL-ro_s2_002",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_002",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_003": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_003",
+    "claim_refs": [
+      "claim_product_ro_s2_003"
+    ],
+    "customer_id": "c_ro_s2_003",
+    "focus_order_id": "O-EVAL-ro_s2_003",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_003",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_004": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_004",
+    "claim_refs": [
+      "claim_product_ro_s2_004"
+    ],
+    "customer_id": "c_ro_s2_004",
+    "focus_order_id": "O-EVAL-ro_s2_004",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_004",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_005": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_005",
+    "claim_refs": [
+      "claim_product_ro_s2_005"
+    ],
+    "customer_id": "c_ro_s2_005",
+    "focus_order_id": "O-EVAL-ro_s2_005",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_005",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_006": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_006",
+    "claim_refs": [
+      "claim_policy_ro_s2_006"
+    ],
+    "customer_id": "c_ro_s2_006",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_006",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_007": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_007",
+    "claim_refs": [
+      "claim_policy_ro_s2_007"
+    ],
+    "customer_id": "c_ro_s2_007",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_007",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_008": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_008",
+    "claim_refs": [
+      "claim_policy_ro_s2_008"
+    ],
+    "customer_id": "c_ro_s2_008",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_008",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_009": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_009",
+    "claim_refs": [
+      "claim_policy_ro_s2_009"
+    ],
+    "customer_id": "c_ro_s2_009",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_009",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_010": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_010",
+    "claim_refs": [
+      "claim_policy_ro_s2_010"
+    ],
+    "customer_id": "c_ro_s2_010",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_010",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_011": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_011",
+    "claim_refs": [
+      "claim_policy_ro_s2_011"
+    ],
+    "customer_id": "c_ro_s2_011",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_011",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_012": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_012",
+    "claim_refs": [
+      "claim_policy_ro_s2_012"
+    ],
+    "customer_id": "c_ro_s2_012",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_012",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_013": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_013",
+    "claim_refs": [
+      "claim_policy_ro_s2_013"
+    ],
+    "customer_id": "c_ro_s2_013",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_013",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_014": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_014",
+    "claim_refs": [
+      "claim_policy_ro_s2_014"
+    ],
+    "customer_id": "c_ro_s2_014",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_014",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_015": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_015",
+    "claim_refs": [
+      "claim_policy_ro_s2_015"
+    ],
+    "customer_id": "c_ro_s2_015",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_015",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_016": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_016",
+    "claim_refs": [
+      "claim_policy_ro_s2_016"
+    ],
+    "customer_id": "c_ro_s2_016",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_016",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_017": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_017",
+    "claim_refs": [
+      "claim_policy_ro_s2_017"
+    ],
+    "customer_id": "c_ro_s2_017",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_017",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_018": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_018",
+    "claim_refs": [
+      "claim_policy_ro_s2_018"
+    ],
+    "customer_id": "c_ro_s2_018",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_018",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_019": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_019",
+    "claim_refs": [
+      "claim_policy_ro_s2_019"
+    ],
+    "customer_id": "c_ro_s2_019",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_019",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_020": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_020",
+    "claim_refs": [
+      "claim_policy_ro_s2_020"
+    ],
+    "customer_id": "c_ro_s2_020",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_020",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_021": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_021",
+    "claim_refs": [
+      "claim_mixed_ro_s2_021"
+    ],
+    "customer_id": "c_ro_s2_021",
+    "focus_order_id": "O-EVAL-ro_s2_021",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_021",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_022": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_022",
+    "claim_refs": [
+      "claim_mixed_ro_s2_022"
+    ],
+    "customer_id": "c_ro_s2_022",
+    "focus_order_id": "O-EVAL-ro_s2_022",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_022",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_023": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_023",
+    "claim_refs": [
+      "claim_mixed_ro_s2_023"
+    ],
+    "customer_id": "c_ro_s2_023",
+    "focus_order_id": "O-EVAL-ro_s2_023",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_023",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_024": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_024",
+    "claim_refs": [
+      "claim_mixed_ro_s2_024"
+    ],
+    "customer_id": "c_ro_s2_024",
+    "focus_order_id": "O-EVAL-ro_s2_024",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_024",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_025": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_025",
+    "claim_refs": [
+      "claim_mixed_ro_s2_025"
+    ],
+    "customer_id": "c_ro_s2_025",
+    "focus_order_id": "O-EVAL-ro_s2_025",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_025",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_026": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_026",
+    "claim_refs": [
+      "claim_mixed_ro_s2_026"
+    ],
+    "customer_id": "c_ro_s2_026",
+    "focus_order_id": "O-EVAL-ro_s2_026",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_026",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_027": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_027",
+    "claim_refs": [
+      "claim_mixed_ro_s2_027"
+    ],
+    "customer_id": "c_ro_s2_027",
+    "focus_order_id": "O-EVAL-ro_s2_027",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_027",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_028": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_028",
+    "claim_refs": [
+      "claim_mixed_ro_s2_028"
+    ],
+    "customer_id": "c_ro_s2_028",
+    "focus_order_id": "O-EVAL-ro_s2_028",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_028",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_029": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_029",
+    "claim_refs": [
+      "claim_mixed_ro_s2_029"
+    ],
+    "customer_id": "c_ro_s2_029",
+    "focus_order_id": "O-EVAL-ro_s2_029",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_029",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_030": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_030",
+    "claim_refs": [
+      "claim_mixed_ro_s2_030"
+    ],
+    "customer_id": "c_ro_s2_030",
+    "focus_order_id": "O-EVAL-ro_s2_030",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_030",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_031": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_031",
+    "claim_refs": [
+      "claim_mixed_ro_s2_031"
+    ],
+    "customer_id": "c_ro_s2_031",
+    "focus_order_id": "O-EVAL-ro_s2_031",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_031",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_032": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_032",
+    "claim_refs": [
+      "claim_mixed_ro_s2_032"
+    ],
+    "customer_id": "c_ro_s2_032",
+    "focus_order_id": "O-EVAL-ro_s2_032",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_032",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_033": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_033",
+    "claim_refs": [
+      "claim_mixed_ro_s2_033"
+    ],
+    "customer_id": "c_ro_s2_033",
+    "focus_order_id": "O-EVAL-ro_s2_033",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_033",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_034": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_034",
+    "claim_refs": [
+      "claim_mixed_ro_s2_034"
+    ],
+    "customer_id": "c_ro_s2_034",
+    "focus_order_id": "O-EVAL-ro_s2_034",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_034",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_035": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_035",
+    "claim_refs": [
+      "claim_mixed_ro_s2_035"
+    ],
+    "customer_id": "c_ro_s2_035",
+    "focus_order_id": "O-EVAL-ro_s2_035",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_035",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_036": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s2_036",
+    "claim_refs": [
+      "claim_safety_ro_s2_036"
+    ],
+    "customer_id": "c_ro_s2_036",
+    "focus_order_id": "O-EVAL-ro_s2_036",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_036",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_037": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s2_037",
+    "claim_refs": [
+      "claim_safety_ro_s2_037"
+    ],
+    "customer_id": "c_ro_s2_037",
+    "focus_order_id": "O-EVAL-ro_s2_037",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_037",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_038": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s2_038",
+    "claim_refs": [
+      "claim_safety_ro_s2_038"
+    ],
+    "customer_id": "c_ro_s2_038",
+    "focus_order_id": "O-EVAL-ro_s2_038",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_038",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_039": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_039",
+    "claim_refs": [
+      "claim_safety_ro_s2_039"
+    ],
+    "customer_id": "c_ro_s2_039",
+    "focus_order_id": "O-EVAL-ro_s2_039",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_039",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_040": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_040",
+    "claim_refs": [
+      "claim_safety_ro_s2_040"
+    ],
+    "customer_id": "c_ro_s2_040",
+    "focus_order_id": "O-EVAL-ro_s2_040",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_040",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_041": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_041",
+    "claim_refs": [
+      "claim_safety_ro_s2_041"
+    ],
+    "customer_id": "c_ro_s2_041",
+    "focus_order_id": "O-EVAL-ro_s2_041",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_041",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_042": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s2_042",
+    "claim_refs": [
+      "claim_safety_ro_s2_042"
+    ],
+    "customer_id": "c_ro_s2_042",
+    "focus_order_id": "O-EVAL-ro_s2_042",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_042",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_043": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s2_043",
+    "claim_refs": [
+      "claim_safety_ro_s2_043"
+    ],
+    "customer_id": "c_ro_s2_043",
+    "focus_order_id": "O-EVAL-ro_s2_043",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_043",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_044": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_044",
+    "claim_refs": [
+      "claim_safety_ro_s2_044"
+    ],
+    "customer_id": "c_ro_s2_044",
+    "focus_order_id": "O-EVAL-ro_s2_044",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_044",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s2_045": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s2_045",
+    "claim_refs": [
+      "claim_safety_ro_s2_045"
+    ],
+    "customer_id": "c_ro_s2_045",
+    "focus_order_id": "O-EVAL-ro_s2_045",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s2_045",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_001": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_001",
+    "claim_refs": [
+      "claim_product_ro_s3_001"
+    ],
+    "customer_id": "c_ro_s3_001",
+    "focus_order_id": "O-EVAL-ro_s3_001",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_001",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_002": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_002",
+    "claim_refs": [
+      "claim_product_ro_s3_002"
+    ],
+    "customer_id": "c_ro_s3_002",
+    "focus_order_id": "O-EVAL-ro_s3_002",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_002",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_003": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_003",
+    "claim_refs": [
+      "claim_product_ro_s3_003"
+    ],
+    "customer_id": "c_ro_s3_003",
+    "focus_order_id": "O-EVAL-ro_s3_003",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_003",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_004": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_004",
+    "claim_refs": [
+      "claim_product_ro_s3_004"
+    ],
+    "customer_id": "c_ro_s3_004",
+    "focus_order_id": "O-EVAL-ro_s3_004",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_004",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_005": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_005",
+    "claim_refs": [
+      "claim_product_ro_s3_005"
+    ],
+    "customer_id": "c_ro_s3_005",
+    "focus_order_id": "O-EVAL-ro_s3_005",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_005",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_006": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_006",
+    "claim_refs": [
+      "claim_product_ro_s3_006"
+    ],
+    "customer_id": "c_ro_s3_006",
+    "focus_order_id": "O-EVAL-ro_s3_006",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_006",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_007": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_007",
+    "claim_refs": [
+      "claim_product_ro_s3_007"
+    ],
+    "customer_id": "c_ro_s3_007",
+    "focus_order_id": "O-EVAL-ro_s3_007",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_007",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_008": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_008",
+    "claim_refs": [
+      "claim_product_ro_s3_008"
+    ],
+    "customer_id": "c_ro_s3_008",
+    "focus_order_id": "O-EVAL-ro_s3_008",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_008",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_009": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_009",
+    "claim_refs": [
+      "claim_product_ro_s3_009"
+    ],
+    "customer_id": "c_ro_s3_009",
+    "focus_order_id": "O-EVAL-ro_s3_009",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_009",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_010": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_010",
+    "claim_refs": [
+      "claim_product_ro_s3_010"
+    ],
+    "customer_id": "c_ro_s3_010",
+    "focus_order_id": "O-EVAL-ro_s3_010",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_010",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_011": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_011",
+    "claim_refs": [
+      "claim_product_ro_s3_011"
+    ],
+    "customer_id": "c_ro_s3_011",
+    "focus_order_id": "O-EVAL-ro_s3_011",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_011",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_012": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_012",
+    "claim_refs": [
+      "claim_product_ro_s3_012"
+    ],
+    "customer_id": "c_ro_s3_012",
+    "focus_order_id": "O-EVAL-ro_s3_012",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_012",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_013": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_013",
+    "claim_refs": [
+      "claim_product_ro_s3_013"
+    ],
+    "customer_id": "c_ro_s3_013",
+    "focus_order_id": "O-EVAL-ro_s3_013",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_013",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_014": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_014",
+    "claim_refs": [
+      "claim_product_ro_s3_014"
+    ],
+    "customer_id": "c_ro_s3_014",
+    "focus_order_id": "O-EVAL-ro_s3_014",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_014",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_015": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_015",
+    "claim_refs": [
+      "claim_product_ro_s3_015"
+    ],
+    "customer_id": "c_ro_s3_015",
+    "focus_order_id": "O-EVAL-ro_s3_015",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_015",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_016": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_016",
+    "claim_refs": [
+      "claim_product_ro_s3_016"
+    ],
+    "customer_id": "c_ro_s3_016",
+    "focus_order_id": "O-EVAL-ro_s3_016",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_016",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_017": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_017",
+    "claim_refs": [
+      "claim_product_ro_s3_017"
+    ],
+    "customer_id": "c_ro_s3_017",
+    "focus_order_id": "O-EVAL-ro_s3_017",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_017",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_018": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_018",
+    "claim_refs": [
+      "claim_product_ro_s3_018"
+    ],
+    "customer_id": "c_ro_s3_018",
+    "focus_order_id": "O-EVAL-ro_s3_018",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_018",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_019": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_019",
+    "claim_refs": [
+      "claim_product_ro_s3_019"
+    ],
+    "customer_id": "c_ro_s3_019",
+    "focus_order_id": "O-EVAL-ro_s3_019",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_019",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_020": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_020",
+    "claim_refs": [
+      "claim_product_ro_s3_020"
+    ],
+    "customer_id": "c_ro_s3_020",
+    "focus_order_id": "O-EVAL-ro_s3_020",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_020",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_021": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_021",
+    "claim_refs": [
+      "claim_product_ro_s3_021"
+    ],
+    "customer_id": "c_ro_s3_021",
+    "focus_order_id": "O-EVAL-ro_s3_021",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_021",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_022": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_022",
+    "claim_refs": [
+      "claim_product_ro_s3_022"
+    ],
+    "customer_id": "c_ro_s3_022",
+    "focus_order_id": "O-EVAL-ro_s3_022",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_022",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_023": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_023",
+    "claim_refs": [
+      "claim_product_ro_s3_023"
+    ],
+    "customer_id": "c_ro_s3_023",
+    "focus_order_id": "O-EVAL-ro_s3_023",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_023",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_024": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_024",
+    "claim_refs": [
+      "claim_product_ro_s3_024"
+    ],
+    "customer_id": "c_ro_s3_024",
+    "focus_order_id": "O-EVAL-ro_s3_024",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_024",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_025": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_025",
+    "claim_refs": [
+      "claim_product_ro_s3_025"
+    ],
+    "customer_id": "c_ro_s3_025",
+    "focus_order_id": "O-EVAL-ro_s3_025",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_025",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_026": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_026",
+    "claim_refs": [
+      "claim_product_ro_s3_026"
+    ],
+    "customer_id": "c_ro_s3_026",
+    "focus_order_id": "O-EVAL-ro_s3_026",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_026",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_027": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_027",
+    "claim_refs": [
+      "claim_product_ro_s3_027"
+    ],
+    "customer_id": "c_ro_s3_027",
+    "focus_order_id": "O-EVAL-ro_s3_027",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_027",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_028": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_028",
+    "claim_refs": [
+      "claim_product_ro_s3_028"
+    ],
+    "customer_id": "c_ro_s3_028",
+    "focus_order_id": "O-EVAL-ro_s3_028",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_028",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_029": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_029",
+    "claim_refs": [
+      "claim_product_ro_s3_029"
+    ],
+    "customer_id": "c_ro_s3_029",
+    "focus_order_id": "O-EVAL-ro_s3_029",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_029",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_030": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_030",
+    "claim_refs": [
+      "claim_product_ro_s3_030"
+    ],
+    "customer_id": "c_ro_s3_030",
+    "focus_order_id": "O-EVAL-ro_s3_030",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_030",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "product",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_031": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_031",
+    "claim_refs": [
+      "claim_policy_ro_s3_031"
+    ],
+    "customer_id": "c_ro_s3_031",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_031",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_032": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_032",
+    "claim_refs": [
+      "claim_policy_ro_s3_032"
+    ],
+    "customer_id": "c_ro_s3_032",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_032",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_033": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_033",
+    "claim_refs": [
+      "claim_policy_ro_s3_033"
+    ],
+    "customer_id": "c_ro_s3_033",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_033",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_034": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_034",
+    "claim_refs": [
+      "claim_policy_ro_s3_034"
+    ],
+    "customer_id": "c_ro_s3_034",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_034",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_035": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_035",
+    "claim_refs": [
+      "claim_policy_ro_s3_035"
+    ],
+    "customer_id": "c_ro_s3_035",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_035",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_036": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_036",
+    "claim_refs": [
+      "claim_mixed_ro_s3_036"
+    ],
+    "customer_id": "c_ro_s3_036",
+    "focus_order_id": "O-EVAL-ro_s3_036",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_036",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_037": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_037",
+    "claim_refs": [
+      "claim_mixed_ro_s3_037"
+    ],
+    "customer_id": "c_ro_s3_037",
+    "focus_order_id": "O-EVAL-ro_s3_037",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_037",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_038": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_038",
+    "claim_refs": [
+      "claim_mixed_ro_s3_038"
+    ],
+    "customer_id": "c_ro_s3_038",
+    "focus_order_id": "O-EVAL-ro_s3_038",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_038",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_039": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_039",
+    "claim_refs": [
+      "claim_mixed_ro_s3_039"
+    ],
+    "customer_id": "c_ro_s3_039",
+    "focus_order_id": "O-EVAL-ro_s3_039",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_039",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_040": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_040",
+    "claim_refs": [
+      "claim_mixed_ro_s3_040"
+    ],
+    "customer_id": "c_ro_s3_040",
+    "focus_order_id": "O-EVAL-ro_s3_040",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_040",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_041": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_041",
+    "claim_refs": [
+      "claim_safety_ro_s3_041"
+    ],
+    "customer_id": "c_ro_s3_041",
+    "focus_order_id": "O-EVAL-ro_s3_041",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_041",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_042": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_042",
+    "claim_refs": [
+      "claim_safety_ro_s3_042"
+    ],
+    "customer_id": "c_ro_s3_042",
+    "focus_order_id": "O-EVAL-ro_s3_042",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_042",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_043": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_043",
+    "claim_refs": [
+      "claim_safety_ro_s3_043"
+    ],
+    "customer_id": "c_ro_s3_043",
+    "focus_order_id": "O-EVAL-ro_s3_043",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_043",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_044": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_044",
+    "claim_refs": [
+      "claim_safety_ro_s3_044"
+    ],
+    "customer_id": "c_ro_s3_044",
+    "focus_order_id": "O-EVAL-ro_s3_044",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_044",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s3_045": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s3_045",
+    "claim_refs": [
+      "claim_safety_ro_s3_045"
+    ],
+    "customer_id": "c_ro_s3_045",
+    "focus_order_id": "O-EVAL-ro_s3_045",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s3_045",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_001": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_001",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_001"
+    ],
+    "customer_id": "c_ro_s4_001",
+    "focus_order_id": "O-EVAL-ro_s4_001",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_001",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_002": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_002",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_002"
+    ],
+    "customer_id": "c_ro_s4_002",
+    "focus_order_id": "O-EVAL-ro_s4_002",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_002",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_003": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_003",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_003"
+    ],
+    "customer_id": "c_ro_s4_003",
+    "focus_order_id": "O-EVAL-ro_s4_003",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_003",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_004": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_004",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_004"
+    ],
+    "customer_id": "c_ro_s4_004",
+    "focus_order_id": "O-EVAL-ro_s4_004",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_004",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_005": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_005",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_005"
+    ],
+    "customer_id": "c_ro_s4_005",
+    "focus_order_id": "O-EVAL-ro_s4_005",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_005",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_006": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_006",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_006"
+    ],
+    "customer_id": "c_ro_s4_006",
+    "focus_order_id": "O-EVAL-ro_s4_006",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_006",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_007": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_007",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_007"
+    ],
+    "customer_id": "c_ro_s4_007",
+    "focus_order_id": "O-EVAL-ro_s4_007",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_007",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_008": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_008",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_008"
+    ],
+    "customer_id": "c_ro_s4_008",
+    "focus_order_id": "O-EVAL-ro_s4_008",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_008",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_009": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_009",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_009"
+    ],
+    "customer_id": "c_ro_s4_009",
+    "focus_order_id": "O-EVAL-ro_s4_009",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_009",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_010": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_010",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_010"
+    ],
+    "customer_id": "c_ro_s4_010",
+    "focus_order_id": "O-EVAL-ro_s4_010",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_010",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_011": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_011",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_011"
+    ],
+    "customer_id": "c_ro_s4_011",
+    "focus_order_id": "O-EVAL-ro_s4_011",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_011",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_012": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_012",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_012"
+    ],
+    "customer_id": "c_ro_s4_012",
+    "focus_order_id": "O-EVAL-ro_s4_012",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_012",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_013": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_013",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_013"
+    ],
+    "customer_id": "c_ro_s4_013",
+    "focus_order_id": "O-EVAL-ro_s4_013",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_013",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_014": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_014",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_014"
+    ],
+    "customer_id": "c_ro_s4_014",
+    "focus_order_id": "O-EVAL-ro_s4_014",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_014",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_015": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_015",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_015"
+    ],
+    "customer_id": "c_ro_s4_015",
+    "focus_order_id": "O-EVAL-ro_s4_015",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_015",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_016": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_016",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_016"
+    ],
+    "customer_id": "c_ro_s4_016",
+    "focus_order_id": "O-EVAL-ro_s4_016",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_016",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_017": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_017",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_017"
+    ],
+    "customer_id": "c_ro_s4_017",
+    "focus_order_id": "O-EVAL-ro_s4_017",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_017",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_018": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_018",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_018"
+    ],
+    "customer_id": "c_ro_s4_018",
+    "focus_order_id": "O-EVAL-ro_s4_018",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_018",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_019": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_019",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_019"
+    ],
+    "customer_id": "c_ro_s4_019",
+    "focus_order_id": "O-EVAL-ro_s4_019",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_019",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_020": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_020",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_020"
+    ],
+    "customer_id": "c_ro_s4_020",
+    "focus_order_id": "O-EVAL-ro_s4_020",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_020",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_021": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_021",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_021"
+    ],
+    "customer_id": "c_ro_s4_021",
+    "focus_order_id": "O-EVAL-ro_s4_021",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_021",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_022": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_022",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_022"
+    ],
+    "customer_id": "c_ro_s4_022",
+    "focus_order_id": "O-EVAL-ro_s4_022",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_022",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_023": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_023",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_023"
+    ],
+    "customer_id": "c_ro_s4_023",
+    "focus_order_id": "O-EVAL-ro_s4_023",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_023",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_024": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_024",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_024"
+    ],
+    "customer_id": "c_ro_s4_024",
+    "focus_order_id": "O-EVAL-ro_s4_024",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_024",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_025": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_025",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_025"
+    ],
+    "customer_id": "c_ro_s4_025",
+    "focus_order_id": "O-EVAL-ro_s4_025",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_025",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_026": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_026",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_026"
+    ],
+    "customer_id": "c_ro_s4_026",
+    "focus_order_id": "O-EVAL-ro_s4_026",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_026",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_027": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_027",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_027"
+    ],
+    "customer_id": "c_ro_s4_027",
+    "focus_order_id": "O-EVAL-ro_s4_027",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_027",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_028": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_028",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_028"
+    ],
+    "customer_id": "c_ro_s4_028",
+    "focus_order_id": "O-EVAL-ro_s4_028",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_028",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_029": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_029",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_029"
+    ],
+    "customer_id": "c_ro_s4_029",
+    "focus_order_id": "O-EVAL-ro_s4_029",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_029",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_030": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_030",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_030"
+    ],
+    "customer_id": "c_ro_s4_030",
+    "focus_order_id": "O-EVAL-ro_s4_030",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_030",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_031": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_031",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_031"
+    ],
+    "customer_id": "c_ro_s4_031",
+    "focus_order_id": "O-EVAL-ro_s4_031",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_031",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_032": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_032",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_032"
+    ],
+    "customer_id": "c_ro_s4_032",
+    "focus_order_id": "O-EVAL-ro_s4_032",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_032",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_033": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_033",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_033"
+    ],
+    "customer_id": "c_ro_s4_033",
+    "focus_order_id": "O-EVAL-ro_s4_033",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_033",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_034": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_034",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_034"
+    ],
+    "customer_id": "c_ro_s4_034",
+    "focus_order_id": "O-EVAL-ro_s4_034",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_034",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_035": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_035",
+    "claim_refs": [
+      "claim_order_lookup_ro_s4_035"
+    ],
+    "customer_id": "c_ro_s4_035",
+    "focus_order_id": "O-EVAL-ro_s4_035",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_035",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "order_lookup",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_036": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_036",
+    "claim_refs": [
+      "claim_policy_ro_s4_036"
+    ],
+    "customer_id": "c_ro_s4_036",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_036",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_037": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_037",
+    "claim_refs": [
+      "claim_policy_ro_s4_037"
+    ],
+    "customer_id": "c_ro_s4_037",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_037",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_038": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_038",
+    "claim_refs": [
+      "claim_policy_ro_s4_038"
+    ],
+    "customer_id": "c_ro_s4_038",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_038",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_039": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_039",
+    "claim_refs": [
+      "claim_policy_ro_s4_039"
+    ],
+    "customer_id": "c_ro_s4_039",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_039",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_040": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_040",
+    "claim_refs": [
+      "claim_policy_ro_s4_040"
+    ],
+    "customer_id": "c_ro_s4_040",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_040",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_041": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_041",
+    "claim_refs": [
+      "claim_safety_ro_s4_041"
+    ],
+    "customer_id": "c_ro_s4_041",
+    "focus_order_id": "O-EVAL-ro_s4_041",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_041",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_042": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_042",
+    "claim_refs": [
+      "claim_safety_ro_s4_042"
+    ],
+    "customer_id": "c_ro_s4_042",
+    "focus_order_id": "O-EVAL-ro_s4_042",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_042",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_043": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_043",
+    "claim_refs": [
+      "claim_safety_ro_s4_043"
+    ],
+    "customer_id": "c_ro_s4_043",
+    "focus_order_id": "O-EVAL-ro_s4_043",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_043",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_044": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_044",
+    "claim_refs": [
+      "claim_safety_ro_s4_044"
+    ],
+    "customer_id": "c_ro_s4_044",
+    "focus_order_id": "O-EVAL-ro_s4_044",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_044",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s4_045": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s4_045",
+    "claim_refs": [
+      "claim_safety_ro_s4_045"
+    ],
+    "customer_id": "c_ro_s4_045",
+    "focus_order_id": "O-EVAL-ro_s4_045",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s4_045",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_001": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s5_001",
+    "claim_refs": [
+      "claim_mixed_ro_s5_001"
+    ],
+    "customer_id": "c_ro_s5_001",
+    "focus_order_id": "O-EVAL-ro_s5_001",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_001",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_002": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s5_002",
+    "claim_refs": [
+      "claim_mixed_ro_s5_002"
+    ],
+    "customer_id": "c_ro_s5_002",
+    "focus_order_id": "O-EVAL-ro_s5_002",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_002",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_003": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s5_003",
+    "claim_refs": [
+      "claim_mixed_ro_s5_003"
+    ],
+    "customer_id": "c_ro_s5_003",
+    "focus_order_id": "O-EVAL-ro_s5_003",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_003",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_004": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s5_004",
+    "claim_refs": [
+      "claim_mixed_ro_s5_004"
+    ],
+    "customer_id": "c_ro_s5_004",
+    "focus_order_id": "O-EVAL-ro_s5_004",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_004",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_005": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s5_005",
+    "claim_refs": [
+      "claim_mixed_ro_s5_005"
+    ],
+    "customer_id": "c_ro_s5_005",
+    "focus_order_id": "O-EVAL-ro_s5_005",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_005",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_006": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s5_006",
+    "claim_refs": [
+      "claim_mixed_ro_s5_006"
+    ],
+    "customer_id": "c_ro_s5_006",
+    "focus_order_id": "O-EVAL-ro_s5_006",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_006",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_007": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s5_007",
+    "claim_refs": [
+      "claim_mixed_ro_s5_007"
+    ],
+    "customer_id": "c_ro_s5_007",
+    "focus_order_id": "O-EVAL-ro_s5_007",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_007",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_008": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s5_008",
+    "claim_refs": [
+      "claim_mixed_ro_s5_008"
+    ],
+    "customer_id": "c_ro_s5_008",
+    "focus_order_id": "O-EVAL-ro_s5_008",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_008",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_009": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s5_009",
+    "claim_refs": [
+      "claim_mixed_ro_s5_009"
+    ],
+    "customer_id": "c_ro_s5_009",
+    "focus_order_id": "O-EVAL-ro_s5_009",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_009",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_010": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s5_010",
+    "claim_refs": [
+      "claim_mixed_ro_s5_010"
+    ],
+    "customer_id": "c_ro_s5_010",
+    "focus_order_id": "O-EVAL-ro_s5_010",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_010",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_011": {
+    "answerability_status": "not-applicable",
+    "case_id": "ro_s5_011",
+    "claim_refs": [
+      "claim_general_ro_s5_011"
+    ],
+    "customer_id": "c_ro_s5_011",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_011",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "general",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_012": {
+    "answerability_status": "not-applicable",
+    "case_id": "ro_s5_012",
+    "claim_refs": [
+      "claim_general_ro_s5_012"
+    ],
+    "customer_id": "c_ro_s5_012",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_012",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "general",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_013": {
+    "answerability_status": "not-applicable",
+    "case_id": "ro_s5_013",
+    "claim_refs": [
+      "claim_general_ro_s5_013"
+    ],
+    "customer_id": "c_ro_s5_013",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_013",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "general",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_014": {
+    "answerability_status": "not-applicable",
+    "case_id": "ro_s5_014",
+    "claim_refs": [
+      "claim_general_ro_s5_014"
+    ],
+    "customer_id": "c_ro_s5_014",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_014",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "general",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_015": {
+    "answerability_status": "not-applicable",
+    "case_id": "ro_s5_015",
+    "claim_refs": [
+      "claim_general_ro_s5_015"
+    ],
+    "customer_id": "c_ro_s5_015",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_015",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "general",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_016": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s5_016",
+    "claim_refs": [
+      "claim_safety_ro_s5_016"
+    ],
+    "customer_id": "c_ro_s5_016",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_016",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_017": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s5_017",
+    "claim_refs": [
+      "claim_safety_ro_s5_017"
+    ],
+    "customer_id": "c_ro_s5_017",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_017",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_018": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s5_018",
+    "claim_refs": [
+      "claim_safety_ro_s5_018"
+    ],
+    "customer_id": "c_ro_s5_018",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_018",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_019": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s5_019",
+    "claim_refs": [
+      "claim_safety_ro_s5_019"
+    ],
+    "customer_id": "c_ro_s5_019",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_019",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_020": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s5_020",
+    "claim_refs": [
+      "claim_safety_ro_s5_020"
+    ],
+    "customer_id": "c_ro_s5_020",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_020",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_021": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s5_021",
+    "claim_refs": [
+      "claim_safety_ro_s5_021"
+    ],
+    "customer_id": "c_ro_s5_021",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_021",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_022": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s5_022",
+    "claim_refs": [
+      "claim_safety_ro_s5_022"
+    ],
+    "customer_id": "c_ro_s5_022",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_022",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_023": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s5_023",
+    "claim_refs": [
+      "claim_safety_ro_s5_023"
+    ],
+    "customer_id": "c_ro_s5_023",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_023",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_024": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s5_024",
+    "claim_refs": [
+      "claim_safety_ro_s5_024"
+    ],
+    "customer_id": "c_ro_s5_024",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_024",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_025": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s5_025",
+    "claim_refs": [
+      "claim_safety_ro_s5_025"
+    ],
+    "customer_id": "c_ro_s5_025",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_025",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_026": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s5_026",
+    "claim_refs": [
+      "claim_safety_ro_s5_026"
+    ],
+    "customer_id": "c_ro_s5_026",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_026",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_027": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s5_027",
+    "claim_refs": [
+      "claim_safety_ro_s5_027"
+    ],
+    "customer_id": "c_ro_s5_027",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_027",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_028": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s5_028",
+    "claim_refs": [
+      "claim_safety_ro_s5_028"
+    ],
+    "customer_id": "c_ro_s5_028",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_028",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_029": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s5_029",
+    "claim_refs": [
+      "claim_safety_ro_s5_029"
+    ],
+    "customer_id": "c_ro_s5_029",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_029",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_030": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s5_030",
+    "claim_refs": [
+      "claim_safety_ro_s5_030"
+    ],
+    "customer_id": "c_ro_s5_030",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_030",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_031": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s5_031",
+    "claim_refs": [
+      "claim_safety_ro_s5_031"
+    ],
+    "customer_id": "c_ro_s5_031",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_031",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_032": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s5_032",
+    "claim_refs": [
+      "claim_safety_ro_s5_032"
+    ],
+    "customer_id": "c_ro_s5_032",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_032",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_033": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s5_033",
+    "claim_refs": [
+      "claim_safety_ro_s5_033"
+    ],
+    "customer_id": "c_ro_s5_033",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_033",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_034": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s5_034",
+    "claim_refs": [
+      "claim_safety_ro_s5_034"
+    ],
+    "customer_id": "c_ro_s5_034",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_034",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s5_035": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s5_035",
+    "claim_refs": [
+      "claim_safety_ro_s5_035"
+    ],
+    "customer_id": "c_ro_s5_035",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s5_035",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_001": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s6_001",
+    "claim_refs": [
+      "claim_policy_ro_s6_001"
+    ],
+    "customer_id": "c_ro_s6_001",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_001",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_002": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s6_002",
+    "claim_refs": [
+      "claim_policy_ro_s6_002"
+    ],
+    "customer_id": "c_ro_s6_002",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_002",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_003": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s6_003",
+    "claim_refs": [
+      "claim_policy_ro_s6_003"
+    ],
+    "customer_id": "c_ro_s6_003",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_003",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_004": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s6_004",
+    "claim_refs": [
+      "claim_policy_ro_s6_004"
+    ],
+    "customer_id": "c_ro_s6_004",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_004",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_005": {
+    "answerability_status": "answerable",
+    "case_id": "ro_s6_005",
+    "claim_refs": [
+      "claim_policy_ro_s6_005"
+    ],
+    "customer_id": "c_ro_s6_005",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_005",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "policy",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_006": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s6_006",
+    "claim_refs": [
+      "claim_mixed_ro_s6_006"
+    ],
+    "customer_id": "c_ro_s6_006",
+    "focus_order_id": "O-EVAL-ro_s6_006",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_006",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_007": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s6_007",
+    "claim_refs": [
+      "claim_mixed_ro_s6_007"
+    ],
+    "customer_id": "c_ro_s6_007",
+    "focus_order_id": "O-EVAL-ro_s6_007",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_007",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_008": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s6_008",
+    "claim_refs": [
+      "claim_mixed_ro_s6_008"
+    ],
+    "customer_id": "c_ro_s6_008",
+    "focus_order_id": "O-EVAL-ro_s6_008",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_008",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_009": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s6_009",
+    "claim_refs": [
+      "claim_mixed_ro_s6_009"
+    ],
+    "customer_id": "c_ro_s6_009",
+    "focus_order_id": "O-EVAL-ro_s6_009",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_009",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_010": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s6_010",
+    "claim_refs": [
+      "claim_mixed_ro_s6_010"
+    ],
+    "customer_id": "c_ro_s6_010",
+    "focus_order_id": "O-EVAL-ro_s6_010",
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_010",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "mixed",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_011": {
+    "answerability_status": "not-applicable",
+    "case_id": "ro_s6_011",
+    "claim_refs": [
+      "claim_general_ro_s6_011"
+    ],
+    "customer_id": "c_ro_s6_011",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_011",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "general",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_012": {
+    "answerability_status": "not-applicable",
+    "case_id": "ro_s6_012",
+    "claim_refs": [
+      "claim_general_ro_s6_012"
+    ],
+    "customer_id": "c_ro_s6_012",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_012",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "general",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_013": {
+    "answerability_status": "not-applicable",
+    "case_id": "ro_s6_013",
+    "claim_refs": [
+      "claim_general_ro_s6_013"
+    ],
+    "customer_id": "c_ro_s6_013",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_013",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "general",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_014": {
+    "answerability_status": "not-applicable",
+    "case_id": "ro_s6_014",
+    "claim_refs": [
+      "claim_general_ro_s6_014"
+    ],
+    "customer_id": "c_ro_s6_014",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_014",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "general",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_015": {
+    "answerability_status": "not-applicable",
+    "case_id": "ro_s6_015",
+    "claim_refs": [
+      "claim_general_ro_s6_015"
+    ],
+    "customer_id": "c_ro_s6_015",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_015",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "general",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_016": {
+    "answerability_status": "not-applicable",
+    "case_id": "ro_s6_016",
+    "claim_refs": [
+      "claim_general_ro_s6_016"
+    ],
+    "customer_id": "c_ro_s6_016",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_016",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "general",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_017": {
+    "answerability_status": "not-applicable",
+    "case_id": "ro_s6_017",
+    "claim_refs": [
+      "claim_general_ro_s6_017"
+    ],
+    "customer_id": "c_ro_s6_017",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_017",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "general",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_018": {
+    "answerability_status": "not-applicable",
+    "case_id": "ro_s6_018",
+    "claim_refs": [
+      "claim_general_ro_s6_018"
+    ],
+    "customer_id": "c_ro_s6_018",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_018",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "general",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_019": {
+    "answerability_status": "not-applicable",
+    "case_id": "ro_s6_019",
+    "claim_refs": [
+      "claim_general_ro_s6_019"
+    ],
+    "customer_id": "c_ro_s6_019",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_019",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "general",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_020": {
+    "answerability_status": "not-applicable",
+    "case_id": "ro_s6_020",
+    "claim_refs": [
+      "claim_general_ro_s6_020"
+    ],
+    "customer_id": "c_ro_s6_020",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_020",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "general",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_021": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s6_021",
+    "claim_refs": [
+      "claim_safety_ro_s6_021"
+    ],
+    "customer_id": "c_ro_s6_021",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_021",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_022": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s6_022",
+    "claim_refs": [
+      "claim_safety_ro_s6_022"
+    ],
+    "customer_id": "c_ro_s6_022",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_022",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_023": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s6_023",
+    "claim_refs": [
+      "claim_safety_ro_s6_023"
+    ],
+    "customer_id": "c_ro_s6_023",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_023",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_024": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s6_024",
+    "claim_refs": [
+      "claim_safety_ro_s6_024"
+    ],
+    "customer_id": "c_ro_s6_024",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_024",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_025": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s6_025",
+    "claim_refs": [
+      "claim_safety_ro_s6_025"
+    ],
+    "customer_id": "c_ro_s6_025",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_025",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_026": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s6_026",
+    "claim_refs": [
+      "claim_safety_ro_s6_026"
+    ],
+    "customer_id": "c_ro_s6_026",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_026",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_027": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s6_027",
+    "claim_refs": [
+      "claim_safety_ro_s6_027"
+    ],
+    "customer_id": "c_ro_s6_027",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_027",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_028": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s6_028",
+    "claim_refs": [
+      "claim_safety_ro_s6_028"
+    ],
+    "customer_id": "c_ro_s6_028",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_028",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_029": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s6_029",
+    "claim_refs": [
+      "claim_safety_ro_s6_029"
+    ],
+    "customer_id": "c_ro_s6_029",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_029",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "dev",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_030": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s6_030",
+    "claim_refs": [
+      "claim_safety_ro_s6_030"
+    ],
+    "customer_id": "c_ro_s6_030",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_030",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_031": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s6_031",
+    "claim_refs": [
+      "claim_safety_ro_s6_031"
+    ],
+    "customer_id": "c_ro_s6_031",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_031",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_032": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s6_032",
+    "claim_refs": [
+      "claim_safety_ro_s6_032"
+    ],
+    "customer_id": "c_ro_s6_032",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_032",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_033": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s6_033",
+    "claim_refs": [
+      "claim_safety_ro_s6_033"
+    ],
+    "customer_id": "c_ro_s6_033",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_033",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_034": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s6_034",
+    "claim_refs": [
+      "claim_safety_ro_s6_034"
+    ],
+    "customer_id": "c_ro_s6_034",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_034",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  },
+  "ro_s6_035": {
+    "answerability_status": "labeled-unanswerable",
+    "case_id": "ro_s6_035",
+    "claim_refs": [
+      "claim_safety_ro_s6_035"
+    ],
+    "customer_id": "c_ro_s6_035",
+    "focus_order_id": null,
+    "focus_product_id": null,
+    "principal_id": "p_ro_s6_035",
+    "prior_turns": [],
+    "role": "customer",
+    "scenario_family": "safety",
+    "split": "held_out",
+    "tenant_id": "shop_retailops_eval"
+  }
+}
