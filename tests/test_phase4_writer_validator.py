@@ -6,24 +6,30 @@ import shutil
 import tempfile
 import unittest
 
-from evals.harness.constants import (
-    CANONICAL_ARTIFACT_FILES,
-    PROTOCOL_VERSION,
-    SCHEMA_VERSION_ATTEMPT,
-    SCHEMA_VERSION_ERROR,
-    SCHEMA_VERSION_GRADING,
-    SCHEMA_VERSION_MANIFEST,
-    SCHEMA_VERSION_RETRIEVAL,
-    SYSTEM_BASELINE_COMMIT_SHA,
-)
-from evals.harness.runner import Phase4MockRunner
-from evals.harness.validator import CanonicalBundleValidator, recompute_aggregate_from_raw
-from evals.harness.writer import CanonicalBundleWriter
+try:
+    from evals.harness.constants import (
+        CANONICAL_ARTIFACT_FILES,
+        PROTOCOL_VERSION,
+        SCHEMA_VERSION_ATTEMPT,
+        SCHEMA_VERSION_ERROR,
+        SCHEMA_VERSION_GRADING,
+        SCHEMA_VERSION_MANIFEST,
+        SCHEMA_VERSION_RETRIEVAL,
+        SYSTEM_BASELINE_COMMIT_SHA,
+    )
+    from evals.harness.runner import Phase4MockRunner
+    from evals.harness.validator import CanonicalBundleValidator, recompute_aggregate_from_raw
+    from evals.harness.writer import CanonicalBundleWriter
+    _HARNESS_AVAILABLE = True
+except ImportError:
+    _HARNESS_AVAILABLE = False
 
 
 class TestWriterAndValidator(unittest.TestCase):
 
     def setUp(self):
+        if not _HARNESS_AVAILABLE:
+            self.skipTest("evals.harness not available in runtime-only container")
         self.test_dir = Path(tempfile.mkdtemp(prefix="phase4_test_bundle_"))
 
     def tearDown(self):

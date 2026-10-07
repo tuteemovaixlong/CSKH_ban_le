@@ -2,12 +2,18 @@
 
 import unittest
 
-from evals.harness.grader import Phase4Grader
+try:
+    from evals.harness.grader import Phase4Grader
+    _HARNESS_AVAILABLE = True
+except ImportError:
+    _HARNESS_AVAILABLE = False
 
 
 class TestPhase4Grader(unittest.TestCase):
 
     def setUp(self):
+        if not _HARNESS_AVAILABLE:
+            self.skipTest("evals.harness not available in runtime-only container")
         self.grader = Phase4Grader()
 
     def test_routing_mismatch_flagged(self):

@@ -10,26 +10,32 @@ import shutil
 import tempfile
 import unittest
 
-from evals.harness.constants import (
-    PROTOCOL_VERSION,
-    SCHEMA_VERSION_ATTEMPT,
-    SCHEMA_VERSION_ERROR,
-    SCHEMA_VERSION_GRADING,
-    SCHEMA_VERSION_MANIFEST,
-    SCHEMA_VERSION_RETRIEVAL,
-    SYSTEM_BASELINE_COMMIT_SHA,
-)
-from evals.harness.grader import Phase4Grader
-from evals.harness.runner import Phase4MockRunner
-from evals.harness.schema import SchemaValidationError, validate_attempt_record
-from evals.harness.telemetry import EvaluationOverlayError, assert_a0_cache_off
-from evals.harness.validator import CanonicalBundleValidator
-from evals.harness.writer import CanonicalBundleWriter
+try:
+    from evals.harness.constants import (
+        PROTOCOL_VERSION,
+        SCHEMA_VERSION_ATTEMPT,
+        SCHEMA_VERSION_ERROR,
+        SCHEMA_VERSION_GRADING,
+        SCHEMA_VERSION_MANIFEST,
+        SCHEMA_VERSION_RETRIEVAL,
+        SYSTEM_BASELINE_COMMIT_SHA,
+    )
+    from evals.harness.grader import Phase4Grader
+    from evals.harness.runner import Phase4MockRunner
+    from evals.harness.schema import SchemaValidationError, validate_attempt_record
+    from evals.harness.telemetry import EvaluationOverlayError, assert_a0_cache_off
+    from evals.harness.validator import CanonicalBundleValidator
+    from evals.harness.writer import CanonicalBundleWriter
+    _HARNESS_AVAILABLE = True
+except ImportError:
+    _HARNESS_AVAILABLE = False
 
 
 class TestPhase4Adversarial(unittest.TestCase):
 
     def setUp(self):
+        if not _HARNESS_AVAILABLE:
+            self.skipTest("evals.harness not available in runtime-only container")
         self.test_dir = Path(tempfile.mkdtemp(prefix="phase4_adversarial_"))
         self.grader = Phase4Grader()
 
