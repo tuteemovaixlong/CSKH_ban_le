@@ -134,20 +134,29 @@ def validate_manifest(data: Dict[str, Any]) -> None:
             f"manifest [H4]: dataset_sha256 mismatch! Got {data.get('dataset_sha256')}, expected frozen LF hash {FROZEN_BENCHMARK_LF_SHA256}"
         )
 
-    # Artifact files must match exact canonical list
+    # Artifact files must match exact canonical list (including manifest.json, no duplicates, no missing, no extra)
     artifact_files = data.get("artifact_files")
     if not isinstance(artifact_files, list):
         raise SchemaValidationError("manifest: artifact_files must be a list of filenames")
 
-    # Must only contain canonical filenames and must contain all canonical non-manifest artifacts
-    allowed_set = set(CANONICAL_ARTIFACT_FILES)
-    for f in artifact_files:
-        if f not in allowed_set:
-            raise SchemaValidationError(f"manifest: Non-canonical filename in artifact_files: '{f}'")
+    if len(artifact_files) != len(set(artifact_files)):
+        raise SchemaValidationError("manifest: artifact_files contains duplicate entries")
 
-    required_in_manifest = {"attempts.jsonl", "grading.jsonl", "retrieval.jsonl", "errors.jsonl", "aggregate.json", "checksums.sha256"}
-    if not required_in_manifest.issubset(set(artifact_files)):
-        raise SchemaValidationError(f"manifest: artifact_files missing canonical files: {required_in_manifest - set(artifact_files)}")
+    expected_canonical_set = set(CANONICAL_ARTIFACT_FILES)
+    actual_set = set(artifact_files)
+
+    missing_files = expected_canonical_set - actual_set
+    if missing_files:
+        raise SchemaValidationError(f"manifest: artifact_files missing canonical files: {sorted(missing_files)}")
+
+    extra_files = actual_set - expected_canonical_set
+    if extra_files:
+        raise SchemaValidationError(f"manifest: artifact_files contains non-canonical files: {sorted(extra_files)}")
+
+    if len(artifact_files) != len(CANONICAL_ARTIFACT_FILES):
+        raise SchemaValidationError(
+            f"manifest: artifact_files count {len(artifact_files)} != expected canonical count {len(CANONICAL_ARTIFACT_FILES)}"
+        )
 
     # Unavailable reasons check
     for key in ("model_revision", "tokenizer_revision", "seed"):
@@ -374,6 +383,11 @@ def validate_retrieval_record(record: Dict[str, Any]) -> None:
     if answerability and answerability not in VALID_ANSWERABILITY_STATUSES:
         raise SchemaValidationError(f"retrieval: Invalid answerability_status: {answerability}")
 
+    qrels_sha = record.get("qrels_sha256")
+    if qrels_sha is not None:
+        if not isinstance(qrels_sha, str) or not HEX_64_RE.match(qrels_sha):
+            raise SchemaValidationError(f"retrieval: Invalid qrels_sha256: {qrels_sha}")
+
 
 def validate_error_record(record: Dict[str, Any]) -> None:
     """Validates an errors.jsonl line record."""
@@ -429,3 +443,30 @@ def validate_aggregate(data: Dict[str, Any]) -> None:
         ratio = data.get(ratio_key)
         if not isinstance(ratio, dict) or "numerator" not in ratio or "denominator" not in ratio:
             raise SchemaValidationError(f"aggregate: {ratio_key} must be dict with numerator and denominator")
+        num = ratio.get("numerator")
+        denom = ratio.get("denominator")
+        if type(num) is not int or type(denom) is not int or num < 0 or denom < 0:
+            raise SchemaValidationError(f"aggregate: {ratio_key} numerator and denominator must be non-negative integers")
+        if denom > 0 and num > denom:
+            raise SchemaValidationError(f"aggregate: {ratio_key} numerator {num} cannot exceed denominator {denom}")
+        rate = ratio.get("rate")
+        if rate is not None:
+            if type(rate) not in (int, float) or type(rate) is bool:
+                raise SchemaValidationError(f"aggregate: {ratio_key} rate must be float or int")
+            if rate < 0.0 or rate > 1.0:
+                raise SchemaValidationError(f"aggregate: {ratio_key} rate {rate} must be between 0.0 and 1.0")
+
+    for rate_key in ("first_attempt_success_rate", "eventual_success_rate"):
+        rate = data.get(rate_key)
+        if rate is not None:
+            if type(rate) not in (int, float) or type(rate) is bool:
+                raise SchemaValidationError(f"aggregate: {rate_key} must be float or int")
+            if rate < 0.0 or rate > 1.0:
+                raise SchemaValidationError(f"aggregate: {rate_key} {rate} must be between 0.0 and 1.0")
+
+    rec_rate = data.get("retry_recovery_rate")
+    if rec_rate is not None:
+        if type(rec_rate) not in (int, float) or type(rec_rate) is bool:
+            raise SchemaValidationError("aggregate: retry_recovery_rate must be float or int")
+        if rec_rate < 0.0 or rec_rate > 1.0:
+            raise SchemaValidationError(f"aggregate: retry_recovery_rate {rec_rate} must be between 0.0 and 1.0")

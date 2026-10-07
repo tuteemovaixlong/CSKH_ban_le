@@ -1,61 +1,70 @@
-# Plan Review & Handoff Gemini — Phase 4
+# Plan Review & Handoff Gemini — Phase 4 (cập nhật)
 
 > Ngày: 2026-10-07
-> Input: branch codex/phase4-harness, head bc3f47fab00b7997d6a57b07943055403ead2df4
-> Status: BLOCKED FOR MERGE
+> Branch: `codex/phase4-harness`
+> HEAD: `ee66045efb8b36dd3f28e2e40fb80a308f415ffa`
+> Trạng thái: **BLOCKED FOR MERGE / READY FOR HARNESS-PREFLIGHT**
 
-## Prompt Gemini
+## Prompt giao Gemini
 
-~~~text
-Fix Phase 4 harness on branch codex/phase4-harness using REVIEW_GEMINI_PHASE4_2026-10-07.md.
+```text
+Đọc REVIEW_GEMINI_PHASE4_2026-10-07.md bản hiện hành và chỉ sửa H8/H9.
 
-Priorities: Docker packaging/no-skip, fail-closed R10, cross-run/case/logical joins and frozen hash,
-logical-case aggregate, required tools and S0/S1 veto, complete R13 runtime paths and multi-commit diff.
-Add adversarial mutation tests for each issue.
+H8: validate_manifest phải yêu cầu artifact_files đúng exact CANONICAL_ARTIFACT_FILES,
+gồm manifest.json, không thiếu/thừa/duplicate.
+H9: không cho phép nhiều grading hiệu lực cho cùng graded_attempt_id; nếu cần adjudication,
+thêm version/key và quy tắc chọn duy nhất trước khi tính aggregate. Bảo đảm mọi numerator/
+denominator tính theo logical case và không vượt 1.
 
-Run full unittest, Phase 4 tests inside Docker, six contract checks, 250-case mock
-validate/recompute and diff check. Report PASS/SKIP/FAIL/ERROR with evidence.
-Do not merge, deploy, run live smoke, paid API or measurement. Stop for owner review.
-~~~
+Bổ sung mutation tests cho thiếu manifest, duplicate grading và aggregate > 1. Kiểm tra thêm
+error_ref, qrels hash và benchmark identity theo schema nếu normative. Chạy full unittest,
+Phase 4 tests, six contract checks, mock 250-case validate/recompute và Docker tests thật.
+Báo PASS/SKIP/FAIL/ERROR kèm command, số lượng và artifact evidence.
 
-## Review plan theo thứ tự
+Không sửa runtime/frozen benchmark; không paid/cloud/deploy/live smoke/full measurement;
+không merge. Mở/cập nhật PR và dừng chờ owner review.
+```
 
-1. **Packaging gate:** copy evals/harness, qrels, phase4 scripts và tests cần thiết vào image/CI; bỏ skip giả.
-2. **R10 gate:** schema kiểu dữ liệu, non-negative, nullability/unavailable_reason và zero provenance.
-3. **R12 provenance gate:** run/case/logical/attempt joins, unique IDs, manifest fields, exact artifacts, frozen LF hash.
-4. **Metrics gate:** first/eventual theo logical case; retry recovery và blocked denominator không đếm trùng.
-5. **Grader gate:** required tools đầy đủ; S0/S1 hard veto rejected; no-evidence labels rõ.
-6. **R13 gate:** runtime path matrix, eval-only/mixed/runtime/manual tests và multi-commit before..sha.
-7. **Evidence gate:** Docker tests thật, full suite, six contracts, mock 250 bundle, checksums/recompute.
-8. **Handoff gate:** mở PR/update PR, báo head SHA/evidence, dừng chờ owner review trước merge.
+## Kế hoạch xử lý
 
-## Output bắt buộc từ Gemini
+1. **Manifest gate:** exact canonical artifact list và mutation tests.
+2. **Grading/metric gate:** unique effective grading per attempt, logical-case aggregation,
+   bounded ratios và retry semantics.
+3. **Provenance gate:** `error_ref`, qrels hash và benchmark identity theo schema.
+4. **Execution gate:** Docker build/run thật; không chấp nhận ImportError skip.
+5. **Evidence gate:** full unittest, 38+ Phase 4 tests, six contracts, mock 250-case bundle,
+   checksums và clean-checkout replay.
+6. **Owner gate:** Gemini mở/cập nhật PR, báo head SHA và dừng trước merge.
 
-- Diff theo H1–H8.
-- Bảng PASS/SKIP/FAIL/ERROR có số lượng test.
-- Docker command và kết quả test không skip harness.
-- Mutation evidence cho R10/R12/R13.
-- Mock 250-case artifact/checksum/recompute.
-- Changed-file matrix của deployment guard.
-- PR URL/head SHA.
-- Danh sách gate còn mở; không tự merge.
+## Bảng trạng thái
+
+| Finding | Trước lượt này | Hiện tại | Điều kiện đóng |
+|---|---|---|---|
+| H1 Docker packaging | OPEN | CLOSED implementation, CI pending | Docker test thật không skip |
+| H2 R10 fail-closed | OPEN | CLOSED | Giữ adversarial coverage |
+| H3 join provenance | OPEN | CLOSED cho 4 artifact raw | Giữ mutation coverage |
+| H4 frozen hash | OPEN | CLOSED nội dung hash | Bổ sung benchmark identity nếu schema yêu cầu |
+| H5 retry aggregate | OPEN | PARTIAL | Reject duplicate grading/effective selection |
+| H6 grader safety | OPEN | CLOSED phần subset/veto | Bổ sung evidence no-evidence nếu live |
+| H7 R13 guard | OPEN | CLOSED logic, CI pending | Chứng minh before..sha/mixed/manual |
+| H8 manifest exact list | OPEN | OPEN blocker | Exact list mutation PASS |
+| H9 duplicate grading | NEW | OPEN blocker | Duplicate attempt bị reject hoặc version selection |
 
 ## Stop conditions
 
-Dừng và không merge nếu còn một trong các điều kiện:
+Dừng, không merge nếu còn một trong các điều kiện sau:
 
-- test harness bị skip trong Docker;
-- mutation R10/R12/R13 vẫn được ACCEPTED;
-- frozen hash hoặc manifest provenance không được enforce;
-- aggregate retry đếm trùng logical case;
-- required tool/S0/S1 veto sai;
-- multi-commit deployment guard chưa chứng minh;
-- CI xanh nhưng thiếu artifact/evidence tương ứng.
+- `artifact_files` thiếu/thừa/duplicate mà validator vẫn chấp nhận;
+- duplicate grading cùng attempt làm aggregate vượt logical-case denominator;
+- Docker/CI skip harness hoặc chưa có evidence container;
+- mutation R10/R12/R13 còn được chấp nhận;
+- frozen hash, joins, checksums hoặc manifest provenance không được enforce;
+- chưa có owner review PR.
 
-## Handoff sau khi đạt
+## Handoff sau khi đóng blocker
 
-Chỉ khi H1–H8 đóng, CI và Docker evidence PASS, owner mới review để merge. Sau merge:
+Gemini chỉ được báo `HARNESS_ACCEPTANCE_READY` sau khi H8/H9 và evidence gates đóng. Chuỗi tiếp theo:
 
-G2 MERGED_VERIFIED → G3 SMOKE_AUTHORIZED → G4 LIVE_SMOKE → G5 LANE_MEASUREMENT_READY.
+`BUILD HARNESS → PR → CI → OWNER REVIEW → MERGE → G2 MERGED_VERIFIED → G3 SMOKE_AUTHORIZED → G4 LIVE_SMOKE → G5 LANE_MEASUREMENT_READY`.
 
-Không tự chuyển READY FOR MEASUREMENT và không chạy full measurement trước G5.
+Không tự merge, không cấp `READY FOR MEASUREMENT`, không chạy full measurement trước G5.

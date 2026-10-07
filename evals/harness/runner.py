@@ -286,7 +286,7 @@ class Phase4MockRunner:
                 "served_chunks": cand_chunks[:2],
                 "qrels_version": self.qrels.version,
                 "qrels_source": self.qrels.source,
-                "qrels_sha256": self.qrels.sha256 or hashlib.sha256(b"none").hexdigest(),
+                "qrels_sha256": self.qrels.sha256 or hashlib.sha256(b"empty_qrels").hexdigest(),
                 "no_evidence": (qrel_entry.no_evidence if qrel_entry else False),
                 "answerability_status": (qrel_entry.answerability_status if qrel_entry else "answerable"),
                 "unavailable_reason": None,

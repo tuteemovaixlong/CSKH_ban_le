@@ -4,6 +4,8 @@
 > Baseline bắt buộc: main / 49671b928ad6badfaa01331174eb73f0e366752e
 > Trạng thái: READY FOR HARNESS/PREFLIGHT — chưa đủ bằng chứng đo chính thức; không phải production approval.
 
+> Review implementation hiện hành: [REVIEW_GEMINI_PHASE4_2026-10-07.md](REVIEW_GEMINI_PHASE4_2026-10-07.md). HEAD `ee66045` còn blocker H8/H9; chưa được merge.
+
 ## 1. Mục tiêu và ranh giới
 
 Bàn giao cho Gemini Antigravity BUILD HARNESS để tạo bằng chứng tái lập được trên hai frozen benchmark 250 ca và tải 1/2/4/8/16. Không sửa runtime business behavior, prompt, RBAC hoặc frozen inputs trong lượt build harness. Harness, fixture sidecar, grader, writer, validator và telemetry là evaluation tooling; mọi evaluation overlay phải có hash riêng và không được gọi là baseline runtime.

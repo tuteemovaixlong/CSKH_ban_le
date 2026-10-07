@@ -44,6 +44,47 @@ class ValidationReport:
     recomputed_aggregate: Optional[Dict[str, Any]] = None
 
 
+def select_effective_gradings(
+    gradings: List[Dict[str, Any]],
+) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
+    """Enforces normative grading deduplication and adjudication precedence.
+
+    Rules:
+    - Exactly one unadjudicated grading is allowed per graded_attempt_id. Multiple unadjudicated gradings are rejected.
+    - Exactly one adjudicated grading is allowed per graded_attempt_id. Multiple adjudicated gradings are rejected.
+    - If an adjudicated grading exists, it strictly supersedes the unadjudicated grading for that attempt.
+    - Returns a mapping of attempt_id -> effective_grading, plus any duplicate errors encountered.
+    """
+    errors: List[str] = []
+    by_attempt: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for g in gradings:
+        att_id = g.get("graded_attempt_id")
+        if att_id:
+            by_attempt[att_id].append(g)
+
+    effective_by_attempt: Dict[str, Dict[str, Any]] = {}
+    for att_id, g_list in by_attempt.items():
+        unadj = [g for g in g_list if not g.get("adjudicated", False)]
+        adj = [g for g in g_list if g.get("adjudicated", False)]
+
+        if len(unadj) > 1:
+            errors.append(
+                f"grading.jsonl: Multiple unadjudicated gradings ({len(unadj)}) for graded_attempt_id '{att_id}'"
+            )
+        if len(adj) > 1:
+            errors.append(
+                f"grading.jsonl: Multiple adjudicated gradings ({len(adj)}) for graded_attempt_id '{att_id}'"
+            )
+
+        # Adjudication selection rule: adjudicated supersedes unadjudicated
+        if adj:
+            effective_by_attempt[att_id] = adj[0]
+        elif unadj:
+            effective_by_attempt[att_id] = unadj[0]
+
+    return effective_by_attempt, errors
+
+
 def recompute_aggregate_from_raw(
     manifest: Dict[str, Any],
     attempts: List[Dict[str, Any]],
@@ -57,77 +98,98 @@ def recompute_aggregate_from_raw(
     n_attempt = len(attempts)
 
     # Attempts grouped by case_id
-    attempts_by_case = defaultdict(list)
+    attempts_by_case: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for a in attempts:
         attempts_by_case[a["case_id"]].append(a)
 
     # First attempt outcomes (retry_index == 0)
-    first_attempts = [a for a in attempts if a.get("retry_index") == 0]
+    first_attempts: List[Dict[str, Any]] = [a for a in attempts if a.get("retry_index") == 0]
     first_outcomes = Counter(a.get("outcome") for a in first_attempts)
 
-    # Gradings indexed by attempt_id
-    gradings_by_attempt = {g["graded_attempt_id"]: g for g in gradings}
-    graded_cases: Set[str] = {g["case_id"] for g in gradings}
-    n_graded = len(graded_cases)
+    # Resolve effective gradings per attempt (adjudicated supersedes unadjudicated)
+    effective_gradings, _ = select_effective_gradings(gradings)
 
-    blocked_cases: Set[str] = {g["case_id"] for g in gradings if g.get("decision") == "blocked_environment"}
-    n_blocked = len(blocked_cases)
+    # Graded cases and blocked cases strictly per logical case (case_id)
+    graded_case_ids: Set[str] = set()
+    blocked_case_ids: Set[str] = set()
+    for att_id, g in effective_gradings.items():
+        cid = g.get("case_id")
+        if cid:
+            graded_case_ids.add(cid)
+            if g.get("decision") == "blocked_environment":
+                blocked_case_ids.add(cid)
 
-    # Quality conditional on first attempts: pass + abstain_correct / n_graded_first
-    first_attempt_ids = {a["attempt_id"] for a in first_attempts}
-    first_gradings = [g for g in gradings if g.get("graded_attempt_id") in first_attempt_ids and g.get("first_attempt") is True]
-    n_graded_first = len(first_gradings)
-    first_passes = sum(1 for g in first_gradings if g.get("decision") in ("pass", "abstain_correct"))
+    n_graded = len(graded_case_ids)
+    n_blocked = len(blocked_case_ids)
 
-    quality_cond_rate = (first_passes / n_graded_first) if n_graded_first > 0 else 0.0
+    # Quality conditional on first attempts:
+    # Denominator: set of case_ids that have an effective grading on their first attempt
+    # Numerator: subset of those case_ids where decision in ("pass", "abstain_correct")
+    first_attempt_map = {a["attempt_id"]: a["case_id"] for a in first_attempts}
+    graded_first_case_ids: Set[str] = set()
+    first_pass_case_ids: Set[str] = set()
+
+    for att_id, cid in first_attempt_map.items():
+        g = effective_gradings.get(att_id)
+        if g and g.get("first_attempt") is True:
+            graded_first_case_ids.add(cid)
+            if g.get("decision") in ("pass", "abstain_correct"):
+                first_pass_case_ids.add(cid)
+
+    n_graded_first = len(graded_first_case_ids)
+    first_passes = len(first_pass_case_ids)
+
+    quality_cond_rate = round(first_passes / n_graded_first, 4) if n_graded_first > 0 else 0.0
     quality_conditional = {
         "numerator": first_passes,
         "denominator": n_graded_first,
-        "rate": round(quality_cond_rate, 4),
+        "rate": quality_cond_rate,
     }
 
     # Eventual outcomes and passes computed strictly per logical case (latest attempt per case_id)
     eventual_outcomes = Counter()
-    eventual_passes = 0
+    eventual_pass_case_ids: Set[str] = set()
+    eventual_completed_case_ids: Set[str] = set()
+
     for cid, atts in attempts_by_case.items():
         latest = max(atts, key=lambda x: x.get("retry_index", 0))
-        eventual_outcomes[latest.get("outcome")] += 1
-        latest_g = gradings_by_attempt.get(latest.get("attempt_id"))
+        latest_outcome = latest.get("outcome")
+        eventual_outcomes[latest_outcome] += 1
+        if latest_outcome == "completed":
+            eventual_completed_case_ids.add(cid)
+
+        latest_g = effective_gradings.get(latest.get("attempt_id"))
         if latest_g and latest_g.get("decision") in ("pass", "abstain_correct"):
-            eventual_passes += 1
+            eventual_pass_case_ids.add(cid)
+
+    eventual_passes = len(eventual_pass_case_ids)
+    eventual_completed = len(eventual_completed_case_ids)
 
     # E2E success: cases where eventual outcome is 'completed'
-    eventual_completed = eventual_outcomes.get("completed", 0)
-    e2e_rate = (eventual_completed / n_total) if n_total > 0 else 0.0
+    e2e_rate = round(eventual_completed / n_total, 4) if n_total > 0 else 0.0
     e2e_success = {
         "numerator": eventual_completed,
         "denominator": n_total,
-        "rate": round(e2e_rate, 4),
+        "rate": e2e_rate,
     }
 
     # Retry recovery rate: of cases that failed first attempt, how many eventually passed?
-    first_pass_cids = {g["case_id"] for g in first_gradings if g.get("decision") in ("pass", "abstain_correct")}
-    failed_first_cases = [cid for cid in all_case_ids if cid not in first_pass_cids]
-    if failed_first_cases:
-        recovered = 0
-        for cid in failed_first_cases:
-            latest = max(attempts_by_case[cid], key=lambda x: x.get("retry_index", 0))
-            latest_g = gradings_by_attempt.get(latest.get("attempt_id"))
-            if latest_g and latest_g.get("decision") in ("pass", "abstain_correct"):
-                recovered += 1
-        retry_recovery_rate = round(recovered / len(failed_first_cases), 4)
+    failed_first_case_ids = all_case_ids - first_pass_case_ids
+    if failed_first_case_ids:
+        recovered_case_ids = failed_first_case_ids.intersection(eventual_pass_case_ids)
+        retry_recovery_rate = round(len(recovered_case_ids) / len(failed_first_case_ids), 4)
     else:
         retry_recovery_rate = None
 
-    # Severity and taxonomy counts
-    severity_counts = Counter(g.get("severity") for g in gradings if g.get("severity"))
-    taxonomy_counts = Counter(g.get("primary_failure") for g in gradings if g.get("primary_failure"))
-    for g in gradings:
+    first_attempt_success_rate = round(first_passes / n_total, 4) if n_total > 0 else 0.0
+    eventual_success_rate = round(eventual_passes / n_total, 4) if n_total > 0 else 0.0
+
+    # Severity and taxonomy counts using effective gradings
+    severity_counts = Counter(g.get("severity") for g in effective_gradings.values() if g.get("severity"))
+    taxonomy_counts = Counter(g.get("primary_failure") for g in effective_gradings.values() if g.get("primary_failure"))
+    for g in effective_gradings.values():
         for sec in g.get("secondary_failures", []):
             taxonomy_counts[sec] += 1
-
-    first_attempt_success_rate = round((first_passes / n_total), 4) if n_total > 0 else 0.0
-    eventual_success_rate = round((eventual_passes / n_total), 4) if n_total > 0 else 0.0
 
     return {
         "schema_version": "phase4-aggregate-v1",
@@ -337,11 +399,17 @@ class CanonicalBundleValidator:
         except Exception as exc:
             errors.append(f"Failed reading grading.jsonl: {exc}")
 
+        # Check duplicate gradings and adjudication consistency per attempt
+        _, dup_grading_errors = select_effective_gradings(gradings)
+        for derr in dup_grading_errors:
+            errors.append(derr)
+
         # 6. Parse and validate retrieval.jsonl
         retrievals: List[Dict[str, Any]] = []
         retrieval_ids: Set[str] = set()
         retrieval_record_ids: Set[str] = set()
         retrieval_path = self.run_dir / "retrieval.jsonl"
+        manifest_qrels = manifest.get("qrels_sha256")
         try:
             for line_no, line in enumerate(retrieval_path.read_text(encoding="utf-8").splitlines(), start=1):
                 line = line.strip()
@@ -385,6 +453,13 @@ class CanonicalBundleValidator:
                         errors.append(f"retrieval.jsonl line {line_no}: evaluation_harness_sha != target attempt evaluation_harness_sha")
                     if rt.get("config_sha256") != target_att.get("config_sha256"):
                         errors.append(f"retrieval.jsonl line {line_no}: config_sha256 != target attempt config_sha256")
+
+                # Cross-reference qrels_sha256 with manifest
+                rt_qrels = rt.get("qrels_sha256")
+                if rt_qrels and manifest_qrels and rt_qrels != manifest_qrels:
+                    errors.append(
+                        f"retrieval.jsonl line {line_no}: qrels_sha256 '{rt_qrels}' does not match manifest qrels_sha256 '{manifest_qrels}'"
+                    )
 
                 retrievals.append(rt)
         except Exception as exc:
@@ -443,6 +518,33 @@ class CanonicalBundleValidator:
         except Exception as exc:
             errors.append(f"Failed reading errors.jsonl: {exc}")
 
+        # Bidirectional check between attempts.error_ref and errors.jsonl
+        errors_by_id = {err["error_id"]: err for err in error_records}
+        for att in attempts:
+            att_id = att["attempt_id"]
+            err_ref = att.get("error_ref")
+            if err_ref:
+                if err_ref not in errors_by_id:
+                    errors.append(
+                        f"attempts.jsonl attempt_id '{att_id}' references error_ref '{err_ref}' which does not exist in errors.jsonl"
+                    )
+                else:
+                    target_err = errors_by_id[err_ref]
+                    if target_err.get("attempt_id") != att_id:
+                        errors.append(
+                            f"attempts.jsonl attempt_id '{att_id}' references error_ref '{err_ref}', but errors.jsonl specifies attempt_id '{target_err.get('attempt_id')}'"
+                        )
+
+        for err in error_records:
+            eid = err["error_id"]
+            target_att_id = err["attempt_id"]
+            target_att = attempts_by_id.get(target_att_id)
+            if target_att:
+                if target_att.get("error_ref") != eid:
+                    errors.append(
+                        f"errors.jsonl error_id '{eid}' specifies attempt_id '{target_att_id}', but attempt's error_ref is '{target_att.get('error_ref')}'"
+                    )
+
         # 8. Parse and validate aggregate.json & Recompute check
         recomputed = None
         aggregate_path = self.run_dir / "aggregate.json"
@@ -466,6 +568,16 @@ class CanonicalBundleValidator:
                     errors.append(
                         f"aggregate.json {ratio_key} mismatch: recorded={rec_ratio}, recomputed={recomp_ratio}"
                     )
+                # Verify numerator <= denominator
+                if rec_ratio.get("denominator", 0) > 0 and rec_ratio.get("numerator", 0) > rec_ratio.get("denominator", 0):
+                    errors.append(
+                        f"aggregate.json {ratio_key} numerator exceeds denominator"
+                    )
+
+            for rate_key in ("first_attempt_success_rate", "eventual_success_rate", "retry_recovery_rate"):
+                val = aggregate.get(rate_key)
+                if val is not None and val > 1.0:
+                    errors.append(f"aggregate.json {rate_key} {val} exceeds 1.0")
         except Exception as exc:
             errors.append(f"aggregate.json recomputation validation failed: {exc}")
 

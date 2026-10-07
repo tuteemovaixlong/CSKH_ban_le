@@ -292,6 +292,126 @@ class TestPhase4Schema(unittest.TestCase):
                 "unavailable_reason": "network_down",
             }))
 
+    def test_h8_manifest_artifact_files_exact_canonical_mutations(self):
+        """Mutation tests for H8: manifest artifact_files must exactly match CANONICAL_ARTIFACT_FILES."""
+        valid_manifest = {
+            "schema_version": SCHEMA_VERSION_MANIFEST,
+            "protocol_version": PROTOCOL_VERSION,
+            "run_id": "run-h8-test",
+            "lane_id": "mock-a0",
+            "provider_id": "mock",
+            "cache_mode": "answer_cache_off",
+            "retry_policy_id": "mock_retry_v1",
+            "load_profile_id": "mock_single_worker",
+            "system_commit_sha": SYSTEM_BASELINE_COMMIT_SHA,
+            "evaluation_harness_sha": "1" * 40,
+            "evaluation_overlay_sha256": "none",
+            "config_sha256": "a" * 64,
+            "dataset_sha256": FROZEN_BENCHMARK_LF_SHA256,
+            "fixture_manifest_sha256": "b" * 64,
+            "qrels_sha256": "c" * 64,
+            "created_at_utc": "2026-10-06T00:00:00Z",
+            "completed_at_utc": "2026-10-06T00:00:00Z",
+            "artifact_files": list(CANONICAL_ARTIFACT_FILES),
+            "model_revision": None,
+            "model_revision_unavailable_reason": "mock",
+            "tokenizer_revision": None,
+            "tokenizer_revision_unavailable_reason": "mock",
+            "seed": None,
+            "seed_unavailable_reason": "mock",
+        }
+        # Baseline must pass
+        validate_manifest(valid_manifest)
+
+        # 1. Missing manifest.json must fail (H8 probe reproduction)
+        files_no_manifest = [f for f in CANONICAL_ARTIFACT_FILES if f != "manifest.json"]
+        with self.assertRaises(SchemaValidationError) as ctx:
+            validate_manifest(dict(valid_manifest, artifact_files=files_no_manifest))
+        self.assertIn("missing canonical files", str(ctx.exception))
+        self.assertIn("manifest.json", str(ctx.exception))
+
+        # 2. Duplicate entries must fail
+        files_dup = list(CANONICAL_ARTIFACT_FILES) + ["manifest.json"]
+        with self.assertRaises(SchemaValidationError) as ctx:
+            validate_manifest(dict(valid_manifest, artifact_files=files_dup))
+        self.assertIn("duplicate entries", str(ctx.exception))
+
+        # 3. Non-canonical / extra files must fail
+        files_extra = list(CANONICAL_ARTIFACT_FILES) + ["extra_probe.json"]
+        with self.assertRaises(SchemaValidationError) as ctx:
+            validate_manifest(dict(valid_manifest, artifact_files=files_extra))
+        self.assertIn("non-canonical files", str(ctx.exception))
+
+        # 4. artifact_files not a list must fail
+        with self.assertRaises(SchemaValidationError):
+            validate_manifest(dict(valid_manifest, artifact_files="not_a_list"))
+
+    def test_h9_aggregate_bounds_mutations(self):
+        """Mutation tests for H9: aggregate ratios and rates must be bounded and valid."""
+        valid_agg = {
+            "schema_version": SCHEMA_VERSION_AGGREGATE,
+            "run_id": "run-agg-test",
+            "logical_cases": 5,
+            "n_total": 5,
+            "n_attempt": 6,
+            "n_graded": 5,
+            "n_blocked": 0,
+            "first_attempt_outcomes": {"completed": 5},
+            "eventual_outcomes": {"completed": 5},
+            "quality_conditional": {"numerator": 5, "denominator": 5, "rate": 1.0},
+            "e2e_success": {"numerator": 5, "denominator": 5, "rate": 1.0},
+            "first_attempt_success_rate": 1.0,
+            "eventual_success_rate": 1.0,
+            "retry_recovery_rate": None,
+            "derived_from": ["attempts.jsonl", "grading.jsonl", "retrieval.jsonl", "errors.jsonl"],
+            "artifact_checksums": "checksums.sha256",
+        }
+        validate_aggregate(valid_agg)
+
+        # 1. Numerator > denominator must fail
+        bad_num = dict(valid_agg, quality_conditional={"numerator": 6, "denominator": 5, "rate": 1.2})
+        with self.assertRaises(SchemaValidationError) as ctx:
+            validate_aggregate(bad_num)
+        self.assertIn("cannot exceed denominator", str(ctx.exception))
+
+        # 2. Rate > 1.0 must fail
+        bad_rate = dict(valid_agg, first_attempt_success_rate=1.2)
+        with self.assertRaises(SchemaValidationError) as ctx:
+            validate_aggregate(bad_rate)
+        self.assertIn("must be between 0.0 and 1.0", str(ctx.exception))
+
+        # 3. retry_recovery_rate > 1.0 must fail
+        bad_rec = dict(valid_agg, retry_recovery_rate=1.05)
+        with self.assertRaises(SchemaValidationError):
+            validate_aggregate(bad_rec)
+
+        # 4. Negative denominator must fail
+        bad_denom = dict(valid_agg, e2e_success={"numerator": 0, "denominator": -1, "rate": 0.0})
+        with self.assertRaises(SchemaValidationError):
+            validate_aggregate(bad_denom)
+
+    def test_retrieval_qrels_sha_validation(self):
+        """Retrieval record qrels_sha256 format validation."""
+        valid_retrieval = dict(
+            self.common_envelope,
+            schema_version=SCHEMA_VERSION_RETRIEVAL,
+            attempt_id="att-01",
+            retrieval_event_id="rev-01",
+            query_id="q-01",
+            stage="served",
+            candidate_chunks=[],
+            served_chunks=[],
+            qrels_version="qrels-v1",
+            answerability_status="answerable",
+            qrels_sha256="d" * 64,
+        )
+        validate_retrieval_record(valid_retrieval)
+
+        # Invalid hex hash length
+        bad_ret = dict(valid_retrieval, qrels_sha256="short_hash")
+        with self.assertRaises(SchemaValidationError):
+            validate_retrieval_record(bad_ret)
+
 
 if __name__ == "__main__":
     unittest.main()

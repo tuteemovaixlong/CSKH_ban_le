@@ -201,6 +201,149 @@ class TestWriterAndValidator(unittest.TestCase):
         self.assertFalse(report.is_valid)
         self.assertTrue(any("Non-canonical or disallowed entry 'disallowed_extra.txt'" in e for e in report.errors))
 
+    def test_h9_duplicate_unadjudicated_grading_rejected(self):
+        """Mutation test for H9: duplicate unadjudicated gradings for same attempt must be rejected."""
+        runner = Phase4MockRunner(run_id="run_dup_grade", output_dir=self.test_dir)
+        runner.run(max_cases=3)
+
+        gr_path = self.test_dir / "grading.jsonl"
+        lines = gr_path.read_text(encoding="utf-8").splitlines()
+        first_gr = json.loads(lines[0])
+
+        # Create duplicate unadjudicated grading for the same graded_attempt_id
+        dup_gr = dict(
+            first_gr,
+            record_id="rec_dup_gr_999",
+            grading_id="gr_dup_999",
+            decision="fail",
+            adjudicated=False,
+        )
+        lines.append(json.dumps(dup_gr))
+        gr_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        writer = CanonicalBundleWriter(self.test_dir)
+        writer.write_checksums()
+
+        val = CanonicalBundleValidator(self.test_dir)
+        report = val.validate()
+        self.assertFalse(report.is_valid)
+        self.assertTrue(any("Multiple unadjudicated gradings" in e for e in report.errors))
+
+    def test_h9_adjudication_precedence_and_aggregate_integrity(self):
+        """Adjudication precedence: adjudicated grading supersedes initial unadjudicated grading."""
+        runner = Phase4MockRunner(run_id="run_adj_prec", output_dir=self.test_dir)
+        runner.run(max_cases=3)
+
+        gr_path = self.test_dir / "grading.jsonl"
+        lines = gr_path.read_text(encoding="utf-8").splitlines()
+        first_gr = json.loads(lines[0])
+
+        # Step 1: Initial unadjudicated grading is a fail
+        first_gr["decision"] = "fail"
+        lines[0] = json.dumps(first_gr)
+
+        # Step 2: Add an adjudicated grading for the same attempt that overturns fail to pass
+        adj_gr = dict(
+            first_gr,
+            record_id="rec_adj_001",
+            grading_id="gr_adj_001",
+            decision="pass",
+            adjudicated=True,
+        )
+        lines.append(json.dumps(adj_gr))
+        gr_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        # Re-sync aggregate.json using recompute_aggregate_from_raw
+        man_path = self.test_dir / "manifest.json"
+        manifest = json.loads(man_path.read_text(encoding="utf-8"))
+        attempts = [json.loads(l) for l in (self.test_dir / "attempts.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+        gradings = [json.loads(l) for l in (self.test_dir / "grading.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+        errors = [json.loads(l) for l in (self.test_dir / "errors.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+
+        new_agg = recompute_aggregate_from_raw(manifest, attempts, gradings, errors)
+        (self.test_dir / "aggregate.json").write_text(json.dumps(new_agg, indent=2) + "\n", encoding="utf-8")
+
+        writer = CanonicalBundleWriter(self.test_dir)
+        writer.write_checksums()
+
+        val = CanonicalBundleValidator(self.test_dir)
+        report = val.validate()
+        self.assertTrue(report.is_valid, f"Validation failed: {report.errors}")
+        # Rate must not exceed 1.0, and the adjudicated pass must be counted
+        self.assertEqual(report.recomputed_aggregate["quality_conditional"]["rate"], 1.0)
+        self.assertLessEqual(report.recomputed_aggregate["quality_conditional"]["numerator"], 3)
+
+        # Step 3: Now inject a second adjudicated grading -> must be rejected
+        second_adj = dict(adj_gr, record_id="rec_adj_002", grading_id="gr_adj_002")
+        with open(gr_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(second_adj) + "\n")
+        writer.write_checksums()
+
+        report2 = val.validate()
+        self.assertFalse(report2.is_valid)
+        self.assertTrue(any("Multiple adjudicated gradings" in e for e in report2.errors))
+
+    def test_r12_error_ref_bidirectional_integrity(self):
+        """Attempts error_ref and errors.jsonl error_id must be strictly bidirectional."""
+        runner = Phase4MockRunner(run_id="run_err_ref_test", output_dir=self.test_dir)
+        runner.run(max_cases=6)
+
+        att_path = self.test_dir / "attempts.jsonl"
+        lines = att_path.read_text(encoding="utf-8").splitlines()
+        first_att = json.loads(lines[0])
+
+        # 1. Non-existent error_ref on attempt
+        tampered_att = dict(first_att, error_ref="err_nonexistent_999")
+        lines[0] = json.dumps(tampered_att)
+        att_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        writer = CanonicalBundleWriter(self.test_dir)
+        writer.write_checksums()
+
+        val = CanonicalBundleValidator(self.test_dir)
+        report = val.validate()
+        self.assertFalse(report.is_valid)
+        self.assertTrue(any("references error_ref 'err_nonexistent_999' which does not exist" in e for e in report.errors))
+
+        # 2. Mismatched error_ref on target attempt
+        # Reset attempt line
+        lines[0] = json.dumps(first_att)
+        att_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        # Modify error record in errors.jsonl to point to first_att without first_att referencing it
+        err_path = self.test_dir / "errors.jsonl"
+        err_lines = err_path.read_text(encoding="utf-8").splitlines()
+        if err_lines:
+            first_err = json.loads(err_lines[0])
+            first_err["attempt_id"] = first_att["attempt_id"]
+            err_lines[0] = json.dumps(first_err)
+            err_path.write_text("\n".join(err_lines) + "\n", encoding="utf-8")
+
+            writer.write_checksums()
+            report2 = val.validate()
+            self.assertFalse(report2.is_valid)
+            self.assertTrue(any("specifies attempt_id" in e and "but attempt's error_ref is" in e for e in report2.errors))
+
+    def test_r12_qrels_sha_mismatch_detected(self):
+        """retrieval.jsonl qrels_sha256 mismatch with manifest must be rejected."""
+        runner = Phase4MockRunner(run_id="run_qrels_mismatch", output_dir=self.test_dir)
+        runner.run(max_cases=3)
+
+        ret_path = self.test_dir / "retrieval.jsonl"
+        lines = ret_path.read_text(encoding="utf-8").splitlines()
+        first_rt = json.loads(lines[0])
+        first_rt["qrels_sha256"] = "e" * 64
+        lines[0] = json.dumps(first_rt)
+        ret_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        writer = CanonicalBundleWriter(self.test_dir)
+        writer.write_checksums()
+
+        val = CanonicalBundleValidator(self.test_dir)
+        report = val.validate()
+        self.assertFalse(report.is_valid)
+        self.assertTrue(any("does not match manifest qrels_sha256" in e for e in report.errors))
+
 
 if __name__ == "__main__":
     unittest.main()
