@@ -94,7 +94,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     # mock-run
     p_run = subparsers.add_parser("mock-run", help="Run offline mock benchmark and emit bundle")
     p_run.add_argument("--run-id", help="Explicit run ID")
-    p_run.add_argument("--outdir", help="Output directory")
+    p_run.add_argument("--outdir", "--output-dir", dest="outdir", help="Output directory")
     p_run.add_argument("--benchmark", help="Benchmark JSONL file")
     p_run.add_argument("--max-cases", type=int, help="Limit number of cases")
     p_run.add_argument("--cache-mode", default="answer_cache_off", help="Cache mode (must be answer_cache_off for A0)")

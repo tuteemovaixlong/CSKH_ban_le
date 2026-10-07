@@ -63,11 +63,26 @@ class Phase4MockRunner:
 
     def run(self, max_cases: Optional[int] = None) -> Path:
         """Executes offline mock benchmark and writes all canonical artifacts."""
-        lines = [l.strip() for l in self.benchmark_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+        # Reset any existing canonical files in output_dir to prevent duplicate appends on re-runs
+        for fname in CANONICAL_ARTIFACT_FILES:
+            fpath = self.output_dir / fname
+            if fpath.is_file():
+                fpath.unlink()
+        self.writer = CanonicalBundleWriter(self.output_dir, validate_on_write=True)
+
+        raw_text = self.benchmark_path.read_text(encoding="utf-8")
+        lf_text = raw_text.replace("\r\n", "\n")
+        dataset_sha256 = hashlib.sha256(lf_text.encode("utf-8")).hexdigest()
+        if dataset_sha256 != FROZEN_BENCHMARK_LF_SHA256:
+            raise ValueError(
+                f"Benchmark file {self.benchmark_path} LF SHA-256 '{dataset_sha256}' "
+                f"does not match frozen benchmark hash '{FROZEN_BENCHMARK_LF_SHA256}'"
+            )
+
+        lines = [l.strip() for l in lf_text.splitlines() if l.strip()]
         if max_cases is not None:
             lines = lines[:max_cases]
 
-        dataset_sha256 = hashlib.sha256(self.benchmark_path.read_bytes()).hexdigest()
         config_sha256 = hashlib.sha256(b"mock_config_v1").hexdigest()
         fixture_manifest_sha256 = hashlib.sha256(b"mock_fixture_v1").hexdigest()
 
@@ -76,6 +91,7 @@ class Phase4MockRunner:
         # Write manifest
         manifest_data = {
             "schema_version": SCHEMA_VERSION_MANIFEST,
+            "protocol_version": PROTOCOL_VERSION,
             "run_id": self.run_id,
             "lane_id": "mock-a0",
             "provider_id": "mock",
@@ -97,6 +113,7 @@ class Phase4MockRunner:
             "seed_unavailable_reason": "mock_provider_offline",
             "artifact_files": list(CANONICAL_ARTIFACT_FILES),
             "created_at_utc": created_at,
+            "completed_at_utc": created_at,
         }
         self.writer.write_manifest(manifest_data)
 
@@ -241,45 +258,7 @@ class Phase4MockRunner:
             self.writer.append_attempt(att)
             attempts_list.append(att)
 
-            # Grade attempt
-            sidecar_dict = {
-                "answerability_status": sidecar.answerability_status,
-                "scenario_family": sidecar.scenario_family,
-            }
-            grade_res = self.grader.grade(case, att, sidecar=sidecar_dict)
-
-            grading_rec = {
-                "schema_version": SCHEMA_VERSION_GRADING,
-                "record_id": f"rec_{rec_counter}",
-                "run_id": self.run_id,
-                "case_id": cid,
-                "logical_request_id": req_id,
-                "system_commit_sha": self.system_sha,
-                "evaluation_harness_sha": self.harness_sha,
-                "evaluation_overlay_sha256": self.overlay_sha,
-                "protocol_version": PROTOCOL_VERSION,
-                "config_sha256": config_sha256,
-                "fixture_manifest_sha256": fixture_manifest_sha256,
-                "created_at_utc": created_at,
-                "graded_attempt_id": att_id,
-                "grading_id": f"gr_{cid}_{retry_idx}",
-                "grader_version": self.grader.grader_version,
-                "rubric_version": self.grader.rubric_version,
-                "decision": grade_res.decision,
-                "first_attempt": grade_res.first_attempt,
-                "claim_judgments": grade_res.claim_judgments,
-                "evidence_refs": grade_res.evidence_refs,
-                "adjudicated": grade_res.adjudicated,
-                "answerability_status": grade_res.answerability_status,
-                "severity": grade_res.severity,
-                "primary_failure": grade_res.primary_failure,
-                "secondary_failures": grade_res.secondary_failures,
-            }
-            rec_counter += 1
-            self.writer.append_grading(grading_rec)
-            gradings_list.append(grading_rec)
-
-            # Append retrieval trace
+            # Build retrieval trace first so grader has retrieval context
             qrel_entry = self.qrels.get_entry(cid)
             cand_chunks = []
             if qrel_entry and qrel_entry.relevant_sources:
@@ -314,6 +293,48 @@ class Phase4MockRunner:
             }
             rec_counter += 1
             self.writer.append_retrieval(retrieval_rec)
+
+            # Grade attempt with sidecar and retrieval context
+            sidecar_dict = {
+                "answerability_status": sidecar.answerability_status,
+                "scenario_family": sidecar.scenario_family,
+            }
+            grade_res = self.grader.grade(case, att, sidecar=sidecar_dict, retrieval=retrieval_rec)
+
+            grading_rec = {
+                "schema_version": SCHEMA_VERSION_GRADING,
+                "record_id": f"rec_{rec_counter}",
+                "run_id": self.run_id,
+                "case_id": cid,
+                "logical_request_id": req_id,
+                "system_commit_sha": self.system_sha,
+                "evaluation_harness_sha": self.harness_sha,
+                "evaluation_overlay_sha256": self.overlay_sha,
+                "protocol_version": PROTOCOL_VERSION,
+                "config_sha256": config_sha256,
+                "fixture_manifest_sha256": fixture_manifest_sha256,
+                "created_at_utc": created_at,
+                "graded_attempt_id": att_id,
+                "grading_id": f"gr_{cid}_{retry_idx}",
+                "grader_version": self.grader.grader_version,
+                "rubric_version": self.grader.rubric_version,
+                "decision": grade_res.decision,
+                "first_attempt": grade_res.first_attempt,
+                "claim_judgments": grade_res.claim_judgments,
+                "evidence_refs": grade_res.evidence_refs,
+                "adjudicated": grade_res.adjudicated,
+                "answerability_status": grade_res.answerability_status,
+                "severity": grade_res.severity,
+                "primary_failure": grade_res.primary_failure,
+                "secondary_failures": grade_res.secondary_failures,
+            }
+            rec_counter += 1
+            self.writer.append_grading(grading_rec)
+            gradings_list.append(grading_rec)
+
+        # Update manifest completion time
+        manifest_data["completed_at_utc"] = datetime.now(timezone.utc).isoformat()
+        self.writer.write_manifest(manifest_data)
 
         # Write aggregate
         from evals.harness.validator import recompute_aggregate_from_raw

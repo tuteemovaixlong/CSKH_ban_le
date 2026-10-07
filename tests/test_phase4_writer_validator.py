@@ -6,30 +6,24 @@ import shutil
 import tempfile
 import unittest
 
-try:
-    from evals.harness.constants import (
-        CANONICAL_ARTIFACT_FILES,
-        PROTOCOL_VERSION,
-        SCHEMA_VERSION_ATTEMPT,
-        SCHEMA_VERSION_ERROR,
-        SCHEMA_VERSION_GRADING,
-        SCHEMA_VERSION_MANIFEST,
-        SCHEMA_VERSION_RETRIEVAL,
-        SYSTEM_BASELINE_COMMIT_SHA,
-    )
-    from evals.harness.runner import Phase4MockRunner
-    from evals.harness.validator import CanonicalBundleValidator, recompute_aggregate_from_raw
-    from evals.harness.writer import CanonicalBundleWriter
-    _HARNESS_AVAILABLE = True
-except ImportError:
-    _HARNESS_AVAILABLE = False
+from evals.harness.constants import (
+    CANONICAL_ARTIFACT_FILES,
+    PROTOCOL_VERSION,
+    SCHEMA_VERSION_ATTEMPT,
+    SCHEMA_VERSION_ERROR,
+    SCHEMA_VERSION_GRADING,
+    SCHEMA_VERSION_MANIFEST,
+    SCHEMA_VERSION_RETRIEVAL,
+    SYSTEM_BASELINE_COMMIT_SHA,
+)
+from evals.harness.runner import Phase4MockRunner
+from evals.harness.validator import CanonicalBundleValidator, recompute_aggregate_from_raw
+from evals.harness.writer import CanonicalBundleWriter
 
 
 class TestWriterAndValidator(unittest.TestCase):
 
     def setUp(self):
-        if not _HARNESS_AVAILABLE:
-            self.skipTest("evals.harness not available in runtime-only container")
         self.test_dir = Path(tempfile.mkdtemp(prefix="phase4_test_bundle_"))
 
     def tearDown(self):
@@ -127,6 +121,85 @@ class TestWriterAndValidator(unittest.TestCase):
         report = val.validate()
         self.assertFalse(report.is_valid)
         self.assertTrue(any("aggregate.json n_total mismatch" in e for e in report.errors))
+
+    def test_r12_join_provenance_tampering(self):
+        """Mutation test: changing run_id, case_id, or logical_request_id must invalidate bundle."""
+        runner = Phase4MockRunner(run_id="run_join_prov", output_dir=self.test_dir)
+        runner.run(max_cases=3)
+
+        gr_path = self.test_dir / "grading.jsonl"
+        lines = gr_path.read_text(encoding="utf-8").splitlines()
+        first_gr = json.loads(lines[0])
+
+        # Tamper case_id of grading record
+        tampered_gr = dict(first_gr, case_id="tampered_case_id")
+        lines[0] = json.dumps(tampered_gr)
+        gr_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        writer = CanonicalBundleWriter(self.test_dir)
+        writer.write_checksums()
+
+        val = CanonicalBundleValidator(self.test_dir)
+        report = val.validate()
+        self.assertFalse(report.is_valid)
+        self.assertTrue(any("case_id 'tampered_case_id' !=" in e for e in report.errors))
+
+    def test_r12_frozen_benchmark_hash_mismatch(self):
+        """Mutation test: tampered dataset_sha256 in manifest must be rejected."""
+        runner = Phase4MockRunner(run_id="run_hash_mismatch", output_dir=self.test_dir)
+        runner.run(max_cases=2)
+
+        man_path = self.test_dir / "manifest.json"
+        manifest = json.loads(man_path.read_text(encoding="utf-8"))
+        manifest["dataset_sha256"] = "f" * 64
+        man_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+        writer = CanonicalBundleWriter(self.test_dir)
+        writer.write_checksums()
+
+        val = CanonicalBundleValidator(self.test_dir)
+        report = val.validate()
+        self.assertFalse(report.is_valid)
+        self.assertTrue(any("dataset_sha256 mismatch" in e for e in report.errors))
+
+    def test_r12_duplicate_record_id_detected(self):
+        """Duplicate record_id in different files must be rejected."""
+        runner = Phase4MockRunner(run_id="run_dup_rec", output_dir=self.test_dir)
+        runner.run(max_cases=2)
+
+        # Force identical record_id into grading.jsonl that already exists in attempts.jsonl
+        att_path = self.test_dir / "attempts.jsonl"
+        first_att = json.loads(att_path.read_text(encoding="utf-8").splitlines()[0])
+        existing_rec_id = first_att["record_id"]
+
+        gr_path = self.test_dir / "grading.jsonl"
+        lines = gr_path.read_text(encoding="utf-8").splitlines()
+        first_gr = json.loads(lines[0])
+        first_gr["record_id"] = existing_rec_id
+        lines[0] = json.dumps(first_gr)
+        gr_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        writer = CanonicalBundleWriter(self.test_dir)
+        writer.write_checksums()
+
+        val = CanonicalBundleValidator(self.test_dir)
+        report = val.validate()
+        self.assertFalse(report.is_valid)
+        self.assertTrue(any(f"Duplicate record_id '{existing_rec_id}'" in e for e in report.errors))
+
+    def test_r12_checksums_rejects_non_canonical_file(self):
+        """checksums.sha256 with extra or invalid entry must be rejected."""
+        runner = Phase4MockRunner(run_id="run_bad_chk", output_dir=self.test_dir)
+        runner.run(max_cases=2)
+
+        chk_path = self.test_dir / "checksums.sha256"
+        with open(chk_path, "a", encoding="utf-8") as f:
+            f.write(f"{'a' * 64}  disallowed_extra.txt\n")
+
+        val = CanonicalBundleValidator(self.test_dir)
+        report = val.validate()
+        self.assertFalse(report.is_valid)
+        self.assertTrue(any("Non-canonical or disallowed entry 'disallowed_extra.txt'" in e for e in report.errors))
 
 
 if __name__ == "__main__":

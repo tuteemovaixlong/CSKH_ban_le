@@ -22,10 +22,12 @@ import sys
 
 DEPLOY_ELIGIBLE_PATTERNS = [
     "retailops/**",
+    "opsconsole/**",
     "deploy/**",
     "web/**",
-    "data/knowledge/**",
-    "data/deepseek_seed_data.json",
+    "data/**",
+    "mcp_config.json",
+    ".dockerignore",
     "Dockerfile",
     "compose.yaml",
     "requirements*.txt",
@@ -33,13 +35,21 @@ DEPLOY_ELIGIBLE_PATTERNS = [
     "retailops_*.py",
     "inference_proxy.py",
     "backup_state.py",
+    "run_live_smoke.py",
+    "scripts/deploy_*.py",
+    "scripts/run_container_smoke.py",
+    "scripts/opsconsole.py",
+    "scripts/check_deployment_contract.py",
+    "scripts/build_agent_notebook.py",
 ]
 
 EVAL_AND_DOCS_PATTERNS = [
     "docs/**",
     "evals/**",
     "tests/**",
+    "notebooks/**",
     "*.md",
+    "LICENSE*",
     "scripts/check_docs_contract.py",
     "scripts/check_eval_dataset.py",
     "scripts/run_benchmark_eval.py",
@@ -50,7 +60,6 @@ EVAL_AND_DOCS_PATTERNS = [
     ".github/workflows/deploy-ec2.yml",
     ".github/workflows/live-e2e.yml",
     ".gitignore",
-    ".dockerignore",
 ]
 
 
@@ -67,7 +76,14 @@ def matches_any(path_str: str, patterns: List[str]) -> bool:
 
 
 def is_deploy_eligible(event_name: str, changed_files: List[str]) -> Tuple[bool, str]:
-    """Determines whether a commit/push is eligible for deployment to EC2."""
+    """Determines whether a commit/push is eligible for deployment to EC2.
+
+    Fail-closed policy:
+    - workflow_dispatch: always deploy-eligible.
+    - Any match in DEPLOY_ELIGIBLE_PATTERNS: deploy-eligible.
+    - Any file NOT matching EVAL_AND_DOCS_PATTERNS: fail-closed to deploy-eligible.
+    - Only if ALL changed files match EVAL_AND_DOCS_PATTERNS and NONE match DEPLOY_ELIGIBLE_PATTERNS: skip deploy.
+    """
     if event_name == "workflow_dispatch":
         return True, "workflow_dispatch manual trigger is always deploy-eligible"
 
@@ -75,12 +91,18 @@ def is_deploy_eligible(event_name: str, changed_files: List[str]) -> Tuple[bool,
         return False, "no changed files detected"
 
     eligible_triggers = []
+    unknown_triggers = []
     for f in changed_files:
         if matches_any(f, DEPLOY_ELIGIBLE_PATTERNS):
             eligible_triggers.append(f)
+        elif not matches_any(f, EVAL_AND_DOCS_PATTERNS):
+            unknown_triggers.append(f)
 
     if eligible_triggers:
         return True, f"deploy eligible: detected runtime/deploy changes in {eligible_triggers[:3]}"
+
+    if unknown_triggers:
+        return True, f"deploy eligible (fail-closed): unrecognized path(s) outside eval/docs in {unknown_triggers[:3]}"
 
     return False, f"deploy skipped: all {len(changed_files)} changed files are eval/docs/test only"
 
@@ -93,21 +115,44 @@ def get_changed_files_from_git(before: Optional[str], sha: Optional[str]) -> Lis
         try:
             res = subprocess.run(cmd, capture_output=True, text=True, check=True)
             return [line.strip() for line in res.stdout.splitlines() if line.strip()]
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"Warning: git diff {before}..{sha} failed: {exc}", file=sys.stderr)
+            try:
+                mb_cmd = ["git", "merge-base", before, sha]
+                mb_res = subprocess.run(mb_cmd, capture_output=True, text=True, check=True)
+                mb = mb_res.stdout.strip()
+                if mb:
+                    diff_cmd = ["git", "diff", "--name-only", f"{mb}..{sha}"]
+                    diff_res = subprocess.run(diff_cmd, capture_output=True, text=True, check=True)
+                    return [line.strip() for line in diff_res.stdout.splitlines() if line.strip()]
+            except Exception:
+                pass
+            return ["GIT_DIFF_ERROR_FAIL_CLOSED"]
+    elif sha and (not before or before == all_zeros):
+        for cmd in (
+            ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", sha],
+            ["git", "show", "--name-only", "--pretty=format:", sha],
+        ):
+            try:
+                res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                files = [line.strip() for line in res.stdout.splitlines() if line.strip()]
+                if files:
+                    return files
+            except Exception:
+                pass
 
-    # Fallback to HEAD~1..HEAD or single commit diff
-    for fallback_cmd in (
-        ["git", "diff", "--name-only", "HEAD~1", "HEAD"],
-        ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"],
-    ):
-        try:
-            res = subprocess.run(fallback_cmd, capture_output=True, text=True, check=True)
-            files = [line.strip() for line in res.stdout.splitlines() if line.strip()]
-            if files:
-                return files
-        except Exception:
-            continue
+    if not before and not sha:
+        for fallback_cmd in (
+            ["git", "diff", "--name-only", "HEAD~1", "HEAD"],
+            ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"],
+        ):
+            try:
+                res = subprocess.run(fallback_cmd, capture_output=True, text=True, check=True)
+                files = [line.strip() for line in res.stdout.splitlines() if line.strip()]
+                if files:
+                    return files
+            except Exception:
+                continue
 
     return []
 

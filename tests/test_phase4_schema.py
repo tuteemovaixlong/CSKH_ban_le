@@ -2,37 +2,33 @@
 
 import unittest
 
-try:
-    from evals.harness.constants import (
-        PROTOCOL_VERSION,
-        SCHEMA_VERSION_AGGREGATE,
-        SCHEMA_VERSION_ATTEMPT,
-        SCHEMA_VERSION_ERROR,
-        SCHEMA_VERSION_GRADING,
-        SCHEMA_VERSION_MANIFEST,
-        SCHEMA_VERSION_RETRIEVAL,
-        SYSTEM_BASELINE_COMMIT_SHA,
-    )
-    from evals.harness.schema import (
-        SchemaValidationError,
-        validate_aggregate,
-        validate_attempt_record,
-        validate_common_envelope,
-        validate_error_record,
-        validate_grading_record,
-        validate_manifest,
-        validate_retrieval_record,
-    )
-    _HARNESS_AVAILABLE = True
-except ImportError:
-    _HARNESS_AVAILABLE = False
+from evals.harness.constants import (
+    CANONICAL_ARTIFACT_FILES,
+    FROZEN_BENCHMARK_LF_SHA256,
+    PROTOCOL_VERSION,
+    SCHEMA_VERSION_AGGREGATE,
+    SCHEMA_VERSION_ATTEMPT,
+    SCHEMA_VERSION_ERROR,
+    SCHEMA_VERSION_GRADING,
+    SCHEMA_VERSION_MANIFEST,
+    SCHEMA_VERSION_RETRIEVAL,
+    SYSTEM_BASELINE_COMMIT_SHA,
+)
+from evals.harness.schema import (
+    SchemaValidationError,
+    validate_aggregate,
+    validate_attempt_record,
+    validate_common_envelope,
+    validate_error_record,
+    validate_grading_record,
+    validate_manifest,
+    validate_retrieval_record,
+)
 
 
 class TestPhase4Schema(unittest.TestCase):
 
     def setUp(self):
-        if not _HARNESS_AVAILABLE:
-            self.skipTest("evals.harness not available in runtime-only container")
         self.common_envelope = {
             "schema_version": SCHEMA_VERSION_ATTEMPT,
             "record_id": "rec-001",
@@ -66,14 +62,23 @@ class TestPhase4Schema(unittest.TestCase):
     def test_manifest_validation(self):
         valid_manifest = {
             "schema_version": SCHEMA_VERSION_MANIFEST,
+            "protocol_version": PROTOCOL_VERSION,
             "run_id": "run-test-01",
             "lane_id": "mock-a0",
+            "provider_id": "mock",
+            "cache_mode": "answer_cache_off",
+            "retry_policy_id": "mock_retry_v1",
+            "load_profile_id": "mock_single_worker",
             "system_commit_sha": SYSTEM_BASELINE_COMMIT_SHA,
             "evaluation_harness_sha": "1" * 40,
             "evaluation_overlay_sha256": "none",
             "config_sha256": "a" * 64,
-            "dataset_sha256": "b" * 64,
-            "artifact_files": ["manifest.json", "attempts.jsonl"],
+            "dataset_sha256": FROZEN_BENCHMARK_LF_SHA256,
+            "fixture_manifest_sha256": "b" * 64,
+            "qrels_sha256": "c" * 64,
+            "created_at_utc": "2026-10-06T00:00:00Z",
+            "completed_at_utc": "2026-10-06T00:00:00Z",
+            "artifact_files": list(CANONICAL_ARTIFACT_FILES),
             "model_revision": None,
             "model_revision_unavailable_reason": "not_exposed",
             "tokenizer_revision": None,
@@ -202,6 +207,90 @@ class TestPhase4Schema(unittest.TestCase):
         bad_error = dict(valid_error, taxonomy_code="NON_EXISTENT_CODE")
         with self.assertRaises(SchemaValidationError):
             validate_error_record(bad_error)
+
+    def test_r10_fail_closed_mutations(self):
+        """Strict fail-closed checks for R10 probe cases in H2."""
+        base_att = dict(
+            self.common_envelope,
+            attempt_id="att-r10-mut",
+            retry_index=0,
+            attempt_class="first",
+            started_at_utc="2026-10-06T00:00:00Z",
+            http_status=200,
+            outcome="completed",
+        )
+
+        # 1. Empty trace dictionary must fail
+        with self.assertRaises(SchemaValidationError):
+            validate_attempt_record(dict(base_att, trace={}))
+
+        # 2. Negative model_calls must fail
+        with self.assertRaises(SchemaValidationError):
+            validate_attempt_record(dict(base_att, trace={
+                "model_invocation_observed": True,
+                "model_calls": -1,
+                "provider_inference_ms": 100.0,
+            }))
+
+        # 3. Negative provider_inference_ms must fail
+        with self.assertRaises(SchemaValidationError):
+            validate_attempt_record(dict(base_att, trace={
+                "model_invocation_observed": True,
+                "model_calls": 1,
+                "provider_inference_ms": -5.0,
+            }))
+
+        # 4. Boolean passed for model_calls must fail (strict int check)
+        with self.assertRaises(SchemaValidationError):
+            validate_attempt_record(dict(base_att, trace={
+                "model_invocation_observed": True,
+                "model_calls": True,  # bool is instance of int in Python!
+                "provider_inference_ms": 100.0,
+            }))
+
+        # 5. model_calls=0 with provider_inference_ms=None must fail
+        with self.assertRaises(SchemaValidationError):
+            validate_attempt_record(dict(base_att, trace={
+                "model_invocation_observed": True,
+                "model_calls": 0,
+                "provider_inference_ms": None,
+                "zero_reason": "refusal",
+            }))
+
+        # 6. model_calls=0 with provider_inference_ms > 0 must fail
+        with self.assertRaises(SchemaValidationError):
+            validate_attempt_record(dict(base_att, trace={
+                "model_invocation_observed": True,
+                "model_calls": 0,
+                "provider_inference_ms": 12.5,
+                "zero_reason": "refusal",
+            }))
+
+        # 7. model_calls > 0 with provider_inference_ms=0.0 must fail
+        with self.assertRaises(SchemaValidationError):
+            validate_attempt_record(dict(base_att, trace={
+                "model_invocation_observed": True,
+                "model_calls": 1,
+                "provider_inference_ms": 0.0,
+            }))
+
+        # 8. Unobserved invocation missing unavailable_reason must fail
+        with self.assertRaises(SchemaValidationError):
+            validate_attempt_record(dict(base_att, trace={
+                "model_invocation_observed": False,
+                "model_calls": None,
+                "provider_inference_ms": None,
+                "unavailable_reason": None,
+            }))
+
+        # 9. Unobserved invocation with non-null calls must fail
+        with self.assertRaises(SchemaValidationError):
+            validate_attempt_record(dict(base_att, trace={
+                "model_invocation_observed": False,
+                "model_calls": 1,
+                "provider_inference_ms": 100.0,
+                "unavailable_reason": "network_down",
+            }))
 
 
 if __name__ == "__main__":

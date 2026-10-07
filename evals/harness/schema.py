@@ -10,7 +10,9 @@ from typing import Any, Dict, List, Optional
 import re
 
 from evals.harness.constants import (
+    CANONICAL_ARTIFACT_FILES,
     COMMON_ENVELOPE_FIELDS,
+    FROZEN_BENCHMARK_LF_SHA256,
     PROTOCOL_VERSION,
     SCHEMA_VERSION_AGGREGATE,
     SCHEMA_VERSION_ATTEMPT,
@@ -75,35 +77,77 @@ def validate_common_envelope(record: Dict[str, Any], record_type: str) -> None:
 
 
 def validate_manifest(data: Dict[str, Any]) -> None:
-    """Validates manifest.json structure."""
+    """Validates manifest.json structure according to normative Phase 4 results schema."""
     if data.get("schema_version") != SCHEMA_VERSION_MANIFEST:
         raise SchemaValidationError(f"manifest: Invalid schema_version: {data.get('schema_version')}")
 
     required_fields = (
-        "run_id", "lane_id", "system_commit_sha", "evaluation_harness_sha",
-        "evaluation_overlay_sha256", "config_sha256", "dataset_sha256",
-        "artifact_files"
+        "schema_version", "protocol_version", "run_id", "lane_id", "provider_id",
+        "cache_mode", "retry_policy_id", "load_profile_id", "system_commit_sha",
+        "evaluation_harness_sha", "evaluation_overlay_sha256", "config_sha256",
+        "dataset_sha256", "fixture_manifest_sha256", "qrels_sha256",
+        "created_at_utc", "completed_at_utc", "artifact_files"
     )
     missing = [f for f in required_fields if f not in data]
     if missing:
         raise SchemaValidationError(f"manifest: Missing required fields: {missing}")
 
-    # Validate commit SHAs
+    if data.get("protocol_version") != PROTOCOL_VERSION:
+        raise SchemaValidationError(
+            f"manifest: Invalid protocol_version: {data.get('protocol_version')} (expected {PROTOCOL_VERSION})"
+        )
+
+    # Cache mode must be answer_cache_off
+    cache_mode = data.get("cache_mode")
+    if cache_mode != "answer_cache_off":
+        raise SchemaValidationError(f"manifest: cache_mode must be 'answer_cache_off', got '{cache_mode}'")
+
+    for str_field in ("run_id", "lane_id", "provider_id", "retry_policy_id", "load_profile_id", "created_at_utc", "completed_at_utc"):
+        val = data.get(str_field)
+        if not isinstance(val, str) or not val.strip():
+            raise SchemaValidationError(f"manifest: Field '{str_field}' must be a non-empty string")
+
+    # Validate commit SHAs (40 hex)
     sys_sha = data.get("system_commit_sha", "")
     if not HEX_40_RE.match(sys_sha):
         raise SchemaValidationError(f"manifest: Invalid system_commit_sha: {sys_sha}")
 
-    harness_sha = data.get("evaluation_harness_sha")
-    if harness_sha is not None and not HEX_40_RE.match(harness_sha):
+    harness_sha = data.get("evaluation_harness_sha", "")
+    if not isinstance(harness_sha, str) or not HEX_40_RE.match(harness_sha):
         raise SchemaValidationError(f"manifest: Invalid evaluation_harness_sha: {harness_sha}")
 
-    for sha_field in ("config_sha256", "dataset_sha256"):
+    # evaluation_overlay_sha256: 64-char hex or 'none'
+    overlay_sha = data.get("evaluation_overlay_sha256", "")
+    if overlay_sha != "none" and not HEX_64_RE.match(overlay_sha):
+        raise SchemaValidationError(f"manifest: Invalid evaluation_overlay_sha256: {overlay_sha}")
+
+    # SHA-256 fields (64 hex)
+    for sha_field in ("config_sha256", "dataset_sha256", "fixture_manifest_sha256", "qrels_sha256"):
         val = data.get(sha_field, "")
-        if not HEX_64_RE.match(val):
+        if not isinstance(val, str) or not HEX_64_RE.match(val):
             raise SchemaValidationError(f"manifest: Invalid {sha_field}: {val}")
 
-    if not isinstance(data.get("artifact_files"), list):
+    # Dataset hash must match frozen benchmark LF SHA256
+    from evals.harness.constants import FROZEN_BENCHMARK_LF_SHA256
+    if data.get("dataset_sha256") != FROZEN_BENCHMARK_LF_SHA256:
+        raise SchemaValidationError(
+            f"manifest [H4]: dataset_sha256 mismatch! Got {data.get('dataset_sha256')}, expected frozen LF hash {FROZEN_BENCHMARK_LF_SHA256}"
+        )
+
+    # Artifact files must match exact canonical list
+    artifact_files = data.get("artifact_files")
+    if not isinstance(artifact_files, list):
         raise SchemaValidationError("manifest: artifact_files must be a list of filenames")
+
+    # Must only contain canonical filenames and must contain all canonical non-manifest artifacts
+    allowed_set = set(CANONICAL_ARTIFACT_FILES)
+    for f in artifact_files:
+        if f not in allowed_set:
+            raise SchemaValidationError(f"manifest: Non-canonical filename in artifact_files: '{f}'")
+
+    required_in_manifest = {"attempts.jsonl", "grading.jsonl", "retrieval.jsonl", "errors.jsonl", "aggregate.json", "checksums.sha256"}
+    if not required_in_manifest.issubset(set(artifact_files)):
+        raise SchemaValidationError(f"manifest: artifact_files missing canonical files: {required_in_manifest - set(artifact_files)}")
 
     # Unavailable reasons check
     for key in ("model_revision", "tokenizer_revision", "seed"):
@@ -114,7 +158,7 @@ def validate_manifest(data: Dict[str, Any]) -> None:
 
 
 def validate_attempt_record(record: Dict[str, Any]) -> None:
-    """Validates an attempts.jsonl line record according to R10 and phase4-attempt-v1."""
+    """Validates an attempts.jsonl line record according to R10 fail-closed contracts."""
     if record.get("schema_version") != SCHEMA_VERSION_ATTEMPT:
         raise SchemaValidationError(f"attempt: Invalid schema_version: {record.get('schema_version')}")
 
@@ -130,7 +174,7 @@ def validate_attempt_record(record: Dict[str, Any]) -> None:
         raise SchemaValidationError("attempt: attempt_id must be a non-empty string")
 
     retry_index = record.get("retry_index")
-    if not isinstance(retry_index, int) or retry_index < 0:
+    if type(retry_index) is not int or retry_index < 0:
         raise SchemaValidationError("attempt: retry_index must be an integer >= 0")
 
     attempt_class = record.get("attempt_class")
@@ -143,52 +187,106 @@ def validate_attempt_record(record: Dict[str, Any]) -> None:
         raise SchemaValidationError("attempt: retry_index > 0 cannot have attempt_class='first'")
 
     http_status = record.get("http_status")
-    if not isinstance(http_status, int) or http_status < 100 or http_status > 599:
+    if type(http_status) is not int or http_status < 100 or http_status > 599:
         raise SchemaValidationError(f"attempt: Invalid http_status: {http_status}")
 
     outcome = record.get("outcome")
     if outcome not in VALID_ATTEMPT_OUTCOMES:
         raise SchemaValidationError(f"attempt: Invalid outcome: {outcome}")
 
-    # Trace & R10 Measured Zero Validation
+    # Trace & R10 Measured Zero Validation (Fail-closed)
     trace = record.get("trace")
     if not isinstance(trace, dict):
         raise SchemaValidationError("attempt: 'trace' must be a dictionary")
+    if not trace:
+        raise SchemaValidationError("attempt [R10]: 'trace' must not be empty")
+
+    inv_observed = trace.get("model_invocation_observed")
+    if type(inv_observed) is not bool:
+        raise SchemaValidationError(
+            f"attempt [R10]: 'trace.model_invocation_observed' must be a strict boolean (True or False), got {type(inv_observed).__name__}"
+        )
 
     model_calls = trace.get("model_calls")
     provider_ms = trace.get("provider_inference_ms")
-    inv_observed = trace.get("model_invocation_observed")
     zero_reason = trace.get("zero_reason")
+    unavailable_reason = trace.get("unavailable_reason")
 
-    # R10 validation:
-    # 1. model_calls == 0
-    if model_calls == 0:
-        if inv_observed is not True:
+    # Strict type & range validation for model_calls
+    if model_calls is not None:
+        if type(model_calls) is not int:
             raise SchemaValidationError(
-                "attempt [R10]: model_calls=0 requires trace.model_invocation_observed=True (fabricated zero rejected)"
+                f"attempt [R10]: 'trace.model_calls' must be an integer, got {type(model_calls).__name__}"
             )
-        if zero_reason not in VALID_ZERO_REASONS:
+        if model_calls < 0:
             raise SchemaValidationError(
-                f"attempt [R10]: model_calls=0 requires trace.zero_reason in {VALID_ZERO_REASONS}, got {zero_reason}"
-            )
-
-    # 2. provider_inference_ms == 0.0
-    if provider_ms == 0.0:
-        if inv_observed is not True:
-            raise SchemaValidationError(
-                "attempt [R10]: provider_inference_ms=0.0 requires trace.model_invocation_observed=True (fabricated zero rejected)"
-            )
-        if model_calls is not None and model_calls > 0:
-            raise SchemaValidationError(
-                "attempt [R10]: provider_inference_ms cannot be 0.0 when model_calls > 0"
+                f"attempt [R10]: 'trace.model_calls' must be non-negative, got {model_calls}"
             )
 
-    # 3. If unobserved, must not claim 0
-    if inv_observed is False:
+    # Strict type & range validation for provider_inference_ms
+    if provider_ms is not None:
+        if type(provider_ms) not in (int, float) or type(provider_ms) is bool:
+            raise SchemaValidationError(
+                f"attempt [R10]: 'trace.provider_inference_ms' must be a float or int, got {type(provider_ms).__name__}"
+            )
+        if provider_ms < 0.0:
+            raise SchemaValidationError(
+                f"attempt [R10]: 'trace.provider_inference_ms' must be non-negative, got {provider_ms}"
+            )
+
+    # When model invocation WAS observed:
+    if inv_observed is True:
+        if model_calls is None:
+            raise SchemaValidationError(
+                "attempt [R10]: When model_invocation_observed=True, 'trace.model_calls' cannot be null"
+            )
+        if provider_ms is None:
+            raise SchemaValidationError(
+                "attempt [R10]: When model_invocation_observed=True, 'trace.provider_inference_ms' cannot be null"
+            )
+
         if model_calls == 0:
-            raise SchemaValidationError("attempt [R10]: Unobserved invocation cannot claim model_calls=0")
-        if provider_ms == 0.0:
-            raise SchemaValidationError("attempt [R10]: Unobserved invocation cannot claim provider_inference_ms=0.0")
+            if provider_ms != 0.0:
+                raise SchemaValidationError(
+                    f"attempt [R10]: model_calls=0 requires provider_inference_ms=0.0 (got {provider_ms})"
+                )
+            if zero_reason not in VALID_ZERO_REASONS:
+                raise SchemaValidationError(
+                    f"attempt [R10]: model_calls=0 requires trace.zero_reason in {VALID_ZERO_REASONS}, got '{zero_reason}'"
+                )
+            if unavailable_reason is not None:
+                raise SchemaValidationError(
+                    "attempt [R10]: Measured zero cannot have unavailable_reason"
+                )
+        else:
+            # model_calls > 0
+            if provider_ms == 0.0:
+                raise SchemaValidationError(
+                    f"attempt [R10]: provider_inference_ms cannot be 0.0 when model_calls > 0 ({model_calls} calls observed)"
+                )
+            if zero_reason is not None:
+                raise SchemaValidationError(
+                    f"attempt [R10]: zero_reason must be null when model_calls > 0, got '{zero_reason}'"
+                )
+
+    # When model invocation was NOT observed (missing telemetry / unobserved):
+    else:
+        if model_calls is not None:
+            raise SchemaValidationError(
+                f"attempt [R10]: When model_invocation_observed=False, model_calls must be null (cannot claim {model_calls})"
+            )
+        if provider_ms is not None:
+            raise SchemaValidationError(
+                f"attempt [R10]: When model_invocation_observed=False, provider_inference_ms must be null (cannot claim {provider_ms})"
+            )
+        if zero_reason is not None:
+            raise SchemaValidationError(
+                f"attempt [R10]: When model_invocation_observed=False, zero_reason must be null (got '{zero_reason}')"
+            )
+        if not isinstance(unavailable_reason, str) or not unavailable_reason.strip():
+            raise SchemaValidationError(
+                "attempt [R10]: When model_invocation_observed=False, 'trace.unavailable_reason' must be a non-empty string"
+            )
 
 
 def validate_grading_record(record: Dict[str, Any]) -> None:
