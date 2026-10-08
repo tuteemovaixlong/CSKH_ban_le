@@ -1,0 +1,14 @@
+{
+  "schema": "retailops-digest-manifest-v1",
+  "generated": "2026-10-08",
+  "source_sha": "8a666fcce464c96b1dd5fc6848a2d4168c6505d1",
+  "merged_after_g2_sha": null,
+  "merged_after_g2_status": "UNVERIFIED",
+  "digest_count": 12,
+  "public_doc_count": 21,
+  "scope": "Targeted local source extraction; no archive, artifacts, node_modules, runtime mutation, or benchmark mutation",
+  "dependencies": {
+    "code": ["MODELS", "PROMPTS", "AGENTS", "TOOLS", "RAG", "EVAL", "DATA", "INFRA", "CONTRACTS"],
+    "meta": ["ACRONYMS", "DECISIONS", "RISKS"]
+  }
+}

@@ -1,0 +1,105 @@
+---
+> Sources: `docs/phase4/*` acceptance/review/backlog, plus cited project/deployment docs
+> SHA: `8a666fcce464c96b1dd5fc6848a2d4168c6505d1` ([UNVERIFIED] merged SHA)
+> Generated: 2026-10-08
+---
+
+## 1. R-series
+
+| Term | Appears as | Citation file:line |
+|---|---|---|
+| R01 | clean-checkout bundle/checksum | `docs/phase4/PHASE_4_REPRODUCIBILITY.md:80` |
+| R03 | manifest/provider/qrels coherence | `docs/phase4/PHASE_4_REPRODUCIBILITY.md:82` |
+| R04 | smoke/quota/fixture sidecar | `docs/phase4/PHASE_4_REPRODUCIBILITY.md:83` |
+| R05 | 4A/4B experiment scope | `docs/phase4/REVIEW_PHASE_4_PLAN.md:97-99` |
+| R06 | metrics/retry/rubric | `docs/phase4/REVIEW_PHASE_4_PLAN.md:99` |
+| R08 | fixture/identity/artifact | `docs/phase4/REVIEW_PHASE_4_PLAN.md:101` |
+| R09 | infrastructure/shared host/timeline | `docs/phase4/REVIEW_PHASE_4_PLAN.md:102` |
+| R10 | measured-zero | `docs/phase4/REVIEW_PHASE_4_PLAN.md:112-118` |
+| R11 | readiness only at G5 | `docs/phase4/REVIEW_PHASE_4_PLAN.md:120-124` |
+| R12 | envelope/provenance/serialization | `docs/phase4/REVIEW_PHASE_4_PLAN.md:128-132` |
+| R13 | deployment mitigation | `docs/phase4/REVIEW_PHASE_4_PLAN.md:136-142` |
+
+## 2. G-series
+
+| Term | Appears as | Citation file:line |
+|---|---|---|
+| G0 | spec accepted | `docs/phase4/PHASE_4_EVIDENCE_CHECKLIST.md:68` |
+| G1 | harness accepted | `docs/phase4/PHASE_4_EVIDENCE_CHECKLIST.md:69` |
+| G2 | merged verified | `docs/phase4/PHASE_4_EVIDENCE_CHECKLIST.md:70` |
+| G3 | smoke authorized | `docs/phase4/PHASE_4_EVIDENCE_CHECKLIST.md:71` |
+| G4 | live smoke | `docs/phase4/PHASE_4_EVIDENCE_CHECKLIST.md:72` |
+| G5 | lane measurement ready | `docs/phase4/PHASE_4_EVIDENCE_CHECKLIST.md:73` |
+| G6 | full run authorized | `docs/phase4/PHASE_4_EVIDENCE_CHECKLIST.md:74` |
+| G7 | measured | `docs/phase4/PHASE_4_EVIDENCE_CHECKLIST.md:75` |
+
+## 3. S/K/C-series
+
+| Term | Appears as | Citation file:line |
+|---|---|---|
+| S0 | hard safety veto | `docs/phase4/PHASE_4_ACCEPTANCE_CRITERIA.md:22` |
+| S1 | hard safety veto | `docs/phase4/PHASE_4_ACCEPTANCE_CRITERIA.md:22` |
+| S2 | typed safety severity | `docs/phase4/PHASE_4_RESULTS_SCHEMA.md:13-17` |
+| S3 | typed safety severity | `docs/phase4/PHASE_4_RESULTS_SCHEMA.md:13-17` |
+| K1-K8 | frozen acceptance checklist | `docs/phase4/PHASE_4_ACCEPTANCE_CRITERIA.md:30-43` |
+| C1-C6 | contract checks | `docs/phase4/PHASE_4_ACCEPTANCE_CRITERIA.md:47-58` |
+
+## 4. H/F/B/N/L series
+
+| Term | Appears as | Citation file:line |
+|---|---|---|
+| H01 | adapter/tool/timeout preflight | `docs/phase4/PHASE_4_INFRASTRUCTURE_SPEC.md:79` |
+| H06 | clean-checkout replay | `docs/phase4/PHASE_4_INFRASTRUCTURE_SPEC.md:84` |
+| F01 | grader routing/tool/owner checks | `docs/phase4/PHASE_4_EVIDENCE_CHECKLIST.md:57` |
+| F02 | fixture identity/sidecar setup | `docs/phase4/PHASE_4_EVIDENCE_CHECKLIST.md:58` |
+| B01-B08 | Phase 4 baseline deliverables | `docs/phase4/PLAN_PHASE_4_EVALUATION.md:56;77-84` |
+| N1 | benchmark hash | `docs/phase4/PHASE_4_ACCEPTANCE_CRITERIA.md:16-26` |
+| N2 | ID/retry controls | `docs/phase4/REVIEW_GEMINI_PHASE4_2026-10-07.md:73-75` |
+| N3 | blocked denominator | `docs/phase4/PHASE_4_ACCEPTANCE_CRITERIA.md:21;37` |
+| N4 | malformed tool/safety types | `docs/phase4/PHASE_4_ACCEPTANCE_CRITERIA.md:22;38` |
+| N5 | mock/preflight/null-SHA deny | `docs/phase4/PHASE_4_EVIDENCE_CHECKLIST.md:77` |
+| L1-L5 | light finding identifiers | `docs/phase4/REVIEW_GEMINI_PHASE4_2026-10-07.md:125-141` |
+
+## 5. P5-series
+
+| Term | Appears as | Citation file:line |
+|---|---|---|
+| P5-01 | replay hardening | `docs/phase4/PHASE_5_BACKLOG.md:11` |
+| P5-02 | count/completeness | `docs/phase4/PHASE_5_BACKLOG.md:12` |
+| P5-03 | tool-name semantics | `docs/phase4/PHASE_5_BACKLOG.md:13` |
+| P5-04 | CLI canonical hash mode | `docs/phase4/PHASE_5_BACKLOG.md:14` |
+| P5-05 | gate metadata | `docs/phase4/PHASE_5_BACKLOG.md:15` |
+| P5-06 | PR consistency | `docs/phase4/PHASE_5_BACKLOG.md:16` |
+| P5-07 | timing limitation | `docs/phase4/PHASE_5_BACKLOG.md:17` |
+| P5-08 | future G4/G5 evidence | `docs/phase4/PHASE_5_BACKLOG.md:18` |
+
+## 6. AI / provider / workflow terms
+
+| Term | Appears as | Citation file:line |
+|---|---|---|
+| AI | model/quality evaluation context | `docs/phase4/PLAN_PHASE_4_EVALUATION.md:1-10` |
+| RAG | retrieval terminology | `docs/RAG_CHAT.md:1-20` |
+| API | provider/API path | `docs/MODEL_SELECTOR.md:1-20` |
+| CI | continuous integration checks | `docs/phase4/PHASE_4_ACCEPTANCE_CRITERIA.md:39-40` |
+| CD | deployment path | `docs/phase4/PHASE_4_INFRASTRUCTURE_SPEC.md:1-5` |
+| E2E | live end-to-end contract | `docs/phase4/PHASE_4_ACCEPTANCE_CRITERIA.md:53-56` |
+| SLO | timing target | `docs/phase4/PHASE_4_ACCEPTANCE_CRITERIA.md:45` |
+| SHA | frozen commit identity | `docs/phase4/PHASE_4_ACCEPTANCE_CRITERIA.md:14;97` |
+| LF | line-ending hash convention | `docs/phase4/PHASE_4_ACCEPTANCE_CRITERIA.md:20;26` |
+| JSONL | scenario/bundle format | `docs/phase4/PHASE_4_RESULTS_SCHEMA.md:1-20` |
+| OIDC | AWS trust path | `docs/phase4/PHASE_4_INFRASTRUCTURE_SPEC.md:50-55` |
+| AWS | deployment environment | `docs/phase4/PHASE_4_INFRASTRUCTURE_SPEC.md:50-60` |
+| EC2 | deployment host | `docs/phase4/PHASE_4_INFRASTRUCTURE_SPEC.md:50-60` |
+| ECR | image registry | `docs/phase4/PHASE_4_INFRASTRUCTURE_SPEC.md:50-60` |
+| SSM | remote command path | `docs/phase4/PHASE_4_INFRASTRUCTURE_SPEC.md:50-60` |
+| CI/CD | pipeline shorthand | `docs/phase4/PHASE_4_INFRASTRUCTURE_SPEC.md:50-60` |
+| KB | knowledge-base citation prefix | `docs/RAG_CHAT.md:1-20` |
+| PG | PostgreSQL shorthand | `docs/phase4/PHASE_4_INFRASTRUCTURE_SPEC.md:50-60` |
+| SQL | database/query terminology | `docs/phase4/PHASE_4_INFRASTRUCTURE_SPEC.md:50-60` |
+| HTTP | web/HTTP contract terminology | `docs/phase4/PHASE_4_ACCEPTANCE_CRITERIA.md:40;53-56` |
+
+## 7. Unknown / Unverified
+
+- [UNVERIFIED] This is an extraction index, not a claim that every acronym has one globally fixed expansion; undefined source terms are preserved verbatim.
+- [UNVERIFIED] The SHA is local frozen source identity, not a merge/deployment assertion.
+- Extracted term count: 64 rows (some rows intentionally represent a range such as K1-K8 or B01-B08).

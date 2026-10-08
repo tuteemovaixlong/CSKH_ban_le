@@ -3,48 +3,42 @@
 ## Prompt Gemini — dùng làm trigger
 
 ```text
-Đọc docs/phase4/REVIEW_GEMINI_PHASE4_2026-10-07.md. N1/N3/N4 DONE; chỉ sửa K7/C6 ở 5 file đã chỉ rõ. Freeze SHA mới, verify đúng 8 check (base→HEAD), lấy sign-off model khác/human mới → owner review → merge → G2 offline. Không mở audit mới hoặc cấp readiness trước G5.
+Đọc docs/phase4/REVIEW_GEMINI_PHASE4_2026-10-07.md và evidence 8a666fc. Dừng sửa code. Giao acceptance v1 + frozen diff + evidence cho model khác/human mới xác minh đúng K1–K8 và ký, gồm summary CI K5. PASS → owner review → merge → G2 offline. Ngoài checklist → backlog Phase 5; chưa cấp readiness trước G5.
 ```
 
 > Review: 2026-10-08. Branch: `codex/phase4-harness`.
-> Frozen HEAD đã kiểm tra: `a19ed2a74e457fcba9eee76f206156d1f4ea446b`.
+> Frozen HEAD đã kiểm tra: `8a666fcce464c96b1dd5fc6848a2d4168c6505d1`.
 > Runtime baseline: `49671b928ad6badfaa01331174eb73f0e366752e`.
 > PR: [#36](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/36), open/unmerged; PR head khớp local.
-> Verdict này thay thế verdict HEAD04 và packet Gemini tự ghi8/8PASS. Chỉ tài liệu của lượt review này được cập nhật, chưa commit/push. Không sửa code/tests hoặc merge.
+> Verdict này thay thế snapshot `a19ed2a` và packet cũ. Không còn yêu cầu sửa code; independent sign-off vẫn PENDING, PR chưa merge.
 
 ## Quyết định nghiệm thu owner — ưu tiên hơn phân loại findings cũ
 
-Owner chốt **blocker + đúng8check** tại [Acceptance v1](PHASE_4_ACCEPTANCE_CRITERIA.md). N1 mutation manifest hash, N3 quality denominator và N4 tool/safety types **DONE VERIFIED tại a19ed2a**. N1 manual-source replay hardening DEFERRED; N3 counts/completeness, N4 positive-count thiếu tool names, L2/L4/L5 vào [Phase5 backlog](PHASE_5_BACKLOG.md), không block merge.
+Owner chốt **blocker + đúng8check** tại [Acceptance v1](PHASE_4_ACCEPTANCE_CRITERIA.md). N1 mutation manifest hash, N3 quality denominator và N4 tool/safety types **DONE VERIFIED tại 8a666fc**. N1 manual-source replay hardening DEFERRED; N3 counts/completeness, N4 positive-count thiếu tool names, L2/L4/L5 vào [Phase5 backlog](PHASE_5_BACKLOG.md), không block merge.
 
-**Verdict hiện tại: K1–K6 PASS; K7/C6 FAIL; independent sign-off PENDING. Chưa ACCEPTED FOR OWNER REVIEW.** K8 có C1–C5 PASS, C6 FAIL (cùng K7, không thêm lỗi/check mới). Status vẫn READY FOR HARNESS/PREFLIGHT; chưa merge/G2/live. Codex verification này không phải independent sign-off. Xem [packet đúng SHA](PHASE_4_ACCEPTANCE_EVIDENCE_a19ed2a.md).
+**Verdict hiện tại: K1–K8 PASS; C1–C6 PASS; independent sign-off PENDING.** Technical acceptance đã đạt; chưa ACCEPTED FOR OWNER REVIEW cho tới khi nguồn độc lập ký. Status vẫn READY FOR HARNESS/PREFLIGHT; chưa merge/G2/live. Codex verification này không phải independent sign-off. Xem [packet đúng SHA](PHASE_4_ACCEPTANCE_EVIDENCE_8a666fc.md).
 
 ## Kết quả hiện hành — nặng / nhẹ / DONE
 
 | Loại | Kết luận trong acceptance v1 |
 |---|---|
 | Nặng | Không còn blocker code N1/N3/N4 trong scope đã chốt. Không cam kết mọi bug của phần mềm đều hết. |
-| Nhẹ | 5 file có blank line thừa tại EOF trên patch merge: K7/C6 chưa đạt. Đây là checklist hiện hữu, phải sửa trước sign-off; không nâng bug backlog thành blocker. |
-| DONE | K1 hash mutation reject; K2 thêm13blocked vẫn185/237, blocked-only0/0; K3 4malformed tools/24non-bool flags reject,16bool controls pass, ownership/identity True rejected S0; K4 CI5 success; K5 full575tests OK/49skipped; K6 mock250cases/263attempts valid đúng SHA; C1–C5 PASS. |
+| Nhẹ | Không còn mục nhẹ trong 8 mục nghiệm thu; 5 EOF blank lines đã được Gemini sửa đúng phạm vi. |
+| DONE | K1–K8/C1–C6 PASS: hash mutation reject; blocked denominator giữ185/237; malformed tools/flags reject; CI5 success; CI offline SUCCESS; Gemini báo 575 tests OK/49 skipped; mock250/263 valid đúng SHA; patch sạch. |
 
-Diff Gemini mới `04ed899 → a19ed2a` gồm20file: schema bổ sung strict bool cho `ownership_violation`/`identity_collision` và rejectNone; schema/grader/denominator tests; regenerated notebook source và docs closure. Đối chiếu trực tiếp với acceptance, không mở audit ngoài8mục.
+Diff Gemini closure `a19ed2a → 8a666fc` chỉ sửa EOF whitespace ở đúng5 docs và cập nhật acceptance/evidence. Code N1/N3/N4 giữ nguyên từ `a19ed2a`; đối chiếu trực tiếp với acceptance, không mở audit ngoài8mục.
 
-## Sửa đúng K7/C6 rồi dừng review khi đủ điều kiện
+## Giới hạn evidence hiện hành
 
-```text
-docs/phase4/CHAPTER_4_OUTLINE.md:136: new blank line at EOF.
-docs/phase4/PHASE_4_ABLATION_STUDY.md:89: new blank line at EOF.
-docs/phase4/PHASE_4_FAILURE_TAXONOMY.md:109: new blank line at EOF.
-docs/phase4/PHASE_4_THREATS_TO_VALIDITY.md:80: new blank line at EOF.
-docs/phase4/REVIEW_PHASE_4_PLAN.md:289: new blank line at EOF.
-```
+CI offline SUCCESS đã được đọc trực tiếp; summary 575 tests OK/49 skipped do Gemini báo cáo, raw log chờ reviewer độc lập đối chiếu K5. Local rerun có 1 timing failure P99 61.0104ms > 50ms; không gọi local PASS. Chi tiết trong packet.
 
-Lệnh kiểm patch thực: `git diff --check 49671b928ad6badfaa01331174eb73f0e366752e HEAD`, exit1. Gemini chỉ bỏ dòng trống thừa cuối5file, giữ một newline. Kết quả `git diff --check` trên worktree sạch sau commit không kiểm patch sẽ merge. Số dòng có thể đổi sau cập nhật docs; sửa theo file và cùng base→HEAD.
+## Sau K7/C6: dừng review kỹ thuật
 
-Freeze SHA mới → verify đúng8check/CI trên SHA đó → một model khác/human mới chưa reviewN1–N5 sign-off → owner review → merge → G2 offline. Đạt8/8 + independentPASS thì kết thúc review harness, chuyển lane preflight riêng. Không mở audit mới hoặc cấp READY FOR MEASUREMENT trướcG5.
+K1–K8/C1–C6 đã PASS trên `8a666fc`. `git diff --check 49671b928ad6badfaa01331174eb73f0e366752e HEAD` exit0; 5 EOF blank lines đã được loại bỏ. Technical review dừng tại đây. Bước duy nhất còn lại là model khác/human mới chưa review N1–N5 ký độc lập; sau đó owner review → merge → G2 offline. Không mở audit mới hoặc cấp READY FOR MEASUREMENT trước G5.
 
 ## Lịch sử HEAD04 — tham khảo, không phải yêu cầu sửa hiện hành
 
-Các evidence/findings dưới đây thuộc `04ed899`, giữ để tra cứu. N4 sai kiểu đã đóng tại a19ed2a; phần deferred có disposition ở backlog. Chỉ bảng hiện hành phía trên và acceptance v1 quyết định merge.
+Các evidence/findings dưới đây thuộc `04ed899`, giữ để tra cứu. N4 sai kiểu đã đóng tại 8a666fc; phần deferred có disposition ở backlog. Chỉ bảng hiện hành phía trên và acceptance v1 quyết định merge.
 
 
 ## Evidence review tại HEAD04 (lịch sử)
@@ -159,4 +153,4 @@ Toàn diff baseline→HEAD guard trả **deploy_eligible=true** do `.dockerignor
 
 ## Plan và bước tiếp theo
 
-Chỉ thực thi [acceptance v1](PHASE_4_ACCEPTANCE_CRITERIA.md) và [plan](PLAN_REVIEW_HANDOFF_GEMINI_2026-10-07.md): sửa5EOF của K7/C6, freezeSHA mới, verify đúng8check, rồi independent8/8 sign-off. PASS thì dừng review engineering; owner review → merge → G2 offline replay. Không mở lại N1/N3/N4 DONE. Ngoài checklist → Phase5, không block merge. Không tự chạy live/paid hoặc cấp READY FOR MEASUREMENT trướcG5.
+Chỉ thực thi [acceptance v1](PHASE_4_ACCEPTANCE_CRITERIA.md) và [packet](PHASE_4_ACCEPTANCE_EVIDENCE_8a666fc.md): technical K1–K8 đã PASS; lấy independent8/8 sign-off rồi dừng review engineering. Tiếp theo owner review → merge → G2 offline replay. Không mở lại N1/N3/N4 DONE. Ngoài checklist → Phase5, không block merge. Không tự chạy live/paid hoặc cấp READY FOR MEASUREMENT trước G5.

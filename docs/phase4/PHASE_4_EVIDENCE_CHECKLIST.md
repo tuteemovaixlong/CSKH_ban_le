@@ -1,8 +1,8 @@
 # PHASE_4_EVIDENCE_CHECKLIST — Evidence và gate
 
-> **Merge policy owner chốt 2026-10-08:** [Acceptance v1](PHASE_4_ACCEPTANCE_CRITERIA.md): đúng8check; N1 manifest mutation/N3 denominator/N4 safety types DONE trong scope v1. [Evidence HEAD a19ed2a](PHASE_4_ACCEPTANCE_EVIDENCE_a19ed2a.md): K1–K6 PASS, K7/C6 FAIL, independent sign-off PENDING. Chỉ sửa nguyên nhân K7 rồi verify đúng8check trên frozen SHA mới; independent source mới sign-off8/8 → owner review → merge → G2. N1 replay/counts/tool-name semantics, L2/L4/L5 và việc ngoài checklist → [Phase5 backlog](PHASE_5_BACKLOG.md), không block merge. Findings/progress lịch sử bên dưới không mở thêm merge gate.
+> **Merge policy owner chốt 2026-10-08:** [Acceptance v1](PHASE_4_ACCEPTANCE_CRITERIA.md): đúng8check; N1 manifest mutation/N3 denominator/N4 safety types DONE trong scope v1. [Evidence HEAD 8a666fc](PHASE_4_ACCEPTANCE_EVIDENCE_8a666fc.md): K1–K8/C1–C6 PASS, independent sign-off PENDING. Checklist kỹ thuật đạt theo packet; chờ nguồn độc lập xác minh và ký 8/8 → owner review → merge → G2. N1 replay/counts/tool-name semantics, L2/L4/L5 và việc ngoài checklist → [Phase5 backlog](PHASE_5_BACKLOG.md), không block merge. Findings/progress lịch sử bên dưới không mở thêm merge gate.
 
-> **Trạng thái (2026-10-08):** READY FOR HARNESS/PREFLIGHT. HEAD `a19ed2a` đạt K1–K6: full local575 tests PASS/49 skipped, CI5 success, mock250 PASS. K7/C6 FAIL trên patch merge do5 blank lines EOF; independent sign-off PENDING. N1 replay/counts/tool-name semantics vào Phase5, không block merge; chưa merge/G2/live.
+> **Trạng thái (2026-10-08):** READY FOR HARNESS/PREFLIGHT. HEAD `8a666fc` đạt K1–K8/C1–C6: CI5 success, mock250 PASS, patch whitespace clean; local full-suite rerun has timing variance. K7/C6 PASS trên patch merge; 5 EOF blank lines đã được loại bỏ; independent sign-off PENDING. N1 replay/counts/tool-name semantics vào Phase5, không block merge; chưa merge/G2/live.
 
 ## 1. Evidence levels
 
@@ -60,7 +60,7 @@ Arm chưa chạy là DESIGNED/BLOCKED; không đưa điểm giả vào scorecard
 | M01 | metric numerator/denominator, CI, first/eventual | metrics/statistics | PASS PRIMARY DENOMINATOR — completeness/counts backlog P5-02; live statistics sau |
 | M02 | cache/retry/no-evidence/blocked handling | schema, runner | PASS OFFLINE — cache/retry/N2/blocked denominator; completeness backlog |
 | M03 | telemetry completeness and unavailable identity | infra/harness | PASS MODEL TELEMETRY/K3 TYPES — live sau |
-| M05 | canonical writer/validator/checksum | results schema | ACCEPTABLE v1 — source replay/count semantics deferred; K7/C6 FAIL và independent sign-off PENDING |
+| M05 | canonical writer/validator/checksum | results schema | ACCEPTABLE v1 — source replay/count semantics deferred; K7/C6 PASS và independent sign-off PENDING |
 | M06 | importer preserves split/category/actual mode from raw | raw schema/taxonomy | BACKLOG — importer/scorecard theo split/category/actual mode chưa nghiệm thu |
 
 ## 6. Readiness rules

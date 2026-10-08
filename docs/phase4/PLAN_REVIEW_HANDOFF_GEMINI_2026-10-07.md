@@ -1,31 +1,29 @@
-# Phase 4 — Plan nghiệm thu cố định và handoff Gemini
+# Phase 4 — Plan nghiệm thu cố định và handoff
 
 ## Prompt trigger
 
 ```text
-Đọc docs/phase4/REVIEW_GEMINI_PHASE4_2026-10-07.md. N1/N3/N4 DONE; chỉ sửa K7/C6 ở 5 file đã chỉ rõ. Freeze SHA mới, verify đúng 8 check (base→HEAD), lấy sign-off model khác/human mới → owner review → merge → G2 offline. Không mở audit mới hoặc cấp readiness trước G5.
+Đọc docs/phase4/REVIEW_GEMINI_PHASE4_2026-10-07.md và evidence 8a666fc. Dừng sửa code. Giao acceptance v1 + frozen diff + evidence cho model khác/human mới xác minh đúng K1–K8 và ký, gồm summary CI K5. PASS → owner review → merge → G2 offline. Ngoài checklist → backlog Phase 5; chưa cấp readiness trước G5.
 ```
 
-> Owner chốt ngày 2026-10-08: [Acceptance Criteria v1](PHASE_4_ACCEPTANCE_CRITERIA.md) là nguồn quyết định; đúng 8 check, không thêm mục.
-> Frozen HEAD đã kiểm: `a19ed2a74e457fcba9eee76f206156d1f4ea446b`, PR [#36](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/36).
-> N1 mutation / N3 denominator / N4 types DONE. K1–K6 PASS; K7/C6 FAIL, nên K8 chưa đủ6/6; independent sign-off PENDING. Chưa merge/G2/live. [Evidence đúng SHA](PHASE_4_ACCEPTANCE_EVIDENCE_a19ed2a.md).
+> Acceptance v1 là nguồn quyết định; đúng 8 check, không thêm mục.
+> Frozen HEAD: `8a666fcce464c96b1dd5fc6848a2d4168c6505d1`, PR [#36](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/36).
+> Technical verdict: K1–K8/C1–C6 PASS. Independent sign-off PENDING; chưa merge/G2/live.
 
-## 1. Thực thi
+## Handoff còn lại
 
-1. Chỉ bỏ dòng trống thừa cuối5file trong `docs/phase4/`: `CHAPTER_4_OUTLINE.md`, `PHASE_4_ABLATION_STUDY.md`, `PHASE_4_FAILURE_TAXONOMY.md`, `PHASE_4_THREATS_TO_VALIDITY.md`, `REVIEW_PHASE_4_PLAN.md`. Giữ đúng một newline cuối mỗi file; không đổi nội dung nghiên cứu/code/frozen inputs/ngưỡng.
-2. Gộp cập nhật review/plan/handoff/tiến độ đang có trong checkout vào closure docs commit, ghi FROZEN_HEAD mới, push PR #36. Không thêm hardening. Giữ N1 deferral và mọi việc ngoài scope trong [Phase5 backlog](PHASE_5_BACKLOG.md).
-3. Chạy **đúng K1–K8** trên SHA mới. K7/C6 dùng `git diff --check 49671b928ad6badfaa01331174eb73f0e366752e HEAD`, lưu output/exit0; không dùng empty working-tree diff thay patch PR. K5 ghi full summary >=563, failures0/errors0 và skipped riêng; CI phải đúng HEAD mới. Không hạ P99 threshold.
-4. Tạo packet SHA mới từ [packet a19ed2a](PHASE_4_ACCEPTANCE_EVIDENCE_a19ed2a.md), giữ packet cũ làm lịch sử. Cập nhật entrypoints theo evidence thật; không ghi toàn bộ PASS khi thiếu chứng cứ.
-5. Sau8/8 PASS, giao acceptance + frozen diff/evidence cho **một model khác/human mới**, chưa tìm N1–N5. Reviewer chỉ verify 8 mục, không scan rộng. Reviewer Codex/agents cũ và Gemini tác giả không tự sign-off.
-6. Nếu8/8 + independent PASS: kết thúc review build, gửi owner review. Nếu FAIL: chỉ sửa nguyên nhân K-ID fail; criteria giữ nguyên, không thêm blocker.
-7. Sau freeze mọi phát hiện ngoài8mục → Phase5 backlog, không nhận thêm vào PR hay chặn merge.
+1. Không sửa thêm code, benchmark, runtime hoặc threshold; N1/N3/N4 và K7 đã DONE.
+2. Giao [evidence packet](PHASE_4_ACCEPTANCE_EVIDENCE_8a666fc.md) và acceptance v1 cho một model khác/human mới chưa tham gia N1–N5.
+3. Reviewer chỉ xác minh K1–K8, ghi PASS/FAIL, nguồn và timestamp; không deep scan, không thêm requirement. Reviewer cũ và Gemini tác giả không tự ký.
+4. Independent PASS → owner review → merge PR #36 theo policy → G2 offline trên merged checkout/SHA.
+5. G2 kiểm merged CI, contracts/frozen hashes và mock replay đúng harness SHA. PASS thì dừng review harness, chuyển lane preflight riêng.
+6. Ngoài 8 mục → [Phase 5 backlog](PHASE_5_BACKLOG.md), không block merge. FAIL trong checklist chỉ sửa nguyên nhân K-ID đó.
 
-## 2. Handoff evidence
+## Evidence và điều kiện dừng
 
-Dùng template trong acceptance: PR URL/full FROZEN_HEAD/runtime baseline; K1–K8; commands/test names/results/CI URLs; full summary/environment/skips; mock counts/SHA/185/237; C1–C6; N1 defer; independent source/timestamp và owner/merged SHA/G2. Không thêm acceptance checklist cạnh tranh.
+Packet ghi full SHA, K1–K8, CI links, full test summary/skips/environment, mock counts/SHA/quality, C1–C6, N1 deferral và sign-off PENDING. Packet a19ed2a giữ làm lịch sử.
 
-Kết quả a19ed2a đã xác nhận: mutation hash reject; thêm13blocked giữ185/237, blocked-only0/0; 4malformed tools và24non-bool flags reject/16valid bool controls; CI5success; full local575/49skipped OK; mock250/263valid. C1–C5 PASS; K7/C6 FAIL do EOF whitespace. Đây là Codex verification, chưa là independent sign-off.
+Kết quả xác minh: CI exact-head 5/5 success; C1–C6 PASS; mock 250 cases/263 attempts với harness SHA đúng 8a666fc; targeted K1–K3 PASS; patch whitespace sạch. Local full-suite rerun có 1 P99 timing failure (61.0104ms > 50ms), còn CI offline là nguồn K5 chuẩn và đã PASS; không hạ threshold, không kết luận chắc chắn về regression từ lần chạy này.
 
-## 3. Owner merge và G2
-
-Independent8/8 PASS → owner review → merge theo policy → G2 merged CI/contracts/frozen-hash/mock replay trên merged SHA. PR có mixed packaging nên guard eligibletrue; không đổi repo variables hoặc tự deploy/live/paid. Sau G2 chuyển lane preflight ở workstream riêng; G3 approval→G4 evidence→G5 readiness→G6 full-run authorization→G7 measured. Merge/G2 không cấp READY FOR MEASUREMENT.
+Sau independent sign-off PASS, dừng review harness. Owner review/merge và G2 là bước tiếp theo; không chạy live/paid hoặc cấp `READY FOR MEASUREMENT` trước G5.
+Docs hậu kiểm đang ở working tree, chưa commit/push; frozen code vẫn là 8a666fc. Nếu gộp docs vào PR làm đổi SHA, đối chiếu docs-only diff và evidence/CI trên head đó trong cùng checklist; không mở audit mới. K5 raw summary do Gemini báo cáo, reviewer độc lập đối chiếu log CI (xem packet).

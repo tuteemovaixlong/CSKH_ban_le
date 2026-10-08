@@ -1,0 +1,38 @@
+---
+> Sources: `retailops/knowledge/chunking.py`, `embedding.py`, `repository.py`, `citations.py`, `tool.py`, `data/knowledge/cancellation.md`, `faq.md`, `payments.md`, `policy_mega_sale_delay_voucher.md`, `policy_shipper_complaint.md`, `policy_size_exchange_twoway.md`, `policy_warranty_exchange_1to1.md`, `returns.md`, `shipping.md`
+> SHA: `8a666fcce464c96b1dd5fc6848a2d4168c6505d1` (merged-after-G2 SHA: [UNVERIFIED])
+> Generated: 2026-10-08
+---
+
+## 1. Ingestion and chunking
+
+| Field | Value | Citation file:line |
+|---|---|---|
+| Accepted source formats | `.md` and `.txt`; directory reader emits repo URI `repo://data/knowledge/...` | [`chunking.py#L7-L8`](../../../retailops/knowledge/chunking.py#L7) [`chunking.py#L32-L45`](../../../retailops/knowledge/chunking.py#L32) |
+| Normalization | CRLF/CR converted to LF, trailing whitespace removed, repeated blank lines collapsed | [`chunking.py#L18-L21`](../../../retailops/knowledge/chunking.py#L18) |
+| Chunk budget | Target 900 chars, overlap 140 chars; input limits target 300–2000 and overlap 0–300 | [`chunking.py#L63-L83`](../../../retailops/knowledge/chunking.py#L63) |
+| Content checksum | SHA-256 of cleaned content | [`chunking.py#L86-L87`](../../../retailops/knowledge/chunking.py#L86) |
+
+## 2. Embedding and retrieval
+
+| Field | Value | Citation file:line |
+|---|---|---|
+| Embedding model | Deterministic feature hashing baseline `feature-hash-v1`, dimension 384 | [`embedding.py#L1-L14`](../../../retailops/knowledge/embedding.py#L1) |
+| Features | Unicode-normalized tokens, weighted bigrams and character trigrams hashed with BLAKE2b | [`embedding.py#L18-L43`](../../../retailops/knowledge/embedding.py#L18) |
+| Storage | PostgreSQL/pgvector repository; model-facing access read-only | [`repository.py#L1-L15`](../../../retailops/knowledge/repository.py#L1) |
+| Ranking | 0.75 vector score + 0.25 capped lexical score; active documents and matching embedding model only | [`repository.py#L67-L87`](../../../retailops/knowledge/repository.py#L67) |
+| Returned citation | `KB:<source_key>#chunk-<ordinal>` at repository result layer | [`repository.py#L88-L96`](../../../retailops/knowledge/repository.py#L88) |
+
+## 3. Tool and citation safety
+
+| Field | Value | Citation file:line |
+|---|---|---|
+| Search budget | Maximum 2 searches, 3 sources, 2800-char reply and 3600-char total budget | [`tool.py#L11-L15`](../../../retailops/knowledge/tool.py#L11) |
+| Evidence threshold | Minimum score 0.15 plus query-token overlap guard | [`tool.py#L15-L16`](../../../retailops/knowledge/tool.py#L55-L68) |
+| Citation validation | Only citation IDs returned in the current turn are accepted; missing citation after evidence fails closed | [`citations.py#L15-L28`](../../../retailops/knowledge/citations.py#L15) |
+| Source collection | Nine Markdown knowledge documents are present under `data/knowledge/` | [`data/knowledge/`](../../../data/knowledge/) |
+
+## 4. Unknown / Unverified
+
+- [UNVERIFIED] Neural embedding replacement, retrieval quality, train/test overlap and production corpus freshness.
+- [UNVERIFIED] Exact line-level claims about each policy document's semantic content; this digest records inventory and code contract only.
