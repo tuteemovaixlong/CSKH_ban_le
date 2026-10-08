@@ -30,6 +30,13 @@ from evals.harness.schema import (
 from evals.harness.writer import compute_sha256
 
 
+def safe_json_loads(s: str) -> Any:
+    """Parses JSON strictly without allowing NaN, Infinity, or -Infinity constants."""
+    def _reject_constant(c: str) -> None:
+        raise ValueError(f"Disallowed non-standard JSON constant: {c}")
+    return json.loads(s, parse_constant=_reject_constant)
+
+
 @dataclass
 class ValidationReport:
     """Detailed validation report of an evaluation run directory."""
@@ -244,10 +251,19 @@ class CanonicalBundleValidator:
         manifest_path = self.run_dir / "manifest.json"
         is_preflight = False
         try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest = safe_json_loads(manifest_path.read_text(encoding="utf-8"))
             validate_manifest(manifest)
             run_id = manifest.get("run_id", "")
-            is_preflight = bool(manifest.get("is_preflight", False)) or (manifest.get("evaluation_harness_sha") is None)
+            raw_preflight = manifest.get("is_preflight")
+            if raw_preflight is not None:
+                if type(raw_preflight) is not bool:
+                    errors.append(
+                        f"manifest.json: 'is_preflight' must be a strict boolean (True or False), got {type(raw_preflight).__name__}"
+                    )
+                else:
+                    is_preflight = raw_preflight
+            else:
+                is_preflight = (manifest.get("evaluation_harness_sha") is None)
             harness_sha = manifest.get("evaluation_harness_sha")
             if is_placeholder_sha(harness_sha):
                 errors.append(f"manifest.json: evaluation_harness_sha '{harness_sha}' is a disallowed placeholder SHA")
@@ -326,7 +342,7 @@ class CanonicalBundleValidator:
                 if not line:
                     continue
                 try:
-                    att = json.loads(line)
+                    att = safe_json_loads(line)
                     validate_attempt_record(att)
                 except Exception as exc:
                     errors.append(f"attempts.jsonl line {line_no} schema error: {exc}")
@@ -377,7 +393,7 @@ class CanonicalBundleValidator:
                 if not line:
                     continue
                 try:
-                    gr = json.loads(line)
+                    gr = safe_json_loads(line)
                     validate_grading_record(gr)
                 except Exception as exc:
                     errors.append(f"grading.jsonl line {line_no} schema error: {exc}")
@@ -402,6 +418,11 @@ class CanonicalBundleValidator:
                         f"grading.jsonl line {line_no}: graded_attempt_id '{target_att_id}' not found in attempts.jsonl"
                     )
                 else:
+                    expected_first = (target_att.get("retry_index") == 0)
+                    if gr.get("first_attempt") != expected_first:
+                        errors.append(
+                            f"grading.jsonl line {line_no}: first_attempt={gr.get('first_attempt')} contradicts target attempt retry_index={target_att.get('retry_index')} (expected {expected_first})"
+                        )
                     if gr.get("run_id") != target_att.get("run_id"):
                         errors.append(f"grading.jsonl line {line_no}: run_id '{gr.get('run_id')}' != target attempt run_id '{target_att.get('run_id')}'")
                     if gr.get("case_id") != target_att.get("case_id"):
@@ -436,7 +457,7 @@ class CanonicalBundleValidator:
                 if not line:
                     continue
                 try:
-                    rt = json.loads(line)
+                    rt = safe_json_loads(line)
                     validate_retrieval_record(rt)
                 except Exception as exc:
                     errors.append(f"retrieval.jsonl line {line_no} schema error: {exc}")
@@ -496,7 +517,7 @@ class CanonicalBundleValidator:
                 if not line:
                     continue
                 try:
-                    err = json.loads(line)
+                    err = safe_json_loads(line)
                     validate_error_record(err)
                 except Exception as exc:
                     errors.append(f"errors.jsonl line {line_no} schema error: {exc}")
@@ -565,7 +586,7 @@ class CanonicalBundleValidator:
                         f"errors.jsonl error_id '{eid}' specifies attempt_id '{target_att_id}', but attempt's error_ref is '{target_att.get('error_ref')}'"
                     )
 
-        # 8. Validate grading.evidence_refs integrity (F1 blocker)
+        # 8. Validate grading.evidence_refs integrity (F1 blocker & logical_request_id alignment)
         canonical_records_by_id: Dict[str, Dict[str, Any]] = {}
         for att in attempts:
             canonical_records_by_id[att["record_id"]] = att
@@ -583,6 +604,13 @@ class CanonicalBundleValidator:
             if not isinstance(refs, list) or len(refs) == 0:
                 errors.append(f"grading.jsonl grading_id '{gid}': evidence_refs must be a non-empty list of record IDs")
                 continue
+
+            target_att_id = gr.get("graded_attempt_id")
+            target_att = attempts_by_id.get(target_att_id)
+            if target_att and target_att.get("record_id") not in refs:
+                errors.append(
+                    f"grading.jsonl grading_id '{gid}': evidence_refs must include target attempt record_id '{target_att.get('record_id')}'"
+                )
 
             for ref in refs:
                 if not isinstance(ref, str) or not ref.strip():
@@ -605,12 +633,16 @@ class CanonicalBundleValidator:
                         errors.append(
                             f"grading.jsonl grading_id '{gid}': evidence_ref '{ref}' case_id '{target_rec.get('case_id')}' != grading case_id '{gr.get('case_id')}'"
                         )
+                    if target_rec.get("logical_request_id") != gr.get("logical_request_id"):
+                        errors.append(
+                            f"grading.jsonl grading_id '{gid}': evidence_ref '{ref}' logical_request_id '{target_rec.get('logical_request_id')}' != grading logical_request_id '{gr.get('logical_request_id')}'"
+                        )
 
-        # 9. Parse and validate aggregate.json & Recompute check
+        # 9. Parse and validate aggregate.json & Recompute check (B2 & B3)
         recomputed = None
         aggregate_path = self.run_dir / "aggregate.json"
         try:
-            aggregate = json.loads(aggregate_path.read_text(encoding="utf-8"))
+            aggregate = safe_json_loads(aggregate_path.read_text(encoding="utf-8"))
             validate_aggregate(aggregate)
 
             # Check aggregate envelope matches manifest
@@ -631,12 +663,21 @@ class CanonicalBundleValidator:
             # Recompute aggregate from raw records
             recomputed = recompute_aggregate_from_raw(manifest, attempts, gradings, error_records)
 
+            # Cross-reference manifest case_count with actual logical case count (n_total)
+            manifest_case_count = manifest.get("case_count")
+            if manifest_case_count is not None and manifest_case_count != recomputed["n_total"]:
+                errors.append(
+                    f"manifest.json case_count mismatch: recorded={manifest_case_count}, actual logical cases={recomputed['n_total']}"
+                )
+
+            # Recomputed checks for all case counts
             for key in ("logical_cases", "n_total", "n_attempt", "n_graded", "n_blocked"):
                 if aggregate.get(key) != recomputed[key]:
                     errors.append(
                         f"aggregate.json {key} mismatch: recorded={aggregate.get(key)}, recomputed={recomputed[key]}"
                     )
 
+            # Recomputed checks for ratio metrics
             for ratio_key in ("quality_conditional", "e2e_success"):
                 rec_ratio = aggregate.get(ratio_key, {})
                 recomp_ratio = recomputed[ratio_key]
@@ -644,16 +685,45 @@ class CanonicalBundleValidator:
                     errors.append(
                         f"aggregate.json {ratio_key} mismatch: recorded={rec_ratio}, recomputed={recomp_ratio}"
                     )
+                if rec_ratio.get("rate") != recomp_ratio["rate"]:
+                    errors.append(
+                        f"aggregate.json {ratio_key}.rate mismatch: recorded={rec_ratio.get('rate')}, recomputed={recomp_ratio['rate']}"
+                    )
                 # Verify numerator <= denominator
                 if rec_ratio.get("denominator", 0) > 0 and rec_ratio.get("numerator", 0) > rec_ratio.get("denominator", 0):
                     errors.append(
                         f"aggregate.json {ratio_key} numerator exceeds denominator"
                     )
 
+            # Recomputed checks for standalone success and recovery rates
             for rate_key in ("first_attempt_success_rate", "eventual_success_rate", "retry_recovery_rate"):
                 val = aggregate.get(rate_key)
-                if val is not None and val > 1.0:
-                    errors.append(f"aggregate.json {rate_key} {val} exceeds 1.0")
+                recomp_val = recomputed.get(rate_key)
+                if val != recomp_val:
+                    errors.append(
+                        f"aggregate.json {rate_key} mismatch: recorded={val}, recomputed={recomp_val}"
+                    )
+
+            # Recomputed checks for outcome histograms
+            for hist_key in ("first_attempt_outcomes", "eventual_outcomes"):
+                rec_hist = aggregate.get(hist_key, {})
+                recomp_hist = recomputed[hist_key]
+                if rec_hist != recomp_hist:
+                    errors.append(
+                        f"aggregate.json {hist_key} mismatch: recorded={rec_hist}, recomputed={recomp_hist}"
+                    )
+
+            # Recomputed checks for severity and taxonomy distributions
+            if "severity_counts" in aggregate:
+                if aggregate["severity_counts"] != recomputed["severity_counts"]:
+                    errors.append(
+                        f"aggregate.json severity_counts mismatch: recorded={aggregate['severity_counts']}, recomputed={recomputed['severity_counts']}"
+                    )
+            if "taxonomy_failure_counts" in aggregate:
+                if aggregate["taxonomy_failure_counts"] != recomputed["taxonomy_failure_counts"]:
+                    errors.append(
+                        f"aggregate.json taxonomy_failure_counts mismatch: recorded={aggregate['taxonomy_failure_counts']}, recomputed={recomputed['taxonomy_failure_counts']}"
+                    )
         except Exception as exc:
             errors.append(f"aggregate.json recomputation validation failed: {exc}")
 

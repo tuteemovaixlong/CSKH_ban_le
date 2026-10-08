@@ -7,6 +7,7 @@ Normative reference:
 """
 
 from typing import Any, Dict, List, Optional
+import math
 import re
 
 from evals.harness.constants import (
@@ -117,7 +118,15 @@ def validate_manifest(data: Dict[str, Any]) -> None:
         raise SchemaValidationError(f"manifest: Invalid system_commit_sha: {sys_sha}")
 
     harness_sha = data.get("evaluation_harness_sha")
-    is_preflight = bool(data.get("is_preflight", False))
+    if "is_preflight" in data:
+        is_preflight_raw = data["is_preflight"]
+        if not isinstance(is_preflight_raw, bool):
+            raise SchemaValidationError(
+                f"manifest: is_preflight must be a strict boolean, got {type(is_preflight_raw).__name__}"
+            )
+        is_preflight = is_preflight_raw
+    else:
+        is_preflight = False
     if is_preflight:
         if harness_sha is not None:
             if not isinstance(harness_sha, str) or not HEX_40_RE.match(harness_sha):
@@ -282,9 +291,9 @@ def validate_attempt_record(record: Dict[str, Any]) -> None:
 
     # Strict type & range validation for provider_inference_ms
     if provider_ms is not None:
-        if type(provider_ms) not in (int, float) or type(provider_ms) is bool:
+        if type(provider_ms) not in (int, float) or type(provider_ms) is bool or not math.isfinite(provider_ms):
             raise SchemaValidationError(
-                f"attempt [R10]: 'trace.provider_inference_ms' must be a float or int, got {type(provider_ms).__name__}"
+                f"attempt [R10]: 'trace.provider_inference_ms' must be a finite float or int, got {provider_ms}"
             )
         if provider_ms < 0.0:
             raise SchemaValidationError(
@@ -444,8 +453,8 @@ def validate_retrieval_record(record: Dict[str, Any]) -> None:
                 raise SchemaValidationError(f"retrieval: {list_field}[{c_idx}] chunk_id must be non-empty string")
             if type(chunk["rank"]) is not int or chunk["rank"] < 1:
                 raise SchemaValidationError(f"retrieval: {list_field}[{c_idx}] rank must be an integer >= 1")
-            if type(chunk["score"]) not in (int, float) or type(chunk["score"]) is bool:
-                raise SchemaValidationError(f"retrieval: {list_field}[{c_idx}] score must be a float or int")
+            if type(chunk["score"]) not in (int, float) or type(chunk["score"]) is bool or not math.isfinite(chunk["score"]):
+                raise SchemaValidationError(f"retrieval: {list_field}[{c_idx}] score must be a finite float or int")
             if not isinstance(chunk["source_id"], str) or not chunk["source_id"].strip():
                 raise SchemaValidationError(f"retrieval: {list_field}[{c_idx}] source_id must be non-empty string")
 
@@ -484,8 +493,10 @@ def validate_error_record(record: Dict[str, Any]) -> None:
         re.compile(r"password\s*[:=]\s*['\"]?\S+['\"]?", re.IGNORECASE),
         re.compile(r"-----BEGIN (RSA |EC )?PRIVATE KEY-----", re.IGNORECASE),
     ]
+    # Strip legitimate redaction markers before checking for credential leaks
+    sanitized_msg = re.sub(r"\[(?:REDACTED|FILTERED)\]|<redacted>|\*{3,}", "", msg, flags=re.IGNORECASE)
     for pat in leak_patterns:
-        if pat.search(msg):
+        if pat.search(sanitized_msg):
             raise SchemaValidationError("error: message_redacted contains sensitive unredacted credential pattern")
 
     taxonomy_code = record.get("taxonomy_code")
@@ -535,23 +546,23 @@ def validate_aggregate(data: Dict[str, Any]) -> None:
             raise SchemaValidationError(f"aggregate: {ratio_key} numerator {num} cannot exceed denominator {denom}")
         rate = ratio.get("rate")
         if rate is not None:
-            if type(rate) not in (int, float) or type(rate) is bool:
-                raise SchemaValidationError(f"aggregate: {ratio_key} rate must be float or int")
+            if type(rate) not in (int, float) or type(rate) is bool or not math.isfinite(rate):
+                raise SchemaValidationError(f"aggregate: {ratio_key} rate must be a finite float or int")
             if rate < 0.0 or rate > 1.0:
                 raise SchemaValidationError(f"aggregate: {ratio_key} rate {rate} must be between 0.0 and 1.0")
 
     for rate_key in ("first_attempt_success_rate", "eventual_success_rate"):
         rate = data.get(rate_key)
         if rate is not None:
-            if type(rate) not in (int, float) or type(rate) is bool:
-                raise SchemaValidationError(f"aggregate: {rate_key} must be float or int")
+            if type(rate) not in (int, float) or type(rate) is bool or not math.isfinite(rate):
+                raise SchemaValidationError(f"aggregate: {rate_key} must be a finite float or int")
             if rate < 0.0 or rate > 1.0:
                 raise SchemaValidationError(f"aggregate: {rate_key} {rate} must be between 0.0 and 1.0")
 
     rec_rate = data.get("retry_recovery_rate")
     if rec_rate is not None:
-        if type(rec_rate) not in (int, float) or type(rec_rate) is bool:
-            raise SchemaValidationError("aggregate: retry_recovery_rate must be float or int")
+        if type(rec_rate) not in (int, float) or type(rec_rate) is bool or not math.isfinite(rec_rate):
+            raise SchemaValidationError("aggregate: retry_recovery_rate must be a finite float or int")
         if rec_rate < 0.0 or rec_rate > 1.0:
             raise SchemaValidationError(f"aggregate: retry_recovery_rate {rec_rate} must be between 0.0 and 1.0")
 

@@ -1,6 +1,6 @@
 # PLAN_PHASE_4_EVALUATION — Scientific Evaluation
 
-> **Trạng thái:** READY FOR HARNESS/PREFLIGHT — HEAD `1f8c344` có offline harness evidence, nhưng F1/F2 provenance blockers và chưa có G2/live evidence; chưa đủ điều kiện đo chính thức.
+> **Trạng thái:** READY FOR HARNESS/PREFLIGHT — HEAD `5d16a0a` có offline harness evidence, nhưng B1–B6 blockers, CI offline failure và chưa có G2/live evidence; chưa đủ điều kiện đo chính thức.
 > **Mốc code:** main tại 49671b928ad6badfaa01331174eb73f0e366752e.
 > **Phạm vi lượt này:** review implementation của Gemini; giữ nguyên runtime và hai frozen benchmark.
 
@@ -72,11 +72,11 @@ CI, denominator, blocked/missing và rubric version phải đi cùng mọi metri
 
 | ID | Acceptance check | Dependency | Status |
 |---|---|---|---|
-| B01 | Grader bắt missing/forbidden/wrong-owner/unsupported-claim và safety severity | schema, taxonomy, fixtures | PARTIAL — offline grader; F1 evidence refs còn mở |
+| B01 | Grader bắt missing/forbidden/wrong-owner/unsupported-claim và safety severity | schema, taxonomy, fixtures | BLOCKED — safety+transport ordering và blocked refs |
 | B02 | Sidecar resolve identity/fixture/focus/prior turns idempotently | frozen JSONL, DB snapshot | OFFLINE IMPLEMENTED — live fixture chưa nghiệm thu |
 | B03 | Manifest ghi adapter/endpoint/model/sampling và unavailable reasons | infrastructure, reproducibility | PARTIAL — F2 harness SHA provenance còn mở |
 | B04 | Cache OFF được assert; từng attempt append; first/eventual/cumulative wait tính được | schema, runner | PASS OFFLINE |
-| B05 | Canonical writer/validator pass join keys, counts, checksums, aggregate recomputation | schema, evidence | PARTIAL — H8/H9 PASS; F1/F2 còn mở |
+| B05 | Canonical writer/validator pass join keys, counts, checksums, aggregate recomputation | schema, evidence | BLOCKED — aggregate mutation, NaN/Inf, estimand tampering, Docker |
 | B06 | Qrels/claim labels/answerability/adjudication có version/hash | corpus snapshot, annotation | PARTIAL — qrels offline có; source rehash/provenance còn mở |
 | B07 | Actual mode/model/tool/timing/cache/load IDs measured hoặc null | harness/instrumentation | PASS OFFLINE MOCK — chưa phải live evidence |
 | B08 | PostgreSQL/pgvector/KB, quota, smoke selector, hard cap và stop rule pass | infra, cost, fixtures | BACKLOG |

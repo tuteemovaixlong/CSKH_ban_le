@@ -54,7 +54,7 @@ class CanonicalBundleWriter:
         if self.validate_on_write:
             validate_manifest(manifest_data)
         self.manifest_path.write_text(
-            json.dumps(manifest_data, indent=2, ensure_ascii=False) + "\n",
+            json.dumps(manifest_data, indent=2, ensure_ascii=False, allow_nan=False) + "\n",
             encoding="utf-8"
         )
 
@@ -62,31 +62,31 @@ class CanonicalBundleWriter:
         if self.validate_on_write:
             validate_attempt_record(attempt_record)
         with open(self.attempts_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(attempt_record, ensure_ascii=False) + "\n")
+            f.write(json.dumps(attempt_record, ensure_ascii=False, allow_nan=False) + "\n")
 
     def append_grading(self, grading_record: Dict[str, Any]) -> None:
         if self.validate_on_write:
             validate_grading_record(grading_record)
         with open(self.grading_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(grading_record, ensure_ascii=False) + "\n")
+            f.write(json.dumps(grading_record, ensure_ascii=False, allow_nan=False) + "\n")
 
     def append_retrieval(self, retrieval_record: Dict[str, Any]) -> None:
         if self.validate_on_write:
             validate_retrieval_record(retrieval_record)
         with open(self.retrieval_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(retrieval_record, ensure_ascii=False) + "\n")
+            f.write(json.dumps(retrieval_record, ensure_ascii=False, allow_nan=False) + "\n")
 
     def append_error(self, error_record: Dict[str, Any]) -> None:
         if self.validate_on_write:
             validate_error_record(error_record)
         with open(self.errors_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(error_record, ensure_ascii=False) + "\n")
+            f.write(json.dumps(error_record, ensure_ascii=False, allow_nan=False) + "\n")
 
     def write_aggregate(self, aggregate_data: Dict[str, Any]) -> None:
         if self.validate_on_write:
             validate_aggregate(aggregate_data)
         self.aggregate_path.write_text(
-            json.dumps(aggregate_data, indent=2, ensure_ascii=False) + "\n",
+            json.dumps(aggregate_data, indent=2, ensure_ascii=False, allow_nan=False) + "\n",
             encoding="utf-8"
         )
 

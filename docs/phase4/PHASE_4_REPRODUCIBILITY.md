@@ -1,6 +1,6 @@
 # PHASE_4_REPRODUCIBILITY — Reproduction protocol
 
-> Status: READY FOR HARNESS/PREFLIGHT — writer/validator/mock replay đã có ở HEAD `1f8c344`; acceptance provenance và live evidence vẫn chưa đóng.
+> Status: READY FOR HARNESS/PREFLIGHT — writer/validator/mock replay đã có ở HEAD `5d16a0a`; aggregate/numeric/safety/Docker blockers và live evidence vẫn chưa đóng.
 
 ## 1. Identity manifest
 
@@ -76,8 +76,8 @@ A live/model runner command is not implied by this document; it must record endp
 | ID | Acceptance | Status |
 |---|---|---|
 | R01 | clean checkout emits canonical bundle/checksums | PARTIAL — mock replay PASS; clean-checkout/CI evidence pending |
-| R02 | validator rejects missing/duplicate joins and recomputation mismatch | PARTIAL — H8/H9 PASS; orphan evidence refs F1 còn mở |
-| R03 | manifest separates system/harness/overlay and unavailable provider fields | PARTIAL — placeholder harness SHA F2 còn mở |
+| R02 | validator rejects missing/duplicate joins and recomputation mismatch | BLOCKED — H8/H9/F1 pass, aggregate mutations and estimand tampering remain |
+| R03 | manifest separates system/harness/overlay and unavailable provider fields | PARTIAL — F2 happy path passes; strict preflight typing and source provenance remain |
 | R04 | stratified smoke, quota/cap and fixture/identity sidecar | BACKLOG — chưa được authorize |
 
 Until R01–R04 have evidence, no paid/cloud/full measurement is authorized and status remains READY FOR HARNESS/PREFLIGHT.

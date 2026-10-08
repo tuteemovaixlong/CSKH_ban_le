@@ -92,6 +92,9 @@ class Phase4MockRunner:
         # Assert A0 Cache OFF contract
         assert_a0_cache_off(self.cache_mode)
 
+        if not isinstance(is_preflight, bool):
+            raise TypeError(f"is_preflight must be a strict boolean, got {type(is_preflight).__name__}")
+
         # F2: Reject harness SHA placeholders and resolve immutable Git SHA
         if harness_sha is not None:
             if is_placeholder_sha(harness_sha):

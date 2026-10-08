@@ -1,6 +1,6 @@
 # PHASE_4_EVIDENCE_CHECKLIST — Evidence và gate
 
-> Trạng thái tài liệu (2026-10-07): READY FOR HARNESS/PREFLIGHT. Offline F/B acceptance đã có ở HEAD `1f8c344`, nhưng F1/F2 provenance blockers, Docker/CI evidence và live evidence chưa đóng; chưa ghi READY FOR MEASUREMENT.
+> Trạng thái tài liệu (2026-10-08): READY FOR HARNESS/PREFLIGHT. Offline F/B acceptance đã có ở HEAD `5d16a0a`, nhưng B1–B6, Docker/CI failure và live evidence chưa đóng; chưa ghi READY FOR MEASUREMENT.
 
 ## 1. Evidence levels
 

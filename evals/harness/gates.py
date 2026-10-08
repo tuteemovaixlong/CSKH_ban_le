@@ -30,6 +30,7 @@ GATE_G3_SMOKE_AUTHORIZED = "G3_SMOKE_AUTHORIZED"
 GATE_G4_LIVE_SMOKE = "G4_LIVE_SMOKE"
 GATE_G5_LANE_MEASUREMENT_READY = "G5_LANE_MEASUREMENT_READY"
 GATE_G6_FULL_MEASUREMENT_AUTHORIZED = "G6_FULL_MEASUREMENT_AUTHORIZED"
+GATE_G7_MEASURED = "G7_MEASURED"
 
 GATE_SEQUENCE: List[str] = [
     GATE_G0_SPEC,
@@ -39,13 +40,15 @@ GATE_SEQUENCE: List[str] = [
     GATE_G4_LIVE_SMOKE,
     GATE_G5_LANE_MEASUREMENT_READY,
     GATE_G6_FULL_MEASUREMENT_AUTHORIZED,
+    GATE_G7_MEASURED,
 ]
 
 VALID_GATES: Set[str] = set(GATE_SEQUENCE)
 
+# B6: Strictly ONLY G5 (LANE_MEASUREMENT_READY) can grant "READY FOR MEASUREMENT".
+# G6 is full-run execution authorization, not lane readiness declaration.
 MEASUREMENT_READY_GATES: Set[str] = {
     GATE_G5_LANE_MEASUREMENT_READY,
-    GATE_G6_FULL_MEASUREMENT_AUTHORIZED,
 }
 
 STATUS_PREFLIGHT = "READY FOR HARNESS/PREFLIGHT"
@@ -53,15 +56,15 @@ STATUS_MEASUREMENT_READY = "READY FOR MEASUREMENT"
 
 
 def assert_gate_readiness(current_gate: str, requested_readiness: str) -> None:
-    """Executable assertion enforcing that only G5 or higher can declare READY FOR MEASUREMENT."""
+    """Executable assertion enforcing that ONLY G5 can declare READY FOR MEASUREMENT."""
     if current_gate not in VALID_GATES:
         raise GateOrderError(f"Unknown gate identifier: '{current_gate}'. Valid gates: {GATE_SEQUENCE}")
 
     if requested_readiness == STATUS_MEASUREMENT_READY:
         if current_gate not in MEASUREMENT_READY_GATES:
             raise GatePermissionError(
-                f"R11 Violation: Only gate G5 (LANE_MEASUREMENT_READY) or G6 can grant '{STATUS_MEASUREMENT_READY}'. "
-                f"Current gate is '{current_gate}', which is restricted to '{STATUS_PREFLIGHT}'."
+                f"R11 Violation: Only gate G5 (LANE_MEASUREMENT_READY) can grant '{STATUS_MEASUREMENT_READY}'. "
+                f"Current gate is '{current_gate}', which is strictly restricted to '{STATUS_PREFLIGHT}'."
             )
 
 

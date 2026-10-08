@@ -1,6 +1,6 @@
 # PHASE_4_RESULTS_SCHEMA — Raw JSONL và reproducibility contract
 
-> **Trạng thái:** `READY FOR HARNESS/PREFLIGHT`. Writer, validator, grader và telemetry đã có implementation/offline evidence ở HEAD `1f8c344`, nhưng evidence refs/provenance còn blocker F1/F2. Không được ghi `READY FOR MEASUREMENT` chỉ vì schema hoặc mock bundle tồn tại.
+> **Trạng thái:** `READY FOR HARNESS/PREFLIGHT`. writer, validator, grader và telemetry đã có implementation/offline evidence ở HEAD `5d16a0a`, nhưng aggregate/numeric/safety/Docker acceptance còn blocker B1–B6. Không được ghi `READY FOR MEASUREMENT` chỉ vì schema hoặc mock bundle tồn tại.
 
 ## 1. Quy tắc bất biến
 

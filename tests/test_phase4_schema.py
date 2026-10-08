@@ -723,5 +723,113 @@ class TestPhase4Schema(unittest.TestCase):
         self.assertIn("credential pattern", str(ctx.exception))
 
 
+    def test_nan_inf_rejected_in_schema(self):
+        """Blocker B3: NaN and Infinity must be strictly rejected across schema validators."""
+        # NaN in attempt provider_inference_ms
+        bad_att = dict(
+            self.common_envelope,
+            attempt_id="att-nan",
+            retry_index=0,
+            attempt_class="first",
+            started_at_utc="2026-10-06T00:00:00Z",
+            finished_at_utc="2026-10-06T00:00:00Z",
+            http_status=200,
+            outcome="completed",
+            response={"text": "Hello"},
+            trace={
+                "model_invocation_observed": True,
+                "model_calls": 1,
+                "provider_inference_ms": float("nan"),
+            },
+        )
+        with self.assertRaises(SchemaValidationError):
+            validate_attempt_record(bad_att)
+
+        # Inf in retrieval chunk score
+        bad_chunk = {
+            "chunk_id": "chk_001",
+            "rank": 1,
+            "score": float("inf"),
+            "source_id": "policy.md",
+        }
+        bad_ret = dict(
+            self.common_envelope,
+            schema_version=SCHEMA_VERSION_RETRIEVAL,
+            attempt_id="att-01",
+            retrieval_event_id="rev-01",
+            query_id="q-01",
+            stage="served",
+            candidate_chunks=[bad_chunk],
+            served_chunks=[bad_chunk],
+            qrels_version="qrels-v1",
+            qrels_source="evals/qrels/policy_qrels_v1.json",
+            qrels_sha256="769a45d682648290a3356dad32aacae3c62f6942b62844dd4cc50f2d83c15161",
+            answerability_status="answerable",
+        )
+        with self.assertRaises(SchemaValidationError):
+            validate_retrieval_record(bad_ret)
+
+        # NaN in aggregate rate
+        bad_agg = {
+            "schema_version": SCHEMA_VERSION_AGGREGATE,
+            "run_id": "run-test-01",
+            "logical_cases": 1,
+            "n_total": 1,
+            "n_attempt": 1,
+            "n_graded": 1,
+            "n_blocked": 0,
+            "first_attempt_outcomes": {"completed": 1},
+            "eventual_outcomes": {"completed": 1},
+            "quality_conditional": {"numerator": 1, "denominator": 1, "rate": float("nan")},
+            "e2e_success": {"numerator": 1, "denominator": 1, "rate": 1.0},
+            "derived_from": ["attempts.jsonl", "grading.jsonl", "retrieval.jsonl", "errors.jsonl"],
+            "artifact_checksums": "checksums.sha256",
+        }
+        with self.assertRaises(SchemaValidationError):
+            validate_aggregate(bad_agg)
+
+    def test_is_preflight_strict_bool_validation(self):
+        """is_preflight must be a strict boolean (not str or int)."""
+        bad_str = dict(self.valid_manifest, is_preflight="true")
+        with self.assertRaises(SchemaValidationError):
+            validate_manifest(bad_str)
+
+        bad_int = dict(self.valid_manifest, is_preflight=1)
+        with self.assertRaises(SchemaValidationError):
+            validate_manifest(bad_int)
+
+        good_bool = dict(self.valid_manifest, is_preflight=True)
+        validate_manifest(good_bool)
+
+    def test_redaction_marker_allowed_in_error_record(self):
+        """Sanitized error messages containing [REDACTED] or *** must not be flagged as credential leaks."""
+        valid_err = dict(
+            self.common_envelope,
+            schema_version=SCHEMA_VERSION_ERROR,
+            attempt_id="att-01",
+            error_id="err-01",
+            stage="admission",
+            taxonomy_code="INFRA_429_ADMISSION",
+            severity="S2",
+            retryable=True,
+            http_status=429,
+            message_redacted="Authentication failed for user: password=[REDACTED]",
+        )
+        validate_error_record(valid_err)
+
+    def test_only_g5_can_grant_measurement_ready(self):
+        """Blocker B6: Only Gate G5 can grant READY FOR MEASUREMENT status."""
+        # G6 must be rejected when requesting STATUS_MEASUREMENT_READY
+        with self.assertRaises(GatePermissionError):
+            assert_gate_readiness(GATE_G6_FULL_MEASUREMENT_AUTHORIZED, STATUS_MEASUREMENT_READY)
+
+        # G1 must be rejected when requesting STATUS_MEASUREMENT_READY
+        with self.assertRaises(GatePermissionError):
+            assert_gate_readiness(GATE_G1_BUILD_HARNESS, STATUS_MEASUREMENT_READY)
+
+        # G5 is allowed to grant STATUS_MEASUREMENT_READY
+        assert_gate_readiness(GATE_G5_LANE_MEASUREMENT_READY, STATUS_MEASUREMENT_READY)
+
+
 if __name__ == "__main__":
     unittest.main()

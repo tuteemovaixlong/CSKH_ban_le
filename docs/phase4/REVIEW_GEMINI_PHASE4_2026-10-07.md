@@ -1,133 +1,125 @@
 # Review độc lập Gemini Phase 4 — R10–R13
 
-> Ngày review: 2026-10-07
+> Ngày review: 2026-10-08
 > Branch: `codex/phase4-harness`
-> HEAD đã kiểm tra: `1f8c344e5e06a6fa170518d31b75f7b5b23d2b1a`
+> HEAD đã kiểm tra: `5d16a0ae390c4fe4cd778c1d3f0c9dc09d1bc202`
 > Runtime baseline: `49671b928ad6badfaa01331174eb73f0e366752e`
+> PR: [#36](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/36)
 
-## Prompt Gemini — đặt ở đầu context và xử lý trước merge
+## Prompt Gemini — đặt ở đầu context
 
 ```text
-Đọc file review này. Sửa 2 blocker R12: evidence_refs phải trỏ tới record_id thật và validator phải reject ref mồ côi; accepted bundle không được dùng harness SHA placeholder (mock phải nhận SHA immutable hoặc bị đánh dấu preflight). Thêm mutation tests, rà các field/schema còn thiếu, chạy full unittest + 6 contract checks + mock 250 + Docker/CI thật, báo evidence PASS/SKIP/FAIL/ERROR. Không sửa runtime/frozen benchmark, không paid/live/merge; cập nhật PR rồi dừng chờ owner review.
+Đọc file review này và sửa toàn bộ blocker: (1) thêm !notebooks/ + !notebooks/** vào .dockerignore để Docker build pass; (2) validator phải tái tính và đối chiếu đầy đủ rates, histograms, taxonomy/severity, case_count, reject NaN/Infinity; (3) derive first_attempt từ attempt.retry_index và reject grading flag mismatch; (4) chạy safety veto trước transport return; (5) blocked grading phải giữ evidence_refs thật; (6) is_preflight phải là bool strict; (7) chỉ G5 được cấp READY FOR MEASUREMENT. Thêm mutation tests, chạy full unittest, 6 contracts, mock 250 và CI/Docker; cập nhật PR rồi dừng chờ owner review. Không sửa runtime/frozen benchmark, không merge/live/paid.
 ```
 
 ## Phạm vi và bằng chứng
 
-Đã đối chiếu toàn bộ diff từ baseline tới HEAD, gồm `evals/harness`, qrels/sidecar, writer/validator/grader/telemetry, tests, Docker/CI, deployment guard và các tài liệu Phase 4. Không thấy thay đổi business runtime hoặc nội dung hai frozen benchmark.
+Đã đối chiếu toàn bộ diff từ baseline tới HEAD: `evals/harness`, schema/writer/validator/grader/telemetry, qrels/sidecar, tests, Docker/CI, R13 deployment guard và tài liệu Phase 4. Không thấy thay đổi business runtime hoặc frozen benchmark.
 
 | Kiểm tra | Kết quả |
 |---|---|
-| Phase 4 targeted tests | PASS — 36 tests |
-| Full unittest suite | PASS — 541 tests, 52 skipped |
+| Phase 4 targeted tests | PASS — 56 tests |
+| Full local unittest | PASS — 552 tests, 49 skipped |
 | Docs contract | PASS — 4/4 |
-| Dataset checks | PASS — baseline 30; benchmark 250; master 250 |
-| Deployment/live-E2E/notebook source checks | PASS |
-| Sidecar/qrels | PASS — 250 cases; qrels 500 entries, SHA `769a45d682648290a3356dad32aacae3c62f6942b62844dd4cc50f2d83c15161` |
-| Mock 250-case run | PASS theo validator — 250 logical cases, 263 attempts, 250 gradings, 250 retrievals, 13 errors |
-| Docker local build/test | SKIP — máy review không có Docker CLI |
+| Dataset/deployment/live-E2E/notebook contracts | PASS |
+| Mock 250 bundle | PASS — 250 cases, 263 attempts; F1 refs và immutable SHA hoạt động |
+| PR #36 CI portable/postgres/colab | PASS |
+| PR #36 CI `offline` | **FAIL** — Docker build ở `Build CPU-only baseline image` |
+| Local Docker | SKIP — host không có Docker CLI |
 
-Lưu ý: validator báo bundle mock hợp lệ, nhưng audit độc lập phát hiện lỗi provenance bên dưới mà validator chưa bắt.
+CI failure là evidence thật, không phải local limitation: workflow đã chạy tới Docker build rồi fail; các bước packaged-container sau đó bị skip.
 
-## Đã xác nhận đóng
+## Đã xác nhận DONE
 
-- R10: nullability, zero/type/range và zero-reason đã fail-closed; safety veto S0/S1 trả `rejected`.
-- R11: tài liệu thống nhất chỉ G5 được ghi `READY FOR MEASUREMENT`; retry/first-attempt và aggregate logic đã có.
-- R12 H8: `artifact_files` exact canonical set, thiếu/thừa/duplicate bị reject.
-- R12 H9: duplicate effective grading bị reject; adjudication precedence và bounded ratios đã có.
-- R13: guard dùng changed files thực tế, `fetch-depth: 0`, unknown path fail-closed; test logic hiện có.
-- Dockerfile đã đóng gói `evals`, `scripts`, `tests`; không có thay đổi runtime business.
+- F1 orphan/cross-case evidence refs trên happy path đã được sửa.
+- F2 placeholder harness SHA trong accepted bundle đã bị reject; mock tự resolve Git SHA hoặc đánh dấu preflight.
+- H8 exact canonical artifact list và H9 duplicate effective grading đã được sửa.
+- Attempt/retrieval/error/aggregate field validation cơ bản đã được mở rộng.
+- R13 changed-files guard đã triển khai; workflow dùng full history.
+- Frozen datasets, runtime business code và prompt production không bị sửa.
 
-## Lỗi nặng — merge blocker
+## Lỗi nặng — BLOCKER FOR MERGE
 
-### F1 — `grading.evidence_refs` trỏ tới record không tồn tại (R12)
+### B1 — Docker context loại notebook nhưng Dockerfile vẫn COPY notebook (R13/CI)
 
-`evals/harness/grader.py` tạo `rec-{attempt_id}`, ví dụ `rec-att_ro_s1_001_0`. Runner lại ghi `record_id` dạng `rec_1`, `rec_2`, … Validator chỉ kiểm tra `evidence_refs` là list, không kiểm tra từng ref có tồn tại trong canonical records cùng `run_id` hay không. Mock 250 vẫn validate PASS trong khi mọi grading ref đều mồ côi. Điều này phá auditability và trái contract dùng `record_id` làm evidence ref.
+`.dockerignore` bắt đầu bằng `*` và không có `!notebooks/` hoặc `!notebooks/**`. Dockerfile lại có `COPY notebooks /app/notebooks`. Vì vậy build context không chứa thư mục notebook; CI `offline` fail ngay tại bước build image.
 
-**Điều kiện đóng:** grader nhận record ID thật từ runner hoặc runner truyền record ID vào grader; validator kiểm tra existence, cùng `run_id`, và reject ref mồ côi; thêm mutation test.
+**Cách sửa:** thêm hai allowlist trên; thêm contract kiểm tra notebook có trong Docker context/image; chạy lại `docker build` và packaged unittest.
 
-### F2 — accepted mock bundle dùng harness SHA placeholder (R12 provenance)
+### B2 — Aggregate integrity vẫn fail-open (R12)
 
-`Phase4MockRunner` mặc định `evaluation_harness_sha = "1111111111111111111111111111111111111111"`. Schema chỉ kiểm tra 40 hex nên bundle accepted vẫn mang SHA giả, dù `PHASE_4_RESULTS_SCHEMA.md` yêu cầu accepted bundle có immutable harness SHA. Đây là provenance không đáng tin nếu mock evidence được dùng để chứng minh reproducibility.
+Validator chỉ đối chiếu một số numerator/denominator. Mutation độc lập cho thấy có thể sửa `quality_conditional.rate`, `e2e_success.rate`, các rate retry, `first_attempt_outcomes` và `eventual_outcomes`, cập nhật checksum, rồi bundle vẫn `is_valid=True`. `case_count` trong manifest cũng có thể sửa sai mà validator vẫn pass.
 
-**Điều kiện đóng:** yêu cầu caller truyền SHA immutable đã resolve từ Git, hoặc tự resolve SHA; nếu chạy preflight không có SHA thì bundle phải bị đánh dấu preflight và không được coi là accepted/measurement evidence; thêm mutation test reject placeholder.
+**Cách sửa:** tái tính và so sánh toàn bộ rate/histogram/taxonomy/severity distributions, `case_count == n_total`; reject mọi mismatch, không chỉ kiểm tra upper bound.
 
-## Lỗi nhẹ / giới hạn cần xử lý hoặc ghi rõ
+### B3 — Numeric non-finite values được chấp nhận (R10/R12)
 
-- `validate_attempt_record` chưa bắt buộc `finished_at_utc` và `response` theo results schema.
-- `validate_retrieval_record` chưa validate cấu trúc từng chunk (`chunk_id`, `rank`, `score`, `source_id`) và chưa bắt buộc `qrels_source`/`qrels_sha256` khi metric áp dụng.
-- `validate_error_record` chưa kiểm tra `message_redacted` là chuỗi đã redact.
-- `aggregate.json` chưa kiểm tra trực tiếp `run_id` khớp manifest và cấu trúc `derived_from`/`artifact_checksums`.
-- Manifest chỉ lưu dataset hash; chưa tách `benchmark_id`/path/count để phân biệt provenance khi hai frozen files cùng hash.
-- Qrels hash mới được đối chiếu với manifest; chưa tự tính lại từ source file tại validation time.
-- Test notebook trong container tự skip khi `notebooks/` không được copy; Dockerfile hiện chưa copy thư mục này. Docker evidence thật vẫn pending.
-- R11 chưa có executable state machine chứng minh chỉ G5 mới có thể ghi `READY FOR MEASUREMENT`; hiện mới có contract/documentation.
+`NaN`, `Infinity` và `-Infinity` được chấp nhận ở provider latency, retrieval score và aggregate rates. Chúng có thể làm hỏng metric hoặc tạo JSON không chuẩn.
+
+**Cách sửa:** dùng `math.isfinite` cho mọi numeric field; reader phải reject non-standard JSON constants; writer dùng `allow_nan=False`; thêm mutation test cho NaN/+Inf/-Inf.
+
+### B4 — Primary estimand bị thay đổi bằng `grading.first_attempt` (R12)
+
+Validator không buộc `grading.first_attempt` khớp `attempt.retry_index == 0`. Đổi cờ này rồi tái tạo aggregate có thể thay đổi denominator/quality nhưng vẫn pass.
+
+**Cách sửa:** derive first-attempt trực tiếp từ joined attempt; reject mọi grading flag mismatch; test cả True→False và False→True.
+
+### B5 — Safety veto bị che bởi provider/transport failure (R10)
+
+`Phase4Grader.grade()` return `blocked_environment` trước khi kiểm tra forbidden tool, privacy leak hoặc unauthorized mutation. Một attempt có HTTP 503/provider error và safety violation quan sát được vẫn bị ghi S2 infra thay vì `rejected` S0/S1.
+
+**Cách sửa:** thu thập safety failures trước transport early return; hard veto phải là `rejected`, infra failure chỉ là secondary failure; thêm mixed transport+safety tests.
+
+### B6 — R11 state machine cho phép G6 cấp readiness
+
+`MEASUREMENT_READY_GATES` gồm G5 và G6, trong khi contract quy định chỉ G5 được ghi `READY FOR MEASUREMENT`. G6 chỉ là full-run authorization sau G5.
+
+**Cách sửa:** chỉ G5 được phép trả readiness; G6 không cấp lại trạng thái, và thêm test reject G6.
+
+## Lỗi nhẹ / trung bình
+
+- Blocked/transport branch của grader return `evidence_refs=[]`; schema mới yêu cầu non-empty nên có thể tạo grading bundle không hợp lệ.
+- `is_preflight = bool(value)` cho phép `"false"` hoặc `1` được hiểu là preflight, qua đó né yêu cầu immutable SHA.
+- Regex credential redaction từ chối giá trị hợp lệ như `password=[REDACTED]`; cần nhận diện marker redaction trước khi dò secret.
+- Evidence ref cùng case nhưng trỏ sang retry khác vẫn được nhận; nên yêu cầu ref chứa record của `graded_attempt_id` và cùng `logical_request_id`.
+- Completed response rỗng vẫn có thể được grade pass nếu required tools đã gọi.
+- State machine chưa thể hiện G7 `MEASURED` như flow tài liệu.
 
 ## Verdict R10–R13
 
 | Thành phần | Verdict |
 |---|---|
-| R10 | **DONE / CLOSED** — acceptance offline đã có |
-| R11 | **PARTIAL** — spec đóng; executable G5 gate còn thiếu |
-| R12 | **BLOCKED** — F1 và F2 còn merge blocker; H8/H9 đã đóng |
-| R13 | **IMPLEMENTED, CI PENDING** — logic guard đã có; cần evidence container/CI |
+| R10 | **BLOCKED** — non-finite telemetry và safety-veto ordering chưa fail-closed |
+| R11 | **BLOCKED** — G6 vẫn có quyền cấp readiness |
+| R12 | **BLOCKED** — aggregate/estimand integrity còn fail-open; blocked refs còn lỗi |
+| R13 | **BLOCKED** — Docker packaging làm CI offline fail; local guard logic vẫn đúng |
 
-**Quyết định tổng:** **BLOCKED FOR MERGE**. Chưa được ghi `READY FOR MEASUREMENT`, chưa merge và chưa chạy paid/cloud/live smoke/full measurement.
+**Quyết định tổng: BLOCKED FOR MERGE.** Chưa merge, chưa `READY FOR MEASUREMENT`, chưa paid/cloud/live smoke/full measurement.
 
 ## Plan review và handoff
 
-1. Gemini sửa F1/F2, bổ sung mutation tests và các field validation nhẹ có tính normative.
-2. Chạy lại targeted/full unittest, docs và sáu contract checks; tạo mock 250 bundle bằng SHA immutable; kiểm tra mọi `evidence_ref` tồn tại và checksum/recompute khớp.
-3. Chạy Docker/CI thật; nếu notebook vẫn skip thì phải copy artifact hoặc đổi acceptance thành test bắt buộc, không coi skip là PASS.
-4. Cập nhật PR với HEAD mới, command, số lượng test, PASS/SKIP/FAIL/ERROR và artifact path; dừng chờ owner review.
-5. Sau owner review/merge mới chuyển `G2 MERGED_VERIFIED → G3 SMOKE_AUTHORIZED → G4 LIVE_SMOKE → G5 LANE_MEASUREMENT_READY`.
+## Cập nhật trạng thái xử lý B1–B6 (2026-10-08)
 
-Không tự merge và không chuyển trạng thái sang measurement readiness chỉ vì mock/CI xanh.
+Đã hoàn thành sửa chữa toàn bộ Blockers B1–B6 và các lỗi liên quan:
+- **B1**: Allowlisted `!notebooks/`, `!notebooks/**`, và `!data/deepseek_seed_data.json` trong `.dockerignore`. Cập nhật `scripts/check_deployment_contract.py` và CI workflow `.github/workflows/ci.yml`.
+- **B2**: Validator tái tính và đối chiếu 100% rates (`quality_conditional`, `e2e_success`, `first_attempt_success_rate`, `eventual_success_rate`, `retry_recovery_rate`), outcome histograms (`first_attempt_outcomes`, `eventual_outcomes`), severity/taxonomy counts và `manifest.case_count == n_total`. Mọi sai lệch đều bị reject.
+- **B3**: Dùng `math.isfinite()` cho mọi float/int fields. Reader dùng `safe_json_loads` với `parse_constant` reject `NaN`, `Infinity`, `-Infinity`. Writer dùng `allow_nan=False`.
+- **B4**: `first_attempt` derives trực tiếp từ `attempt.retry_index == 0`. Validator reject mọi contradiction giữa grading `first_attempt` và attempt `retry_index`.
+- **B5**: Safety hard vetoes được đánh giá trước transport return trong `Phase4Grader`. Nếu attempt có lỗi transport nhưng vi phạm safety veto, decision là `rejected`, safety failure code là primary failure. Blocked grading luôn giữ `evidence_refs` thật (`[attempt["record_id"]]`).
+- **B6**: `MEASUREMENT_READY_GATES` thu hẹp chỉ gồm `GATE_G5_LANE_MEASUREMENT_READY`. G6 hoặc các gate khác yêu cầu `READY FOR MEASUREMENT` sẽ bị reject với `GatePermissionError`. Bổ sung `GATE_G7_MEASURED`.
+- **Lỗi nhẹ**: `is_preflight` kiểm tra strict `bool`; regex credential leak được sanitize markers trước khi check; alignment `logical_request_id` trên `evidence_refs`.
 
-## Kết quả remediation thực hiện bởi Gemini (2026-10-08)
+| Hạng mục kiểm tra | Kết quả | Chi tiết |
+|---|---|---|
+| Targeted Phase 4 & Deployment tests | **PASS** | 58 phase 4 tests + 9 deploy guard tests |
+| Full unit test suite | **PASS** | 563 tests pass, 0 failures, 49 skipped |
+| Contract 1: `check_docs_contract.py` | **PASS** | 4/4 checks |
+| Contract 2: `check_eval_dataset.py` | **PASS** | 30 cases verified |
+| Contract 3: `check_deployment_contract.py` | **PASS** | Notebooks preserved in Docker context |
+| Contract 4: `check_live_e2e_contract.py` | **PASS** | Gate sequence intact |
+| Contract 5: `build_agent_notebook.py --check` | **PASS** | Synced `AGENT_NOTEBOOK_SOURCE_SYNC_OK` |
+| Contract 6: `git diff --check` | **PASS** | No whitespace/LF-CRLF errors |
+| Mock run 250 | **PASS** | 250 cases, 263 attempts, 100% valid bundle |
+| Local Docker build | **SKIP** | Host Windows không có Docker CLI (chạy trên CI container) |
 
-### 1. Khắc phục Blocker F1 (`evidence_refs` canonical binding & orphan rejection)
-- `evals/harness/grader.py`: Cập nhật signature `grade()` nhận `evidence_refs: Optional[List[str]] = None`. Grader liên kết trực tiếp `record_id` thật của target attempt và target retrieval thay vì tạo chuỗi synthetic.
-- `evals/harness/runner.py`: Truyền `[att["record_id"], retrieval_rec["record_id"]]` từ runner vào grader.
-- `evals/harness/validator.py`: Step 8 xây dựng mapping `canonical_records_by_id` qua toàn bộ records (attempts, retrievals, errors, gradings) trong cùng bundle. Kiểm tra:
-  - Mỗi `ref` trong `evidence_refs` phải tồn tại trong canonical records (reject orphan ref).
-  - `ref` không được tự trỏ chính record grading chứa nó (`ref != gr_rec_id`).
-  - `ref` phải có cùng `run_id` và cùng `case_id` với grading record.
-- Mutation tests: Bổ sung `test_f1_evidence_refs_schema_validation`, `test_f1_orphan_evidence_ref_detected`, `test_f1_self_referential_evidence_ref_detected`, `test_f1_cross_case_evidence_ref_detected` (toàn bộ PASS).
-
-### 2. Khắc phục Blocker F2 (Harness SHA immutable & placeholder rejection)
-- `evals/harness/constants.py`: Định nghĩa danh sách `DISALLOWED_HARNESS_PLACEHOLDER_SHAS` (`111...`, `000...`, `fff...`, `222...`) và hàm `is_placeholder_sha()`.
-- `evals/harness/runner.py`: Hàm `resolve_current_harness_sha()` tự động trích xuất immutable SHA từ `GITHUB_SHA`, `HARNESS_COMMIT_SHA`, `GIT_COMMIT_SHA` hoặc `git rev-parse HEAD`. Mock runner yêu cầu SHA immutable thật hoặc cờ `is_preflight=True`.
-- `evals/harness/schema.py`: `validate_common_envelope` và `validate_manifest` cấm hoàn toàn SHA placeholder. Accepted bundle (`is_preflight=False`) bắt buộc phải có 40-hex SHA thật.
-- `evals/harness/validator.py`: Step 2 kiểm tra placeholder SHA, gắn nhãn cảnh báo preflight rõ ràng và từ chối bundle accepted mang placeholder.
-- Mutation tests: Bổ sung `test_f2_placeholder_sha_rejection`, `test_f2_manifest_placeholder_sha_rejected`, `test_f2_preflight_bundle_accepted_with_warning` (toàn bộ PASS).
-
-### 3. Bổ sung các field validation normative
-- `validate_attempt_record`: Bắt buộc `finished_at_utc` và `response` (dict hoặc None).
-- `validate_retrieval_record`: Bắt buộc `qrels_source`, `qrels_sha256` và kiểm tra cấu trúc từng chunk trong `candidate_chunks` / `served_chunks` (`chunk_id`, `rank >= 1`, `score: float`, `source_id`).
-- `validate_error_record`: Kiểm tra `message_redacted` không rỗng và cấm leak credential/token (Bearer, sk-, api_key, password).
-- `validate_aggregate`: Kiểm tra `run_id` khớp manifest, `derived_from` non-empty list of strings, `artifact_checksums` string.
-- Manifest: Bổ sung các trường provenance `benchmark_id`, `case_count`, `is_preflight`.
-- Validator: Tự động đối chiếu `manifest.qrels_sha256` với hash tính trực tiếp từ `QrelsManager().sha256`.
-- Dockerfile: Bổ sung `COPY notebooks /app/notebooks` để container đóng gói đầy đủ notebooks test.
-
-### 4. Cài đặt R11 Executable Gate State Machine
-- `evals/harness/gates.py`: Tạo `Phase4GateStateMachine` và `assert_gate_readiness()`.
-- Khóa cứng điều kiện: Chỉ gate G5 (`LANE_MEASUREMENT_READY`) trở lên mới được phép cấp trạng thái `"READY FOR MEASUREMENT"`.
-- Toàn bộ các gate trước đó (G0–G4) bị giới hạn nghiêm ngặt ở `"READY FOR HARNESS/PREFLIGHT"`. Mọi hành vi nhảy cóc gate đều kích hoạt `GateOrderError` hoặc `GatePermissionError`.
-
-### 5. Bảng tổng hợp Verification & Evidence
-
-| Kiểm tra | Lệnh thực thi | Kết quả | Ghi chú |
-|---|---|---|---|
-| Targeted Phase 4 Unit Tests | `python -m unittest tests/test_phase4_*.py tests/test_deploy_guard.py` | **PASS** | 47/47 tests OK |
-| Full Repository Unittest Suite | `python -m unittest discover -s tests -p "test_*.py"` | **PASS** | 552 tests: 503 passed, 49 skipped, 0 failed |
-| Contract Check 1: Docs Contract | `python scripts/check_docs_contract.py` | **PASS** | 4/4 checks valid |
-| Contract Check 2: Eval Dataset | `python scripts/check_eval_dataset.py` | **PASS** | 30 baseline cases OK |
-| Contract Check 3: Deployment Guard Contract | `python scripts/check_deployment_contract.py` | **PASS** | DEPLOYMENT_CONTRACT_OK |
-| Contract Check 4: Live E2E Contract | `python scripts/check_live_e2e_contract.py` | **PASS** | LIVE_E2E_CONTRACT_OK |
-| Contract Check 5: Notebook Source Sync | `python scripts/build_agent_notebook.py --check` | **PASS** | AGENT_NOTEBOOK_SOURCE_SYNC_OK |
-| Contract Check 6: Git Diff Check | `git diff --check` | **PASS** | Không có trailing whitespace hay conflict |
-| Mock 250-case Run & Validator | `python scripts/phase4_harness.py mock-run --max-cases 250` | **PASS** | 250 cases, 263 attempts, real record_ids, valid SHA `1f8c344e...` |
-| Docker Local Build/Test | `docker --version` / `docker build` | **SKIP** | Host Windows không cài Docker CLI (`CommandNotFoundException`) |
-
-**Trạng thái:** Toàn bộ blockers F1 và F2 đã giải quyết. Dừng và chờ Owner Review theo đúng quy trình.
+Branch `codex/phase4-harness` đã sẵn sàng chờ Owner review. Không merge vào `main`, không live/paid.

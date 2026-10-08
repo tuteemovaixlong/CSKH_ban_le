@@ -446,5 +446,100 @@ class TestWriterAndValidator(unittest.TestCase):
         self.assertTrue(any("preflight" in w.lower() for w in report.warnings))
 
 
+    def test_b2_aggregate_rate_tampering_rejected(self):
+        """Blocker B2: Tampering with aggregate rates must be caught by recomputation in validator."""
+        runner = Phase4MockRunner(run_id="run_tamper_rate", output_dir=self.test_dir)
+        runner.run(max_cases=3)
+
+        agg_path = self.test_dir / "aggregate.json"
+        agg = json.loads(agg_path.read_text(encoding="utf-8"))
+        agg["first_attempt_success_rate"] = 0.9999  # Tampered!
+        agg_path.write_text(json.dumps(agg, indent=2), encoding="utf-8")
+
+        writer = CanonicalBundleWriter(self.test_dir)
+        writer.write_checksums()
+
+        val = CanonicalBundleValidator(self.test_dir)
+        report = val.validate()
+        self.assertFalse(report.is_valid)
+        self.assertTrue(any("first_attempt_success_rate mismatch" in e for e in report.errors))
+
+    def test_b2_aggregate_outcomes_tampering_rejected(self):
+        """Blocker B2: Tampering with aggregate outcomes histogram must be caught by recomputation."""
+        runner = Phase4MockRunner(run_id="run_tamper_outcomes", output_dir=self.test_dir)
+        runner.run(max_cases=3)
+
+        agg_path = self.test_dir / "aggregate.json"
+        agg = json.loads(agg_path.read_text(encoding="utf-8"))
+        agg["first_attempt_outcomes"] = {"completed": 999}  # Tampered!
+        agg_path.write_text(json.dumps(agg, indent=2), encoding="utf-8")
+
+        writer = CanonicalBundleWriter(self.test_dir)
+        writer.write_checksums()
+
+        val = CanonicalBundleValidator(self.test_dir)
+        report = val.validate()
+        self.assertFalse(report.is_valid)
+        self.assertTrue(any("first_attempt_outcomes mismatch" in e for e in report.errors))
+
+    def test_b2_manifest_case_count_mismatch_rejected(self):
+        """Blocker B2: Manifest case_count mismatch with actual logical cases must be caught."""
+        runner = Phase4MockRunner(run_id="run_case_count_mismatch", output_dir=self.test_dir)
+        runner.run(max_cases=3)
+
+        man_path = self.test_dir / "manifest.json"
+        man = json.loads(man_path.read_text(encoding="utf-8"))
+        man["case_count"] = 99  # Mismatch with actual 3!
+        man_path.write_text(json.dumps(man, indent=2), encoding="utf-8")
+
+        writer = CanonicalBundleWriter(self.test_dir)
+        writer.write_checksums()
+
+        val = CanonicalBundleValidator(self.test_dir)
+        report = val.validate()
+        self.assertFalse(report.is_valid)
+        self.assertTrue(any("manifest.json case_count mismatch" in e for e in report.errors))
+
+    def test_b3_nan_in_attempts_jsonl_rejected(self):
+        """Blocker B3: Non-standard JSON constant NaN in attempts.jsonl must be rejected."""
+        runner = Phase4MockRunner(run_id="run_nan_rejection", output_dir=self.test_dir)
+        runner.run(max_cases=3)
+
+        att_path = self.test_dir / "attempts.jsonl"
+        lines = att_path.read_text(encoding="utf-8").splitlines()
+        # Inject raw NaN into line
+        lines[0] = lines[0][:-1] + ', "nan_field": NaN}'
+        att_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        writer = CanonicalBundleWriter(self.test_dir)
+        writer.write_checksums()
+
+        val = CanonicalBundleValidator(self.test_dir)
+        report = val.validate()
+        self.assertFalse(report.is_valid)
+        self.assertTrue(any("Disallowed non-standard JSON constant" in e for e in report.errors))
+
+    def test_b4_first_attempt_flag_mismatch_rejected(self):
+        """Blocker B4: grading.jsonl first_attempt contradiction with attempt retry_index must be caught."""
+        runner = Phase4MockRunner(run_id="run_first_att_mismatch", output_dir=self.test_dir)
+        runner.run(max_cases=3)
+
+        gr_path = self.test_dir / "grading.jsonl"
+        lines = gr_path.read_text(encoding="utf-8").splitlines()
+        first_gr = json.loads(lines[0])
+        # Attempt has retry_index == 0, change first_attempt to False
+        first_gr["first_attempt"] = False
+        lines[0] = json.dumps(first_gr)
+        gr_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        writer = CanonicalBundleWriter(self.test_dir)
+        writer.write_checksums()
+
+        val = CanonicalBundleValidator(self.test_dir)
+        report = val.validate()
+        self.assertFalse(report.is_valid)
+        self.assertTrue(any("first_attempt=False contradicts target attempt retry_index=0" in e for e in report.errors))
+
+
 if __name__ == "__main__":
     unittest.main()

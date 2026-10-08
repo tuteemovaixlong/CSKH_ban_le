@@ -43,5 +43,8 @@
 !scripts/**
 !deploy/compose.admin.yaml
 !deploy/admin-console.py
+!notebooks/
+!notebooks/**
+!data/deepseek_seed_data.json
 **/__pycache__/
 **/*.pyc
