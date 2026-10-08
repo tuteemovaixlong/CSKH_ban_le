@@ -1,6 +1,6 @@
 # PHASE_4_RESULTS_SCHEMA — Raw JSONL và reproducibility contract
 
-> **Trạng thái:** `READY FOR HARNESS/PREFLIGHT`. writer, validator, grader và telemetry đã có implementation/offline evidence ở HEAD `5d16a0a`, nhưng aggregate/numeric/safety/Docker acceptance còn blocker B1–B6. Không được ghi `READY FOR MEASUREMENT` chỉ vì schema hoặc mock bundle tồn tại.
+> **Trạng thái (2026-10-08):** `READY FOR HARNESS/PREFLIGHT`. HEAD `48b84cd` có implementation/offline/CI evidence; B1–B6 cũ DONE. N1–N5 source/coherence/case/metric/safety/readiness còn mở theo [review](REVIEW_GEMINI_PHASE4_2026-10-07.md). Schema/mock validity không tự cấp measurement acceptance.
 
 ## 1. Quy tắc bất biến
 

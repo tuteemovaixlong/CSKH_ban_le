@@ -1,6 +1,6 @@
 # PHASE_4_METRICS_DEFINITION — Metrics, công thức và cách đo
 
-> Trạng thái: READY FOR HARNESS/PREFLIGHT. Công thức là protocol; grader, qrels, writer và telemetry chưa có acceptance evidence.
+> Trạng thái (2026-10-08): READY FOR HARNESS/PREFLIGHT. HEAD `48b84cd` đã có offline grader/writer/telemetry/recompute; N2 case scheduling và N3 blocked denominator chưa đạt acceptance theo [review](REVIEW_GEMINI_PHASE4_2026-10-07.md). Chưa có live/statistical measurement evidence.
 
 ## 1. Đơn vị và denominator
 

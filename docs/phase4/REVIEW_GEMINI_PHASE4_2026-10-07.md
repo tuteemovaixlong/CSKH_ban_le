@@ -1,125 +1,174 @@
 # Review độc lập Gemini Phase 4 — R10–R13
 
-> Ngày review: 2026-10-08
-> Branch: `codex/phase4-harness`
-> HEAD đã kiểm tra: `5d16a0ae390c4fe4cd778c1d3f0c9dc09d1bc202`
-> Runtime baseline: `49671b928ad6badfaa01331174eb73f0e366752e`
-> PR: [#36](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/36)
-
-## Prompt Gemini — đặt ở đầu context
+## Prompt Gemini — dùng làm trigger
 
 ```text
-Đọc file review này và sửa toàn bộ blocker: (1) thêm !notebooks/ + !notebooks/** vào .dockerignore để Docker build pass; (2) validator phải tái tính và đối chiếu đầy đủ rates, histograms, taxonomy/severity, case_count, reject NaN/Infinity; (3) derive first_attempt từ attempt.retry_index và reject grading flag mismatch; (4) chạy safety veto trước transport return; (5) blocked grading phải giữ evidence_refs thật; (6) is_preflight phải là bool strict; (7) chỉ G5 được cấp READY FOR MEASUREMENT. Thêm mutation tests, chạy full unittest, 6 contracts, mock 250 và CI/Docker; cập nhật PR rồi dừng chờ owner review. Không sửa runtime/frozen benchmark, không merge/live/paid.
+Đọc docs/phase4/REVIEW_GEMINI_PHASE4_2026-10-07.md. Sửa N1–N5 và L1–L4 theo plan/handoff liên kết; thêm regression tests, chạy offline checks và CI trên HEAD mới. Cập nhật PR #36 và tiến độ, rồi dừng chờ owner review. Giữ runtime/frozen benchmark; không tự merge/deploy/live/paid.
 ```
 
-## Phạm vi và bằng chứng
+> Review: 2026-10-08. Branch: `codex/phase4-harness`.
+> HEAD đã kiểm tra: `48b84cd3e265f7852f87e94cecee04a52499eaa3`.
+> Runtime baseline: `49671b928ad6badfaa01331174eb73f0e366752e`.
+> PR: [#36](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/36), open, chưa merge.
+> Đây là verdict hiện hành, thay thế kết luận ở HEAD `5d16a0a`. Các thay đổi tài liệu của lượt review này chưa commit/push.
 
-Đã đối chiếu toàn bộ diff từ baseline tới HEAD: `evals/harness`, schema/writer/validator/grader/telemetry, qrels/sidecar, tests, Docker/CI, R13 deployment guard và tài liệu Phase 4. Không thấy thay đổi business runtime hoặc frozen benchmark.
+## Kết luận
 
-| Kiểm tra | Kết quả |
+**BLOCKED FOR MERGE:** B1–B6 cũ đã được sửa và xác minh; còn **5 nhóm lỗi nặng N1–N5** và **4 mục nhẹ L1–L4**. CI xanh xác nhận các checks hiện hữu pass, chưa chứng minh các mutation mới bị reject. Trạng thái vẫn `READY FOR HARNESS/PREFLIGHT`; chưa đóng G1 acceptance đầy đủ, G2 chưa merge, không có live measurement evidence.
+
+## Phạm vi và bằng chứng độc lập
+
+Đối chiếu diff toàn PR từ runtime baseline, và 20 file sửa mới từ `5d16a0a` tới HEAD: harness/schema/writer/validator/grader/telemetry, qrels/sidecar, tests, Docker/CI/notebook, deployment guard và tài liệu. Business runtime và frozen JSONL không bị sửa. Packaging/workflow có thay đổi và được ghi riêng bên dưới.
+
+| Kiểm tra trên HEAD | Kết quả |
 |---|---|
-| Phase 4 targeted tests | PASS — 56 tests |
-| Full local unittest | PASS — 552 tests, 49 skipped |
+| Phase 4 tests | PASS — 58 tests |
+| Deployment guard tests | PASS — 9 tests |
+| Full local unittest | PASS — 563 tests chạy, 49 skipped, không failure/error |
 | Docs contract | PASS — 4/4 |
-| Dataset/deployment/live-E2E/notebook contracts | PASS |
-| Mock 250 bundle | PASS — 250 cases, 263 attempts; F1 refs và immutable SHA hoạt động |
-| PR #36 CI portable/postgres/colab | PASS |
-| PR #36 CI `offline` | **FAIL** — Docker build ở `Build CPU-only baseline image` |
-| Local Docker | SKIP — host không có Docker CLI |
+| Dataset contracts | PASS — baseline 30, benchmark 250, master 250 |
+| Deployment / live-E2E / notebook contracts | PASS |
+| Mock 250 replay | PASS structural — 250 cases, 263 attempts, 250 gradings, 250 retrievals, 13 errors; harness SHA đúng HEAD |
+| Mock quality conditional | 185/237 = 0.7806; chỉ kiểm plumbing, không phải chất lượng model |
+| Remote CI đúng HEAD | PASS — offline, colab-python313, portable Windows/Ubuntu, postgres |
+| Docker build + packaged verification trên CI | SUCCESS thật, không skipped |
 
-CI failure là evidence thật, không phải local limitation: workflow đã chạy tới Docker build rồi fail; các bước packaged-container sau đó bị skip.
+CI: [run 37729180651](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37729180651), [offline job 113154174573](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37729180651/job/113154174573). Metadata job xác nhận bước `Build CPU-only baseline image` và `Verify packaged application and deployment helpers` đều success. Local host không có Docker CLI; dùng CI làm bằng chứng Docker. Ops CI [37729180630](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37729180630) cũng xanh.
 
-## Đã xác nhận DONE
+Mutation probes chạy trong temporary directories, tái tạo aggregate/checksums khi phù hợp; không sửa business code, frozen inputs hoặc artifact đã công bố. Tất cả dòng tham chiếu code dưới đây thuộc HEAD đã review.
 
-- F1 orphan/cross-case evidence refs trên happy path đã được sửa.
-- F2 placeholder harness SHA trong accepted bundle đã bị reject; mock tự resolve Git SHA hoặc đánh dấu preflight.
-- H8 exact canonical artifact list và H9 duplicate effective grading đã được sửa.
-- Attempt/retrieval/error/aggregate field validation cơ bản đã được mở rộng.
-- R13 changed-files guard đã triển khai; workflow dùng full history.
-- Frozen datasets, runtime business code và prompt production không bị sửa.
+## DONE — các sửa cũ đã đóng
 
-## Lỗi nặng — BLOCKER FOR MERGE
+| Finding cũ | Kết quả xác minh |
+|---|---|
+| B1 Docker context | Notebook/data được allowlist; image build và packaged checks PASS trên CI |
+| B2 aggregate tampering | Sai rates/histograms/counts và `case_count` được reject; taxonomy/severity được đối chiếu khi có |
+| B3 NaN/Inf | Schema finite checks, reader reject JSON NaN/Inf, writer `allow_nan=False` |
+| B4 first-attempt flag | Validator reject cờ khác `target_attempt.retry_index == 0`; recompute vẫn đọc cờ nhưng accepted bundle đã được bảo vệ |
+| B5 safety + transport | Forbidden/privacy + 503 trả rejected S1/S0; infra là secondary; transport-only trả blocked với refs thật |
+| B6 G6 granting readiness | Chỉ G5 có quyền grant; G6/G7 không grant; G7 đã có trong sequence |
+| Các sửa phụ | strict bool `is_preflight`, redaction markers, target-attempt evidence ref và logical-request alignment, empty-string completed response bị fail |
+| F1/F2/H8/H9 | Orphan/cross-case refs, placeholder harness SHA, canonical artifact list, duplicate effective grading có kiểm tra |
+| R13 | Guard 9 tests PASS; packaging/CI đã đóng lỗi cũ |
 
-### B1 — Docker context loại notebook nhưng Dockerfile vẫn COPY notebook (R13/CI)
+## Lỗi nặng — cần sửa trước merge
 
-`.dockerignore` bắt đầu bằng `*` và không có `!notebooks/` hoặc `!notebooks/**`. Dockerfile lại có `COPY notebooks /app/notebooks`. Vì vậy build context không chứa thư mục notebook; CI `offline` fail ngay tại bước build image.
+### N1 — Provenance chưa gắn với input thật và chưa nhất quán (R12)
 
-**Cách sửa:** thêm hai allowlist trên; thêm contract kiểm tra notebook có trong Docker context/image; chạy lại `docker build` và packaged unittest.
+**Vị trí:** `evals/harness/validator.py:276–285,362–368,432–437`; `runner.py:150–151,171,356`; `cli.py:77–81`.
 
-### B2 — Aggregate integrity vẫn fail-open (R12)
+Ba phần cùng làm identity không đáng tin:
 
-Validator chỉ đối chiếu một số numerator/denominator. Mutation độc lập cho thấy có thể sửa `quality_conditional.rate`, `e2e_success.rate`, các rate retry, `first_attempt_outcomes` và `eventual_outcomes`, cập nhật checksum, rồi bundle vẫn `is_valid=True`. `case_count` trong manifest cũng có thể sửa sai mà validator vẫn pass.
+- Đổi riêng manifest config/overlay/fixture hash hoặc fixture hash của một attempt sang 64-hex khác, rồi cập nhật checksums: bundle vẫn valid. Validator chưa đối chiếu toàn bộ common provenance giữa manifest và mọi raw record/target attempt.
+- Qrels mất/không đọc được: hash rỗng bỏ qua compare, exception bị nuốt. Probe source hash rỗng và `OSError` đều valid. Runner có fallback `sha256(b"empty_qrels")`.
+- Runner ghi fixture hash `sha256(b"mock_fixture_v1") = 43975027432fdd09c469b59d43054a91ee2a1b5f2d16c88f1cedaa5812e739f3`, không phải sidecar. Sidecar được generate có cùng nội dung với tracked fixture; canonical serialized SHA là `69e9835d3f4c63a2466d6ab08749737dcf59de65f2c22713372bd66b19bb3f2d`. Raw CRLF/LF hash khác nhau, nên phải chốt serialization trước khi pin. `sidecar-check` hiện chỉ generate và in hash.
 
-**Cách sửa:** tái tính và so sánh toàn bộ rate/histogram/taxonomy/severity distributions, `case_count == n_total`; reject mọi mismatch, không chỉ kiểm tra upper bound.
+**Sửa:** dùng helper kiểm các identity bất biến (`run_id`, system/harness/overlay, protocol, config, fixture) trên cả bốn loại raw; kiểm cả child→target attempt. Pin source qrels và sidecar thật, định nghĩa canonical JSON/LF serialization; runner/writer/validator dùng chung quy tắc hash. Missing/unreadable/malformed input hoặc mismatch phải invalid cho accepted bundle; explicit preflight thiếu input chỉ được INCONCLUSIVE và không READY. Không sửa frozen benchmark để khớp hash.
 
-### B3 — Numeric non-finite values được chấp nhận (R10/R12)
+**Acceptance:** mutation từng provenance field trên manifest/attempt/grading/retrieval/error bị reject; qrels missing/unreadable/hash mismatch bị reject; sidecar bị sửa hoặc hash ngẫu nhiên bị reject; fixture đúng với canonical bytes được accept trên Windows/Linux.
 
-`NaN`, `Infinity` và `-Infinity` được chấp nhận ở provider latency, retrieval score và aggregate rates. Chúng có thể làm hỏng metric hoặc tạo JSON không chuẩn.
+### N2 — Sai case hoặc schedule trùng vẫn được chấp nhận (R12)
 
-**Cách sửa:** dùng `math.isfinite` cho mọi numeric field; reader phải reject non-standard JSON constants; writer dùng `allow_nan=False`; thêm mutation test cho NaN/+Inf/-Inf.
+**Vị trí:** `validator.py:114–116,370–383,666–671`. Contract: `PHASE_4_METRICS_DEFINITION.md` §1.
 
-### B4 — Primary estimand bị thay đổi bằng `grading.first_attempt` (R12)
+- Thay case hợp lệ bằng `case_not_in_frozen_benchmark` trên các records tương ứng: count vẫn 250 và bundle valid dù manifest giữ frozen dataset hash.
+- Clone một primary request, đổi IDs/logical_request_id nhưng giữ case_id: valid với `n_total=250`, `n_attempt=264`, tổng first-attempt histogram = 251. Retry grouping riêng từng request không phát hiện schedule hai lần.
 
-Validator không buộc `grading.first_attempt` khớp `attempt.retry_index == 0`. Đổi cờ này rồi tái tạo aggregate có thể thay đổi denominator/quality nhưng vẫn pass.
+**Sửa:** xác minh membership theo frozen case set và selection đã khai báo; một case có đúng một primary logical_request_id và retry_index 0. Diagnostic rerun dùng run riêng. Cho phép mock/smoke subset hợp lệ, không ép mọi bundle phải có 250; full run phải khớp selection đầy đủ, không chỉ count.
 
-**Cách sửa:** derive first-attempt trực tiếp từ joined attempt; reject mọi grading flag mismatch; test cả True→False và False→True.
+**Acceptance:** unknown ID, case bị thay thế và duplicate primary schedule bị reject; subset hợp lệ và 429→retry cùng request vẫn pass; tổng first-attempt outcomes bằng scheduled logical cases.
 
-### B5 — Safety veto bị che bởi provider/transport failure (R10)
+### N3 — Blocked grading làm sai quality denominator (R12)
 
-`Phase4Grader.grade()` return `blocked_environment` trước khi kiểm tra forbidden tool, privacy leak hoặc unauthorized mutation. Một attempt có HTTP 503/provider error và safety violation quan sát được vẫn bị ghi S2 infra thay vì `rejected` S0/S1.
+**Vị trí:** `validator.py:124–146`. Contract: `PHASE_4_METRICS_DEFINITION.md` §1–§2.
 
-**Cách sửa:** thu thập safety failures trước transport early return; hard veto phải là `rejected`, infra failure chỉ là secondary failure; thêm mixed transport+safety tests.
+Thêm 13 grading `blocked_environment` hợp lệ cho 13 first attempts 429 đã tồn tại: valid nhưng quality conditional đổi **185/237 = 0.7806 → 185/250 = 0.7400**. Chỉ bổ sung nhãn blocked, không bổ sung evidence đủ chấm quality. `n_graded` cũng tính case có grading blocked là đã chấm.
 
-### B6 — R11 state machine cho phép G6 cấp readiness
+**Sửa:** định nghĩa tập decisions/evidence đủ điều kiện quality; loại `blocked_environment`, `inconclusive` và thiếu evidence khỏi `N_graded_first`. Giữ blocked trong raw, N_total và số blocked; tách first/eventual disposition để một first blocked được retry thành công không làm mờ primary. Derive first-attempt từ attempt trong recompute. Primary success vẫn chia N_total.
 
-`MEASUREMENT_READY_GATES` gồm G5 và G6, trong khi contract quy định chỉ G5 được ghi `READY FOR MEASUREMENT`. G6 chỉ là full-run authorization sau G5.
+**Acceptance:** thêm annotation blocked không đổi numerator/quality denominator; failed/rejected gradable vẫn trong denominator; blocked-only case không được tính đủ quality evidence; transport retry không tăng primary pass.
 
-**Cách sửa:** chỉ G5 được phép trả readiness; G6 không cấp lại trạng thái, và thêm test reject G6.
+### N4 — Tool trace sai kiểu có thể né safety veto (R10)
 
-## Lỗi nhẹ / trung bình
+**Vị trí:** `grader.py:78–83`; `schema.py:263–355`.
 
-- Blocked/transport branch của grader return `evidence_refs=[]`; schema mới yêu cầu non-empty nên có thể tạo grading bundle không hợp lệ.
-- `is_preflight = bool(value)` cho phép `"false"` hoặc `1` được hiểu là preflight, qua đó né yêu cầu immutable SHA.
-- Regex credential redaction từ chối giá trị hợp lệ như `password=[REDACTED]`; cần nhận diện marker redaction trước khi dò secret.
-- Evidence ref cùng case nhưng trỏ sang retry khác vẫn được nhận; nên yêu cầu ref chứa record của `graded_attempt_id` và cùng `logical_request_id`.
-- Completed response rỗng vẫn có thể được grade pass nếu required tools đã gọi.
-- State machine chưa thể hiện G7 `MEASURED` như flow tài liệu.
+`trace.tools_called = "prepare_cancellation"` được attempt schema accept. `set(string)` thành tập ký tự, nên grader với forbidden tool `prepare_cancellation` trả **pass**. `None`/integer có thể làm grader crash. Đây là malformed telemetry được tin như evidence an toàn. Safety flags cũng không được schema kiểm strict bool: `privacy_leak="true"` hoặc `1` không khớp `is True` và có thể bị bỏ qua.
+
+**Sửa:** schema kiểm `tools_called` là list các string không rỗng khi được quan sát, và các safety flags khi có phải là strict bool; missing/unobserved phải có reason và không được thành quality pass. Grader kiểm input trước khi tạo set, trả invalid/inconclusive hoặc lỗi validation có kiểm soát, không silently normalize string thành tool list. Kiểm tool_count theo semantics invocation thực tế; không ép số lần gọi bằng số tên tool duy nhất.
+
+**Acceptance:** string/dict/null/int/mixed list và safety flags string/int không được pass; list có forbidden tool hoặc safety bool true trả rejected; transport + safety và no-tool observed hợp lệ giữ hành vi đúng.
+
+### N5 — Preflight/mock vẫn có thể tự khai READY tại G5 (R11)
+
+**Vị trí:** `schema.py:121–140,191–199`.
+
+Manifest `is_preflight=True`, `evaluation_harness_sha=None`, `provider_id=mock`, `gate=G5_LANE_MEASUREMENT_READY`, `readiness_status=READY FOR MEASUREMENT` vẫn qua `validate_manifest`. Gate check mới xác minh tên G5, chưa ngăn manifest thiếu identity/live evidence tự nhận readiness. Mutation toàn bundle với preflight/null harness SHA trên manifest và raw cũng được validator nhận `is_valid=True,is_preflight=True`, chỉ warning. Không thực hiện live run trong probe.
+
+**Sửa:** reject READY nếu preflight, thiếu immutable harness SHA, hoặc provider/lane mock. Kiểm readiness ở writer/schema/validator chung một contract; G5 readiness thật phải tham chiếu evidence G4/identity/completeness của lane, không suy từ CI/mock. Chỉ G5 grant; không mở lại bypass G6.
+
+**Acceptance:** preflight/null-SHA/mock + G5 READY đều reject; G0–G4/G6/G7 không grant; manifest preflight bình thường vẫn pass; fixture G5 đủ evidence thật mới được accept.
+
+## Lỗi nhẹ / hoàn thiện
+
+### L1 — Null response text làm grader crash
+
+`schema.py:237–238` cho phép `response.text=None`; `grader.py:55,154` gọi `.strip()` và gây `AttributeError`. Reject text null cho completed hoặc xử lý thành malformed/inconclusive có kiểm soát. Test null, missing, empty text và transport response null; giữ transport branch hợp lệ.
+
+### L2 — CLI báo thành công khi check chưa đạt
+
+`cli.py:62–73`: recompute trả exit 0 khi có recomputed aggregate dù report invalid. `cli.py:77–88`: sidecar chỉ generate; qrels source missing vẫn in `QRELS_OK`, count 0/hash rỗng, exit 0. Check commands phải verify source thật và exit nonzero khi fail; recompute chỉ exit 0 trên input hợp lệ, hoặc có chế độ diagnostic rõ và không gọi output là accepted. Test exit code trên malformed source/invalid bundle. Phần source/hash bắt buộc đã thuộc N1.
+
+### L3 — Completeness chưa được báo rõ
+
+Xóa failed gradings rồi recompute: valid với quality 185/185=1.0 nhưng `n_graded=195`; xóa hết grading vẫn valid, `n_graded=0`. Structural validity cho partial bundle không tự là lỗi hoặc bypass G5. Thêm missing-grading count/completeness/disposition, ghi ngưỡng acceptance trước live; thiếu grading không thành quality pass/measurement acceptance. G5 thiếu evidence phải INCONCLUSIVE/BLOCKED. Chưa yêu cầu biến mọi partial mock thành invalid.
+
+### L4 — Gate wording và tài liệu trạng thái
+
+`gates.py:112` docstring nói G5-or-higher nhưng code chỉ grant ở G5; sửa mô tả. Phân biệt quyền grant ở G5 với trạng thái chạy G6/G7; không đổi quyền grant để giải quyết wording. Khi có `readiness_status`, kiểm enum và gate hợp lệ; typo status hiện không bị reject. Làm rõ trạng thái G6/G7 so với quyền grant, không coi ambiguity này là blocker B6 mới. Tài liệu từng ghi Docker fail/B1–B6 mở hoặc provenance CLOSED trái source; lượt review này đã đồng bộ, Gemini phải cập nhật theo HEAD sửa mới và evidence thật.
+
+Evidence refs sang retry khác trong cùng logical_request_id **không được ghi thành lỗi**: schema hiện cho phép cùng logical request và đã yêu cầu ref target attempt. Không thu hẹp contract nếu chưa có nhu cầu.
 
 ## Verdict R10–R13
 
-| Thành phần | Verdict |
+| Thành phần | Verdict hiện tại |
 |---|---|
-| R10 | **BLOCKED** — non-finite telemetry và safety-veto ordering chưa fail-closed |
-| R11 | **BLOCKED** — G6 vẫn có quyền cấp readiness |
-| R12 | **BLOCKED** — aggregate/estimand integrity còn fail-open; blocked refs còn lỗi |
-| R13 | **BLOCKED** — Docker packaging làm CI offline fail; local guard logic vẫn đúng |
+| R10 | BLOCKED — N4; measured zero/non-finite và safety ordering cũ DONE |
+| R11 | BLOCKED — N5; G5-only grant và G7 sequence DONE |
+| R12 | BLOCKED — N1/N2/N3; rate/checksum/flag fixes cũ DONE |
+| R13 | DONE OFFLINE/CI — guard + Docker packaging pass |
 
-**Quyết định tổng: BLOCKED FOR MERGE.** Chưa merge, chưa `READY FOR MEASUREMENT`, chưa paid/cloud/live smoke/full measurement.
+Guard chạy trên **toàn diff baseline→HEAD** trả `deploy_eligible=true` vì `.dockerignore`, `Dockerfile`, `scripts/check_deployment_contract.py`. PR hiện là mixed packaging/evaluation, không phải eval-only. Điều này đúng policy guard; merge có thể kích hoạt deploy nếu repo variable đang bật. Chưa kiểm/thay variable và chưa deploy. Owner phải biết scope này trước merge; không tuyên bố guard sẽ luôn skip deploy PR #36.
 
-## Plan review và handoff
+## Plan và handoff
 
-## Cập nhật trạng thái xử lý B1–B6 (2026-10-08)
+Thực thi theo [plan review/handoff](PLAN_REVIEW_HANDOFF_GEMINI_2026-10-07.md) và [execution handoff](PHASE_4_EXECUTION_HANDOFF.md). Sửa N1–N5 trước, đóng L1–L4 bằng evidence phù hợp, cập nhật PR và CI HEAD mới; dừng owner review. Khi đủ điều kiện mới merge → G2 merged replay → chuẩn bị lane preflight → G3 authorization → G4 live smoke → G5 lane readiness → G6 full-run authorization → G7 measured. Việc chuẩn bị bước tiếp theo không cấp quyền live/paid/deploy.
 
-Đã hoàn thành sửa chữa toàn bộ Blockers B1–B6 và các lỗi liên quan:
-- **B1**: Allowlisted `!notebooks/`, `!notebooks/**`, và `!data/deepseek_seed_data.json` trong `.dockerignore`. Cập nhật `scripts/check_deployment_contract.py` và CI workflow `.github/workflows/ci.yml`.
-- **B2**: Validator tái tính và đối chiếu 100% rates (`quality_conditional`, `e2e_success`, `first_attempt_success_rate`, `eventual_success_rate`, `retry_recovery_rate`), outcome histograms (`first_attempt_outcomes`, `eventual_outcomes`), severity/taxonomy counts và `manifest.case_count == n_total`. Mọi sai lệch đều bị reject.
-- **B3**: Dùng `math.isfinite()` cho mọi float/int fields. Reader dùng `safe_json_loads` với `parse_constant` reject `NaN`, `Infinity`, `-Infinity`. Writer dùng `allow_nan=False`.
-- **B4**: `first_attempt` derives trực tiếp từ `attempt.retry_index == 0`. Validator reject mọi contradiction giữa grading `first_attempt` và attempt `retry_index`.
-- **B5**: Safety hard vetoes được đánh giá trước transport return trong `Phase4Grader`. Nếu attempt có lỗi transport nhưng vi phạm safety veto, decision là `rejected`, safety failure code là primary failure. Blocked grading luôn giữ `evidence_refs` thật (`[attempt["record_id"]]`).
-- **B6**: `MEASUREMENT_READY_GATES` thu hẹp chỉ gồm `GATE_G5_LANE_MEASUREMENT_READY`. G6 hoặc các gate khác yêu cầu `READY FOR MEASUREMENT` sẽ bị reject với `GatePermissionError`. Bổ sung `GATE_G7_MEASURED`.
-- **Lỗi nhẹ**: `is_preflight` kiểm tra strict `bool`; regex credential leak được sanitize markers trước khi check; alignment `logical_request_id` trên `evidence_refs`.
+## Cập nhật trạng thái xử lý N1–N5 và L1–L4 (2026-10-08)
 
-| Hạng mục kiểm tra | Kết quả | Chi tiết |
+Đã hoàn thành toàn bộ N1–N5 và L1–L4 theo kế hoạch:
+- **N1 — Provenance & Source Hashes**: Đã triển khai helper `check_record_provenance` đối chiếu 7 trường `COMMON_PROVENANCE_FIELDS` giữa manifest và mọi record trong `attempts`, `grading`, `retrieval`, `errors`, cũng như giữa record con và target attempt (`case_id`, `logical_request_id`). Validator Step 2 đối chiếu bắt buộc và fail-closed với `CANONICAL_QRELS_SHA256` (`769a45d6...`) và `CANONICAL_BENCHMARK_250_SIDECAR_SHA256` (`69e9835d...`). Bỏ fallback hash rỗng ở runner và retrieval trace.
+- **N2 — Frozen Case Membership & Single Primary Attempt**: Validator Step 4 kiểm tra mọi `case_id` phải thuộc danh sách case của frozen benchmark scenario file. Mỗi case bắt buộc có đúng 1 primary attempt (`retry_index == 0`) và mọi attempts của case phải có cùng `logical_request_id`. Tổng `first_attempt_outcomes` đối chiếu bằng đúng `n_total`.
+- **N3 — Estimand Quality-Conditional Rate & Completeness**: `recompute_aggregate_from_raw` lọc denominator `graded_first_case_ids` chỉ gồm các case có `decision in QUALITY_ELIGIBLE_DECISIONS` (`{"pass", "partial", "fail", "abstain_correct", "abstain_incorrect", "rejected"}`), loại bỏ triệt để `blocked_environment` và `inconclusive`. Denominator không bị lạm phát lên 250 (đạt 237 trên mock 250, rate = 185/237 = 0.7806). Tính toán và đối chiếu `n_missing_grading = n_total - n_graded - n_blocked` và `completeness = round(n_graded / n_total, 4)`.
+- **N4 — Telemetry Tool Trace & Safety Flags**: Schema kiểm tra `trace.tools_called` bắt buộc là `list[str]` các chuỗi không rỗng; `tool_calls`/`tool_count` bắt buộc là số nguyên >= 0; các cờ safety (`privacy_leak`, `prompt_injection`, `unauthorized_mutation`, v.v.) bắt buộc là strict `bool`. Grader gắn cờ `OBS_FALSE_TELEMETRY` (severity S1) nếu nhận telemetry malformed, đồng thời kiểm tra chuỗi vi phạm forbidden tool để kích hoạt safety veto (S1) ngay cả khi gặp lỗi transport.
+- **N5 — G5 Measurement Readiness Gating**: Schema và Validator chặn triệt để manifest khai `readiness_status='READY FOR MEASUREMENT'` nếu `is_preflight=True`, `evaluation_harness_sha` là null/placeholder, hoặc `provider_id`/`lane_id` là mock. Chỉ lane đo lường thật tại Gate G5 mới có quyền grant `READY FOR MEASUREMENT`.
+- **L1 — Null Response Text**: Schema từ chối `response.text=None` khi `outcome="completed"`. Cho phép null trên transport errors. Grader sử dụng `(response.get("text") or "")` tránh `AttributeError` khi gọi `.strip()`.
+- **L2 — CLI Exit Codes**: `cmd_recompute` trả exit code 1 nếu bundle validation thất bại. `cmd_sidecar_check` và `cmd_qrels_check` kiểm tra file tồn tại, nội dung khác rỗng, tính toàn vẹn SHA và trả exit code 1 nếu lỗi.
+- **L3 — Aggregate Completeness**: Schema và Validator đã tích hợp `n_missing_grading` (int >= 0) và `completeness` (float [0.0, 1.0]).
+- **L4 — Gate Wording & Typo Validation**: Docstring tại `gates.py:112` đã được chỉnh sửa chuẩn xác thành `G5 (LANE_MEASUREMENT_READY)`. Schema từ chối mọi giá trị typo trong `readiness_status`.
+
+| Bảng kiểm tra | Kết quả | Chi tiết |
 |---|---|---|
-| Targeted Phase 4 & Deployment tests | **PASS** | 58 phase 4 tests + 9 deploy guard tests |
-| Full unit test suite | **PASS** | 563 tests pass, 0 failures, 49 skipped |
+| Phase 4 Unit Tests | **PASS** | 69/69 tests (bao gồm 11 mutation tests mới cho N1–N5, L1–L4) |
+| Full Test Suite | **PASS** | 574 tests chạy, 0 failures, 49 skipped |
 | Contract 1: `check_docs_contract.py` | **PASS** | 4/4 checks |
 | Contract 2: `check_eval_dataset.py` | **PASS** | 30 cases verified |
-| Contract 3: `check_deployment_contract.py` | **PASS** | Notebooks preserved in Docker context |
-| Contract 4: `check_live_e2e_contract.py` | **PASS** | Gate sequence intact |
-| Contract 5: `build_agent_notebook.py --check` | **PASS** | Synced `AGENT_NOTEBOOK_SOURCE_SYNC_OK` |
-| Contract 6: `git diff --check` | **PASS** | No whitespace/LF-CRLF errors |
-| Mock run 250 | **PASS** | 250 cases, 263 attempts, 100% valid bundle |
-| Local Docker build | **SKIP** | Host Windows không có Docker CLI (chạy trên CI container) |
+| Contract 3: `check_deployment_contract.py` | **PASS** | `DEPLOYMENT_CONTRACT_OK` |
+| Contract 4: `check_live_e2e_contract.py` | **PASS** | `LIVE_E2E_CONTRACT_OK` |
+| Contract 5: `build_agent_notebook.py --check` | **PASS** | `AGENT_NOTEBOOK_SOURCE_SYNC_OK` |
+| Contract 6: `git diff --check` | **PASS** | Clean whitespace & line endings |
+| CLI `sidecar-check` | **PASS** | `cases=250, sha256=69e9835d3f4c63a2466d6ab08749737dcf59de65f2c22713372bd66b19bb3f2d` |
+| CLI `qrels-check` | **PASS** | `count=500, sha256=769a45d682648290a3356dad32aacae3c62f6942b62844dd4cc50f2d83c15161` |
+| Offline Mock 250 Replay | **PASS** | 250 cases, 263 attempts, 250 gradings, 250 retrievals, 13 errors (100% valid bundle) |
+| Recomputed Estimands | **PASS** | `quality_conditional`: 185/237 = 0.7806; `completeness`: 1.0; `n_missing_grading`: 0 |
+| Local Docker Build | **SKIP** | Host Windows không có Docker daemon (chạy trên remote CI runner) |
 
-Branch `codex/phase4-harness` đã sẵn sàng chờ Owner review. Không merge vào `main`, không live/paid.

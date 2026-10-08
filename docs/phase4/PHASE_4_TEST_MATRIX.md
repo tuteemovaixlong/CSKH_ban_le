@@ -1,6 +1,6 @@
 # PHASE_4_TEST_MATRIX — Ma trận 250 ca
 
-> Trạng thái: READY FOR HARNESS/PREFLIGHT. Frozen records không bị sửa; sidecar, qrels, grader và supplementary suites chưa có acceptance evidence.
+> Trạng thái (2026-10-08): READY FOR HARNESS/PREFLIGHT. Frozen records nguyên vẹn; sidecar/qrels/grader đã có offline implementation ở HEAD `48b84cd`, 58 Phase 4 tests PASS; N1–N5 còn mở. Supplementary/live suites chưa nghiệm thu.
 
 ## 1. Dataset contract
 
@@ -63,7 +63,7 @@ Acceptance:
 - A3 prior turns chỉ chạy khi sidecar có prior turns;
 - smoke selector phân tầng category/policy/safety/general;
 - overlap scenario_family dev/held_out và held-out exposure được báo;
-- sidecar/selector chưa có implementation evidence: BACKLOG.
+- sidecar 250 đã có offline implementation; source/hash binding còn N1. Stratified live smoke selector/fixture vẫn BACKLOG.
 
 ## 7. Status
 

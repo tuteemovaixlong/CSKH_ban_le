@@ -1,6 +1,6 @@
 # Phase 4 — Review bản sửa Astra và handoff BUILD HARNESS
 
-> Review lại ngày **2026-10-07** trên tài liệu thực tế trong working tree.
+> Review specification ngày **2026-10-07**; implementation cập nhật **2026-10-08** ở HEAD `48b84cd`. Entry point hiện hành: [review Gemini](REVIEW_GEMINI_PHASE4_2026-10-07.md) và [plan/handoff](PLAN_REVIEW_HANDOFF_GEMINI_2026-10-07.md). Các prompt build bên dưới lưu bối cảnh/spec; thực thi sửa theo prompt đầu review hiện hành.
 > Runtime baseline: **49671b928ad6badfaa01331174eb73f0e366752e**.
 > Phạm vi: 16 tài liệu Phase 4 gốc, STRATEGIC_ANALYSIS_PHASE_4.md và code/runner/CI hiện có.
 > Quy trình owner chốt: **Gemini build harness → mở PR → chạy CI → owner review trước merge**.
@@ -273,7 +273,7 @@ Review trước phát hiện whole-report/JSONL conflict, scope cản harness, c
 | R10 | zero chỉ được chấp nhận cho cache/replay | observed no-model path được chấp nhận; fabricated zero bị reject; missing là null + reason |
 | R11 | G4/M5 và G5 diễn đạt không đồng nhất | chỉ G5 ghi READY FOR MEASUREMENT; G4 chỉ là LIVE_SMOKE |
 | R12 | envelope/join/nullability/provenance chưa normative đầy đủ | common envelope, join keys, typed severity, no-evidence labels và bảy artifact examples đã chốt |
-| R13 | merge harness có thể chạm deploy nếu variable bật | mitigation changed-files đã chốt; implementation/test vẫn OPEN trước merge |
+| R13 | merge harness có thể chạm deploy nếu variable bật | mitigation changed-files có implementation/9 tests/CI; toàn PR packaging eligible; báo owner trước merge |
 
 ## Prompt Gemini cập nhật
 
@@ -283,5 +283,5 @@ BUILD HARNESS Phase 4 offline/local theo docs/phase4/REVIEW_PHASE_4_PLAN.md và 
 
 ## Trạng thái chốt 2026-10-07
 
-R10–R12: CLOSED(spec). R13: OPEN (implementation/pre-merge). G1/G2 chưa có evidence implementation/merge. Trạng thái chính thức: READY FOR HARNESS/PREFLIGHT.
+R10–R12: CLOSED(spec), implementation còn N1–N5 acceptance. R13: DONE OFFLINE/CI; actual PR diff packaging eligible theo policy. G1 có implementation/test evidence nhưng chưa accepted đầy đủ; G2 chưa merge. Trạng thái chính thức: READY FOR HARNESS/PREFLIGHT.
 

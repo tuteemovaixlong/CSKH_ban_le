@@ -1,6 +1,6 @@
 # Phase 4 — Timeline and Milestones
 
-Status: READY FOR HARNESS/PREFLIGHT — proposed schedule only; no paid/cloud/deploy run executed (2026-10-06).
+Status (2026-10-08): READY FOR HARNESS/PREFLIGHT — M1–M3 đã có implementation/local/CI evidence tại `48b84cd`, nhưng N1–N5 acceptance còn mở. Chưa merge hoặc thực hiện live/paid/deploy trong lượt review.
 
 ## 1. Gantt
 
@@ -57,3 +57,7 @@ M5 corresponds to G4 live smoke and is not measurement readiness. Only the subse
 If GPU/API is unavailable, complete M0–M4 and report lane BLOCKED with fallback identity. Do not stop shared public EC2 without an ownership/runbook decision. Never compress by dropping raw evidence, changing frozen data or pooling lanes.
 
 See PHASE_4_INFRASTRUCTURE_SPEC.md, PHASE_4_REPRODUCIBILITY.md and PHASE_4_EVIDENCE_CHECKLIST.md.
+
+## 5. Tiến độ thực tế và bước tiếp theo (2026-10-08)
+
+M0 spec/frozen baseline giữ nguyên. M1 harness implementation đã có; M2/M3 có local 563 tests/49 skipped, contracts/mock và CI/Docker xanh nhưng chưa accepted hoàn toàn vì N1–N5. Thực thi sửa theo [plan](PLAN_REVIEW_HANDOFF_GEMINI_2026-10-07.md), review lại HEAD mới, owner review/merge rồi G2 clean replay. M4/G3 authorization và mọi live milestone sau vẫn chưa mở; Gantt là kế hoạch, không phải bằng chứng hoàn thành.

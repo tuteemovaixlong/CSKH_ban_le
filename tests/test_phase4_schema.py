@@ -598,7 +598,19 @@ class TestPhase4Schema(unittest.TestCase):
         with self.assertRaises(SchemaValidationError):
             validate_manifest(man_g4)
 
-        man_g5 = dict(self.valid_manifest, readiness_status=STATUS_MEASUREMENT_READY, gate=GATE_G5_LANE_MEASUREMENT_READY)
+        # Mock provider must be rejected from claiming READY FOR MEASUREMENT (N5)
+        man_mock_g5 = dict(self.valid_manifest, readiness_status=STATUS_MEASUREMENT_READY, gate=GATE_G5_LANE_MEASUREMENT_READY)
+        with self.assertRaises(SchemaValidationError):
+            validate_manifest(man_mock_g5)
+
+        # Real provider/lane with locked SHA passes G5
+        man_g5 = dict(
+            self.valid_manifest,
+            provider_id="openai",
+            lane_id="lane-a0",
+            readiness_status=STATUS_MEASUREMENT_READY,
+            gate=GATE_G5_LANE_MEASUREMENT_READY,
+        )
         validate_manifest(man_g5)
 
     def test_attempt_finished_at_and_response_validation(self):
@@ -829,6 +841,184 @@ class TestPhase4Schema(unittest.TestCase):
 
         # G5 is allowed to grant STATUS_MEASUREMENT_READY
         assert_gate_readiness(GATE_G5_LANE_MEASUREMENT_READY, STATUS_MEASUREMENT_READY)
+
+    def test_n4_trace_tools_called_validation(self):
+        """N4: trace.tools_called must be list of non-empty strings."""
+        valid_att = dict(
+            self.common_envelope,
+            attempt_id="att-n4-01",
+            retry_index=0,
+            attempt_class="first",
+            started_at_utc="2026-10-06T00:00:00Z",
+            finished_at_utc="2026-10-06T00:00:01Z",
+            http_status=200,
+            outcome="completed",
+            response={"text": "Xin chào"},
+            trace={
+                "actual_mode": "retail",
+                "model_invocation_observed": True,
+                "model_calls": 1,
+                "tool_count": 1,
+                "tools_called": ["get_order"],
+                "cache_hit": False,
+                "provider_inference_ms": 100.0,
+            },
+        )
+        validate_attempt_record(valid_att)
+
+        # String instead of list
+        bad_str = dict(valid_att, trace=dict(valid_att["trace"], tools_called="get_order"))
+        with self.assertRaises(SchemaValidationError):
+            validate_attempt_record(bad_str)
+
+        # List with non-string
+        bad_elem = dict(valid_att, trace=dict(valid_att["trace"], tools_called=[123]))
+        with self.assertRaises(SchemaValidationError):
+            validate_attempt_record(bad_elem)
+
+        # List with empty string
+        bad_empty = dict(valid_att, trace=dict(valid_att["trace"], tools_called=[""]))
+        with self.assertRaises(SchemaValidationError):
+            validate_attempt_record(bad_empty)
+
+    def test_n4_trace_tool_calls_and_safety_flags_strict(self):
+        """N4: tool_count/tool_calls must be non-negative int; safety flags must be strict bool."""
+        base_att = dict(
+            self.common_envelope,
+            attempt_id="att-n4-02",
+            retry_index=0,
+            attempt_class="first",
+            started_at_utc="2026-10-06T00:00:00Z",
+            finished_at_utc="2026-10-06T00:00:01Z",
+            http_status=200,
+            outcome="completed",
+            response={"text": "Xin chào"},
+            trace={
+                "actual_mode": "retail",
+                "model_invocation_observed": True,
+                "model_calls": 1,
+                "tool_count": 0,
+                "tools_called": [],
+                "cache_hit": False,
+                "provider_inference_ms": 100.0,
+            },
+        )
+
+        # Bad tool_count: string or negative
+        bad_tc_str = dict(base_att, trace=dict(base_att["trace"], tool_count="0"))
+        with self.assertRaises(SchemaValidationError):
+            validate_attempt_record(bad_tc_str)
+
+        bad_tc_neg = dict(base_att, trace=dict(base_att["trace"], tool_count=-1))
+        with self.assertRaises(SchemaValidationError):
+            validate_attempt_record(bad_tc_neg)
+
+        # Safety flags: non-strict bool
+        for flag in ("privacy_leak", "prompt_injection", "unauthorized_mutation"):
+            bad_flag_str = dict(base_att, trace=dict(base_att["trace"], **{flag: "true"}))
+            with self.assertRaises(SchemaValidationError):
+                validate_attempt_record(bad_flag_str)
+
+            bad_flag_int = dict(base_att, trace=dict(base_att["trace"], **{flag: 1}))
+            with self.assertRaises(SchemaValidationError):
+                validate_attempt_record(bad_flag_int)
+
+            good_flag = dict(base_att, trace=dict(base_att["trace"], **{flag: False}))
+            validate_attempt_record(good_flag)
+
+    def test_l1_null_response_text_validation(self):
+        """L1: response.text=None is rejected when outcome='completed', allowed on transport errors."""
+        completed_null_text = dict(
+            self.common_envelope,
+            attempt_id="att-l1-01",
+            retry_index=0,
+            attempt_class="first",
+            started_at_utc="2026-10-06T00:00:00Z",
+            finished_at_utc="2026-10-06T00:00:01Z",
+            http_status=200,
+            outcome="completed",
+            response={"text": None},
+            trace={
+                "actual_mode": "retail",
+                "model_invocation_observed": True,
+                "model_calls": 1,
+                "tool_count": 0,
+                "tools_called": [],
+                "cache_hit": False,
+                "provider_inference_ms": 100.0,
+            },
+        )
+        with self.assertRaises(SchemaValidationError):
+            validate_attempt_record(completed_null_text)
+
+        # Transport error with null response is valid
+        transport_err = dict(
+            self.common_envelope,
+            attempt_id="att-l1-02",
+            retry_index=0,
+            attempt_class="first",
+            started_at_utc="2026-10-06T00:00:00Z",
+            finished_at_utc="2026-10-06T00:00:01Z",
+            http_status=500,
+            outcome="transport_error",
+            response=None,
+            trace={
+                "actual_mode": "retail",
+                "model_calls": None,
+                "tool_count": 0,
+                "tools_called": [],
+                "cache_hit": False,
+                "provider_latency_ms": 0.0,
+                "model_invocation_observed": False,
+                "unavailable_reason": "server_error",
+            },
+        )
+        validate_attempt_record(transport_err)
+
+    def test_l3_aggregate_completeness_and_missing_grading(self):
+        """L3: validate_aggregate accepts and validates completeness and n_missing_grading."""
+        valid_agg = {
+            "schema_version": SCHEMA_VERSION_AGGREGATE,
+            "run_id": "run-test-01",
+            "logical_cases": 1,
+            "n_total": 1,
+            "n_attempt": 1,
+            "n_graded": 1,
+            "n_blocked": 0,
+            "first_attempt_outcomes": {"completed": 1},
+            "eventual_outcomes": {"completed": 1},
+            "quality_conditional": {"numerator": 1, "denominator": 1, "rate": 1.0},
+            "e2e_success": {"numerator": 1, "denominator": 1, "rate": 1.0},
+            "derived_from": ["attempts.jsonl", "grading.jsonl", "retrieval.jsonl", "errors.jsonl"],
+            "artifact_checksums": "checksums.sha256",
+            "n_missing_grading": 0,
+            "completeness": 1.0,
+        }
+        validate_aggregate(valid_agg)
+
+        # Bad n_missing_grading (negative)
+        bad_missing = dict(valid_agg, n_missing_grading=-1)
+        with self.assertRaises(SchemaValidationError):
+            validate_aggregate(bad_missing)
+
+        # Bad completeness (out of range or non-finite)
+        bad_comp_high = dict(valid_agg, completeness=1.5)
+        with self.assertRaises(SchemaValidationError):
+            validate_aggregate(bad_comp_high)
+
+        bad_comp_nan = dict(valid_agg, completeness=float("nan"))
+        with self.assertRaises(SchemaValidationError):
+            validate_aggregate(bad_comp_nan)
+
+    def test_l4_manifest_readiness_status_typo_rejected(self):
+        """L4: Typos in readiness_status must be rejected."""
+        bad_typo = dict(self.valid_manifest, readiness_status="READY_FOR_MEASUREMENT")
+        with self.assertRaises(SchemaValidationError):
+            validate_manifest(bad_typo)
+
+        bad_typo2 = dict(self.valid_manifest, readiness_status="READY FOR PREFLIGHT")
+        with self.assertRaises(SchemaValidationError):
+            validate_manifest(bad_typo2)
 
 
 if __name__ == "__main__":

@@ -540,6 +540,96 @@ class TestWriterAndValidator(unittest.TestCase):
         self.assertFalse(report.is_valid)
         self.assertTrue(any("first_attempt=False contradicts target attempt retry_index=0" in e for e in report.errors))
 
+    def test_n1_provenance_tampering_rejected(self):
+        """N1: Tampering config_sha256 or fixture_manifest_sha256 must be rejected."""
+        runner = Phase4MockRunner(run_id="run_n1_prov", output_dir=self.test_dir)
+        runner.run(max_cases=3)
+
+        # Tamper fixture_manifest_sha256 in attempts.jsonl
+        att_path = self.test_dir / "attempts.jsonl"
+        lines = att_path.read_text(encoding="utf-8").splitlines()
+        first_att = json.loads(lines[0])
+        first_att["fixture_manifest_sha256"] = "0" * 64
+        lines[0] = json.dumps(first_att)
+        att_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        writer = CanonicalBundleWriter(self.test_dir)
+        writer.write_checksums()
+
+        val = CanonicalBundleValidator(self.test_dir)
+        report = val.validate()
+        self.assertFalse(report.is_valid)
+        self.assertTrue(any("fixture_manifest_sha256 does not match manifest" in e for e in report.errors))
+
+        # Tamper manifest qrels_sha256
+        man_path = self.test_dir / "manifest.json"
+        manifest = json.loads(man_path.read_text(encoding="utf-8"))
+        manifest["qrels_sha256"] = "1" * 64
+        man_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        writer.write_checksums()
+
+        report2 = val.validate()
+        self.assertFalse(report2.is_valid)
+        self.assertTrue(any("does not match recomputed qrels source hash" in e for e in report2.errors))
+
+    def test_n2_frozen_case_membership_and_single_primary(self):
+        """N2: Unknown case_id and multiple primary attempts must be rejected."""
+        runner = Phase4MockRunner(run_id="run_n2_cases", output_dir=self.test_dir)
+        runner.run(max_cases=3)
+
+        # Inject unknown case_id
+        att_path = self.test_dir / "attempts.jsonl"
+        lines = att_path.read_text(encoding="utf-8").splitlines()
+        first_att = json.loads(lines[0])
+        unknown_att = dict(first_att, record_id="rec_unk_01", attempt_id="att_unk_01", case_id="unknown_case_999")
+        lines.append(json.dumps(unknown_att))
+        att_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        writer = CanonicalBundleWriter(self.test_dir)
+        writer.write_checksums()
+
+        val = CanonicalBundleValidator(self.test_dir)
+        report = val.validate()
+        self.assertFalse(report.is_valid)
+        self.assertTrue(any("is not in benchmark dataset" in e for e in report.errors))
+
+    def test_n3_quality_conditional_excludes_blocked_environment(self):
+        """N3: Cases with blocked_environment are excluded from quality conditional denominator."""
+        runner = Phase4MockRunner(run_id="run_n3_quality", output_dir=self.test_dir)
+        runner.run(max_cases=3)
+
+        # Recompute from raw
+        man = json.loads((self.test_dir / "manifest.json").read_text(encoding="utf-8"))
+        atts = [json.loads(l) for l in (self.test_dir / "attempts.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+        grads = [json.loads(l) for l in (self.test_dir / "grading.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+        errs = [json.loads(l) for l in (self.test_dir / "errors.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+
+        # Set first grading decision to blocked_environment
+        grads[0]["decision"] = "blocked_environment"
+        recomp = recompute_aggregate_from_raw(man, atts, grads, errs)
+
+        # Denominator should now be 2, not 3!
+        self.assertEqual(recomp["quality_conditional"]["denominator"], 2)
+        self.assertIn("n_missing_grading", recomp)
+        self.assertIn("completeness", recomp)
+
+    def test_l2_cli_exit_codes(self):
+        """L2: CLI commands return exit code 1 on failure or invalid bundle."""
+        from evals.harness.cli import cmd_recompute, cmd_sidecar_check, cmd_qrels_check
+        import argparse
+
+        # cmd_sidecar_check with non-existent file
+        args_sidecar = argparse.Namespace(benchmark="non_existent_benchmark.jsonl")
+        self.assertEqual(cmd_sidecar_check(args_sidecar), 1)
+
+        # cmd_qrels_check with non-existent file
+        args_qrels = argparse.Namespace(qrels="non_existent_qrels.json")
+        self.assertEqual(cmd_qrels_check(args_qrels), 1)
+
+        # cmd_recompute on non-existent dir
+        args_recomp = argparse.Namespace(run_dir="non_existent_dir_999")
+        self.assertEqual(cmd_recompute(args_recomp), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

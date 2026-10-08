@@ -1,6 +1,6 @@
 # PHASE_4_EVIDENCE_CHECKLIST — Evidence và gate
 
-> Trạng thái tài liệu (2026-10-08): READY FOR HARNESS/PREFLIGHT. Offline F/B acceptance đã có ở HEAD `5d16a0a`, nhưng B1–B6, Docker/CI failure và live evidence chưa đóng; chưa ghi READY FOR MEASUREMENT.
+> Trạng thái (2026-10-08): READY FOR HARNESS/PREFLIGHT. HEAD `48b84cd` có offline/CI/Docker evidence, B1–B6 cũ DONE; N1–N5 còn mở theo [review](REVIEW_GEMINI_PHASE4_2026-10-07.md); chưa merge hoặc READY FOR MEASUREMENT.
 
 ## 1. Evidence levels
 
@@ -52,14 +52,14 @@ Arm chưa chạy là DESIGNED/BLOCKED; không đưa điểm giả vào scorecard
 
 | ID | Acceptance check | Dependency | Status |
 |---|---|---|---|
-| F01 | grader routing/tool/owner/outcome/claim/safety | schema, taxonomy, fixture | BACKLOG |
-| F02 | identity/fixture sidecar setup idempotent | frozen JSONL, DB | BACKLOG |
-| F09 | qrels, claim labels, answerability, adjudication | corpus/annotation | BACKLOG |
-| M01 | metric numerator/denominator, CI, first/eventual | metrics/statistics | BACKLOG |
-| M02 | cache/retry/no-evidence/blocked handling | schema, runner | BACKLOG |
-| M03 | telemetry completeness and unavailable identity | infra/harness | BACKLOG |
-| M05 | canonical writer/validator/checksum | results schema | BACKLOG |
-| M06 | importer preserves split/category/actual mode from raw | raw schema/taxonomy | BACKLOG |
+| F01 | grader routing/tool/owner/outcome/claim/safety | schema, taxonomy, fixture | PARTIAL OFFLINE — safety ordering DONE; N4 malformed trace và L1 null text còn mở; live rubric chưa nghiệm thu |
+| F02 | identity/fixture sidecar setup idempotent | frozen JSONL, DB | OFFLINE IMPLEMENTED — sidecar 250 có; N1 hash binding/live fixture còn mở |
+| F09 | qrels, claim labels, answerability, adjudication | corpus/annotation | PARTIAL — qrels/labels offline có; N1 fail-closed source và annotation/adjudication live còn mở |
+| M01 | metric numerator/denominator, CI, first/eventual | metrics/statistics | PARTIAL — recompute checks có; N3 quality denominator và statistical CI live chưa đạt |
+| M02 | cache/retry/no-evidence/blocked handling | schema, runner | PARTIAL — cache/retry append có; N2 duplicate schedule/N3 blocked handling còn mở |
+| M03 | telemetry completeness and unavailable identity | infra/harness | PASS OFFLINE MOCK — model telemetry có; N4 tool/safety typing và live identity còn mở |
+| M05 | canonical writer/validator/checksum | results schema | PARTIAL — writer/checksum/refs có; N1/N2/N3 và L2 còn mở |
+| M06 | importer preserves split/category/actual mode from raw | raw schema/taxonomy | BACKLOG — importer/scorecard theo split/category/actual mode chưa nghiệm thu |
 
 ## 6. Readiness rules
 
@@ -69,8 +69,7 @@ G2 MERGED_VERIFIED: merge/CI + clean checkout replay pass.
 G3 SMOKE_AUTHORIZED: explicit owner approval, quota/price cap and stop rule.
 G4 LIVE_SMOKE: live stratified smoke with actual provider/DB/KB, cache/retry/identity and artifact validation; this is not measurement readiness.
 G5 LANE_MEASUREMENT_READY: the only gate that may write READY FOR MEASUREMENT after G4 evidence, completeness, budget and identity checks pass.
-G5 LANE_MEASUREMENT_READY: smoke evidence is valid for this lane.
 G6 FULL_RUN_AUTHORIZED: separate full-run approval and preregistered workload.
 G7 MEASURED: full run and analysis artifacts complete.
 
-Only G5 may write READY FOR MEASUREMENT in a lane manifest. Missing artifact, missing identity, mock/CPU-only output or HTTP-200-only evidence cannot close G5.
+Only G5 may grant READY FOR MEASUREMENT in a lane manifest. Preflight/null-harness/mock bundles cannot grant it (N5 implementation còn mở). Missing artifact, missing identity, mock/CPU-only output or HTTP-200-only evidence cannot close G5.

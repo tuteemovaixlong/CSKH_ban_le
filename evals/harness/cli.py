@@ -64,27 +64,56 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 def cmd_recompute(args: argparse.Namespace) -> int:
     run_dir = Path(args.run_dir)
+    if not run_dir.is_dir():
+        print(f"ERROR: Run directory not found: {run_dir}", file=sys.stderr)
+        return 1
     val = CanonicalBundleValidator(run_dir)
     rep = val.validate()
+    if not rep.is_valid:
+        print(f"ERROR: Bundle validation failed for '{run_dir}':", file=sys.stderr)
+        for err in rep.errors:
+            print(f"  - {err}", file=sys.stderr)
+        return 1
     if rep.recomputed_aggregate:
         print(json.dumps(rep.recomputed_aggregate, indent=2, ensure_ascii=False))
         return 0
     else:
-        print(f"Failed to recompute aggregate: {rep.errors}", file=sys.stderr)
+        print(f"ERROR: Failed to recompute aggregate: {rep.errors}", file=sys.stderr)
         return 1
 
 
 def cmd_sidecar_check(args: argparse.Namespace) -> int:
     dataset_path = Path(args.benchmark or "evals/scenarios/benchmark_250.jsonl")
-    sidecar_dict, sha256 = generate_benchmark_sidecar(dataset_path)
-    print(f"SIDECAR_OK: cases={len(sidecar_dict)}, sha256={sha256}")
-    return 0
+    if not dataset_path.is_file():
+        print(f"ERROR: Benchmark file not found: {dataset_path}", file=sys.stderr)
+        return 1
+    try:
+        sidecar_dict, sha256 = generate_benchmark_sidecar(dataset_path)
+        if not sidecar_dict or not sha256:
+            print(f"ERROR: Benchmark sidecar is empty: {dataset_path}", file=sys.stderr)
+            return 1
+        print(f"SIDECAR_OK: cases={len(sidecar_dict)}, sha256={sha256}")
+        return 0
+    except Exception as exc:
+        print(f"ERROR: Sidecar generation failed: {exc}", file=sys.stderr)
+        return 1
 
 
 def cmd_qrels_check(args: argparse.Namespace) -> int:
-    qm = QrelsManager(Path(args.qrels) if args.qrels else None)
-    print(f"QRELS_OK: version={qm.version}, count={len(qm.entries)}, sha256={qm.sha256}")
-    return 0
+    qrels_path = Path(args.qrels) if args.qrels else Path("evals/qrels/policy_qrels_v1.json")
+    if not qrels_path.is_file():
+        print(f"ERROR: Qrels file not found: {qrels_path}", file=sys.stderr)
+        return 1
+    try:
+        qm = QrelsManager(qrels_path)
+        if not qm.entries or not qm.sha256:
+            print(f"ERROR: Qrels entries empty or missing SHA-256: {qrels_path}", file=sys.stderr)
+            return 1
+        print(f"QRELS_OK: version={qm.version}, count={len(qm.entries)}, sha256={qm.sha256}")
+        return 0
+    except Exception as exc:
+        print(f"ERROR: Qrels check failed: {exc}", file=sys.stderr)
+        return 1
 
 
 def main(argv: Optional[List[str]] = None) -> int:

@@ -10,7 +10,7 @@ Rule:
 - Gate progression must be sequential: G0 -> G1 -> G2 -> G3 -> G4 -> G5 -> G6.
 """
 
-from typing import List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 
 class GateOrderError(ValueError):
@@ -55,10 +55,18 @@ STATUS_PREFLIGHT = "READY FOR HARNESS/PREFLIGHT"
 STATUS_MEASUREMENT_READY = "READY FOR MEASUREMENT"
 
 
-def assert_gate_readiness(current_gate: str, requested_readiness: str) -> None:
+def assert_gate_readiness(
+    current_gate: str, requested_readiness: str, manifest: Optional[Dict[str, Any]] = None
+) -> None:
     """Executable assertion enforcing that ONLY G5 can declare READY FOR MEASUREMENT."""
     if current_gate not in VALID_GATES:
         raise GateOrderError(f"Unknown gate identifier: '{current_gate}'. Valid gates: {GATE_SEQUENCE}")
+
+    if requested_readiness not in (STATUS_PREFLIGHT, STATUS_MEASUREMENT_READY):
+        raise GatePermissionError(
+            f"Invalid readiness status '{requested_readiness}'. Must be one of: "
+            f"'{STATUS_PREFLIGHT}', '{STATUS_MEASUREMENT_READY}'."
+        )
 
     if requested_readiness == STATUS_MEASUREMENT_READY:
         if current_gate not in MEASUREMENT_READY_GATES:
@@ -66,6 +74,16 @@ def assert_gate_readiness(current_gate: str, requested_readiness: str) -> None:
                 f"R11 Violation: Only gate G5 (LANE_MEASUREMENT_READY) can grant '{STATUS_MEASUREMENT_READY}'. "
                 f"Current gate is '{current_gate}', which is strictly restricted to '{STATUS_PREFLIGHT}'."
             )
+        if manifest:
+            if manifest.get("is_preflight") is True:
+                raise GatePermissionError("Preflight bundle cannot grant READY FOR MEASUREMENT")
+            h_sha = manifest.get("evaluation_harness_sha")
+            if not h_sha:
+                raise GatePermissionError("Missing immutable harness SHA; cannot grant READY FOR MEASUREMENT")
+            p_id = manifest.get("provider_id", "")
+            l_id = manifest.get("lane_id", "")
+            if p_id == "mock" or l_id.startswith("mock"):
+                raise GatePermissionError(f"Mock provider/lane ('{p_id}'/'{l_id}') cannot grant READY FOR MEASUREMENT")
 
 
 class Phase4GateStateMachine:
@@ -109,7 +127,7 @@ class Phase4GateStateMachine:
         return self._current_gate
 
     def can_grant_measurement_readiness(self) -> bool:
-        """Returns True iff current gate is G5 or higher."""
+        """Returns True iff current gate is G5 (LANE_MEASUREMENT_READY)."""
         return self._current_gate in MEASUREMENT_READY_GATES
 
     def get_readiness_status(self) -> str:

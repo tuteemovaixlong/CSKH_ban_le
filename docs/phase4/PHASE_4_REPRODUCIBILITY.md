@@ -1,6 +1,6 @@
 # PHASE_4_REPRODUCIBILITY — Reproduction protocol
 
-> Status: READY FOR HARNESS/PREFLIGHT — writer/validator/mock replay đã có ở HEAD `5d16a0a`; aggregate/numeric/safety/Docker blockers và live evidence vẫn chưa đóng.
+> Status (2026-10-08): READY FOR HARNESS/PREFLIGHT — HEAD `48b84cd`; local 563 tests/49 skipped, contracts/mock/CI/Docker PASS. B1–B6 cũ DONE; N1–N5 còn mở theo [review](REVIEW_GEMINI_PHASE4_2026-10-07.md); chưa merge/live.
 
 ## 1. Identity manifest
 
@@ -75,9 +75,9 @@ A live/model runner command is not implied by this document; it must record endp
 
 | ID | Acceptance | Status |
 |---|---|---|
-| R01 | clean checkout emits canonical bundle/checksums | PARTIAL — mock replay PASS; clean-checkout/CI evidence pending |
-| R02 | validator rejects missing/duplicate joins and recomputation mismatch | BLOCKED — H8/H9/F1 pass, aggregate mutations and estimand tampering remain |
-| R03 | manifest separates system/harness/overlay and unavailable provider fields | PARTIAL — F2 happy path passes; strict preflight typing and source provenance remain |
-| R04 | stratified smoke, quota/cap and fixture/identity sidecar | BACKLOG — chưa được authorize |
+| R01 | clean checkout emits canonical bundle/checksums | PASS OFFLINE/CI — canonical mock replay đúng HEAD; G2 merged clean-checkout replay chưa có |
+| R02 | validator rejects missing/duplicate joins and recomputation mismatch | BLOCKED — rates/flags/refs/checksums cũ DONE; N2/N3 case/schedule/denominator và L2 CLI còn mở |
+| R03 | manifest separates system/harness/overlay and unavailable provider fields | PARTIAL — SHA/strict bool DONE; N1 source/coherence và N5 preflight readiness còn mở |
+| R04 | stratified smoke, quota/cap and fixture/identity sidecar | BACKLOG LIVE — sidecar offline có; N1 binding còn mở; smoke/quota/cap chưa authorize |
 
 Until R01–R04 have evidence, no paid/cloud/full measurement is authorized and status remains READY FOR HARNESS/PREFLIGHT.

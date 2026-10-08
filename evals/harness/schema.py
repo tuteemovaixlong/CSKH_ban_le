@@ -21,10 +21,13 @@ from evals.harness.constants import (
     SCHEMA_VERSION_GRADING,
     SCHEMA_VERSION_MANIFEST,
     SCHEMA_VERSION_RETRIEVAL,
+    STATUS_MEASUREMENT_READY,
+    STATUS_PREFLIGHT,
     VALID_ANSWERABILITY_STATUSES,
     VALID_ATTEMPT_CLASSES,
     VALID_ATTEMPT_OUTCOMES,
     VALID_DECISIONS,
+    VALID_READINESS_STATUSES,
     VALID_SEVERITIES,
     VALID_TAXONOMY_CODES,
     VALID_ZERO_REASONS,
@@ -190,13 +193,24 @@ def validate_manifest(data: Dict[str, Any]) -> None:
 
     # R11 Readiness gate check
     readiness_status = data.get("readiness_status")
-    if readiness_status == "READY FOR MEASUREMENT":
-        from evals.harness.gates import assert_gate_readiness
-        gate = data.get("gate", "")
-        try:
-            assert_gate_readiness(gate, readiness_status)
-        except Exception as exc:
-            raise SchemaValidationError(f"manifest [R11]: {exc}")
+    if readiness_status is not None:
+        if readiness_status not in VALID_READINESS_STATUSES:
+            raise SchemaValidationError(f"manifest: Invalid readiness_status: '{readiness_status}'. Must be one of {sorted(VALID_READINESS_STATUSES)}")
+        if readiness_status == STATUS_MEASUREMENT_READY:
+            if is_preflight:
+                raise SchemaValidationError("manifest [R11]: Preflight bundle cannot declare readiness_status='READY FOR MEASUREMENT'")
+            if harness_sha is None or is_placeholder_sha(harness_sha):
+                raise SchemaValidationError("manifest [R11]: Cannot declare readiness_status='READY FOR MEASUREMENT' without immutable evaluation_harness_sha")
+            provider_id = data.get("provider_id", "")
+            lane_id = data.get("lane_id", "")
+            if provider_id == "mock" or lane_id.startswith("mock"):
+                raise SchemaValidationError(f"manifest [R11]: Mock provider/lane ('{provider_id}'/'{lane_id}') cannot declare readiness_status='READY FOR MEASUREMENT'")
+            from evals.harness.gates import assert_gate_readiness
+            gate = data.get("gate", "")
+            try:
+                assert_gate_readiness(gate, readiness_status)
+            except Exception as exc:
+                raise SchemaValidationError(f"manifest [R11]: {exc}")
 
     benchmark_id = data.get("benchmark_id")
     if benchmark_id is not None and (not isinstance(benchmark_id, str) or not benchmark_id.strip()):
@@ -230,12 +244,17 @@ def validate_attempt_record(record: Dict[str, Any]) -> None:
     if finished_at is not None and (not isinstance(finished_at, str) or not finished_at.strip()):
         raise SchemaValidationError("attempt: finished_at_utc must be a non-empty string or null")
 
+    outcome = record.get("outcome")
+
     response_val = record.get("response")
     if response_val is not None and not isinstance(response_val, dict):
         raise SchemaValidationError("attempt: response must be a dictionary or null")
     if isinstance(response_val, dict):
-        if "text" in response_val and response_val["text"] is not None and not isinstance(response_val["text"], str):
-            raise SchemaValidationError("attempt: response.text must be a string or null")
+        if "text" in response_val:
+            if outcome == "completed" and response_val.get("text") is None:
+                raise SchemaValidationError("attempt: response.text cannot be null when outcome='completed'")
+            if response_val["text"] is not None and not isinstance(response_val["text"], str):
+                raise SchemaValidationError("attempt: response.text must be a string or null")
         if "sources" in response_val and response_val["sources"] is not None and not isinstance(response_val["sources"], list):
             raise SchemaValidationError("attempt: response.sources must be a list or null")
 
@@ -353,6 +372,27 @@ def validate_attempt_record(record: Dict[str, Any]) -> None:
             raise SchemaValidationError(
                 "attempt [R10]: When model_invocation_observed=False, 'trace.unavailable_reason' must be a non-empty string"
             )
+
+    # N4: tools_called validation
+    if "tools_called" in trace:
+        tools_called = trace["tools_called"]
+        if not isinstance(tools_called, list):
+            raise SchemaValidationError("attempt [N4]: 'trace.tools_called' must be a list of strings")
+        for idx, t in enumerate(tools_called):
+            if not isinstance(t, str) or not t.strip():
+                raise SchemaValidationError(f"attempt [N4]: 'trace.tools_called[{idx}]' must be a non-empty string")
+
+    # N4: tool_calls or tool_count validation
+    for tc_key in ("tool_calls", "tool_count"):
+        if tc_key in trace and trace[tc_key] is not None:
+            if type(trace[tc_key]) is not int or trace[tc_key] < 0:
+                raise SchemaValidationError(f"attempt [N4]: 'trace.{tc_key}' must be a non-negative integer")
+
+    # N4: Safety flags strict bool validation
+    for flag in ("privacy_leak", "prompt_injection", "unauthorized_mutation", "fabricated_source", "ownership_bypass", "unsupported_claim"):
+        if flag in trace and trace[flag] is not None:
+            if type(trace[flag]) is not bool:
+                raise SchemaValidationError(f"attempt [N4]: 'trace.{flag}' must be a strict boolean (True or False), got {type(trace[flag]).__name__}")
 
 
 def validate_grading_record(record: Dict[str, Any]) -> None:
@@ -565,6 +605,18 @@ def validate_aggregate(data: Dict[str, Any]) -> None:
             raise SchemaValidationError("aggregate: retry_recovery_rate must be a finite float or int")
         if rec_rate < 0.0 or rec_rate > 1.0:
             raise SchemaValidationError(f"aggregate: retry_recovery_rate {rec_rate} must be between 0.0 and 1.0")
+
+    missing_gr = data.get("n_missing_grading")
+    if missing_gr is not None:
+        if type(missing_gr) is not int or missing_gr < 0:
+            raise SchemaValidationError(f"aggregate: n_missing_grading must be a non-negative integer, got {missing_gr}")
+
+    completeness = data.get("completeness")
+    if completeness is not None:
+        if type(completeness) not in (int, float) or type(completeness) is bool or not math.isfinite(completeness):
+            raise SchemaValidationError("aggregate: completeness must be a finite float or int")
+        if completeness < 0.0 or completeness > 1.0:
+            raise SchemaValidationError(f"aggregate: completeness {completeness} must be between 0.0 and 1.0")
 
     derived_from = data.get("derived_from")
     if not isinstance(derived_from, list) or len(derived_from) == 0:

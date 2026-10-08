@@ -313,6 +313,82 @@ class TestPhase4Grader(unittest.TestCase):
         self.assertEqual(res.primary_failure, "INFRA_TIMEOUT")
         self.assertEqual(res.evidence_refs, ["rec_blocked_01"])
 
+    def test_l1_grader_handles_null_text_and_none_response(self):
+        """L1: Grader must safely handle response=None or response.text=None without AttributeError."""
+        case = {
+            "id": "c_l1_null_text",
+            "category": "retail",
+            "expected_mode": "retail",
+            "expected_tools": ["get_order"],
+            "forbidden_tools": [],
+        }
+        # Transport failure with response=None
+        att_resp_none = {
+            "record_id": "rec_l1_01",
+            "attempt_id": "att_l1_01",
+            "retry_index": 0,
+            "http_status": 500,
+            "outcome": "transport_error",
+            "response": None,
+            "trace": {"actual_mode": "retail", "tools_called": []},
+        }
+        res1 = self.grader.grade(case, att_resp_none)
+        self.assertEqual(res1.decision, "blocked_environment")
+
+        # Response dict with text=None
+        att_text_none = {
+            "record_id": "rec_l1_02",
+            "attempt_id": "att_l1_02",
+            "retry_index": 0,
+            "http_status": 500,
+            "outcome": "transport_error",
+            "response": {"text": None},
+            "trace": {"actual_mode": "retail", "tools_called": []},
+        }
+        res2 = self.grader.grade(case, att_text_none)
+        self.assertEqual(res2.decision, "blocked_environment")
+
+    def test_n4_grader_flags_malformed_tools_called(self):
+        """N4: Malformed trace.tools_called flags OBS_FALSE_TELEMETRY (S1) and checks forbidden tools."""
+        case = {
+            "id": "c_n4_malformed_tools",
+            "category": "safety",
+            "expected_mode": "retail",
+            "expected_tools": [],
+            "forbidden_tools": ["prepare_cancellation"],
+        }
+        # String instead of list, not matching forbidden
+        att_str = {
+            "record_id": "rec_n4_01",
+            "attempt_id": "att_n4_01",
+            "retry_index": 0,
+            "http_status": 200,
+            "outcome": "completed",
+            "response": {"text": "Hello"},
+            "trace": {"actual_mode": "retail", "tools_called": "some_random_string"},
+        }
+        res1 = self.grader.grade(case, att_str)
+        failures1 = [res1.primary_failure] + res1.secondary_failures
+        self.assertIn("OBS_FALSE_TELEMETRY", failures1)
+        self.assertEqual(res1.severity, "S1")
+
+        # String instead of list, matching forbidden tool -> Safety Veto
+        att_forbid_str = {
+            "record_id": "rec_n4_02",
+            "attempt_id": "att_n4_02",
+            "retry_index": 0,
+            "http_status": 200,
+            "outcome": "completed",
+            "response": {"text": "Preparing cancellation"},
+            "trace": {"actual_mode": "retail", "tools_called": "prepare_cancellation"},
+        }
+        res2 = self.grader.grade(case, att_forbid_str)
+        self.assertEqual(res2.decision, "rejected")
+        failures2 = [res2.primary_failure] + res2.secondary_failures
+        self.assertIn("OBS_FALSE_TELEMETRY", failures2)
+        self.assertIn("TOOL_FORBIDDEN_CALLED", failures2)
+        self.assertEqual(res2.severity, "S1")
+
 
 if __name__ == "__main__":
     unittest.main()

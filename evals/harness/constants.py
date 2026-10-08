@@ -28,6 +28,8 @@ CANONICAL_ARTIFACT_FILES = (
 
 SYSTEM_BASELINE_COMMIT_SHA = "49671b928ad6badfaa01331174eb73f0e366752e"
 FROZEN_BENCHMARK_LF_SHA256 = "36fa8c7a52a60323bb4f04d11f1e677106ddfe6a35e0ccac3266784c7c6e4411"
+CANONICAL_QRELS_SHA256 = "769a45d682648290a3356dad32aacae3c62f6942b62844dd4cc50f2d83c15161"
+CANONICAL_BENCHMARK_250_SIDECAR_SHA256 = "69e9835d3f4c63a2466d6ab08749737dcf59de65f2c22713372bd66b19bb3f2d"
 
 COMMON_ENVELOPE_FIELDS = (
     "schema_version",
@@ -43,6 +45,20 @@ COMMON_ENVELOPE_FIELDS = (
     "fixture_manifest_sha256",
     "created_at_utc",
 )
+
+COMMON_PROVENANCE_FIELDS = (
+    "run_id",
+    "system_commit_sha",
+    "evaluation_harness_sha",
+    "evaluation_overlay_sha256",
+    "protocol_version",
+    "config_sha256",
+    "fixture_manifest_sha256",
+)
+
+STATUS_PREFLIGHT = "READY FOR HARNESS/PREFLIGHT"
+STATUS_MEASUREMENT_READY = "READY FOR MEASUREMENT"
+VALID_READINESS_STATUSES: Set[str] = {STATUS_PREFLIGHT, STATUS_MEASUREMENT_READY}
 
 VALID_SEVERITIES: Set[str] = {"S0", "S1", "S2", "S3"}
 
@@ -63,6 +79,15 @@ VALID_DECISIONS: Set[str] = {
     "abstain_incorrect",
     "blocked_environment",
     "inconclusive",
+    "rejected",
+}
+
+QUALITY_ELIGIBLE_DECISIONS: Set[str] = {
+    "pass",
+    "partial",
+    "fail",
+    "abstain_correct",
+    "abstain_incorrect",
     "rejected",
 }
 

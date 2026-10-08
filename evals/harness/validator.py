@@ -14,7 +14,13 @@ import json
 
 from evals.harness.constants import (
     CANONICAL_ARTIFACT_FILES,
+    CANONICAL_BENCHMARK_250_SIDECAR_SHA256,
+    CANONICAL_QRELS_SHA256,
+    COMMON_PROVENANCE_FIELDS,
     FROZEN_BENCHMARK_LF_SHA256,
+    QUALITY_ELIGIBLE_DECISIONS,
+    STATUS_MEASUREMENT_READY,
+    STATUS_PREFLIGHT,
     SYSTEM_BASELINE_COMMIT_SHA,
     is_placeholder_sha,
 )
@@ -35,6 +41,45 @@ def safe_json_loads(s: str) -> Any:
     def _reject_constant(c: str) -> None:
         raise ValueError(f"Disallowed non-standard JSON constant: {c}")
     return json.loads(s, parse_constant=_reject_constant)
+
+
+def check_record_provenance(
+    record: Dict[str, Any],
+    manifest: Dict[str, Any],
+    record_file: str,
+    line_no: int,
+    target_attempt: Optional[Dict[str, Any]] = None,
+) -> List[str]:
+    """Validates that a record's provenance fields strictly align with the manifest and target attempt."""
+    errs: List[str] = []
+    # Check against manifest
+    for f in COMMON_PROVENANCE_FIELDS:
+        rec_val = record.get(f)
+        man_val = manifest.get(f)
+        if rec_val != man_val:
+            if f == "run_id":
+                errs.append(f"{record_file} line {line_no}: run_id '{rec_val}' != manifest run_id '{man_val}'")
+            else:
+                errs.append(f"{record_file} line {line_no}: {f} does not match manifest")
+
+    # Check against target attempt if applicable
+    if target_attempt is not None:
+        for f in COMMON_PROVENANCE_FIELDS:
+            rec_val = record.get(f)
+            att_val = target_attempt.get(f)
+            if rec_val != att_val:
+                if f == "run_id":
+                    errs.append(f"{record_file} line {line_no}: run_id '{rec_val}' != target attempt run_id '{att_val}'")
+                else:
+                    errs.append(f"{record_file} line {line_no}: {f} != target attempt {f}")
+        for join_key in ("case_id", "logical_request_id"):
+            rec_val = record.get(join_key)
+            att_val = target_attempt.get(join_key)
+            if rec_val != att_val:
+                errs.append(
+                    f"{record_file} line {line_no}: {join_key} '{rec_val}' != target attempt {join_key} '{att_val}'"
+                )
+    return errs
 
 
 @dataclass
@@ -141,9 +186,11 @@ def recompute_aggregate_from_raw(
     for att_id, cid in first_attempt_map.items():
         g = effective_gradings.get(att_id)
         if g and g.get("first_attempt") is True:
-            graded_first_case_ids.add(cid)
-            if g.get("decision") in ("pass", "abstain_correct"):
-                first_pass_case_ids.add(cid)
+            dec = g.get("decision")
+            if dec in QUALITY_ELIGIBLE_DECISIONS:
+                graded_first_case_ids.add(cid)
+                if dec in ("pass", "abstain_correct"):
+                    first_pass_case_ids.add(cid)
 
     n_graded_first = len(graded_first_case_ids)
     first_passes = len(first_pass_case_ids)
@@ -154,6 +201,10 @@ def recompute_aggregate_from_raw(
         "denominator": n_graded_first,
         "rate": quality_cond_rate,
     }
+
+    # Completeness and missing grading
+    n_missing_grading = max(0, n_total - n_graded - n_blocked)
+    completeness = round(n_graded / n_total, 4) if n_total > 0 else 0.0
 
     # Eventual outcomes and passes computed strictly per logical case (latest attempt per case_id)
     eventual_outcomes = Counter()
@@ -208,6 +259,8 @@ def recompute_aggregate_from_raw(
         "n_attempt": n_attempt,
         "n_graded": n_graded,
         "n_blocked": n_blocked,
+        "n_missing_grading": n_missing_grading,
+        "completeness": completeness,
         "first_attempt_outcomes": dict(first_outcomes),
         "eventual_outcomes": dict(eventual_outcomes),
         "quality_conditional": quality_conditional,
@@ -273,16 +326,56 @@ class CanonicalBundleValidator:
             errors.append(f"manifest.json validation failed: {exc}")
             return ValidationReport(run_id="<unknown>", is_valid=False, is_preflight=False, errors=errors)
 
-        # Cross-reference manifest qrels_sha256 with actual qrels source file if present
+        # N5: Readiness gate check on manifest
+        readiness_status = manifest.get("readiness_status")
+        if readiness_status == STATUS_MEASUREMENT_READY:
+            if is_preflight:
+                errors.append("manifest.json: Preflight bundle cannot declare readiness_status='READY FOR MEASUREMENT'")
+            if is_placeholder_sha(harness_sha) or not harness_sha:
+                errors.append("manifest.json: Bundle cannot declare readiness_status='READY FOR MEASUREMENT' without immutable evaluation_harness_sha")
+            provider_id = manifest.get("provider_id", "")
+            lane_id = manifest.get("lane_id", "")
+            if provider_id == "mock" or lane_id.startswith("mock"):
+                errors.append(f"manifest.json: Mock provider/lane ('{provider_id}'/'{lane_id}') cannot declare readiness_status='READY FOR MEASUREMENT'")
+
+        # Cross-reference manifest qrels_sha256 with actual qrels source file (fail-closed)
         from evals.harness.qrels import QrelsManager
         try:
             qm = QrelsManager()
-            if qm.sha256 and manifest.get("qrels_sha256") and manifest.get("qrels_sha256") != qm.sha256:
-                errors.append(
-                    f"manifest.json: qrels_sha256 '{manifest.get('qrels_sha256')}' does not match recomputed qrels source hash '{qm.sha256}'"
-                )
-        except Exception:
-            pass
+            if not qm.sha256:
+                errors.append("manifest.json: Cannot verify qrels_sha256: canonical qrels source file missing or unreadable")
+            else:
+                if manifest.get("qrels_sha256") != qm.sha256:
+                    errors.append(
+                        f"manifest.json: qrels_sha256 '{manifest.get('qrels_sha256')}' does not match recomputed qrels source hash '{qm.sha256}'"
+                    )
+                if qm.sha256 != CANONICAL_QRELS_SHA256:
+                    errors.append(
+                        f"manifest.json: qrels source hash '{qm.sha256}' does not match canonical qrels hash '{CANONICAL_QRELS_SHA256}'"
+                    )
+        except Exception as q_exc:
+            errors.append(f"manifest.json: Failed verifying qrels source hash: {q_exc}")
+
+        # Cross-reference manifest fixture_manifest_sha256 with canonical sidecar
+        from evals.harness.sidecar import generate_benchmark_sidecar
+        benchmark_id = manifest.get("benchmark_id")
+        benchmark_file = Path(__file__).resolve().parents[1] / "scenarios" / f"{benchmark_id}.jsonl"
+        if benchmark_file.is_file():
+            try:
+                _, sidecar_sha = generate_benchmark_sidecar(benchmark_file)
+                if manifest.get("fixture_manifest_sha256") != sidecar_sha:
+                    errors.append(
+                        f"manifest.json: fixture_manifest_sha256 '{manifest.get('fixture_manifest_sha256')}' does not match recomputed sidecar hash '{sidecar_sha}'"
+                    )
+                if benchmark_id == "benchmark_250" and manifest.get("case_count") == 250:
+                    if sidecar_sha != CANONICAL_BENCHMARK_250_SIDECAR_SHA256:
+                        errors.append(
+                            f"manifest.json: sidecar hash '{sidecar_sha}' does not match canonical benchmark_250 sidecar hash '{CANONICAL_BENCHMARK_250_SIDECAR_SHA256}'"
+                        )
+            except Exception as s_exc:
+                errors.append(f"manifest.json: Failed recomputing sidecar hash: {s_exc}")
+        else:
+            errors.append(f"manifest.json: Benchmark scenario file not found: {benchmark_file}")
 
         # Verify manifest dataset_sha256 strictly equals frozen benchmark LF hash
         if manifest.get("dataset_sha256") != FROZEN_BENCHMARK_LF_SHA256:
@@ -335,7 +428,21 @@ class CanonicalBundleValidator:
         attempts_by_id: Dict[str, Dict[str, Any]] = {}
         attempt_record_ids: Set[str] = set()
         retry_groups: Dict[Tuple[str, str], List[int]] = defaultdict(list)
+        primary_attempts_by_case: Dict[str, List[str]] = defaultdict(list)
+        requests_by_case: Dict[str, Set[str]] = defaultdict(set)
         attempts_path = self.run_dir / "attempts.jsonl"
+
+        # Frozen benchmark cases set for membership check (N2)
+        frozen_cases: Set[str] = set()
+        if benchmark_file.is_file():
+            for b_line in benchmark_file.read_text(encoding="utf-8").splitlines():
+                b_line = b_line.strip()
+                if b_line:
+                    try:
+                        frozen_cases.add(safe_json_loads(b_line)["id"])
+                    except Exception:
+                        pass
+
         try:
             for line_no, line in enumerate(attempts_path.read_text(encoding="utf-8").splitlines(), start=1):
                 line = line.strip()
@@ -359,19 +466,39 @@ class CanonicalBundleValidator:
                     errors.append(f"attempts.jsonl: Duplicate attempt_id '{att_id}' at line {line_no}")
                 attempts_by_id[att_id] = att
 
-                # Check run_id and commit SHA match manifest
-                if att.get("run_id") != run_id:
-                    errors.append(f"attempts.jsonl line {line_no}: run_id '{att.get('run_id')}' != manifest run_id '{run_id}'")
-                if att.get("system_commit_sha") != manifest.get("system_commit_sha"):
-                    errors.append(f"attempts.jsonl line {line_no}: system_commit_sha does not match manifest")
-                if att.get("evaluation_harness_sha") != manifest.get("evaluation_harness_sha"):
-                    errors.append(f"attempts.jsonl line {line_no}: evaluation_harness_sha does not match manifest")
+                cid = att["case_id"]
+                if frozen_cases and cid not in frozen_cases:
+                    errors.append(
+                        f"attempts.jsonl line {line_no}: case_id '{cid}' is not in benchmark dataset '{benchmark_id}'"
+                    )
+
+                if att.get("retry_index") == 0:
+                    primary_attempts_by_case[cid].append(att_id)
+                requests_by_case[cid].add(att.get("logical_request_id"))
+
+                # Check provenance against manifest
+                errors.extend(check_record_provenance(att, manifest, "attempts.jsonl", line_no))
 
                 group_key = (att["case_id"], att["logical_request_id"])
                 retry_groups[group_key].append(att["retry_index"])
                 attempts.append(att)
         except Exception as exc:
             errors.append(f"Failed reading attempts.jsonl: {exc}")
+
+        # Check single primary attempt and request consistency per case (N2)
+        for cid, att_ids in primary_attempts_by_case.items():
+            if len(att_ids) > 1:
+                errors.append(
+                    f"attempts.jsonl: case '{cid}' has multiple primary attempts (retry_index=0): {att_ids}"
+                )
+        for cid in {a["case_id"] for a in attempts}:
+            if len(primary_attempts_by_case[cid]) == 0:
+                errors.append(f"attempts.jsonl: case '{cid}' has no primary attempt (retry_index=0)")
+        for cid, req_ids in requests_by_case.items():
+            if len(req_ids) > 1:
+                errors.append(
+                    f"attempts.jsonl: case '{cid}' has inconsistent logical_request_ids: {sorted(req_ids)}"
+                )
 
         # Check retry sequencing per retry group
         for group_key, indices in retry_groups.items():
@@ -423,18 +550,9 @@ class CanonicalBundleValidator:
                         errors.append(
                             f"grading.jsonl line {line_no}: first_attempt={gr.get('first_attempt')} contradicts target attempt retry_index={target_att.get('retry_index')} (expected {expected_first})"
                         )
-                    if gr.get("run_id") != target_att.get("run_id"):
-                        errors.append(f"grading.jsonl line {line_no}: run_id '{gr.get('run_id')}' != target attempt run_id '{target_att.get('run_id')}'")
-                    if gr.get("case_id") != target_att.get("case_id"):
-                        errors.append(f"grading.jsonl line {line_no}: case_id '{gr.get('case_id')}' != target attempt case_id '{target_att.get('case_id')}'")
-                    if gr.get("logical_request_id") != target_att.get("logical_request_id"):
-                        errors.append(f"grading.jsonl line {line_no}: logical_request_id '{gr.get('logical_request_id')}' != target attempt logical_request_id '{target_att.get('logical_request_id')}'")
-                    if gr.get("system_commit_sha") != target_att.get("system_commit_sha"):
-                        errors.append(f"grading.jsonl line {line_no}: system_commit_sha != target attempt system_commit_sha")
-                    if gr.get("evaluation_harness_sha") != target_att.get("evaluation_harness_sha"):
-                        errors.append(f"grading.jsonl line {line_no}: evaluation_harness_sha != target attempt evaluation_harness_sha")
-                    if gr.get("config_sha256") != target_att.get("config_sha256"):
-                        errors.append(f"grading.jsonl line {line_no}: config_sha256 != target attempt config_sha256")
+                    errors.extend(
+                        check_record_provenance(gr, manifest, "grading.jsonl", line_no, target_attempt=target_att)
+                    )
 
                 gradings.append(gr)
         except Exception as exc:
@@ -482,18 +600,9 @@ class CanonicalBundleValidator:
                         f"retrieval.jsonl line {line_no}: attempt_id '{target_att_id}' not found in attempts.jsonl"
                     )
                 else:
-                    if rt.get("run_id") != target_att.get("run_id"):
-                        errors.append(f"retrieval.jsonl line {line_no}: run_id '{rt.get('run_id')}' != target attempt run_id '{target_att.get('run_id')}'")
-                    if rt.get("case_id") != target_att.get("case_id"):
-                        errors.append(f"retrieval.jsonl line {line_no}: case_id '{rt.get('case_id')}' != target attempt case_id '{target_att.get('case_id')}'")
-                    if rt.get("logical_request_id") != target_att.get("logical_request_id"):
-                        errors.append(f"retrieval.jsonl line {line_no}: logical_request_id '{rt.get('logical_request_id')}' != target attempt logical_request_id '{target_att.get('logical_request_id')}'")
-                    if rt.get("system_commit_sha") != target_att.get("system_commit_sha"):
-                        errors.append(f"retrieval.jsonl line {line_no}: system_commit_sha != target attempt system_commit_sha")
-                    if rt.get("evaluation_harness_sha") != target_att.get("evaluation_harness_sha"):
-                        errors.append(f"retrieval.jsonl line {line_no}: evaluation_harness_sha != target attempt evaluation_harness_sha")
-                    if rt.get("config_sha256") != target_att.get("config_sha256"):
-                        errors.append(f"retrieval.jsonl line {line_no}: config_sha256 != target attempt config_sha256")
+                    errors.extend(
+                        check_record_provenance(rt, manifest, "retrieval.jsonl", line_no, target_attempt=target_att)
+                    )
 
                 # Cross-reference qrels_sha256 with manifest
                 rt_qrels = rt.get("qrels_sha256")
@@ -542,18 +651,9 @@ class CanonicalBundleValidator:
                         f"errors.jsonl line {line_no}: attempt_id '{target_att_id}' not found in attempts.jsonl"
                     )
                 else:
-                    if err.get("run_id") != target_att.get("run_id"):
-                        errors.append(f"errors.jsonl line {line_no}: run_id '{err.get('run_id')}' != target attempt run_id '{target_att.get('run_id')}'")
-                    if err.get("case_id") != target_att.get("case_id"):
-                        errors.append(f"errors.jsonl line {line_no}: case_id '{err.get('case_id')}' != target attempt case_id '{target_att.get('case_id')}'")
-                    if err.get("logical_request_id") != target_att.get("logical_request_id"):
-                        errors.append(f"errors.jsonl line {line_no}: logical_request_id '{err.get('logical_request_id')}' != target attempt logical_request_id '{target_att.get('logical_request_id')}'")
-                    if err.get("system_commit_sha") != target_att.get("system_commit_sha"):
-                        errors.append(f"errors.jsonl line {line_no}: system_commit_sha != target attempt system_commit_sha")
-                    if err.get("evaluation_harness_sha") != target_att.get("evaluation_harness_sha"):
-                        errors.append(f"errors.jsonl line {line_no}: evaluation_harness_sha != target attempt evaluation_harness_sha")
-                    if err.get("config_sha256") != target_att.get("config_sha256"):
-                        errors.append(f"errors.jsonl line {line_no}: config_sha256 != target attempt config_sha256")
+                    errors.extend(
+                        check_record_provenance(err, manifest, "errors.jsonl", line_no, target_attempt=target_att)
+                    )
 
                 error_records.append(err)
         except Exception as exc:
@@ -671,11 +771,21 @@ class CanonicalBundleValidator:
                 )
 
             # Recomputed checks for all case counts
-            for key in ("logical_cases", "n_total", "n_attempt", "n_graded", "n_blocked"):
+            for key in ("logical_cases", "n_total", "n_attempt", "n_graded", "n_blocked", "n_missing_grading"):
                 if aggregate.get(key) != recomputed[key]:
                     errors.append(
                         f"aggregate.json {key} mismatch: recorded={aggregate.get(key)}, recomputed={recomputed[key]}"
                     )
+
+            if "completeness" in aggregate and aggregate.get("completeness") != recomputed["completeness"]:
+                errors.append(
+                    f"aggregate.json completeness mismatch: recorded={aggregate.get('completeness')}, recomputed={recomputed['completeness']}"
+                )
+
+            if sum(recomputed["first_attempt_outcomes"].values()) != recomputed["n_total"]:
+                errors.append(
+                    f"aggregate.json first_attempt_outcomes count sum ({sum(recomputed['first_attempt_outcomes'].values())}) != n_total ({recomputed['n_total']})"
+                )
 
             # Recomputed checks for ratio metrics
             for ratio_key in ("quality_conditional", "e2e_success"):

@@ -31,7 +31,7 @@ from evals.harness.constants import (
 )
 from evals.harness.grader import Phase4Grader
 from evals.harness.qrels import QrelsManager
-from evals.harness.sidecar import build_sidecar_for_case
+from evals.harness.sidecar import build_sidecar_for_case, generate_benchmark_sidecar
 from evals.harness.telemetry import TelemetryCollector, assert_a0_cache_off
 from evals.harness.writer import CanonicalBundleWriter
 
@@ -148,7 +148,10 @@ class Phase4MockRunner:
             lines = lines[:max_cases]
 
         config_sha256 = hashlib.sha256(b"mock_config_v1").hexdigest()
-        fixture_manifest_sha256 = hashlib.sha256(b"mock_fixture_v1").hexdigest()
+        _, fixture_manifest_sha256 = generate_benchmark_sidecar(self.benchmark_path)
+
+        if not self.qrels.sha256:
+            raise ValueError(f"Qrels file {self.qrels.qrels_path} not found or empty")
 
         created_at = datetime.now(timezone.utc).isoformat()
 
@@ -168,7 +171,7 @@ class Phase4MockRunner:
             "config_sha256": config_sha256,
             "dataset_sha256": dataset_sha256,
             "fixture_manifest_sha256": fixture_manifest_sha256,
-            "qrels_sha256": self.qrels.sha256 or hashlib.sha256(b"empty_qrels").hexdigest(),
+            "qrels_sha256": self.qrels.sha256,
             "model_revision": None,
             "model_revision_unavailable_reason": "mock_provider_offline",
             "tokenizer_revision": None,
@@ -353,7 +356,7 @@ class Phase4MockRunner:
                 "served_chunks": cand_chunks[:2],
                 "qrels_version": self.qrels.version,
                 "qrels_source": self.qrels.source,
-                "qrels_sha256": self.qrels.sha256 or hashlib.sha256(b"empty_qrels").hexdigest(),
+                "qrels_sha256": self.qrels.sha256,
                 "no_evidence": (qrel_entry.no_evidence if qrel_entry else False),
                 "answerability_status": (qrel_entry.answerability_status if qrel_entry else "answerable"),
                 "unavailable_reason": None,

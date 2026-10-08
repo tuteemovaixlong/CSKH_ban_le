@@ -1,8 +1,8 @@
 # Strategic Analysis: Phase 4 Scientific Evaluation
 
-> Ngày: 2026-10-06
+> Cập nhật: 2026-10-08
 > Baseline: main tại 49671b928ad6badfaa01331174eb73f0e366752e
-> Trạng thái: READY FOR HARNESS/PREFLIGHT; chưa đủ evidence để ghi READY FOR MEASUREMENT hoặc production readiness.
+> Trạng thái: READY FOR HARNESS/PREFLIGHT; HEAD `48b84cd` offline/CI/Docker PASS, B1–B6 cũ DONE; N1–N5 còn mở theo [review hiện hành](phase4/REVIEW_GEMINI_PHASE4_2026-10-07.md); chưa merge/live measurement.
 
 ## Kết luận điều hành
 
@@ -47,14 +47,14 @@ Merge/CI không cấp quyền paid smoke. G4 chỉ là live smoke; chỉ G5 đư
 
 | ID | Acceptance | Dependency | Status |
 |---|---|---|---|
-| B01 | grader routing/tool/owner/outcome/claim/safety adversarial | schema/taxonomy/fixture | BACKLOG |
-| B02 | identity/fixture/focus/prior-turn sidecar idempotent | frozen JSONL/DB | BACKLOG |
-| B03 | provider/config manifest + unavailable identity reasons | infrastructure | BACKLOG |
-| B04 | cache OFF assertion, retry append, first/eventual/cumulative wait | schema/runner | BACKLOG |
-| B05 | canonical writer/validator joins, counts, checksums, recomputation | schema/evidence | BACKLOG |
-| B06 | qrels/claim labels/answerability/adjudication version/hash | corpus/annotation | BACKLOG |
-| B07 | actual mode/model/tool/timing/cache/load measured or null | harness/telemetry | BACKLOG |
-| B08 | PostgreSQL/pgvector/KB, quota/cap/stratified smoke/stop rule | infra/cost/fixture | BACKLOG |
+| B01 | grader routing/tool/owner/outcome/claim/safety adversarial | schema/taxonomy/fixture | PARTIAL — safety ordering/empty-string/ref fixes DONE; N4 malformed safety trace và L1 null text còn mở |
+| B02 | identity/fixture/focus/prior-turn sidecar idempotent | frozen JSONL/DB | OFFLINE IMPLEMENTED — sidecar 250 có; N1 source/hash binding và live fixture chưa nghiệm thu |
+| B03 | provider/config manifest + unavailable identity reasons | infrastructure | PARTIAL — immutable SHA/strict preflight typing DONE; N1 coherence và N5 readiness còn mở; live identity chưa nghiệm thu |
+| B04 | cache OFF assertion, retry append, first/eventual/cumulative wait | schema/runner | PASS OFFLINE CONTROLLER — cache OFF/retry append có; N2/N3 primary selection/denominator còn mở |
+| B05 | canonical writer/validator joins, counts, checksums, recomputation | schema/evidence | BLOCKED — rate/non-finite/flag fixes DONE; N1/N2/N3 và CLI còn mở |
+| B06 | qrels/claim labels/answerability/adjudication version/hash | corpus/annotation | PARTIAL — qrels/labels offline có; N1 source fail-closed và live annotation chưa nghiệm thu |
+| B07 | actual mode/model/tool/timing/cache/load measured or null | harness/telemetry | PASS OFFLINE MOCK — measured-zero/non-finite checks có; N4 tool/safety typing còn mở; chưa phải live evidence |
+| B08 | PostgreSQL/pgvector/KB, quota/cap/stratified smoke/stop rule | infra/cost/fixture | BACKLOG — live DB/KB/lane quota/smoke/cap chưa authorize/nghiệm thu |
 
 ## Phase 4A/4B
 
@@ -74,4 +74,4 @@ Upgrade only when evidence indicates root cause:
 
 ## Next action
 
-Gemini receives the BUILD HARNESS prompt from PHASE_4_EXECUTION_HANDOFF.md. Work stops at offline acceptance/merge/reproduction until owner separately authorizes smoke. Current official status remains READY FOR HARNESS/PREFLIGHT.
+Gemini tiếp tục từ prompt đầu docs/phase4/REVIEW_GEMINI_PHASE4_2026-10-07.md và plan/handoff liên kết để sửa N1–N5/L1–L4, cập nhật PR #36 rồi dừng owner review. Work stops at offline acceptance/merge/reproduction until owner separately authorizes smoke. Current official status remains READY FOR HARNESS/PREFLIGHT.

@@ -1,6 +1,6 @@
 # Phase 4 — Infrastructure Specification
 
-**Status:** READY FOR HARNESS/PREFLIGHT — infrastructure/protocol đã được chốt trên giấy; chưa có measurement gate đóng (2026-10-06).
+**Status (2026-10-08):** READY FOR HARNESS/PREFLIGHT — offline harness/CI/Docker đã có ở HEAD `48b84cd`; N1–N5 còn mở, chưa merge/G2 hoặc live measurement gate.
 **Scope:** scientific evaluation only. Không authorize production deploy, model replacement, schema migration, paid API hoặc cloud provisioning.
 
 ## 1. Identity và status
@@ -74,11 +74,11 @@ Lane có RAG phải kết nối isolated PostgreSQL/pgvector snapshot, business 
 
 | ID | Acceptance check | Status |
 |---|---|---|
-| H01 | adapter topology/response identity/tool-call/timeout preflight | BACKLOG |
-| H02 | cache OFF and retry append controller | BACKLOG |
-| H03 | fixture/identity/sidecar and PostgreSQL/pgvector/KB preflight | BACKLOG |
-| H04 | canonical writer/validator and checksums | BACKLOG |
-| H05 | quota/cost ledger and smoke/full approval separation | BACKLOG |
-| H06 | clean-checkout replay with system/harness/overlay tuple | BACKLOG |
+| H01 | adapter topology/response identity/tool-call/timeout preflight | PARTIAL MOCK — manifest có; live adapter/endpoint identity chưa nghiệm thu |
+| H02 | cache OFF and retry append controller | PASS OFFLINE CONTROLLER — cache OFF/retry append; N2/N3 acceptance còn mở |
+| H03 | fixture/identity/sidecar and PostgreSQL/pgvector/KB preflight | PARTIAL — sidecar offline có/N1 binding mở; live PostgreSQL/KB fixture preflight chưa nghiệm thu |
+| H04 | canonical writer/validator and checksums | PARTIAL — canonical bundle/checksums có; N1/N2/N3/L2 acceptance còn mở |
+| H05 | quota/cost ledger and smoke/full approval separation | BACKLOG — quota/price cap và live authorization evidence chưa có |
+| H06 | clean-checkout replay with system/harness/overlay tuple | PASS BRANCH OFFLINE/CI — tuple ghi đúng HEAD; coherence N1 mở; G2 merged replay chưa có |
 
 Until H01–H06 have evidence, status remains READY FOR HARNESS/PREFLIGHT.
