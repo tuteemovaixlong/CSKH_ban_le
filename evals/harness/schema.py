@@ -27,6 +27,7 @@ from evals.harness.constants import (
     VALID_SEVERITIES,
     VALID_TAXONOMY_CODES,
     VALID_ZERO_REASONS,
+    is_placeholder_sha,
 )
 
 HEX_40_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -61,8 +62,11 @@ def validate_common_envelope(record: Dict[str, Any], record_type: str) -> None:
 
     # evaluation_harness_sha: 40-char hex or None/null in preflight dry-run
     harness_sha = record.get("evaluation_harness_sha")
-    if harness_sha is not None and not HEX_40_RE.match(harness_sha):
-        raise SchemaValidationError(f"[{record_type}] Invalid evaluation_harness_sha: {harness_sha}")
+    if harness_sha is not None:
+        if not HEX_40_RE.match(harness_sha):
+            raise SchemaValidationError(f"[{record_type}] Invalid evaluation_harness_sha: {harness_sha}")
+        if is_placeholder_sha(harness_sha):
+            raise SchemaValidationError(f"[{record_type}] evaluation_harness_sha cannot be a placeholder: {harness_sha}")
 
     # evaluation_overlay_sha256: 64-char hex or 'none'
     overlay_sha = record.get("evaluation_overlay_sha256", "")
@@ -112,9 +116,19 @@ def validate_manifest(data: Dict[str, Any]) -> None:
     if not HEX_40_RE.match(sys_sha):
         raise SchemaValidationError(f"manifest: Invalid system_commit_sha: {sys_sha}")
 
-    harness_sha = data.get("evaluation_harness_sha", "")
-    if not isinstance(harness_sha, str) or not HEX_40_RE.match(harness_sha):
-        raise SchemaValidationError(f"manifest: Invalid evaluation_harness_sha: {harness_sha}")
+    harness_sha = data.get("evaluation_harness_sha")
+    is_preflight = bool(data.get("is_preflight", False))
+    if is_preflight:
+        if harness_sha is not None:
+            if not isinstance(harness_sha, str) or not HEX_40_RE.match(harness_sha):
+                raise SchemaValidationError(f"manifest: Invalid evaluation_harness_sha in preflight: {harness_sha}")
+            if is_placeholder_sha(harness_sha):
+                raise SchemaValidationError(f"manifest: evaluation_harness_sha cannot be a placeholder in preflight: {harness_sha}")
+    else:
+        if harness_sha is None or not isinstance(harness_sha, str) or not HEX_40_RE.match(harness_sha):
+            raise SchemaValidationError(f"manifest: Accepted bundle requires non-null 40-hex evaluation_harness_sha, got: {harness_sha}")
+        if is_placeholder_sha(harness_sha):
+            raise SchemaValidationError(f"manifest: evaluation_harness_sha cannot be a placeholder in accepted bundle: {harness_sha}")
 
     # evaluation_overlay_sha256: 64-char hex or 'none'
     overlay_sha = data.get("evaluation_overlay_sha256", "")
@@ -165,6 +179,24 @@ def validate_manifest(data: Dict[str, Any]) -> None:
             if not data.get(reason_key):
                 raise SchemaValidationError(f"manifest: When {key} is null, {reason_key} must be provided")
 
+    # R11 Readiness gate check
+    readiness_status = data.get("readiness_status")
+    if readiness_status == "READY FOR MEASUREMENT":
+        from evals.harness.gates import assert_gate_readiness
+        gate = data.get("gate", "")
+        try:
+            assert_gate_readiness(gate, readiness_status)
+        except Exception as exc:
+            raise SchemaValidationError(f"manifest [R11]: {exc}")
+
+    benchmark_id = data.get("benchmark_id")
+    if benchmark_id is not None and (not isinstance(benchmark_id, str) or not benchmark_id.strip()):
+        raise SchemaValidationError("manifest: benchmark_id must be a non-empty string when provided")
+
+    case_count = data.get("case_count")
+    if case_count is not None and (type(case_count) is not int or case_count < 0):
+        raise SchemaValidationError("manifest: case_count must be an integer >= 0 when provided")
+
 
 def validate_attempt_record(record: Dict[str, Any]) -> None:
     """Validates an attempts.jsonl line record according to R10 fail-closed contracts."""
@@ -173,7 +205,10 @@ def validate_attempt_record(record: Dict[str, Any]) -> None:
 
     validate_common_envelope(record, "attempt")
 
-    required = ("attempt_id", "retry_index", "attempt_class", "started_at_utc", "http_status", "outcome", "trace")
+    required = (
+        "attempt_id", "retry_index", "attempt_class", "started_at_utc",
+        "finished_at_utc", "http_status", "outcome", "response", "trace"
+    )
     missing = [f for f in required if f not in record]
     if missing:
         raise SchemaValidationError(f"attempt: Missing required fields: {missing}")
@@ -181,6 +216,19 @@ def validate_attempt_record(record: Dict[str, Any]) -> None:
     attempt_id = record.get("attempt_id")
     if not isinstance(attempt_id, str) or not attempt_id.strip():
         raise SchemaValidationError("attempt: attempt_id must be a non-empty string")
+
+    finished_at = record.get("finished_at_utc")
+    if finished_at is not None and (not isinstance(finished_at, str) or not finished_at.strip()):
+        raise SchemaValidationError("attempt: finished_at_utc must be a non-empty string or null")
+
+    response_val = record.get("response")
+    if response_val is not None and not isinstance(response_val, dict):
+        raise SchemaValidationError("attempt: response must be a dictionary or null")
+    if isinstance(response_val, dict):
+        if "text" in response_val and response_val["text"] is not None and not isinstance(response_val["text"], str):
+            raise SchemaValidationError("attempt: response.text must be a string or null")
+        if "sources" in response_val and response_val["sources"] is not None and not isinstance(response_val["sources"], list):
+            raise SchemaValidationError("attempt: response.sources must be a list or null")
 
     retry_index = record.get("retry_index")
     if type(retry_index) is not int or retry_index < 0:
@@ -329,8 +377,14 @@ def validate_grading_record(record: Dict[str, Any]) -> None:
     if not isinstance(record.get("claim_judgments"), list):
         raise SchemaValidationError("grading: claim_judgments must be a list")
 
-    if not isinstance(record.get("evidence_refs"), list):
+    evidence_refs = record.get("evidence_refs")
+    if not isinstance(evidence_refs, list):
         raise SchemaValidationError("grading: evidence_refs must be a list")
+    if len(evidence_refs) == 0:
+        raise SchemaValidationError("grading: evidence_refs must be a non-empty list of record IDs")
+    for ref in evidence_refs:
+        if not isinstance(ref, str) or not ref.strip():
+            raise SchemaValidationError("grading: each evidence_ref must be a non-empty string")
 
     if not isinstance(record.get("adjudicated"), bool):
         raise SchemaValidationError("grading: adjudicated must be a boolean")
@@ -364,29 +418,44 @@ def validate_retrieval_record(record: Dict[str, Any]) -> None:
 
     required = (
         "attempt_id", "retrieval_event_id", "query_id", "stage",
-        "candidate_chunks", "served_chunks", "qrels_version"
+        "candidate_chunks", "served_chunks", "qrels_version",
+        "qrels_source", "qrels_sha256"
     )
     missing = [f for f in required if f not in record]
     if missing:
         raise SchemaValidationError(f"retrieval: Missing required fields: {missing}")
 
-    for id_field in ("attempt_id", "retrieval_event_id", "query_id", "stage", "qrels_version"):
+    for id_field in ("attempt_id", "retrieval_event_id", "query_id", "stage", "qrels_version", "qrels_source"):
         val = record.get(id_field)
         if not isinstance(val, str) or not val.strip():
             raise SchemaValidationError(f"retrieval: Field '{id_field}' must be a non-empty string")
 
     for list_field in ("candidate_chunks", "served_chunks"):
-        if not isinstance(record.get(list_field), list):
+        chunk_list = record.get(list_field)
+        if not isinstance(chunk_list, list):
             raise SchemaValidationError(f"retrieval: Field '{list_field}' must be a list")
+        for c_idx, chunk in enumerate(chunk_list):
+            if not isinstance(chunk, dict):
+                raise SchemaValidationError(f"retrieval: {list_field}[{c_idx}] must be a dict")
+            for chk_key in ("chunk_id", "rank", "score", "source_id"):
+                if chk_key not in chunk:
+                    raise SchemaValidationError(f"retrieval: {list_field}[{c_idx}] missing required chunk key '{chk_key}'")
+            if not isinstance(chunk["chunk_id"], str) or not chunk["chunk_id"].strip():
+                raise SchemaValidationError(f"retrieval: {list_field}[{c_idx}] chunk_id must be non-empty string")
+            if type(chunk["rank"]) is not int or chunk["rank"] < 1:
+                raise SchemaValidationError(f"retrieval: {list_field}[{c_idx}] rank must be an integer >= 1")
+            if type(chunk["score"]) not in (int, float) or type(chunk["score"]) is bool:
+                raise SchemaValidationError(f"retrieval: {list_field}[{c_idx}] score must be a float or int")
+            if not isinstance(chunk["source_id"], str) or not chunk["source_id"].strip():
+                raise SchemaValidationError(f"retrieval: {list_field}[{c_idx}] source_id must be non-empty string")
 
     answerability = record.get("answerability_status")
     if answerability and answerability not in VALID_ANSWERABILITY_STATUSES:
         raise SchemaValidationError(f"retrieval: Invalid answerability_status: {answerability}")
 
     qrels_sha = record.get("qrels_sha256")
-    if qrels_sha is not None:
-        if not isinstance(qrels_sha, str) or not HEX_64_RE.match(qrels_sha):
-            raise SchemaValidationError(f"retrieval: Invalid qrels_sha256: {qrels_sha}")
+    if qrels_sha is None or not isinstance(qrels_sha, str) or not HEX_64_RE.match(qrels_sha):
+        raise SchemaValidationError(f"retrieval: Invalid qrels_sha256: {qrels_sha}")
 
 
 def validate_error_record(record: Dict[str, Any]) -> None:
@@ -403,6 +472,21 @@ def validate_error_record(record: Dict[str, Any]) -> None:
     missing = [f for f in required if f not in record]
     if missing:
         raise SchemaValidationError(f"error: Missing required fields: {missing}")
+
+    msg = record.get("message_redacted")
+    if not isinstance(msg, str) or not msg.strip():
+        raise SchemaValidationError("error: message_redacted must be a non-empty string")
+
+    leak_patterns = [
+        re.compile(r"bearer\s+[A-Za-z0-9_\-\.]{10,}", re.IGNORECASE),
+        re.compile(r"(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}", re.IGNORECASE),
+        re.compile(r"sk-[A-Za-z0-9]{20,}", re.IGNORECASE),
+        re.compile(r"password\s*[:=]\s*['\"]?\S+['\"]?", re.IGNORECASE),
+        re.compile(r"-----BEGIN (RSA |EC )?PRIVATE KEY-----", re.IGNORECASE),
+    ]
+    for pat in leak_patterns:
+        if pat.search(msg):
+            raise SchemaValidationError("error: message_redacted contains sensitive unredacted credential pattern")
 
     taxonomy_code = record.get("taxonomy_code")
     if taxonomy_code not in VALID_TAXONOMY_CODES:
@@ -470,3 +554,14 @@ def validate_aggregate(data: Dict[str, Any]) -> None:
             raise SchemaValidationError("aggregate: retry_recovery_rate must be float or int")
         if rec_rate < 0.0 or rec_rate > 1.0:
             raise SchemaValidationError(f"aggregate: retry_recovery_rate {rec_rate} must be between 0.0 and 1.0")
+
+    derived_from = data.get("derived_from")
+    if not isinstance(derived_from, list) or len(derived_from) == 0:
+        raise SchemaValidationError("aggregate: derived_from must be a non-empty list of source files")
+    for df in derived_from:
+        if not isinstance(df, str) or not df.strip():
+            raise SchemaValidationError("aggregate: each entry in derived_from must be a non-empty string")
+
+    artifact_checksums = data.get("artifact_checksums")
+    if not isinstance(artifact_checksums, str) or not artifact_checksums.strip():
+        raise SchemaValidationError("aggregate: artifact_checksums must be a non-empty string")

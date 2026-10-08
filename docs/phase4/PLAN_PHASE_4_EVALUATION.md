@@ -1,8 +1,8 @@
 # PLAN_PHASE_4_EVALUATION — Scientific Evaluation
 
-> **Trạng thái:** READY FOR HARNESS/PREFLIGHT — chưa có bằng chứng đóng gate để đo chính thức.
+> **Trạng thái:** READY FOR HARNESS/PREFLIGHT — HEAD `1f8c344` có offline harness evidence, nhưng F1/F2 provenance blockers và chưa có G2/live evidence; chưa đủ điều kiện đo chính thức.
 > **Mốc code:** main tại 49671b928ad6badfaa01331174eb73f0e366752e.
-> **Phạm vi lượt này:** chỉ đồng bộ specification; giữ nguyên runtime và hai frozen benchmark.
+> **Phạm vi lượt này:** review implementation của Gemini; giữ nguyên runtime và hai frozen benchmark.
 
 ## 1. Mục tiêu và phạm vi
 
@@ -72,13 +72,13 @@ CI, denominator, blocked/missing và rubric version phải đi cùng mọi metri
 
 | ID | Acceptance check | Dependency | Status |
 |---|---|---|---|
-| B01 | Grader bắt missing/forbidden/wrong-owner/unsupported-claim và safety severity | schema, taxonomy, fixtures | BACKLOG |
-| B02 | Sidecar resolve identity/fixture/focus/prior turns idempotently | frozen JSONL, DB snapshot | BACKLOG |
-| B03 | Manifest ghi adapter/endpoint/model/sampling và unavailable reasons | infrastructure, reproducibility | BACKLOG |
-| B04 | Cache OFF được assert; từng attempt append; first/eventual/cumulative wait tính được | schema, runner | BACKLOG |
-| B05 | Canonical writer/validator pass join keys, counts, checksums, aggregate recomputation | schema, evidence | BACKLOG |
-| B06 | Qrels/claim labels/answerability/adjudication có version/hash | corpus snapshot, annotation | BACKLOG |
-| B07 | Actual mode/model/tool/timing/cache/load IDs measured hoặc null | harness/instrumentation | BACKLOG |
+| B01 | Grader bắt missing/forbidden/wrong-owner/unsupported-claim và safety severity | schema, taxonomy, fixtures | PARTIAL — offline grader; F1 evidence refs còn mở |
+| B02 | Sidecar resolve identity/fixture/focus/prior turns idempotently | frozen JSONL, DB snapshot | OFFLINE IMPLEMENTED — live fixture chưa nghiệm thu |
+| B03 | Manifest ghi adapter/endpoint/model/sampling và unavailable reasons | infrastructure, reproducibility | PARTIAL — F2 harness SHA provenance còn mở |
+| B04 | Cache OFF được assert; từng attempt append; first/eventual/cumulative wait tính được | schema, runner | PASS OFFLINE |
+| B05 | Canonical writer/validator pass join keys, counts, checksums, aggregate recomputation | schema, evidence | PARTIAL — H8/H9 PASS; F1/F2 còn mở |
+| B06 | Qrels/claim labels/answerability/adjudication có version/hash | corpus snapshot, annotation | PARTIAL — qrels offline có; source rehash/provenance còn mở |
+| B07 | Actual mode/model/tool/timing/cache/load IDs measured hoặc null | harness/instrumentation | PASS OFFLINE MOCK — chưa phải live evidence |
 | B08 | PostgreSQL/pgvector/KB, quota, smoke selector, hard cap và stop rule pass | infra, cost, fixtures | BACKLOG |
 
 Các backlog trên là implementation work, không được mô tả là đã triển khai. Status chính thức vẫn READY FOR HARNESS/PREFLIGHT.

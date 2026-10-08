@@ -4,6 +4,7 @@ import unittest
 
 from evals.harness.constants import (
     CANONICAL_ARTIFACT_FILES,
+    DISALLOWED_HARNESS_PLACEHOLDER_SHAS,
     FROZEN_BENCHMARK_LF_SHA256,
     PROTOCOL_VERSION,
     SCHEMA_VERSION_AGGREGATE,
@@ -13,6 +14,21 @@ from evals.harness.constants import (
     SCHEMA_VERSION_MANIFEST,
     SCHEMA_VERSION_RETRIEVAL,
     SYSTEM_BASELINE_COMMIT_SHA,
+)
+from evals.harness.gates import (
+    GATE_G0_SPEC,
+    GATE_G1_BUILD_HARNESS,
+    GATE_G2_MERGED_VERIFIED,
+    GATE_G3_SMOKE_AUTHORIZED,
+    GATE_G4_LIVE_SMOKE,
+    GATE_G5_LANE_MEASUREMENT_READY,
+    GATE_G6_FULL_MEASUREMENT_AUTHORIZED,
+    STATUS_MEASUREMENT_READY,
+    STATUS_PREFLIGHT,
+    GateOrderError,
+    GatePermissionError,
+    Phase4GateStateMachine,
+    assert_gate_readiness,
 )
 from evals.harness.schema import (
     SchemaValidationError,
@@ -36,12 +52,38 @@ class TestPhase4Schema(unittest.TestCase):
             "case_id": "ro_s1_001",
             "logical_request_id": "req-001",
             "system_commit_sha": SYSTEM_BASELINE_COMMIT_SHA,
-            "evaluation_harness_sha": "1" * 40,
+            "evaluation_harness_sha": "1f8c344e5e06a6fa170518d31b75f7b5b23d2b1a",
             "evaluation_overlay_sha256": "none",
             "protocol_version": PROTOCOL_VERSION,
             "config_sha256": "a" * 64,
             "fixture_manifest_sha256": "b" * 64,
             "created_at_utc": "2026-10-06T00:00:00Z",
+        }
+        self.valid_manifest = {
+            "schema_version": SCHEMA_VERSION_MANIFEST,
+            "protocol_version": PROTOCOL_VERSION,
+            "run_id": "run-test-01",
+            "lane_id": "mock-a0",
+            "provider_id": "mock",
+            "cache_mode": "answer_cache_off",
+            "retry_policy_id": "mock_retry_v1",
+            "load_profile_id": "mock_single_worker",
+            "system_commit_sha": SYSTEM_BASELINE_COMMIT_SHA,
+            "evaluation_harness_sha": "1f8c344e5e06a6fa170518d31b75f7b5b23d2b1a",
+            "evaluation_overlay_sha256": "none",
+            "config_sha256": "a" * 64,
+            "dataset_sha256": FROZEN_BENCHMARK_LF_SHA256,
+            "fixture_manifest_sha256": "b" * 64,
+            "qrels_sha256": "c" * 64,
+            "created_at_utc": "2026-10-06T00:00:00Z",
+            "completed_at_utc": "2026-10-06T00:00:00Z",
+            "artifact_files": list(CANONICAL_ARTIFACT_FILES),
+            "model_revision": None,
+            "model_revision_unavailable_reason": "not_exposed",
+            "tokenizer_revision": None,
+            "tokenizer_revision_unavailable_reason": "not_exposed",
+            "seed": None,
+            "seed_unavailable_reason": "deterministic",
         }
 
     def test_common_envelope_validation(self):
@@ -70,7 +112,7 @@ class TestPhase4Schema(unittest.TestCase):
             "retry_policy_id": "mock_retry_v1",
             "load_profile_id": "mock_single_worker",
             "system_commit_sha": SYSTEM_BASELINE_COMMIT_SHA,
-            "evaluation_harness_sha": "1" * 40,
+            "evaluation_harness_sha": "1f8c344e5e06a6fa170518d31b75f7b5b23d2b1a",
             "evaluation_overlay_sha256": "none",
             "config_sha256": "a" * 64,
             "dataset_sha256": FROZEN_BENCHMARK_LF_SHA256,
@@ -102,8 +144,10 @@ class TestPhase4Schema(unittest.TestCase):
             retry_index=0,
             attempt_class="first",
             started_at_utc="2026-10-06T00:00:00Z",
+            finished_at_utc="2026-10-06T00:00:00Z",
             http_status=200,
             outcome="handoff",
+            response={"text": "Chuyển tiếp hỗ trợ"},
             trace={
                 "actual_mode": "retail",
                 "model_calls": 0,
@@ -186,6 +230,8 @@ class TestPhase4Schema(unittest.TestCase):
             candidate_chunks=[],
             served_chunks=[],
             qrels_version="qrels-v1",
+            qrels_source="evals/qrels/policy_qrels_v1.json",
+            qrels_sha256="769a45d682648290a3356dad32aacae3c62f6942b62844dd4cc50f2d83c15161",
             answerability_status="answerable",
         )
         validate_retrieval_record(valid_retrieval)
@@ -216,8 +262,10 @@ class TestPhase4Schema(unittest.TestCase):
             retry_index=0,
             attempt_class="first",
             started_at_utc="2026-10-06T00:00:00Z",
+            finished_at_utc="2026-10-06T00:00:00Z",
             http_status=200,
             outcome="completed",
+            response={"text": "OK"},
         )
 
         # 1. Empty trace dictionary must fail
@@ -304,7 +352,7 @@ class TestPhase4Schema(unittest.TestCase):
             "retry_policy_id": "mock_retry_v1",
             "load_profile_id": "mock_single_worker",
             "system_commit_sha": SYSTEM_BASELINE_COMMIT_SHA,
-            "evaluation_harness_sha": "1" * 40,
+            "evaluation_harness_sha": "1f8c344e5e06a6fa170518d31b75f7b5b23d2b1a",
             "evaluation_overlay_sha256": "none",
             "config_sha256": "a" * 64,
             "dataset_sha256": FROZEN_BENCHMARK_LF_SHA256,
@@ -402,6 +450,7 @@ class TestPhase4Schema(unittest.TestCase):
             candidate_chunks=[],
             served_chunks=[],
             qrels_version="qrels-v1",
+            qrels_source="evals/qrels/policy_qrels_v1.json",
             answerability_status="answerable",
             qrels_sha256="d" * 64,
         )
@@ -411,6 +460,267 @@ class TestPhase4Schema(unittest.TestCase):
         bad_ret = dict(valid_retrieval, qrels_sha256="short_hash")
         with self.assertRaises(SchemaValidationError):
             validate_retrieval_record(bad_ret)
+
+    def test_f1_evidence_refs_schema_validation(self):
+        """Blocker F1: evidence_refs must be a non-empty list of non-empty strings."""
+        valid_grading = dict(
+            self.common_envelope,
+            schema_version=SCHEMA_VERSION_GRADING,
+            graded_attempt_id="att-01",
+            grading_id="gr-01",
+            grader_version="g-v1",
+            rubric_version="rubric-v1",
+            decision="pass",
+            first_attempt=True,
+            claim_judgments=[],
+            evidence_refs=["rec-att-001", "rec-ret-001"],
+            adjudicated=False,
+            answerability_status="answerable",
+            severity=None,
+        )
+        validate_grading_record(valid_grading)
+
+        # 1. Not a list
+        with self.assertRaises(SchemaValidationError) as ctx:
+            validate_grading_record(dict(valid_grading, evidence_refs="rec-001"))
+        self.assertIn("must be a list", str(ctx.exception))
+
+        # 2. Empty list
+        with self.assertRaises(SchemaValidationError) as ctx:
+            validate_grading_record(dict(valid_grading, evidence_refs=[]))
+        self.assertIn("non-empty list", str(ctx.exception))
+
+        # 3. None
+        with self.assertRaises(SchemaValidationError) as ctx:
+            validate_grading_record(dict(valid_grading, evidence_refs=None))
+        self.assertIn("must be a list", str(ctx.exception))
+
+        # 4. List with non-string element
+        with self.assertRaises(SchemaValidationError) as ctx:
+            validate_grading_record(dict(valid_grading, evidence_refs=["rec-001", 123]))
+        self.assertIn("non-empty string", str(ctx.exception))
+
+        # 5. List with empty string
+        with self.assertRaises(SchemaValidationError) as ctx:
+            validate_grading_record(dict(valid_grading, evidence_refs=["rec-001", ""]))
+        self.assertIn("non-empty string", str(ctx.exception))
+
+    def test_f2_placeholder_sha_rejection(self):
+        """Blocker F2: reject harness SHA placeholders in common envelope and manifest."""
+        valid_manifest = {
+            "schema_version": SCHEMA_VERSION_MANIFEST,
+            "protocol_version": PROTOCOL_VERSION,
+            "run_id": "run-f2-test",
+            "lane_id": "mock-a0",
+            "provider_id": "mock",
+            "cache_mode": "answer_cache_off",
+            "retry_policy_id": "mock_retry_v1",
+            "load_profile_id": "mock_single_worker",
+            "system_commit_sha": SYSTEM_BASELINE_COMMIT_SHA,
+            "evaluation_harness_sha": "1f8c344e5e06a6fa170518d31b75f7b5b23d2b1a",
+            "evaluation_overlay_sha256": "none",
+            "config_sha256": "a" * 64,
+            "dataset_sha256": FROZEN_BENCHMARK_LF_SHA256,
+            "fixture_manifest_sha256": "b" * 64,
+            "qrels_sha256": "c" * 64,
+            "created_at_utc": "2026-10-06T00:00:00Z",
+            "completed_at_utc": "2026-10-06T00:00:00Z",
+            "artifact_files": list(CANONICAL_ARTIFACT_FILES),
+            "model_revision": None,
+            "model_revision_unavailable_reason": "mock",
+            "tokenizer_revision": None,
+            "tokenizer_revision_unavailable_reason": "mock",
+            "seed": None,
+            "seed_unavailable_reason": "mock",
+        }
+
+        # 1. Common envelope rejects placeholders
+        for placeholder in DISALLOWED_HARNESS_PLACEHOLDER_SHAS:
+            bad_env = dict(self.common_envelope, evaluation_harness_sha=placeholder)
+            with self.assertRaises(SchemaValidationError) as ctx:
+                validate_common_envelope(bad_env, "test")
+            self.assertIn("cannot be a placeholder", str(ctx.exception))
+
+        # 2. Manifest rejects placeholders
+        for placeholder in DISALLOWED_HARNESS_PLACEHOLDER_SHAS:
+            bad_man = dict(valid_manifest, evaluation_harness_sha=placeholder)
+            with self.assertRaises(SchemaValidationError) as ctx:
+                validate_manifest(bad_man)
+            self.assertIn("cannot be a placeholder", str(ctx.exception))
+
+        # 3. Accepted bundle (is_preflight=False) requires non-None SHA
+        man_no_sha = dict(valid_manifest, evaluation_harness_sha=None, is_preflight=False)
+        with self.assertRaises(SchemaValidationError) as ctx:
+            validate_manifest(man_no_sha)
+        self.assertIn("Accepted bundle requires non-null 40-hex evaluation_harness_sha", str(ctx.exception))
+
+        # 4. Preflight bundle allows evaluation_harness_sha=None
+        validate_manifest(dict(valid_manifest, evaluation_harness_sha=None, is_preflight=True))
+
+        # 5. Preflight bundle still rejects explicit placeholder
+        bad_preflight = dict(valid_manifest, evaluation_harness_sha="1" * 40, is_preflight=True)
+        with self.assertRaises(SchemaValidationError):
+            validate_manifest(bad_preflight)
+
+    def test_r11_gate_readiness_state_machine(self):
+        """R11 executable gate state machine transitions and permissions."""
+        sm = Phase4GateStateMachine(initial_gate=GATE_G0_SPEC)
+        self.assertEqual(sm.current_gate, GATE_G0_SPEC)
+
+        # Linear progression passes
+        sm.transition_to(GATE_G1_BUILD_HARNESS)
+        sm.transition_to(GATE_G2_MERGED_VERIFIED)
+        sm.transition_to(GATE_G3_SMOKE_AUTHORIZED)
+        sm.transition_to(GATE_G4_LIVE_SMOKE)
+
+        # G4 cannot declare READY FOR MEASUREMENT
+        with self.assertRaises(GatePermissionError) as ctx:
+            sm.assert_can_set_readiness(STATUS_MEASUREMENT_READY)
+        self.assertIn("restricted", str(ctx.exception))
+
+        # Move to G5
+        sm.transition_to(GATE_G5_LANE_MEASUREMENT_READY)
+        self.assertTrue(sm.can_grant_measurement_readiness())
+        sm.assert_can_set_readiness(STATUS_MEASUREMENT_READY)
+
+        # Non-linear jump must fail
+        sm_bad = Phase4GateStateMachine(initial_gate=GATE_G0_SPEC)
+        with self.assertRaises(GateOrderError):
+            sm_bad.transition_to(GATE_G5_LANE_MEASUREMENT_READY)
+
+        # assert_gate_readiness helper
+        with self.assertRaises(GatePermissionError):
+            assert_gate_readiness(GATE_G4_LIVE_SMOKE, STATUS_MEASUREMENT_READY)
+        assert_gate_readiness(GATE_G5_LANE_MEASUREMENT_READY, STATUS_MEASUREMENT_READY)
+
+        # validate_manifest with R11 gate check
+        man_g4 = dict(self.valid_manifest, readiness_status=STATUS_MEASUREMENT_READY, gate=GATE_G4_LIVE_SMOKE)
+        with self.assertRaises(SchemaValidationError):
+            validate_manifest(man_g4)
+
+        man_g5 = dict(self.valid_manifest, readiness_status=STATUS_MEASUREMENT_READY, gate=GATE_G5_LANE_MEASUREMENT_READY)
+        validate_manifest(man_g5)
+
+    def test_attempt_finished_at_and_response_validation(self):
+        """Attempt record requires finished_at_utc and response (dict or None)."""
+        valid_att = dict(
+            self.common_envelope,
+            attempt_id="att-schema-01",
+            retry_index=0,
+            attempt_class="first",
+            started_at_utc="2026-10-06T00:00:00Z",
+            finished_at_utc="2026-10-06T00:00:01Z",
+            http_status=200,
+            outcome="completed",
+            response={"text": "Xin chào quý khách"},
+            trace={
+                "actual_mode": "retail",
+                "model_calls": 1,
+                "tool_count": 0,
+                "cache_hit": False,
+                "provider_inference_ms": 150.0,
+                "model_invocation_observed": True,
+            },
+        )
+        validate_attempt_record(valid_att)
+
+        # Missing finished_at_utc
+        bad_att1 = dict(valid_att)
+        del bad_att1["finished_at_utc"]
+        with self.assertRaises(SchemaValidationError):
+            validate_attempt_record(bad_att1)
+
+        # Missing response
+        bad_att2 = dict(valid_att)
+        del bad_att2["response"]
+        with self.assertRaises(SchemaValidationError):
+            validate_attempt_record(bad_att2)
+
+        # Invalid response type
+        bad_att3 = dict(valid_att, response="should_be_a_dict_or_null")
+        with self.assertRaises(SchemaValidationError):
+            validate_attempt_record(bad_att3)
+
+        # Response None is permitted (e.g. timeout error attempt)
+        validate_attempt_record(dict(valid_att, response=None))
+
+    def test_retrieval_chunk_structure_validation(self):
+        """Retrieval chunks must have chunk_id, rank >= 1, float score, source_id."""
+        valid_chunk = {
+            "chunk_id": "chk_policy_001",
+            "rank": 1,
+            "score": 0.85,
+            "source_id": "chinh_sach_doi_tra.md",
+        }
+        valid_ret = dict(
+            self.common_envelope,
+            schema_version=SCHEMA_VERSION_RETRIEVAL,
+            attempt_id="att-01",
+            retrieval_event_id="rev-01",
+            query_id="q-01",
+            stage="served",
+            candidate_chunks=[valid_chunk],
+            served_chunks=[valid_chunk],
+            qrels_version="qrels-v1",
+            qrels_source="evals/qrels/policy_qrels_v1.json",
+            qrels_sha256="769a45d682648290a3356dad32aacae3c62f6942b62844dd4cc50f2d83c15161",
+            answerability_status="answerable",
+        )
+        validate_retrieval_record(valid_ret)
+
+        # Missing rank in candidate chunk
+        bad_chunk = dict(valid_ret, candidate_chunks=[{
+            "chunk_id": "chk_001",
+            "score": 0.5,
+            "source_id": "policy.md",
+        }])
+        with self.assertRaises(SchemaValidationError):
+            validate_retrieval_record(bad_chunk)
+
+        # Rank 0 (must be >= 1)
+        bad_rank = dict(valid_ret, candidate_chunks=[{
+            "chunk_id": "chk_001",
+            "rank": 0,
+            "score": 0.5,
+            "source_id": "policy.md",
+        }])
+        with self.assertRaises(SchemaValidationError):
+            validate_retrieval_record(bad_rank)
+
+        # Non-numeric score
+        bad_score = dict(valid_ret, candidate_chunks=[{
+            "chunk_id": "chk_001",
+            "rank": 1,
+            "score": "high",
+            "source_id": "policy.md",
+        }])
+        with self.assertRaises(SchemaValidationError):
+            validate_retrieval_record(bad_score)
+
+    def test_error_redaction_validation(self):
+        """Error record message_redacted must not leak tokens or passwords."""
+        valid_err = dict(
+            self.common_envelope,
+            schema_version=SCHEMA_VERSION_ERROR,
+            attempt_id="att-01",
+            error_id="err-01",
+            stage="admission",
+            taxonomy_code="INFRA_429_ADMISSION",
+            severity="S2",
+            retryable=True,
+            http_status=429,
+            message_redacted="upstream 429 rate limit exceeded",
+        )
+        validate_error_record(valid_err)
+
+        # Empty message_redacted
+        with self.assertRaises(SchemaValidationError):
+            validate_error_record(dict(valid_err, message_redacted=""))
+
+        # Leaking secret/token
+        with self.assertRaises(SchemaValidationError) as ctx:
+            validate_error_record(dict(valid_err, message_redacted="authorization failed with Bearer eyJhbGciOi..."))
+        self.assertIn("credential pattern", str(ctx.exception))
 
 
 if __name__ == "__main__":

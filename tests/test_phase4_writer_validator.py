@@ -344,6 +344,107 @@ class TestWriterAndValidator(unittest.TestCase):
         self.assertFalse(report.is_valid)
         self.assertTrue(any("does not match manifest qrels_sha256" in e for e in report.errors))
 
+    def test_f1_orphan_evidence_ref_detected(self):
+        """Blocker F1: orphan evidence_ref referencing non-existent record must be rejected."""
+        runner = Phase4MockRunner(run_id="run_orphan_ref", output_dir=self.test_dir)
+        runner.run(max_cases=3)
+
+        gr_path = self.test_dir / "grading.jsonl"
+        lines = gr_path.read_text(encoding="utf-8").splitlines()
+        first_gr = json.loads(lines[0])
+        first_gr["evidence_refs"] = ["rec_nonexistent_999"]
+        lines[0] = json.dumps(first_gr)
+        gr_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        writer = CanonicalBundleWriter(self.test_dir)
+        writer.write_checksums()
+
+        val = CanonicalBundleValidator(self.test_dir)
+        report = val.validate()
+        self.assertFalse(report.is_valid)
+        self.assertTrue(any("orphan ref" in e for e in report.errors))
+
+    def test_f1_self_referential_evidence_ref_detected(self):
+        """Blocker F1: grading record referencing its own record_id must be rejected."""
+        runner = Phase4MockRunner(run_id="run_self_ref", output_dir=self.test_dir)
+        runner.run(max_cases=3)
+
+        gr_path = self.test_dir / "grading.jsonl"
+        lines = gr_path.read_text(encoding="utf-8").splitlines()
+        first_gr = json.loads(lines[0])
+        first_gr["evidence_refs"] = [first_gr["record_id"]]
+        lines[0] = json.dumps(first_gr)
+        gr_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        writer = CanonicalBundleWriter(self.test_dir)
+        writer.write_checksums()
+
+        val = CanonicalBundleValidator(self.test_dir)
+        report = val.validate()
+        self.assertFalse(report.is_valid)
+        self.assertTrue(any("cannot reference itself" in e for e in report.errors))
+
+    def test_f1_cross_case_evidence_ref_detected(self):
+        """Blocker F1: grading record referencing a record from a different case_id must be rejected."""
+        runner = Phase4MockRunner(run_id="run_cross_case_ref", output_dir=self.test_dir)
+        runner.run(max_cases=3)
+
+        gr_path = self.test_dir / "grading.jsonl"
+        att_path = self.test_dir / "attempts.jsonl"
+        gr_lines = gr_path.read_text(encoding="utf-8").splitlines()
+        att_lines = att_path.read_text(encoding="utf-8").splitlines()
+
+        first_gr = json.loads(gr_lines[0])
+        second_att = json.loads(att_lines[1])
+        self.assertNotEqual(first_gr["case_id"], second_att["case_id"])
+
+        first_gr["evidence_refs"] = [second_att["record_id"]]
+        gr_lines[0] = json.dumps(first_gr)
+        gr_path.write_text("\n".join(gr_lines) + "\n", encoding="utf-8")
+
+        writer = CanonicalBundleWriter(self.test_dir)
+        writer.write_checksums()
+
+        val = CanonicalBundleValidator(self.test_dir)
+        report = val.validate()
+        self.assertFalse(report.is_valid)
+        self.assertTrue(any("case_id" in e and "!=" in e for e in report.errors))
+
+    def test_f2_manifest_placeholder_sha_rejected(self):
+        """Blocker F2: placeholder evaluation_harness_sha in manifest must be rejected by validator."""
+        runner = Phase4MockRunner(run_id="run_placeholder_man", output_dir=self.test_dir)
+        runner.run(max_cases=3)
+
+        man_path = self.test_dir / "manifest.json"
+        man = json.loads(man_path.read_text(encoding="utf-8"))
+        man["evaluation_harness_sha"] = "1" * 40
+        man["is_preflight"] = False
+        man_path.write_text(json.dumps(man, indent=2), encoding="utf-8")
+
+        writer = CanonicalBundleWriter(self.test_dir)
+        writer.write_checksums()
+
+        val = CanonicalBundleValidator(self.test_dir)
+        report = val.validate()
+        self.assertFalse(report.is_valid)
+        self.assertTrue(any("cannot be a placeholder" in e for e in report.errors))
+
+    def test_f2_preflight_bundle_accepted_with_warning(self):
+        """Blocker F2: is_preflight=True runner creates valid preflight bundle with warning."""
+        runner = Phase4MockRunner(
+            run_id="run_preflight_valid",
+            output_dir=self.test_dir,
+            is_preflight=True,
+            harness_sha=None,
+        )
+        runner.run(max_cases=3)
+
+        val = CanonicalBundleValidator(self.test_dir)
+        report = val.validate()
+        self.assertTrue(report.is_valid, f"Expected valid preflight bundle, got errors: {report.errors}")
+        self.assertTrue(report.is_preflight)
+        self.assertTrue(any("preflight" in w.lower() for w in report.warnings))
+
 
 if __name__ == "__main__":
     unittest.main()

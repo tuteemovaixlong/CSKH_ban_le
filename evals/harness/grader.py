@@ -45,6 +45,7 @@ class Phase4Grader:
         attempt: Dict[str, Any],
         sidecar: Optional[Dict[str, Any]] = None,
         retrieval: Optional[Dict[str, Any]] = None,
+        evidence_refs: Optional[List[str]] = None,
     ) -> GradingResult:
         first_attempt = (attempt.get("retry_index", 0) == 0)
         http_status = attempt.get("http_status", 200)
@@ -218,7 +219,19 @@ class Phase4Grader:
                 "severity": overall_severity,
             })
 
-        evidence_refs = [f"rec-{attempt.get('attempt_id')}"]
+        if evidence_refs is not None:
+            resolved_evidence_refs = [r for r in evidence_refs if isinstance(r, str) and r.strip()]
+        else:
+            resolved_evidence_refs = []
+            att_rec_id = attempt.get("record_id")
+            if att_rec_id and isinstance(att_rec_id, str):
+                resolved_evidence_refs.append(att_rec_id)
+            if retrieval and isinstance(retrieval, dict):
+                rt_rec_id = retrieval.get("record_id")
+                if rt_rec_id and isinstance(rt_rec_id, str) and rt_rec_id not in resolved_evidence_refs:
+                    resolved_evidence_refs.append(rt_rec_id)
+            if not resolved_evidence_refs and attempt.get("attempt_id"):
+                resolved_evidence_refs.append(f"rec-{attempt.get('attempt_id')}")
 
         ans_status = "answerable"
         if is_no_evidence:
@@ -236,7 +249,7 @@ class Phase4Grader:
             secondary_failures=secondary_failures,
             rubric_scores=rubric_scores,
             claim_judgments=claim_judgments,
-            evidence_refs=evidence_refs,
+            evidence_refs=resolved_evidence_refs,
             adjudicated=False,
             answerability_status=ans_status,
         )

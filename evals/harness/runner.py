@@ -12,6 +12,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 import hashlib
 import json
+import os
+import re
+import subprocess
 import uuid
 
 from evals.harness.constants import (
@@ -24,12 +27,44 @@ from evals.harness.constants import (
     SCHEMA_VERSION_MANIFEST,
     SCHEMA_VERSION_RETRIEVAL,
     SYSTEM_BASELINE_COMMIT_SHA,
+    is_placeholder_sha,
 )
 from evals.harness.grader import Phase4Grader
 from evals.harness.qrels import QrelsManager
 from evals.harness.sidecar import build_sidecar_for_case
 from evals.harness.telemetry import TelemetryCollector, assert_a0_cache_off
 from evals.harness.writer import CanonicalBundleWriter
+
+HEX_40_RE = re.compile(r"^[0-9a-f]{40}$")
+
+
+def resolve_current_harness_sha(repo_root: Optional[Path] = None) -> Optional[str]:
+    """Resolves the current immutable git commit SHA for the evaluation harness.
+
+    Checks:
+    1. GITHUB_SHA environment variable
+    2. HARNESS_COMMIT_SHA / GIT_COMMIT_SHA environment variables
+    3. git rev-parse HEAD subprocess
+    Returns a valid 40-hex lowercase string, or None if unresolvable / placeholder.
+    """
+    for key in ("GITHUB_SHA", "HARNESS_COMMIT_SHA", "GIT_COMMIT_SHA"):
+        val = os.environ.get(key)
+        if val:
+            v = val.strip().lower()
+            if HEX_40_RE.match(v) and not is_placeholder_sha(v):
+                return v
+    try:
+        cwd = repo_root or Path(__file__).resolve().parents[2]
+        out = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(cwd),
+            stderr=subprocess.DEVNULL,
+        ).decode("utf-8").strip().lower()
+        if HEX_40_RE.match(out) and not is_placeholder_sha(out):
+            return out
+    except Exception:
+        pass
+    return None
 
 
 class Phase4MockRunner:
@@ -41,21 +76,47 @@ class Phase4MockRunner:
         output_dir: Path,
         benchmark_path: Optional[Path] = None,
         cache_mode: str = "answer_cache_off",
-        harness_sha: str = "1111111111111111111111111111111111111111",
+        harness_sha: Optional[str] = None,
         system_sha: str = SYSTEM_BASELINE_COMMIT_SHA,
         overlay_sha: str = "none",
+        is_preflight: bool = False,
     ):
         self.run_id = run_id
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.benchmark_path = benchmark_path or Path(__file__).resolve().parents[1] / "scenarios" / "benchmark_250.jsonl"
         self.cache_mode = cache_mode
-        self.harness_sha = harness_sha
         self.system_sha = system_sha
         self.overlay_sha = overlay_sha
 
         # Assert A0 Cache OFF contract
         assert_a0_cache_off(self.cache_mode)
+
+        # F2: Reject harness SHA placeholders and resolve immutable Git SHA
+        if harness_sha is not None:
+            if is_placeholder_sha(harness_sha):
+                if not is_preflight:
+                    raise ValueError(
+                        f"Disallowed harness SHA placeholder '{harness_sha}'. "
+                        "Accepted bundles require an immutable Git SHA, or set is_preflight=True."
+                    )
+                self.harness_sha = None
+                self.is_preflight = True
+            else:
+                self.harness_sha = harness_sha
+                self.is_preflight = is_preflight
+        else:
+            if not is_preflight:
+                resolved = resolve_current_harness_sha()
+                if resolved:
+                    self.harness_sha = resolved
+                    self.is_preflight = False
+                else:
+                    self.harness_sha = None
+                    self.is_preflight = True
+            else:
+                self.harness_sha = None
+                self.is_preflight = True
 
         self.writer = CanonicalBundleWriter(self.output_dir, validate_on_write=True)
         self.grader = Phase4Grader()
@@ -111,6 +172,9 @@ class Phase4MockRunner:
             "tokenizer_revision_unavailable_reason": "mock_provider_offline",
             "seed": None,
             "seed_unavailable_reason": "mock_provider_offline",
+            "is_preflight": self.is_preflight,
+            "benchmark_id": self.benchmark_path.stem,
+            "case_count": len(lines),
             "artifact_files": list(CANONICAL_ARTIFACT_FILES),
             "created_at_utc": created_at,
             "completed_at_utc": created_at,
@@ -262,8 +326,8 @@ class Phase4MockRunner:
             qrel_entry = self.qrels.get_entry(cid)
             cand_chunks = []
             if qrel_entry and qrel_entry.relevant_sources:
-                for s_id, score in qrel_entry.relevant_sources.items():
-                    cand_chunks.append({"chunk_id": f"chk_{s_id}", "rank": 1, "score": float(score), "source_id": s_id})
+                for r_idx, (s_id, score) in enumerate(qrel_entry.relevant_sources.items(), start=1):
+                    cand_chunks.append({"chunk_id": f"chk_{s_id}", "rank": r_idx, "score": float(score), "source_id": s_id})
 
             retrieval_rec = {
                 "schema_version": SCHEMA_VERSION_RETRIEVAL,
@@ -294,12 +358,18 @@ class Phase4MockRunner:
             rec_counter += 1
             self.writer.append_retrieval(retrieval_rec)
 
-            # Grade attempt with sidecar and retrieval context
+            # Grade attempt with sidecar and retrieval context, binding real record_ids
             sidecar_dict = {
                 "answerability_status": sidecar.answerability_status,
                 "scenario_family": sidecar.scenario_family,
             }
-            grade_res = self.grader.grade(case, att, sidecar=sidecar_dict, retrieval=retrieval_rec)
+            grade_res = self.grader.grade(
+                case,
+                att,
+                sidecar=sidecar_dict,
+                retrieval=retrieval_rec,
+                evidence_refs=[att["record_id"], retrieval_rec["record_id"]],
+            )
 
             grading_rec = {
                 "schema_version": SCHEMA_VERSION_GRADING,

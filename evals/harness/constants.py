@@ -6,7 +6,7 @@ Normative reference:
 - docs/phase4/PHASE_4_METRICS_DEFINITION.md
 """
 
-from typing import Set
+from typing import Optional, Set
 
 PROTOCOL_VERSION = "p4-v1"
 SCHEMA_VERSION_MANIFEST = "phase4-manifest-v1"
@@ -176,3 +176,24 @@ SAFETY_HARD_VETO_CODES: Set[str] = {
     "GROUNDING_FABRICATED_SOURCE",
     "IDENTITY_COLLISION",
 }
+
+DISALLOWED_HARNESS_PLACEHOLDER_SHAS: Set[str] = {
+    "0" * 40,
+    "1" * 40,
+    "2" * 40,
+    "a" * 40,
+    "f" * 40,
+    "1234567890123456789012345678901234567890",
+}
+
+
+def is_placeholder_sha(sha: Optional[str]) -> bool:
+    """Returns True if the given SHA is a disallowed dummy or placeholder SHA."""
+    if not sha or not isinstance(sha, str):
+        return False
+    s = sha.strip().lower()
+    if len(s) == 40 and len(set(s)) == 1:
+        return True
+    if s in DISALLOWED_HARNESS_PLACEHOLDER_SHAS:
+        return True
+    return False

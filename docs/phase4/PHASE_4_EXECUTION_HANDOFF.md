@@ -4,7 +4,9 @@
 > Baseline bắt buộc: main / 49671b928ad6badfaa01331174eb73f0e366752e
 > Trạng thái: READY FOR HARNESS/PREFLIGHT — chưa đủ bằng chứng đo chính thức; không phải production approval.
 
-> Review implementation hiện hành: [REVIEW_GEMINI_PHASE4_2026-10-07.md](REVIEW_GEMINI_PHASE4_2026-10-07.md). HEAD `ee66045` còn blocker H8/H9; chưa được merge.
+> Review implementation hiện hành: [REVIEW_GEMINI_PHASE4_2026-10-07.md](REVIEW_GEMINI_PHASE4_2026-10-07.md). HEAD `1f8c344e5e06a6fa170518d31b75f7b5b23d2b1a` đã đóng H8/H9 nhưng còn blocker F1/F2 về evidence refs và harness provenance; chưa được merge.
+
+> Cập nhật 2026-10-07: R10 đã có acceptance offline; R11 còn thiếu executable G5-only assertion; R12 đang BLOCKED bởi F1/F2; R13 đã triển khai guard nhưng CI/Docker evidence còn pending.
 
 ## 1. Mục tiêu và ranh giới
 
@@ -55,18 +57,18 @@ Merge hoặc CI không tự cấp quyền chạy paid/cloud. G4 chỉ là `LIVE_
 
 | ID | Acceptance check | Dependency | Status |
 |---|---|---|---|
-| B01 | Grader bắt missing/forbidden/wrong-owner/unsupported-claim và safety severity | schema, taxonomy, fixtures | NOT IMPLEMENTED |
-| B02 | Sidecar map case → identity/fixture/focus/prior turns, setup idempotent | frozen JSONL, DB snapshot | NOT IMPLEMENTED |
-| B03 | Lane manifest ghi adapter/endpoint/model/sampling và unavailable reasons | infrastructure | NOT IMPLEMENTED |
-| B04 | Quality answer-cache OFF được assert; retry append từng attempt; first/eventual/cumulative wait tính được | schema, runner | NOT IMPLEMENTED |
-| B05 | Writer/validator kiểm join keys, counts, checksums, aggregate recomputation | results schema | NOT IMPLEMENTED |
-| B06 | Qrels/claim labels/answerability/adjudication version/hash | corpus/annotation | NOT IMPLEMENTED |
-| B07 | Actual mode/model/tool/timing/cache/load IDs measured hoặc null | harness/instrumentation | NOT IMPLEMENTED |
+| B01 | Grader bắt missing/forbidden/wrong-owner/unsupported-claim và safety severity | schema, taxonomy, fixtures | PARTIAL — offline grader có; evidence refs còn blocker |
+| B02 | Sidecar map case → identity/fixture/focus/prior turns, setup idempotent | frozen JSONL, DB snapshot | OFFLINE IMPLEMENTED — live fixture chưa nghiệm thu |
+| B03 | Lane manifest ghi adapter/endpoint/model/sampling và unavailable reasons | infrastructure | PARTIAL — mock manifest có; live lane identity chưa nghiệm thu |
+| B04 | Quality answer-cache OFF được assert; retry append từng attempt; first/eventual/cumulative wait tính được | schema, runner | PASS OFFLINE |
+| B05 | Writer/validator kiểm join keys, counts, checksums, aggregate recomputation | results schema | PARTIAL — H8/H9 đóng; F1/F2 còn mở |
+| B06 | Qrels/claim labels/answerability/adjudication version/hash | corpus/annotation | PARTIAL — qrels/sidecar offline có; provenance hardening còn mở |
+| B07 | Actual mode/model/tool/timing/cache/load IDs measured hoặc null | harness/instrumentation | PASS OFFLINE MOCK — chưa phải live evidence |
 | B08 | PostgreSQL/pgvector/KB, quota, smoke selector, cap/stop rule pass | infra, cost | NOT IMPLEMENTED |
 
 ### R13 — deployment guard bắt buộc trong cùng PR
 
-Workflow deploy hiện có `push` vào `main` và chỉ bỏ qua docs/Markdown; khi `RETAILOPS_DEPLOY_ENABLED=true`, merge harness có thể chạm job deploy. Gemini phải thêm guard reviewable dựa trên **changed files thực tế**: eval-only/harness-only merge không deploy; mixed eval + runtime vẫn giữ policy deploy hiện có; `workflow_dispatch` giữ nguyên. Không hardcode thư mục harness chưa tồn tại, không ignore rộng toàn `scripts/`, `.github/` hoặc `Dockerfile`, không đổi repo variables và không tắt deploy toàn cục. Guard phải có test cho eval-only, mixed-scope và manual dispatch. R13 vẫn `OPEN (implementation/pre-merge)` cho tới khi diff và CI evidence được owner review.
+Workflow deploy đã có guard reviewable dựa trên **changed files thực tế**: eval-only/harness-only merge không deploy; mixed eval + runtime giữ policy deploy; `workflow_dispatch` giữ nguyên; unknown path fail-closed. Không hardcode thư mục harness, không ignore rộng toàn `scripts/`, `.github/` hoặc `Dockerfile`, không đổi repo variables và không tắt deploy toàn cục. R13 được xem là **IMPLEMENTED, CI PENDING** cho tới khi diff và CI evidence được owner review.
 
 ## 6. Điều kiện dừng
 

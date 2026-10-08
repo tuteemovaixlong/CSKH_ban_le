@@ -16,6 +16,7 @@ from evals.harness.constants import (
     CANONICAL_ARTIFACT_FILES,
     FROZEN_BENCHMARK_LF_SHA256,
     SYSTEM_BASELINE_COMMIT_SHA,
+    is_placeholder_sha,
 )
 from evals.harness.schema import (
     SchemaValidationError,
@@ -34,6 +35,7 @@ class ValidationReport:
     """Detailed validation report of an evaluation run directory."""
     run_id: str
     is_valid: bool
+    is_preflight: bool = False
     errors: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     attempt_count: int = 0
@@ -240,13 +242,31 @@ class CanonicalBundleValidator:
 
         # 2. Validate manifest.json
         manifest_path = self.run_dir / "manifest.json"
+        is_preflight = False
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             validate_manifest(manifest)
             run_id = manifest.get("run_id", "")
+            is_preflight = bool(manifest.get("is_preflight", False)) or (manifest.get("evaluation_harness_sha") is None)
+            harness_sha = manifest.get("evaluation_harness_sha")
+            if is_placeholder_sha(harness_sha):
+                errors.append(f"manifest.json: evaluation_harness_sha '{harness_sha}' is a disallowed placeholder SHA")
+            elif is_preflight:
+                warnings.append("Bundle is preflight/dry-run: evaluation_harness_sha is not locked to an immutable Git SHA")
         except Exception as exc:
             errors.append(f"manifest.json validation failed: {exc}")
-            return ValidationReport(run_id="<unknown>", is_valid=False, errors=errors)
+            return ValidationReport(run_id="<unknown>", is_valid=False, is_preflight=False, errors=errors)
+
+        # Cross-reference manifest qrels_sha256 with actual qrels source file if present
+        from evals.harness.qrels import QrelsManager
+        try:
+            qm = QrelsManager()
+            if qm.sha256 and manifest.get("qrels_sha256") and manifest.get("qrels_sha256") != qm.sha256:
+                errors.append(
+                    f"manifest.json: qrels_sha256 '{manifest.get('qrels_sha256')}' does not match recomputed qrels source hash '{qm.sha256}'"
+                )
+        except Exception:
+            pass
 
         # Verify manifest dataset_sha256 strictly equals frozen benchmark LF hash
         if manifest.get("dataset_sha256") != FROZEN_BENCHMARK_LF_SHA256:
@@ -545,12 +565,68 @@ class CanonicalBundleValidator:
                         f"errors.jsonl error_id '{eid}' specifies attempt_id '{target_att_id}', but attempt's error_ref is '{target_att.get('error_ref')}'"
                     )
 
-        # 8. Parse and validate aggregate.json & Recompute check
+        # 8. Validate grading.evidence_refs integrity (F1 blocker)
+        canonical_records_by_id: Dict[str, Dict[str, Any]] = {}
+        for att in attempts:
+            canonical_records_by_id[att["record_id"]] = att
+        for rt in retrievals:
+            canonical_records_by_id[rt["record_id"]] = rt
+        for err in error_records:
+            canonical_records_by_id[err["record_id"]] = err
+        for gr in gradings:
+            canonical_records_by_id[gr["record_id"]] = gr
+
+        for gr in gradings:
+            gid = gr.get("grading_id")
+            gr_rec_id = gr.get("record_id")
+            refs = gr.get("evidence_refs")
+            if not isinstance(refs, list) or len(refs) == 0:
+                errors.append(f"grading.jsonl grading_id '{gid}': evidence_refs must be a non-empty list of record IDs")
+                continue
+
+            for ref in refs:
+                if not isinstance(ref, str) or not ref.strip():
+                    errors.append(f"grading.jsonl grading_id '{gid}': empty or non-string evidence_ref '{ref}'")
+                    continue
+                if ref == gr_rec_id:
+                    errors.append(f"grading.jsonl grading_id '{gid}': evidence_ref '{ref}' cannot reference itself")
+                    continue
+                if ref not in canonical_records_by_id:
+                    errors.append(
+                        f"grading.jsonl grading_id '{gid}': evidence_ref '{ref}' does not exist in canonical records (orphan ref)"
+                    )
+                else:
+                    target_rec = canonical_records_by_id[ref]
+                    if target_rec.get("run_id") != gr.get("run_id"):
+                        errors.append(
+                            f"grading.jsonl grading_id '{gid}': evidence_ref '{ref}' run_id '{target_rec.get('run_id')}' != grading run_id '{gr.get('run_id')}'"
+                        )
+                    if target_rec.get("case_id") != gr.get("case_id"):
+                        errors.append(
+                            f"grading.jsonl grading_id '{gid}': evidence_ref '{ref}' case_id '{target_rec.get('case_id')}' != grading case_id '{gr.get('case_id')}'"
+                        )
+
+        # 9. Parse and validate aggregate.json & Recompute check
         recomputed = None
         aggregate_path = self.run_dir / "aggregate.json"
         try:
             aggregate = json.loads(aggregate_path.read_text(encoding="utf-8"))
             validate_aggregate(aggregate)
+
+            # Check aggregate envelope matches manifest
+            if aggregate.get("run_id") != run_id:
+                errors.append(
+                    f"aggregate.json run_id '{aggregate.get('run_id')}' != manifest run_id '{run_id}'"
+                )
+            expected_derived = {"attempts.jsonl", "grading.jsonl", "retrieval.jsonl", "errors.jsonl"}
+            if set(aggregate.get("derived_from", [])) != expected_derived:
+                errors.append(
+                    f"aggregate.json derived_from mismatch: expected {sorted(expected_derived)}, got {aggregate.get('derived_from')}"
+                )
+            if aggregate.get("artifact_checksums") != "checksums.sha256":
+                errors.append(
+                    f"aggregate.json artifact_checksums must be 'checksums.sha256', got '{aggregate.get('artifact_checksums')}'"
+                )
 
             # Recompute aggregate from raw records
             recomputed = recompute_aggregate_from_raw(manifest, attempts, gradings, error_records)
@@ -585,6 +661,7 @@ class CanonicalBundleValidator:
         return ValidationReport(
             run_id=run_id,
             is_valid=is_valid,
+            is_preflight=is_preflight,
             errors=errors,
             warnings=warnings,
             attempt_count=len(attempts),

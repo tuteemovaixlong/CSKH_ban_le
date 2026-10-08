@@ -58,7 +58,7 @@ class TestPhase4Adversarial(unittest.TestCase):
             "case_id": "ro_s1_001",
             "logical_request_id": "req-01",
             "system_commit_sha": SYSTEM_BASELINE_COMMIT_SHA,
-            "evaluation_harness_sha": "1" * 40,
+            "evaluation_harness_sha": "1f8c344e5e06a6fa170518d31b75f7b5b23d2b1a",
             "evaluation_overlay_sha256": "none",
             "protocol_version": PROTOCOL_VERSION,
             "config_sha256": "a" * 64,
