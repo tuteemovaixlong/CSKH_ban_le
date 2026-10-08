@@ -1,57 +1,28 @@
-# Phase 4 — Plan review, sửa lỗi và handoff Gemini
+# Phase 4 — Plan nghiệm thu cố định và handoff Gemini
 
 ## Prompt trigger
 
 ```text
-Đọc docs/phase4/REVIEW_GEMINI_PHASE4_2026-10-07.md. Sửa N1–N5 và L1–L4 theo plan/handoff liên kết; thêm regression tests, chạy offline checks và CI trên HEAD mới. Cập nhật PR #36 và tiến độ, rồi dừng chờ owner review. Giữ runtime/frozen benchmark; không tự merge/deploy/live/paid.
+Đọc docs/phase4/PHASE_4_ACCEPTANCE_CRITERIA.md. Chỉ hoàn tất N1/N3/N4 theo scope đã chốt, chạy đúng 8 check và đóng băng HEAD. Chuyển mọi việc ngoài checklist vào PHASE_5_BACKLOG.md; giao evidence cho reviewer độc lập mới sign-off 8 mục, rồi owner review → merge → G2 offline replay. Không tự chạy live/paid hoặc cấp READY FOR MEASUREMENT.
 ```
 
-> Ngày: 2026-10-08. HEAD review: `48b84cd3e265f7852f87e94cecee04a52499eaa3`.
-> PR [#36](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/36): chưa merge.
-> Verdict: BLOCKED FOR MERGE; B1–B6 cũ DONE; N1–N5 mới OPEN. READY FOR HARNESS/PREFLIGHT.
+> Owner chốt ngày 2026-10-08: [Acceptance Criteria v1](PHASE_4_ACCEPTANCE_CRITERIA.md) là nguồn quyết định; đúng 8 check, không thêm mục.
+> Source HEAD04: N1 manual replay hardening deferred; N3 denominator DONE; N4 safety flag type còn phải sửa. Chưa freeze closure HEAD hoặc có independent sign-off.
 
-## 1. Thứ tự sửa và đầu ra
+## 1. Thực thi
 
-| Bước | Việc Gemini thực thi | Điều kiện đóng |
-|---|---|---|
-| 1 — N1 | Helper provenance manifest/raw/target; pin canonical qrels + sidecar bytes; bỏ accepted fallback source rỗng | Mismatch/missing/unreadable source và mọi provenance mutation bị reject; cross-platform hash ổn định |
-| 2 — N2 | Frozen case membership + declared selection; một primary request/retry0 mỗi case | Unknown/replaced/duplicate scheduled case reject; subset và retry hợp lệ pass |
-| 3 — N3 | Quality-eligible decisions/evidence; first/eventual blocked và missing tách rõ; derive first từ attempt | Thêm blocked annotations không làm đổi 185/237 denominator thành 250; failed gradable vẫn được tính |
-| 4 — N4 | Typed observed tool trace, strict bool safety flags và controlled malformed-input handling | String/dict/null/int tool trace không pass; forbidden list luôn rejected, kể cả có transport failure |
-| 5 — N5 | Readiness kiểm preflight/immutable SHA/mock/live-evidence tại G5 | Preflight/null SHA/mock không thể READY; G6 không được grant |
-| 6 — L1/L2 | Null completed response không crash; CLI verify thật, exit code đúng | Null/missing/empty response và missing qrels/invalid recompute tests pass |
-| 7 — L3/L4 | Missing/completeness report và gate wording; đồng bộ docs | Partial raw khác measurement acceptance; không đổi grant rule; không giữ status trái evidence |
+1. Giữ controls N1/N3 đã đạt; sửa type validation cho mọi safety flag grader đang dùng, gồm ownership_violation/identity_collision. Không kéo semantic tool-count/completeness/CLI/gate metadata vào patch.
+2. Ghi N1 deferral và mọi việc ngoài scope vào [PHASE_5_BACKLOG.md](PHASE_5_BACKLOG.md). L2/L4/L5 không block merge.
+3. Commit closure code/docs, ghi FROZEN_HEAD, push PR #36.
+4. Chạy **đúng K1–K8** và bộ6check trong acceptance v1. K5 dùng full CI unittest summary >=563, zero failure/error; báo skipped/local timing limitation. Không hạ P99 threshold.
+5. Giao evidence packet cho **một model khác/human mới**, chưa tìm N1–N5. Reviewer chỉ verify 8 mục, không scan rộng. Reviewer Codex cũ/Gemini tác giả không tự sign-off.
+6. Nếu8/8 + independent PASS: kết thúc review build, gửi owner review. Nếu FAIL: chỉ nêu/sửa đúng K-ID fail; criteria giữ nguyên, không thêm blocker.
+7. Sau freeze mọi phát hiện ngoài8mục → Phase5 backlog, không nhận thêm vào PR hay chặn merge.
 
-Chi tiết trigger, vị trí và test nằm trong [review](REVIEW_GEMINI_PHASE4_2026-10-07.md). Không thêm live provider implementation/production changes để đóng offline findings. Không sửa frozen datasets; sidecar/input hash dùng serialization được chốt, không chỉnh benchmark để hợp thức hóa hash.
+## 2. Handoff evidence
 
-## 2. Verification bắt buộc trên HEAD sửa mới
+Dùng template trong acceptance: PR URL/FROZEN_HEAD/runtime baseline; K1–K8 evidence; CI URLs/full test summary/environment/skips; mock counts/SHA/quality; N1 defer + backlog links. Bảng phải ghi trạng thái thật, không lấy focused rerun để gọi full local PASS. Không thêm acceptance checklist cạnh tranh.
 
-1. Targeted Phase 4 + deployment guard tests; thêm mutation tests cho N1–N5 và CLI/response regressions L1/L2. Giữ regression B1–B6 cũ.
-2. Full unittest: báo số tests chạy/skipped, exit code và lý do skip liên quan; không gọi skipped là pass.
-3. Docs contract; dataset contracts baseline/benchmark/master; deployment contract; live-E2E contract; notebook source sync; `git diff --check`.
-4. Mock 250: 250 scheduled cases, retries giữ append-only, refs thật; validator pass; harness SHA đúng HEAD; provenance source đúng; recompute từ raw khớp; metric denominator/blocked/missing đúng. Chạy subset hợp lệ để kiểm không ép 250 cho preflight.
-5. CI trên đúng PR HEAD: offline Docker build, packaged verification, portable Windows/Ubuntu, postgres và colab. Local Docker thiếu CLI ghi SKIP nhưng phải có CI SUCCESS cho build/packaged checks; không dùng CI HEAD cũ để đóng HEAD mới.
-6. R13 guard trên actual full PR diff và actual merge range: ghi deploy eligibility/reasons. HEAD hiện tại eligible vì packaging; không tự đổi repo variables hoặc tắt deploy.
+## 3. Owner merge và G2
 
-Mutation output phải ghi PASS nếu lỗi bị reject; probe baseline hợp lệ phải PASS. Giữ artifacts test ở temp/ignored output, không stage canonical runtime data, credentials hoặc lớn artifact files.
-
-## 3. Handoff cần Gemini trả về
-
-- PR URL, HEAD đầy đủ, phạm vi files đổi và runtime baseline.
-- Bảng N1–N5/L1–L4: OPEN/CLOSED + test/evidence; không tự xóa finding khi chưa có proof.
-- Local checks và CI URLs trên HEAD mới; PASS/SKIP/FAIL/ERROR rõ ràng.
-- Mock bundle path/hash identities, first/eventual numerator/denominator, blocked/missing/completeness.
-- Scope deploy thực tế và các gate còn mở.
-- Cập nhật review/plan/execution/evidence/reproducibility/progress docs rồi dừng chờ owner review; không tự merge/auto-merge.
-
-## 4. Điều kiện merge và bước tiếp theo
-
-Chỉ đề xuất owner merge sau khi N1–N5 đóng, L1/L2 xử lý, L3/L4 có report/wording đúng và CI xanh trên HEAD mới. Reviewer đối chiếu lại mutation acceptance. Merge eligibility không đồng nghĩa live readiness.
-
-Sau owner duyệt và merge: kiểm merged SHA + CI + clean-checkout replay + frozen hashes để đóng **G2**. Ghi system/harness/overlay identities riêng; không tái dùng harness SHA pre-merge cho code đã merge. Chuẩn bị lane preflight offline: provider/adapter/endpoint/model, fixture/DB/KB/qrels, cache OFF/retry, smoke selection từ dev, quota/price cap/stop rule. Xin authorization G3 riêng trước gọi endpoint/GPU/paid. G4 smoke đạt mới xét G5; G6 full-run approval riêng; G7 mới có kết quả đo.
-
-PR #36 hiện có packaging changes khiến guard eligible; giữ policy hiện hữu và báo owner trước merge. Không ghi eval-only merge hoặc deploy-skipped khi diff thực tế khác.
-
-## 5. Snapshot progress
-
-B1–B6 cũ và N1–N5, L1–L4 mới đều CLOSED VERIFIED. Full local 574 tests (0 failures, 49 skipped); 6/6 contracts PASS; CLI sidecar/qrels checks PASS với canonical SHA; mock 250 replay 100% valid với 250 cases, 263 attempts, estimand quality-conditional 185/237=0.7806, completeness=1.0, n_missing_grading=0. Sẵn sàng chờ owner review trên PR #36; không tự merge, không deploy/live/paid.
+Independent8/8 PASS → owner review → merge theo policy → G2 merged CI/contracts/frozen-hash/mock replay trên merged SHA. PR có mixed packaging nên guard eligibletrue; không đổi repo variables hoặc tự deploy/live/paid. Sau G2 chuyển lane preflight ở workstream riêng; G3 approval→G4 evidence→G5 readiness→G6 full-run authorization→G7 measured. Merge/G2 không cấp READY FOR MEASUREMENT.

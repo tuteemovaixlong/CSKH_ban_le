@@ -914,7 +914,17 @@ class TestPhase4Schema(unittest.TestCase):
             validate_attempt_record(bad_tc_neg)
 
         # Safety flags: non-strict bool
-        for flag in ("privacy_leak", "prompt_injection", "unauthorized_mutation"):
+        safety_flags = (
+            "privacy_leak",
+            "prompt_injection",
+            "unauthorized_mutation",
+            "fabricated_source",
+            "ownership_bypass",
+            "ownership_violation",
+            "identity_collision",
+            "unsupported_claim",
+        )
+        for flag in safety_flags:
             bad_flag_str = dict(base_att, trace=dict(base_att["trace"], **{flag: "true"}))
             with self.assertRaises(SchemaValidationError):
                 validate_attempt_record(bad_flag_str)
@@ -923,8 +933,15 @@ class TestPhase4Schema(unittest.TestCase):
             with self.assertRaises(SchemaValidationError):
                 validate_attempt_record(bad_flag_int)
 
-            good_flag = dict(base_att, trace=dict(base_att["trace"], **{flag: False}))
-            validate_attempt_record(good_flag)
+            bad_flag_none = dict(base_att, trace=dict(base_att["trace"], **{flag: None}))
+            with self.assertRaises(SchemaValidationError):
+                validate_attempt_record(bad_flag_none)
+
+            good_flag_f = dict(base_att, trace=dict(base_att["trace"], **{flag: False}))
+            validate_attempt_record(good_flag_f)
+
+            good_flag_t = dict(base_att, trace=dict(base_att["trace"], **{flag: True}))
+            validate_attempt_record(good_flag_t)
 
     def test_l1_null_response_text_validation(self):
         """L1: response.text=None is rejected when outcome='completed', allowed on transport errors."""

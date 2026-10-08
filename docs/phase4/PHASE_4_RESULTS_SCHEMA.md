@@ -1,6 +1,8 @@
 # PHASE_4_RESULTS_SCHEMA — Raw JSONL và reproducibility contract
 
-> **Trạng thái (2026-10-08):** `READY FOR HARNESS/PREFLIGHT`. HEAD `48b84cd` có implementation/offline/CI evidence; B1–B6 cũ DONE. N1–N5 source/coherence/case/metric/safety/readiness còn mở theo [review](REVIEW_GEMINI_PHASE4_2026-10-07.md). Schema/mock validity không tự cấp measurement acceptance.
+> **Merge policy owner chốt 2026-10-08:** [Acceptance v1](PHASE_4_ACCEPTANCE_CRITERIA.md): đúng8check; N1 replay hardening deferred, N3 denominator DONE, N4 safety type còn K3. L2/L4/L5 và việc ngoài checklist → [Phase5 backlog](PHASE_5_BACKLOG.md), không block merge. Sau freeze: independent source mới sign-off8/8 → owner review → merge → G2. Findings/progress bên dưới là evidence, không mở thêm merge gate.
+
+> **Trạng thái (2026-10-08):** READY FOR HARNESS/PREFLIGHT. HEAD `04ed899` có offline/CI evidence; acceptance v1 chỉ còn K3 +8check/evidence/sign-off. N1 replay/counts/semantic improvements vào Phase5, không block merge; chưa merge/G2/live.
 
 ## 1. Quy tắc bất biến
 

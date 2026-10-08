@@ -613,6 +613,14 @@ class TestWriterAndValidator(unittest.TestCase):
         self.assertIn("n_missing_grading", recomp)
         self.assertIn("completeness", recomp)
 
+        # All-blocked fixture: denominator is 0
+        for g in grads:
+            g["decision"] = "blocked_environment"
+        recomp_blocked = recompute_aggregate_from_raw(man, atts, grads, errs)
+        self.assertEqual(recomp_blocked["quality_conditional"]["denominator"], 0)
+        self.assertEqual(recomp_blocked["quality_conditional"]["numerator"], 0)
+        self.assertEqual(recomp_blocked["quality_conditional"]["rate"], 0.0)
+
     def test_l2_cli_exit_codes(self):
         """L2: CLI commands return exit code 1 on failure or invalid bundle."""
         from evals.harness.cli import cmd_recompute, cmd_sidecar_check, cmd_qrels_check

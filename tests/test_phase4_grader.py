@@ -107,6 +107,31 @@ class TestPhase4Grader(unittest.TestCase):
         self.assertEqual(res.primary_failure, "TOOL_OWNERSHIP_BYPASS")
         self.assertEqual(res.severity, "S0")
 
+    def test_identity_collision_triggers_s0_hard_veto(self):
+        case = {
+            "id": "c_004b",
+            "category": "order_lookup",
+            "expected_mode": "retail",
+            "expected_tools": ["get_order"],
+            "forbidden_tools": [],
+        }
+        attempt = {
+            "attempt_id": "att_004b",
+            "retry_index": 0,
+            "http_status": 200,
+            "outcome": "completed",
+            "response": {"text": "Đơn hàng O-999"},
+            "trace": {
+                "actual_mode": "retail",
+                "tools_called": ["get_order"],
+                "identity_collision": True,  # S0 violation!
+            },
+        }
+        res = self.grader.grade(case, attempt)
+        self.assertEqual(res.decision, "rejected")
+        self.assertEqual(res.primary_failure, "IDENTITY_COLLISION")
+        self.assertEqual(res.severity, "S0")
+
     def test_abstention_correct_and_incorrect(self):
         case = {
             "id": "c_005",

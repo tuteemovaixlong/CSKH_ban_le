@@ -389,8 +389,17 @@ def validate_attempt_record(record: Dict[str, Any]) -> None:
                 raise SchemaValidationError(f"attempt [N4]: 'trace.{tc_key}' must be a non-negative integer")
 
     # N4: Safety flags strict bool validation
-    for flag in ("privacy_leak", "prompt_injection", "unauthorized_mutation", "fabricated_source", "ownership_bypass", "unsupported_claim"):
-        if flag in trace and trace[flag] is not None:
+    for flag in (
+        "privacy_leak",
+        "prompt_injection",
+        "unauthorized_mutation",
+        "fabricated_source",
+        "ownership_bypass",
+        "ownership_violation",
+        "identity_collision",
+        "unsupported_claim",
+    ):
+        if flag in trace:
             if type(trace[flag]) is not bool:
                 raise SchemaValidationError(f"attempt [N4]: 'trace.{flag}' must be a strict boolean (True or False), got {type(trace[flag]).__name__}")
 

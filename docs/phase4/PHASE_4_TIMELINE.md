@@ -1,6 +1,8 @@
 # Phase 4 — Timeline and Milestones
 
-Status (2026-10-08): READY FOR HARNESS/PREFLIGHT — M1–M3 đã có implementation/local/CI evidence tại `48b84cd`, nhưng N1–N5 acceptance còn mở. Chưa merge hoặc thực hiện live/paid/deploy trong lượt review.
+> **Merge policy owner chốt 2026-10-08:** [Acceptance v1](PHASE_4_ACCEPTANCE_CRITERIA.md): đúng8check; N1 replay hardening deferred, N3 denominator DONE, N4 safety type còn K3. L2/L4/L5 và việc ngoài checklist → [Phase5 backlog](PHASE_5_BACKLOG.md), không block merge. Sau freeze: independent source mới sign-off8/8 → owner review → merge → G2. Findings/progress bên dưới là evidence, không mở thêm merge gate.
+
+**Status (2026-10-08):** READY FOR HARNESS/PREFLIGHT. HEAD `04ed899` có offline/CI evidence; acceptance v1 chỉ còn K3 +8check/evidence/sign-off. N1 replay/counts/semantic improvements vào Phase5, không block merge; chưa merge/G2/live.
 
 ## 1. Gantt
 
@@ -60,4 +62,4 @@ See PHASE_4_INFRASTRUCTURE_SPEC.md, PHASE_4_REPRODUCIBILITY.md and PHASE_4_EVIDE
 
 ## 5. Tiến độ thực tế và bước tiếp theo (2026-10-08)
 
-M0 spec/frozen baseline giữ nguyên. M1 harness implementation đã có; M2/M3 có local 563 tests/49 skipped, contracts/mock và CI/Docker xanh nhưng chưa accepted hoàn toàn vì N1–N5. Thực thi sửa theo [plan](PLAN_REVIEW_HANDOFF_GEMINI_2026-10-07.md), review lại HEAD mới, owner review/merge rồi G2 clean replay. M4/G3 authorization và mọi live milestone sau vẫn chưa mở; Gantt là kế hoạch, không phải bằng chứng hoàn thành.
+M0 frozen baseline giữ nguyên; M1 harness implementation có, M2/M3 chưa accepted hoàn toàn: N2/denominator/mock deny DONE, N1 replay/completeness deferred; N4 type còn K3. HEAD04 CI 5 jobs success, 69+9 targeted/contracts/mock pass; full local574/49 skipped có1 timing failure, focused rerun pass. Hoàn tất [plan residual](PLAN_REVIEW_HANDOFF_GEMINI_2026-10-07.md), review lại exact HEAD, owner review/merge rồi G2 clean replay. Chuẩn bị preflight offline trước authorization G3; G4/live và mọi measurement milestone chưa mở. Gantt là lịch đề xuất, không là proof hoàn thành.

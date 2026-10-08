@@ -1,6 +1,8 @@
 # PHASE_4_REPRODUCIBILITY — Reproduction protocol
 
-> Status (2026-10-08): READY FOR HARNESS/PREFLIGHT — HEAD `48b84cd`; local 563 tests/49 skipped, contracts/mock/CI/Docker PASS. B1–B6 cũ DONE; N1–N5 còn mở theo [review](REVIEW_GEMINI_PHASE4_2026-10-07.md); chưa merge/live.
+> **Merge policy owner chốt 2026-10-08:** [Acceptance v1](PHASE_4_ACCEPTANCE_CRITERIA.md): đúng8check; N1 replay hardening deferred, N3 denominator DONE, N4 safety type còn K3. L2/L4/L5 và việc ngoài checklist → [Phase5 backlog](PHASE_5_BACKLOG.md), không block merge. Sau freeze: independent source mới sign-off8/8 → owner review → merge → G2. Findings/progress bên dưới là evidence, không mở thêm merge gate.
+
+> **Trạng thái (2026-10-08):** READY FOR HARNESS/PREFLIGHT. HEAD `04ed899` có offline/CI evidence; acceptance v1 chỉ còn K3 +8check/evidence/sign-off. N1 replay/counts/semantic improvements vào Phase5, không block merge; chưa merge/G2/live.
 
 ## 1. Identity manifest
 
@@ -75,9 +77,9 @@ A live/model runner command is not implied by this document; it must record endp
 
 | ID | Acceptance | Status |
 |---|---|---|
-| R01 | clean checkout emits canonical bundle/checksums | PASS OFFLINE/CI — canonical mock replay đúng HEAD; G2 merged clean-checkout replay chưa có |
-| R02 | validator rejects missing/duplicate joins and recomputation mismatch | BLOCKED — rates/flags/refs/checksums cũ DONE; N2/N3 case/schedule/denominator và L2 CLI còn mở |
-| R03 | manifest separates system/harness/overlay and unavailable provider fields | PARTIAL — SHA/strict bool DONE; N1 source/coherence và N5 preflight readiness còn mở |
-| R04 | stratified smoke, quota/cap and fixture/identity sidecar | BACKLOG LIVE — sidecar offline có; N1 binding còn mở; smoke/quota/cap chưa authorize |
+| R01 | clean checkout emits canonical bundle/checksums | PASS BRANCH OFFLINE/CI — mock SHA đúng HEAD; full local timing failure/rerun ghi rõ; G2 merged replay chưa có |
+| R02 | validator rejects missing/duplicate joins and recomputation mismatch | ACCEPTABLE v1 — joins/rates/N2 DONE; N3 counts backlog, không block merge |
+| R03 | manifest separates system/harness/overlay and unavailable provider fields | PASS COHERENCE/QRELS/MOCK DENY — N1 actual-source replay deferred P5-01 |
+| R04 | stratified smoke, quota/cap and fixture/identity sidecar | BACKLOG LIVE — sidecar offline có; smoke/quota/cap chưa authorize; G4 proof không được suy từ schema PASS |
 
 Until R01–R04 have evidence, no paid/cloud/full measurement is authorized and status remains READY FOR HARNESS/PREFLIGHT.

@@ -1,8 +1,10 @@
 # Strategic Analysis: Phase 4 Scientific Evaluation
 
+> **Merge policy owner chốt 2026-10-08:** [Acceptance v1](phase4/PHASE_4_ACCEPTANCE_CRITERIA.md): đúng8check; N1 replay hardening deferred, N3 denominator DONE, N4 safety type còn K3. L2/L4/L5 và việc ngoài checklist → [Phase5 backlog](phase4/PHASE_5_BACKLOG.md), không block merge. Sau freeze: independent source mới sign-off8/8 → owner review → merge → G2. Findings/progress bên dưới là evidence, không mở thêm merge gate.
+
 > Cập nhật: 2026-10-08
 > Baseline: main tại 49671b928ad6badfaa01331174eb73f0e366752e
-> Trạng thái: READY FOR HARNESS/PREFLIGHT; HEAD `48b84cd` offline/CI/Docker PASS, B1–B6 cũ DONE; N1–N5 còn mở theo [review hiện hành](phase4/REVIEW_GEMINI_PHASE4_2026-10-07.md); chưa merge/live measurement.
+> **Trạng thái (2026-10-08):** READY FOR HARNESS/PREFLIGHT. HEAD `04ed899` có offline/CI evidence; acceptance v1 chỉ còn K3 +8check/evidence/sign-off. N1 replay/counts/semantic improvements vào Phase5, không block merge; chưa merge/G2/live.
 
 ## Kết luận điều hành
 
@@ -47,14 +49,14 @@ Merge/CI không cấp quyền paid smoke. G4 chỉ là live smoke; chỉ G5 đư
 
 | ID | Acceptance | Dependency | Status |
 |---|---|---|---|
-| B01 | grader routing/tool/owner/outcome/claim/safety adversarial | schema/taxonomy/fixture | PARTIAL — safety ordering/empty-string/ref fixes DONE; N4 malformed safety trace và L1 null text còn mở |
-| B02 | identity/fixture/focus/prior-turn sidecar idempotent | frozen JSONL/DB | OFFLINE IMPLEMENTED — sidecar 250 có; N1 source/hash binding và live fixture chưa nghiệm thu |
-| B03 | provider/config manifest + unavailable identity reasons | infrastructure | PARTIAL — immutable SHA/strict preflight typing DONE; N1 coherence và N5 readiness còn mở; live identity chưa nghiệm thu |
-| B04 | cache OFF assertion, retry append, first/eventual/cumulative wait | schema/runner | PASS OFFLINE CONTROLLER — cache OFF/retry append có; N2/N3 primary selection/denominator còn mở |
-| B05 | canonical writer/validator joins, counts, checksums, recomputation | schema/evidence | BLOCKED — rate/non-finite/flag fixes DONE; N1/N2/N3 và CLI còn mở |
-| B06 | qrels/claim labels/answerability/adjudication version/hash | corpus/annotation | PARTIAL — qrels/labels offline có; N1 source fail-closed và live annotation chưa nghiệm thu |
-| B07 | actual mode/model/tool/timing/cache/load measured or null | harness/telemetry | PASS OFFLINE MOCK — measured-zero/non-finite checks có; N4 tool/safety typing còn mở; chưa phải live evidence |
-| B08 | PostgreSQL/pgvector/KB, quota/cap/stratified smoke/stop rule | infra/cost/fixture | BACKLOG — live DB/KB/lane quota/smoke/cap chưa authorize/nghiệm thu |
+| B01 | grader routing/tool/owner/outcome/claim/safety adversarial | schema/taxonomy/fixture | PENDING K3 — safety flag types; L1/order fixes DONE; semantic evidence backlog |
+| B02 | identity/fixture/focus/prior-turn sidecar idempotent | frozen JSONL/DB | OFFLINE IMPLEMENTED — sidecar/hash có; actual-source replay hardening deferred P5-01; live chưa nghiệm thu |
+| B03 | provider/config manifest + unavailable identity reasons | infrastructure | PASS OFFLINE GUARD — SHA/coherence/mock deny DONE; live identity/evidence workstream sau |
+| B04 | cache OFF assertion, retry append, first/eventual/cumulative wait | schema/runner | PASS OFFLINE — cache/retry/scheduling/quality denominator DONE; completeness backlog P5-02 |
+| B05 | canonical writer/validator joins, counts, checksums, recomputation | schema/evidence | ACCEPTABLE v1 SCOPE — canonical/coherence/hash mutation DONE; replay/counts backlog; overall8check/sign-off pending |
+| B06 | qrels/claim labels/answerability/adjudication version/hash | corpus/annotation | PASS VALIDATOR SOURCE PIN — CLI improvements L2 backlog, không block merge; live annotation sau |
+| B07 | actual mode/model/tool/timing/cache/load measured or null | harness/telemetry | PASS OFFLINE MODEL TELEMETRY — K3 safety types pending; live measurements chưa chạy |
+| B08 | PostgreSQL/pgvector/KB, quota/cap/stratified smoke/stop rule | infra/cost/fixture | FUTURE LIVE — DB/KB/quota/smoke/cap không block harness merge v1 |
 
 ## Phase 4A/4B
 
@@ -74,4 +76,4 @@ Upgrade only when evidence indicates root cause:
 
 ## Next action
 
-Gemini tiếp tục từ prompt đầu docs/phase4/REVIEW_GEMINI_PHASE4_2026-10-07.md và plan/handoff liên kết để sửa N1–N5/L1–L4, cập nhật PR #36 rồi dừng owner review. Work stops at offline acceptance/merge/reproduction until owner separately authorizes smoke. Current official status remains READY FOR HARNESS/PREFLIGHT.
+Gemini tiếp tục từ prompt đầu docs/phase4/REVIEW_GEMINI_PHASE4_2026-10-07.md, hoàn tất K3 và đúng8check trong acceptance v1; mọi việc ngoài scope vào Phase5; independent source mới sign-off rồi owner review. Sau acceptance/owner merge mới G2 replay và chuẩn bị lane preflight offline; smoke phải có authorization riêng. Status vẫn READY FOR HARNESS/PREFLIGHT.

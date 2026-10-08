@@ -1,6 +1,8 @@
 # PHASE_4_EVIDENCE_CHECKLIST — Evidence và gate
 
-> Trạng thái (2026-10-08): READY FOR HARNESS/PREFLIGHT. HEAD `48b84cd` có offline/CI/Docker evidence, B1–B6 cũ DONE; N1–N5 còn mở theo [review](REVIEW_GEMINI_PHASE4_2026-10-07.md); chưa merge hoặc READY FOR MEASUREMENT.
+> **Merge policy owner chốt 2026-10-08:** [Acceptance v1](PHASE_4_ACCEPTANCE_CRITERIA.md): đúng8check; N1 replay hardening deferred, N3 denominator DONE, N4 safety type còn K3. L2/L4/L5 và việc ngoài checklist → [Phase5 backlog](PHASE_5_BACKLOG.md), không block merge. Sau freeze: independent source mới sign-off8/8 → owner review → merge → G2. Findings/progress bên dưới là evidence, không mở thêm merge gate.
+
+> **Trạng thái (2026-10-08):** READY FOR HARNESS/PREFLIGHT. HEAD `04ed899` có offline/CI evidence; acceptance v1 chỉ còn K3 +8check/evidence/sign-off. N1 replay/counts/semantic improvements vào Phase5, không block merge; chưa merge/G2/live.
 
 ## 1. Evidence levels
 
@@ -52,13 +54,13 @@ Arm chưa chạy là DESIGNED/BLOCKED; không đưa điểm giả vào scorecard
 
 | ID | Acceptance check | Dependency | Status |
 |---|---|---|---|
-| F01 | grader routing/tool/owner/outcome/claim/safety | schema, taxonomy, fixture | PARTIAL OFFLINE — safety ordering DONE; N4 malformed trace và L1 null text còn mở; live rubric chưa nghiệm thu |
-| F02 | identity/fixture sidecar setup idempotent | frozen JSONL, DB | OFFLINE IMPLEMENTED — sidecar 250 có; N1 hash binding/live fixture còn mở |
-| F09 | qrels, claim labels, answerability, adjudication | corpus/annotation | PARTIAL — qrels/labels offline có; N1 fail-closed source và annotation/adjudication live còn mở |
-| M01 | metric numerator/denominator, CI, first/eventual | metrics/statistics | PARTIAL — recompute checks có; N3 quality denominator và statistical CI live chưa đạt |
-| M02 | cache/retry/no-evidence/blocked handling | schema, runner | PARTIAL — cache/retry append có; N2 duplicate schedule/N3 blocked handling còn mở |
-| M03 | telemetry completeness and unavailable identity | infra/harness | PASS OFFLINE MOCK — model telemetry có; N4 tool/safety typing và live identity còn mở |
-| M05 | canonical writer/validator/checksum | results schema | PARTIAL — writer/checksum/refs có; N1/N2/N3 và L2 còn mở |
+| F01 | grader routing/tool/owner/outcome/claim/safety | schema, taxonomy, fixture | PENDING K3 safety types — other offline fixes DONE; semantic evidence backlog |
+| F02 | identity/fixture sidecar setup idempotent | frozen JSONL, DB | OFFLINE IMPLEMENTED — source replay hardening deferred P5-01; live fixture sau |
+| F09 | qrels, claim labels, answerability, adjudication | corpus/annotation | PASS SOURCE PIN — L2 CLI/live annotation backlog, không block merge |
+| M01 | metric numerator/denominator, CI, first/eventual | metrics/statistics | PASS PRIMARY DENOMINATOR — completeness/counts backlog P5-02; live statistics sau |
+| M02 | cache/retry/no-evidence/blocked handling | schema, runner | PASS OFFLINE — cache/retry/N2/blocked denominator; completeness backlog |
+| M03 | telemetry completeness and unavailable identity | infra/harness | PASS MODEL TELEMETRY — K3 safety types pending; live sau |
+| M05 | canonical writer/validator/checksum | results schema | ACCEPTABLE v1 — source replay/count semantics deferred;8check/evidence/sign-off pending |
 | M06 | importer preserves split/category/actual mode from raw | raw schema/taxonomy | BACKLOG — importer/scorecard theo split/category/actual mode chưa nghiệm thu |
 
 ## 6. Readiness rules
@@ -72,4 +74,4 @@ G5 LANE_MEASUREMENT_READY: the only gate that may write READY FOR MEASUREMENT af
 G6 FULL_RUN_AUTHORIZED: separate full-run approval and preregistered workload.
 G7 MEASURED: full run and analysis artifacts complete.
 
-Only G5 may grant READY FOR MEASUREMENT in a lane manifest. Preflight/null-harness/mock bundles cannot grant it (N5 implementation còn mở). Missing artifact, missing identity, mock/CPU-only output or HTTP-200-only evidence cannot close G5.
+Only G5 may grant READY FOR MEASUREMENT in a lane manifest. Preflight/null-harness/mock bundles cannot grant it (N5 deny đã kiểm chứng offline; live G4/completeness acceptance vẫn chưa mở). Missing artifact, missing identity, mock/CPU-only output or HTTP-200-only evidence cannot close G5.

@@ -1,12 +1,14 @@
 # Phase 4 Scientific Evaluation — Execution Handoff
 
+> **Merge policy owner chốt 2026-10-08:** [Acceptance v1](PHASE_4_ACCEPTANCE_CRITERIA.md): đúng8check; N1 replay hardening deferred, N3 denominator DONE, N4 safety type còn K3. L2/L4/L5 và việc ngoài checklist → [Phase5 backlog](PHASE_5_BACKLOG.md), không block merge. Sau freeze: independent source mới sign-off8/8 → owner review → merge → G2. Findings/progress bên dưới là evidence, không mở thêm merge gate.
+
 > Cập nhật bàn giao: 2026-10-08
 > Baseline bắt buộc: main / 49671b928ad6badfaa01331174eb73f0e366752e
-> Trạng thái: READY FOR HARNESS/PREFLIGHT — chưa đủ bằng chứng đo chính thức; không phải production approval.
+> **Trạng thái (2026-10-08):** READY FOR HARNESS/PREFLIGHT. HEAD `04ed899` có offline/CI evidence; acceptance v1 chỉ còn K3 +8check/evidence/sign-off. N1 replay/counts/semantic improvements vào Phase5, không block merge; chưa merge/G2/live.
 
-> Review hiện hành: [REVIEW_GEMINI_PHASE4_2026-10-07.md](REVIEW_GEMINI_PHASE4_2026-10-07.md); [plan thực thi](PLAN_REVIEW_HANDOFF_GEMINI_2026-10-07.md). HEAD `48b84cd3e265f7852f87e94cecee04a52499eaa3`: B1–B6 cũ đã VERIFIED DONE; 563 tests chạy/49 skipped, 58 Phase 4 + 9 guard PASS; CI/Docker thật xanh. N1–N5 còn mở, chưa merge.
+> Review hiện hành: [REVIEW_GEMINI_PHASE4_2026-10-07.md](REVIEW_GEMINI_PHASE4_2026-10-07.md); [plan](PLAN_REVIEW_HANDOFF_GEMINI_2026-10-07.md). HEAD `04ed8990019e99fbca2321ebbaf100669d42c031`: 69 Phase4 +9 guard/contract/mock/5 CI jobs PASS; full local574/49 skipped có1 P99 failure, focused rerun PASS. Chưa merge.
 
-> Công việc tiếp theo: Gemini sửa N1 provenance, N2 case/schedule, N3 blocked denominator, N4 malformed safety telemetry, N5 preflight readiness và L1–L4 theo review. R13 DONE OFFLINE/CI; R10/R11/R12 chưa đạt acceptance đầy đủ. Sau sửa/CI mới dừng owner review.
+> Gemini hoàn tất K3 safety flag type rồi verify đúng8check theo acceptance v1; N1 source replay/N3 counts/tool-name semantics và L2/L4/L5 vào backlog. N2/N5 bypass/L1 DONE; R11/R13 guard DONE OFFLINE. Merge acceptance chỉ còn K3 + frozen-head evidence + independent sign-off8/8; không mở lại N1/N3 backlog.
 
 ## 1. Mục tiêu và ranh giới
 
@@ -57,22 +59,22 @@ Merge hoặc CI không tự cấp quyền chạy paid/cloud. G4 chỉ là `LIVE_
 
 | ID | Acceptance check | Dependency | Status |
 |---|---|---|---|
-| B01 | Grader bắt missing/forbidden/wrong-owner/unsupported-claim và safety severity | schema, taxonomy, fixtures | PARTIAL — safety ordering/empty-string/ref fixes DONE; N4 malformed safety trace và L1 null text còn mở |
-| B02 | Sidecar map case → identity/fixture/focus/prior turns, setup idempotent | frozen JSONL, DB snapshot | OFFLINE IMPLEMENTED — sidecar 250 có; N1 source/hash binding và live fixture chưa nghiệm thu |
-| B03 | Lane manifest ghi adapter/endpoint/model/sampling và unavailable reasons | infrastructure | PARTIAL — immutable SHA/strict preflight typing DONE; N1 coherence và N5 readiness còn mở; live identity chưa nghiệm thu |
-| B04 | Quality answer-cache OFF được assert; retry append từng attempt; first/eventual/cumulative wait tính được | schema, runner | PASS OFFLINE CONTROLLER — cache OFF/retry append có; N2/N3 primary selection/denominator còn mở |
-| B05 | Writer/validator kiểm join keys, counts, checksums, aggregate recomputation | results schema | BLOCKED — rate/non-finite/flag fixes DONE; N1/N2/N3 và CLI còn mở |
-| B06 | Qrels/claim labels/answerability/adjudication version/hash | corpus/annotation | PARTIAL — qrels/labels offline có; N1 source fail-closed và live annotation chưa nghiệm thu |
-| B07 | Actual mode/model/tool/timing/cache/load IDs measured hoặc null | harness/instrumentation | PASS OFFLINE MOCK — measured-zero/non-finite checks có; N4 tool/safety typing còn mở; chưa phải live evidence |
-| B08 | PostgreSQL/pgvector/KB, quota, smoke selector, cap/stop rule pass | infra, cost | BACKLOG — live DB/KB/lane quota/smoke/cap chưa authorize/nghiệm thu |
+| B01 | Grader bắt missing/forbidden/wrong-owner/unsupported-claim và safety severity | schema, taxonomy, fixtures | PENDING K3 — safety flag types; L1/order fixes DONE; semantic evidence backlog |
+| B02 | Sidecar map case → identity/fixture/focus/prior turns, setup idempotent | frozen JSONL, DB snapshot | OFFLINE IMPLEMENTED — sidecar/hash có; actual-source replay hardening deferred P5-01; live chưa nghiệm thu |
+| B03 | Lane manifest ghi adapter/endpoint/model/sampling và unavailable reasons | infrastructure | PASS OFFLINE GUARD — SHA/coherence/mock deny DONE; live identity/evidence workstream sau |
+| B04 | Quality answer-cache OFF được assert; retry append từng attempt; first/eventual/cumulative wait tính được | schema, runner | PASS OFFLINE — cache/retry/scheduling/quality denominator DONE; completeness backlog P5-02 |
+| B05 | Writer/validator kiểm join keys, counts, checksums, aggregate recomputation | results schema | ACCEPTABLE v1 SCOPE — canonical/coherence/hash mutation DONE; replay/counts backlog; overall8check/sign-off pending |
+| B06 | Qrels/claim labels/answerability/adjudication version/hash | corpus/annotation | PASS VALIDATOR SOURCE PIN — CLI improvements L2 backlog, không block merge; live annotation sau |
+| B07 | Actual mode/model/tool/timing/cache/load IDs measured hoặc null | harness/instrumentation | PASS OFFLINE MODEL TELEMETRY — K3 safety types pending; live measurements chưa chạy |
+| B08 | PostgreSQL/pgvector/KB, quota, smoke selector, cap/stop rule pass | infra, cost | FUTURE LIVE — DB/KB/quota/smoke/cap không block harness merge v1 |
 
 ### R13 — deployment guard bắt buộc trong cùng PR
 
-Workflow deploy đã có guard reviewable dựa trên **changed files thực tế**: eval-only/harness-only merge không deploy; mixed eval + runtime giữ policy deploy; `workflow_dispatch` giữ nguyên; unknown path fail-closed. Không hardcode thư mục harness, không ignore rộng toàn `scripts/`, `.github/` hoặc `Dockerfile`, không đổi repo variables và không tắt deploy toàn cục. R13 **DONE OFFLINE/CI** ở HEAD review: 9 guard tests, Docker build và packaged checks PASS. Toàn diff baseline→HEAD hiện trả `deploy_eligible=true` vì `.dockerignore`, `Dockerfile`, `scripts/check_deployment_contract.py`. Đây là mixed packaging/evaluation; merge có thể deploy theo variable/policy hiện hữu. Chưa kiểm/thay variables, chưa deploy; không ghi PR #36 eval-only hoặc luôn deploy-skipped.
+Workflow deploy đã có guard reviewable dựa trên **changed files thực tế**: eval-only/harness-only merge không deploy; mixed eval + runtime giữ policy deploy; `workflow_dispatch` giữ nguyên; unknown path fail-closed. Không hardcode thư mục harness, không ignore rộng toàn `scripts/`, `.github/` hoặc `Dockerfile`, không đổi repo variables và không tắt deploy toàn cục. R13 **DONE OFFLINE/CI** ở HEAD `04ed899`: 9 guard tests và exact-head offline CI success; Docker build/packaged checks là các bước bắt buộc của workflow. Toàn diff baseline→HEAD hiện trả `deploy_eligible=true` vì `.dockerignore`, `Dockerfile`, `scripts/check_deployment_contract.py`. Đây là mixed packaging/evaluation; merge có thể deploy theo variable/policy hiện hữu. Chưa kiểm/thay variables, chưa deploy; không ghi PR #36 eval-only hoặc luôn deploy-skipped.
 
 ## 6. Điều kiện dừng
 
-Dừng trước smoke nếu G1 hoặc G2 fail. Dừng trước full run nếu lane thiếu identity, fixture/DB/KB, cache/retry assertion, quota/price approval hoặc raw validator. Không biến HTTP 200, mock response, CPU-only run, merge commit hoặc CI xanh thành quality evidence. Dừng merge nếu N1–N5 chưa đóng, CLI/response robustness chưa xử lý hoặc CI không xanh trên HEAD mới. Báo R13 eligibility theo diff thực tế cho owner trước merge.
+Dừng trước smoke nếu G1 hoặc G2 fail. Dừng trước full run nếu lane thiếu identity, fixture/DB/KB, cache/retry assertion, quota/price approval hoặc raw validator. Không biến HTTP 200, mock response, CPU-only run, merge commit hoặc CI xanh thành quality evidence. Dừng merge chỉ khi K1–K8 chưa PASS hoặc thiếu independent sign-off/owner review theo acceptance v1. L2/L4/L5/backlog không chặn merge. Báo R13 eligibility theo diff thực tế cho owner trước merge.
 
 ## 7. Report bắt buộc
 

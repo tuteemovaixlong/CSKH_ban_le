@@ -1,6 +1,8 @@
 # Phase 4 — Infrastructure Specification
 
-**Status (2026-10-08):** READY FOR HARNESS/PREFLIGHT — offline harness/CI/Docker đã có ở HEAD `48b84cd`; N1–N5 còn mở, chưa merge/G2 hoặc live measurement gate.
+> **Merge policy owner chốt 2026-10-08:** [Acceptance v1](PHASE_4_ACCEPTANCE_CRITERIA.md): đúng8check; N1 replay hardening deferred, N3 denominator DONE, N4 safety type còn K3. L2/L4/L5 và việc ngoài checklist → [Phase5 backlog](PHASE_5_BACKLOG.md), không block merge. Sau freeze: independent source mới sign-off8/8 → owner review → merge → G2. Findings/progress bên dưới là evidence, không mở thêm merge gate.
+
+**Status (2026-10-08):** READY FOR HARNESS/PREFLIGHT. HEAD `04ed899` có offline/CI evidence; acceptance v1 chỉ còn K3 +8check/evidence/sign-off. N1 replay/counts/semantic improvements vào Phase5, không block merge; chưa merge/G2/live.
 **Scope:** scientific evaluation only. Không authorize production deploy, model replacement, schema migration, paid API hoặc cloud provisioning.
 
 ## 1. Identity và status
@@ -74,11 +76,11 @@ Lane có RAG phải kết nối isolated PostgreSQL/pgvector snapshot, business 
 
 | ID | Acceptance check | Status |
 |---|---|---|
-| H01 | adapter topology/response identity/tool-call/timeout preflight | PARTIAL MOCK — manifest có; live adapter/endpoint identity chưa nghiệm thu |
-| H02 | cache OFF and retry append controller | PASS OFFLINE CONTROLLER — cache OFF/retry append; N2/N3 acceptance còn mở |
-| H03 | fixture/identity/sidecar and PostgreSQL/pgvector/KB preflight | PARTIAL — sidecar offline có/N1 binding mở; live PostgreSQL/KB fixture preflight chưa nghiệm thu |
-| H04 | canonical writer/validator and checksums | PARTIAL — canonical bundle/checksums có; N1/N2/N3/L2 acceptance còn mở |
+| H01 | adapter topology/response identity/tool-call/timeout preflight | PARTIAL MOCK — manifest/mock readiness deny có; live endpoint/G4 evidence chưa nghiệm thu |
+| H02 | cache OFF and retry append controller | PASS OFFLINE — cache/retry/denominator DONE; counts backlog |
+| H03 | fixture/identity/sidecar and PostgreSQL/pgvector/KB preflight | OFFLINE SIDECAR IMPLEMENTED — replay hardening deferred; live DB/KB future |
+| H04 | canonical writer/validator and checksums | ACCEPTABLE v1 — canonical/checksums/coherence DONE; source/counts/L2 backlog |
 | H05 | quota/cost ledger and smoke/full approval separation | BACKLOG — quota/price cap và live authorization evidence chưa có |
-| H06 | clean-checkout replay with system/harness/overlay tuple | PASS BRANCH OFFLINE/CI — tuple ghi đúng HEAD; coherence N1 mở; G2 merged replay chưa có |
+| H06 | clean-checkout replay with system/harness/overlay tuple | PASS BRANCH REPLAY/CI — source replay deferred; independent sign-off/G2 merged replay pending |
 
 Until H01–H06 have evidence, status remains READY FOR HARNESS/PREFLIGHT.

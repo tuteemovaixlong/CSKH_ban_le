@@ -1,6 +1,8 @@
 # PHASE_4_METRICS_DEFINITION — Metrics, công thức và cách đo
 
-> Trạng thái (2026-10-08): READY FOR HARNESS/PREFLIGHT. HEAD `48b84cd` đã có offline grader/writer/telemetry/recompute; N2 case scheduling và N3 blocked denominator chưa đạt acceptance theo [review](REVIEW_GEMINI_PHASE4_2026-10-07.md). Chưa có live/statistical measurement evidence.
+> **Merge policy owner chốt 2026-10-08:** [Acceptance v1](PHASE_4_ACCEPTANCE_CRITERIA.md): đúng8check; N1 replay hardening deferred, N3 denominator DONE, N4 safety type còn K3. L2/L4/L5 và việc ngoài checklist → [Phase5 backlog](PHASE_5_BACKLOG.md), không block merge. Sau freeze: independent source mới sign-off8/8 → owner review → merge → G2. Findings/progress bên dưới là evidence, không mở thêm merge gate.
+
+> **Trạng thái (2026-10-08):** READY FOR HARNESS/PREFLIGHT. HEAD `04ed899` có offline/CI evidence; acceptance v1 chỉ còn K3 +8check/evidence/sign-off. N1 replay/counts/semantic improvements vào Phase5, không block merge; chưa merge/G2/live.
 
 ## 1. Đơn vị và denominator
 
@@ -92,3 +94,7 @@ Ngưỡng là pre-registered proposal, không phải production SLO và không �
 | M04 | CI/bootstrap cluster theo logical case/template/run block, không coi retry là độc lập | BACKLOG |
 
 Chưa có evidence M01–M04 nên chưa công bố score/significance; status vẫn READY FOR HARNESS/PREFLIGHT.
+
+## Implementation acceptance cập nhật 2026-10-08
+
+Quality denominator đã loại blocked/inconclusive. N3 chưa đóng vì n_graded còn tính mọi grading và blocked set overlap; missing dùng subtraction/clamp che thiếu evidence. Gemini phải khai báo cấp primary/eventual cho mỗi disposition/completeness, tính eligible/blocked/missing bằng các tập nhất quán. Blocked-only hoặc inconclusive không là complete quality; recovered retry không che thiếu primary evidence. Full model measurement/CI thống kê vẫn chưa chạy.
