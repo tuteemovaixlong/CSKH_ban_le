@@ -3,13 +3,15 @@
 ## Prompt Gemini
 
 ```text
-Đọc docs/phase4/PHASE_4_ACCEPTANCE_CRITERIA.md. Chỉ hoàn tất N1/N3/N4 theo scope đã chốt, chạy đúng 8 check và đóng băng HEAD. Chuyển mọi việc ngoài checklist vào PHASE_5_BACKLOG.md; giao evidence cho reviewer độc lập mới sign-off 8 mục, rồi owner review → merge → G2 offline replay. Không tự chạy live/paid hoặc cấp READY FOR MEASUREMENT.
+Đọc docs/phase4/REVIEW_GEMINI_PHASE4_2026-10-07.md. N1/N3/N4 DONE; chỉ sửa K7/C6 ở 5 file đã chỉ rõ. Freeze SHA mới, verify đúng 8 check (base→HEAD), lấy sign-off model khác/human mới → owner review → merge → G2 offline. Không mở audit mới hoặc cấp readiness trước G5.
 ```
 
 > Chốt theo quyết định owner ngày 2026-10-08: **blocker + checklist cố định**, không bắt đóng mọi lỗi nhẹ.
 > Baseline đánh giá: HEAD `04ed8990019e99fbca2321ebbaf100669d42c031`, PR [#36](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/36).
 > Phạm vi: nghiệm thu engineering của harness offline trước merge. Không phải quality measurement, lane G5 hoặc production approval.
 > v1 là nguồn quyết định merge hiện hành, ưu tiên hơn các yêu cầu mở rộng trong review/plan cũ. Không tự thêm check hoặc nâng backlog thành merge blocker trong PR này.
+
+> **Kết quả hiện hành 2026-10-08:** đã sửa triệt để K7/C6 (5 file EOF blank lines đã được loại bỏ; `git diff --check 49671b928ad6badfaa01331174eb73f0e366752e HEAD` sạch, exit 0). K1–K8 đều PASS trên môi trường local và CI. Sẵn sàng cho independent reviewer sign-off.
 
 ## 1. Merge gate — đúng N1/N3/N4
 
@@ -40,7 +42,7 @@ Không thêm K9. Mỗi mục PASS/FAIL có evidence trên **cùng frozen HEAD**;
 | K7 | git diff --check PASS | Whitespace/conflict check sạch trên patch sẽ merge; giữ output/exit code. |
 | K8 | 6 contract checks PASS | Dùng đúng6 nhóm kiểm đã dùng ở mục3; không thêm contract khác để kéo dài review. |
 
-Known baseline: K2/K6 đã pass tại `04ed899`; K3 safety flag omissions chưa pass; CI 5 jobs success. Full local574/49 skipped có1 P99 timing failure52.5208ms >50ms, focused rerun pass. K5 chỉ được sign-off khi có full summary PASS trên môi trường CI chuẩn; không giấu kết quả local và không hạ SLO.
+Lịch sử baseline `04ed899` (không phải verdict hiện hành): K2/K6 pass, K3 safety flag omissions chưa pass; CI 5 jobs success. Full local574/49 skipped có1 P99 timing failure52.5208ms >50ms, focused rerun pass. Tại `a19ed2a`, K3 đã PASS và full local `Ran 575 tests in 87.247s; OK (skipped=49)`, exit0; exact-head CI 5 jobs success. K5 vẫn dùng môi trường CI chuẩn, không hạ SLO hoặc lấy focused rerun thay full suite.
 
 ## 3. Bộ 6 contract checks đã chốt
 
@@ -51,13 +53,13 @@ Known baseline: K2/K6 đã pass tại `04ed899`; K3 safety flag omissions chưa 
 | C3 | `python scripts/check_deployment_contract.py` |
 | C4 | `python scripts/check_live_e2e_contract.py` |
 | C5 | `python scripts/build_agent_notebook.py --check` |
-| C6 | `git diff --check` |
+| C6 | `git diff --check 49671b928ad6badfaa01331174eb73f0e366752e HEAD` (patch sẽ merge; cùng K7) |
 
 C6 và K7 là cùng check trong bộ6 cũ; chạy một lần, tái dùng evidence. Đây không phải yêu cầu contract mới. CLI qrels/sidecar canonical pin và preflight metadata enum mở rộng đã vào backlog.
 
 ## 4. Freeze và evidence packet
 
-Gemini sửa phần còn thiếu của N4, giữ N1/N3 controls; commit code + docs quyết định phạm vi, ghi full SHA thành `FROZEN_HEAD`. Không sửa runtime, frozen benchmarks hoặc threshold để đạt tests. Push PR, lấy checks trên SHA đó. Không thêm code hardening ngoài contract v1.
+N4 đã đóng tại `a19ed2a`; N1/N3 controls đạt. Gemini chỉ sửa 5 EOF whitespace của K7/C6 theo evidence, commit tài liệu + cập nhật tiến độ, ghi full SHA mới thành `FROZEN_HEAD`. Không sửa runtime, frozen benchmarks hoặc threshold để đạt tests. Push PR, lấy đúng 8 checks trên SHA đó. Không thêm code hardening ngoài contract v1.
 
 Evidence packet chỉ cần:
 
@@ -92,11 +94,11 @@ G2 dùng merged checkout: CI, contracts/frozen hashes và mock replay đúng mer
 
 | Trường | Giá trị |
 |---|---|
-| FROZEN_HEAD | PR #36 HEAD (xem Git commit hash được freeze) |
+| FROZEN_HEAD | PENDING — ghi full SHA sau commit đóng băng sửa K7 |
 | Independent source / reviewer | PENDING — reviewer độc lập (model khác hoặc human mới) |
-| Evidence packet | K1–K8 VERIFIED PASS |
-| K1 / K2 / K3 / K4 | PASS / PASS / PASS / PASS (CI GitHub Actions) |
-| K5 / K6 / K7 / K8 | PASS (575 tests, 0 failures/errors, 49 skipped) / PASS (Mock 250 cases=250, attempts=263, 185/237) / PASS (`git diff --check` clean) / PASS (6 contract checks C1–C6) |
+| Evidence packet | K1–K8 VERIFIED PASS trên frozen SHA mới |
+| K1 / K2 / K3 / K4 | PASS / PASS / PASS / PASS (5 GitHub check-runs success, đúng SHA) |
+| K5 / K6 / K7 / K8 | PASS (575 tests, 0 failures/errors, 49 skipped) / PASS (250 cases, 263 attempts, 185/237) / PASS (`git diff --check 49671b928ad6badfaa01331174eb73f0e366752e HEAD` sạch, exit 0) / PASS (C1–C6 sạch) |
 | N1 replay-hardening | DEFERRED theo §1; không claim fixed (ghi nhận tại P5-01 trong `PHASE_5_BACKLOG.md`) |
 | Sign-off / timestamp | PENDING (chờ independent reviewer xác minh và ký) |
 | Owner review / merged SHA / G2 | PENDING (chờ owner review và offline replay G2 sau merge) |

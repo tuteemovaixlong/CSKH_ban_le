@@ -1,10 +1,10 @@
 # Strategic Analysis: Phase 4 Scientific Evaluation
 
-> **Merge policy owner chốt 2026-10-08:** [Acceptance v1](phase4/PHASE_4_ACCEPTANCE_CRITERIA.md): đúng8check; N1 replay hardening deferred, N3 denominator DONE, N4 safety type còn K3. L2/L4/L5 và việc ngoài checklist → [Phase5 backlog](phase4/PHASE_5_BACKLOG.md), không block merge. Sau freeze: independent source mới sign-off8/8 → owner review → merge → G2. Findings/progress bên dưới là evidence, không mở thêm merge gate.
+> **Merge policy owner chốt 2026-10-08:** [Acceptance v1](phase4/PHASE_4_ACCEPTANCE_CRITERIA.md): đúng8check; N1 manifest mutation/N3 denominator/N4 safety types DONE trong scope v1. [Evidence HEAD a19ed2a](phase4/PHASE_4_ACCEPTANCE_EVIDENCE_a19ed2a.md): K1–K6 PASS, K7/C6 FAIL, independent sign-off PENDING. Chỉ sửa nguyên nhân K7 rồi verify đúng8check trên frozen SHA mới; independent source mới sign-off8/8 → owner review → merge → G2. N1 replay/counts/tool-name semantics, L2/L4/L5 và việc ngoài checklist → [Phase5 backlog](phase4/PHASE_5_BACKLOG.md), không block merge. Findings/progress lịch sử bên dưới không mở thêm merge gate.
 
 > Cập nhật: 2026-10-08
 > Baseline: main tại 49671b928ad6badfaa01331174eb73f0e366752e
-> **Trạng thái (2026-10-08):** READY FOR HARNESS/PREFLIGHT. HEAD `04ed899` có offline/CI evidence; acceptance v1 chỉ còn K3 +8check/evidence/sign-off. N1 replay/counts/semantic improvements vào Phase5, không block merge; chưa merge/G2/live.
+> **Trạng thái (2026-10-08):** READY FOR HARNESS/PREFLIGHT. HEAD `a19ed2a` đạt K1–K6: full local575 tests PASS/49 skipped, CI5 success, mock250 PASS. K7/C6 FAIL trên patch merge do5 blank lines EOF; independent sign-off PENDING. N1 replay/counts/tool-name semantics vào Phase5, không block merge; chưa merge/G2/live.
 
 ## Kết luận điều hành
 
@@ -49,13 +49,13 @@ Merge/CI không cấp quyền paid smoke. G4 chỉ là live smoke; chỉ G5 đư
 
 | ID | Acceptance | Dependency | Status |
 |---|---|---|---|
-| B01 | grader routing/tool/owner/outcome/claim/safety adversarial | schema/taxonomy/fixture | PENDING K3 — safety flag types; L1/order fixes DONE; semantic evidence backlog |
+| B01 | grader routing/tool/owner/outcome/claim/safety adversarial | schema/taxonomy/fixture | DONE OFFLINE K3 TYPES — safety type gate PASS tại a19ed2a; L1/order fixes DONE; semantic evidence backlog |
 | B02 | identity/fixture/focus/prior-turn sidecar idempotent | frozen JSONL/DB | OFFLINE IMPLEMENTED — sidecar/hash có; actual-source replay hardening deferred P5-01; live chưa nghiệm thu |
 | B03 | provider/config manifest + unavailable identity reasons | infrastructure | PASS OFFLINE GUARD — SHA/coherence/mock deny DONE; live identity/evidence workstream sau |
 | B04 | cache OFF assertion, retry append, first/eventual/cumulative wait | schema/runner | PASS OFFLINE — cache/retry/scheduling/quality denominator DONE; completeness backlog P5-02 |
-| B05 | canonical writer/validator joins, counts, checksums, recomputation | schema/evidence | ACCEPTABLE v1 SCOPE — canonical/coherence/hash mutation DONE; replay/counts backlog; overall8check/sign-off pending |
+| B05 | canonical writer/validator joins, counts, checksums, recomputation | schema/evidence | ACCEPTABLE v1 SCOPE — canonical/coherence/hash mutation DONE; replay/counts backlog; K7/C6 FAIL và independent sign-off PENDING |
 | B06 | qrels/claim labels/answerability/adjudication version/hash | corpus/annotation | PASS VALIDATOR SOURCE PIN — CLI improvements L2 backlog, không block merge; live annotation sau |
-| B07 | actual mode/model/tool/timing/cache/load measured or null | harness/telemetry | PASS OFFLINE MODEL TELEMETRY — K3 safety types pending; live measurements chưa chạy |
+| B07 | actual mode/model/tool/timing/cache/load measured or null | harness/telemetry | PASS OFFLINE MODEL TELEMETRY/K3 TYPES — live measurements chưa chạy |
 | B08 | PostgreSQL/pgvector/KB, quota/cap/stratified smoke/stop rule | infra/cost/fixture | FUTURE LIVE — DB/KB/quota/smoke/cap không block harness merge v1 |
 
 ## Phase 4A/4B
@@ -76,4 +76,4 @@ Upgrade only when evidence indicates root cause:
 
 ## Next action
 
-Gemini tiếp tục từ prompt đầu docs/phase4/REVIEW_GEMINI_PHASE4_2026-10-07.md, hoàn tất K3 và đúng8check trong acceptance v1; mọi việc ngoài scope vào Phase5; independent source mới sign-off rồi owner review. Sau acceptance/owner merge mới G2 replay và chuẩn bị lane preflight offline; smoke phải có authorization riêng. Status vẫn READY FOR HARNESS/PREFLIGHT.
+Gemini tiếp tục từ prompt đầu docs/phase4/REVIEW_GEMINI_PHASE4_2026-10-07.md: chỉ sửa5 blank lines EOF làm K7/C6 FAIL, commit/freeze SHA mới rồi verify đúng8check trong acceptance v1. N1/N3/N4 type gate DONE; việc ngoài scope giữ Phase5. Independent source mới sign-off8/8 rồi owner review→merge→G2 replay; sau đó chuẩn bị lane preflight offline. Smoke phải có authorization riêng. Status vẫn READY FOR HARNESS/PREFLIGHT.

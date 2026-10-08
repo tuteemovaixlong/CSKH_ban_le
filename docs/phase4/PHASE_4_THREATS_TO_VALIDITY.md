@@ -77,4 +77,3 @@ Chương 4 phải có một tiểu mục giới hạn, nêu rõ benchmark là b�
 | Feature/deployment scope | run manifest ghi topology + enabled features | Không áp dụng production gate ngoài phạm vi; tách kết luận text-only/single-instance |
 
 Không được xóa threat chỉ vì mitigation đã được viết trong plan. Chỉ chuyển residual risk khi artifact tương ứng đã tồn tại và validator kiểm được.
-

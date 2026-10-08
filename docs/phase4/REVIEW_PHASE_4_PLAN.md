@@ -1,8 +1,8 @@
 # Phase 4 — Review bản sửa Astra và handoff BUILD HARNESS
 
-> **Merge policy owner chốt 2026-10-08:** [Acceptance v1](PHASE_4_ACCEPTANCE_CRITERIA.md): đúng8check; N1 replay hardening deferred, N3 denominator DONE, N4 safety type còn K3. L2/L4/L5 và việc ngoài checklist → [Phase5 backlog](PHASE_5_BACKLOG.md), không block merge. Sau freeze: independent source mới sign-off8/8 → owner review → merge → G2. Findings/progress bên dưới là evidence, không mở thêm merge gate.
+> **Merge policy owner chốt 2026-10-08:** [Acceptance v1](PHASE_4_ACCEPTANCE_CRITERIA.md): đúng8check; N1 manifest mutation/N3 denominator/N4 safety types DONE trong scope v1. [Evidence HEAD a19ed2a](PHASE_4_ACCEPTANCE_EVIDENCE_a19ed2a.md): K1–K6 PASS, K7/C6 FAIL, independent sign-off PENDING. Chỉ sửa nguyên nhân K7 rồi verify đúng8check trên frozen SHA mới; independent source mới sign-off8/8 → owner review → merge → G2. N1 replay/counts/tool-name semantics, L2/L4/L5 và việc ngoài checklist → [Phase5 backlog](PHASE_5_BACKLOG.md), không block merge. Findings/progress lịch sử bên dưới không mở thêm merge gate.
 
-> Review specification ngày **2026-10-07**; implementation cập nhật **2026-10-08** ở HEAD `04ed899`. Entry point hiện hành: [review Gemini](REVIEW_GEMINI_PHASE4_2026-10-07.md) và [plan/handoff](PLAN_REVIEW_HANDOFF_GEMINI_2026-10-07.md). Các prompt build bên dưới lưu bối cảnh/spec; thực thi sửa theo prompt đầu review hiện hành.
+> Review specification ngày **2026-10-07**; implementation cập nhật **2026-10-08** ở HEAD `a19ed2a`. Entry point hiện hành: [review Gemini](REVIEW_GEMINI_PHASE4_2026-10-07.md) và [plan/handoff](PLAN_REVIEW_HANDOFF_GEMINI_2026-10-07.md). Các prompt build bên dưới lưu bối cảnh/spec; thực thi sửa theo prompt đầu review hiện hành.
 > Runtime baseline: **49671b928ad6badfaa01331174eb73f0e366752e**.
 > Phạm vi: 16 tài liệu Phase 4 gốc, STRATEGIC_ANALYSIS_PHASE_4.md và code/runner/CI hiện có.
 > Quy trình owner chốt: **Gemini build harness → mở PR → chạy CI → owner review trước merge**.
@@ -285,5 +285,4 @@ BUILD HARNESS Phase 4 offline/local theo docs/phase4/REVIEW_PHASE_4_PLAN.md và 
 
 ## Trạng thái chốt 2026-10-07
 
-R10–R12: CLOSED(spec); R11 offline guard DONE. Merge scope hiện theo acceptance v1: N1 replay deferred, N3 denominator DONE, K3 safety types/evidence/sign-off pending. R13: DONE OFFLINE/CI; actual PR diff packaging eligible theo policy. G1 có implementation/test evidence nhưng chưa accepted đầy đủ; G2 chưa merge. Trạng thái chính thức: READY FOR HARNESS/PREFLIGHT.
-
+R10–R12: CLOSED(spec); R10 type gate K3 DONE OFFLINE tại a19ed2a; R11 offline guard DONE. Merge scope theo acceptance v1: N1 manifest mutation/N3 denominator/N4 types DONE; replay/counts/tool-name semantics deferred. K1–K6 PASS, K7/C6 FAIL; independent sign-off PENDING. R13: DONE OFFLINE/CI; actual PR diff packaging eligible theo policy. G1 có implementation/test evidence nhưng chưa accepted; G2 chưa merge. Chỉ sửa K7 rồi verify đúng8check/sign-off theo [evidence](PHASE_4_ACCEPTANCE_EVIDENCE_a19ed2a.md). Trạng thái chính thức: READY FOR HARNESS/PREFLIGHT.

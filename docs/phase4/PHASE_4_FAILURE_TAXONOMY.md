@@ -106,4 +106,3 @@ Taxonomy chỉ được dùng trong kết quả chính khi:
 - mọi `SKIP`, quota stop hoặc blocked environment được báo trong reliability denominator và không bị đổi thành PASS.
 
 Các mã mới là **hợp đồng cần triển khai**, chưa phải bằng chứng rằng harness/grader/telemetry hiện đã phát ra chúng.
-

@@ -86,4 +86,3 @@ Một arm chỉ được đề xuất thay baseline khi đồng thời:
 Nếu chất lượng tăng nhưng grounding/safety giảm, giữ A0 và mở issue nghiên cứu; không merge theo điểm trung bình.
 
 Các arm R1–R3, W0–W3 và A1–A4 là **candidate design/backlog** cho tới khi acceptance evidence được lưu. Không ghi `BASELINE ACCEPTED` hoặc `READY FOR MEASUREMENT` chỉ từ việc hoàn thành văn bản.
-

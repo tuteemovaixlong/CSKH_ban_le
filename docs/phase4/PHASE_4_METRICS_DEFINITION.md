@@ -1,8 +1,8 @@
 # PHASE_4_METRICS_DEFINITION — Metrics, công thức và cách đo
 
-> **Merge policy owner chốt 2026-10-08:** [Acceptance v1](PHASE_4_ACCEPTANCE_CRITERIA.md): đúng8check; N1 replay hardening deferred, N3 denominator DONE, N4 safety type còn K3. L2/L4/L5 và việc ngoài checklist → [Phase5 backlog](PHASE_5_BACKLOG.md), không block merge. Sau freeze: independent source mới sign-off8/8 → owner review → merge → G2. Findings/progress bên dưới là evidence, không mở thêm merge gate.
+> **Merge policy owner chốt 2026-10-08:** [Acceptance v1](PHASE_4_ACCEPTANCE_CRITERIA.md): đúng8check; N1 manifest mutation/N3 denominator/N4 safety types DONE trong scope v1. [Evidence HEAD a19ed2a](PHASE_4_ACCEPTANCE_EVIDENCE_a19ed2a.md): K1–K6 PASS, K7/C6 FAIL, independent sign-off PENDING. Chỉ sửa nguyên nhân K7 rồi verify đúng8check trên frozen SHA mới; independent source mới sign-off8/8 → owner review → merge → G2. N1 replay/counts/tool-name semantics, L2/L4/L5 và việc ngoài checklist → [Phase5 backlog](PHASE_5_BACKLOG.md), không block merge. Findings/progress lịch sử bên dưới không mở thêm merge gate.
 
-> **Trạng thái (2026-10-08):** READY FOR HARNESS/PREFLIGHT. HEAD `04ed899` có offline/CI evidence; acceptance v1 chỉ còn K3 +8check/evidence/sign-off. N1 replay/counts/semantic improvements vào Phase5, không block merge; chưa merge/G2/live.
+> **Trạng thái (2026-10-08):** READY FOR HARNESS/PREFLIGHT. HEAD `a19ed2a` đạt K1–K6: full local575 tests PASS/49 skipped, CI5 success, mock250 PASS. K7/C6 FAIL trên patch merge do5 blank lines EOF; independent sign-off PENDING. N1 replay/counts/tool-name semantics vào Phase5, không block merge; chưa merge/G2/live.
 
 ## 1. Đơn vị và denominator
 
@@ -97,4 +97,4 @@ Chưa có evidence M01–M04 nên chưa công bố score/significance; status v�
 
 ## Implementation acceptance cập nhật 2026-10-08
 
-Quality denominator đã loại blocked/inconclusive. N3 chưa đóng vì n_graded còn tính mọi grading và blocked set overlap; missing dùng subtraction/clamp che thiếu evidence. Gemini phải khai báo cấp primary/eventual cho mỗi disposition/completeness, tính eligible/blocked/missing bằng các tập nhất quán. Blocked-only hoặc inconclusive không là complete quality; recovered retry không che thiếu primary evidence. Full model measurement/CI thống kê vẫn chưa chạy.
+N3 denominator DONE trong acceptance v1 tại `a19ed2a`: thêm13 blocked grading giữ quality185/237; all-blocked có numerator0/denominator0. Completeness/counts và consistency primary/eventual đã defer vào [P5-02](PHASE_5_BACKLOG.md), không yêu cầu sửa trong PR sau freeze. Evidence denominator offline không chứng minh completeness hoặc model quality; full model measurement/CI thống kê vẫn chưa chạy.

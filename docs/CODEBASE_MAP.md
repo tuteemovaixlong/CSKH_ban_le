@@ -1,421 +1,190 @@
-# Codebase Map
+# Codebase Map — RetailOps hiện tại
 
-## 1. Tổng quan
+> Cập nhật **2026-10-08**. Checkout: `codex/phase4-harness`; commit đã kiểm: `a19ed2a74e457fcba9eee76f206156d1f4ea446b`.
+> Runtime baseline của PR: `49671b928ad6badfaa01331174eb73f0e366752e`. PR [#36](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/36) chưa merge theo evidence gần nhất.
+> Bản đồ mô tả code trong checkout và evidence đã ghi; phiên bản đang chạy EC2 đọc riêng trong runbook/status. Các cập nhật tài liệu hiện chưa commit/push.
 
-Metadata inventory được quét ngày 2026-10-02; trạng thái sơ đồ migration được cập nhật ngày 2026-10-03 từ status/CI report. Phạm vi lúc quét: **64 file Python trong `retailops/` (8,437 dòng)** và **8 file `retailops_*.py` ở root (2,848 dòng)**. Số dòng là snapshot inventory, không phải số đo sau các commit N08.
+## Đọc nhanh: hệ thống và việc sắp làm
 
-Chỉ thu thập tên file, docstring cấp module, import statement và số dòng. Mô tả bên dưới tóm tắt docstring; quan hệ giữa module suy từ import. Bản đồ hỗ trợ chọn file đưa vào context, không xác nhận logic runtime hay trạng thái hoàn tất của plan.
+RetailOps là web CSKH bán lẻ: đăng nhập/session → chat đa agent → tra đơn, chính sách, bảo hành và hỗ trợ → backend xử lý thao tác nghiệp vụ có kiểm quyền. Web đi qua HTTPS trên EC2; model có thể chạy ở endpoint riêng/Colab hoặc API. SQLite/PostgreSQL giữ identity và nghiệp vụ; pgvector phục vụ knowledge retrieval. Ops Console hiển thị báo cáo/usage. Harness Phase 4 tạo và kiểm bundle offline để chuẩn bị đo lường.
 
-- Cây thư mục: `tree retailops /F /A` trên Windows (tương đương `tree retailops/`).
-- Docstring/import: trích metadata AST, không import/chạy module; không đưa thân hàm vào context.
-- Số dòng: `"C:\\Program Files\\Git\\usr\\bin\\wc.exe" -l <các file .py>`.
-- `wc -l` đếm newline, gồm cả dòng trống/comment; dùng làm ước tính kích thước file, không phải số dòng logic. Bỏ `__pycache__/` khỏi cây mã nguồn.
+| Phần | Trạng thái hiện tại |
+|---|---|
+| Runtime, identity, workflow, cache/concurrency | Có trong code; Module 2.5 đã merged/postmerge verified theo [project status](CURRENT_PROJECT_STATUS.md). Trạng thái deploy được ghi riêng ở đó. |
+| Phase 4 build harness | N1 hash mutation, N3 denominator, N4 tool/safety types **DONE theo acceptance v1**. |
+| Nghiệm thu `a19ed2a` | K1–K6 PASS; K7/C6 FAIL do 5 file có dòng trống thừa cuối file; K8 C1–C5 PASS/C6 FAIL; sign-off độc lập PENDING. |
+| Evidence đã có | Full suite 575 tests OK/49 skipped; 5 CI jobs xanh; mock 250 hợp lệ, 263 attempts, quality 185/237. Mock không phải kết quả chất lượng model thật. |
+| Chưa thực hiện | Chưa merge PR #36/G2; chưa mở live/full run hoặc cấp READY FOR MEASUREMENT trong lượt này. |
 
-## 2. Cấu trúc thư mục
+**Sắp làm:** Gemini sửa 5 EOF → commit docs/freeze SHA mới → đúng 8 check → sign-off model khác/human mới → owner review → merge → G2 offline → kết thúc review harness, chuyển lane preflight.
 
-Tổng dưới đây tính trực tiếp trong mỗi thư mục; `workflow/` không cộng lại `workflow/subagents/`.
+Nguồn quyết định: [acceptance v1](phase4/PHASE_4_ACCEPTANCE_CRITERIA.md), [review](phase4/REVIEW_GEMINI_PHASE4_2026-10-07.md), [plan/handoff](phase4/PLAN_REVIEW_HANDOFF_GEMINI_2026-10-07.md), [evidence a19ed2a](phase4/PHASE_4_ACCEPTANCE_EVIDENCE_a19ed2a.md). Không thêm checklist hoặc mở lại việc DONE.
 
-| Module | Chức năng | 2–3 file chính | Số file / dòng |
-| --- | --- | --- | --- |
-| `retailops/` | Cấu hình và ghép các backend thành ứng dụng; tiện ích lỗi, schema, gateway và quota. | `bootstrap.py`, `config.py`, `models.py` | 9 / 728 |
-| `retailops/http/` | Public/private HTTP adapter, route nghiệp vụ, assets và OAuth. | `public.py`, `routes.py`, `auth_google.py` | 6 / 885 |
-| `retailops/identity/` | Account, membership, credential và session; backend demo, SQLite persistent và PostgreSQL. | `store.py`, `persistent.py`, `postgres.py` | 8 / 1,125 |
-| `retailops/business/` | Use case chat/đơn hàng, repository nghiệp vụ, cache, role, bảo hành và export. | `application.py`, `store.py`, `cache.py` | 8 / 2,239 |
-| `retailops/guardrails/` | Lọc chủ đề, sentiment và theo dõi lạm dụng ngoài phạm vi. | `topic_filter.py`, `sentiment.py`, `rate_limiter.py` | 4 / 163 |
-| `retailops/knowledge/` | Ingestion, chunking, embedding baseline, retrieval pgvector và citation. | `repository.py`, `tool.py`, `embedding.py` | 7 / 406 |
-| `retailops/storage/` | Transaction, DDL, repository adapter, import SQLite và backfill. | `postgres.py`, `pg_schema.py`, `pg_repositories.py` | 7 / 691 |
-| `retailops/workflow/` | Ghép graph, routing, model/tool loop, checkpoint và human approval. | `graph.py`, `supervisor.py`, `agent.py` | 9 / 1,023 |
-| `retailops/workflow/subagents/` | Worker order/policy/dispute/general và runtime worker chỉ đọc dùng chung. | `dispute_agent.py`, `read_worker.py`, `order_agent.py` | 6 / 1,177 |
-
-<details>
-<summary>Cây tên file đầy đủ (64 module Python)</summary>
-
-```text
-retailops/
-  __init__.py
-  __main__.py
-  account_usage.py
-  bootstrap.py
-  config.py
-  core.py
-  inference_gate.py
-  models.py
-  schema.py
-  http/
-    __init__.py
-    assets.py
-    auth_google.py
-    private.py
-    public.py
-    routes.py
-  identity/
-    __init__.py
-    bearer.py
-    cli.py
-    contracts.py
-    demo.py
-    persistent.py
-    postgres.py
-    store.py
-  business/
-    __init__.py
-    application.py
-    cache.py
-    export.py
-    permissions.py
-    schema.py
-    store.py
-    warranty.py
-  guardrails/
-    __init__.py
-    rate_limiter.py
-    sentiment.py
-    topic_filter.py
-  knowledge/
-    __init__.py
-    chunking.py
-    citations.py
-    cli.py
-    embedding.py
-    repository.py
-    tool.py
-  storage/
-    __init__.py
-    backfill.py
-    cli.py
-    import_sqlite.py
-    pg_repositories.py
-    pg_schema.py
-    postgres.py
-  workflow/
-    __init__.py
-    agent.py
-    approval.py
-    checkpoints.py
-    graph.py
-    mcp_client.py
-    schema.py
-    state.py
-    supervisor.py
-  workflow/subagents/
-    __init__.py
-    dispute_agent.py
-    order_agent.py
-    policy_agent.py
-    read_worker.py
-    witty_agent.py
-  **/__pycache__/  [KHÔNG ĐƯA VÀO CONTEXT]
-```
-
-</details>
-
-<details>
-<summary>Danh mục docstring và số dòng từng file</summary>
-
-### Tầng chung / khởi động — retailops/
-
-| File | Chức năng theo docstring | Dòng |
-| --- | --- | ---: |
-| [__init__.py](../retailops/__init__.py) | Khởi tạo package; docstring ghi import không khởi động dịch vụ. | 1 |
-| [__main__.py](../retailops/__main__.py) | CLI hệ thống: `python -m retailops`, cấu hình và phục vụ HTTP. | 49 |
-| [account_usage.py](../retailops/account_usage.py) | Tổng hợp usage AI theo account; dự trữ quota trước I/O, không lưu prompt/answer. | 190 |
-| [bootstrap.py](../retailops/bootstrap.py) | Ghép cấu hình, model gateway, identity/storage và HTTP adapter lúc khởi động. | 62 |
-| [config.py](../retailops/config.py) | Xác thực cấu hình khởi động; che secret trong repr/summary. | 145 |
-| [core.py](../retailops/core.py) | Lỗi nghiệp vụ, từ vựng chung và vị trí assets. | 24 |
-| [inference_gate.py](../retailops/inference_gate.py) | Giới hạn concurrency, hàng đợi và timeout cho model I/O. | 203 |
-| [models.py](../retailops/models.py) | Dựng model gateway theo cấu hình. | 28 |
-| [schema.py](../retailops/schema.py) | Khởi tạo/migration SQLite theo transaction. | 26 |
-
-### HTTP — retailops/http/
-
-| File | Chức năng theo docstring | Dòng |
-| --- | --- | ---: |
-| [__init__.py](../retailops/http/__init__.py) | Khởi tạo package HTTP. | 1 |
-| [assets.py](../retailops/http/assets.py) | Assets UI cố định, cùng origin cho hai HTTP adapter. | 9 |
-| [auth_google.py](../retailops/http/auth_google.py) | Đăng nhập Google OAuth 2.0/SSO. | 197 |
-| [private.py](../retailops/http/private.py) | HTTP adapter localhost/SSM. | 103 |
-| [public.py](../retailops/http/public.py) | WSGI adapter cho HTTPS; session backend cấp binding nghiệp vụ. | 149 |
-| [routes.py](../retailops/http/routes.py) | Dispatch route nghiệp vụ dùng chung cho hai adapter. | 426 |
-
-### Identity / session — retailops/identity/
-
-| File | Chức năng theo docstring | Dòng |
-| --- | --- | ---: |
-| [__init__.py](../retailops/identity/__init__.py) | Khởi tạo package identity. | 1 |
-| [bearer.py](../retailops/identity/bearer.py) | Xác thực bearer demo private, trả identity do server quản lý. | 13 |
-| [cli.py](../retailops/identity/cli.py) | CLI cấp account/credential cho operator. | 79 |
-| [contracts.py](../retailops/identity/contracts.py) | Hợp đồng session xác thực và binding. | 30 |
-| [demo.py](../retailops/identity/demo.py) | Workspace/session demo tạm có lời mời. | 180 |
-| [persistent.py](../retailops/identity/persistent.py) | Lifecycle session độc lập với tenant DB trong persistent pilot. | 146 |
-| [postgres.py](../retailops/identity/postgres.py) | Session account bền vững trên PostgreSQL. | 42 |
-| [store.py](../retailops/identity/store.py) | Principal, membership, session thu hồi được; credential dạng hash. | 634 |
-
-### Nghiệp vụ — retailops/business/
-
-| File | Chức năng theo docstring | Dòng |
-| --- | --- | ---: |
-| [__init__.py](../retailops/business/__init__.py) | Khởi tạo package nghiệp vụ. | 1 |
-| [application.py](../retailops/business/application.py) | Use case hội thoại, chọn provider và tra cứu đơn. | 478 |
-| [cache.py](../retailops/business/cache.py) | Cache exact, semantic/vector và kết quả tool. | 335 |
-| [export.py](../retailops/business/export.py) | Xuất dữ liệu SFT/DPO từ feedback và turn. | 168 |
-| [permissions.py](../retailops/business/permissions.py) | Chính sách role tường minh. | 13 |
-| [schema.py](../retailops/business/schema.py) | Không có docstring đầu file; vai trò schema suy từ tên file và import của `store.py`/`retailops/schema.py`. | 108 |
-| [store.py](../retailops/business/store.py) | Repository SQLite nghiệp vụ và quy tắc hủy đơn nguyên tử. | 1065 |
-| [warranty.py](../retailops/business/warranty.py) | Ưu tiên bảo hành catalog/chính sách chung và kiểm tra điều kiện. | 71 |
-
-### Guardrails — retailops/guardrails/
-
-| File | Chức năng theo docstring | Dòng |
-| --- | --- | ---: |
-| [__init__.py](../retailops/guardrails/__init__.py) | Khởi tạo package guardrails. | 1 |
-| [rate_limiter.py](../retailops/guardrails/rate_limiter.py) | Theo dõi rate limit và lạm dụng câu hỏi ngoài phạm vi CSKH. | 30 |
-| [sentiment.py](../retailops/guardrails/sentiment.py) | Nhận diện bực bội/tức giận để định hướng cách trả lời. | 71 |
-| [topic_filter.py](../retailops/guardrails/topic_filter.py) | Lọc chủ đề bị cấm/nhạy cảm. | 61 |
-
-### Knowledge / RAG — retailops/knowledge/
-
-| File | Chức năng theo docstring | Dòng |
-| --- | --- | ---: |
-| [__init__.py](../retailops/knowledge/__init__.py) | Package ingestion/retrieval RAG theo tenant. | 5 |
-| [chunking.py](../retailops/knowledge/chunking.py) | Đọc và chia đoạn Markdown/text theo cách xác định. | 87 |
-| [citations.py](../retailops/knowledge/citations.py) | Kiểm tra nguồn gốc citation; không xác minh nội dung trả lời suy ra đúng từ nguồn. | 28 |
-| [cli.py](../retailops/knowledge/cli.py) | CLI ingestion/search knowledge theo tenant. | 38 |
-| [embedding.py](../retailops/knowledge/embedding.py) | Embedding baseline feature hashing, xác định và offline; docstring không tuyên bố neural embedding. | 55 |
-| [repository.py](../retailops/knowledge/repository.py) | Repository pgvector theo tenant, truy cập model chỉ đọc. | 97 |
-| [tool.py](../retailops/knowledge/tool.py) | Knowledge tool chỉ đọc, có giới hạn; tenant lấy từ bound store. | 96 |
-
-### Storage PostgreSQL / migration — retailops/storage/
-
-| File | Chức năng theo docstring | Dòng |
-| --- | --- | ---: |
-| [__init__.py](../retailops/storage/__init__.py) | Khởi tạo storage adapter; import không kết nối DB. | 1 |
-| [backfill.py](../retailops/storage/backfill.py) | Backfill liên kết order→product theo tên canonical, có dry-run cho SQLite/PostgreSQL. | 111 |
-| [cli.py](../retailops/storage/cli.py) | CLI khởi tạo DB và import offline tường minh. | 39 |
-| [import_sqlite.py](../retailops/storage/import_sqlite.py) | Import bản sao workspace SQLite persistent đã dừng vào PostgreSQL trống. | 107 |
-| [pg_repositories.py](../retailops/storage/pg_repositories.py) | Adapter repository business/identity dùng PostgreSQL. | 45 |
-| [pg_schema.py](../retailops/storage/pg_schema.py) | DDL PostgreSQL và migration nghiệp vụ theo giai đoạn. | 292 |
-| [postgres.py](../retailops/storage/postgres.py) | Transaction và SQL parameterized cho repository PostgreSQL. | 96 |
-
-### Workflow LangGraph — retailops/workflow/
-
-| File | Chức năng theo docstring | Dòng |
-| --- | --- | ---: |
-| [__init__.py](../retailops/workflow/__init__.py) | Package LangGraph workflow có checkpoint bền vững theo tenant. | 5 |
-| [agent.py](../retailops/workflow/agent.py) | Vòng model→tools→model có giới hạn; tools chỉ đọc. | 145 |
-| [approval.py](../retailops/workflow/approval.py) | Graph duyệt bởi con người: interrupt bền vững rồi transaction nghiệp vụ. | 83 |
-| [checkpoints.py](../retailops/workflow/checkpoints.py) | LangGraph saver đồng bộ qua SQL theo tenant. | 123 |
-| [graph.py](../retailops/workflow/graph.py) | Ghép Supervisor và worker chuyên trách trong StateGraph. | 174 |
-| [mcp_client.py](../retailops/workflow/mcp_client.py) | MCP client adapter, discovery và kết nối in-process/SSE. | 113 |
-| [schema.py](../retailops/workflow/schema.py) | Bảng graph portable cho migration business. | 22 |
-| [state.py](../retailops/workflow/state.py) | State schema chung cho routing, checkpoint và human approval. | 50 |
-| [supervisor.py](../retailops/workflow/supervisor.py) | Router intent và triage guardrails/sentiment. | 308 |
-
-### Worker chuyên trách — retailops/workflow/subagents/
-
-| File | Chức năng theo docstring | Dòng |
-| --- | --- | ---: |
-| [__init__.py](../retailops/workflow/subagents/__init__.py) | Khởi tạo package subagents. | 1 |
-| [dispute_agent.py](../retailops/workflow/subagents/dispute_agent.py) | Hủy đơn, khiếu nại/hoàn tiền qua proposal có human approval. | 511 |
-| [order_agent.py](../retailops/workflow/subagents/order_agent.py) | Worker đơn hàng, kết quả theo ownership và phản hồi dựa trên bằng chứng. | 201 |
-| [policy_agent.py](../retailops/workflow/subagents/policy_agent.py) | Worker chính sách, trích excerpt với provenance ID. | 54 |
-| [read_worker.py](../retailops/workflow/subagents/read_worker.py) | Runtime worker chỉ đọc có giới hạn, phân biệt lỗi lookup/transport. | 328 |
-| [witty_agent.py](../retailops/workflow/subagents/witty_agent.py) | Worker general/chit-chat chuyển hướng sang bán hàng, theo guardrails. | 82 |
-
-</details>
-
-### Entry points và module hỗ trợ ở root
-
-Docstring chỉ nêu rõ entry HTTP public/private, baseline và MCP server. Các file gateway/tool/catalog cũng khớp mẫu `retailops_*.py`, được liệt kê đầy đủ nhưng không mặc định coi tất cả là CLI độc lập.
-
-| File | Vai trò | Dòng |
-| --- | --- | ---: |
-| [retailops_agent.py](../retailops_agent.py) | Model adapter và lớp tương thích gọi graph có giới hạn. | 64 |
-| [retailops_api.py](../retailops_api.py) | Entry HTTP private/lớp import tương thích; implementation trong `retailops/`. | 13 |
-| [retailops_baseline.py](../retailops_baseline.py) | Scaffold đánh giá intent/slot với Ollama local hoặc HTTPS proxy. | 401 |
-| [retailops_conversation.py](../retailops_conversation.py) | Catalog và hiển thị xác định cho nút UI; docstring ghi chat dùng agent. | 187 |
-| [retailops_mcp_server.py](../retailops_mcp_server.py) | MCP server cho external AI client, transport stdio/SSE. | 1392 |
-| [retailops_providers.py](../retailops_providers.py) | OpenRouter adapter cấu hình phía server. | 496 |
-| [retailops_public.py](../retailops_public.py) | Entry HTTP public/lớp import tương thích; implementation trong `retailops/`. | 15 |
-| [retailops_tools.py](../retailops_tools.py) | Tool chỉ đọc bound với customer đã xác thực. | 280 |
-
-Entry hệ thống nằm trong package: `python -m retailops` → [retailops/__main__.py](../retailops/__main__.py) → `bootstrap.py` hoặc CLI identity/storage/knowledge.
-
-## 3. Kiến trúc tổng quan
-
-Kiến trúc nhóm theo **Client → Entry → Core → Support → DB**. Entry HTTP lấy binding từ identity; Core dùng cache, model gateway, bound tools và repository. MCP là nhánh vào riêng cho external AI client. Mũi tên chỉ thể hiện quan hệ ở mức module.
+## 1. Kiến trúc và luồng dữ liệu
 
 ```mermaid
 flowchart LR
-    subgraph CLIENT["Client"]
-        UI["Browser / UI"]
-        EXT["External AI client"]
-    end
-    subgraph ENTRY["Entry"]
-        HTTP["Public / private HTTP"]
-        MCP["MCP server"]
-    end
-    subgraph CORE["Core"]
-        APP["Business application"]
-        WF["Workflow / workers"]
-    end
-    subgraph SUPPORT["Support"]
-        ID["Identity / session"]
-        CACHE["Cache"]
-        TOOLS["Bound tools / RAG"]
-        MODEL["Model gateways"]
-        REPO["Repositories / checkpoints"]
-    end
-    subgraph DATABASE["DB"]
-        SQL["SQLite / PostgreSQL"]
-        VECTOR["Knowledge pgvector"]
-    end
-    UI --> HTTP
-    EXT --> MCP
-    HTTP --> ID --> APP
-    APP --> CACHE
-    APP --> WF
-    WF --> MODEL
-    WF --> TOOLS
-    MCP --> TOOLS
-    APP --> REPO
-    WF --> REPO
-    TOOLS --> REPO --> SQL
-    TOOLS --> VECTOR
+    WEB["Web CSKH"] --> HTTP["HTTPS / HTTP routes"]
+    HTTP --> ID["Identity / session / role"]
+    ID --> APP["Business application"]
+    APP --> CACHE["Cache / quota / inference gate"]
+    APP --> GRAPH["Supervisor → một worker"]
+    GRAPH --> MODEL["Custom hoặc API model"]
+    GRAPH --> TOOLS["Tools gắn customer / tenant"]
+    APP --> TX["Proposal / xác nhận / transaction"]
+    TX --> DB["SQLite / PostgreSQL"]
+    TOOLS --> DB
+    TOOLS --> RAG["Knowledge / pgvector"]
+    GRAPH --> CP["Checkpoint / conversation"]
+    CP --> DB
+    EXT["External AI client"] --> MCP["MCP server"]
+    MCP --> FIXTURES["Synthetic fixtures / seed / knowledge files"]
+    RUN["Harness offline"] --> BUNDLE["Canonical bundle / validator"]
+    BUNDLE -. "report được import" .-> OPS["Ops Console / snapshots"]
 ```
 
-## 4. Chat request flow
+Mũi tên biểu diễn quan hệ chính, không phải mọi lời gọi. Graph chat chính gọi `BoundTools` trực tiếp. MCP server có tool implementation riêng trên synthetic fixtures/seed và knowledge files; không dùng session/customer binding của web. Supervisor hiện chọn một worker trong mỗi lượt; checkpoint giữ state để resume hội thoại/approval.
 
-Luồng chat ở mức tương tác giữa tầng: xác thực binding, dispatch, lookup cache, workflow/model/tools và trả response. Cache-hit bỏ qua workflow/model; kết quả mới chỉ được cache khi đủ điều kiện. Sequence dùng `box` để nhóm tầng; không mô tả từng function, lỗi chi tiết hay thứ tự lock.
+## 2. Bản đồ thư mục
 
-```mermaid
-sequenceDiagram
-    box Client
-        actor C as Client
-    end
-    box Entry
-        participant H as HTTP adapter / routes
-    end
-    box Support
-        participant I as Identity / session
-        participant K as Cache
-        participant M as Model gateway
-        participant T as Bound tools / RAG
-        participant D as Repository / DB
-    end
-    box Core
-        participant A as Business application
-        participant W as Workflow / worker
-    end
-    C->>H: Chat request
-    H->>I: Resolve authenticated binding
-    I-->>H: Tenant / account context
-    H->>A: Dispatch chat
-    A->>K: Eligible cache lookup
-    alt Cache hit
-        K-->>A: Cached result
-    else Cache miss or bypass
-        A->>W: Process conversation
-        loop Bounded model and tool rounds
-            W->>M: Model request
-            M-->>W: Answer or tool request
-            opt Tool requested
-                W->>T: Read with bound identity
-                T->>D: Order or knowledge lookup
-                D-->>T: Evidence
-                T-->>W: Tool result
-            end
-        end
-        W-->>A: Reply / proposal
-    end
-    A->>D: Persist turn / response
-    opt Eligible new result for cache
-        A->>K: Store result
-    end
-    A-->>H: Response
-    H-->>C: HTTP response
+Inventory ngày cập nhật: **65 file Python trong `retailops/`**, **8 file `retailops_*.py` ở root**, **12 file Python trong `evals/harness/`**; gồm `__init__.py`, không gồm bytecode. Số dòng của inventory 2026-10-02 được bỏ để tránh nhầm với kích thước hiện tại.
+
+| Khu vực | Vai trò | File nên mở trước |
+|---|---|---|
+| `retailops/` | Composition root, cấu hình, gateway, quota/concurrency | [bootstrap.py](../retailops/bootstrap.py), [config.py](../retailops/config.py), [inference_gate.py](../retailops/inference_gate.py) |
+| `retailops/http/` | Public/private adapter, API, OAuth, assets | [public.py](../retailops/http/public.py), [routes.py](../retailops/http/routes.py), [auth_google.py](../retailops/http/auth_google.py) |
+| `retailops/identity/` | Account, tenant membership, session, credential, reconciliation | [store.py](../retailops/identity/store.py), [persistent.py](../retailops/identity/persistent.py), [reconcile.py](../retailops/identity/reconcile.py) |
+| `retailops/business/` | Chat use cases, đơn/catalog, cache, permissions, feedback/export | [application.py](../retailops/business/application.py), [store.py](../retailops/business/store.py), [cache.py](../retailops/business/cache.py) |
+| `retailops/workflow/` | LangGraph routing, model/tool loop, checkpoint, approval | [graph.py](../retailops/workflow/graph.py), [supervisor.py](../retailops/workflow/supervisor.py), [approval.py](../retailops/workflow/approval.py) |
+| `retailops/workflow/subagents/` | Order, policy, dispute, general workers | [order_agent.py](../retailops/workflow/subagents/order_agent.py), [policy_agent.py](../retailops/workflow/subagents/policy_agent.py), [dispute_agent.py](../retailops/workflow/subagents/dispute_agent.py), [witty_agent.py](../retailops/workflow/subagents/witty_agent.py) |
+| `retailops/guardrails/` | Topic/sentiment/abuse triage | [topic_filter.py](../retailops/guardrails/topic_filter.py), [sentiment.py](../retailops/guardrails/sentiment.py) |
+| `retailops/storage/` | PostgreSQL adapter/schema, import/backfill | [postgres.py](../retailops/storage/postgres.py), [pg_schema.py](../retailops/storage/pg_schema.py), [import_sqlite.py](../retailops/storage/import_sqlite.py) |
+| `retailops/knowledge/` | Ingest/chunk/embed/retrieve, citation provenance | [repository.py](../retailops/knowledge/repository.py), [tool.py](../retailops/knowledge/tool.py), [embedding.py](../retailops/knowledge/embedding.py) |
+| `web/` | Chat, lịch sử, provider selector, nghiệp vụ theo role | [app.js](../web/app.js), [index.html](../web/index.html), [chat-focus.js](../web/chat-focus.js) |
+| `opsconsole/` | Dashboard report/usage/deployment snapshots; CLI import/evaluation | [server.py](../opsconsole/server.py), [evaluation.py](../opsconsole/evaluation.py), [usage.py](../opsconsole/usage.py) |
+| `evals/` | Frozen scenarios, qrels, harness Phase 4 | [README](../evals/README.md), [runner.py](../evals/harness/runner.py), [validator.py](../evals/harness/validator.py) |
+| `notebooks/` | Colab agent/model runtime, vLLM/GGUF helpers, smoke | [colab_agent.ipynb](../notebooks/colab_agent.ipynb), [colab_runtime.py](../notebooks/colab_runtime.py), [colab_vllm_l4.py](../notebooks/colab_vllm_l4.py) |
+| `deploy/`, `.github/workflows/` | Container, Caddy, PostgreSQL, rollout, CI/deploy guard | [SETUP](../deploy/SETUP.md), [ci.yml](../.github/workflows/ci.yml), [deploy-ec2.yml](../.github/workflows/deploy-ec2.yml) |
+| `scripts/`, `tests/` | Contracts, notebook generation, evaluation scripts, regressions | [check_docs_contract.py](../scripts/check_docs_contract.py), [build_agent_notebook.py](../scripts/build_agent_notebook.py), [test_phase4_schema.py](../tests/test_phase4_schema.py) |
+| `docs/phase4/` | Scope, acceptance, evidence, đo lường/chi phí, backlog | [acceptance](phase4/PHASE_4_ACCEPTANCE_CRITERIA.md), [handoff](phase4/PHASE_4_EXECUTION_HANDOFF.md), [backlog](phase4/PHASE_5_BACKLOG.md) |
+
+## 3. Entry points và file root
+
+`python -m retailops` → [__main__.py](../retailops/__main__.py) → `bootstrap.py`. Commands: `check-config`, `serve-public`, `serve-private`, `identity`, `database`, `knowledge`.
+
+| File / entry | Vai trò hiện tại |
+|---|---|
+| [retailops_public.py](../retailops_public.py) | Wrapper public HTTP; Docker public dùng entry này, implementation trong package. |
+| [retailops_api.py](../retailops_api.py) | Wrapper private HTTP cho local/SSM/test; không phải cách đăng nhập EC2. |
+| [retailops_agent.py](../retailops_agent.py) | RemoteAgent giao tiếp endpoint Custom, lớp tương thích graph. |
+| [retailops_providers.py](../retailops_providers.py) | API gateway: OpenRouter/Anthropic/Google hoặc endpoint OpenAI-compatible theo cấu hình. |
+| [retailops_tools.py](../retailops_tools.py) | BoundTools theo tenant/customer: tra dữ liệu, chuẩn bị hủy, yêu cầu hỗ trợ. |
+| [retailops_mcp_server.py](../retailops_mcp_server.py) | External AI integration qua stdio/SSE; tool implementation riêng trên synthetic fixtures/seed và knowledge files. |
+| [retailops_conversation.py](../retailops_conversation.py) | Catalog/presentation helper cho UI; chat reasoning đi qua agent. |
+| [retailops_baseline.py](../retailops_baseline.py) | Model config, scaffold intent/slot và baseline/compatibility helpers. |
+| [phase4_harness.py](../scripts/phase4_harness.py) | CLI mock-run/validate/recompute/sidecar-check/qrels-check. |
+| `python -m opsconsole.server` | Dashboard đọc snapshot, Waitress8100 phía sau Caddy theo admin deployment. |
+
+Public runtime dùng Waitress8000 phía sau Caddy HTTPS. Người dùng mở web EC2 theo [EC2 workflow](EC2_WEB_WORKFLOW.md); kiểm host/origin theo runbook, không hardcode IP cũ.
+
+## 4. Một lượt chat và thao tác nghiệp vụ
+
+1. Public HTTP xác thực cookie và lấy binding do server quản lý: tenant, principal/customer và role. Private demo xác thực Bearer, dùng customer do server ánh xạ trong Application/SQLite demo.
+2. `http/routes.py` gọi `business/application.py`; application quản lý conversation/provider, cache, quota và inference gate.
+3. Khi cache miss/bypass, graph supervisor dùng intent/context cùng topic/sentiment để chọn `order`, `policy`, `dispute` hoặc `witty` worker; model/tool loop có giới hạn. Runtime với model thật mặc định `multi_agent`; `single_agent` là lựa chọn cấu hình/test.
+4. Tools dùng bound customer/tenant để tra đơn/knowledge; kết quả và trace đưa về worker. Conversation/checkpoint hỗ trợ resume.
+5. Application lưu turn/usage và chỉ cache kết quả đủ điều kiện; provider giữ nhất quán, không tự đổi model khi lỗi.
+6. Hủy đơn: prepare → proposal → xác nhận rõ ràng → backend kiểm role/ownership, trạng thái/version, thời hạn/idempotency → transaction/audit.
+
+Prepare_cancellation không tự hủy đơn; `request_human_support` có thể lưu feedback/handoff. Vì vậy không gọi toàn bộ tool surface là “chỉ đọc”. Staff desk và manager CRUD là API có permission riêng.
+
+Nguồn: [LangGraph](LANGGRAPH.md), [identity](PERSISTENT_IDENTITY.md), [system foundation](SYSTEM_FOUNDATION.md).
+
+## 5. Identity, dữ liệu, model và RAG
+
+| Phần | Cơ chế trong code |
+|---|---|
+| Private/synthetic demo | Seeded SQLite; public guest demo có workspace/session riêng. |
+| Public persistent-demo/live | SQLite identity + tenant business DB, hoặc PostgreSQL identity/tenant schemas theo cấu hình. Có lane live trong code không đồng nghĩa đã nghiệm thu dữ liệu/model live. |
+| Identity schema | v4; migration v1/v2/v3, unresolved-collision guard, reconciliation journal. [reconcile.py](../retailops/identity/reconcile.py) phối hợp Identity/Business; journal hỗ trợ recovery, không phải distributed ACID. |
+| Business schema | SQLite v3 / PostgreSQL v4; tách version khỏi Identity v4. |
+| Model Custom | RemoteAgent protocol `/agent/identity`, `/agent/chat`; Colab/Ollama proxy là một deployment path. |
+| Model API | Server adapter cấu hình API provider hoặc OpenAI-compatible endpoint. Custom/API chỉ bật khi được cấu hình; provider của conversation được giữ nhất quán. |
+| Quota/concurrency/cache | [account_usage.py](../retailops/account_usage.py), `inference_gate.py`, `business/cache.py`; reservation/bounded inference được ghép trong application. |
+| Knowledge/RAG | PostgreSQL/pgvector theo tenant, hybrid vector/lexical retrieval. Embedding `feature-hash-v1`, 384 chiều, là baseline xác định; chưa mặc định neural embedding/reranker mới. |
+| Citation | Kiểm provenance source/chunk; correctness/entailment của câu trả lời cần được đánh giá riêng. |
+
+Nâng model/embedding/reranker, OCR hoặc ablation thuộc workstream đo/Phase4B có điều kiện; không kéo vào closure PR harness.
+
+## 6. Harness Phase 4 và R10–R13
+
+Harness là evaluation tooling riêng với business runtime. Runner hiện là **mock offline**, không chứng minh chất lượng model thật hoặc readiness của lane live.
+
+```text
+Frozen scenarios + sidecar + qrels
+  → Phase4MockRunner / grader / telemetry
+  → writer: manifest.json, attempts.jsonl, grading.jsonl, retrieval.jsonl,
+            errors.jsonl, aggregate.json, checksums.sha256
+  → validator: schema / joins / provenance / checksums / aggregate recompute
+  → evidence / acceptance v1
 ```
 
-## 5. Identity migration v1/v2/v3 → v4
+| Phần trọng tâm | Module / vai trò | Trạng thái v1 |
+|---|---|---|
+| R10 — grader/safety | [grader.py](../evals/harness/grader.py), [schema.py](../evals/harness/schema.py): rubric, tool/safety types, hard veto | DONE OFFLINE; semantic tool evidence ở backlog. |
+| R11 — readiness gates | [gates.py](../evals/harness/gates.py): G0–G7; chỉ G5 grant measurement readiness | DONE OFFLINE GUARD; live lane chưa nghiệm thu. |
+| R12 — bundle/reproducibility | [runner.py](../evals/harness/runner.py), [writer.py](../evals/harness/writer.py), [validator.py](../evals/harness/validator.py), [constants.py](../evals/harness/constants.py) | Hash mutation/blocked denominator DONE; actual-source replay hardening/count semantics deferred. |
+| R13 — packaging/deploy guard | [eligibility](../scripts/check_deploy_eligibility.py), [deploy workflow](../.github/workflows/deploy-ec2.yml), [deployment contract](../scripts/check_deployment_contract.py) | DONE OFFLINE/CI; full PR mixed packaging, guard eligible=true. |
 
-Đây là **Identity schema**, không phải Business schema (SQLite Business v3 / PostgreSQL Business v4 là hai version khác). `CURRENT_PROJECT_STATUS.md` ghi Identity schema v1/v2/v3 được nâng lên v4 trên SQLite và PostgreSQL, và báo 47/47 PostgreSQL integration tests PASS trong CI run `37098929081`. Bản đồ phản ánh báo cáo đó; không tự xác nhận trạng thái live production hay thay thế kiểm tra CI `head_sha`.
+Inputs: `baseline_v1.jsonl` 30 ca, `benchmark_250.jsonl` 250 ca, `master_250_v1.jsonl` 250 ca; frozen hashes/counts ở contracts. [sidecar.py](../evals/harness/sidecar.py) bổ sung identity/fixture labels; [qrels.py](../evals/harness/qrels.py) quản lý retrieval labels. [build_agent_notebook.py](../scripts/build_agent_notebook.py) giữ generated notebook đồng bộ source.
 
-```mermaid
-stateDiagram-v2
-    [*] --> Legacy: existing Identity schema v1 / v2 / v3
-    state "Legacy Identity DB (v1/v2/v3)" as Legacy
-    state "SQLite migration" as SQLite
-    state "PostgreSQL migration" as PostgreSQL
-    state "Create reconciliation journal + plan_hash" as Journal
-    state "Mark collision unresolved / revoke affected sessions" as Guard
-    state "Identity v4" as V4
-    state "Collision unresolved; login/session fails closed" as Blocked
-    state "Operator supplies complete ownership plan" as Plan
-    state "Coordinator reconciles Business + Identity with journal" as Reconcile
-    state "Reconciled; account ownership isolated" as Complete
-    state "Migration transaction rolled back" as Rollback
-    Legacy --> SQLite: backend is SQLite
-    Legacy --> PostgreSQL: backend is PostgreSQL
-    SQLite --> Journal
-    PostgreSQL --> Journal
-    Journal --> Guard
-    Guard --> V4: migration commit
-    SQLite --> Rollback: transaction failure
-    PostgreSQL --> Rollback: transaction failure
-    Rollback --> Legacy: retry after recovery
-    V4 --> V4: restart / no-op
-    V4 --> Blocked: unresolved collision
-    Blocked --> Plan: manual review
-    Plan --> Reconcile: validate full coverage
-    Reconcile --> Complete: journal completes
-    Reconcile --> Blocked: partial failure / retry required
-    note right of Reconcile
-        CI verification is reported in CURRENT_PROJECT_STATUS.md.
-        The journal supports recovery; it is not distributed ACID.
-    end note
-```
+N1 replay hardening, N3 completeness/counts, N4 positive-count thiếu tool names và L2/L4/L5 ở [Phase5 backlog](phase4/PHASE_5_BACKLOG.md); không dùng để giữ merge hoặc mở audit mới.
 
-## 6. Khi cần sửa X, đọc file nào
+## 7. Ops Console, CI và triển khai
 
-Đọc 2–3 file đầu tiên theo nhu cầu; mở thêm phụ thuộc khi cần. Những file ngoài `retailops/` được xác định từ import hoặc docstring của module liên quan.
+| Nhánh | Vai trò |
+|---|---|
+| Ops Console server/UI | Đọc report/usage/deployment snapshots; không có endpoint thực thi chat/hủy đơn/deploy. CLI/importer riêng; dashboard không tự đóng G5. |
+| `ci.yml` | Offline contracts/tests, Docker packaging, Colab Python3.13 source/runtime compatibility theo workflow. |
+| `ops-console.yml` | Portable Windows/Ubuntu và PostgreSQL integration; console/UI/quota regressions. |
+| `live-e2e.yml` | Live verification riêng; CI offline không thay bằng chứng live. |
+| `deploy-ec2.yml` | Guard changed-files trước deploy; cần main, deploy-enabled variable và eligibility. |
+| `deploy/` | Compose/Caddy/PostgreSQL, publish/activate, rollout/source consistency, live-E2E scripts. |
 
-| Nhu cầu | Đọc trước | Mở tiếp nếu cần |
-| --- | --- | --- |
-| Cấu hình / khởi động | `retailops/config.py`, `retailops/bootstrap.py`, `retailops/__main__.py` | `retailops/models.py` |
-| Public HTTP / cookie / OAuth | `retailops/http/public.py`, `retailops/http/auth_google.py`, `retailops/identity/contracts.py` | `retailops/identity/persistent.py` |
-| Account / role / session / credential | `retailops/identity/store.py`, `retailops/identity/persistent.py`, `retailops/business/permissions.py` | `retailops/identity/postgres.py`, `retailops/identity/cli.py` |
-| Route API / quản lý đơn | `retailops/http/routes.py`, `retailops/business/application.py`, `retailops/business/store.py` | `retailops_tools.py` |
-| Chat / lựa chọn workflow | `retailops/business/application.py`, `retailops/workflow/graph.py`, `retailops/workflow/supervisor.py` | `retailops/workflow/agent.py`, `retailops/workflow/state.py` |
-| Order / policy / dispute worker | File tương ứng trong `retailops/workflow/subagents/` | `read_worker.py`, `retailops_tools.py` |
-| Model provider / Ollama / OpenRouter | `retailops/models.py`, `retailops_agent.py`, `retailops_providers.py` | `retailops_baseline.py` |
-| Giới hạn model I/O / concurrency | `retailops/inference_gate.py`, `retailops/business/application.py` | `retailops/identity/persistent.py`, `retailops/http/public.py` |
-| Semantic / exact / tool cache | `retailops/business/cache.py`, `retailops/business/application.py` | `retailops/knowledge/embedding.py` |
-| RAG ingestion / retrieval / embedding | `retailops/knowledge/repository.py`, `tool.py`, `embedding.py` | `chunking.py`, `cli.py` trong cùng package |
-| Nguồn citation | `retailops/knowledge/citations.py`, `retailops/knowledge/tool.py` | `retailops/workflow/subagents/policy_agent.py` |
-| Human approval / checkpoint | `retailops/workflow/approval.py`, `retailops/workflow/checkpoints.py`, `retailops/workflow/state.py` | `retailops/workflow/schema.py` |
-| Migration SQLite / schema nghiệp vụ | `retailops/schema.py`, `retailops/business/schema.py`, `retailops/business/store.py` | `retailops/identity/store.py` |
-| PostgreSQL / migration / transaction | `retailops/storage/pg_schema.py`, `postgres.py`, `pg_repositories.py` | `retailops/identity/postgres.py` |
-| Import workspace / backfill product | `retailops/storage/cli.py`, `import_sqlite.py`, `backfill.py` | `retailops/storage/pg_schema.py` |
-| Bảo hành / catalog / nút UI | `retailops/business/warranty.py`, `retailops_conversation.py`, `retailops/business/store.py` | `retailops_tools.py` |
-| Usage / quota AI / export dữ liệu | `retailops/account_usage.py`, `retailops/business/export.py` | `retailops/identity/persistent.py`, `retailops/identity/store.py` |
-| Guardrails sentiment / topic / abuse | `retailops/guardrails/sentiment.py`, `topic_filter.py`, `rate_limiter.py` | `retailops/workflow/supervisor.py` |
-| Tích hợp MCP | `retailops_mcp_server.py`, `retailops/workflow/mcp_client.py` | Các import của client adapter |
+Full diff PR #36 có packaging nên `deploy_eligible=true` theo evidence đã kiểm. Owner xét policy/variables hiện hữu trước merge; không coi PR eval-only hoặc mặc định deploy-skipped. Bản đồ không thay đổi variables, merge hay triển khai.
 
-## 7. Quy tắc context
+## 8. Khi cần hiểu/sửa X, mở đâu
 
-| Thư mục | Quy tắc |
-| --- | --- |
-| `data/` | **KHÔNG nạp cả thư mục.** Chỉ chọn tệp dữ liệu/knowledge cụ thể khi nhiệm vụ cần. |
-| `evals/` | **KHÔNG nạp cả thư mục.** Chỉ mở case/schema cần thiết cho đánh giá. |
-| `scratch/` | **KHÔNG nạp mặc định.** Script/tài liệu tạm chỉ dùng khi có yêu cầu cụ thể. |
-| `artifacts/` | **KHÔNG nạp mặc định.** Chỉ chọn báo cáo/kết quả liên quan. |
-| `**/__pycache__/` | **KHÔNG ĐỌC.** Bytecode sinh tự động, không phải nguồn code để chỉnh. |
+| Nhu cầu | Đọc trước |
+|---|---|
+| Khởi động/cấu hình | `retailops/__main__.py`, `retailops/bootstrap.py`, `retailops/config.py` |
+| Login/session/role/tenant | `retailops/http/public.py`, `retailops/identity/store.py`, `retailops/identity/persistent.py` |
+| Collision/migration/reconciliation | `retailops/identity/reconcile.py`, `retailops/storage/pg_schema.py`, `retailops/identity/store.py` |
+| Chat/provider/history | `retailops/business/application.py`, `retailops/models.py`, `retailops_providers.py` |
+| Routing/worker/tool loop | `retailops/workflow/graph.py`, `retailops/workflow/supervisor.py`, worker tương ứng trong `retailops/workflow/subagents/` |
+| Hủy đơn/approval/idempotency | `retailops/http/routes.py`, `retailops/business/store.py`, `retailops/workflow/approval.py` |
+| Catalog/bảo hành/staff desk | `retailops/http/routes.py`, `retailops/business/store.py`, `retailops/business/warranty.py` |
+| Quota/concurrency/cache | `retailops/account_usage.py`, `retailops/inference_gate.py`, `retailops/business/cache.py` |
+| RAG/citation | `retailops/knowledge/repository.py`, `retailops/knowledge/tool.py`, `retailops/knowledge/citations.py` |
+| MCP external integration | `retailops_mcp_server.py`, `retailops/workflow/mcp_client.py` |
+| Ops reports/usage/import | `opsconsole/server.py`, `opsconsole/evaluation.py`, `opsconsole/usage.py` |
+| Harness R10–R12 | `evals/harness/schema.py`, `evals/harness/grader.py`, `evals/harness/validator.py`, tests liên quan |
+| Deploy guard R13 | `scripts/check_deploy_eligibility.py`, `.github/workflows/deploy-ec2.yml`, `tests/test_deploy_guard.py` |
+| Gemini làm ngay | [review](phase4/REVIEW_GEMINI_PHASE4_2026-10-07.md) → [plan](phase4/PLAN_REVIEW_HANDOFF_GEMINI_2026-10-07.md) → [acceptance](phase4/PHASE_4_ACCEPTANCE_CRITERIA.md) |
 
-Với câu hỏi mới: chọn một hàng ở bảng mục 6, mở file tương ứng; dùng bản đồ này thay cho việc nạp toàn bộ code, plan và review vào context.
+Path trong bảng tính từ repo root. Chọn 2–3 file đầu rồi mở dependency khi cần. Không nạp toàn bộ `data/`, `evals/`, `scratch/`, `artifacts/`; chỉ lấy case/report liên quan. Bỏ bytecode, secret/env và `__pycache__/` khỏi context.
 
-## 8. Lịch sử thay đổi lớn
+## 9. Phạm vi tiếp theo và điều kiện dừng
 
-| Mốc | Thay đổi | Phạm vi / nguồn |
-| --- | --- | --- |
-| Bản đồ ban đầu, 2026-10-02 | Liệt kê 64 module trong `retailops/`, 8 file root, docstring/import, số dòng và bảng tra cứu. | Metadata file và `wc -l`; không audit logic. |
-| N08 status refresh, 2026-10-03 | Identity schema v1/v2/v3 → v4 trên SQLite/PostgreSQL; journal, collision guard và coordinator reconciliation. | CI run `37098929081` và 47/47 PostgreSQL tests PASS được `CURRENT_PROJECT_STATUS.md` báo cáo; merge review còn pending SHA check. |
-| Bổ sung Mermaid | Thêm đúng 3 diagram: kiến trúc, chat sequence, identity migration; sắp xếp bản đồ theo cấu trúc mới. | 13 nút kiến trúc / 9 participant / 10 trạng thái kể cả nhóm; không đọc thêm code chi tiết. |
+| Bước | Ai thực hiện | Phạm vi / kết quả |
+|---|---|---|
+| 1. Sửa K7/C6 | Gemini | Bỏ blank lines EOF ở [outline](phase4/CHAPTER_4_OUTLINE.md), [ablation](phase4/PHASE_4_ABLATION_STUDY.md), [taxonomy](phase4/PHASE_4_FAILURE_TAXONOMY.md), [threats](phase4/PHASE_4_THREATS_TO_VALIDITY.md), [plan review](phase4/REVIEW_PHASE_4_PLAN.md). Giữ một newline; không đổi code/benchmarks/ngưỡng. |
+| 2. Freeze/evidence | Gemini | Gộp docs đã cập nhật, commit/push SHA mới; verify đúng K1–K8/CI cùng SHA. K7/C6: `git diff --check 49671b928ad6badfaa01331174eb73f0e366752e HEAD`, không kiểm empty working-tree diff. |
+| 3. Sign-off | Model khác/human mới | Chưa tham gia N1–N5; chỉ nhận acceptance + frozen diff/evidence, xác minh 8 mục. Không dùng reviewer/agents cũ hoặc Gemini tác giả tự ký. |
+| 4. Owner review/merge | Owner và người được giao merge | 8/8 PASS + independent PASS; xem mixed-packaging eligibility, merge theo policy. |
+| 5. G2 offline | Gemini theo handoff | Merged checkout/SHA: CI, contracts/frozen hashes, mock replay đúng harness SHA. PASS thì kết thúc review build harness. |
+| 6. Sau G2 | Owner/Gemini theo lane plan | Lane preflight → G3 approval → G4 live smoke evidence → G5 readiness → G6 full-run approval → G7 measured. |
+
+**Đúng 8 mục, không K9:** K1 hash mutation reject; K2 blocked denominator; K3 malformed tool/safety types reject; K4 CI xanh; K5 >=563 tests, 0 failures/errors; K6 mock 250; K7 patch whitespace; K8 C1–C6 contracts. C6 chính là K7.
+
+Một mục FAIL thì chỉ sửa nguyên nhân mục đó. Ngoài 8 mục → Phase 5 backlog, không block merge. **8/8 PASS + independent PASS thì dừng review harness, chuyển owner review.** G2 không cấp READY FOR MEASUREMENT; chỉ G5 cấp khi có evidence/approval tương ứng. Cập nhật bản đồ là bước chuẩn bị tài liệu; chưa thực thi các bước sửa/merge/live trên đây.

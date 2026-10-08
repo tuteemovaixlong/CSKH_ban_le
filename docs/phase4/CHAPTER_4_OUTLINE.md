@@ -133,4 +133,3 @@ Kết luận chỉ được viết cho hàng có trạng thái `MEASURED` và ar
 | 4.10 | GPU/API cost | `PHASE_4_COST_BUDGET.md` |
 | 4.11 | Component contribution | `PHASE_4_ABLATION_STUDY.md` |
 | 4.12 | Validity limits/evidence level | `PHASE_4_THREATS_TO_VALIDITY.md`, `PHASE_4_EVIDENCE_CHECKLIST.md` |
-
