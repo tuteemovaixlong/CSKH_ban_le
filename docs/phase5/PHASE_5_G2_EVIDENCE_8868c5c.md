@@ -42,7 +42,7 @@ Kết quả bundle validator và aggregate:
   - `numerator`: **185**
   - `denominator`: **237**
   - `rate`: **0.7806** (khớp chuẩn frozen quality baseline)
-- **Frozen Benchmark Hash**: Khớp `FROZEN_BENCHMARK_LF_SHA256` (`30d52b1263c9ebffb53dfa32b2e8ebdb8778f6c4ff43eb894bfba894a4b4ee99`).
+- **Frozen Benchmark Hash**: Khớp `FROZEN_BENCHMARK_LF_SHA256` (`36fa8c7a52a60323bb4f04d11f1e677106ddfe6a35e0ccac3266784c7c6e4411`).
 
 ---
 

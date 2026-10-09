@@ -66,6 +66,3 @@ Không dùng dữ liệu production/PII thật; không sửa frozen benchmarks; 
 - Sales simulator + adapter + event fixtures + replay test.
 - Complaint E2E report dùng cùng customer session.
 - Cập nhật [PHASE_5_ACCEPTANCE_CRITERIA.md](PHASE_5_ACCEPTANCE_CRITERIA.md), handoff và project status.
-
-
-

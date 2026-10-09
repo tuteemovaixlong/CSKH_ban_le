@@ -27,4 +27,3 @@ Precondition: verify G2 offline replay on merged SHA 8868c5c498b1c64241bc791eb01
 ## Required report
 
 Record commit SHA, image digest, tenant/principal/customer identities (synthetic or redacted), Google issuer/sub hash, event IDs, mapping hash, order IDs, complaint text class, proposal/confirmation IDs, audit events, costs, failures and raw artifact paths. Never store OAuth secrets, access tokens or real customer PII.
-

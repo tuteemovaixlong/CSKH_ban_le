@@ -380,20 +380,8 @@ def establish_live_conversation(http, cookie, providers_payload, report):
     raise E2EFailure("no configured live model provider completed a chat")
 
 
-def run_full(
-    http: HttpClient,
-    report: dict,
-    secret_values: list[str],
-    *,
-    tenant: str | None = None,
-    customer: str | None = None,
-    order_id: str | None = None,
-):
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-    rand_suffix = uuid.uuid4().hex[:6]
-    tenant = tenant or os.environ.get("E2E_TENANT") or f"e2e-full-{stamp}-{rand_suffix}"
-    customer = customer or os.environ.get("E2E_CUSTOMER") or "C-001"
-    order_id = order_id or os.environ.get("E2E_ORDER_ID") or "O-101"
+def run_full(http: HttpClient, report: dict, secret_values: list[str]):
+    tenant = "e2e-full-" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S") + "-" + uuid.uuid4().hex[:6]
     customer_principal = "e2e-customer-" + uuid.uuid4().hex[:8]
     viewer_principal = "e2e-viewer-" + uuid.uuid4().hex[:8]
     customer_cred_path = "/tmp/" + customer_principal + ".credential"
@@ -401,15 +389,8 @@ def run_full(
     customer_membership = None
     viewer_membership = None
     report["tenant"] = tenant
-    report["identity"] = {
-        "tenant": tenant,
-        "customer": customer,
-        "order_id": order_id,
-        "customer_principal": customer_principal,
-        "viewer_principal": viewer_principal,
-    }
     try:
-        cli(["identity", "init-tenant", "--tenant", tenant, "--name", f"RetailOps full live E2E {tenant}", "--seed-demo"])
+        cli(["identity", "init-tenant", "--tenant", tenant, "--name", "RetailOps full live E2E", "--seed-demo"])
         ingest = cli(["knowledge", "ingest", "--tenant", tenant, "--path", "/app/data/knowledge"])
         require(ingest.get("result") == "KNOWLEDGE_INGESTED", "knowledge ingest failed")
         report["checks"]["knowledge_ingest"] = True
@@ -420,14 +401,11 @@ def run_full(
         }
 
         customer_membership, customer_credential = issue_member(
-            tenant, customer_principal, customer, "customer", customer_cred_path,
+            tenant, customer_principal, "C-001", "customer", customer_cred_path,
         )
         secret_values.append(customer_credential)
         customer_cookie = http.temp_dir / "customer.cookies"
-        pending, providers = login_and_basic_checks(
-            http, tenant, customer_credential, customer_cookie, report,
-            customer=customer, order_id=order_id,
-        )
+        pending, providers = login_and_basic_checks(http, tenant, customer_credential, customer_cookie, report)
 
         provider, conversation_id, general = establish_live_conversation(http, customer_cookie, providers, report)
         report["selected_provider"] = provider
@@ -592,14 +570,7 @@ def main():
                 order_id=args.order_id,
             )
         else:
-            run_full(
-                http,
-                report,
-                secrets,
-                tenant=args.tenant,
-                customer=args.customer,
-                order_id=args.order_id,
-            )
+            run_full(http, report, secrets)
         report["pass"] = True
         report["finished_at_utc"] = now_stamp()
         path = save_report(report, args.mode, stamp, secrets)

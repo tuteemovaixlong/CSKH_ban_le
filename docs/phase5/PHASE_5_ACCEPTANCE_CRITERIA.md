@@ -18,5 +18,3 @@ Phase 5 chỉ đạt khi toàn bộ tiêu chí dưới đây có evidence trên 
 ## Điều kiện dừng
 
 FAIL bất kỳ P5-K1…P5-K8 thì dừng tại tiêu chí đó. Không chạy full benchmark, không ghi `READY FOR MEASUREMENT`, không dùng dữ liệu thật và không bypass guard để làm PASS.
-
-

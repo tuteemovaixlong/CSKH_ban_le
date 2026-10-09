@@ -260,4 +260,3 @@ sudo python3 /opt/retailops/live-e2e.py --mode smoke
    *(Số 470/479 tests là lịch sử; ghi số tests thực tế cùng SHA của mỗi lần chạy, không đặt làm kết quả HEAD hiện hành.)*
 4. **Bước tiếp theo theo lộ trình dự án:**
    - (Hiện hành) PR #34 merged `47ba72a`; PR #35 merged `b3a0ccd`. CI post-merge verification trên main đã SUCCESS (run 37418383578, artifact 11392265139). Chuyển giao Phase 4 Scientific Evaluation (Frozen Master Benchmark 250 ca & Concurrency Load Matrix 1/2/4/8/16).
-
