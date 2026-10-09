@@ -1,0 +1,37 @@
+---
+> Sources: `retailops/workflow/graph.py`, `supervisor.py`, `agent.py`, `state.py`, `approval.py`, `checkpoints.py`, `subagents/order_agent.py`, `policy_agent.py`, `dispute_agent.py`, `witty_agent.py`, `read_worker.py`
+> SHA: `8a666fcce464c96b1dd5fc6848a2d4168c6505d1` (merged-after-G2 SHA: [UNVERIFIED])
+> Generated: 2026-10-08
+---
+
+## 1. Graph and supervisor
+
+| Field | Value | Citation file:line |
+|---|---|---|
+| Graph nodes | Supervisor plus `order_agent`, `policy_agent`, `dispute_agent`, `witty_agent` | [`graph.py#L18-L56`](../../../retailops/workflow/graph.py#L18) |
+| Routing | Supervisor routes to a worker; direct/human completion ends the graph; unknown worker falls back to witty | [`graph.py#L58-L82`](../../../retailops/workflow/graph.py#L58) |
+| Supervisor inputs | Last user message, normalized text, bound order/product context, recent history, attachment and prior route | [`supervisor.py#L82-L89`](../../../retailops/workflow/supervisor.py#L82) [`supervisor.py#L157-L172`](../../../retailops/workflow/supervisor.py#L157) |
+| Supervisor route labels | `order_inquiry`, `policy_knowledge`, `dispute_complaint`, `chitchat_general` and guarded human/direct outcomes | [`supervisor.py#L257-L307`](../../../retailops/workflow/supervisor.py#L257) |
+
+## 2. Worker responsibilities and tools
+
+| Worker | Tool scope / behavior | Citation file:line |
+|---|---|---|
+| Order worker | Read-only order/product/shipment tools; six-tool allowlist | [`order_agent.py#L42-L53`](../../../retailops/workflow/subagents/order_agent.py#L42) |
+| Policy worker | Only `search_knowledge`; renderer cites returned evidence | [`policy_agent.py#L13-L53`](../../../retailops/workflow/subagents/policy_agent.py#L13) |
+| Dispute worker | Handles cancellation, inventory and complaint proposals with target validation and human approval markers | [`dispute_agent.py#L64-L80`](../../../retailops/workflow/subagents/dispute_agent.py#L64) [`dispute_agent.py#L204-L221`](../../../retailops/workflow/subagents/dispute_agent.py#L204) |
+| Witty worker | Tool-free general answer; strict sentiment/OOD guards and fallback | [`witty_agent.py#L25-L52`](../../../retailops/workflow/subagents/witty_agent.py#L25) [`witty_agent.py#L59-L81`](../../../retailops/workflow/subagents/witty_agent.py#L59) |
+| Shared read worker | Up to protocol model/tool limits, validates allowed tools, records trace and can render evidence-only fallback | [`read_worker.py#L149-L188`](../../../retailops/workflow/subagents/read_worker.py#L149) [`read_worker.py#L217-L328`](../../../retailops/workflow/subagents/read_worker.py#L217) |
+
+## 3. State, approval and checkpointing
+
+| Field | Value | Citation file:line |
+|---|---|---|
+| State fields | Messages/fresh/trace/tool count, intent/worker history, sentiment/strict mode, proposal and human flags | [`state.py#L28-L50`](../../../retailops/workflow/state.py#L28) |
+| Durable approval | [UNVERIFIED] Approval graph source is present; exact review/commit lines require separate line extraction | [`approval.py#L1-L8`](../../../retailops/workflow/approval.py#L1) |
+| Checkpoint scope | Server-generated run IDs, tenant fence, no public time travel or callable tools | [`checkpoints.py#L1-L6`](../../../retailops/workflow/checkpoints.py#L1) [`checkpoints.py#L19-L39`](../../../retailops/workflow/checkpoints.py#L19) |
+
+## 4. Unknown / Unverified
+
+- [UNVERIFIED] Exact count of routed workers should be described as four routed workers plus shared `read_worker`; source does not define a fifth routed worker.
+- [UNVERIFIED] Runtime provider/deployment selection and production traffic distribution.

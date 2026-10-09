@@ -38,9 +38,13 @@
 !opsconsole/
 !opsconsole/**
 !evals/
-!evals/scenarios/
-!evals/scenarios/baseline_v1.jsonl
+!evals/**
+!scripts/
+!scripts/**
 !deploy/compose.admin.yaml
 !deploy/admin-console.py
+!notebooks/
+!notebooks/**
+!data/deepseek_seed_data.json
 **/__pycache__/
 **/*.pyc

@@ -13,7 +13,9 @@ COPY deploy/source_consistency.py /app/deploy/
 COPY deploy/compose.public.yaml deploy/Caddyfile deploy/Caddyfile.maintenance deploy/start-public-web.sh deploy/rollout-public-web.sh deploy/live-e2e.py /app/deploy/
 COPY deploy/compose.postgres.yaml deploy/init-postgres.sh deploy/configure-postgres.py deploy/cutover-postgres.sh deploy/enable-pgvector.sh /app/deploy/
 COPY opsconsole /app/opsconsole
-COPY evals/scenarios/baseline_v1.jsonl /app/evals/scenarios/baseline_v1.jsonl
+COPY evals /app/evals
+COPY scripts /app/scripts
+COPY notebooks /app/notebooks
 COPY deploy/compose.admin.yaml deploy/admin-console.py /app/deploy/
 COPY tests /app/tests
 COPY data/smoke.jsonl /app/data/smoke.jsonl

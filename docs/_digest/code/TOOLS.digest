@@ -1,0 +1,37 @@
+---
+> Sources: `retailops_tools.py`, `retailops_mcp_server.py`, `retailops/workflow/mcp_client.py`, `agent_protocol.py`
+> SHA: `8a666fcce464c96b1dd5fc6848a2d4168c6505d1` (merged-after-G2 SHA: [UNVERIFIED])
+> Generated: 2026-10-08
+---
+
+## 1. Native tool contract
+
+| Field | Value | Citation file:line |
+|---|---|---|
+| Tool definitions | Native `TOOLS` list declares names, descriptions and JSON argument schemas | [`agent_protocol.py#L83-L110`](../../../agent_protocol.py#L83) |
+| Validation | Unknown tools, mismatched argument fields and invalid scope raise protocol errors | [`agent_protocol.py#L231-L236`](../../../agent_protocol.py#L231) [`agent_protocol.py#L345-L356`](../../../agent_protocol.py#L345) |
+| Application binding | `BoundTools` binds tools to authenticated customer/store context; customer identity is server-side | [`retailops_tools.py#L12-L32`](../../../retailops_tools.py#L12) |
+
+## 2. MCP tools
+
+| Tool | Source declaration / behavior | Citation file:line |
+|---|---|---|
+| Shipment | `track_shipment` MCP tool | [`retailops_mcp_server.py#L790-L826`](../../../retailops_mcp_server.py#L790) |
+| Inventory | `check_inventory` MCP tool | [`retailops_mcp_server.py#L826-L874`](../../../retailops_mcp_server.py#L826) |
+| Knowledge | `search_knowledge` MCP tool | [`retailops_mcp_server.py#L874-L953`](../../../retailops_mcp_server.py#L874) |
+| Order reads | `get_order` and `list_orders` MCP tools | [`retailops_mcp_server.py#L953-L1000`](../../../retailops_mcp_server.py#L953) |
+| Proposals/calculation | Return proposal, voucher calculation, shipping estimate and human support tools | [`retailops_mcp_server.py#L1000-L1187`](../../../retailops_mcp_server.py#L1000) |
+| Product specs | Guarded external technical-spec search | [`retailops_mcp_server.py#L1187-L1210`](../../../retailops_mcp_server.py#L1187) |
+
+## 3. MCP adapter
+
+| Field | Value | Citation file:line |
+|---|---|---|
+| Discovery | Adapter lists and caches MCP tools | [`mcp_client.py#L34-L50`](../../../retailops/workflow/mcp_client.py#L34) |
+| Invocation | Adapter calls server tool and returns structured error on failure | [`mcp_client.py#L72-L90`](../../../retailops/workflow/mcp_client.py#L72) |
+| Transport server | MCP server supports JSON-RPC/SSE fallback and exposes discovery health metadata | [`retailops_mcp_server.py#L187-L202`](../../../retailops_mcp_server.py#L187) [`retailops_mcp_server.py#L254-L320`](../../../retailops_mcp_server.py#L254) |
+
+## 4. Unknown / Unverified
+
+- [UNVERIFIED] Production MCP transport choice and external client inventory.
+- [UNVERIFIED] A tool being declared does not prove it was invoked in a live deployment.

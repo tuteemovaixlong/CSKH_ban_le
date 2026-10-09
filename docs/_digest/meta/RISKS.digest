@@ -1,0 +1,27 @@
+---
+> Sources: `docs/phase4/PHASE_5_BACKLOG.md`; `docs/phase4/REVIEW_GEMINI_PHASE4_2026-10-07.md`; `docs/phase4/PHASE_4_ACCEPTANCE_CRITERIA.md`; `docs/phase4/PHASE_4_ACCEPTANCE_EVIDENCE_8a666fc.md`
+> SHA: `8a666fcce464c96b1dd5fc6848a2d4168c6505d1` ([UNVERIFIED] merged SHA)
+> Generated: 2026-10-08
+---
+
+## 1. Phase 5 risks retained after freeze
+
+| ID | Risk extracted | Status | Citation file:line |
+|---|---|---|---|
+| P5-01 | Replay validator does not hash actual source when sidecar is preserved; runner hashes before emit. | DEFERRED — nonblocking merge | `docs/phase4/PHASE_5_BACKLOG.md:9-12` |
+| P5-02 | Blocked/inconclusive can overlap graded counts and hide missing cases; primary denominator is correct. | OPEN — nonblocking merge | `docs/phase4/PHASE_5_BACKLOG.md:9-13` |
+| P5-03 | Positive tool count may lack names; `ownership_bypass=True` is not consumed by grader. | OPEN — nonblocking merge | `docs/phase4/PHASE_5_BACKLOG.md:9-13` |
+| P5-04 | Custom qrels/sidecar parsing can report OK without canonical expected-hash acceptance. | BACKLOG — nonblocking merge | `docs/phase4/PHASE_5_BACKLOG.md:14` |
+| P5-05 | Preflight `G999`/null metadata can be accepted; G5-only grant remains correct. | BACKLOG — nonblocking merge | `docs/phase4/PHASE_5_BACKLOG.md:15` |
+| P5-06 | PR body contains stale counts/links and outdated eligibility claim. | BACKLOG — nonblocking merge | `docs/phase4/PHASE_5_BACKLOG.md:16` |
+| P5-07 | Local full suite has timing variance while CI is green; outside K5 fixed environment rule. | OBSERVED — nonblocking | `docs/phase4/PHASE_5_BACKLOG.md:17`; `docs/phase4/PHASE_4_ACCEPTANCE_EVIDENCE_8a666fc.md:28-32` |
+| P5-08 | Offline checks cannot establish live provider/identity/budget/completeness evidence. | FUTURE — nonblocking merge | `docs/phase4/PHASE_5_BACKLOG.md:18` |
+
+## 2. Acceptance boundary
+
+Owner rule keeps post-freeze findings outside the eight-item merge gate in Phase 5; do not alter v1 or add required Phase 4 tests (`docs/phase4/PHASE_4_ACCEPTANCE_CRITERIA.md:60-72`).
+
+## 3. Unknown / Unverified
+
+- [UNVERIFIED] Impact probabilities and severity scores are not stated in scanned sources; no likelihood score is invented.
+- [UNVERIFIED] Cloud/runtime exposure is not inferable from Phase 4 documents alone.

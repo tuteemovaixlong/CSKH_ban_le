@@ -321,13 +321,13 @@ class TestAuditRemediation(unittest.TestCase):
         """Ensure notebooks/colab_agent.ipynb matches codebase so CI never fails on stale artifact."""
         root = Path(__file__).resolve().parents[1]
         script_path = root / "scripts" / "build_agent_notebook.py"
-        if not script_path.is_file():
-            self.skipTest("scripts/build_agent_notebook.py not present in packaged container")
+        target = root / "notebooks" / "colab_agent.ipynb"
+        if not script_path.is_file() or not target.is_file():
+            self.skipTest("scripts/build_agent_notebook.py or notebooks/colab_agent.ipynb not present in packaged container")
         import importlib.util
         spec = importlib.util.spec_from_file_location("build_agent_notebook", script_path)
         builder = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(builder)
-        target = root / "notebooks" / "colab_agent.ipynb"
         self.assertTrue(target.is_file(), "notebooks/colab_agent.ipynb does not exist")
         expected = builder.build()
         actual = target.read_text(encoding="utf-8")

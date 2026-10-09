@@ -1,0 +1,43 @@
+---
+> Sources: `agent_protocol.py`, `retailops/workflow/subagents/order_agent.py`, `policy_agent.py`, `witty_agent.py`, `dispute_agent.py`, `retailops_mcp_server.py`, `evals/prompts/RetailOps_MASTER_PROMPT.txt`, `evals/prompts/RETAILOPS_DISPATCH_COMMANDS.md`, `notebooks/colab_agent.ipynb`
+> SHA: `8a666fcce464c96b1dd5fc6848a2d4168c6505d1` (merged-after-G2 SHA: [UNVERIFIED])
+> Generated: 2026-10-08
+---
+
+## 1. Runtime system prompts
+
+| Field | Value | Citation file:line |
+|---|---|---|
+| RetailOps system prompt | Defines tool-first handling for orders/products/policies, identity and current time; forbids guessing and secret disclosure | [`agent_protocol.py#L11-L60`](../../../agent_protocol.py#L11) |
+| General system prompt | Vietnamese general assistant; no RetailOps tools, KB citations or live-fact claims | [`agent_protocol.py#L63-L78`](../../../agent_protocol.py#L63) |
+| Prompt selection | `request_mode` selects general versus RetailOps system prompt; scoped tools are inserted into request | [`agent_protocol.py#L359-L389`](../../../agent_protocol.py#L359) |
+| Prompt validation | Transcript must start with user/system, tool calls and tool results are validated in sequence | [`agent_protocol.py#L298-L340`](../../../agent_protocol.py#L298) |
+
+## 2. Worker prompt templates
+
+| Worker | Extracted instruction | Citation file:line |
+|---|---|---|
+| Order | Use order/context tools for owned facts; never use order IDs as product IDs; do not invent missing fields or actions | [`retailops/workflow/subagents/order_agent.py#L7-L50`](../../../retailops/workflow/subagents/order_agent.py#L7) |
+| Policy | Use `search_knowledge`; report only returned excerpts with exact `[KB:...]` IDs; empty search is not permission to invent policy | [`retailops/workflow/subagents/policy_agent.py#L5-L10`](../../../retailops/workflow/subagents/policy_agent.py#L5) |
+| Witty | Answer a general question in 1–2 short sentences, then pivot naturally to shop; no fabricated live weather | [`retailops/workflow/subagents/witty_agent.py#L12-L22`](../../../retailops/workflow/subagents/witty_agent.py#L12) |
+| Dispute | Vietnamese dispute/cancellation prompt instructs proposal-only actions and human approval path | [`retailops/workflow/subagents/dispute_agent.py#L13-L23`](../../../retailops/workflow/subagents/dispute_agent.py#L13) |
+| MCP prompt | Server exposes a RetailOps SOP assistant prompt to MCP clients | [`retailops_mcp_server.py#L1324-L1335`](../../../retailops_mcp_server.py#L1324) |
+
+## 3. Tool descriptions used in prompts
+
+| Field | Value | Citation file:line |
+|---|---|---|
+| Tool catalog | `TOOLS` contains order, product, context, cancellation-check, runtime, time, knowledge, shipment, inventory and human-support descriptions | [`agent_protocol.py#L83-L110`](../../../agent_protocol.py#L83) |
+| Scope filtering | `scoped_tools` rejects unknown/duplicate names and returns only the requested tool definitions | [`agent_protocol.py#L345-L356`](../../../agent_protocol.py#L345) |
+
+## 4. Evaluation prompt sources
+
+| Field | Value | Citation file:line |
+|---|---|---|
+| Master evaluation prompt | Generates evaluation data and explicitly states it is not the chatbot runtime prompt | [`evals/prompts/RetailOps_MASTER_PROMPT.txt#L1-L5`](../../../evals/prompts/RetailOps_MASTER_PROMPT.txt#L1) |
+| Dispatch commands | Instructs batch dispatch and says held-out approved data must not enter chatbot optimization prompts | [`evals/prompts/RETAILOPS_DISPATCH_COMMANDS.md#L1-L5`](../../../evals/prompts/RETAILOPS_DISPATCH_COMMANDS.md#L1) |
+
+## 5. Unknown / Unverified
+
+- [UNVERIFIED] Notebook cell text for `colab_agent.ipynb` was not treated as a runtime source unless line-addressable; inspect notebook JSON cells before asserting a template.
+- [UNVERIFIED] Prompt wording from evaluation files where source extraction was not line-addressed here.

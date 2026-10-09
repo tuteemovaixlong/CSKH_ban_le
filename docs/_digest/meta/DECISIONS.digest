@@ -1,0 +1,38 @@
+---
+> Sources: `docs/phase4/PHASE_4_ACCEPTANCE_CRITERIA.md`; `docs/phase4/PHASE_4_ACCEPTANCE_EVIDENCE_8a666fc.md`; `docs/phase4/REVIEW_GEMINI_PHASE4_2026-10-07.md`; `docs/phase4/PHASE_5_BACKLOG.md`; selected deployment sources
+> SHA: `8a666fcce464c96b1dd5fc6848a2d4168c6505d1` ([UNVERIFIED] merged SHA)
+> Generated: 2026-10-08
+---
+
+## 1. Current acceptance decisions
+
+| Decision | Extracted value | Citation file:line |
+|---|---|---|
+| Scope freeze | Owner chose blocker + fixed checklist; no requirement to close every light finding. | `docs/phase4/PHASE_4_ACCEPTANCE_CRITERIA.md:9-12` |
+| Frozen head | K1–K8/C1–C6 recorded PASS at `8a666fc`; independent sign-off remains pending. | `docs/phase4/PHASE_4_ACCEPTANCE_CRITERIA.md:14` |
+| Checklist size | Exactly K1–K8; no K9 or extra contract review. | `docs/phase4/PHASE_4_ACCEPTANCE_CRITERIA.md:30-43` |
+| K5 environment | Offline CI is standard; local timing variance is disclosed without changing threshold. | `docs/phase4/PHASE_4_ACCEPTANCE_CRITERIA.md:40;45` |
+| End condition | Independent PASS → owner review → merge → G2 offline; no readiness before G5. | `docs/phase4/PHASE_4_ACCEPTANCE_CRITERIA.md:87-91` |
+| Out-of-scope findings | Findings outside eight items go to Phase 5 and do not block this merge. | `docs/phase4/PHASE_4_ACCEPTANCE_CRITERIA.md:60-72` |
+
+## 2. Deployment decisions extracted from source
+
+| Decision | Extracted value | Citation file:line |
+|---|---|---|
+| Deploy guard | EC2 deploy requires `main`, deployment variable enabled and eligibility output `true`. | `.github/workflows/deploy-ec2.yml:15-36` |
+| Release identity | ECR image is pushed and activated by digest through EC2 runner. | `deploy/publish_and_activate.py:145-156`; `deploy/deploy-runner.sh:5-35` |
+| Rollback pointer | Previous image pointer is retained in `previous.env`; schema rollback is not provided. | `deploy/SETUP.md:129-139` |
+| Live separation | Live E2E is separately dispatched smoke/full workflow via SSM. | `.github/workflows/live-e2e.yml:1-44` |
+
+## 3. Historical/deferred decisions
+
+| Decision | Extracted value | Citation file:line |
+|---|---|---|
+| N1 replay hardening | Deferred: v1 closes manifest mutation while runner source hashing remains in place. | `docs/phase4/PHASE_4_ACCEPTANCE_CRITERIA.md:24-28` |
+| N3/N4 residuals | Completeness/counts and positive tool-name semantics are Phase 5, not v1 blockers. | `docs/phase4/PHASE_5_BACKLOG.md:11-13` |
+| Docs-only closure | Packet/docs updates do not constitute new code closure or merged state. | `docs/phase4/PHASE_4_ACCEPTANCE_EVIDENCE_8a666fc.md:34-36` |
+
+## 4. Unknown / Unverified
+
+- [UNVERIFIED] Source SHA is not evidence of merged PR or active deployment.
+- [UNVERIFIED] No cloud account, repository variable, EC2 or model endpoint value was in scanned decision sources.

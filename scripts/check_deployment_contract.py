@@ -21,7 +21,8 @@ def require(path, *needles):
 
 def main():
     require("Dockerfile", "deploy/rollout-public-web.sh", "deploy/cutover-postgres.sh",
-            "deploy/enable-pgvector.sh", "data/knowledge")
+            "deploy/enable-pgvector.sh", "data/knowledge", "notebooks")
+    require(".dockerignore", "!notebooks/", "!notebooks/**")
     publish = require("deploy/publish_and_activate.py", "rollout-public-web.sh", "docker cp",
                       "Public web rollout checked for the activated image", "ssm_run",
                       "EC2 DEPLOY PREFLIGHT", "EC2_ROOT_DISK_LOW",

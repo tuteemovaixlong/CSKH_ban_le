@@ -1,0 +1,35 @@
+---
+> Sources: `retailops_providers.py`, `retailops_agent.py`, `retailops/config.py`, `retailops_baseline.py`, `notebooks/colab_agent.ipynb`, `notebooks/colab_vllm_l4.py`
+> SHA: `8a666fcce464c96b1dd5fc6848a2d4168c6505d1` (merged-after-G2 SHA: [UNVERIFIED])
+> Generated: 2026-10-08
+---
+
+## 1. Providers and endpoints
+
+| Field | Value | Citation file:line |
+|---|---|---|
+| OpenRouter endpoint | `https://openrouter.ai/api/v1/chat/completions` | [`retailops_providers.py#L19-L23`](../../../retailops_providers.py#L19) |
+| Anthropic endpoint | `https://api.anthropic.com/v1/messages` | [`retailops_providers.py#L19-L21`](../../../retailops_providers.py#L19) |
+| Google endpoint | `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions` | [`retailops_providers.py#L19-L21`](../../../retailops_providers.py#L19) |
+| API default model | `meta/muse-spark-1.3-contributor` | [`retailops_providers.py#L23-L24`](../../../retailops_providers.py#L23) |
+| Approved API model set | Includes Muse Spark, Gemma, Gemini, Claude and Qwen identifiers listed in source | [`retailops_providers.py#L24-L63`](../../../retailops_providers.py#L24) |
+| Local default | `qwen3.5:4b` | [`retailops/config.py#L68-L76`](../../../retailops/config.py#L68) |
+| API model configuration | `RETAILOPS_API_MODEL`, defaulting to Muse Spark | [`retailops/config.py#L120-L135`](../../../retailops/config.py#L120) |
+| Local model runtime | Ollama-compatible loopback endpoint; cloud model tags rejected | [`retailops_baseline.py#L90-L114`](../../../retailops_baseline.py#L90) |
+| Colab serving model | `yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2` | [`notebooks/colab_vllm_l4.py#L3-L5`](../../../notebooks/colab_vllm_l4.py#L3) |
+
+## 2. Request and inference parameters
+
+| Field | Value | Citation file:line |
+|---|---|---|
+| Native Ollama request | `think: false`, `keep_alive: 10m`, `stream: false`, `temperature: 0.2`, `seed: 42` | [`agent_protocol.py#L359-L391`](../../../agent_protocol.py#L359) |
+| Baseline defaults | temperature `0.0`, timeout `180s` | [`retailops_baseline.py#L90-L100`](../../../retailops_baseline.py#L90) |
+| Prompt/context bounds | `MAX_MESSAGES=40`, `MAX_CHARACTERS=18000`, `MAX_TOOL_CALLS=8`, `MAX_MODEL_CALLS=4` | [`agent_protocol.py#L6-L10`](../../../agent_protocol.py#L6) |
+| Colab vLLM serving | `--max-model-len 8192`, automatic tool choice and Gemma4 parser | [`notebooks/colab_vllm_l4.py#L125-L140`](../../../notebooks/colab_vllm_l4.py#L125) |
+| Model identity | Local runtime requires a model digest and records name/digest | [`retailops_baseline.py#L147-L158`](../../../retailops_baseline.py#L147) |
+
+## 3. Unknown / Unverified
+
+- [UNVERIFIED] Which provider/model is deployed for a future merged G2 runtime.
+- [UNVERIFIED] Provider pricing, production latency, throughput, quantization quality and API revision beyond values present in source.
+- [UNVERIFIED] A merged SHA after G2; this digest is sourced from the local frozen SHA above.

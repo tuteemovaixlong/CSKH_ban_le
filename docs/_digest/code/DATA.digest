@@ -1,0 +1,87 @@
+---
+> Sources: data/products.json; data/mock_shipments.json; data/deepseek_seed_data.json; data/knowledge/cancellation.md; data/knowledge/faq.md; data/knowledge/payments.md; data/knowledge/policy_mega_sale_delay_voucher.md; data/knowledge/policy_shipper_complaint.md; data/knowledge/policy_size_exchange_twoway.md; data/knowledge/policy_warranty_exchange_1to1.md; data/knowledge/returns.md; data/knowledge/shipping.md; evals/scenarios/baseline_v1.jsonl; evals/scenarios/benchmark_250.jsonl; evals/scenarios/master_250_v1.jsonl; evals/qrels/policy_qrels_v1.json; evals/fixtures/sidecar_250.json; evals/harness/constants.py; evals/harness/runner.py; evals/harness/qrels.py; evals/harness/sidecar.py; evals/harness/writer.py; docs/phase4/PHASE_4_INFRASTRUCTURE_SPEC.md; docs/phase4/PLAN_PHASE_4_EVALUATION.md; docs/phase4/PHASE_4_ACCEPTANCE_CRITERIA.md
+> SHA: 8a666fcce464c96b1dd5fc6848a2d4168c6505d1 — local HEAD; merged SHA after G2 [UNVERIFIED].
+> Generated: 2026-10-08; local read-only inventory/hash computation.
+---
+
+# DATA — inventory, counts, hashes, overlap
+
+## 1. Phương pháp tính local
+
+| Field | Value | Citation file:line |
+|---|---|---|
+| Counts | Parse nonempty JSONL lines; count JSON collections; all counts computed over complete cited files | evals/scenarios/baseline_v1.jsonl:1-30; evals/scenarios/benchmark_250.jsonl:1-250; evals/qrels/policy_qrels_v1.json:1-2214; evals/fixtures/sidecar_250.json:1-4002 |
+| Raw hash | SHA-256 of read_bytes, preserving checkout CRLF | evals/harness/writer.py:23 |
+| LF hash | sha256(Path.read_text(encoding='utf-8').replace('\r\n','\n').encode('utf-8')); retains read_text universal-newline behavior; no trim/append | evals/harness/runner.py:137 |
+| Canonical sidecar hash | json.dumps(parsed_dict,indent=2,sort_keys=True,ensure_ascii=False), no terminal newline; distinct from file raw/LF hash | evals/harness/sidecar.py:102 |
+
+## 2. Scenario inventory — local computation
+
+| Field | Value | Citation file:line |
+|---|---|---|
+| baseline_v1 |30lines/records/uniqueIDs; dev18/held_out12; sixcategories×5 | evals/scenarios/baseline_v1.jsonl:1-30 |
+| baseline raw hash |64a4599b83d98436a673aeb372614386f17da71144d50c2cfa4aa41390611b16 | evals/scenarios/baseline_v1.jsonl:1-30; computation §1 |
+| baseline LF hash |d41a90b8cf34efa2f938c712f17738417f7ebc36c4bd5045e6b3199e4ea0d14d | evals/scenarios/baseline_v1.jsonl:1-30; computation §1 |
+| benchmark_250 |250lines/records/uniqueIDs; dev150/held_out100 | evals/scenarios/benchmark_250.jsonl:1-250 |
+| master_250_v1 |250lines/records/uniqueIDs; dev150/held_out100 | evals/scenarios/master_250_v1.jsonl:1-250 |
+| Each250file categories |order_lookup65/policy35/mixed40/safety60/product35/general15 | evals/scenarios/benchmark_250.jsonl:1-250; evals/scenarios/master_250_v1.jsonl:1-250 |
+| benchmark raw hash |81f64611eb09eb4d319a29257e9c456fbffff07779182b130832fd7780062105 | evals/scenarios/benchmark_250.jsonl:1-250; computation §1 |
+| master raw hash |81f64611eb09eb4d319a29257e9c456fbffff07779182b130832fd7780062105 | evals/scenarios/master_250_v1.jsonl:1-250; computation §1 |
+| benchmark LF hash |36fa8c7a52a60323bb4f04d11f1e677106ddfe6a35e0ccac3266784c7c6e4411 | evals/scenarios/benchmark_250.jsonl:1-250; evals/harness/constants.py:30 |
+| master LF hash |36fa8c7a52a60323bb4f04d11f1e677106ddfe6a35e0ccac3266784c7c6e4411 | evals/scenarios/master_250_v1.jsonl:1-250; docs/phase4/PHASE_4_INFRASTRUCTURE_SPEC.md:13 |
+| Fields |id/split/category/user_text/expected_mode/expected_tools/forbidden_tools/expected_outcome/safety | evals/scenarios/baseline_v1.jsonl:1; evals/scenarios/benchmark_250.jsonl:1; evals/scenarios/master_250_v1.jsonl:1 |
+
+## 3. Sidecar/qrels inventory — local computation
+
+| Field | Value | Citation file:line |
+|---|---|---|
+| sidecar_250 |JSONdict250entries/4002lines; identity/focus/answerability/prior_turns/claim_refs | evals/fixtures/sidecar_250.json:1-4002 |
+| sidecar raw hash |4501df7787e07d198d6a6aeafb3a29af62d45265f67017ea75268034b820aa15 | evals/fixtures/sidecar_250.json:1-4002; computation §1 |
+| sidecar LF file hash |496d29db3b1da8d36f8361dfd1f011d4fa2004d315f3c5d61a89256ea1225d68 | evals/fixtures/sidecar_250.json:1-4002; computation §1 |
+| Canonical serialized sidecar hash |69e9835d3f4c63a2466d6ab08749737dcf59de65f2c22713372bd66b19bb3f2d | evals/harness/constants.py:32; evals/harness/sidecar.py:102 |
+| policy_qrels_v1 |qrels-v1;250queryrows/2214lines;75with relevance;75no_evidence; answerable175/labeled-unanswerable60/not-applicable15 | evals/qrels/policy_qrels_v1.json:1-2214 |
+| qrels raw hash |ec2e2b37ffe3ae195a4ea42ad4c45964c00ab8b3eb743dccffdc07c0749fc1ee | evals/qrels/policy_qrels_v1.json:1-2214; computation §1 |
+| qrels LF/text hash |769a45d682648290a3356dad32aacae3c62f6942b62844dd4cc50f2d83c15161 | evals/harness/constants.py:31; evals/harness/qrels.py:90 |
+
+## 4. Business JSON inventory — local computation
+
+| Field | Value | Citation file:line |
+|---|---|---|
+| products.json |source=“Danh mục giả lập RetailOps v1”;19products/452lines; raw1d942f28d67d5f90ca94e4dd274230ef305b1b2891d060157ba54822f9db886c; LF4a3e81d744b1c475018b2e42be638cdce93c05ee1b4504a81f18d1e954be914f | data/products.json:2-452; computation §1 |
+| mock_shipments.json |8order-keyedentries/210lines; rawa396fb87d7df226fd9af0f24707c859f1522d1bed658aeea117942d91de064ba; LFb74d66a5dc6aea5f5d8c041ded6050d7642a28fc4ec819f315af9d74cefaf4b8 | data/mock_shipments.json:1-210; computation §1 |
+| deepseek_seed_data.json |products8/customers6/orders8/shipments8/inventory8;406lines; raw=LF b66498a424d4876bbab5fb464d4e9c410ed5d8cfed464c9b8260f3f382bd5b1a | data/deepseek_seed_data.json:2; data/deepseek_seed_data.json:127; data/deepseek_seed_data.json:165; data/deepseek_seed_data.json:231; data/deepseek_seed_data.json:369; computation §1 |
+
+## 5. Knowledge inventory — local computation, LF hashes
+
+| Field | Value | Citation file:line |
+|---|---|---|
+| cancellation.md |9lines; hủy đơn demo; a1399c946b7349706bbc9cb66e05aa53ead11009d53f3be88bd7941371b951ce | data/knowledge/cancellation.md:1-9; computation §1 |
+| faq.md |13lines; FAQ/synthetic/transaction vs policy;8907aaa2edcd6cc92ed35687a8d5ebdccfee44471e9cfc9c81f4c811550f5b98 | data/knowledge/faq.md:1-13; computation §1 |
+| payments.md |5lines; simulated payments/unknown fields;618b3e10c98c6c22292f1e239c0d345a1fc81e8190e3ee3a5548f713c69a9cd7 | data/knowledge/payments.md:1-5; computation §1 |
+| policy_mega_sale_delay_voucher.md |12lines; sale-delay/voucher;037f21626569504750a0c5a661419646fd8d5b239db74266e9d9d39a7ca6f581 | data/knowledge/policy_mega_sale_delay_voucher.md:1-12; computation §1 |
+| policy_shipper_complaint.md |12lines; shipper complaint;34c7a35517a35838275817c705e49f41a29a22d0546435c1dedcb48bb3c8653b | data/knowledge/policy_shipper_complaint.md:1-12; computation §1 |
+| policy_size_exchange_twoway.md |13lines; size exchange;5ff22fc60d6e9ed83e16845ec3cfcd524d5de4ec78690d046747d46493b91adf | data/knowledge/policy_size_exchange_twoway.md:1-13; computation §1 |
+| policy_warranty_exchange_1to1.md |13lines; warranty;661f23fb09a1c4fa65fdec6fcf5053a9f7362e0a49950ab2a5135fb5ad5cb79a | data/knowledge/policy_warranty_exchange_1to1.md:1-13; computation §1 |
+| returns.md |7lines; simulated returns;68e1613314feed034dcda8472dcf6f6eda062059765d4d974303dce851e17b49 | data/knowledge/returns.md:1-7; computation §1 |
+| shipping.md |7lines; simulated shipping;50e1e4017763d6f35006e35b7e65a1220c7cb371a1572a18160e8b8d5c2bb591 | data/knowledge/shipping.md:1-7; computation §1 |
+| Hash scope |LF file hashes above are not runtime vector-index/embedding hashes | evals/harness/runner.py:137; docs/phase4/PHASE_4_INFRASTRUCTURE_SPEC.md:64 |
+
+## 6. Exact overlap — local computation
+
+| Field | Value | Citation file:line |
+|---|---|---|
+| Method |Set intersection on id/exact decoded user_text/parsed row serialized sort_keys=True; no fuzzy/embedding comparison | evals/scenarios/baseline_v1.jsonl:1-30; evals/scenarios/benchmark_250.jsonl:1-250; evals/scenarios/master_250_v1.jsonl:1-250 |
+| baseline vs benchmark |id0/exacttext0/exactrow0 | evals/scenarios/baseline_v1.jsonl:1-30; evals/scenarios/benchmark_250.jsonl:1-250; method above |
+| baseline vs master |id0/exacttext0/exactrow0 | evals/scenarios/baseline_v1.jsonl:1-30; evals/scenarios/master_250_v1.jsonl:1-250; method above |
+| benchmark vs master |id250/exacttext250/exactrow250; source doc calls master/benchmark mirror | evals/scenarios/benchmark_250.jsonl:1-250; evals/scenarios/master_250_v1.jsonl:1-250; docs/phase4/PLAN_PHASE_4_EVALUATION.md:11 |
+| baseline dev vs held_out |id0/exacttext0; unique texts18/12 | evals/scenarios/baseline_v1.jsonl:1-30; method above |
+| benchmark dev vs held_out |id0/exacttext0; unique texts150/100 | evals/scenarios/benchmark_250.jsonl:1-250; method above |
+| master dev vs held_out |id0/exacttext0; unique texts150/100 | evals/scenarios/master_250_v1.jsonl:1-250; method above |
+
+## 7. Unknown / Unverified
+
+- [UNVERIFIED] Merged SHA/G2: source remains PENDING (docs/phase4/PHASE_4_ACCEPTANCE_CRITERIA.md:104).
+- [UNVERIFIED] Named human creator/creation timestamp of benchmarks/qrels/fixtures: scanned metadata do not provide these fields (evals/scenarios/benchmark_250.jsonl:1-250; evals/qrels/policy_qrels_v1.json:1-2214; evals/fixtures/sidecar_250.json:1-4002).
+- [UNVERIFIED] Model training corpus/fine-tuning splits/benchmark exposure history: not supplied by cited data; eval overlap alone does not establish train/test non-contamination (data/deepseek_seed_data.json:1-406; evals/scenarios/benchmark_250.jsonl:1-250).
+- [UNVERIFIED] Semantic/template overlap and train-vs-KB leakage are not checked by §6 exact set intersections (evals/scenarios/benchmark_250.jsonl:1-250; data/knowledge/faq.md:1-13).
+- [UNVERIFIED] Live DB/index corpus/hash cannot be determined from local seed files (docs/phase4/PHASE_4_INFRASTRUCTURE_SPEC.md:64).

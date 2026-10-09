@@ -1,0 +1,58 @@
+---
+> Sources: `deploy/*`; `.github/workflows/ci.yml`; `.github/workflows/deploy-ec2.yml`; `.github/workflows/live-e2e.yml`; `.github/workflows/ops-console.yml`; `Dockerfile`; `compose.yaml`
+> SHA: `8a666fcce464c96b1dd5fc6848a2d4168c6505d1` ([UNVERIFIED] merged SHA; local frozen checkout only)
+> Generated: 2026-10-08
+---
+
+## 1. CI workflow
+
+| Field | Value | Citation file:line |
+|---|---|---|
+| CI triggers | Pull requests, pushes to `main`, and manual dispatch. | [`.github/workflows/ci.yml`](../../../.github/workflows/ci.yml#L1-L6) |
+| Offline environment | Ubuntu 24.04 runner with a pinned pgvector/PostgreSQL service and disposable CI credentials. | [`.github/workflows/ci.yml`](../../../.github/workflows/ci.yml#L50-L65) |
+| Offline contracts | Documentation, dataset, live-E2E, notebook, JavaScript, unit/pgvector/HTTP, deployment, image packaging, and HTTPS checks run in the offline job. | [`.github/workflows/ci.yml`](../../../.github/workflows/ci.yml#L70-L194) |
+| Headroom artifact | The job checks artifact SHA, sample counts, saturation, tool hook and raw P99 values against a 50 ms SLO. | [`.github/workflows/ci.yml`](../../../.github/workflows/ci.yml#L97-L166) |
+| Colab compatibility | Python 3.13 checks the agent notebook, dependencies, protocol and tool contract. | [`.github/workflows/ci.yml`](../../../.github/workflows/ci.yml#L13-L49) |
+| Portable/ops checks | Ubuntu/Windows matrix runs no-model ops-console/UI checks; PostgreSQL job runs read-only integration checks. | [`.github/workflows/ops-console.yml`](../../../.github/workflows/ops-console.yml#L13-L70) |
+
+## 2. Deployment eligibility and release path
+
+| Field | Value | Citation file:line |
+|---|---|---|
+| Deployment trigger | EC2 workflow is manual or a push to `main`; documentation-only paths are ignored. | [`.github/workflows/deploy-ec2.yml`](../../../.github/workflows/deploy-ec2.yml#L1-L9) |
+| Eligibility guard | Filter requires `main` and `RETAILOPS_DEPLOY_ENABLED=true`; deploy runs only when eligibility output is `true`. | [`.github/workflows/deploy-ec2.yml`](../../../.github/workflows/deploy-ec2.yml#L15-L36) |
+| Pre-deploy checks | Deployment validates contracts, compiles helpers, runs tests, builds image and checks packaged helpers before AWS credentials. | [`.github/workflows/deploy-ec2.yml`](../../../.github/workflows/deploy-ec2.yml#L34-L64) |
+| AWS path | Job uses an environment and OIDC role credentials, then calls `deploy/publish_and_activate.py`. | [`.github/workflows/deploy-ec2.yml`](../../../.github/workflows/deploy-ec2.yml#L37-L71) |
+| ECR/SSM release | Release validates inputs, performs EC2 preflight, pushes image, verifies ECR digest and sends pinned digest to EC2 runner. | [`publish_and_activate.py`](../../../deploy/publish_and_activate.py#L112-L155) |
+| EC2 runner | Runner accepts only digest-pinned image from allowlisted ECR, locks deployment, pulls/tests image, atomically writes `deployed.env`, preserving `previous.env`. | [`deploy-runner.sh`](../../../deploy/deploy-runner.sh#L5-L36) |
+| Live E2E trigger | Live E2E is separately dispatched with `smoke` or `full` mode and runs through SSM only when enabled. | [`.github/workflows/live-e2e.yml`](../../../.github/workflows/live-e2e.yml#L1-L44) |
+
+## 3. Container and compose boundaries
+
+| Field | Value | Citation file:line |
+|---|---|---|
+| Baseline image | Python 3.11 slim Bookworm; hashed binary installs; runtime, web, eval, notebook, test and knowledge assets copied. | [`Dockerfile`](../../../Dockerfile#L1-L36) |
+| Baseline container | Runs UID/GID 10001, writes `/data`, enters through `retailops_baseline.py`. | [`Dockerfile`](../../../Dockerfile#L2-L36) |
+| Baseline compose safety | Read-only service, `/tmp` tmpfs, dropped capabilities, no-new-privileges and resource limits. | [`compose.yaml`](../../../compose.yaml#L1-L20) |
+| Public compose | Web serves internal 8000; Caddy publishes 80/443 and waits for healthy web; both are hardened/resource-limited. | [`compose.public.yaml`](../../../deploy/compose.public.yaml#L1-L54) |
+| API compose | API binds host loopback `127.0.0.1:8080:8000`, uses separate env files and a healthcheck. | [`compose.api.yaml`](../../../deploy/compose.api.yaml#L1-L31) |
+| PostgreSQL overlay | Pinned pgvector image, no host port mapping, file-backed secrets, healthcheck and bounded resources. | [`compose.postgres.yaml`](../../../deploy/compose.postgres.yaml#L1-L47) |
+| Admin overlay | Optional admin service uses internal network, read-only snapshots, no model/database secret and bounded resources. | [`compose.admin.yaml`](../../../deploy/compose.admin.yaml#L1-L38) |
+| HTTPS proxy | Caddy serves configured host, strips selected forwarding headers, sets HSTS, proxies to `web:8000` with bounded timeouts. | [`Caddyfile`](../../../deploy/Caddyfile#L1-L24) |
+
+## 4. Operations and rollback contract
+
+| Field | Value | Citation file:line |
+|---|---|---|
+| Bootstrap assumptions | EC2 needs Docker/Compose, AWS CLI, Python and SSM; bootstrap installs runner/compose/env through an existing admin channel. | [`SETUP.md`](../../../deploy/SETUP.md#L1-L35) |
+| Secrets | OIDC deploy role and EC2 profile provide ECR/SSM permissions; inference/ngrok tokens stay on their respective hosts. | [`SETUP.md`](../../../deploy/SETUP.md#L37-L114) |
+| Activation | Successful CD writes a digest-checked `deployed.env`; `doctor`/`evaluate` are separate operator commands. | [`SETUP.md`](../../../deploy/SETUP.md#L116-L127) |
+| Rollback | `previous.env` keeps previous image pointer; rollback uses known digest and does not roll back DB schema. | [`SETUP.md`](../../../deploy/SETUP.md#L129-L139) |
+| Public rollout | Helper checks image/repository, validates compose/Caddy, starts web/Caddy and confirms trusted HTTPS. | [`rollout-public-web.sh`](../../../deploy/rollout-public-web.sh#L1-L137) |
+| Source consistency | Script computes deterministic source digest and removes only fixed legacy read-only code mounts. | [`source_consistency.py`](../../../deploy/source_consistency.py#L1-L41) |
+
+## 5. Unknown / Unverified
+
+- [UNVERIFIED] Frozen SHA is not evidence that code is merged or AWS deployment is active.
+- [UNVERIFIED] Repository variables, AWS account/region, EC2 identity, ECR repository and `demo` environment values are deployment inputs, not values in this digest.
+- [UNVERIFIED] CI/package checks do not establish model availability, paid inference success or G5 readiness ([`PHASE_4_ACCEPTANCE_CRITERIA.md`](../../phase4/PHASE_4_ACCEPTANCE_CRITERIA.md#L87-L91)).

@@ -1,0 +1,2214 @@
+{
+  "qrels_version": "qrels-v1",
+  "queries": [
+    {
+      "query_id": "q_ro_s1_001",
+      "case_id": "ro_s1_001",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_002",
+      "case_id": "ro_s1_002",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_003",
+      "case_id": "ro_s1_003",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_004",
+      "case_id": "ro_s1_004",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_005",
+      "case_id": "ro_s1_005",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_006",
+      "case_id": "ro_s1_006",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_007",
+      "case_id": "ro_s1_007",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_008",
+      "case_id": "ro_s1_008",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_009",
+      "case_id": "ro_s1_009",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_010",
+      "case_id": "ro_s1_010",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_011",
+      "case_id": "ro_s1_011",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_012",
+      "case_id": "ro_s1_012",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_013",
+      "case_id": "ro_s1_013",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_014",
+      "case_id": "ro_s1_014",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_015",
+      "case_id": "ro_s1_015",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_016",
+      "case_id": "ro_s1_016",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_017",
+      "case_id": "ro_s1_017",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_018",
+      "case_id": "ro_s1_018",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_019",
+      "case_id": "ro_s1_019",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_020",
+      "case_id": "ro_s1_020",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_021",
+      "case_id": "ro_s1_021",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_022",
+      "case_id": "ro_s1_022",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_023",
+      "case_id": "ro_s1_023",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_024",
+      "case_id": "ro_s1_024",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_025",
+      "case_id": "ro_s1_025",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_026",
+      "case_id": "ro_s1_026",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_027",
+      "case_id": "ro_s1_027",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_028",
+      "case_id": "ro_s1_028",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_029",
+      "case_id": "ro_s1_029",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_030",
+      "case_id": "ro_s1_030",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_031",
+      "case_id": "ro_s1_031",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/policy_shipper_complaint.md": 2,
+        "data/knowledge/shipping.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_032",
+      "case_id": "ro_s1_032",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/faq.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_033",
+      "case_id": "ro_s1_033",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/faq.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_034",
+      "case_id": "ro_s1_034",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/faq.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_035",
+      "case_id": "ro_s1_035",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/policy_shipper_complaint.md": 2,
+        "data/knowledge/shipping.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_036",
+      "case_id": "ro_s1_036",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/faq.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_037",
+      "case_id": "ro_s1_037",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/policy_shipper_complaint.md": 2,
+        "data/knowledge/shipping.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_038",
+      "case_id": "ro_s1_038",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_039",
+      "case_id": "ro_s1_039",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/faq.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_040",
+      "case_id": "ro_s1_040",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/policy_shipper_complaint.md": 2,
+        "data/knowledge/shipping.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s1_041",
+      "case_id": "ro_s1_041",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s1_042",
+      "case_id": "ro_s1_042",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s1_043",
+      "case_id": "ro_s1_043",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s1_044",
+      "case_id": "ro_s1_044",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s1_045",
+      "case_id": "ro_s1_045",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s2_001",
+      "case_id": "ro_s2_001",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_002",
+      "case_id": "ro_s2_002",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_003",
+      "case_id": "ro_s2_003",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_004",
+      "case_id": "ro_s2_004",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_005",
+      "case_id": "ro_s2_005",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_006",
+      "case_id": "ro_s2_006",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1,
+        "data/knowledge/policy_warranty_exchange_1to1.md": 2
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_007",
+      "case_id": "ro_s2_007",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1,
+        "data/knowledge/policy_warranty_exchange_1to1.md": 2
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_008",
+      "case_id": "ro_s2_008",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1,
+        "data/knowledge/policy_warranty_exchange_1to1.md": 2
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_009",
+      "case_id": "ro_s2_009",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_010",
+      "case_id": "ro_s2_010",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/policy_warranty_exchange_1to1.md": 2
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_011",
+      "case_id": "ro_s2_011",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1,
+        "data/knowledge/policy_warranty_exchange_1to1.md": 2
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_012",
+      "case_id": "ro_s2_012",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/policy_warranty_exchange_1to1.md": 2
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_013",
+      "case_id": "ro_s2_013",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_014",
+      "case_id": "ro_s2_014",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/policy_warranty_exchange_1to1.md": 2
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_015",
+      "case_id": "ro_s2_015",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1,
+        "data/knowledge/policy_warranty_exchange_1to1.md": 2
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_016",
+      "case_id": "ro_s2_016",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_017",
+      "case_id": "ro_s2_017",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/policy_warranty_exchange_1to1.md": 2
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_018",
+      "case_id": "ro_s2_018",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/policy_warranty_exchange_1to1.md": 2
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_019",
+      "case_id": "ro_s2_019",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/policy_warranty_exchange_1to1.md": 2
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_020",
+      "case_id": "ro_s2_020",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_021",
+      "case_id": "ro_s2_021",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_022",
+      "case_id": "ro_s2_022",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/policy_warranty_exchange_1to1.md": 2
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_023",
+      "case_id": "ro_s2_023",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_024",
+      "case_id": "ro_s2_024",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1,
+        "data/knowledge/policy_warranty_exchange_1to1.md": 2
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_025",
+      "case_id": "ro_s2_025",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_026",
+      "case_id": "ro_s2_026",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/policy_warranty_exchange_1to1.md": 2
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_027",
+      "case_id": "ro_s2_027",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_028",
+      "case_id": "ro_s2_028",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1,
+        "data/knowledge/policy_warranty_exchange_1to1.md": 2
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_029",
+      "case_id": "ro_s2_029",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_030",
+      "case_id": "ro_s2_030",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1,
+        "data/knowledge/policy_warranty_exchange_1to1.md": 2
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_031",
+      "case_id": "ro_s2_031",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1,
+        "data/knowledge/policy_warranty_exchange_1to1.md": 2
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_032",
+      "case_id": "ro_s2_032",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1,
+        "data/knowledge/policy_warranty_exchange_1to1.md": 2
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_033",
+      "case_id": "ro_s2_033",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1,
+        "data/knowledge/policy_warranty_exchange_1to1.md": 2
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_034",
+      "case_id": "ro_s2_034",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_035",
+      "case_id": "ro_s2_035",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1,
+        "data/knowledge/policy_warranty_exchange_1to1.md": 2
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s2_036",
+      "case_id": "ro_s2_036",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s2_037",
+      "case_id": "ro_s2_037",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s2_038",
+      "case_id": "ro_s2_038",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s2_039",
+      "case_id": "ro_s2_039",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s2_040",
+      "case_id": "ro_s2_040",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s2_041",
+      "case_id": "ro_s2_041",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s2_042",
+      "case_id": "ro_s2_042",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s2_043",
+      "case_id": "ro_s2_043",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s2_044",
+      "case_id": "ro_s2_044",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s2_045",
+      "case_id": "ro_s2_045",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s3_001",
+      "case_id": "ro_s3_001",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_002",
+      "case_id": "ro_s3_002",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_003",
+      "case_id": "ro_s3_003",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_004",
+      "case_id": "ro_s3_004",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_005",
+      "case_id": "ro_s3_005",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_006",
+      "case_id": "ro_s3_006",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_007",
+      "case_id": "ro_s3_007",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_008",
+      "case_id": "ro_s3_008",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_009",
+      "case_id": "ro_s3_009",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_010",
+      "case_id": "ro_s3_010",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_011",
+      "case_id": "ro_s3_011",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_012",
+      "case_id": "ro_s3_012",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_013",
+      "case_id": "ro_s3_013",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_014",
+      "case_id": "ro_s3_014",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_015",
+      "case_id": "ro_s3_015",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_016",
+      "case_id": "ro_s3_016",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_017",
+      "case_id": "ro_s3_017",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_018",
+      "case_id": "ro_s3_018",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_019",
+      "case_id": "ro_s3_019",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_020",
+      "case_id": "ro_s3_020",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_021",
+      "case_id": "ro_s3_021",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_022",
+      "case_id": "ro_s3_022",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_023",
+      "case_id": "ro_s3_023",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_024",
+      "case_id": "ro_s3_024",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_025",
+      "case_id": "ro_s3_025",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_026",
+      "case_id": "ro_s3_026",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_027",
+      "case_id": "ro_s3_027",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_028",
+      "case_id": "ro_s3_028",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_029",
+      "case_id": "ro_s3_029",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_030",
+      "case_id": "ro_s3_030",
+      "topic": "product",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_031",
+      "case_id": "ro_s3_031",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_032",
+      "case_id": "ro_s3_032",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_033",
+      "case_id": "ro_s3_033",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_034",
+      "case_id": "ro_s3_034",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_035",
+      "case_id": "ro_s3_035",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_036",
+      "case_id": "ro_s3_036",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1,
+        "data/knowledge/policy_shipper_complaint.md": 2,
+        "data/knowledge/shipping.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_037",
+      "case_id": "ro_s3_037",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1,
+        "data/knowledge/policy_shipper_complaint.md": 2,
+        "data/knowledge/shipping.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_038",
+      "case_id": "ro_s3_038",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1,
+        "data/knowledge/policy_shipper_complaint.md": 2,
+        "data/knowledge/shipping.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_039",
+      "case_id": "ro_s3_039",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1,
+        "data/knowledge/policy_shipper_complaint.md": 2,
+        "data/knowledge/shipping.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_040",
+      "case_id": "ro_s3_040",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/policy_size_exchange_twoway.md": 2,
+        "data/knowledge/returns.md": 1,
+        "data/knowledge/policy_shipper_complaint.md": 2,
+        "data/knowledge/shipping.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s3_041",
+      "case_id": "ro_s3_041",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s3_042",
+      "case_id": "ro_s3_042",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s3_043",
+      "case_id": "ro_s3_043",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s3_044",
+      "case_id": "ro_s3_044",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s3_045",
+      "case_id": "ro_s3_045",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s4_001",
+      "case_id": "ro_s4_001",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_002",
+      "case_id": "ro_s4_002",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_003",
+      "case_id": "ro_s4_003",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_004",
+      "case_id": "ro_s4_004",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_005",
+      "case_id": "ro_s4_005",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_006",
+      "case_id": "ro_s4_006",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_007",
+      "case_id": "ro_s4_007",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_008",
+      "case_id": "ro_s4_008",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_009",
+      "case_id": "ro_s4_009",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_010",
+      "case_id": "ro_s4_010",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_011",
+      "case_id": "ro_s4_011",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_012",
+      "case_id": "ro_s4_012",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_013",
+      "case_id": "ro_s4_013",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_014",
+      "case_id": "ro_s4_014",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_015",
+      "case_id": "ro_s4_015",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_016",
+      "case_id": "ro_s4_016",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_017",
+      "case_id": "ro_s4_017",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_018",
+      "case_id": "ro_s4_018",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_019",
+      "case_id": "ro_s4_019",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_020",
+      "case_id": "ro_s4_020",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_021",
+      "case_id": "ro_s4_021",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_022",
+      "case_id": "ro_s4_022",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_023",
+      "case_id": "ro_s4_023",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_024",
+      "case_id": "ro_s4_024",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_025",
+      "case_id": "ro_s4_025",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_026",
+      "case_id": "ro_s4_026",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_027",
+      "case_id": "ro_s4_027",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_028",
+      "case_id": "ro_s4_028",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_029",
+      "case_id": "ro_s4_029",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_030",
+      "case_id": "ro_s4_030",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_031",
+      "case_id": "ro_s4_031",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_032",
+      "case_id": "ro_s4_032",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_033",
+      "case_id": "ro_s4_033",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_034",
+      "case_id": "ro_s4_034",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_035",
+      "case_id": "ro_s4_035",
+      "topic": "order_lookup",
+      "relevant_sources": {},
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_036",
+      "case_id": "ro_s4_036",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/policy_mega_sale_delay_voucher.md": 2
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_037",
+      "case_id": "ro_s4_037",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/policy_mega_sale_delay_voucher.md": 2
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_038",
+      "case_id": "ro_s4_038",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/policy_mega_sale_delay_voucher.md": 2
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_039",
+      "case_id": "ro_s4_039",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/policy_mega_sale_delay_voucher.md": 2
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_040",
+      "case_id": "ro_s4_040",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/policy_mega_sale_delay_voucher.md": 2
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s4_041",
+      "case_id": "ro_s4_041",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s4_042",
+      "case_id": "ro_s4_042",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s4_043",
+      "case_id": "ro_s4_043",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s4_044",
+      "case_id": "ro_s4_044",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s4_045",
+      "case_id": "ro_s4_045",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s5_001",
+      "case_id": "ro_s5_001",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/faq.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s5_002",
+      "case_id": "ro_s5_002",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/faq.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s5_003",
+      "case_id": "ro_s5_003",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/faq.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s5_004",
+      "case_id": "ro_s5_004",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/faq.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s5_005",
+      "case_id": "ro_s5_005",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/faq.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s5_006",
+      "case_id": "ro_s5_006",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/faq.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s5_007",
+      "case_id": "ro_s5_007",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/faq.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s5_008",
+      "case_id": "ro_s5_008",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/faq.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s5_009",
+      "case_id": "ro_s5_009",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/faq.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s5_010",
+      "case_id": "ro_s5_010",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/faq.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s5_011",
+      "case_id": "ro_s5_011",
+      "topic": "general",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "not-applicable"
+    },
+    {
+      "query_id": "q_ro_s5_012",
+      "case_id": "ro_s5_012",
+      "topic": "general",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "not-applicable"
+    },
+    {
+      "query_id": "q_ro_s5_013",
+      "case_id": "ro_s5_013",
+      "topic": "general",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "not-applicable"
+    },
+    {
+      "query_id": "q_ro_s5_014",
+      "case_id": "ro_s5_014",
+      "topic": "general",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "not-applicable"
+    },
+    {
+      "query_id": "q_ro_s5_015",
+      "case_id": "ro_s5_015",
+      "topic": "general",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "not-applicable"
+    },
+    {
+      "query_id": "q_ro_s5_016",
+      "case_id": "ro_s5_016",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s5_017",
+      "case_id": "ro_s5_017",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s5_018",
+      "case_id": "ro_s5_018",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s5_019",
+      "case_id": "ro_s5_019",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s5_020",
+      "case_id": "ro_s5_020",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s5_021",
+      "case_id": "ro_s5_021",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s5_022",
+      "case_id": "ro_s5_022",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s5_023",
+      "case_id": "ro_s5_023",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s5_024",
+      "case_id": "ro_s5_024",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s5_025",
+      "case_id": "ro_s5_025",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s5_026",
+      "case_id": "ro_s5_026",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s5_027",
+      "case_id": "ro_s5_027",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s5_028",
+      "case_id": "ro_s5_028",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s5_029",
+      "case_id": "ro_s5_029",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s5_030",
+      "case_id": "ro_s5_030",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s5_031",
+      "case_id": "ro_s5_031",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s5_032",
+      "case_id": "ro_s5_032",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s5_033",
+      "case_id": "ro_s5_033",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s5_034",
+      "case_id": "ro_s5_034",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s5_035",
+      "case_id": "ro_s5_035",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s6_001",
+      "case_id": "ro_s6_001",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/faq.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s6_002",
+      "case_id": "ro_s6_002",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/faq.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s6_003",
+      "case_id": "ro_s6_003",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/faq.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s6_004",
+      "case_id": "ro_s6_004",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/faq.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s6_005",
+      "case_id": "ro_s6_005",
+      "topic": "policy",
+      "relevant_sources": {
+        "data/knowledge/faq.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s6_006",
+      "case_id": "ro_s6_006",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/policy_warranty_exchange_1to1.md": 2
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s6_007",
+      "case_id": "ro_s6_007",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/faq.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s6_008",
+      "case_id": "ro_s6_008",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/faq.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s6_009",
+      "case_id": "ro_s6_009",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/faq.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s6_010",
+      "case_id": "ro_s6_010",
+      "topic": "mixed",
+      "relevant_sources": {
+        "data/knowledge/faq.md": 1
+      },
+      "no_evidence": false,
+      "answerability_status": "answerable"
+    },
+    {
+      "query_id": "q_ro_s6_011",
+      "case_id": "ro_s6_011",
+      "topic": "general",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "not-applicable"
+    },
+    {
+      "query_id": "q_ro_s6_012",
+      "case_id": "ro_s6_012",
+      "topic": "general",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "not-applicable"
+    },
+    {
+      "query_id": "q_ro_s6_013",
+      "case_id": "ro_s6_013",
+      "topic": "general",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "not-applicable"
+    },
+    {
+      "query_id": "q_ro_s6_014",
+      "case_id": "ro_s6_014",
+      "topic": "general",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "not-applicable"
+    },
+    {
+      "query_id": "q_ro_s6_015",
+      "case_id": "ro_s6_015",
+      "topic": "general",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "not-applicable"
+    },
+    {
+      "query_id": "q_ro_s6_016",
+      "case_id": "ro_s6_016",
+      "topic": "general",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "not-applicable"
+    },
+    {
+      "query_id": "q_ro_s6_017",
+      "case_id": "ro_s6_017",
+      "topic": "general",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "not-applicable"
+    },
+    {
+      "query_id": "q_ro_s6_018",
+      "case_id": "ro_s6_018",
+      "topic": "general",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "not-applicable"
+    },
+    {
+      "query_id": "q_ro_s6_019",
+      "case_id": "ro_s6_019",
+      "topic": "general",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "not-applicable"
+    },
+    {
+      "query_id": "q_ro_s6_020",
+      "case_id": "ro_s6_020",
+      "topic": "general",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "not-applicable"
+    },
+    {
+      "query_id": "q_ro_s6_021",
+      "case_id": "ro_s6_021",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s6_022",
+      "case_id": "ro_s6_022",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s6_023",
+      "case_id": "ro_s6_023",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s6_024",
+      "case_id": "ro_s6_024",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s6_025",
+      "case_id": "ro_s6_025",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s6_026",
+      "case_id": "ro_s6_026",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s6_027",
+      "case_id": "ro_s6_027",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s6_028",
+      "case_id": "ro_s6_028",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s6_029",
+      "case_id": "ro_s6_029",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s6_030",
+      "case_id": "ro_s6_030",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s6_031",
+      "case_id": "ro_s6_031",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s6_032",
+      "case_id": "ro_s6_032",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s6_033",
+      "case_id": "ro_s6_033",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s6_034",
+      "case_id": "ro_s6_034",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    },
+    {
+      "query_id": "q_ro_s6_035",
+      "case_id": "ro_s6_035",
+      "topic": "safety",
+      "relevant_sources": {},
+      "no_evidence": true,
+      "answerability_status": "labeled-unanswerable"
+    }
+  ]
+}
