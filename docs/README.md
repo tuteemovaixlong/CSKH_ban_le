@@ -2,6 +2,11 @@
 
 Đây là điểm vào duy nhất của bộ tài liệu. Đọc theo câu hỏi bạn cần trả lời:
 
+## Workstream hiện hành
+
+- [Phase 5 — Identity, Sales Simulator và Complaint E2E](phase5/README.md)
+- [Phase 4 execution handoff](phase4/PHASE_4_EXECUTION_HANDOFF.md)
+
 | Muốn hiểu | Mở |
 |---|---|
 | Hệ thống là gì và các thành phần nằm ở đâu | [Project overview](00_OVERVIEW/PROJECT_OVERVIEW.md) → [Codebase map](00_OVERVIEW/CODEBASE_MAP.md) |
@@ -23,4 +28,4 @@
 
 ## Mốc nguồn
 
-Các digest được tạo từ checkout local tại `8a666fcce464c96b1dd5fc6848a2d4168c6505d1`. Merged SHA sau G2 là `[UNVERIFIED]` theo tài liệu hiện hành; không suy ra trạng thái deploy từ digest.
+Các digest được tạo từ checkout local tại `8a666fcce464c96b1dd5fc6848a2d4168c6505d1`. Merged SHA hiện tại là `8868c5c498b1c64241bc791eb0166d82415cfeb0`; G2 offline replay trên SHA này vẫn **PENDING**, không suy ra G2/G5 từ trạng thái deploy.
