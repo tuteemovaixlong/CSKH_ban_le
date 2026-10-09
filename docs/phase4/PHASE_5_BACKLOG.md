@@ -16,9 +16,13 @@
 | P5-06 | L5 | PR body có counts cũ523/27, local file links/control characters, guardfalse trên41paths; thực tế mixed packaging eligibletrue. | Viết lại PR body ngắn bằng structured/body-file input; exact-head evidence, limitations và scope thực tế. Docs review current đã được đồng bộ. | BACKLOG — nonblocking merge |
 | P5-07 | Verification limitation | Local full574/49skip có1 P99 timing failure52.5208ms, focused rerun pass; CI xanh. Chưa chứng minh source regression. | Theo dõi reproducibility timing môi trường trong workstream riêng; giữ artifacts, không hạ threshold để đạt. K5 dùng full CI summary PASS. | OBSERVED — nonblocking ngoài K5 |
 | P5-08 | G4/G5 future | Offline checker có thể kiểm provider/lane labels; không thay thế live evidence/identity/completeness/budget thật. | Làm lane preflight/smoke/evidence acceptance ở workstream kế tiếp, authorization riêng. | FUTURE — không block harness merge |
+| P5-09 | G4 live smoke 2026-10-09 | Deployment và 4 containers healthy, nhưng smoke không tạo được membership vì `e2e-live-smoke/C-001` đang `customer_reserved`; chưa có bằng chứng G4 PASS. | Cô lập smoke bằng tenant/customer/order cấu hình được; giữ reservation cũ, không sửa trực tiếp DB; chạy lại một smoke có kiểm soát. | OPEN — Phase 5 |
+| P5-10 | G4→G5 next workstream | Cần kiểm chứng danh tính Google test, ánh xạ customer bên ngoài và luồng khiếu nại cùng một session. | Xây sales simulator offline/dev với event ký, idempotency, mapping external customer → RetailOps customer; test complaint/proposal/confirmation/audit. | PLANNED — Phase 5 |
 
 ## Quy tắc tiếp nhận phát hiện sau freeze
 
 Thêm một hàng gồm ID, frozen SHA, reproduction/evidence, tác động, đề xuất, status. Không sửa acceptance v1, không mở lại merge gate, không thêm test bắt buộc Phase4 hoặc khởi động audit rộng. Chỉ sửa ở task/workstream Phase5 được owner giao sau.
 
 Lỗi type safety flags `ownership_violation`/`identity_collision` đã được sửa và pass ở Phase 4 (K3, PR #36). Mọi vấn đề mới ngoài 8 mục ghi tại đây.
+
+Workstream thực thi: [Phase 5 plan](../phase5/PHASE_5_PLAN.md), [acceptance](../phase5/PHASE_5_ACCEPTANCE_CRITERIA.md), [handoff](../phase5/PHASE_5_EXECUTION_HANDOFF.md).

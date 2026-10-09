@@ -249,20 +249,28 @@ def common_runtime_checks(http: HttpClient, expected_image: str | None, report: 
     })
 
 
-def login_and_basic_checks(http: HttpClient, tenant: str, credential: str, cookie: Path, report: dict):
+def login_and_basic_checks(
+    http: HttpClient,
+    tenant: str,
+    credential: str,
+    cookie: Path,
+    report: dict,
+    customer: str = "C-001",
+    order_id: str = "O-101",
+):
     status, login = http.request("/api/login", {"token": credential}, cookie=cookie)
     require(status == 200 and login.get("scope") == "synthetic-demo", "login failed")
     status, session = http.request("/api/session", cookie=cookie)
     require(status == 200, "session lookup failed")
     require(session.get("tenant_id") == tenant, "session tenant binding is wrong")
-    require(session.get("customer_id") == "C-001", "session customer binding is wrong")
+    require(session.get("customer_id") == customer, "session customer binding is wrong")
     require(session.get("role") == "customer", "session role is wrong")
     require(session.get("storage_backend") == "postgresql", "session is not backed by PostgreSQL")
 
     status, orders = http.request("/api/orders", cookie=cookie)
     order_list = orders.get("orders") if isinstance(orders, dict) else None
     require(status == 200 and isinstance(order_list, list) and len(order_list) >= 2, "order list failed")
-    pending = next((o for o in order_list if o.get("id") == "O-101"), None)
+    pending = next((o for o in order_list if o.get("id") == order_id), None)
     require(pending is not None and pending.get("status") == "pending", "seeded pending order is missing")
 
     status, providers = http.request("/api/providers", cookie=cookie)
@@ -301,19 +309,38 @@ def login_and_basic_checks(http: HttpClient, tenant: str, credential: str, cooki
     return pending, providers
 
 
-def run_smoke(http: HttpClient, report: dict, secret_values: list[str]):
-    tenant = "e2e-live-smoke"
+def run_smoke(
+    http: HttpClient,
+    report: dict,
+    secret_values: list[str],
+    *,
+    tenant: str | None = None,
+    customer: str | None = None,
+    order_id: str | None = None,
+):
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    rand_suffix = uuid.uuid4().hex[:6]
+    tenant = tenant or os.environ.get("E2E_TENANT") or f"e2e-smoke-{stamp}-{rand_suffix}"
+    customer = customer or os.environ.get("E2E_CUSTOMER") or "C-001"
+    order_id = order_id or os.environ.get("E2E_ORDER_ID") or "O-101"
     principal = "e2e-smoke-" + uuid.uuid4().hex[:10]
     credential_path = "/tmp/" + principal + ".credential"
     membership = None
+    report["tenant"] = tenant
+    report["identity"] = {
+        "tenant": tenant,
+        "customer": customer,
+        "order_id": order_id,
+        "principal": principal,
+    }
     try:
-        cli(["identity", "init-tenant", "--tenant", tenant, "--name", "RetailOps live smoke", "--seed-demo"])
-        membership, credential = issue_member(tenant, principal, "C-001", "customer", credential_path)
+        cli(["identity", "init-tenant", "--tenant", tenant, "--name", f"RetailOps live smoke {tenant}", "--seed-demo"])
+        membership, credential = issue_member(tenant, principal, customer, "customer", credential_path)
         secret_values.append(credential)
         cookie = http.temp_dir / "customer.cookies"
-        login_and_basic_checks(http, tenant, credential, cookie, report)
+        login_and_basic_checks(http, tenant, credential, cookie, report, customer=customer, order_id=order_id)
 
-        status, order = http.request("/api/orders/O-101", cookie=cookie)
+        status, order = http.request(f"/api/orders/{order_id}", cookie=cookie)
         require(status == 200 and (order.get("order") or {}).get("status") == "pending", "owned order lookup failed")
         status, logout = http.request("/api/logout", {}, cookie=cookie)
         require(status == 200 and logout.get("logged_out") is True, "logout failed")
@@ -322,6 +349,8 @@ def run_smoke(http: HttpClient, report: dict, secret_values: list[str]):
         report["checks"].update({"owned_order": True, "logout_revokes_session": True})
     finally:
         revoke_member(membership, credential_path)
+        report.setdefault("cleanup", {})["credentials_revoked"] = True
+        report["cleanup"]["isolated_tenant_retained_for_audit"] = tenant
 
 
 def chat(http: HttpClient, cookie: Path, conversation_id: str, text: str, request_id: str, timeout=130):
@@ -351,8 +380,20 @@ def establish_live_conversation(http, cookie, providers_payload, report):
     raise E2EFailure("no configured live model provider completed a chat")
 
 
-def run_full(http: HttpClient, report: dict, secret_values: list[str]):
-    tenant = "e2e-full-" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S") + "-" + uuid.uuid4().hex[:6]
+def run_full(
+    http: HttpClient,
+    report: dict,
+    secret_values: list[str],
+    *,
+    tenant: str | None = None,
+    customer: str | None = None,
+    order_id: str | None = None,
+):
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    rand_suffix = uuid.uuid4().hex[:6]
+    tenant = tenant or os.environ.get("E2E_TENANT") or f"e2e-full-{stamp}-{rand_suffix}"
+    customer = customer or os.environ.get("E2E_CUSTOMER") or "C-001"
+    order_id = order_id or os.environ.get("E2E_ORDER_ID") or "O-101"
     customer_principal = "e2e-customer-" + uuid.uuid4().hex[:8]
     viewer_principal = "e2e-viewer-" + uuid.uuid4().hex[:8]
     customer_cred_path = "/tmp/" + customer_principal + ".credential"
@@ -360,8 +401,15 @@ def run_full(http: HttpClient, report: dict, secret_values: list[str]):
     customer_membership = None
     viewer_membership = None
     report["tenant"] = tenant
+    report["identity"] = {
+        "tenant": tenant,
+        "customer": customer,
+        "order_id": order_id,
+        "customer_principal": customer_principal,
+        "viewer_principal": viewer_principal,
+    }
     try:
-        cli(["identity", "init-tenant", "--tenant", tenant, "--name", "RetailOps full live E2E", "--seed-demo"])
+        cli(["identity", "init-tenant", "--tenant", tenant, "--name", f"RetailOps full live E2E {tenant}", "--seed-demo"])
         ingest = cli(["knowledge", "ingest", "--tenant", tenant, "--path", "/app/data/knowledge"])
         require(ingest.get("result") == "KNOWLEDGE_INGESTED", "knowledge ingest failed")
         report["checks"]["knowledge_ingest"] = True
@@ -372,11 +420,14 @@ def run_full(http: HttpClient, report: dict, secret_values: list[str]):
         }
 
         customer_membership, customer_credential = issue_member(
-            tenant, customer_principal, "C-001", "customer", customer_cred_path,
+            tenant, customer_principal, customer, "customer", customer_cred_path,
         )
         secret_values.append(customer_credential)
         customer_cookie = http.temp_dir / "customer.cookies"
-        pending, providers = login_and_basic_checks(http, tenant, customer_credential, customer_cookie, report)
+        pending, providers = login_and_basic_checks(
+            http, tenant, customer_credential, customer_cookie, report,
+            customer=customer, order_id=order_id,
+        )
 
         provider, conversation_id, general = establish_live_conversation(http, customer_cookie, providers, report)
         report["selected_provider"] = provider
@@ -502,6 +553,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=("smoke", "full"), default="smoke")
     parser.add_argument("--expected-image", default=None)
+    parser.add_argument("--tenant", default=None, help="Explicit synthetic tenant ID (or E2E_TENANT env)")
+    parser.add_argument("--customer", default=None, help="Explicit customer ID (or E2E_CUSTOMER env)")
+    parser.add_argument("--order-id", default=None, help="Explicit order ID (or E2E_ORDER_ID env)")
     args = parser.parse_args()
 
     os.umask(0o077)
@@ -529,9 +583,23 @@ def main():
         http = HttpClient(host, temp_path)
         common_runtime_checks(http, args.expected_image, report)
         if args.mode == "smoke":
-            run_smoke(http, report, secrets)
+            run_smoke(
+                http,
+                report,
+                secrets,
+                tenant=args.tenant,
+                customer=args.customer,
+                order_id=args.order_id,
+            )
         else:
-            run_full(http, report, secrets)
+            run_full(
+                http,
+                report,
+                secrets,
+                tenant=args.tenant,
+                customer=args.customer,
+                order_id=args.order_id,
+            )
         report["pass"] = True
         report["finished_at_utc"] = now_stamp()
         path = save_report(report, args.mode, stamp, secrets)

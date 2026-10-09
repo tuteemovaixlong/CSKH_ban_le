@@ -1,5 +1,15 @@
 # BÁO CÁO TIẾN ĐỘ & TRẠNG THÁI HỆ THỐNG RETAILOPS 2026
 
+## Cập nhật hiện hành — Phase 5 handoff (2026-10-09)
+
+- PR #36 đã merge vào `main` tại `8868c5c498b1c64241bc791eb0166d82415cfeb0`; CI/build image đã PASS.
+- EC2 deployment đã cập nhật đúng image; web, admin và PostgreSQL healthy.
+- G4 live smoke chưa đạt: tenant/customer smoke cũ `e2e-live-smoke/C-001` bị `customer_reserved`; dữ liệu cũ không được xóa hoặc sửa trực tiếp.
+- Bước kế tiếp là [Phase 5 plan](phase5/PHASE_5_PLAN.md): cô lập smoke bằng tenant synthetic mới, kiểm Google test identity, mô phỏng event từ hệ thống bán hàng và chạy complaint E2E bằng cùng customer session.
+- Chưa có G5 `READY FOR MEASUREMENT`, chưa chạy full benchmark live/paid.
+
+> Nguồn chi tiết: [Phase 5 acceptance](phase5/PHASE_5_ACCEPTANCE_CRITERIA.md) và [Phase 5 handoff](phase5/PHASE_5_EXECUTION_HANDOFF.md).
+
 > **Trạng thái:** ACTIVE OPERATIONAL STATUS & EVIDENCE REPORT<br>
 > **Rà soát toàn diện trước đây:** tài liệu `b93eb5a`, application snapshot `main` tại `c6c7a1a` (lịch sử, không đại diện trạng thái PR hiện tại).<br>
 > **Đồng bộ Module 2.5 ngày 2026-10-06:** PR #34 merged tại `47ba72a`; PR #35 (PR B) merged tại `b3a0ccd72c1d025b3af567486943123bf3e05526`. **PR B MERGED & POSTMERGE VERIFIED**. Artifact CI main [run 37418383578](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37418383578), ID `11392265139`: 10 batch × 100 mẫu/endpoint, nearest-rank P99 unrounded float đạt SLO $\le 50$ms; 60 chat HTTP 200, tool hook và saturation 1+5; 5/5 CI check-runs trên main completed/success; Ops Console [run 37418383604](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37418383604) completed/success. Hoàn thành Module 2.5; sẵn sàng chuyển giao Phase 4. Xem <a href="review%20gpt%206%20astra.md">review hiện hành</a>.

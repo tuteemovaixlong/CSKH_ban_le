@@ -1,5 +1,7 @@
 # Phase 4 Scientific Evaluation — Execution Handoff
 
+> **Post-merge handoff (2026-10-09):** PR #36 đã merge tại `8868c5c498b1c64241bc791eb0166d82415cfeb0`. EC2 deployment đã cập nhật đúng image và các container healthy. G4 smoke chưa đạt: report `/opt/retailops/e2e-reports/LIVE_SMOKE_20261009T132840Z.json` dừng tại `customer_reserved` cho `e2e-live-smoke/C-001`. Phase 4 dừng ở đây; workstream tiếp theo là [Phase 5](../phase5/PHASE_5_EXECUTION_HANDOFF.md). Không ghi G5/readiness và không chạy full measurement.
+
 > **Merge policy owner chốt 2026-10-08:** [Acceptance v1](PHASE_4_ACCEPTANCE_CRITERIA.md): đúng8check; N1 manifest mutation/N3 denominator/N4 safety types DONE trong scope v1. [Evidence HEAD 8a666fc](PHASE_4_ACCEPTANCE_EVIDENCE_8a666fc.md): K1–K8/C1–C6 PASS, independent sign-off PENDING. Checklist kỹ thuật đạt theo packet; chờ nguồn độc lập xác minh và ký 8/8 → owner review → merge → G2. N1 replay/counts/tool-name semantics, L2/L4/L5 và việc ngoài checklist → [Phase5 backlog](PHASE_5_BACKLOG.md), không block merge. Findings/progress lịch sử bên dưới không mở thêm merge gate.
 
 > Cập nhật bàn giao: 2026-10-08
