@@ -1,14 +1,25 @@
 # Phase 5 — P5-B Google Test Identity Evidence
 
 - **Baseline SHA (merged)**: `dd0947aad3a2dc8884710c8f6c609f42b67417bd` (PR #37)
+- **Candidate SHA**: `f766e85` (Branch `feat/phase5-google-test-identity`)
 - **Workstream**: `P5-B — Google test identity` (PR #38)
 - **PR URL**: [PR #38](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/38)
+- **Full CI Gate**: **PASSED (ALL GREEN)**
+  - CI Workflow: Run [38027787787](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/38027787787) (**SUCCESS**)
+    - `colab-python313`: **SUCCESS** (embedded agent notebook verified in sync)
+    - `offline`: **SUCCESS** (590/590 tests passed in 80s)
+    - Headroom P99 Artifact: ID `11660463341`, `healthz P99=0.879ms`, `session P99=22.206ms` (cả 2 đều $\le 50.0$ms SLO)
+  - Ops Console Workflow: Run [38027787885](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/38027787885) (**SUCCESS**)
+    - `portable (windows-latest)`: **SUCCESS**
+    - `portable (ubuntu-24.04)`: **SUCCESS**
+    - `postgres`: **SUCCESS**
 - **Scope**:
   - Map `(issuer, sub, verified_email)` → principal → tenant/customer link.
   - Loại bỏ hoàn toàn `ORDER BY id LIMIT 1` trong việc chọn tenant cho Google login.
   - Không dùng email đơn độc làm khóa; distinct sub luôn tạo distinct principal/customer.
-  - Kiểm tra `/api/session`, `/api/profile` và cô lập đơn hàng (tenant/customer isolation).
-  - Kiểm thử offline 100%, không lưu credential thật trong repository.
+  - Verify `/api/session` và `/api/profile` trả về đầy đủ `tenant_id`, `principal_id`, `customer_id`, `name`, `role`.
+  - Google callback sử dụng deterministic tenant resolution, không bao giờ fallback vào tenant smoke (`e2e-`, `smoke-`, `synthetic-`).
+  - Kiểm thử offline 100%, không lưu credential thật trong repository; không deploy EC2; không gọi Google live.
 - **Trạng thái P5-B**: **PASS (ĐẠT)** — Sẵn sàng chuyển giao owner review.
 
 ---
