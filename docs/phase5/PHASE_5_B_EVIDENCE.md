@@ -1,7 +1,8 @@
 # Phase 5 — P5-B Google Test Identity Evidence
 
 - **Baseline SHA (merged)**: `dd0947aad3a2dc8884710c8f6c609f42b67417bd` (PR #37)
-- **Workstream**: `P5-B — Google test identity`
+- **Workstream**: `P5-B — Google test identity` (PR #38)
+- **PR URL**: [PR #38](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/38)
 - **Scope**:
   - Map `(issuer, sub, verified_email)` → principal → tenant/customer link.
   - Loại bỏ hoàn toàn `ORDER BY id LIMIT 1` trong việc chọn tenant cho Google login.
