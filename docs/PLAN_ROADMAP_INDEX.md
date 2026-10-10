@@ -1,6 +1,6 @@
 # TỔNG HỢP KẾ HOẠCH CHIẾN LƯỢC: LỘ TRÌNH KHÓA LUẬN TỐT NGHIỆP & HỆ THỐNG RETAILOPS 2026
 
-> **Current execution snapshot (2026-10-10):** G2 PASS trên `8868c5c498b1c64241bc791eb0166d82415cfeb0`; Phase 5 P5-A smoke isolation và G4 controlled smoke PASS trên merged `dd0947aad3a2dc8884710c8f6c609f42b67417bd`. Bước kế tiếp là P5-B Google test identity, rồi P5-C sales simulator và P5-D complaint E2E theo [phase5/PHASE_5_PLAN.md](phase5/PHASE_5_PLAN.md). Chưa có G5 measurement readiness; Messenger/QR vẫn để sau.
+> **Current execution snapshot (2026-10-10):** G2 PASS trên `8868c5c498b1c64241bc791eb0166d82415cfeb0`; Phase 5 P5-A smoke isolation và G4 controlled smoke PASS trên merged `dd0947aad3a2dc8884710c8f6c609f42b67417bd`; Phase 5 P5-B Google test identity & tenant isolation hoàn thành trên [PR #38](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/38) (candidate `682e982459a5abfad4459707d729d2fd8f1f28a5`, offline tests & full CI PASSED, chờ owner review). Bước kế tiếp là P5-C sales simulator và import contract (`external_customer_id` mapping), rồi P5-D complaint E2E theo [phase5/PHASE_5_PLAN.md](phase5/PHASE_5_PLAN.md). Chưa có G5 measurement readiness; Messenger/QR vẫn để sau.
 
 > **Trạng thái:** ACTIVE STRATEGIC ROADMAP
 > **Phân biệt gate:** smoke PASS theo log owner là operational smoke, chưa gọi Google OAuth/model; G4 per-lane real-model/DB/KB và G5 vẫn cần evidence riêng. Sơ đồ phân kỳ bên dưới là roadmap tổng thể lịch sử; workstream kế tiếp lấy từ current snapshot/P5-B ở trên.

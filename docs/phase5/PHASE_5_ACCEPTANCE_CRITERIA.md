@@ -18,8 +18,8 @@ Phase 5 chỉ đạt khi toàn bộ tiêu chí dưới đây có evidence trên 
 ## Tiến độ theo chặng
 
 - **P5-K1 (Smoke isolation):** PASS trên PR #37 `dd0947a` (operational smoke report owner gửi).
-- **P5-K3 (Google identity):** PASS offline trên PR P5-B (xem [PHASE_5_B_EVIDENCE.md](PHASE_5_B_EVIDENCE.md)).
-- **P5-K4 (External mapping):** PASS offline trên PR P5-B (xem [PHASE_5_B_EVIDENCE.md](PHASE_5_B_EVIDENCE.md)).
+- **P5-K3 (Google identity):** Offline implementation PASS trên PR P5-B (xem [PHASE_5_B_EVIDENCE.md](PHASE_5_B_EVIDENCE.md)); Google OAuth thật live PENDING (chờ môi trường live/owner review).
+- **P5-K4 (External mapping):** PENDING đến P5-C (`external_customer_id` mapping trong sales simulator & import contract).
 - **P5-K2, P5-K5…P5-K8:** Chưa nghiệm thu; đang dừng chờ owner review trước khi sang P5-C.
 
 ## Điều kiện dừng

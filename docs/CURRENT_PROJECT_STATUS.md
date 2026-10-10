@@ -4,9 +4,9 @@
 
 - G2 đã PASS trên `8868c5c498b1c64241bc791eb0166d82415cfeb0`.
 - Phase 5 P5-A smoke isolation và G4 controlled smoke đã PASS trên merged/deployed `dd0947aad3a2dc8884710c8f6c609f42b67417bd`; report `/opt/retailops/e2e-reports/LIVE_SMOKE_20261010T042118Z.json`.
-- Phase 5 P5-B Google test identity & tenant isolation đã hoàn thành trên [PR #38](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/38); candidate commit `f766e85`; full CI PASSED (CI run 38027787787 [colab-python313 + offline 590/590 OK, headroom artifact 11660463341], Ops Console run 38027787885 [windows, ubuntu, postgres]); verify đầy đủ /api/profile và /api/session; loại bỏ hoàn toàn `ORDER BY id LIMIT 1`. Đang dừng chờ owner review.
+- Phase 5 P5-B Google test identity & tenant isolation đã hoàn thành trên [PR #38](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/38); candidate commit `682e982459a5abfad4459707d729d2fd8f1f28a5`; full CI PASSED (CI run 38028114147 [colab-python313 + offline 590/590 OK, headroom artifact 11660878586], Ops Console run 38028114155 [windows, ubuntu, postgres]); verify đầy đủ /api/profile và /api/session; loại bỏ hoàn toàn `ORDER BY id LIMIT 1`. Đang dừng chờ owner review.
 - EC2 image `ada57b5225d6` và web/admin/PostgreSQL healthy; reservation cũ được giữ nguyên.
-- Bước kế tiếp là [Phase 5 plan](phase5/PHASE_5_PLAN.md): P5-C sales simulator và import contract, sau đó P5-D complaint E2E cùng customer session.
+- Bước kế tiếp là [Phase 5 plan](phase5/PHASE_5_PLAN.md): P5-C sales simulator và import contract (`external_customer_id` mapping), sau đó P5-D complaint E2E cùng customer session.
 - Chưa có G5 `READY FOR MEASUREMENT`, chưa chạy full benchmark live/paid.
 
 > Nguồn chi tiết: [Phase 5 acceptance](phase5/PHASE_5_ACCEPTANCE_CRITERIA.md) và [Phase 5 handoff](phase5/PHASE_5_EXECUTION_HANDOFF.md).
