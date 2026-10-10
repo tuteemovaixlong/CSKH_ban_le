@@ -186,6 +186,7 @@ def exchange_code_for_user_info(code: str, origin: str) -> Dict[str, str]:
         "sub": str(profile.get("sub", "")),
         "picture": profile.get("picture", ""),
         "email_verified": is_verified,
+        "issuer": "https://accounts.google.com",
     }
 
 

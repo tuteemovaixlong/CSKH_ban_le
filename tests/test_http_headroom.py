@@ -478,12 +478,12 @@ class HttpHeadroomTests(unittest.TestCase):
 
             if server is not None:
                 try:
-                    server.close()
+                    if hasattr(server, "task_dispatcher"):
+                        server.task_dispatcher.shutdown()
                 except Exception:
                     pass
                 try:
-                    if hasattr(server, "task_dispatcher"):
-                        server.task_dispatcher.shutdown()
+                    server.close()
                 except Exception:
                     pass
 

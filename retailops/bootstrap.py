@@ -24,10 +24,12 @@ def build_public_app(settings: Settings | None = None) -> PublicWeb:
         if settings.storage_backend == 'postgresql':
             from retailops.identity.postgres import PostgresSessions
             sessions = PostgresSessions(settings.database_url, gateways.custom, gateways.api,
-                                         settings.api_daily_turn_limit, data_mode=settings.data_mode)
+                                         settings.api_daily_turn_limit, data_mode=settings.data_mode,
+                                         default_tenant_id=settings.demo_tenant_id or None)
         else:
             sessions = PersistentSessions(settings.output/'persistent', gateways.custom, gateways.api,
-                                          settings.api_daily_turn_limit, data_mode=settings.data_mode)
+                                          settings.api_daily_turn_limit, data_mode=settings.data_mode,
+                                          default_tenant_id=settings.demo_tenant_id or None)
     else:
         sessions = GuestSessions(settings.output/'public-guests', settings.access_token,
                                  gateways.custom, gateways.api, settings.api_daily_turn_limit)

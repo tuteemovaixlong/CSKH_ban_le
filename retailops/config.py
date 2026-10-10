@@ -77,6 +77,7 @@ class Settings:
     api_daily_turn_limit: int = 20
     storage_backend: str = 'sqlite'
     database_url: str = field(default='', repr=False)
+    demo_tenant_id: str = ''
 
     def __post_init__(self):
         if self.interface not in ('public', 'private'):
@@ -136,6 +137,7 @@ class Settings:
             ),
             api_daily_turn_limit=integer(env, 'RETAILOPS_API_DAILY_TURN_LIMIT', 20, 1, 10000),
             storage_backend=backend, database_url=database_url,
+            demo_tenant_id=env.get('RETAILOPS_DEMO_TENANT_ID', env.get('GOOGLE_AUTH_TENANT_ID', '')),
         )
 
     def summary(self):
