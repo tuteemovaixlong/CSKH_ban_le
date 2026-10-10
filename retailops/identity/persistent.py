@@ -1,5 +1,6 @@
 """Session lifecycle is independent of tenant databases in the persistent synthetic pilot."""
 import hashlib
+import os
 import re
 import threading
 from collections import OrderedDict
@@ -23,11 +24,12 @@ class PersistentSessions:
     session_seconds = 8 * 3600
     data_mode = 'persistent-demo'
 
-    def __init__(self, directory, infer=None, api_infer=None, api_daily_limit=20, capacity=50, data_mode=None):
+    def __init__(self, directory, infer=None, api_infer=None, api_daily_limit=20, capacity=50, data_mode=None, default_tenant_id=None):
         self.directory = Path(directory)
         self.directory.mkdir(parents=True, exist_ok=True)
         if data_mode is not None:
             self.data_mode = data_mode
+        self.default_tenant_id = default_tenant_id or os.environ.get('RETAILOPS_DEMO_TENANT_ID') or os.environ.get('GOOGLE_AUTH_TENANT_ID')
         self.control = IdentityStore(self.directory/'identity.sqlite3', tenant_stores=self.business_store, data_mode=data_mode)
         self.infer, self.api_infer = infer, api_infer
         self.api_daily_limit, self.capacity = api_daily_limit, capacity
@@ -61,11 +63,39 @@ class PersistentSessions:
     def login(self, token):
         return self.control.login(token, self.session_seconds, self.capacity)
 
-    def login_google(self, email, name, role='customer', sub=None, issuer='https://accounts.google.com', email_verified=False, live=False):
+    def resolve_google_tenant(self, sub=None, issuer='https://accounts.google.com', tenant_id=None):
+        target_tid = tenant_id or getattr(self, 'default_tenant_id', None) or os.environ.get('RETAILOPS_DEMO_TENANT_ID') or os.environ.get('GOOGLE_AUTH_TENANT_ID')
         with self.control.connection() as db:
-            row = db.execute('SELECT id FROM tenants WHERE active=1 ORDER BY id LIMIT 1').fetchone()
-        require(row is not None, 503, 'no_active_tenant', 'Chưa có cửa hàng nào hoạt động trên hệ thống.')
-        tenant_id = row['id']
+            if target_tid:
+                row = db.execute('SELECT id FROM tenants WHERE id=? AND active=1', (target_tid,)).fetchone()
+                require(row is not None, 503, 'tenant_unavailable', f'Cửa hàng {target_tid} không tồn tại hoặc chưa kích hoạt.')
+                return target_tid
+
+            if sub:
+                sub_clean = str(sub).strip()
+                issuer_clean = str(issuer).strip() if issuer else 'https://accounts.google.com'
+                ext = db.execute('SELECT principal_id FROM external_identities WHERE issuer=? AND sub=?',
+                                 (issuer_clean, sub_clean)).fetchone()
+                if ext:
+                    mems = db.execute(
+                        'SELECT tenant_id FROM memberships WHERE principal_id=? AND active=1',
+                        (ext['principal_id'],)
+                    ).fetchall()
+                    if len(mems) == 1:
+                        return mems[0]['tenant_id']
+
+            rows = db.execute('SELECT id FROM tenants WHERE active=1').fetchall()
+            require(len(rows) > 0, 503, 'no_active_tenant', 'Chưa có cửa hàng nào hoạt động trên hệ thống.')
+
+            non_smoke = [r['id'] for r in rows if not str(r['id']).startswith(('e2e-', 'smoke-', 'synthetic-'))]
+            if len(non_smoke) == 1:
+                return non_smoke[0]
+
+            require(False, 503, 'ambiguous_tenant',
+                    'Hệ thống có nhiều cửa hàng; cần cấu hình rõ cửa hàng (tenant) cho đăng nhập Google thay vì chọn ngẫu nhiên.')
+
+    def login_google(self, email, name, role='customer', sub=None, issuer='https://accounts.google.com', email_verified=False, live=False, tenant_id=None):
+        tenant_id = self.resolve_google_tenant(sub=sub, issuer=issuer, tenant_id=tenant_id)
         is_live = live or getattr(self, 'data_mode', None) in ('production', 'live')
         mid, cid = self.control.get_or_create_google_member(
             tenant_id, email, name, role=role, sub=sub, issuer=issuer, email_verified=email_verified, live=is_live

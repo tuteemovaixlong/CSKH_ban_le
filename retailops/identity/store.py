@@ -553,6 +553,9 @@ class IdentityStore:
                 if ext:
                     principal_id = ext['principal_id']
                     db.execute('UPDATE principals SET name=? WHERE id=?', (name_clean, principal_id))
+                    if email_verified and ext['email'] != email_clean:
+                        db.execute('UPDATE external_identities SET email=? WHERE issuer=? AND sub=?',
+                                   (email_clean, issuer_clean, sub_clean))
 
             # 2. If not found by (issuer, sub), check if this is a returning legacy principal (ONLY IF email_verified is True!)
             if not principal_id:
@@ -580,6 +583,7 @@ class IdentityStore:
                                 'VALUES (?,?,?,?,?,?) ON CONFLICT(issuer, sub) DO UPDATE SET principal_id=excluded.principal_id',
                                 (str(uuid.uuid4()), issuer_clean, sub_clean, principal_id, email_clean, time.time())
                             )
+                            self.event(db, 'external_identity_linked', tenant_id, None)
 
                 if not principal_id:
                     principal_id = f"prin_{uuid.uuid4().hex}"
@@ -588,8 +592,9 @@ class IdentityStore:
                     db.execute(
                         'INSERT INTO external_identities (id, issuer, sub, principal_id, email, created_at) '
                         'VALUES (?,?,?,?,?,?) ON CONFLICT(issuer, sub) DO NOTHING',
-                        (str(uuid.uuid4()), issuer_clean, effective_sub, principal_id, email_clean, time.time())
+                        (str(uuid.uuid4()), issuer_clean, effective_sub, principal_id, email_clean if email_verified else None, time.time())
                     )
+                    self.event(db, 'external_identity_created', tenant_id, None)
 
             existing = db.execute('SELECT * FROM memberships WHERE tenant_id=? AND principal_id=?',
                                   (tenant_id, principal_id)).fetchone()
@@ -727,3 +732,17 @@ class IdentityStore:
                 DO UPDATE SET attempts=provider_daily_usage.attempts+1""", (day,))
             cutoff = (datetime.now(timezone.utc) - timedelta(days=31)).date().isoformat()
             db.execute("DELETE FROM provider_daily_usage WHERE day < ?", (cutoff,))
+
+    def external_identity(self, issuer, sub):
+        sub_clean = str(sub).strip() if (sub and str(sub).strip()) else ''
+        issuer_clean = str(issuer).strip() if (issuer and str(issuer).strip()) else 'https://accounts.google.com'
+        with self.connection() as db:
+            row = db.execute('SELECT * FROM external_identities WHERE issuer=? AND sub=?',
+                             (issuer_clean, sub_clean)).fetchone()
+        return dict(row) if row else None
+
+    def customer_link(self, tenant_id, principal_id):
+        with self.connection() as db:
+            row = db.execute('SELECT * FROM customer_links WHERE tenant_id=? AND principal_id=?',
+                             (tenant_id, principal_id)).fetchone()
+        return dict(row) if row else None

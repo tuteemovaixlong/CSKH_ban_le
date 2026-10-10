@@ -28,4 +28,4 @@
 
 ## Mốc nguồn
 
-Các digest được tạo từ checkout local tại `8a666fcce464c96b1dd5fc6848a2d4168c6505d1`. Merged SHA hiện tại là `8868c5c498b1c64241bc791eb0166d82415cfeb0`; G2 offline replay trên SHA này vẫn **PENDING**, không suy ra G2/G5 từ trạng thái deploy.
+Các digest giữ snapshot `8a666fcce464c96b1dd5fc6848a2d4168c6505d1`. [G2 evidence](phase5/PHASE_5_G2_EVIDENCE_8868c5c.md) ghi PASS trên `8868c5c`; P5-A merge `dd0947aad3a2dc8884710c8f6c609f42b67417bd`. Bước kế tiếp là [P5-B](phase5/PHASE_5_EXECUTION_HANDOFF.md); operational smoke PASS không cấp G5.

@@ -15,6 +15,13 @@ Phase 5 chỉ đạt khi toàn bộ tiêu chí dưới đây có evidence trên 
 | P5-K7 | Complaint workflow | Cùng Google customer session gửi complaint; dispute worker đọc đúng order/policy, tạo proposal/handoff và không mutation trước confirmation. |
 | P5-K8 | Confirmation and audit | Confirmation idempotent; trạng thái/audit/event khớp; raw report và checksums được lưu. |
 
+## Tiến độ theo chặng
+
+- **P5-K1 (Smoke isolation):** PASS trên PR #37 `dd0947a` (operational smoke report owner gửi).
+- **P5-K3 (Google identity):** PASS offline trên PR P5-B (xem [PHASE_5_B_EVIDENCE.md](PHASE_5_B_EVIDENCE.md)).
+- **P5-K4 (External mapping):** PASS offline trên PR P5-B (xem [PHASE_5_B_EVIDENCE.md](PHASE_5_B_EVIDENCE.md)).
+- **P5-K2, P5-K5…P5-K8:** Chưa nghiệm thu; đang dừng chờ owner review trước khi sang P5-C.
+
 ## Điều kiện dừng
 
 FAIL bất kỳ P5-K1…P5-K8 thì dừng tại tiêu chí đó. Không chạy full benchmark, không ghi `READY FOR MEASUREMENT`, không dùng dữ liệu thật và không bypass guard để làm PASS.

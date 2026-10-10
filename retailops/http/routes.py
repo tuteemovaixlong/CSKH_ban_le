@@ -108,7 +108,7 @@ def _extract_actor(app, customer, binding=None):
 
 def api_result(app, customer, method, path, body=None, idempotency_key=None, binding=None):
     if method == "GET":
-        if path == "/api/session":
+        if path in ("/api/session", "/api/profile"):
             return (200, {"customer_id": customer, "name": "Mai Anh" if customer == "C-001" else "Khách mẫu",
                                     "model_configured": app.infer is not None or app.api_infer is not None,
                                     "permissions": sorted(app.permissions), "role": app.role, "scope": "synthetic-demo"})

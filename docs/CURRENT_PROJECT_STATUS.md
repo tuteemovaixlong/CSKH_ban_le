@@ -1,14 +1,17 @@
 # BÁO CÁO TIẾN ĐỘ & TRẠNG THÁI HỆ THỐNG RETAILOPS 2026
 
-## Cập nhật hiện hành — Phase 5 handoff (2026-10-09)
+## Cập nhật hiện hành — Phase 5 handoff (2026-10-10)
 
-- PR #36 đã merge vào `main` tại `8868c5c498b1c64241bc791eb0166d82415cfeb0`; CI/build image đã PASS.
-- EC2 deployment đã cập nhật đúng image; web, admin và PostgreSQL healthy.
-- G4 live smoke chưa đạt: tenant/customer smoke cũ `e2e-live-smoke/C-001` bị `customer_reserved`; dữ liệu cũ không được xóa hoặc sửa trực tiếp.
-- Bước kế tiếp là [Phase 5 plan](phase5/PHASE_5_PLAN.md): cô lập smoke bằng tenant synthetic mới, kiểm Google test identity, mô phỏng event từ hệ thống bán hàng và chạy complaint E2E bằng cùng customer session.
+- G2 đã PASS trên `8868c5c498b1c64241bc791eb0166d82415cfeb0`.
+- Phase 5 P5-A smoke isolation và G4 controlled smoke đã PASS trên merged/deployed `dd0947aad3a2dc8884710c8f6c609f42b67417bd`; report `/opt/retailops/e2e-reports/LIVE_SMOKE_20261010T042118Z.json`.
+- Phase 5 P5-B Google test identity & tenant isolation đã hoàn thành offline trên PR hiện tại; evidence [PHASE_5_B_EVIDENCE.md](phase5/PHASE_5_B_EVIDENCE.md); suite 12/12 PASS; loại bỏ hoàn toàn `ORDER BY id LIMIT 1`.
+- EC2 image `ada57b5225d6` và web/admin/PostgreSQL healthy; reservation cũ được giữ nguyên.
+- Bước kế tiếp là [Phase 5 plan](phase5/PHASE_5_PLAN.md): P5-C sales simulator và import contract, sau đó P5-D complaint E2E cùng customer session.
 - Chưa có G5 `READY FOR MEASUREMENT`, chưa chạy full benchmark live/paid.
 
 > Nguồn chi tiết: [Phase 5 acceptance](phase5/PHASE_5_ACCEPTANCE_CRITERIA.md) và [Phase 5 handoff](phase5/PHASE_5_EXECUTION_HANDOFF.md).
+
+> **Giới hạn evidence:** smoke PASS theo log owner; chưa đọc trực tiếp JSON trên EC2. Đây là operational smoke login/session/orders/logout, không gọi Google OAuth/model. G4 per-lane model/DB/KB và G5 chưa được nghiệm thu.
 
 > **Trạng thái:** ACTIVE OPERATIONAL STATUS & EVIDENCE REPORT<br>
 > **Rà soát toàn diện trước đây:** tài liệu `b93eb5a`, application snapshot `main` tại `c6c7a1a` (lịch sử, không đại diện trạng thái PR hiện tại).<br>

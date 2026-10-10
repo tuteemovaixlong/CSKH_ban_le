@@ -166,6 +166,7 @@ class PublicWeb:
                 user_info['name'],
                 role=role,
                 sub=user_info.get('sub'),
+                issuer=user_info.get('issuer', 'https://accounts.google.com'),
                 email_verified=email_verified,
                 live=is_live
             )
@@ -196,7 +197,7 @@ class PublicWeb:
                 return 200, {'logged_out': True}, mime, headers
             app.current_binding = binding
             status, result = api_result(app, binding.customer_id, method, path, body, env.get('HTTP_IDEMPOTENCY_KEY'), binding=binding)
-            if path == '/api/session':
+            if path in ('/api/session', '/api/profile'):
                 result.update(self.sessions.metadata())
                 if binding.principal_id is not None:
                     result.update(tenant_id=binding.tenant_id, principal_id=binding.principal_id,

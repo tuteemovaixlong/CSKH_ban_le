@@ -10,10 +10,12 @@ from retailops.inference_gate import InferenceGate
 
 
 class PostgresSessions(PersistentSessions):
-    def __init__(self, dsn, infer=None, api_infer=None, api_daily_limit=20, capacity=50, data_mode=None):
+    def __init__(self, dsn, infer=None, api_infer=None, api_daily_limit=20, capacity=50, data_mode=None, default_tenant_id=None):
         self.dsn = dsn
         if data_mode is not None:
             self.data_mode = data_mode
+        import os
+        self.default_tenant_id = default_tenant_id or os.environ.get('RETAILOPS_DEMO_TENANT_ID') or os.environ.get('GOOGLE_AUTH_TENANT_ID')
         self.control = PostgresIdentityStore(dsn)
         self.infer, self.api_infer = infer, api_infer
         self.api_daily_limit, self.capacity = api_daily_limit, capacity

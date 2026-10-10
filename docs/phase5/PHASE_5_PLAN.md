@@ -6,12 +6,13 @@ Xây một đường kiểm thử dev/synthetic có dữ liệu bán hàng mô p
 
 ## Hiện trạng đầu vào
 
-- Merged SHA: `8868c5c498b1c64241bc791eb0166d82415cfeb0`.
-- EC2 deployment: image và các container healthy.
-- G4 smoke gần nhất FAIL vì customer `C-001` trong tenant `e2e-live-smoke` bị `customer_reserved`.
+- G2 baseline SHA: `8868c5c498b1c64241bc791eb0166d82415cfeb0`.
+- Current merged/deployed SHA: `dd0947aad3a2dc8884710c8f6c609f42b67417bd`.
+- EC2 deployment và 4 containers: healthy; P5-A smoke isolation và G4 controlled smoke PASS. Report: `/opt/retailops/e2e-reports/LIVE_SMOKE_20261010T042118Z.json`.
+- Reservation cũ `e2e-live-smoke/C-001` vẫn được giữ nguyên và không dùng làm smoke.
 - Google OAuth đã có state/nonce, profile `email/name/sub`, role mapping và session binding.
 - `/api/session` hiện trả tenant, principal, customer, name và role.
-- `live-e2e.py` hiện còn hardcode tenant/customer/order; cần cô lập trước khi chạy lại.
+- `live-e2e.py --mode smoke` đã nhận tenant/customer/order; full mode giữ baseline.
 - Chưa có adapter hoàn chỉnh nhận event đơn hàng từ một hệ thống bán hàng bên ngoài.
 
 ## Điều kiện liền kề bắt buộc: G2 sau merge
@@ -20,21 +21,28 @@ Trước khi bắt đầu P5-A, phải chạy G2 offline replay trên đúng mer
 
 ## Phạm vi theo chặng
 
-### P5-A — Smoke isolation
+### P5-A — Smoke isolation — DONE
 
 - Tham số hóa `E2E_TENANT`, `E2E_CUSTOMER`, `E2E_ORDER_ID`.
 - Dùng tenant synthetic mới cho mỗi run hoặc một tenant resettable có owner rõ.
 - Không xóa reservation cũ và không sửa trực tiếp PostgreSQL.
 - G4 smoke kiểm health, image SHA, login, session binding, orders, logout và revoke.
 
-### P5-B — Google test identity
+Evidence: merged `dd0947a`, image `ada57b5225d6`, smoke report ở trên.
 
-- Dùng Google account dành riêng cho test, không dùng email/PII khách thật.
+Nguồn hiện tại: log owner gửi ngày 2026-10-10, chưa đọc trực tiếp raw JSON. Operational smoke này không gọi Google OAuth/model; G4 per-lane real-model/DB/KB và G5 vẫn chưa đủ evidence.
+
+### P5-B — Google test identity — DONE
+
+- Cấu hình tenant cửa hàng demo rõ ràng (`default_tenant_id` hoặc env `RETAILOPS_DEMO_TENANT_ID` / `GOOGLE_AUTH_TENANT_ID`); loại bỏ hoàn toàn `ORDER BY id LIMIT 1` trong `retailops/identity/persistent.py`. Tenant mỗi smoke run không thể bị chọn làm cửa hàng cho khách Google login.
+- Dùng Google test identity mapping offline, không dùng email/PII khách thật; không cần credential thật trong repository.
 - Pin issuer, `sub`, email verified và tenant mapping.
-- Không dùng email làm khóa duy nhất nếu đã có `sub`; lưu external identity mapping có audit.
+- Không dùng email làm khóa duy nhất nếu đã có `sub`; lưu external identity mapping có audit (`identity_events`).
 - Không seed đơn demo khi `data_mode=live`; dữ liệu phải đến từ simulator/import.
+- Kiểm tra `/api/session`, `/api/profile` và tenant/customer isolation.
+- Evidence: [PHASE_5_B_EVIDENCE.md](PHASE_5_B_EVIDENCE.md), suite `tests/test_phase5_google_identity.py` (12/12 PASS).
 
-### P5-C — Sales simulator và import contract
+### P5-C — Sales simulator và import contract — NEXT
 
 Simulator chỉ chạy offline/dev và phát event JSON qua adapter được kiểm soát. Mỗi event phải có `source_system`, `event_id`, `tenant`, `external_customer_id`, `order_id`, trạng thái, items, total, currency, timestamp và signature.
 
