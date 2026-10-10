@@ -214,6 +214,7 @@ class GoogleAuthHTTPRoutesTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             sessions = PersistentSessions(td)
             sessions.provision_tenant('T-001', 'Test Tenant', seed_demo=True)
+            sessions.provision_tenant('smoke-test-tenant', 'Smoke Tenant', seed_demo=False)
             web = PublicWeb('https://retailops.example.com', sessions)
 
             nonce = "persistent_nonce_e2e"
@@ -238,7 +239,7 @@ class GoogleAuthHTTPRoutesTests(unittest.TestCase):
                 cookie_val = headers_dict.get('Set-Cookie', '').split(';')[0]
                 self.assertTrue(cookie_val.startswith('__Host-retailops_account='))
 
-                # Now verify /api/session succeeds with this cookie
+                # Verify /api/session returns tenant_id, principal_id, customer_id, name, role
                 session_env = {
                     'REQUEST_METHOD': 'GET',
                     'PATH_INFO': '/api/session',
@@ -249,6 +250,24 @@ class GoogleAuthHTTPRoutesTests(unittest.TestCase):
                 self.assertEqual(s_status, 200)
                 self.assertEqual(s_body.get('name'), 'Teemo')
                 self.assertEqual(s_body.get('role'), 'customer')
+                self.assertEqual(s_body.get('tenant_id'), 'T-001')
+                self.assertTrue(s_body.get('principal_id', '').startswith('prin_'))
+                self.assertTrue(bool(s_body.get('customer_id')))
+
+                # Verify /api/profile returns identical identity fields
+                profile_env = {
+                    'REQUEST_METHOD': 'GET',
+                    'PATH_INFO': '/api/profile',
+                    'HTTP_HOST': 'retailops.example.com',
+                    'HTTP_COOKIE': cookie_val,
+                }
+                p_status, p_body, p_mime, p_headers = web.route(profile_env)
+                self.assertEqual(p_status, 200)
+                self.assertEqual(p_body.get('name'), 'Teemo')
+                self.assertEqual(p_body.get('role'), 'customer')
+                self.assertEqual(p_body.get('tenant_id'), 'T-001')
+                self.assertEqual(p_body.get('principal_id'), s_body.get('principal_id'))
+                self.assertEqual(p_body.get('customer_id'), s_body.get('customer_id'))
 
     def test_google_oauth_end_to_end_guest_sessions(self):
         import tempfile

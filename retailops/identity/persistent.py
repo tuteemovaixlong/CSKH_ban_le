@@ -81,8 +81,9 @@ class PersistentSessions:
                         'SELECT tenant_id FROM memberships WHERE principal_id=? AND active=1',
                         (ext['principal_id'],)
                     ).fetchall()
-                    if len(mems) == 1:
-                        return mems[0]['tenant_id']
+                    non_smoke_mems = [m['tenant_id'] for m in mems if not str(m['tenant_id']).startswith(('e2e-', 'smoke-', 'synthetic-'))]
+                    if len(non_smoke_mems) == 1:
+                        return non_smoke_mems[0]
 
             rows = db.execute('SELECT id FROM tenants WHERE active=1').fetchall()
             require(len(rows) > 0, 503, 'no_active_tenant', 'Chưa có cửa hàng nào hoạt động trên hệ thống.')

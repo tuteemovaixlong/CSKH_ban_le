@@ -200,6 +200,15 @@ class PublicWeb:
             if path in ('/api/session', '/api/profile'):
                 result.update(self.sessions.metadata())
                 if binding.principal_id is not None:
-                    result.update(tenant_id=binding.tenant_id, principal_id=binding.principal_id,
-                                  name=binding.display_name)
+                    result.update(
+                        tenant_id=binding.tenant_id,
+                        principal_id=binding.principal_id,
+                        name=binding.display_name or result.get('name'),
+                    )
+                elif binding.tenant_id is not None:
+                    result['tenant_id'] = binding.tenant_id
+                if getattr(binding, 'display_name', None):
+                    result['name'] = binding.display_name
+                result['customer_id'] = binding.customer_id
+                result['role'] = getattr(app, 'role', result.get('role', 'customer'))
             return status, result, mime, headers

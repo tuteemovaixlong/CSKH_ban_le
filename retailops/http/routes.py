@@ -109,9 +109,23 @@ def _extract_actor(app, customer, binding=None):
 def api_result(app, customer, method, path, body=None, idempotency_key=None, binding=None):
     if method == "GET":
         if path in ("/api/session", "/api/profile"):
-            return (200, {"customer_id": customer, "name": "Mai Anh" if customer == "C-001" else "Khách mẫu",
-                                    "model_configured": app.infer is not None or app.api_infer is not None,
-                                    "permissions": sorted(app.permissions), "role": app.role, "scope": "synthetic-demo"})
+            actor = _extract_actor(app, customer, binding=binding)
+            display_name = actor.get("display_name")
+            if not display_name:
+                display_name = "Mai Anh" if customer == "C-001" else "Khách mẫu"
+            res = {
+                "customer_id": customer,
+                "name": display_name,
+                "model_configured": app.infer is not None or app.api_infer is not None,
+                "permissions": sorted(app.permissions),
+                "role": actor.get("role") or app.role,
+                "scope": "synthetic-demo",
+            }
+            if actor.get("tenant_id") is not None:
+                res["tenant_id"] = actor["tenant_id"]
+            if actor.get("principal_id") is not None:
+                res["principal_id"] = actor["principal_id"]
+            return (200, res)
         if path == '/api/account/usage':
             return (200, _account_usage(app))
         if path == "/api/providers":

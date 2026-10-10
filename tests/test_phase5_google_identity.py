@@ -148,8 +148,9 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
 
     def test_smoke_tenant_is_never_selected_as_google_fallback(self):
         """P5-B: Smoke/synthetic tenants (e2e-, smoke-, synthetic-) are rejected as Google demo fallback."""
-        # Only a smoke tenant exists
+        # 1. Only smoke tenants exist -> fails closed (503)
         self.sessions.provision_tenant("e2e-live-smoke", "Live Smoke Tenant", seed_demo=False)
+        self.sessions.provision_tenant("smoke-fixture-tenant", "Fixture Smoke Tenant", seed_demo=False)
 
         with self.assertRaises(ApiError) as ctx:
             self.sessions.login_google(
@@ -160,6 +161,17 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
             )
         self.assertEqual(ctx.exception.status, 503)
         self.assertEqual(ctx.exception.code, "ambiguous_tenant")
+
+        # 2. Add one legitimate non-smoke tenant -> deterministically resolves to it, ignoring smoke tenants
+        self.sessions.provision_tenant("shop-legitimate", "Real Shop", seed_demo=True)
+        sec = self.sessions.login_google(
+            email="real.user@example.com",
+            name="Real User",
+            sub="sub-smoke-test-resolve",
+            email_verified=True,
+        )
+        mem = self.sessions.control.resolve(self.sessions.cookie_id(f"__Host-retailops_account={sec}"))
+        self.assertEqual(mem["tenant_id"], "shop-legitimate")
 
     def test_email_never_used_as_sole_key(self):
         """P5-B: Distinct Google sub IDs with identical email NEVER share principal or customer."""
@@ -381,7 +393,10 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
         })
         self.assertEqual(status, 200)
         self.assertEqual(prof_a1["tenant_id"], tenant_a)
+        self.assertEqual(prof_a1["principal_id"], mem_a1["principal_id"])
         self.assertEqual(prof_a1["customer_id"], mem_a1["customer_id"])
+        self.assertEqual(prof_a1["name"], "Customer A1")
+        self.assertEqual(prof_a1["role"], "customer")
 
         # 3. Customer A1 sees only their order O-A1-001
         status, orders_a1, _, _ = web.route({
