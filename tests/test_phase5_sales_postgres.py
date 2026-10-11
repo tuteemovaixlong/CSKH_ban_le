@@ -205,6 +205,45 @@ class PostgresSalesImportTests(unittest.TestCase):
         self.assertEqual((ctx.exception.status, ctx.exception.code), (409, 'external_customer_mapping_conflict'))
         self.assertEqual(len(self.mapping_audits()), 1)
 
+    def test_prior_business_import_authoritative_on_postgresql(self):
+        first = self.adapter.ingest_event(
+            self.simulator.create_order_event(order_id='O-PG-AUTH', external_customer_id='pg_auth')
+        )
+        with self.assertRaises(ApiError) as ctx:
+            self.adapter.link_external_customer(self.tenant, 'sales_simulator', 'pg_auth', 'cust_somebody_else')
+        self.assertEqual(ctx.exception.code, 'external_customer_mapping_conflict')
+
+    def test_event_id_collision_rejected_on_postgresql(self):
+        event = self.simulator.create_order_event(order_id='O-PG-COL1', external_customer_id='pg_col_a')
+        self.adapter.ingest_event(event)
+
+        import copy
+        from retailops.sales.events import compute_signature
+        tampered = copy.deepcopy(event)
+        tampered['external_customer_id'] = 'pg_col_b'
+        tampered['signature'] = compute_signature(tampered, DEFAULT_DEV_SECRET)
+
+        with self.assertRaises(ApiError) as ctx:
+            self.adapter.ingest_event(tampered)
+        self.assertEqual(ctx.exception.code, 'event_id_collision')
+
+    def test_exact_replay_after_300s_heals_mapping_on_postgresql(self):
+        from datetime import datetime, timezone
+        fixed = 1791720000.0
+        iso_time = datetime.fromtimestamp(fixed, tz=timezone.utc).isoformat()
+        event = self.simulator.create_order_event(
+            order_id='O-PG-DRIFT', external_customer_id='pg_drift', timestamp=iso_time
+        )
+        with patch.object(self.control, 'link_external_customer', side_effect=RuntimeError('identity down')):
+            with self.assertRaises(ApiError):
+                self.adapter.ingest_event(event, reference_time=fixed)
+        self.assertIsNone(self.control.external_customer_mapping(self.tenant, 'sales_simulator', 'pg_drift'))
+
+        replay = self.adapter.ingest_event(event, reference_time=fixed + 1200.0)
+        self.assertTrue(replay.is_replay)
+        self.assertEqual(replay.status, 'already_processed')
+        self.assertIsNotNone(self.control.external_customer_mapping(self.tenant, 'sales_simulator', 'pg_drift'))
+
 
 if __name__ == '__main__':
     unittest.main()

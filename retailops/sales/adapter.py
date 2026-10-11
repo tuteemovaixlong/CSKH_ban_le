@@ -12,14 +12,18 @@ The business store (orders/imported_events) and the identity store
 cover both. The design therefore makes the *business* store authoritative for
 "which customer does this external customer id belong to":
 
-* The customer id is assigned inside the business transaction, reusing any customer
-  already recorded in ``imported_events`` for the same ``(source_system,
-  external_customer_id)``. A retry therefore can never mint a second customer.
+* Prior business import is ALWAYS authoritative. The customer id is assigned inside the
+  business transaction, reusing any customer already recorded in ``imported_events``
+  for the same ``(source_system, external_customer_id)``. A retry or secondary mapping
+  can never split or reassign the external customer.
 * The identity mapping is a derived index written after the business commit with
   insert-if-absent semantics. If that write fails the order stays committed, the
   caller gets a retryable ``identity_mapping_pending`` error, and the mapping is
-  healed by replaying the same event, by the next event of the same customer, or by
+  healed by replaying the exact same event, by the next event of the same customer, or by
   :meth:`SalesImportAdapter.reconcile_mappings`.
+* Exact replays of already-imported events bypass the timestamp drift check (>300s) to allow
+  deferred mapping healing, but collisions on (source_system, event_id) with different payload
+  or external_customer_id are rejected with ``event_id_collision`` (409).
 """
 from __future__ import annotations
 
@@ -114,6 +118,19 @@ class SalesImportAdapter:
         # Ensure customer exists in the tenant's business database
         bstore = self.get_bstore(tenant_clean)
         with bstore.connection(write=True) as db:
+            prior = db.execute(
+                "SELECT customer_id FROM imported_events "
+                "WHERE tenant_id=? AND source_system=? AND external_customer_id=? "
+                "ORDER BY created_at LIMIT 1",
+                (tenant_clean, source_system, external_customer_id),
+            ).fetchone()
+            if prior and prior["customer_id"] != customer_id:
+                raise ApiError(
+                    409,
+                    "external_customer_mapping_conflict",
+                    f"external_customer_id {external_customer_id} đã có đơn hàng thuộc về {prior['customer_id']}; "
+                    "không thể liên kết sang khách hàng khác.",
+                )
             db.execute(
                 "INSERT INTO customers (id, name) VALUES (?, ?) ON CONFLICT DO NOTHING",
                 (customer_id, customer_name or f"Khách {external_customer_id}"),
@@ -224,27 +241,18 @@ class SalesImportAdapter:
         timestamp_str = validated["timestamp"]
         signature = validated["signature"]
 
-        # 2. Validate Timestamp drift
-        validate_timestamp(
-            timestamp_str,
-            max_age_seconds=self.max_age_seconds,
-            max_future_seconds=self.max_future_seconds,
-            reference_time=reference_time,
-        )
-
-        # 3. Validate Tenant existence & active status
+        # 2. Validate Tenant existence & active status
         with self.identity_store.connection() as db:
             tenant_row = db.execute("SELECT * FROM tenants WHERE id=?", (tenant_id,)).fetchone()
         require(tenant_row is not None, 404, "tenant_not_found", f"Cửa hàng {tenant_id} không tồn tại.")
         require(bool(tenant_row["active"]), 400, "tenant_inactive", f"Cửa hàng {tenant_id} chưa được kích hoạt.")
 
-        # 4. Verify HMAC signature
+        # 3. Verify HMAC signature
         secret = self.resolve_secret(source_system, tenant_id)
         if not verify_event_signature(event_data, secret):
             raise ApiError(401, "invalid_signature", "Chữ ký HMAC không hợp lệ hoặc sai secret.")
 
-        # 5. Atomic transaction in the business store
-        mapped_cid = self.identity_store.get_external_customer_mapping(tenant_id, source_system, ext_customer_id)
+        # 4. Atomic transaction in the business store
         bstore = self.get_bstore(tenant_id)
         now = time.time()
         replay = None
@@ -256,21 +264,63 @@ class SalesImportAdapter:
                 (source_system, event_id),
             ).fetchone()
             if existing_event:
+                # Finding 2: Replay must reject event_id_collision if payload/external_customer_id differ
+                stored_payload = json.loads(existing_event["payload_json"])
+                is_same_payload = (stored_payload == event_data)
+                is_same_ext_cust = (existing_event["external_customer_id"] == ext_customer_id)
+                is_same_order = (existing_event["order_id"] == order_id)
+                is_same_tenant = (existing_event["tenant_id"] == tenant_id)
+                is_same_sig = (existing_event["signature"] == signature)
+
+                if not (is_same_payload and is_same_ext_cust and is_same_order and is_same_tenant and is_same_sig):
+                    logger.warning(
+                        "Rejected event_id collision source=%s event_id=%s: stored_ext=%s incoming_ext=%s",
+                        source_system, event_id, existing_event["external_customer_id"], ext_customer_id,
+                    )
+                    raise ApiError(
+                        409,
+                        "event_id_collision",
+                        "event_id đã tồn tại với payload hoặc khách hàng khác trong hệ thống nguồn.",
+                    )
+                # Finding 3: Exact replay bypasses drift check to heal mapping
                 replay = dict(existing_event)
             else:
-                # Customer resolution. The mapping table is only a cache of the decision
-                # recorded in imported_events, so a missing mapping (failed identity write)
-                # still resolves to the customer chosen on the first import (N4).
-                if mapped_cid:
+                # Finding 3: New event MUST pass timestamp drift validation
+                validate_timestamp(
+                    timestamp_str,
+                    max_age_seconds=self.max_age_seconds,
+                    max_future_seconds=self.max_future_seconds,
+                    reference_time=reference_time,
+                )
+
+                # Finding 1: Prior business import is ALWAYS the authoritative source of truth.
+                # A secondary identity mapping is consulted only if no prior import exists.
+                prior = db.execute(
+                    "SELECT customer_id FROM imported_events "
+                    "WHERE tenant_id=? AND source_system=? AND external_customer_id=? "
+                    "ORDER BY created_at LIMIT 1",
+                    (tenant_id, source_system, ext_customer_id),
+                ).fetchone()
+
+                mapped_cid = self.identity_store.get_external_customer_mapping(tenant_id, source_system, ext_customer_id)
+
+                if prior:
+                    customer_id = prior["customer_id"]
+                    if mapped_cid and mapped_cid != customer_id:
+                        logger.warning(
+                            "Identity mapping conflict tenant=%s source=%s ext_cust=%s: prior=%s mapped=%s",
+                            tenant_id, source_system, ext_customer_id, customer_id, mapped_cid,
+                        )
+                        raise ApiError(
+                            409,
+                            "external_customer_mapping_conflict",
+                            f"external_customer_id {ext_customer_id} đã có đơn hàng thuộc về {customer_id}, "
+                            f"không thể tách sang {mapped_cid}.",
+                        )
+                elif mapped_cid:
                     customer_id = mapped_cid
                 else:
-                    prior = db.execute(
-                        "SELECT customer_id FROM imported_events "
-                        "WHERE tenant_id=? AND source_system=? AND external_customer_id=? "
-                        "ORDER BY created_at LIMIT 1",
-                        (tenant_id, source_system, ext_customer_id),
-                    ).fetchone()
-                    customer_id = prior["customer_id"] if prior else f"cust_{uuid.uuid4().hex}"
+                    customer_id = f"cust_{uuid.uuid4().hex}"
 
                 # N1: an existing order can only be updated by its own customer.
                 owner = db.execute("SELECT customer_id FROM orders WHERE id=?", (order_id,)).fetchone()
@@ -366,19 +416,25 @@ class SalesImportAdapter:
                 "Idempotent replay detected for event_id=%s source_system=%s order_id=%s",
                 event_id, source_system, replay["order_id"],
             )
-            # A replay also completes a mapping left pending by an earlier identity failure.
-            self._ensure_mapping(tenant_id, source_system, ext_customer_id, replay["customer_id"])
+            # Finding 2: A replay completes a mapping left pending by an earlier identity failure,
+            # strictly using the STORED tuple's attributes (only heal stored tuple).
+            self._ensure_mapping(
+                replay["tenant_id"],
+                replay["source_system"],
+                replay["external_customer_id"],
+                replay["customer_id"],
+            )
             return ImportResult(
                 success=True,
                 status="already_processed",
                 order_id=replay["order_id"],
                 customer_id=replay["customer_id"],
-                tenant_id=tenant_id,
-                source_system=source_system,
-                event_id=event_id,
+                tenant_id=replay["tenant_id"],
+                source_system=replay["source_system"],
+                event_id=replay["event_id"],
                 is_replay=True,
                 items_count=len(items),
-                total=total,
+                total=replay["total"],
             )
 
         # 6. Cache invalidation happens right after commit, independent of identity health.

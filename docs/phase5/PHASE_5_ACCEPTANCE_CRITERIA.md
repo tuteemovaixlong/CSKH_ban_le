@@ -20,9 +20,9 @@ Phase 5 chỉ đạt khi toàn bộ tiêu chí dưới đây có evidence trên 
 - **P5-K1 (Smoke isolation):** PASS trên PR #37 `dd0947a`; latest controlled smoke on deployed SHA `80f51569b3bef5ae0793bac1593fb91e39558477` also PASS (report `/opt/retailops/e2e-reports/LIVE_SMOKE_20261011T074654Z.json`).
 - **P5-K2 (Runtime health):** PASS operationally trên merged SHA `80f51569b3bef5ae0793bac1593fb91e39558477`; deploy workflow 38119061325 SUCCESS, web/admin/PostgreSQL/Caddy healthy, smoke report `/opt/retailops/e2e-reports/LIVE_SMOKE_20261011T074654Z.json`.
 - **P5-K3 (Google identity):** Offline implementation PASS trên PR P5-B (xem [PHASE_5_B_EVIDENCE.md](PHASE_5_B_EVIDENCE.md)); Google OAuth thật live PENDING (chờ môi trường live/owner review).
-- **P5-K4 (External mapping):** REMEDIATED, chờ re-review — N2/N4 đã sửa: DDL/migration PostgreSQL có, mapping insert-if-absent và tự phục hồi sau lỗi identity; SQLite + PostgreSQL thật PASS (xem [PHASE_5_C_EVIDENCE.md](PHASE_5_C_EVIDENCE.md)). Chưa tính PASS cho tới khi reviewer xác nhận CI.
-- **P5-K5 (Event contract):** REMEDIATED, chờ re-review — N3 đã sửa: đúng 11 trường, từ chối trường thừa, bool/float/chuỗi sai kiểu; 15 test gốc vẫn PASS. Chưa tính PASS cho tới khi reviewer xác nhận CI.
-- **P5-K6 (Order visibility):** REMEDIATED, chờ re-review — N1 đã sửa: `order_id` đã có không thể đổi chủ (409 `order_owner_conflict`), regression test SQLite và PostgreSQL. Chưa tính PASS cho tới khi reviewer xác nhận CI.
+- **P5-K4 (External mapping):** REMEDIATED, chờ re-review PR #39 — N2/N4 và PR #39 (1)/(2) đã sửa: prior business import là nguồn sự thật tối thượng, cấm mapping tách cùng external ID; DDL/migration PostgreSQL có; mapping tự phục hồi sau lỗi identity; SQLite + PostgreSQL contract PASS (xem [PHASE_5_C_EVIDENCE.md](PHASE_5_C_EVIDENCE.md)). Chưa tính PASS cho tới khi reviewer xác nhận CI.
+- **P5-K5 (Event contract):** REMEDIATED, chờ re-review PR #39 — N3 và PR #39 (2)/(3)/(4) đã sửa: đúng 11 trường, strict integer, cấm NaN/Infinity, từ chối event collision 409, exact replay bypass drift-check sau 300s để heal mapping; 15 test gốc + 30 regression test PASS. Chưa tính PASS cho tới khi reviewer xác nhận CI.
+- **P5-K6 (Order visibility):** REMEDIATED, chờ re-review PR #39 — N1 đã sửa: `order_id` đã có không thể đổi chủ (409 `order_owner_conflict`), regression test SQLite và PostgreSQL. Chưa tính PASS cho tới khi reviewer xác nhận CI.
 - **P5-K7…P5-K8:** PENDING đến P5-D (Complaint workflow E2E và confirmation).
 
 ## Điều kiện dừng

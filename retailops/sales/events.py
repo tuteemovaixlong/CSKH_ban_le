@@ -81,23 +81,42 @@ def verify_event_signature(event_dict: Dict[str, Any], secret: str) -> bool:
     return hmac.compare_digest(signature.lower(), expected.lower())
 
 
+import math
+
+
 def parse_timestamp(timestamp_val: Any) -> float:
-    """Parse ISO-8601 string or numeric timestamp to epoch seconds."""
+    """Parse ISO-8601 string or numeric timestamp to epoch seconds.
+
+    Rejects boolean types, NaN, Infinity, and malformed date strings.
+    """
+    if type(timestamp_val) is bool:
+        raise ApiError(400, "invalid_timestamp", f"Định dạng thời gian không hợp lệ: {timestamp_val}")
     if isinstance(timestamp_val, (int, float)):
+        if math.isnan(timestamp_val) or math.isinf(timestamp_val):
+            raise ApiError(400, "invalid_timestamp", "timestamp không được là NaN hoặc Infinity.")
         return float(timestamp_val)
     if isinstance(timestamp_val, str):
         ts_clean = timestamp_val.strip()
+        lower = ts_clean.lower()
+        if lower in ("nan", "+nan", "-nan", "inf", "+inf", "-inf", "infinity", "+infinity", "-infinity"):
+            raise ApiError(400, "invalid_timestamp", "timestamp không được là NaN hoặc Infinity.")
         if ts_clean.endswith("Z"):
             ts_clean = ts_clean[:-1] + "+00:00"
         try:
             dt = datetime.fromisoformat(ts_clean)
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=timezone.utc)
-            return dt.timestamp()
+            val = dt.timestamp()
+            if math.isnan(val) or math.isinf(val):
+                raise ApiError(400, "invalid_timestamp", "timestamp không được là NaN hoặc Infinity.")
+            return val
         except ValueError:
             pass
         try:
-            return float(ts_clean)
+            val = float(ts_clean)
+            if math.isnan(val) or math.isinf(val):
+                raise ApiError(400, "invalid_timestamp", "timestamp không được là NaN hoặc Infinity.")
+            return val
         except ValueError:
             pass
     raise ApiError(400, "invalid_timestamp", f"Định dạng thời gian không hợp lệ: {timestamp_val}")
@@ -111,7 +130,11 @@ def validate_timestamp(
 ) -> float:
     """Validate timestamp drift against reference time (default time.time())."""
     epoch = parse_timestamp(timestamp_val)
+    if math.isnan(epoch) or math.isinf(epoch):
+        raise ApiError(400, "invalid_timestamp", "timestamp không được là NaN hoặc Infinity.")
     ref = reference_time if reference_time is not None else time.time()
+    if math.isnan(ref) or math.isinf(ref):
+        raise ApiError(400, "invalid_timestamp", "reference_time không được là NaN hoặc Infinity.")
     if epoch < ref - max_age_seconds:
         raise ApiError(
             400,
@@ -221,6 +244,7 @@ def validate_event_schema(data: Any) -> Dict[str, Any]:
             400, "invalid_currency", "currency phải là mã tiền tệ 3 chữ in hoa (ví dụ: VND).")
     require(isinstance(data["timestamp"], str) and data["timestamp"].strip(),
             400, "invalid_timestamp", "timestamp phải là chuỗi ISO-8601.")
+    parse_timestamp(data["timestamp"])
 
     # 8. Signature format (64-character hex string)
     sig = data["signature"]

@@ -262,6 +262,28 @@ class N3StrictSchemaTests(SalesReviewBase):
             self.adapter.ingest_event(tampered)
         self.assertEqual(ctx.exception.code, "invalid_item_quantity")
 
+    def test_rejects_nan_and_infinity_timestamps(self):
+        from retailops.sales.events import parse_timestamp, validate_timestamp
+
+        for bad in ("NaN", "nan", "+NaN", "-nan", "Infinity", "+inf", "-Infinity", "inf", "-inf"):
+            event = self.event()
+            event["timestamp"] = bad
+            self.assert_rejected(resign(event), "invalid_timestamp")
+            with self.assertRaises(ApiError) as ctx:
+                parse_timestamp(bad)
+            self.assertEqual(ctx.exception.code, "invalid_timestamp")
+            with self.assertRaises(ApiError) as ctx:
+                validate_timestamp(bad)
+            self.assertEqual(ctx.exception.code, "invalid_timestamp")
+
+        for bad_num in (float("nan"), float("inf"), float("-inf")):
+            with self.assertRaises(ApiError) as ctx:
+                parse_timestamp(bad_num)
+            self.assertEqual(ctx.exception.code, "invalid_timestamp")
+            with self.assertRaises(ApiError) as ctx:
+                validate_timestamp(bad_num)
+            self.assertEqual(ctx.exception.code, "invalid_timestamp")
+
 
 class N4MappingRecoveryTests(SalesReviewBase):
     def fail_identity_write(self, error=None):
@@ -370,6 +392,96 @@ class N4MappingRecoveryTests(SalesReviewBase):
             with self.assertRaises(ApiError):
                 self.adapter.ingest_event(event)
         cache.invalidate.assert_called_once()
+
+    def test_prior_business_import_is_authoritative_and_conflicting_mapping_rejected(self):
+        """Finding 1: Prior business import is authoritative, preventing conflicting mapping from splitting customer."""
+        first = self.adapter.ingest_event(
+            self.simulator.create_order_event(order_id="O-AUTH-001", external_customer_id="auth_buyer")
+        )
+        committed_customer = first.customer_id
+
+        # Attempting to explicitly link this external_customer_id to another customer must fail
+        with self.assertRaises(ApiError) as ctx:
+            self.adapter.link_external_customer(TENANT, "sales_simulator", "auth_buyer", "cust_intruder_99")
+        self.assertEqual(ctx.exception.code, "external_customer_mapping_conflict")
+
+        # If identity store somehow had a conflicting mapping directly inserted
+        with self.control.connection(write=True) as db:
+            db.execute("UPDATE external_customer_mappings SET customer_id='cust_intruder_99' WHERE external_customer_id='auth_buyer'")
+
+        # Ingestion for this customer must reject conflict and refuse to split the customer
+        next_event = self.simulator.create_order_event(order_id="O-AUTH-002", external_customer_id="auth_buyer")
+        with self.assertRaises(ApiError) as ctx:
+            self.adapter.ingest_event(next_event)
+        self.assertEqual(ctx.exception.code, "external_customer_mapping_conflict")
+        # No order O-AUTH-002 is committed
+        self.assertEqual(self.rows("SELECT id FROM orders WHERE id='O-AUTH-002'"), [])
+
+    def test_event_id_collision_rejected_with_different_payload_or_customer(self):
+        """Finding 2: Replay with same (source_system, event_id) rejects collision if payload/customer differ."""
+        event = self.simulator.create_order_event(order_id="O-COLL-001", external_customer_id="coll_buyer1")
+        res1 = self.adapter.ingest_event(event)
+        self.assertEqual(res1.status, "imported")
+
+        # 1. Different external_customer_id with same (source_system, event_id)
+        hijack_cust = copy.deepcopy(event)
+        hijack_cust["external_customer_id"] = "coll_intruder"
+        hijack_cust = resign(hijack_cust)
+        with self.assertRaises(ApiError) as ctx:
+            self.adapter.ingest_event(hijack_cust)
+        self.assertEqual((ctx.exception.status, ctx.exception.code), (409, "event_id_collision"))
+        # Intruder is NOT mapped
+        self.assertIsNone(self.control.external_customer_mapping(TENANT, "sales_simulator", "coll_intruder"))
+
+        # 2. Different order_id with same (source_system, event_id)
+        diff_order = copy.deepcopy(event)
+        diff_order["order_id"] = "O-COLL-002"
+        diff_order = resign(diff_order)
+        with self.assertRaises(ApiError) as ctx:
+            self.adapter.ingest_event(diff_order)
+        self.assertEqual(ctx.exception.code, "event_id_collision")
+
+        # 3. Different total / items with same (source_system, event_id)
+        diff_items = copy.deepcopy(event)
+        diff_items["items"][0]["quantity"] = 2
+        diff_items["total"] = diff_items["items"][0]["unit_price"] * 2
+        diff_items = resign(diff_items)
+        with self.assertRaises(ApiError) as ctx:
+            self.adapter.ingest_event(diff_items)
+        self.assertEqual(ctx.exception.code, "event_id_collision")
+
+    def test_exact_replay_after_300s_bypasses_drift_check_and_heals_mapping(self):
+        """Finding 3: Exact replay can heal mapping after 300s, but new event still drift-checks."""
+        from datetime import datetime, timezone
+        fixed_time = 1791720000.0
+        iso_time = datetime.fromtimestamp(fixed_time, tz=timezone.utc).isoformat()
+        event = self.simulator.create_order_event(
+            order_id="O-DRIFT-001", external_customer_id="drift_buyer", timestamp=iso_time
+        )
+
+        # Ingest with identity write failure at reference_time = fixed_time
+        with self.fail_identity_write():
+            with self.assertRaises(ApiError) as ctx:
+                self.adapter.ingest_event(event, reference_time=fixed_time)
+        self.assertEqual(ctx.exception.code, "identity_mapping_pending")
+        self.assertIsNone(self.control.external_customer_mapping(TENANT, "sales_simulator", "drift_buyer"))
+
+        # Replay the EXACT event 1000 seconds later (well past 300s max_age_seconds)
+        replay_result = self.adapter.ingest_event(event, reference_time=fixed_time + 1000.0)
+        self.assertTrue(replay_result.is_replay)
+        self.assertEqual(replay_result.status, "already_processed")
+        # Mapping is healed!
+        mapping = self.control.external_customer_mapping(TENANT, "sales_simulator", "drift_buyer")
+        self.assertIsNotNone(mapping)
+        self.assertEqual(mapping["customer_id"], replay_result.customer_id)
+
+        # But a NEW event sent with old timestamp (1000s ago) MUST be rejected with expired_timestamp
+        new_old_event = self.simulator.create_order_event(
+            order_id="O-DRIFT-002", external_customer_id="drift_buyer2", timestamp=iso_time
+        )
+        with self.assertRaises(ApiError) as ctx:
+            self.adapter.ingest_event(new_old_event, reference_time=fixed_time + 1000.0)
+        self.assertEqual(ctx.exception.code, "expired_timestamp")
 
 
 class N2PostgresDdlContractTests(unittest.TestCase):

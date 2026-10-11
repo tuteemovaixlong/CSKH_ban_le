@@ -37,10 +37,10 @@ Mỗi event bao gồm **đúng** 11 trường (thiếu → `missing_event_field`
 | `items` | `list[dict]` | 1–200 dòng. Mỗi dòng chỉ gồm `product_id`, `product_title`, `quantity`, `unit_price` (bắt buộc) và `variant_id`, `variant_name` (tùy chọn); trường khác → `unexpected_item_field`. |
 | `total` | `int` | Số nguyên VND `0 ≤ total ≤ 10^12`, khớp chính xác $\sum (\text{quantity} \times \text{unit\_price})$. |
 | `currency` | `str` | Mã ISO 3 chữ in hoa (ví dụ: `VND`). |
-| `timestamp` | `str` | Thời gian phát sinh ISO-8601 UTC. Kiểm tra chống trôi thời gian (drift tolerance). |
+| `timestamp` | `str` | Thời gian phát sinh ISO-8601 UTC. Kiểm tra chống trôi thời gian (drift tolerance). Từ chối nghiêm ngặt `NaN`, `Infinity`, `-Infinity` và các chuỗi số vô hạn (`invalid_timestamp_format` / `invalid_timestamp_drift`). |
 | `signature` | `str` | Chữ ký HMAC-SHA256 64 ký tự hex tính trên chuỗi JSON canonical của 10 trường trên. |
 
-**Kiểu số nghiêm ngặt (N3):** `quantity` (1…100 000), `unit_price` và `total` (0…10^12) phải là `int` thật. `bool` (kể cả `True == 1`), `float` (kể cả `1.0`, `450000.5`), chuỗi số và `None` đều bị từ chối; không còn `int()` làm tròn ngầm. Giới hạn trên bảo đảm giá trị luôn nằm trong `BIGINT` của PostgreSQL.
+**Kiểu số nghiêm ngặt (N3 & Review-Fix 4):** `quantity` (1…100 000), `unit_price` và `total` (0…10^12) phải là `int` thật. `bool` (kể cả `True == 1`), `float` (kể cả `1.0`, `450000.5`), chuỗi số và `None` đều bị từ chối; không còn `int()` làm tròn ngầm. Timestamp parse và validate từ chối mọi giá trị `math.isnan()` hoặc `math.isinf()`. Giới hạn trên bảo đảm giá trị luôn nằm trong `BIGINT` của PostgreSQL.
 
 ### 2.2. Simulator Cô lập Hoàn toàn (Zero Direct DB Writes)
 
@@ -50,27 +50,35 @@ Mỗi event bao gồm **đúng** 11 trường (thiếu → `missing_event_field`
 
 ### 2.3. Ranh giới Nhập liệu & Giao dịch Nguyên tử (`SalesImportAdapter`)
 
-- **Bước 1 — Schema & Non-email Validation**: Kiểm tra đúng 11 trường, kiểu dữ liệu nghiêm ngặt, ràng buộc tổng tiền và cấm email.
-- **Bước 2 — Timestamp Drift Check**: Từ chối các event quá cũ ($> 300\text{s}$) hoặc tương lai ($> 60\text{s}$) để chống replay attack.
-- **Bước 3 — Tenant Check**: Kiểm tra tenant tồn tại và đang kích hoạt trong `IdentityStore`.
-- **Bước 4 — HMAC Verification**: Đối chiếu chữ ký với secret của `(source_system, tenant)` bằng `hmac.compare_digest`.
-- **Bước 5 — Atomic Transaction trong Business Store** (business store là nguồn sự thật cho "external customer này là customer nào"):
-  - Kiểm tra bảng `imported_events` theo `(source_system, event_id)`: nếu đã xử lý, trả về `is_replay=True, status="already_processed"` mà không ghi đè dữ liệu.
-  - Xác định `customer_id`: ưu tiên mapping trong identity store; nếu chưa có thì **dùng lại customer đã ghi trong `imported_events`** của cùng `(tenant, source_system, external_customer_id)`; chỉ khi chưa từng import mới cấp `cust_<uuid4_hex>` mới (opaque, khắc phục N08).
-  - **N1 — Guard quyền sở hữu**: nếu `orders.id = order_id` đã tồn tại với `customer_id` khác → `409 order_owner_conflict`, rollback toàn bộ (không có customer, order, items, audit, imported_event, mapping nào được ghi). `ON CONFLICT(id) DO UPDATE` không bao giờ cập nhật `customer_id`.
-  - Tạo hồ sơ khách hàng `customers`, ghi đơn vào `orders` (status nội bộ: `pending`, `delivered`, `cancelled`), thay thế `order_items`, ghi `business_events(kind='order_imported')` và `imported_events`.
+- **Bước 1 — Schema, NaN/Infinity & Non-email Validation**: Kiểm tra đúng 11 trường, kiểu dữ liệu nghiêm ngặt, ràng buộc tổng tiền, cấm email và kiểm tra cú pháp timestamp chuẩn ISO-8601 không NaN/Infinity.
+- **Bước 2 — Tenant Check**: Kiểm tra tenant tồn tại và đang kích hoạt trong `IdentityStore`.
+- **Bước 3 — HMAC Verification**: Đối chiếu chữ ký với secret của `(source_system, tenant)` bằng `hmac.compare_digest`.
+- **Bước 4 — Atomic Transaction & Replay / Collision Guard trong Business Store**:
+  - Đối chiếu bảng `imported_events` theo `(source_system, event_id)`:
+    - Nếu đã tồn tại (`existing_event`): kiểm tra toàn vẹn bản ghi (`payload_json`, `external_customer_id`, `order_id`, `tenant_id`, `signature`). Nếu bất kỳ thuộc tính nào khác biệt → **409 `event_id_collision`** (Review-Fix 2).
+    - Nếu khớp chính xác: đánh dấu `replay`. **Exact replay được miễn trừ timestamp drift check** (Review-Fix 3) để có thể heal identity mapping kể cả sau cửa sổ 300s.
+  - Nếu là event mới (`existing_event` is None): thực hiện **Timestamp Drift Check** nghiêm ngặt (từ chối nếu $> 300\text{s}$ hoặc tương lai $> 60\text{s}$).
+  - **Prior Business Import Authority (Review-Fix 1)**: Truy vấn `imported_events` để tìm customer đã ghi trước đó cho `(tenant, source_system, external_customer_id)`.
+    - Nếu đã có prior import: kiểm tra mapping ở identity store. Nếu mapping trỏ tới customer khác → **409 `external_customer_mapping_conflict`** (không cho phép mapping khác tách cùng `external_customer_id`). Dùng đúng prior `customer_id`.
+    - Nếu chưa có prior import: đọc mapping từ identity store; nếu chưa có thì cấp mới `cust_<uuid4_hex>`.
+  - **N1 — Guard quyền sở hữu**: nếu `orders.id = order_id` đã tồn tại với `customer_id` khác → `409 order_owner_conflict`, rollback toàn bộ. `ON CONFLICT(id) DO UPDATE` không bao giờ cập nhật `customer_id`.
+  - **Tạo hồ sơ và đơn hàng**: Nếu là event mới, ghi hồ sơ `customers`, đơn vào `orders`, thay thế `order_items`, ghi `business_events(kind='order_imported')` và `imported_events`.
   - **Rollback Guard**: Nếu có bất kỳ lỗi nào trong giao dịch (lỗi DB, constraint, FK, disk), toàn bộ thay đổi trong DB tenant được rollback sạch sẽ; mapping mới ở identity store không được lưu.
-- **Bước 6 — Cache Invalidation**: Ngay sau commit, gọi `ToolCache.invalidate(customer=customer_id, tenant_id=tenant_id, order_id=order_id)` — độc lập với tình trạng identity store.
-- **Bước 7 — Derived Identity Mapping (N4)**: ghi `external_customer_mappings` bằng `IdentityStore.link_external_customer` kiểu **insert-if-absent** (cùng customer → no-op, không audit trùng; khác customer → `409 external_customer_mapping_conflict`, không ghi đè) và `identity_events(kind='external_customer_mapped')` khi tạo mới.
+- **Bước 5 — Cache Invalidation**: Ngay sau commit, gọi `ToolCache.invalidate(customer=customer_id, tenant_id=tenant_id, order_id=order_id)` — độc lập với tình trạng identity store.
+- **Bước 6 — Derived Identity Mapping & Replay Healing (Review-Fix 2 & N4)**:
+  - Nếu là replay: chỉ heal identity mapping bằng đúng tuple đã lưu trong DB `(replay["tenant_id"], replay["source_system"], replay["external_customer_id"], replay["customer_id"])` và trả về `ImportResult(is_replay=True, status="already_processed")`.
+  - Nếu là event mới: ghi `external_customer_mappings` bằng `IdentityStore.link_external_customer` (insert-if-absent, kiểm tra prior import trước khi link để chống xung đột). Nếu identity store lỗi → `503 identity_mapping_pending`.
 
-### 2.4. Nhất quán xuyên hai store (N4)
+### 2.4. Nhất quán xuyên hai store (N4 & Review Fixes)
 
-Business store và identity store là hai database nên không có transaction chung. Thiết kế chọn **business `imported_events` là nguồn sự thật, mapping là chỉ mục dẫn xuất tự phục hồi**:
+Business store và identity store là hai database nên không có transaction chung. Thiết kế chọn **business `imported_events` luôn là nguồn sự thật tối thượng, mapping là chỉ mục dẫn xuất tự phục hồi**:
 
 | Tình huống | Hành vi |
 |---|---|
 | Identity write lỗi sau business commit (lỗi driver/DB, 5xx) | Đơn đã commit đúng 1 lần; trả `503 identity_mapping_pending` (retryable); không có mapping nửa vời. |
-| Retry cùng `event_id` | `already_processed` + hoàn tất mapping bằng đúng customer đã commit; không đơn/audit trùng. |
+| Retry cùng `event_id` với payload/customer khác | Từ chối 409 `event_id_collision`, không ghi đè và không heal sai. |
+| Exact replay sau 300s | Vượt qua drift check, heal mapping bằng đúng tuple đã lưu trong DB; trả `already_processed`. |
+| Cố tình link mapping khác cho cùng external customer | `link_external_customer` kiểm tra `imported_events`, từ chối 409 `external_customer_mapping_conflict`. |
 | Event mới của cùng external customer khi mapping còn thiếu | Dùng lại customer đã commit trong `imported_events` (không cấp customer thứ hai). |
 | Quên retry | `SalesImportAdapter.reconcile_mappings(tenant_id)` dựng lại mapping từ `imported_events`, idempotent, báo conflict thay vì ghi đè. |
 | Mapping đã trỏ customer khác (4xx) | Lỗi thật (409) được trả nguyên vẹn, không bị che thành `pending`. |
@@ -109,9 +117,9 @@ Business store và identity store là hai database nên không có transaction c
 | `test_tool_cache_invalidation_after_import` | P5-C | **PASS** |
 | `test_pre_signed_fixtures_validation` | P5-C | **PASS** |
 
-### 3.2. Regression test cho N1–N4 (SQLite, `tests/test_phase5_sales_review_fixes.py`, 26 test)
+### 3.2. Regression test cho N1–N4 và PR #39 review fixes (SQLite, `tests/test_phase5_sales_review_fixes.py`, 30 test)
 
-| Blocker | Test tiêu biểu | Xác nhận |
+| Finding / Blocker | Test tiêu biểu | Xác nhận |
 |---|---|---|
 | N1 | `test_other_customer_cannot_take_over_existing_order` | Customer B dùng lại `order_id` của A → 409 `order_owner_conflict`; order/items/audit/imported_events không đổi; không có customer/mapping của B. |
 | N1 | `test_same_external_id_from_other_source_is_a_different_customer_and_cannot_take_over` | Cùng `external_customer_id` ở `source_system` khác cũng không chiếm được đơn. |
@@ -124,8 +132,12 @@ Business store và identity store là hai database nên không có transaction c
 | N4 | `test_next_event_of_same_external_customer_reuses_committed_customer`, `test_repeated_identity_failures_never_create_second_customer` | Không bao giờ có customer thứ hai. |
 | N4 | `test_reconcile_is_idempotent_and_reports_conflicts_without_overwriting`, `test_link_external_customer_is_insert_if_absent`, `test_mapping_conflict_is_not_masked_as_pending` | Recovery/idempotency; không ghi đè mapping. |
 | N2 (offline) | `N2PostgresDdlContractTests` | DDL P5-C nằm trong `BUSINESS_DDL`/`IDENTITY_DDL`, idempotent, có khóa idempotency, và được áp dụng ở đường migrate. |
+| **PR #39 (1)** | `test_prior_business_import_is_authoritative_and_conflicting_mapping_rejected` | Prior business import là nguồn sự thật tối thượng; `link_external_customer` cố map external ID sang customer khác bị từ chối 409 `external_customer_mapping_conflict`. Sự kiện mới nếu mapping lệch cũng bị chặn 409. |
+| **PR #39 (2)** | `test_event_id_collision_rejected_with_different_payload_or_customer` | Cùng `(source_system, event_id)` nhưng payload/customer khác bị từ chối 409 `event_id_collision`. Replay chỉ heal mapping bằng đúng tuple đã lưu trong DB. |
+| **PR #39 (3)** | `test_exact_replay_after_300s_bypasses_drift_check_and_heals_mapping` | Exact replay sau 300s vượt qua drift check thành công và heal identity mapping; trong khi event mới ngoài cửa sổ 300s bị chặn 400 `invalid_timestamp_drift`. |
+| **PR #39 (4)** | `test_rejects_nan_and_infinity_timestamps` | Timestamp `NaN`, `Infinity`, `-Infinity`, `"nan"`, `"inf"` bị từ chối tại schema validation và parse. |
 
-### 3.3. PostgreSQL thật (N2 + hành vi N1/N4) — `tests/test_phase5_sales_postgres.py`, 10 test
+### 3.3. PostgreSQL thật (N2 + hành vi N1/N4 + PR #39) — `tests/test_phase5_sales_postgres.py`, 13 test
 
 Chạy trên PostgreSQL 16.2 + pgvector 0.6.2 dùng một lần (database `retailops_test`, `scripts/prepare_test_pgvector.py` như CI). Test tự `skip` khi không có `RETAILOPS_TEST_DATABASE_URL`; CI job `offline` cung cấp PostgreSQL service nên chạy thật.
 
@@ -141,15 +153,18 @@ Chạy trên PostgreSQL 16.2 + pgvector 0.6.2 dùng một lần (database `retai
 | `test_n4_identity_failure_after_commit_recovers_by_replay_and_reconcile` | 503 → replay → mapping đúng; reconcile no-op. |
 | `test_n4_next_event_after_identity_failure_reuses_customer` | Không sinh customer thứ hai. |
 | `test_link_external_customer_conflict_on_postgresql` | Insert-if-absent, 409 khi đổi chủ. |
+| `test_prior_business_import_authoritative_on_postgresql` | Prior business import chặn conflicting mapping trên PostgreSQL (409 `external_customer_mapping_conflict`). |
+| `test_event_id_collision_rejected_on_postgresql` | Event ID collision với payload khác bị từ chối 409 `event_id_collision` trên PostgreSQL. |
+| `test_exact_replay_after_300s_heals_mapping_on_postgresql` | Exact replay sau 300s bypass drift check và heal mapping thành công trên PostgreSQL. |
 
 ### 3.4. Kết quả tổng hợp (lần chạy cuối trên working tree của PR)
 
 ```text
-P5-C (15 gốc) + review-fixes (26):        Ran 41 tests  OK
-test_phase5_sales_postgres (PostgreSQL):  Ran 10 tests  OK
-python3 scripts/check_docs_contract.py:   SUCCESS (4/4 checks)
-python3 scripts/build_agent_notebook.py --check: AGENT_NOTEBOOK_SOURCE_SYNC_OK
-python -m unittest discover -s tests (kèm PostgreSQL + pgvector cục bộ): Ran 641 tests, OK (có PostgreSQL thật; ~242s)
+P5-C (15 gốc) + review-fixes (30):        Ran 45 tests  OK
+test_phase5_sales_postgres (PostgreSQL):  Ran 13 tests  OK (13 passed in CI PostgreSQL service)
+python scripts/check_docs_contract.py:    SUCCESS (4/4 checks)
+python scripts/check_eval_dataset.py:     EVAL_DATASET_OK baseline_v1.jsonl
+python scripts/build_agent_notebook.py --check: AGENT_NOTEBOOK_SOURCE_SYNC_OK
 ```
 
 Bao gồm regression `test_phase5_google_identity.py`, `test_schema_migration.py`, `test_persistent_identity.py`, `test_business_api.py`, `test_pr_a_correctness.py` (kiểm tra contract "schema hiện tại thì không `initialize()`").
@@ -164,9 +179,9 @@ Bao gồm regression `test_phase5_google_identity.py`, `test_schema_migration.py
 - [x] **P5-K1 (Smoke isolation)**: PASS trên commit `80f5156` (report `/opt/retailops/e2e-reports/LIVE_SMOKE_20261011T074654Z.json`).
 - [x] **P5-K2 (Runtime health)**: PASS trên commit `80f5156` (deploy workflow 38119061325).
 - [x] **P5-K3 (Google identity)**: PASS offline trên P5-B (12/12 tests PASS).
-- [ ] **P5-K4 (External mapping)**: **REMEDIATED — chờ re-review**. SQLite + PostgreSQL thật PASS; DDL/migration có; mapping tự phục hồi sau lỗi identity.
-- [ ] **P5-K5 (Event contract)**: **REMEDIATED — chờ re-review**. Đúng 11 trường, strict numeric types, idempotency PASS.
-- [ ] **P5-K6 (Order visibility)**: **REMEDIATED — chờ re-review**. Không thể đổi chủ `order_id`; regression test N1 trên SQLite và PostgreSQL.
+- [ ] **P5-K4 (External mapping)**: **REMEDIATED — chờ re-review PR #39**. SQLite + PostgreSQL thật PASS; DDL/migration có; prior business import là nguồn sự thật tối thượng, mapping tự phục hồi sau lỗi identity.
+- [ ] **P5-K5 (Event contract)**: **REMEDIATED — chờ re-review PR #39**. Đúng 11 trường, strict numeric types, cấm NaN/Infinity, event collision rejection, exact replay 300s drift-bypass PASS.
+- [ ] **P5-K6 (Order visibility)**: **REMEDIATED — chờ re-review PR #39**. Không thể đổi chủ `order_id`; regression test N1 trên SQLite và PostgreSQL.
 - [ ] **P5-K7 (Complaint workflow)**: PENDING đến P5-D.
 - [ ] **P5-K8 (Confirmation and audit)**: PENDING đến P5-D.
 
@@ -174,7 +189,7 @@ Các mục K4–K6 chỉ được chuyển `[x]` bởi reviewer sau khi CI của
 
 ---
 
-## 5. Review độc lập — 2026-10-11 và cách đã xử lý
+## 5. Review độc lập & Xử lý 4 Finding tại PR #39 (2026-10-11)
 
 ### Blocker N1 — trùng `order_id` có thể đổi chủ đơn hàng — ĐÃ SỬA
 
@@ -186,7 +201,7 @@ Các mục K4–K6 chỉ được chuyển `[x]` bởi reviewer sau khi CI của
 
 P5-C thêm `order_items`/`imported_events` trong SQLite `retailops/business/schema.py`, nhưng `retailops/storage/pg_schema.py` không thêm các bảng này vào DDL/migration. Tương tự, `external_customer_mappings` chỉ được tạo trong SQLite `retailops/identity/store.py`, không có trong `IDENTITY_DDL`/migration PostgreSQL. Adapter sẽ không chạy trên backend PostgreSQL đang deploy.
 
-**Sửa:** xem §2.5. Bằng chứng: §3.3 (10 test trên PostgreSQL thật, gồm migrate từ schema thiếu bảng, chạy 2 lần, giữ dữ liệu cũ).
+**Sửa:** xem §2.5. Bằng chứng: §3.3 (13 test trên PostgreSQL thật, gồm migrate từ schema thiếu bảng, chạy 2 lần, giữ dữ liệu cũ).
 
 ### Lỗi mức vừa N3 — contract không thật sự “exactly 11 fields” và kiểm tra số chưa chặt — ĐÃ SỬA
 
@@ -200,12 +215,32 @@ Business transaction commit trước, sau đó mới ghi `external_customer_mapp
 
 **Sửa:** xem §2.4 (business là nguồn sự thật + mapping insert-if-absent + retry/reconcile). Regression: `N4MappingRecoveryTests` (7 test SQLite) + 2 test PostgreSQL.
 
-**Giới hạn còn lại (nêu rõ):** không có transaction phân tán; trong cửa sổ giữa business commit và identity write, mapping tạm thiếu nhưng API trả `503 identity_mapping_pending` để caller retry, và không thể phát sinh customer thứ hai hay đổi chủ đơn. Chưa có job reconcile định kỳ — `reconcile_mappings` là hàm thủ công/gọi từ script vận hành; việc lên lịch thuộc phạm vi triển khai sau, không thuộc PR này.
+### 4 Finding bổ sung từ Review PR #39 — ĐÃ SỬA ĐÚNG PHẠM VI
+
+1. **(1) Prior business import luôn là nguồn sự thật (Authoritative Source of Truth):**
+   - Không cho phép bất kỳ mapping identity nào tách hoặc trỏ `external_customer_id` đã từng import sang customer khác.
+   - `link_external_customer` truy vấn `imported_events` trước khi ghi; nếu đã có prior import với `customer_id` khác → từ chối **409 `external_customer_mapping_conflict`**.
+   - Khi ingest event mới, nếu mapping hiện tại mâu thuẫn với prior import trong `imported_events` → từ chối **409 `external_customer_mapping_conflict`**.
+
+2. **(2) Replay cùng `(source_system, event_id)` reject collision nếu khác payload/external_customer_id; chỉ heal stored tuple:**
+   - Khi tìm thấy event đã import, adapter so sánh `payload_json`, `external_customer_id`, `order_id`, `tenant_id`, `signature`.
+   - Nếu bất kỳ trường nào sai lệch → từ chối **409 `event_id_collision`**.
+   - Nếu khớp chính xác (replay hợp lệ), adapter chỉ thực hiện heal identity mapping bằng đúng bộ giá trị `(tenant_id, source_system, external_customer_id, customer_id)` đã lưu trong DB, không lấy dữ liệu chưa kiểm chứng từ caller.
+
+3. **(3) Exact replay được phép bypass timestamp drift-check sau 300s để heal mapping:**
+   - Trong trường hợp identity mapping bị lỗi (503) và caller retry sau hơn 300 giây, việc chặn drift check trên replay sẽ khiến hệ thống không thể tự phục hồi mapping.
+   - Đã tách luồng: event mới phải vượt qua `validate_timestamp(max_age_seconds=300, max_future_seconds=60)`. Nếu là exact replay của event đã lưu hợp lệ trong `imported_events`, drift check được bỏ qua để heal identity mapping thành công.
+
+4. **(4) Từ chối nghiêm ngặt timestamp `NaN` / `Infinity`:**
+   - Bổ sung kiểm tra `math.isnan(ts)` và `math.isinf(ts)` trong `parse_timestamp()` và `validate_timestamp()`.
+   - Kiểm tra các biểu diễn chuỗi vô hạn (`"nan"`, `"+nan"`, `"-nan"`, `"inf"`, `"-inf"`, `"infinity"`, v.v.) và raise `ValueError` $\rightarrow$ trả về 400 `invalid_timestamp_format` hoặc `invalid_timestamp_drift`.
+   - `validate_event_schema(data)` trực tiếp parse timestamp để từ chối ngay ở bước schema validation.
 
 ## 6. Kết luận P5-C
 
-Chặng P5-C **đã sửa N1–N4 và chờ re-review**:
-- Không event nào đổi được chủ `order_id`; contract đúng 11 trường với kiểu số nghiêm ngặt.
-- DDL/migration PostgreSQL cho `order_items`, `imported_events`, `external_customer_mappings` đã có và được kiểm bằng PostgreSQL thật.
-- Mapping không lệch khi identity write lỗi sau business commit; có retry và reconcile idempotent.
-- Chưa deploy, chưa P5-D; K1–K8 không bị mở lại. Sau khi reviewer xác nhận CI xanh mới cập nhật acceptance K4–K6.
+Chặng P5-C **đã sửa toàn diện N1–N4 và 4 finding PR #39, sẵn sàng cho review**:
+- Prior business import là nguồn sự thật duy nhất; không thể đổi chủ đơn hàng hoặc tách mapping trái phép.
+- Event ID collision được phát hiện và từ chối 409; exact replay heal mapping an toàn sau 300s.
+- Contract đúng 11 trường, strict integer, loại bỏ hoàn toàn NaN/Infinity.
+- DDL/migration PostgreSQL đầy đủ, kiểm thử với 13 test PostgreSQL.
+- Giữ nguyên phạm vi: không làm P5-D, không live OAuth, không deploy, không đo lường paid/model. Dừng chờ review.
