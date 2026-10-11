@@ -787,6 +787,11 @@ class IdentityStore:
         return self.link_external_customer(tenant_id, source_system, external_customer_id, customer_id)
 
     def link_external_customer(self, tenant_id, source_system, external_customer_id, customer_id):
+        """Insert-if-absent mapping (tenant, source_system, external_customer_id) -> customer_id.
+
+        Idempotent for the same customer (``created`` False, no extra audit event). A mapping that
+        already points at a different customer is never overwritten: 409 external_customer_mapping_conflict.
+        """
         tenant_clean = str(tenant_id).strip()
         source_clean = str(source_system).strip()
         ext_cust_clean = str(external_customer_id).strip()
@@ -798,13 +803,20 @@ class IdentityStore:
                 'external_customer_id phải là mã định danh từ hệ thống nguồn, không dùng email làm khóa.')
         self.tenant(tenant_clean)
         now = time.time()
-        mapping_id = str(uuid.uuid4())
         with self.connection(write=True) as db:
+            row = db.execute(
+                'SELECT * FROM external_customer_mappings WHERE tenant_id=? AND source_system=? AND external_customer_id=?',
+                (tenant_clean, source_clean, ext_cust_clean)
+            ).fetchone()
+            if row is not None:
+                require(row['customer_id'] == cid_clean, 409, 'external_customer_mapping_conflict',
+                        'external_customer_id đã được ánh xạ tới khách hàng khác trong cửa hàng này.')
+                return {**dict(row), 'created': False}
+            mapping_id = str(uuid.uuid4())
             db.execute('''INSERT INTO external_customer_mappings (id, tenant_id, source_system, external_customer_id, customer_id, created_at, updated_at)
-                          VALUES (?,?,?,?,?,?,?)
-                          ON CONFLICT(tenant_id, source_system, external_customer_id)
-                          DO UPDATE SET customer_id=excluded.customer_id, updated_at=excluded.updated_at''',
+                          VALUES (?,?,?,?,?,?,?)''',
                        (mapping_id, tenant_clean, source_clean, ext_cust_clean, cid_clean, now, now))
             self.event(db, 'external_customer_mapped', tenant_clean, None)
         return {'id': mapping_id, 'tenant_id': tenant_clean, 'source_system': source_clean,
-                'external_customer_id': ext_cust_clean, 'customer_id': cid_clean, 'updated_at': now}
+                'external_customer_id': ext_cust_clean, 'customer_id': cid_clean,
+                'created_at': now, 'updated_at': now, 'created': True}

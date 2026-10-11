@@ -5,9 +5,9 @@
 - G2 đã PASS trên `8868c5c498b1c64241bc791eb0166d82415cfeb0`.
 - Phase 5 P5-A smoke isolation và G4 controlled smoke đã PASS; latest deployed evidence dùng merged SHA `80f51569b3bef5ae0793bac1593fb91e39558477` và report `/opt/retailops/e2e-reports/LIVE_SMOKE_20261011T074654Z.json`.
 - Phase 5 P5-B Google test identity & tenant isolation đã merge trên [PR #38](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/38) tại merged SHA `80f51569b3bef5ae0793bac1593fb91e39558477`; full CI và deploy workflow [38119061325](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/38119061325) PASSED. P5-K2 runtime health PASS; smoke report `/opt/retailops/e2e-reports/LIVE_SMOKE_20261011T074654Z.json`.
-- Phase 5 P5-C sales simulator và import contract (`external_customer_id` mapping, canonical event contract 11 trường, HMAC-SHA256, timestamp drift, idempotency/replay, atomic rollback 100%, không dùng email làm khóa) đã HOÀN THÀNH offline/dev; 15/15 tests PASS (xem [PHASE_5_C_EVIDENCE.md](phase5/PHASE_5_C_EVIDENCE.md)). P5-K4, P5-K5, P5-K6 đã đạt offline.
+- Phase 5 P5-C sales simulator và import contract đã sửa N1 (order_id không đổi chủ), N2 (DDL/migration PostgreSQL), N3 (đúng 11 trường, strict numeric types), N4 (mapping tự phục hồi sau lỗi identity); 15/15 test gốc + 26 test review-fix + 10 test PostgreSQL thật PASS. P5-K4–K6 REMEDIATED, chờ re-review/CI của PR; xem [PHASE_5_C_EVIDENCE.md](phase5/PHASE_5_C_EVIDENCE.md).
 - EC2 image `sha256:64d15c4aee299d4468422aa563b42cfce4631883090d832389d69f36b716091e`; web/admin/PostgreSQL/Caddy healthy; reservation cũ được giữ nguyên.
-- Bước kế tiếp là P5-D: cùng account chạy complaint E2E với đơn đã import, sau đó tạo PR chờ owner review.
+- Bước kế tiếp là re-review P5-C; P5-D complaint E2E vẫn HOLD cho tới khi P5-K4–K6 được reviewer xác nhận.
 - Chưa có G5 `READY FOR MEASUREMENT`, chưa chạy full benchmark live/paid.
 
 > Nguồn chi tiết: [Phase 5 acceptance](phase5/PHASE_5_ACCEPTANCE_CRITERIA.md) và [Phase 5 handoff](phase5/PHASE_5_EXECUTION_HANDOFF.md).

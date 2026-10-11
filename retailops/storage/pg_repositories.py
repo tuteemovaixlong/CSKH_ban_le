@@ -1,7 +1,7 @@
 """Same business and identity operations, using PostgreSQL transactions and DDL."""
 from retailops.business.store import BusinessStore
 from retailops.identity.store import IdentityStore
-from retailops.storage.pg_schema import initialize
+from retailops.storage.pg_schema import P5C_IDENTITY_DDL, initialize
 from retailops.storage.postgres import IDENTITY_SCHEMA, check_schema, tenant_schema, transaction
 
 
@@ -30,7 +30,11 @@ class PostgresIdentityStore(IdentityStore):
             with self.connection(write=True) as db:
                 row = db.raw.execute("SELECT version FROM retailops_schema WHERE component='identity'").fetchone()
                 if row and row.get('version') in (1, 2, 3):
-                    initialize(db, IDENTITY_SCHEMA, 'identity')
+                    initialize(db, IDENTITY_SCHEMA, 'identity')  # also applies P5C_IDENTITY_DDL
+                else:
+                    # P5-C: an already-current schema gets the additive, idempotent mapping-table DDL.
+                    for statement in P5C_IDENTITY_DDL:
+                        db.raw.execute(statement)
         try:
             with self.connection(write=True) as db:
                 db.raw.execute("""

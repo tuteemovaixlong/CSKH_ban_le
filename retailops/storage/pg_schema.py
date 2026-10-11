@@ -113,6 +113,42 @@ IDENTITY_DDL = [
     'CREATE INDEX IF NOT EXISTS idx_reconciliation_journal_tenant ON reconciliation_journal(tenant_id, colliding_customer_id)',
 ]
 
+# Phase 5 / P5-C (sales import). Additive and idempotent: used for fresh schemas AND applied to
+# existing schemas by initialize()/`database migrate`, without bumping the schema version.
+P5C_BUSINESS_DDL = [
+    '''CREATE TABLE IF NOT EXISTS order_items (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL,
+        order_id TEXT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+        product_id TEXT NOT NULL REFERENCES products(id), variant_id TEXT,
+        product_title TEXT NOT NULL, variant_name TEXT,
+        quantity INTEGER NOT NULL CHECK(quantity > 0),
+        unit_price BIGINT NOT NULL CHECK(unit_price >= 0),
+        subtotal BIGINT NOT NULL CHECK(subtotal >= 0),
+        created_at DOUBLE PRECISION NOT NULL)''',
+    'CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id)',
+    '''CREATE TABLE IF NOT EXISTS imported_events (id TEXT PRIMARY KEY, source_system TEXT NOT NULL,
+        event_id TEXT NOT NULL, tenant_id TEXT NOT NULL, external_customer_id TEXT NOT NULL,
+        customer_id TEXT NOT NULL, order_id TEXT NOT NULL, status TEXT NOT NULL,
+        total BIGINT NOT NULL, currency TEXT NOT NULL, payload_json TEXT NOT NULL,
+        signature TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL,
+        UNIQUE(source_system, event_id))''',
+    'CREATE INDEX IF NOT EXISTS idx_imported_events_tenant_order ON imported_events(tenant_id, order_id)',
+    '''CREATE INDEX IF NOT EXISTS idx_imported_events_external
+        ON imported_events(tenant_id, source_system, external_customer_id)''',
+]
+
+P5C_IDENTITY_DDL = [
+    '''CREATE TABLE IF NOT EXISTS external_customer_mappings (id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL REFERENCES tenants(id), source_system TEXT NOT NULL,
+        external_customer_id TEXT NOT NULL, customer_id TEXT NOT NULL,
+        created_at DOUBLE PRECISION NOT NULL, updated_at DOUBLE PRECISION NOT NULL,
+        UNIQUE(tenant_id, source_system, external_customer_id))''',
+    '''CREATE INDEX IF NOT EXISTS idx_ext_cust_mappings_tenant_cust
+        ON external_customer_mappings(tenant_id, customer_id)''',
+]
+
+BUSINESS_DDL.extend(P5C_BUSINESS_DDL)
+IDENTITY_DDL.extend(P5C_IDENTITY_DDL)
+
 
 CACHE_DDL = [
     '''CREATE TABLE IF NOT EXISTS semantic_cache (
@@ -276,6 +312,8 @@ def initialize(db, schema, component):
                 row = {'component': 'identity', 'version': IDENTITY_SCHEMA_CURRENT}
             if row['version'] != IDENTITY_SCHEMA_CURRENT:
                 raise ValueError('Unsupported PostgreSQL schema version or component.')
+            for statement in P5C_IDENTITY_DDL:
+                db.raw.execute(statement)
         if component == 'business':
             db.raw.execute(sql.SQL('SET LOCAL search_path TO {}, pg_catalog').format(sql.Identifier(schema)))
             if row['version'] == 1:
@@ -325,6 +363,8 @@ def initialize(db, schema, component):
                 'CREATE INDEX IF NOT EXISTS idx_feedback_conv ON conversation_feedback(conversation_id)',
                 'CREATE INDEX IF NOT EXISTS idx_feedback_type ON conversation_feedback(feedback_type)',
             ):
+                db.raw.execute(statement)
+            for statement in P5C_BUSINESS_DDL:
                 db.raw.execute(statement)
         assert_schema(db, schema, component)
         return False

@@ -44,12 +44,12 @@ Nguồn hiện tại: log owner gửi ngày 2026-10-10, chưa đọc trực ti�
 
 Real Google OAuth live remains pending; the controlled smoke does not call Google OAuth or model inference.
 
-### P5-C — Sales simulator và import contract — DONE
+### P5-C — Sales simulator và import contract — REMEDIATED / AWAITING RE-REVIEW
 
 Simulator chỉ chạy offline/dev và phát event JSON qua adapter được kiểm soát. Mỗi event có đủ 11 trường: `source_system`, `event_id`, `tenant`, `external_customer_id`, `order_id`, trạng thái, items, total, currency, timestamp và signature.
 
 Adapter kiểm schema, HMAC/signature, tenant/customer mapping, timestamp hợp lệ và idempotency theo `source_system + event_id`. Adapter ghi audit event và dùng service boundary; simulator không ghi thẳng DB; không dùng email làm khóa; rollback sạch sẽ khi lỗi DB.
-Evidence: [PHASE_5_C_EVIDENCE.md](PHASE_5_C_EVIDENCE.md), suite `tests/test_phase5_sales_simulator_import.py` (15/15 PASS).
+Evidence: [PHASE_5_C_EVIDENCE.md](PHASE_5_C_EVIDENCE.md), suite `tests/test_phase5_sales_simulator_import.py` (15/15 PASS), `tests/test_phase5_sales_review_fixes.py` (26 test cho N1–N4) và `tests/test_phase5_sales_postgres.py` (10 test PostgreSQL); N1–N4 của independent review đã sửa, chờ re-review — chưa deploy, chưa P5-D.
 
 ### P5-D — Cùng account chạy complaint E2E — NEXT
 

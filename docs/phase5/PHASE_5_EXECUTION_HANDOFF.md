@@ -1,9 +1,9 @@
 # Phase 5 Execution Handoff — Identity, Sales Simulator, Complaint E2E
 
-## Prompt Gemini — P5-C trigger
+## Prompt Gemini — P5-C remediation trigger
 
 ```text
-Đọc PHASE_5_PLAN.md và PHASE_5_ACCEPTANCE_CRITERIA.md. Chỉ triển khai P5-C offline/dev: sales simulator + service-boundary import adapter với canonical event fields source_system/event_id/tenant/external_customer_id/order_id/status/items/total/currency/timestamp/signature; HMAC, timestamp/schema/tenant checks, tenant-scoped mapping, audit và idempotency/replay. Không dùng email/buyer_identifier làm khóa; simulator không ghi thẳng DB. Thêm signed fixtures, rollback/duplicate tests và cache invalidation sau commit. Không làm P5-D, Google live OAuth, deploy, model/paid measurement hay mở lại K1-K8. Cập nhật evidence/docs, tạo PR và dừng chờ review.
+P5-C đã implement nhưng review bị BLOCK (N1/N2/N3/N4 đã sửa và đang chờ re-review). Phạm vi lượt này là: sửa N1/N2/N3/N4 trong PHASE_5_C_EVIDENCE.md: chặn order_id đổi customer, thêm migration/DDL PostgreSQL cho toàn bộ P5-C tables, enforce exact schema + strict numeric types, và bảo đảm mapping không lệch sau lỗi post-commit. Thêm regression tests cho từng lỗi, chạy test/contract checks, cập nhật evidence. Không làm P5-D, Google live OAuth, deploy, model/paid measurement hay mở lại K1-K8. Tạo PR rồi dừng chờ review.
 ```
 
 ## Baseline và trạng thái
@@ -21,8 +21,8 @@ Nguồn smoke PASS là log owner gửi ngày 2026-10-11; chưa đọc trực ti�
 1. Read Phase 5 plan and acceptance; verify G2 offline replay on merged SHA `8868c5c498b1c64241bc791eb0166d82415cfeb0` (CI/contracts, frozen hashes, mock250 263 attempts with quality185/237, git diff --check) and save evidence. If G2 is not PASS, stop.
 2. P5-A smoke isolation and G4 controlled smoke: DONE/PASS trên `dd0947a`.
 3. Implement P5-B identity mapping using a dedicated Google test account: DONE/MERGED/DEPLOYED; offline tests 12/12 PASS (evidence: [PHASE_5_B_EVIDENCE.md](PHASE_5_B_EVIDENCE.md)).
-4. Implement P5-C simulator/import boundary with signed fixtures and replay/idempotency tests: DONE/PASS (offline tests 15/15, evidence: [PHASE_5_C_EVIDENCE.md](PHASE_5_C_EVIDENCE.md)).
-5. Implement P5-D complaint flow using the same session and audit assertions. — NEXT
+4. Implement P5-C simulator/import boundary: IMPLEMENTED; N1/N2/N3/N4 REMEDIATED (SQLite + PostgreSQL thật); AWAITING RE-REVIEW trên PR.
+5. Implement P5-D complaint flow using the same session and audit assertions: HOLD until P5-C re-review passes.
 6. Run CI and contract checks; obtain owner review for P5-C/P5-D PR.
 7. After P5-C/P5-D review and explicit authorization, deploy only the reviewed commit and run one controlled G4 smoke; save raw report.
 8. Complete P5-K1…P5-K8 and update status docs. Stop before G5 unless separately authorized.

@@ -68,6 +68,8 @@ def ensure_import_tables(db):
                   UNIQUE(source_system, event_id)
                 )""")
     db.execute('CREATE INDEX IF NOT EXISTS idx_imported_events_tenant_order ON imported_events(tenant_id, order_id)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_imported_events_external '
+               'ON imported_events(tenant_id, source_system, external_customer_id)')
 
 
 def initialize(db):
