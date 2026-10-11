@@ -1,12 +1,13 @@
 # BÁO CÁO TIẾN ĐỘ & TRẠNG THÁI HỆ THỐNG RETAILOPS 2026
 
-## Cập nhật hiện hành — Phase 5 handoff (2026-10-10)
+## Cập nhật hiện hành — Phase 5 handoff (2026-10-11)
 
 - G2 đã PASS trên `8868c5c498b1c64241bc791eb0166d82415cfeb0`.
-- Phase 5 P5-A smoke isolation và G4 controlled smoke đã PASS trên merged/deployed `dd0947aad3a2dc8884710c8f6c609f42b67417bd`; report `/opt/retailops/e2e-reports/LIVE_SMOKE_20261010T042118Z.json`.
-- Phase 5 P5-B Google test identity & tenant isolation đã hoàn thành trên [PR #38](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/38); candidate commit `682e982459a5abfad4459707d729d2fd8f1f28a5`; full CI PASSED (CI run 38028114147 [colab-python313 + offline 590/590 OK, headroom artifact 11660878586], Ops Console run 38028114155 [windows, ubuntu, postgres]); verify đầy đủ /api/profile và /api/session; loại bỏ hoàn toàn `ORDER BY id LIMIT 1`. Đang dừng chờ owner review.
-- EC2 image `ada57b5225d6` và web/admin/PostgreSQL healthy; reservation cũ được giữ nguyên.
-- Bước kế tiếp là [Phase 5 plan](phase5/PHASE_5_PLAN.md): P5-C sales simulator và import contract (`external_customer_id` mapping), sau đó P5-D complaint E2E cùng customer session.
+- Phase 5 P5-A smoke isolation và G4 controlled smoke đã PASS; latest deployed evidence dùng merged SHA `80f51569b3bef5ae0793bac1593fb91e39558477` và report `/opt/retailops/e2e-reports/LIVE_SMOKE_20261011T074654Z.json`.
+- Phase 5 P5-B Google test identity & tenant isolation đã merge trên [PR #38](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/38) tại merged SHA `80f51569b3bef5ae0793bac1593fb91e39558477`; full CI và deploy workflow [38119061325](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/38119061325) PASSED. P5-K2 runtime health PASS; smoke report `/opt/retailops/e2e-reports/LIVE_SMOKE_20261011T074654Z.json`.
+- Phase 5 P5-C sales simulator và import contract (`external_customer_id` mapping, canonical event contract 11 trường, HMAC-SHA256, timestamp drift, idempotency/replay, atomic rollback 100%, không dùng email làm khóa) đã HOÀN THÀNH offline/dev; 15/15 tests PASS (xem [PHASE_5_C_EVIDENCE.md](phase5/PHASE_5_C_EVIDENCE.md)). P5-K4, P5-K5, P5-K6 đã đạt offline.
+- EC2 image `sha256:64d15c4aee299d4468422aa563b42cfce4631883090d832389d69f36b716091e`; web/admin/PostgreSQL/Caddy healthy; reservation cũ được giữ nguyên.
+- Bước kế tiếp là P5-D: cùng account chạy complaint E2E với đơn đã import, sau đó tạo PR chờ owner review.
 - Chưa có G5 `READY FOR MEASUREMENT`, chưa chạy full benchmark live/paid.
 
 > Nguồn chi tiết: [Phase 5 acceptance](phase5/PHASE_5_ACCEPTANCE_CRITERIA.md) và [Phase 5 handoff](phase5/PHASE_5_EXECUTION_HANDOFF.md).

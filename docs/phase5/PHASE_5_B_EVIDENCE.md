@@ -1,7 +1,7 @@
 # Phase 5 — P5-B Google Test Identity Evidence
 
 - **Baseline SHA (merged)**: `dd0947aad3a2dc8884710c8f6c609f42b67417bd` (PR #37)
-- **Candidate SHA**: `682e982459a5abfad4459707d729d2fd8f1f28a5` (Branch `feat/phase5-google-test-identity`)
+- **Candidate SHA (pre-merge evidence)**: `682e982459a5abfad4459707d729d2fd8f1f28a5` (Branch `feat/phase5-google-test-identity`)
 - **Workstream**: `P5-B — Google test identity` (PR #38)
 - **PR URL**: [PR #38](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/38)
 - **Full CI Gate**: **PASSED (ALL GREEN)**
@@ -19,8 +19,17 @@
   - Không dùng email đơn độc làm khóa; distinct sub luôn tạo distinct principal/customer.
   - Verify `/api/session` và `/api/profile` trả về đầy đủ `tenant_id`, `principal_id`, `customer_id`, `name`, `role`.
   - Google callback sử dụng deterministic tenant resolution, không bao giờ fallback vào tenant smoke (`e2e-`, `smoke-`, `synthetic-`).
-  - Kiểm thử offline 100%, không lưu credential thật trong repository; không deploy EC2; không gọi Google live.
-- **Trạng thái P5-B**: **PASS (ĐẠT)** — Sẵn sàng chuyển giao owner review.
+  - Phạm vi pre-merge là offline, không lưu credential thật trong repository và không gọi Google live; post-merge deploy/smoke evidence được ghi tại mục 6.
+- **Trạng thái P5-B**: **PASS (ĐẠT), MERGED và DEPLOYED** — merged SHA và runtime evidence được ghi tại mục 6.
+
+## 6. Post-merge deployment evidence (2026-10-11)
+
+- **Merged SHA deployed**: `80f51569b3bef5ae0793bac1593fb91e39558477`.
+- **Deploy workflow**: [run 38119061325](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/38119061325), [job 114417646620](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/38119061325/job/114417646620) — **SUCCESS**.
+- **EC2 image digest**: `sha256:64d15c4aee299d4468422aa563b42cfce4631883090d832389d69f36b716091e` for `web` and `admin`.
+- **Runtime**: web, admin, PostgreSQL and Caddy healthy; HTTPS smoke passed.
+- **Smoke report**: `/opt/retailops/e2e-reports/LIVE_SMOKE_20261011T074654Z.json` (owner-provided EC2 path).
+- **Scope note**: controlled operational smoke only; it does not prove real Google OAuth, model inference, G5 readiness or P5-C.
 
 ---
 
@@ -98,5 +107,4 @@ Ran 12 tests in 1.465s — OK
 
 ## 5. Kết luận P5-B
 
-Chặng P5-B (Google Test Identity & Tenant Isolation) **CHÍNH THỨC HOÀN THÀNH VÀ ĐẠT (PASS)** theo đúng các tiêu chí của `docs/phase5/PHASE_5_PLAN.md` và `docs/phase5/PHASE_5_EXECUTION_HANDOFF.md`.
-Dừng tại đây để chờ owner review PR trước khi chuyển sang P5-C (Sales simulator & import contract).
+Chặng P5-B (Google Test Identity & Tenant Isolation) **CHÍNH THỨC HOÀN THÀNH, MERGED VÀ ĐẠT (PASS)** theo đúng các tiêu chí của `docs/phase5/PHASE_5_PLAN.md` và `docs/phase5/PHASE_5_EXECUTION_HANDOFF.md`. P5-C (Sales simulator & import contract) là workstream kế tiếp.

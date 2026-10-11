@@ -17,10 +17,13 @@ Phase 5 chỉ đạt khi toàn bộ tiêu chí dưới đây có evidence trên 
 
 ## Tiến độ theo chặng
 
-- **P5-K1 (Smoke isolation):** PASS trên PR #37 `dd0947a` (operational smoke report owner gửi).
+- **P5-K1 (Smoke isolation):** PASS trên PR #37 `dd0947a`; latest controlled smoke on deployed SHA `80f51569b3bef5ae0793bac1593fb91e39558477` also PASS (report `/opt/retailops/e2e-reports/LIVE_SMOKE_20261011T074654Z.json`).
+- **P5-K2 (Runtime health):** PASS operationally trên merged SHA `80f51569b3bef5ae0793bac1593fb91e39558477`; deploy workflow 38119061325 SUCCESS, web/admin/PostgreSQL/Caddy healthy, smoke report `/opt/retailops/e2e-reports/LIVE_SMOKE_20261011T074654Z.json`.
 - **P5-K3 (Google identity):** Offline implementation PASS trên PR P5-B (xem [PHASE_5_B_EVIDENCE.md](PHASE_5_B_EVIDENCE.md)); Google OAuth thật live PENDING (chờ môi trường live/owner review).
-- **P5-K4 (External mapping):** PENDING đến P5-C (`external_customer_id` mapping trong sales simulator & import contract).
-- **P5-K2, P5-K5…P5-K8:** Chưa nghiệm thu; đang dừng chờ owner review trước khi sang P5-C.
+- **P5-K4 (External mapping):** PASS trên P5-C (xem [PHASE_5_C_EVIDENCE.md](PHASE_5_C_EVIDENCE.md)); mapping `external_customer_id` theo tenant scope, không dùng email làm khóa, ghi audit vào `identity_events`.
+- **P5-K5 (Event contract):** PASS trên P5-C (xem [PHASE_5_C_EVIDENCE.md](PHASE_5_C_EVIDENCE.md)); event schema 11 trường, HMAC-SHA256, timestamp drift, tenant binding, idempotency/replay và atomic rollback 100%.
+- **P5-K6 (Order visibility):** PASS trên P5-C (xem [PHASE_5_C_EVIDENCE.md](PHASE_5_C_EVIDENCE.md)); tạo/cập nhật đơn hàng và chi tiết `order_items`; khách hàng chỉ thấy đơn của mình, truy cập chéo bị từ chối 404.
+- **P5-K7…P5-K8:** PENDING đến P5-D (Complaint workflow E2E và confirmation).
 
 ## Điều kiện dừng
 
