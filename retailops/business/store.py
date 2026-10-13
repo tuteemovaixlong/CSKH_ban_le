@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from retailops.core import ApiError, REASONS, fields, require
 from retailops.schema import migrate
-from retailops.business.schema import initialize as initialize_schema
+from retailops.business.schema import initialize as initialize_schema, ensure_import_tables
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -63,6 +63,7 @@ class BusinessStore:
             db.execute('PRAGMA journal_mode=WAL')
         with self.connection(write=True) as db:
             migrate(db, 'business', initialize_schema)
+            ensure_import_tables(db)
 
     @contextmanager
     def connection(self, write=False, *, create=False):
@@ -575,6 +576,15 @@ class BusinessStore:
             order = self.owned(db, customer, oid)
             self.log(db, customer, "order_viewed", oid)
             return order
+
+    def order_items(self, order_id):
+        with self.connection() as db:
+            return [dict(r) for r in db.execute("SELECT * FROM order_items WHERE order_id=? ORDER BY id", (order_id,))]
+
+    def imported_event(self, source_system, event_id):
+        with self.connection() as db:
+            row = db.execute("SELECT * FROM imported_events WHERE source_system=? AND event_id=?", (source_system, event_id)).fetchone()
+            return dict(row) if row else None
 
     def events(self, customer):
         with self.connection() as db:

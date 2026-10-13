@@ -36,6 +36,42 @@ def migrate_v3(db):
             db.execute('CREATE INDEX IF NOT EXISTS idx_orders_product_id ON orders(product_id)')
 
 
+def ensure_import_tables(db):
+    db.execute("""CREATE TABLE IF NOT EXISTS order_items (
+                  id TEXT PRIMARY KEY,
+                  tenant_id TEXT NOT NULL,
+                  order_id TEXT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+                  product_id TEXT NOT NULL REFERENCES products(id),
+                  variant_id TEXT,
+                  product_title TEXT NOT NULL,
+                  variant_name TEXT,
+                  quantity INTEGER NOT NULL CHECK (quantity > 0),
+                  unit_price INTEGER NOT NULL CHECK (unit_price >= 0),
+                  subtotal INTEGER NOT NULL CHECK (subtotal >= 0),
+                  created_at REAL NOT NULL
+                )""")
+    db.execute('CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id)')
+    db.execute("""CREATE TABLE IF NOT EXISTS imported_events (
+                  id TEXT PRIMARY KEY,
+                  source_system TEXT NOT NULL,
+                  event_id TEXT NOT NULL,
+                  tenant_id TEXT NOT NULL,
+                  external_customer_id TEXT NOT NULL,
+                  customer_id TEXT NOT NULL,
+                  order_id TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  total INTEGER NOT NULL,
+                  currency TEXT NOT NULL,
+                  payload_json TEXT NOT NULL,
+                  signature TEXT NOT NULL,
+                  created_at REAL NOT NULL,
+                  UNIQUE(source_system, event_id)
+                )""")
+    db.execute('CREATE INDEX IF NOT EXISTS idx_imported_events_tenant_order ON imported_events(tenant_id, order_id)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_imported_events_external '
+               'ON imported_events(tenant_id, source_system, external_customer_id)')
+
+
 def initialize(db):
     migrate_v3(db)
     db.execute("""CREATE TABLE IF NOT EXISTS orders (
@@ -47,6 +83,7 @@ def initialize(db):
                 )""")
     db.execute('CREATE INDEX IF NOT EXISTS idx_orders_customer_id ON orders(customer_id)')
     db.execute('CREATE INDEX IF NOT EXISTS idx_orders_product_id ON orders(product_id)')
+    ensure_import_tables(db)
     db.execute("""CREATE TABLE IF NOT EXISTS proposals (
                   id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, order_id TEXT NOT NULL REFERENCES orders(id),
                   order_version INTEGER NOT NULL, reason TEXT NOT NULL,

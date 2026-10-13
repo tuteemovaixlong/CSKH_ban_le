@@ -7,8 +7,8 @@ Xây một đường kiểm thử dev/synthetic có dữ liệu bán hàng mô p
 ## Hiện trạng đầu vào
 
 - G2 baseline SHA: `8868c5c498b1c64241bc791eb0166d82415cfeb0`.
-- Current merged/deployed SHA: `dd0947aad3a2dc8884710c8f6c609f42b67417bd`.
-- EC2 deployment và 4 containers: healthy; P5-A smoke isolation và G4 controlled smoke PASS. Report: `/opt/retailops/e2e-reports/LIVE_SMOKE_20261010T042118Z.json`.
+- Current merged/deployed SHA: `80f51569b3bef5ae0793bac1593fb91e39558477`.
+- EC2 deployment và 4 containers: healthy; deploy workflow 38119061325 và controlled HTTPS smoke PASS. Report: `/opt/retailops/e2e-reports/LIVE_SMOKE_20261011T074654Z.json`.
 - Reservation cũ `e2e-live-smoke/C-001` vẫn được giữ nguyên và không dùng làm smoke.
 - Google OAuth đã có state/nonce, profile `email/name/sub`, role mapping và session binding.
 - `/api/session` hiện trả tenant, principal, customer, name và role.
@@ -28,11 +28,11 @@ Trước khi bắt đầu P5-A, phải chạy G2 offline replay trên đúng mer
 - Không xóa reservation cũ và không sửa trực tiếp PostgreSQL.
 - G4 smoke kiểm health, image SHA, login, session binding, orders, logout và revoke.
 
-Evidence: merged `dd0947a`, image `ada57b5225d6`, smoke report ở trên.
+Evidence: merged/deployed `80f5156`, image `sha256:64d15c4aee29...`, smoke report ở trên.
 
 Nguồn hiện tại: log owner gửi ngày 2026-10-10, chưa đọc trực tiếp raw JSON. Operational smoke này không gọi Google OAuth/model; G4 per-lane real-model/DB/KB và G5 vẫn chưa đủ evidence.
 
-### P5-B — Google test identity — DONE
+### P5-B — Google test identity — DONE / MERGED / DEPLOYED
 
 - Cấu hình tenant cửa hàng demo rõ ràng (`default_tenant_id` hoặc env `RETAILOPS_DEMO_TENANT_ID` / `GOOGLE_AUTH_TENANT_ID`); loại bỏ hoàn toàn `ORDER BY id LIMIT 1` trong `retailops/identity/persistent.py`. Tenant mỗi smoke run không thể bị chọn làm cửa hàng cho khách Google login.
 - Dùng Google test identity mapping offline, không dùng email/PII khách thật; không cần credential thật trong repository.
@@ -42,13 +42,16 @@ Nguồn hiện tại: log owner gửi ngày 2026-10-10, chưa đọc trực ti�
 - Kiểm tra `/api/session`, `/api/profile` và tenant/customer isolation.
 - Evidence: [PHASE_5_B_EVIDENCE.md](PHASE_5_B_EVIDENCE.md), suite `tests/test_phase5_google_identity.py` (12/12 PASS).
 
-### P5-C — Sales simulator và import contract — NEXT
+Real Google OAuth live remains pending; the controlled smoke does not call Google OAuth or model inference.
 
-Simulator chỉ chạy offline/dev và phát event JSON qua adapter được kiểm soát. Mỗi event phải có `source_system`, `event_id`, `tenant`, `external_customer_id`, `order_id`, trạng thái, items, total, currency, timestamp và signature.
+### P5-C — Sales simulator và import contract — REMEDIATED / AWAITING RE-REVIEW
 
-Adapter phải kiểm schema, HMAC/signature, tenant/customer mapping, timestamp hợp lệ và idempotency theo `source_system + event_id`. Adapter ghi audit event và dùng service boundary; không cho simulator ghi thẳng DB.
+Simulator chỉ chạy offline/dev và phát event JSON qua adapter được kiểm soát. Mỗi event có đủ 11 trường: `source_system`, `event_id`, `tenant`, `external_customer_id`, `order_id`, trạng thái, items, total, currency, timestamp và signature.
 
-### P5-D — Cùng account chạy complaint E2E
+Adapter kiểm schema, HMAC/signature, tenant/customer mapping, timestamp hợp lệ và idempotency theo `source_system + event_id`. Adapter ghi audit event và dùng service boundary; simulator không ghi thẳng DB; không dùng email làm khóa; rollback sạch sẽ khi lỗi DB.
+Evidence: [PHASE_5_C_EVIDENCE.md](PHASE_5_C_EVIDENCE.md), suite `tests/test_phase5_sales_simulator_import.py` (15/15 PASS), `tests/test_phase5_sales_review_fixes.py` (26 test cho N1–N4) và `tests/test_phase5_sales_postgres.py` (10 test PostgreSQL); N1–N4 của independent review đã sửa, chờ re-review — chưa deploy, chưa P5-D.
+
+### P5-D — Cùng account chạy complaint E2E — NEXT
 
 1. Google test account đăng nhập.
 2. Import `order.created`/`order.paid` cho đúng external customer.

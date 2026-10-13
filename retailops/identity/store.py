@@ -57,6 +57,16 @@ def initialize(db):
             created_at REAL NOT NULL,
             updated_at REAL NOT NULL)''',
         'CREATE INDEX IF NOT EXISTS idx_reconciliation_journal_tenant ON reconciliation_journal(tenant_id, colliding_customer_id)',
+        '''CREATE TABLE IF NOT EXISTS external_customer_mappings (
+            id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL REFERENCES tenants(id),
+            source_system TEXT NOT NULL,
+            external_customer_id TEXT NOT NULL,
+            customer_id TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            UNIQUE(tenant_id, source_system, external_customer_id))''',
+        'CREATE INDEX IF NOT EXISTS idx_ext_cust_mappings_tenant_cust ON external_customer_mappings(tenant_id, customer_id)',
     ]
     for statement in statements:
         db.execute(statement)
@@ -110,6 +120,17 @@ def migrate_legacy_collisions(db, tenant_stores=None):
         updated_at REAL NOT NULL
     )''')
     db.execute('CREATE INDEX IF NOT EXISTS idx_reconciliation_journal_tenant ON reconciliation_journal(tenant_id, colliding_customer_id)')
+    db.execute('''CREATE TABLE IF NOT EXISTS external_customer_mappings (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL REFERENCES tenants(id),
+        source_system TEXT NOT NULL,
+        external_customer_id TEXT NOT NULL,
+        customer_id TEXT NOT NULL,
+        created_at REAL NOT NULL,
+        updated_at REAL NOT NULL,
+        UNIQUE(tenant_id, source_system, external_customer_id)
+    )''')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_ext_cust_mappings_tenant_cust ON external_customer_mappings(tenant_id, customer_id)')
     try:
         db.execute('ALTER TABLE reconciliation_journal ADD COLUMN plan_hash TEXT')
     except Exception:
@@ -746,3 +767,56 @@ class IdentityStore:
             row = db.execute('SELECT * FROM customer_links WHERE tenant_id=? AND principal_id=?',
                              (tenant_id, principal_id)).fetchone()
         return dict(row) if row else None
+
+    def external_customer_mapping(self, tenant_id, source_system, external_customer_id):
+        tenant_clean = str(tenant_id).strip()
+        source_clean = str(source_system).strip()
+        ext_cust_clean = str(external_customer_id).strip()
+        with self.connection() as db:
+            row = db.execute(
+                'SELECT * FROM external_customer_mappings WHERE tenant_id=? AND source_system=? AND external_customer_id=?',
+                (tenant_clean, source_clean, ext_cust_clean)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def get_external_customer_mapping(self, tenant_id, source_system, external_customer_id):
+        row = self.external_customer_mapping(tenant_id, source_system, external_customer_id)
+        return row['customer_id'] if row else None
+
+    def set_external_customer_mapping(self, tenant_id, source_system, external_customer_id, customer_id):
+        return self.link_external_customer(tenant_id, source_system, external_customer_id, customer_id)
+
+    def link_external_customer(self, tenant_id, source_system, external_customer_id, customer_id):
+        """Insert-if-absent mapping (tenant, source_system, external_customer_id) -> customer_id.
+
+        Idempotent for the same customer (``created`` False, no extra audit event). A mapping that
+        already points at a different customer is never overwritten: 409 external_customer_mapping_conflict.
+        """
+        tenant_clean = str(tenant_id).strip()
+        source_clean = str(source_system).strip()
+        ext_cust_clean = str(external_customer_id).strip()
+        cid_clean = str(customer_id).strip()
+        require(tenant_clean and source_clean and ext_cust_clean and cid_clean,
+                400, 'invalid_mapping_fields', 'Thiếu trường ánh xạ khách hàng.')
+        # P5-K4: Do NOT use email as key
+        require('@' not in ext_cust_clean, 400, 'invalid_external_customer_id',
+                'external_customer_id phải là mã định danh từ hệ thống nguồn, không dùng email làm khóa.')
+        self.tenant(tenant_clean)
+        now = time.time()
+        with self.connection(write=True) as db:
+            row = db.execute(
+                'SELECT * FROM external_customer_mappings WHERE tenant_id=? AND source_system=? AND external_customer_id=?',
+                (tenant_clean, source_clean, ext_cust_clean)
+            ).fetchone()
+            if row is not None:
+                require(row['customer_id'] == cid_clean, 409, 'external_customer_mapping_conflict',
+                        'external_customer_id đã được ánh xạ tới khách hàng khác trong cửa hàng này.')
+                return {**dict(row), 'created': False}
+            mapping_id = str(uuid.uuid4())
+            db.execute('''INSERT INTO external_customer_mappings (id, tenant_id, source_system, external_customer_id, customer_id, created_at, updated_at)
+                          VALUES (?,?,?,?,?,?,?)''',
+                       (mapping_id, tenant_clean, source_clean, ext_cust_clean, cid_clean, now, now))
+            self.event(db, 'external_customer_mapped', tenant_clean, None)
+        return {'id': mapping_id, 'tenant_id': tenant_clean, 'source_system': source_clean,
+                'external_customer_id': ext_cust_clean, 'customer_id': cid_clean,
+                'created_at': now, 'updated_at': now, 'created': True}

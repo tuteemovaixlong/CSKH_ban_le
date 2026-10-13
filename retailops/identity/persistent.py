@@ -181,3 +181,15 @@ class PersistentSessions:
 
     def metadata(self):
         return {'session_scope': 'persistent-account', 'data_mode': self.data_mode, 'session_seconds': self.session_seconds}
+
+    @property
+    def sales_adapter(self):
+        if not hasattr(self, '_sales_adapter') or self._sales_adapter is None:
+            from retailops.sales.adapter import SalesImportAdapter
+            self._sales_adapter = SalesImportAdapter(self)
+        return self._sales_adapter
+
+    def import_sales_event(self, event_data, *, actor_principal_id=None, reference_time=None):
+        return self.sales_adapter.ingest_event(
+            event_data, actor_principal_id=actor_principal_id, reference_time=reference_time
+        )
