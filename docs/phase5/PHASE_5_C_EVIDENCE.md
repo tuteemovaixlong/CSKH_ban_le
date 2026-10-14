@@ -1,12 +1,18 @@
 # Phase 5 P5-C Evidence — Sales Simulator & Service-Boundary Import Contract
 
-> **Mã tài liệu**: `PHASE_5_C_EVIDENCE`  
-> **Chặng**: Phase 5 — Chặng P5-C (Sales simulator và import contract)  
-> **Base SHA**: `80f51569b3bef5ae0793bac1593fb91e39558477` (Merged PR #38 / P5-B deploy)  
-> **Branch**: `feat/phase5-sales-simulator-import`  
-> **Trạng thái**: N1–N4 ĐÃ SỬA OFFLINE/DEV + PostgreSQL thật cục bộ — CHỜ RE-REVIEW (chưa deploy, chưa P5-D)
+> **Mã tài liệu**: `PHASE_5_C_EVIDENCE`
 >
-> **Phạm vi tuân thủ**: Hoàn toàn offline/dev; simulator KHÔNG ghi thẳng DB; KHÔNG dùng email làm khóa; KHÔNG làm P5-D; KHÔNG gọi Google live OAuth; KHÔNG deploy; KHÔNG đo lường model/paid; KHÔNG mở lại K1–K8.
+> **Chặng**: Phase 5 — Chặng P5-C (Sales simulator và import contract)
+>
+> **Base SHA**: `80f51569b3bef5ae0793bac1593fb91e39558477` (Merged PR #38 / P5-B deploy)
+>
+> **Branch**: `feat/phase5-sales-simulator-import`
+> **Merged SHA**: `a34b479eeb633ba55090f43a1f4ed7d85f6a3c9a` (PR #39); source candidate `3ff5d0ee8d4d53df6772a697d2638c9e65bbe7e6`
+> **CI**: merged CI run `38335308462` PASS (offline/Colab, PostgreSQL và portable); P5-C PostgreSQL suite nằm trong job offline, không phải Ops Console.
+> **Deploy**: run `38335308481` rerun; deploy job `115122302562` SUCCESS lúc 2026-10-13 11:06 (+07) trên merged SHA `a34b479`. Owner snapshot sau deploy (`2026-10-13T04:36:57Z`) cho thấy web/admin chạy image digest `sha256:2c05827775460a5c56c41855dcd1a216e9c529e89a75614e553e91e00b922c1e`, khớp `deployed.env`; web/admin/PostgreSQL healthy; Caddy ở public + admin network và mount `/etc/caddy/admin`.
+> **Trạng thái**: N1–N4 và 4 finding đã sửa; targeted/local/CI verification PASS; **MERGED, DEPLOYED, RUNTIME/TOPOLOGY VERIFIED; P5-K1 PASS**. Owner-pasted excerpts from both smoke JSON reports confirm expected image, health, identity tuples, all listed checks and credential cleanup. Raw JSON/workflow logs/OCI revision labels chưa được archive.
+>
+> **Phạm vi review implementation P5-C**: Simulator không ghi thẳng DB; không dùng email làm khóa; không làm P5-D; không gọi Google live OAuth; không đo lường model/paid; không mở lại K1–K8. Deploy P5-C được theo dõi riêng trong cập nhật hiện hành phía trên.
 
 ---
 
@@ -137,7 +143,7 @@ Business store và identity store là hai database nên không có transaction c
 | **PR #39 (3)** | `test_exact_replay_after_300s_bypasses_drift_check_and_heals_mapping` | Exact replay sau 300s vượt qua drift check thành công và heal identity mapping; trong khi event mới ngoài cửa sổ 300s bị chặn 400 `invalid_timestamp_drift`. |
 | **PR #39 (4)** | `test_rejects_nan_and_infinity_timestamps` | Timestamp `NaN`, `Infinity`, `-Infinity`, `"nan"`, `"inf"` bị từ chối tại schema validation và parse. |
 
-### 3.3. PostgreSQL thật (N2 + hành vi N1/N4 + PR #39) — `tests/test_phase5_sales_postgres.py`, 13 test
+### 3.3. PostgreSQL contract suite (N2 + hành vi N1/N4 + PR #39) — `tests/test_phase5_sales_postgres.py`, 13 test được cấu hình
 
 Chạy trên PostgreSQL 16.2 + pgvector 0.6.2 dùng một lần (database `retailops_test`, `scripts/prepare_test_pgvector.py` như CI). Test tự `skip` khi không có `RETAILOPS_TEST_DATABASE_URL`; CI job `offline` cung cấp PostgreSQL service nên chạy thật.
 
@@ -161,7 +167,8 @@ Chạy trên PostgreSQL 16.2 + pgvector 0.6.2 dùng một lần (database `retai
 
 ```text
 P5-C (15 gốc) + review-fixes (30):        Ran 45 tests  OK
-test_phase5_sales_postgres (PostgreSQL):  Ran 13 tests  OK (13 passed in CI PostgreSQL service)
+test_phase5_sales_postgres (PostgreSQL):  13 tests configured in offline CI run 38129938864 (job SUCCESS; raw per-test log not read)
+full local suite:                         Ran 648 tests  OK (skipped=65; PostgreSQL integration skipped locally)
 python scripts/check_docs_contract.py:    SUCCESS (4/4 checks)
 python scripts/check_eval_dataset.py:     EVAL_DATASET_OK baseline_v1.jsonl
 python scripts/build_agent_notebook.py --check: AGENT_NOTEBOOK_SOURCE_SYNC_OK
@@ -176,16 +183,16 @@ Bao gồm regression `test_phase5_google_identity.py`, `test_schema_migration.py
 
 ## 4. Trạng thái Nghiệm thu Tiêu chí Phase 5
 
-- [x] **P5-K1 (Smoke isolation)**: PASS trên commit `80f5156` (report `/opt/retailops/e2e-reports/LIVE_SMOKE_20261011T074654Z.json`).
-- [x] **P5-K2 (Runtime health)**: PASS trên commit `80f5156` (deploy workflow 38119061325).
-- [x] **P5-K3 (Google identity)**: PASS offline trên P5-B (12/12 tests PASS).
-- [ ] **P5-K4 (External mapping)**: **REMEDIATED — chờ re-review PR #39**. SQLite + PostgreSQL thật PASS; DDL/migration có; prior business import là nguồn sự thật tối thượng, mapping tự phục hồi sau lỗi identity.
-- [ ] **P5-K5 (Event contract)**: **REMEDIATED — chờ re-review PR #39**. Đúng 11 trường, strict numeric types, cấm NaN/Infinity, event collision rejection, exact replay 300s drift-bypass PASS.
-- [ ] **P5-K6 (Order visibility)**: **REMEDIATED — chờ re-review PR #39**. Không thể đổi chủ `order_id`; regression test N1 trên SQLite và PostgreSQL.
-- [ ] **P5-K7 (Complaint workflow)**: PENDING đến P5-D.
-- [ ] **P5-K8 (Confirmation and audit)**: PENDING đến P5-D.
+- [x] **P5-K1 (Smoke isolation)**: PASS trên deploy P5-C run `38335308481`; hai report excerpt dưới đây cùng xác nhận image/runtime/checks và identity tuple.
+- [x] **P5-K2 (Runtime health)**: PASS trên P5-C deploy run `38335308481` / job `115122302562`; snapshot `2026-10-13T04:36:57Z` xác nhận digest, health và topology.
+- [ ] **P5-K3 (Google identity)**: PARTIAL — offline trên P5-B (12/12 tests PASS); live Google OAuth/state/nonce/session verification chưa chạy.
+- [x] **P5-K4 (External mapping):** **PASS trên `3ff5d0e`**. SQLite targeted suite PASS; offline CI job SUCCESS; independent sign-off PASS.
+- [x] **P5-K5 (Event contract):** **PASS trên `3ff5d0e`**. 45 targeted tests PASS; offline CI job SUCCESS; independent sign-off PASS.
+- [x] **P5-K6 (Order visibility):** **PASS trên `3ff5d0e`**. Ownership/isolation regressions PASS; offline CI job SUCCESS; independent sign-off PASS.
+- [ ] **P5-K7 (Complaint workflow)**: P5-D patch has substantive disposable PostgreSQL/pgvector assertions, but the integration test was skipped locally without a DSN. Same-candidate CI execution is still pending; live remains pending.
+- [ ] **P5-K8 (Confirmation and audit)**: P5-D offline test now binds proposal fields to the complaint `action_proposal` and verifies reopen/replay/checksum/tamper behavior. Same-candidate CI/evidence and acceptance remain pending; live remains pending.
 
-Các mục K4–K6 chỉ được chuyển `[x]` bởi reviewer sau khi CI của PR xanh.
+K4–K6 là acceptance offline/merged của P5-C. P5-D được theo dõi riêng tại [P5-D evidence](PHASE_5_D_EVIDENCE.md) và [review](REVIEW_GEMINI_P5_D_2026-10-13.md); không dùng tài liệu P5-C này để kết luận P5-D đã accepted. P5-K3 live Google identity vẫn pending.
 
 ---
 
@@ -201,7 +208,7 @@ Các mục K4–K6 chỉ được chuyển `[x]` bởi reviewer sau khi CI của
 
 P5-C thêm `order_items`/`imported_events` trong SQLite `retailops/business/schema.py`, nhưng `retailops/storage/pg_schema.py` không thêm các bảng này vào DDL/migration. Tương tự, `external_customer_mappings` chỉ được tạo trong SQLite `retailops/identity/store.py`, không có trong `IDENTITY_DDL`/migration PostgreSQL. Adapter sẽ không chạy trên backend PostgreSQL đang deploy.
 
-**Sửa:** xem §2.5. Bằng chứng: §3.3 (13 test trên PostgreSQL thật, gồm migrate từ schema thiếu bảng, chạy 2 lần, giữ dữ liệu cũ).
+**Sửa:** xem §2.5. Bằng chứng: §3.3 (13 test PostgreSQL được cấu hình trong offline CI, gồm migrate từ schema thiếu bảng, chạy 2 lần, giữ dữ liệu cũ; raw per-test log chưa được đọc độc lập).
 
 ### Lỗi mức vừa N3 — contract không thật sự “exactly 11 fields” và kiểm tra số chưa chặt — ĐÃ SỬA
 
@@ -236,11 +243,32 @@ Business transaction commit trước, sau đó mới ghi `external_customer_mapp
    - Kiểm tra các biểu diễn chuỗi vô hạn (`"nan"`, `"+nan"`, `"-nan"`, `"inf"`, `"-inf"`, `"infinity"`, v.v.) và raise `ValueError` $\rightarrow$ trả về 400 `invalid_timestamp_format` hoặc `invalid_timestamp_drift`.
    - `validate_event_schema(data)` trực tiếp parse timestamp để từ chối ngay ở bước schema validation.
 
-## 6. Kết luận P5-C
+## 6. Independent sign-off trên candidate HEAD
 
-Chặng P5-C **đã sửa toàn diện N1–N4 và 4 finding PR #39, sẵn sàng cho review**:
+**Reviewer:** Codex — GPT-6.1 Sol (fresh independent context)
+
+**Thời điểm:** 2026-10-13 (Asia/Bangkok)
+
+**Phạm vi:** P5-K4, P5-K5, P5-K6 và bốn finding PR #39 trên `3ff5d0ee8d4d53df6772a697d2638c9e65bbe7e6`; PR #39 sau đó merge thành `a34b479eeb633ba55090f43a1f4ed7d85f6a3c9a`.
+
+**Phương pháp:** đọc code/evidence, đối chiếu file:line, chạy `python -m unittest tests.test_phase5_sales_simulator_import tests.test_phase5_sales_review_fixes` — 45/45 PASS; xác minh GitHub metadata cho 5/5 required checks trên đúng HEAD.
+
+**Kết quả:** PASS cho K4/K5/K6 và cả bốn finding. PostgreSQL evidence được coi là CI-backed từ offline job; reviewer không tuyên bố đã đọc raw per-test log và không thực hiện deploy/live/paid/EC2.
+
+## 7. Kết luận P5-C
+
+Chặng P5-C **đã sửa N1–N4 và 4 finding PR #39, merge vào `main` tại `a34b479`, CI/deploy PASS**. Snapshot owner `2026-10-13T04:36:57Z` xác nhận web/admin đang chạy đúng digest trong `deployed.env` (`sha256:2c058277…`), web/admin/PostgreSQL healthy, Caddy có public/admin network và mount `/etc/caddy/admin`. Hai report excerpt do owner paste xác nhận P5-K1 PASS. Không cần sửa code hay redeploy P5-C. P5-D implementation re-review hiện: D-R2/D-R3 PASS; D-R1 test có assertions thật nhưng PostgreSQL/pgvector integration bị skip local, nên same-candidate CI còn pending. Xem [P5-D review](REVIEW_GEMINI_P5_D_2026-10-13.md) và [candidate-verification handoff](PHASE_5_D_EXECUTION_HANDOFF.md). Live complaint E2E còn phụ thuộc P5-K3 live Google OAuth. Operational smoke không chứng minh Google live OAuth, AI-lane G4, G5 hoặc paid model measurement.
 - Prior business import là nguồn sự thật duy nhất; không thể đổi chủ đơn hàng hoặc tách mapping trái phép.
 - Event ID collision được phát hiện và từ chối 409; exact replay heal mapping an toàn sau 300s.
 - Contract đúng 11 trường, strict integer, loại bỏ hoàn toàn NaN/Infinity.
-- DDL/migration PostgreSQL đầy đủ, kiểm thử với 13 test PostgreSQL.
-- Giữ nguyên phạm vi: không làm P5-D, không live OAuth, không deploy, không đo lường paid/model. Dừng chờ review.
+- DDL/migration PostgreSQL đầy đủ; PostgreSQL suite được cấu hình trong offline CI job.
+- Giữ nguyên phạm vi P5-C. Ở snapshot sau này P5-D patch đã được thêm nhưng chưa accepted; không được dùng evidence P5-C làm bằng chứng đóng K7/K8. Live OAuth chưa chạy, chưa đo lường paid/model.
+
+## 8. P5-K1 Post-deploy smoke evidence (owner-provided excerpts)
+
+| Report | Result / runtime | Isolated identity tuple | Cleanup |
+|---|---|---|---|
+| `LIVE_SMOKE_20261013T040523Z.json` (04:05:23–04:05:33Z) | `pass=true`; activated image = web image = `sha256:2c058277…`; web `running|healthy`; health `ok`, PostgreSQL, `retailops-agent-v2`, `public-https`; all listed checks true | tenant `e2e-smoke-20261013040523-10330f`; principal `e2e-smoke-4293e63828`; customer `C-001`; order `O-101` | credentials revoked; isolated tenant retained |
+| `LIVE_SMOKE_20261013T040555Z.json` (04:05:55–04:06:09Z) | `pass=true`; same exact activated/web digest; same health contract; all listed checks true | tenant `e2e-smoke-20261013040556-122853`; principal `e2e-smoke-c4666bfbfe`; customer `C-001`; order `O-101` | credentials revoked; isolated tenant retained |
+
+Hai tenant khác nhau và không trùng tenant reservation cũ `e2e-live-smoke`; việc dùng lại `C-001`/`O-101` nằm trong tenant riêng. Chỉ các trường chọn lọc được owner paste, không lưu raw report vào repository; smoke này không gọi Google OAuth hay model inference.

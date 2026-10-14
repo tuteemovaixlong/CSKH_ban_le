@@ -63,13 +63,19 @@ AWS có thể cấp public IPv4 mới sau stop/start nếu không dùng Elastic 
 - `RETAILOPS_PUBLIC_HOST`: hostname, không có scheme;
 - `RETAILOPS_PUBLIC_ORIGIN`: `https://` cộng chính hostname đó, không có dấu `/` cuối.
 
-Sau khi đổi cấu hình, recreate web/Caddy theo runbook public, kiểm tra HTTPS rồi chạy smoke. Không tắt kiểm tra Host/Origin và không bỏ xác minh TLS để làm test xanh.
+Sau khi đổi cấu hình, ưu tiên workflow deploy hiện hành để đồng bộ image, public web và các phần đã cấu hình. Không recreate riêng `web`/`caddy` bằng public Compose khi admin đã bật: thao tác đó có thể làm Caddy mất overlay admin. Khi `admin.env` tồn tại, cần áp dụng cả `deploy/compose.admin.yaml` (Caddy mount `/etc/caddy/admin`, Caddy tham gia `admin_internal`, admin chỉ ở `admin_internal`) và xác nhận host admin đã được cập nhật. Không tắt kiểm tra Host/Origin và không bỏ xác minh TLS để làm test xanh.
+
+### Đối chiếu sau P5-C (snapshot owner, 2026-10-13)
+
+Deploy run `38335308481` / job `115122302562` SUCCESS lúc 11:06 (+07) trên merged SHA `a34b479`. Snapshot EC2 sau deploy được owner cung cấp lúc `2026-10-13T04:36:57Z` (11:36:57 +07): `deployed.env` và cả web/admin đang dùng image digest `sha256:2c05827775460a5c56c41855dcd1a216e9c529e89a75614e553e91e00b922c1e`; web/admin/PostgreSQL healthy; Caddy running trên `retailops-web_default` và `retailops-web_admin_internal`, có mount `/etc/caddy/admin`. Runtime image/topology đối chiếu đạt. Hai report `LIVE_SMOKE_20261013T040523Z.json` và `LIVE_SMOKE_20261013T040555Z.json` xuất hiện quanh thời gian deploy; chỉ tên/giờ file được cung cấp, chưa đọc body. Deploy runner gọi smoke với `--expected-image`; run SUCCESS cho biết smoke step trong workflow không fail, nhưng nếu cần xác nhận các trường cụ thể trong report thì đọc JSON read-only. Snapshot cũ không timestamp với image prefix `64d15c4…` không còn là trạng thái hiện hành.
+
+Không cần redeploy/recreate vì snapshot hiện tại healthy/đúng topology và hai report excerpt xác nhận P5-K1 PASS. Bắt đầu P5-D offline; chỉ bật EC2 cho live OAuth/complaint E2E sau khi đã chuẩn bị P5-K3 dedicated Google test-account verification. Xem [current status](CURRENT_PROJECT_STATUS.md) và [Phase 5 handoff](phase5/PHASE_5_EXECUTION_HANDOFF.md).
 
 Elastic IP hoặc domain/DNS được quản lý ổn định là cải tiến riêng cần phê duyệt cấu hình/chi phí; lần dọn này không tạo IP, domain, load balancer hay EC2 mới.
 
 Tài liệu AWS: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-instance-addressing.html
 
-## Dọn phần dư đã thực hiện trên EC2
+## Snapshot lịch sử dọn phần dư EC2 (2026-09-08; không phải inventory hiện hành)
 
 Kiểm tra trước khi dọn xác nhận Caddy reverse-proxy tới `web:8000`, không dùng API cũ `127.0.0.1:8080`.
 
@@ -81,7 +87,7 @@ Kiểm tra trước khi dọn xác nhận Caddy reverse-proxy tới `web:8000`, 
 | `retailops-web-caddy-1` | Giữ nguyên |
 | `retailops-web-postgres-1` | Giữ nguyên, không xóa volume/data |
 
-Sau khi dọn chỉ còn ba service public stack chạy. HTTPS `/healthz` trả 200, PostgreSQL backend và protocol `retailops-agent-v2`.
+Tại snapshot cleanup ngày 2026-09-08 chỉ còn ba service public stack chạy. Snapshot này đã cũ; owner inventory ngày 2026-10-13 liệt kê thêm `retailops-web-admin-1`, nên không dùng câu “chỉ còn ba service” làm trạng thái hiện hành. HTTPS `/healthz` trả 200 ở snapshot cleanup, không khẳng định health hiện tại.
 
 Bằng chứng thực thi qua SSM:
 

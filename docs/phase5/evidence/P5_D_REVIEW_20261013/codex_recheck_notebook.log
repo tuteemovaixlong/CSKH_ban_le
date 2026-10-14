@@ -1,0 +1,2 @@
+Notebook is stale: run python scripts/build_agent_notebook.py
+EXIT_CODE=1

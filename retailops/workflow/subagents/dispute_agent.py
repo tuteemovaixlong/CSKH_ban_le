@@ -117,10 +117,15 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
                             and chosen_oid == target_oid
                         )
                         if is_eligible:
+                            ord_obj = result.get("order", {}) if isinstance(result, dict) else {}
+                            raw_reason = args.get("reason", "ordered_by_mistake")
+                            canonical_reason = raw_reason if raw_reason in ("ordered_by_mistake", "no_longer_needed") else "ordered_by_mistake"
                             action_proposal = {
                                 "action": "cancel_order",
                                 "order_id": chosen_oid,
-                                "reason": args.get("reason", "Khách yêu cầu hủy qua chat"),
+                                "order_version": ord_obj.get("version", 1),
+                                "reason": canonical_reason,
+                                "cancel_reason": canonical_reason,
                                 "status": "pending_user_confirmation"
                             }
                             refusal_set = True
@@ -132,12 +137,19 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
                             action_proposal = None
                             refusal_set = True
                             execute("clear_cancellation", {})
-                            status_desc = result.get("order", {}).get("status") if isinstance(result, dict) else "delivered"
-                            final_content = (
-                                f"Dạ đơn hàng {chosen_oid} hiện ở trạng thái '{status_desc}', "
-                                "shop không thể hỗ trợ hủy đơn qua hệ thống. "
-                                "Nếu cần hỗ trợ thêm, anh/chị vui lòng liên hệ nhân viên CSKH để được trợ giúp nhé ạ!"
-                            )
+                            if isinstance(result, dict) and (result.get("error") or not result.get("order")):
+                                final_content = (
+                                    f"Dạ em rất tiếc, hệ thống không tìm thấy đơn hàng {chosen_oid} "
+                                    f"(hoặc đơn không thuộc tài khoản của anh/chị). "
+                                    "Anh/chị vui lòng kiểm tra lại chính xác Mã đơn hàng để em hỗ trợ nhé ạ!"
+                                )
+                            else:
+                                status_desc = result.get("order", {}).get("status") if (isinstance(result, dict) and result.get("order")) else "delivered"
+                                final_content = (
+                                    f"Dạ đơn hàng {chosen_oid} hiện ở trạng thái '{status_desc}', "
+                                    "shop không thể hỗ trợ hủy đơn qua hệ thống. "
+                                    "Nếu cần hỗ trợ thêm, anh/chị vui lòng liên hệ nhân viên CSKH để được trợ giúp nhé ạ!"
+                                )
                     else:
                         result = execute(name, args)
                         state["tool_count"] += 1
@@ -147,8 +159,20 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
                         prompt_messages.append(message)
                         prompt_messages.append(tool_entry)
 
+            if not refusal_set and not final_content:
+                try:
+                    second_resp = gateway.chat(prompt_messages, False, timeout)
+                    trace["model_calls"] = trace.get("model_calls", 0) + 1
+                    trace["prompt_tokens"] = trace.get("prompt_tokens", 0) + (second_resp.get("prompt_eval_count") or 0)
+                    trace["generated_tokens"] = trace.get("generated_tokens", 0) + (second_resp.get("eval_count") or 0)
+                    second_msg = second_resp.get("message", {})
+                    if second_msg.get("content"):
+                        final_content = second_msg.get("content")
+                except Exception:
+                    pass
+
         # Check domain heuristic for SOP 2 (Defect / Warranty Exchange 1-1)
-        if any(w in lower_msg for w in ["kẹt khóa", "bung chỉ", "hỏng khóa", "lỗi chỉ", "rách", "đổi 1-1", "đổi mới", "bảo hành"]):
+        if not final_content and any(w in lower_msg for w in ["kẹt khóa", "bung chỉ", "hỏng khóa", "lỗi chỉ", "rách", "đổi 1-1", "đổi mới", "bảo hành"]):
             if extracted_oid:
                 bound_oid = bound_context.get("order_id") or bound_obj.get("order_id")
                 is_order_ok = True
@@ -445,10 +469,13 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
                         and res.get("order", {}).get("id") == extracted_oid
                     )
                     if is_eligible:
+                        ord_obj = res.get("order", {}) if isinstance(res, dict) else {}
                         action_proposal = {
                             "action": "cancel_order",
                             "order_id": extracted_oid,
-                            "reason": "Khách yêu cầu hủy qua chat",
+                            "order_version": ord_obj.get("version", 1),
+                            "reason": "ordered_by_mistake",
+                            "cancel_reason": "ordered_by_mistake",
                             "status": "pending_user_confirmation"
                         }
                         refusal_set = True
@@ -460,12 +487,19 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
                         action_proposal = None
                         refusal_set = True
                         execute("clear_cancellation", {})
-                        status_desc = res.get("order", {}).get("status") if isinstance(res, dict) else "delivered"
-                        final_content = (
-                            f"Dạ đơn hàng {extracted_oid} hiện ở trạng thái '{status_desc}', "
-                            "shop không thể hỗ trợ hủy đơn qua hệ thống. "
-                            "Nếu cần hỗ trợ thêm, anh/chị vui lòng liên hệ nhân viên CSKH để được trợ giúp nhé ạ!"
-                        )
+                        if isinstance(res, dict) and (res.get("error") or not res.get("order")):
+                            final_content = (
+                                f"Dạ em rất tiếc, hệ thống không tìm thấy đơn hàng {extracted_oid} "
+                                f"(hoặc đơn không thuộc tài khoản của anh/chị). "
+                                "Anh/chị vui lòng kiểm tra lại chính xác Mã đơn hàng để em hỗ trợ nhé ạ!"
+                            )
+                        else:
+                            status_desc = res.get("order", {}).get("status") if (isinstance(res, dict) and res.get("order")) else "delivered"
+                            final_content = (
+                                f"Dạ đơn hàng {extracted_oid} hiện ở trạng thái '{status_desc}', "
+                                "shop không thể hỗ trợ hủy đơn qua hệ thống. "
+                                "Nếu cần hỗ trợ thêm, anh/chị vui lòng liên hệ nhân viên CSKH để được trợ giúp nhé ạ!"
+                            )
                 except ApiError as exc:
                     if exc.status == 429 or exc.status >= 500:
                         raise

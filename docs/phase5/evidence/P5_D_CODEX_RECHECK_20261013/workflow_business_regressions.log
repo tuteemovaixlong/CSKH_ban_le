@@ -1,0 +1,39 @@
+test_end_to_end_witty_pivot_flow (tests.test_multiagent_flow.MultiAgentFlowTests) ... ok
+test_supervisor_forbidden_topic (tests.test_multiagent_flow.MultiAgentFlowTests) ... ok
+test_supervisor_human_escalation (tests.test_multiagent_flow.MultiAgentFlowTests) ... ok
+test_supervisor_image_attachment_and_order_query_routing (tests.test_multiagent_flow.MultiAgentFlowTests) ... ok
+test_supervisor_multi_turn_order_continuation_routing (tests.test_multiagent_flow.MultiAgentFlowTests) ... ok
+test_supervisor_routing_dispute (tests.test_multiagent_flow.MultiAgentFlowTests) ... ok
+test_supervisor_routing_order (tests.test_multiagent_flow.MultiAgentFlowTests) ... ok
+test_supervisor_routing_policy (tests.test_multiagent_flow.MultiAgentFlowTests) ... ok
+test_supervisor_routing_witty_ood (tests.test_multiagent_flow.MultiAgentFlowTests) ... ok
+test_witty_pivot_strict_mode_when_angry (tests.test_multiagent_flow.MultiAgentFlowTests) ... ok
+test_atomic_confirmation_and_replay_after_restart (tests.test_business_api.BusinessTests) ... ok
+test_concurrent_double_click_executes_once (tests.test_business_api.BusinessTests) ... ok
+test_confirmation_must_be_explicit_and_owned (tests.test_business_api.BusinessTests) ... ok
+test_distinct_proposals_cannot_cancel_same_order_twice (tests.test_business_api.BusinessTests) ... ok
+test_expired_and_dismissed_proposals_cannot_execute (tests.test_business_api.BusinessTests) ... ok
+test_idempotency_key_cannot_be_reused_for_another_order (tests.test_business_api.BusinessTests) ... ok
+test_lookup_is_scoped_to_owner (tests.test_business_api.BusinessTests) ... ok
+test_manager_update_status_invalidates_tenant_cache (tests.test_business_api.BusinessTests)
+Canonical test for F13 / AC-12: POST /api/manager/orders/update-status invalidates tenant cache. ... ok
+test_proposal_does_not_cancel (tests.test_business_api.BusinessTests) ... ok
+test_rechecks_order_at_confirmation (tests.test_business_api.BusinessTests) ... ok
+test_rejects_delivered_stale_and_invalid_reason (tests.test_business_api.BusinessTests) ... ok
+test_auth_health_and_assets (tests.test_business_api.HttpTests) ... ok
+test_http_confirmation_and_owner_contract (tests.test_business_api.HttpTests) ... ok
+test_json_origin_and_offline_model (tests.test_business_api.HttpTests) ... ok
+test_approval_resume_rechecks_role_owner_expiry_and_order_version (tests.test_workflows.WorkflowTests) ... ok
+test_chat_resumes_after_tools_without_repeating_saved_model_call (tests.test_workflows.WorkflowTests) ... ok
+test_checkpoint_retention_deletes_only_expired_unleased_runs (tests.test_workflows.WorkflowTests) ... ok
+test_completed_graph_survives_crash_before_business_history_commit (tests.test_workflows.WorkflowTests) ... ok
+test_confirmation_interrupt_survives_restart_and_requires_explicit_click (tests.test_workflows.WorkflowTests) ... ok
+test_crash_after_cancellation_commit_replays_without_second_transaction (tests.test_workflows.WorkflowTests) ... ok
+test_database_lease_excludes_other_process_and_fences_stale_writer (tests.test_workflows.WorkflowTests) ... ok
+test_dismissed_interrupt_cannot_be_approved_later (tests.test_workflows.WorkflowTests) ... ok
+test_resumed_turn_rejects_stale_order_and_changed_input (tests.test_workflows.WorkflowTests) ... ok
+
+----------------------------------------------------------------------
+Ran 33 tests in 6.298s
+
+OK

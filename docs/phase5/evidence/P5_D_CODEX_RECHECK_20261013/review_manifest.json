@@ -1,0 +1,71 @@
+{
+  "reviewed_at_local": "2026-10-13 (Asia/Bangkok)",
+  "base_head": "3ff5d0ee8d4d53df6772a697d2638c9e65bbe7e6",
+  "candidate_commit": null,
+  "verdict": "CHANGES_REQUIRED",
+  "scope": "P5-D D-R1/D-R2/D-R3 and listed regressions only; no EC2/deploy/live OAuth/paid inference",
+  "source_sha256": {
+    "tests/test_phase5_complaint_e2e.py": "bb3a87a210a070f45cdfb5d8453ecdea0541b3ffa63304b28c091c0e12f3d0ee",
+    "retailops/workflow/subagents/dispute_agent.py": "3046e5e1e71c8bdbdb401f443a2f643bb4adf1424209a2e9ee523efc0307a287",
+    "retailops/sales/fixtures.py": "62019accece3c5c4a46a80a82b4d9cb8354bc61fed60c2d5e16a2c48c848cbc8",
+    "retailops/sales/simulator.py": "85e740d9f2047118072a0e33c07faaa90384e2c2c17dd54d0a158486a7f6406c",
+    "notebooks/colab_agent.ipynb": "087dd20e3800e4df2f1a9a7f485f8e088ed3d878027d7c20b136494e2468ab61",
+    "docs/phase5/evidence/P5_D_LIFECYCLE_REPORT.json": "e6bfa6ba949a42b535515eee2885f63a172526a5d0f65e4f89ef67427bb09895"
+  },
+  "status_docs_sha256": {
+    "docs/CURRENT_PROJECT_STATUS.md": "b8a7c23fa8d7f06737be90027e7c611c2e59eeb3c2d6d8d5c2957e5317ee5d16",
+    "docs/PLAN_ROADMAP_INDEX.md": "2d163145c89a0e0ef6b2ca22450a8c56f99bc51de57156e54b976b79004a7b8c",
+    "docs/03_EVALUATION/ACCEPTANCE_MATRIX.md": "5b45f950bcb6e5cd430323ae03ff909e0a698528a3ee9095aca7e2e8c02468ed",
+    "docs/phase5/PHASE_5_ACCEPTANCE_CRITERIA.md": "0cc3f5d0f22e9746cb054fe310fb59af7a3833ef87ce881b2c814f79fc6a2a91",
+    "docs/phase5/PHASE_5_D_EVIDENCE.md": "7262cb6552f753adab6b658685461944b7ca4fd3116b2311b5271abb1016c9ac",
+    "docs/phase5/PHASE_5_D_EXECUTION_HANDOFF.md": "99343e794abfd5744cf8fd939025bd794f1fec438a00ce1a0113be48290e33a6",
+    "docs/phase5/PHASE_5_EXECUTION_HANDOFF.md": "96873147b8566d4e24c06515d8ef6cb38e55f8ad09132f955135d9c08bbad05e",
+    "docs/phase4/PHASE_5_BACKLOG.md": "64845c4e8f675616c3243d9dca8d8e35c9d5535efd7a4e45af880712d1c41afc"
+  },
+  "verification_logs_sha256": {
+    "audit_remediation.log": "bb496850f220a9e32c55b33c618b36029dcd243f72cdb494665e10d7226d003e",
+    "diff_check.log": "bc98d5cdc6ee423f2bb680ddfaba4ecebe104344031c1156c44432f200c11a6e",
+    "docs_contract.log": "888319d0d2b0534116acf4f822ab14eb7a2e29c702d372fdc9c048ceec3c8c43",
+    "notebook_sync_check.log": "4238a7884429cf14cee531f3dcc42be95b33a398adfea60c43bbdca0877e1d07",
+    "phase5_suite.log": "b2d45e2e72fbd34f83685ed4f6e4788166b23fd1bf3ec75d50503f9ce31d8f0c",
+    "targeted_p5d.log": "f20fd3173d9b496ceebc3b740a67333baaf5c5991d3b9bcb241a787118c619fa",
+    "workflow_business_regressions.log": "3e20e2849cbe23f4c66af5a7c49fe617649d77f532413de7faa31838ccc7aff7"
+  },
+  "check_summary": [
+    {
+      "check": "targeted_p5d.log",
+      "exit_code": 0
+    },
+    {
+      "check": "phase5_suite.log",
+      "exit_code": 0
+    },
+    {
+      "check": "audit_remediation.log",
+      "exit_code": 0
+    },
+    {
+      "check": "workflow_business_regressions.log",
+      "exit_code": 0
+    },
+    {
+      "check": "notebook_sync_check.log",
+      "exit_code": 0
+    },
+    {
+      "check": "docs_contract.log",
+      "exit_code": 0
+    },
+    {
+      "check": "diff_check.log",
+      "exit_code": 0
+    }
+  ],
+  "limitations": [
+    "D-R1 test invokes KnowledgeTool.search but monkeypatches KnowledgeRepository.search; no real pgvector retrieval is verified.",
+    "Optional P5-D pgvector test body is pass-only; when DSN is set it would pass without assertions.",
+    "D-R2 confirmation/replay uses a separately API-created proposal, not a proposal bound to the complaint action_proposal.",
+    "Lifecycle report generated_at_utc is hard-coded and reruns overwrite report with generated IDs/checksum.",
+    "P5-D working tree is uncommitted; no immutable candidate SHA or candidate CI exists."
+  ]
+}

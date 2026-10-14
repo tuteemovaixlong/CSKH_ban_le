@@ -13,6 +13,8 @@
 
 > **Kết quả hiện hành 2026-10-08:** frozen HEAD `8a666fcce464c96b1dd5fc6848a2d4168c6505d1`; K1–K8 và C1–C6 PASS trên cùng patch/CI. Sẵn sàng cho independent reviewer sign-off; chưa ACCEPTED FOR OWNER REVIEW cho tới khi nguồn độc lập ký.
 
+> **Cập nhật trạng thái sau merge (2026-10-13; supersedes dòng “Kết quả hiện hành” và template pending cũ):** Owner cung cấp independent sign-off của Antigravity / Claude Sonnet 5.5 lúc 2026-10-09 11:46 (+07), xác nhận K1–K8 PASS trên PR #36 HEAD `cf19766176749c40fa4321e2b35c9d03896812db` (K5 dựa trên CI log owner cung cấp). PR #36 đã merge; G2 offline replay PASS tại `8868c5c498b1c64241bc791eb0166d82415cfeb0` theo [G2 evidence](../phase5/PHASE_5_G2_EVIDENCE_8868c5c.md). Acceptance v1 và evidence packet `8a666fc` bên dưới được giữ như snapshot lịch sử, không phải trạng thái chờ ký hiện nay. Raw CI log/sign-off artifact chưa được lưu lại trong packet này.
+
 ## 1. Merge gate — đúng N1/N3/N4
 
 | Blocker owner chốt | Contract v1 | Trạng thái hiện tại |
@@ -91,6 +93,8 @@ Kết quả chỉ là:
 G2 dùng merged checkout: CI, contracts/frozen hashes và mock replay đúng merged harness SHA; không mở thêm audit ngoài8 mục. Sau G2, chuyển workstream lane preflight riêng. Không chuyển `READY FOR MEASUREMENT` cho tới G5 có evidence tương ứng. Merge PR hiện có packaging scope/guard eligible; không tự đổi deploy variables hay chạy live/paid.
 
 ## 7. Sign-off template
+
+> Bảng dưới là template snapshot được đóng tại acceptance v1 ngày 2026-10-08; các ô PENDING trong template không phản ánh trạng thái sau merge. Trạng thái hiện hành ghi ở cập nhật phía trên.
 
 | Trường | Giá trị |
 |---|---|

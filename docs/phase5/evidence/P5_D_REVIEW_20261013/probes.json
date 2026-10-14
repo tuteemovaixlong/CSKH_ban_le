@@ -1,0 +1,27 @@
+{
+  "policy_test_without_working_retrieval": {
+    "successful": true,
+    "search_call_count": 0,
+    "run_output": ".\n----------------------------------------------------------------------\nRan 1 test in 0.370s\n\nOK\n"
+  },
+  "checksum_test_with_false_digest": {
+    "successful": true,
+    "injected_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+    "scope": "Only the test module hashlib binding is replaced; production hashing unchanged.",
+    "run_output": ".\n----------------------------------------------------------------------\nRan 1 test in 0.198s\n\nOK\n"
+  },
+  "notebook_source_drift": [
+    {
+      "path": "retailops/sales/fixtures.py",
+      "embedded_sha256_utf8": "64404f325bc83c5356db1d9226eee261244890117fd5e6d2948d9c7c8bc97fc4",
+      "current_sha256_utf8": "62019accece3c5c4a46a80a82b4d9cb8354bc61fed60c2d5e16a2c48c848cbc8"
+    }
+  ],
+  "reviewed_source_sha256": {
+    "tests\\test_phase5_complaint_e2e.py": "deb4b13c25018c522f1d0a0022878be46d68a3fa0b003c08f5d053acf6bbd914",
+    "retailops\\sales\\fixtures.py": "62019accece3c5c4a46a80a82b4d9cb8354bc61fed60c2d5e16a2c48c848cbc8",
+    "retailops\\sales\\simulator.py": "85e740d9f2047118072a0e33c07faaa90384e2c2c17dd54d0a158486a7f6406c",
+    "retailops\\workflow\\subagents\\dispute_agent.py": "e0ae115eefcb393e33e56faf2219794c6ed07e293bdb63da6dcef5988256a554",
+    "notebooks\\colab_agent.ipynb": "359e036177c4db352c9711ab8c8be43e7dbb9cdcd322a03999070bc8bf3daf3b"
+  }
+}

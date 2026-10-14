@@ -1,8 +1,8 @@
 # Codebase Map — RetailOps hiện tại
 
-> Cập nhật **2026-10-08**. Checkout: `codex/phase4-harness`; commit đã kiểm: `8a666fcce464c96b1dd5fc6848a2d4168c6505d1`.
-> Runtime baseline của PR: `49671b928ad6badfaa01331174eb73f0e366752e`. PR [#36](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/36) chưa merge theo evidence gần nhất.
-> Bản đồ mô tả code trong checkout và evidence đã ghi; phiên bản đang chạy EC2 đọc riêng trong runbook/status. Các cập nhật tài liệu hiện chưa commit/push.
+> Cập nhật **2026-10-14**. Local checkout tại `feat/phase5-sales-simulator-import`, HEAD `3ff5d0ee8d4d53df6772a697d2638c9e65bbe7e6`.
+> Working tree có thay đổi chưa commit trong P5-D implementation/tests/docs; bản đồ mô tả cấu trúc checkout hiện tại, không đồng nghĩa các thay đổi đó đã được merge/deploy.
+> Runtime/deploy evidence được theo dõi riêng trong [current status](../CURRENT_PROJECT_STATUS.md) và [acceptance matrix](../03_EVALUATION/ACCEPTANCE_MATRIX.md).
 
 ## Đọc nhanh: hệ thống và việc sắp làm
 
@@ -10,15 +10,15 @@ RetailOps là web CSKH bán lẻ: đăng nhập/session → chat đa agent → t
 
 | Phần | Trạng thái hiện tại |
 |---|---|
-| Runtime, identity, workflow, cache/concurrency | Có trong code; Module 2.5 đã merged/postmerge verified theo [project status](../CURRENT_PROJECT_STATUS.md). Trạng thái deploy được ghi riêng ở đó. |
-| Phase 4 build harness | N1 hash mutation, N3 denominator, N4 tool/safety types **DONE theo acceptance v1**. |
-| Nghiệm thu `8a666fc` | K1–K8/C1–C6 PASS; independent sign-off PENDING. |
-| Evidence đã có | 5 CI checks SUCCESS; Gemini báo full suite 575 tests OK/49 skipped. Local full-suite có 1 timing failure, được ghi rõ trong packet. Mock250/263 hợp lệ, quality185/237; chưa là model-quality evidence. |
-| Chưa thực hiện | Chưa merge PR #36/G2; chưa mở live/full run hoặc cấp READY FOR MEASUREMENT trong lượt này. |
+| Runtime, identity, workflow, cache/concurrency | Có trong code; deployed baseline và evidence được ghi riêng trong [project status](../CURRENT_PROJECT_STATUS.md). |
+| Phase 4 harness / G2 | K1–K8 đã nghiệm thu theo Phase 4 criteria; G2 offline replay đã PASS trên merged SHA `8868c5c`. |
+| Phase 5 A–C | Identity, sales simulator/import và runtime smoke đã có evidence; P5-C merge/deploy tại `a34b479`; xem [Phase 5 matrix](../03_EVALUATION/ACCEPTANCE_MATRIX.md). |
+| Phase 5-D | D-R2/D-R3 implementation re-review PASS; D-R1 có test PostgreSQL/pgvector nhưng local test bị SKIPPED do thiếu DSN. P5-K7/K8 chưa accepted; chưa có candidate SHA/CI. |
+| Chưa thực hiện | CI cho candidate P5-D chưa chạy xác nhận pgvector không skip. OAuth thật P5-K3, G5/full measurement cũng chưa được nghiệm thu. |
 
-**Sắp làm:** packet 8a666fc → sign-off model khác/human mới → owner review → merge → G2 offline → dừng review harness, chuyển lane preflight.
+**Bước kế tiếp:** tạo immutable P5-D candidate → chạy CI job `offline` với PostgreSQL/pgvector không skip → Codex xác minh đúng SHA/evidence → dừng trước owner review/merge. Không cần EC2 cho bước CI này; không chạy live OAuth, paid model, P5-E hoặc G5.
 
-Nguồn quyết định: [acceptance v1](../phase4/PHASE_4_ACCEPTANCE_CRITERIA.md), [review](../phase4/REVIEW_GEMINI_PHASE4_2026-10-07.md), [plan/handoff](../phase4/PLAN_REVIEW_HANDOFF_GEMINI_2026-10-07.md), [evidence 8a666fc](../phase4/PHASE_4_ACCEPTANCE_EVIDENCE_8a666fc.md). Không thêm checklist hoặc mở lại việc DONE.
+Nguồn chuẩn cho trạng thái hiện tại: [Phase 5 acceptance](../phase5/PHASE_5_ACCEPTANCE_CRITERIA.md), [acceptance matrix](../03_EVALUATION/ACCEPTANCE_MATRIX.md), [current status](../CURRENT_PROJECT_STATUS.md), [P5-D review](../phase5/REVIEW_GEMINI_P5_D_2026-10-13.md) và [P5-D handoff](../phase5/PHASE_5_D_EXECUTION_HANDOFF.md). Phase 4 criteria/evidence vẫn là hồ sơ có thẩm quyền cho G2/K1–K8.
 
 ## 1. Kiến trúc và luồng dữ liệu
 
@@ -37,6 +37,9 @@ flowchart LR
     TOOLS --> RAG["Knowledge / pgvector"]
     GRAPH --> CP["Checkpoint / conversation"]
     CP --> DB
+    POS["Sales simulator / external POS event"] --> IMPORT["Signed, idempotent import / customer mapping"]
+    IMPORT --> DB
+    DB --> APP
     EXT["External AI client"] --> MCP["MCP server"]
     MCP --> FIXTURES["Synthetic fixtures / seed / knowledge files"]
     RUN["Harness offline"] --> BUNDLE["Canonical bundle / validator"]
@@ -47,7 +50,7 @@ Mũi tên biểu diễn quan hệ chính, không phải mọi lời gọi. Graph
 
 ## 2. Bản đồ thư mục
 
-Inventory ngày cập nhật: **65 file Python trong `retailops/`**, **8 file `retailops_*.py` ở root**, **12 file Python trong `evals/harness/`**; gồm `__init__.py`, không gồm bytecode. Số dòng của inventory 2026-10-02 được bỏ để tránh nhầm với kích thước hiện tại.
+Inventory quét ngày **2026-10-14**: **70 file Python trong `retailops/`**, **8 file `retailops_*.py` ở repo root**, **12 file Python trong `evals/harness/`**, **61 file trong `tests/`**, **19 Python scripts**, **21 file deploy**, **6 web assets**, **14 file trong `opsconsole/`**, và **157 file docs**. Đếm file theo working tree; loại `.git`, bytecode/cache, `node_modules`, virtualenv, `_archive/` và nội dung sinh lớn trong `scratch/`/`artifacts/` khỏi phân tích nội dung. Fixtures, reports và evidence không được đọc tuần tự như source code.
 
 | Khu vực | Vai trò | File nên mở trước |
 |---|---|---|
@@ -60,13 +63,14 @@ Inventory ngày cập nhật: **65 file Python trong `retailops/`**, **8 file `r
 | `retailops/guardrails/` | Topic/sentiment/abuse triage | [topic_filter.py](../../retailops/guardrails/topic_filter.py), [sentiment.py](../../retailops/guardrails/sentiment.py) |
 | `retailops/storage/` | PostgreSQL adapter/schema, import/backfill | [postgres.py](../../retailops/storage/postgres.py), [pg_schema.py](../../retailops/storage/pg_schema.py), [import_sqlite.py](../../retailops/storage/import_sqlite.py) |
 | `retailops/knowledge/` | Ingest/chunk/embed/retrieve, citation provenance | [repository.py](../../retailops/knowledge/repository.py), [tool.py](../../retailops/knowledge/tool.py), [embedding.py](../../retailops/knowledge/embedding.py) |
+| `retailops/sales/` | Synthetic sales simulator, signed event contract, import/customer-mapping adapter | [simulator.py](../../retailops/sales/simulator.py), [events.py](../../retailops/sales/events.py), [adapter.py](../../retailops/sales/adapter.py), [fixtures.py](../../retailops/sales/fixtures.py) |
 | `web/` | Chat, lịch sử, provider selector, nghiệp vụ theo role | [app.js](../../web/app.js), [index.html](../../web/index.html), [chat-focus.js](../../web/chat-focus.js) |
 | `opsconsole/` | Dashboard report/usage/deployment snapshots; CLI import/evaluation | [server.py](../../opsconsole/server.py), [evaluation.py](../../opsconsole/evaluation.py), [usage.py](../../opsconsole/usage.py) |
 | `evals/` | Frozen scenarios, qrels, harness Phase 4 | [README](../../evals/README.md), [runner.py](../../evals/harness/runner.py), [validator.py](../../evals/harness/validator.py) |
 | `notebooks/` | Colab agent/model runtime, vLLM/GGUF helpers, smoke | [colab_agent.ipynb](../../notebooks/colab_agent.ipynb), [colab_runtime.py](../../notebooks/colab_runtime.py), [colab_vllm_l4.py](../../notebooks/colab_vllm_l4.py) |
 | `deploy/`, `.github/workflows/` | Container, Caddy, PostgreSQL, rollout, CI/deploy guard | [SETUP](../../deploy/SETUP.md), [ci.yml](../../.github/workflows/ci.yml), [deploy-ec2.yml](../../.github/workflows/deploy-ec2.yml) |
-| `scripts/`, `tests/` | Contracts, notebook generation, evaluation scripts, regressions | [check_docs_contract.py](../../scripts/check_docs_contract.py), [build_agent_notebook.py](../../scripts/build_agent_notebook.py), [test_phase4_schema.py](../../tests/test_phase4_schema.py) |
-| `docs/../phase4/` | Scope, acceptance, evidence, đo lường/chi phí, backlog | [acceptance](../phase4/PHASE_4_ACCEPTANCE_CRITERIA.md), [handoff](../phase4/PHASE_4_EXECUTION_HANDOFF.md), [backlog](../phase4/PHASE_5_BACKLOG.md) |
+| `scripts/`, `tests/` | Contracts, notebook generation, evaluation/deploy checks, unit/integration regressions | [check_docs_contract.py](../../scripts/check_docs_contract.py), [prepare_test_pgvector.py](../../scripts/prepare_test_pgvector.py), [test_phase5_complaint_e2e.py](../../tests/test_phase5_complaint_e2e.py) |
+| `docs/00_OVERVIEW`…`04_OPERATIONS` | Public docs 5 tầng; `_digest/` là snapshot; `_audit/` là inventory; `phase4/`/`phase5/` là evidence/acceptance/handoffs | [docs index](../README.md), [Phase 5 index](../phase5/README.md), [acceptance matrix](../03_EVALUATION/ACCEPTANCE_MATRIX.md) |
 
 ## 3. Entry points và file root
 
@@ -145,13 +149,13 @@ N1 replay hardening, N3 completeness/counts, N4 positive-count thiếu tool name
 | Nhánh | Vai trò |
 |---|---|
 | Ops Console server/UI | Đọc report/usage/deployment snapshots; không có endpoint thực thi chat/hủy đơn/deploy. CLI/importer riêng; dashboard không tự đóng G5. |
-| `ci.yml` | Offline contracts/tests, Docker packaging, Colab Python3.13 source/runtime compatibility theo workflow. |
+| `ci.yml` | Offline contracts/tests, PostgreSQL/pgvector integration, Docker packaging, Colab Python3.13 source/runtime compatibility theo workflow. |
 | `ops-console.yml` | Portable Windows/Ubuntu và PostgreSQL integration; console/UI/quota regressions. |
 | `live-e2e.yml` | Live verification riêng; CI offline không thay bằng chứng live. |
 | `deploy-ec2.yml` | Guard changed-files trước deploy; cần main, deploy-enabled variable và eligibility. |
 | `deploy/` | Compose/Caddy/PostgreSQL, publish/activate, rollout/source consistency, live-E2E scripts. |
 
-Full diff PR #36 có packaging nên `deploy_eligible=true` theo evidence đã kiểm. Owner xét policy/variables hiện hữu trước merge; không coi PR eval-only hoặc mặc định deploy-skipped. Bản đồ không thay đổi variables, merge hay triển khai.
+P5-D candidate verification phải dùng job `offline` trong `ci.yml`, job này provision PostgreSQL/pgvector và `RETAILOPS_TEST_DATABASE_URL`; xác nhận test pgvector không bị skip. `ops-console.yml` không thay thế gate này. Bản đồ không commit, merge hoặc triển khai.
 
 ## 8. Khi cần hiểu/sửa X, mở đâu
 
@@ -167,24 +171,23 @@ Full diff PR #36 có packaging nên `deploy_eligible=true` theo evidence đã ki
 | Quota/concurrency/cache | `retailops/account_usage.py`, `retailops/inference_gate.py`, `retailops/business/cache.py` |
 | RAG/citation | `retailops/knowledge/repository.py`, `retailops/knowledge/tool.py`, `retailops/knowledge/citations.py` |
 | MCP external integration | `retailops_mcp_server.py`, `retailops/workflow/mcp_client.py` |
+| Sales simulator/import/mapping | `retailops/sales/events.py`, `retailops/sales/adapter.py`, `retailops/sales/simulator.py`, `tests/test_phase5_sales_simulator_import.py` |
+| Same-customer complaint lifecycle | `retailops/workflow/subagents/dispute_agent.py`, `retailops/workflow/approval.py`, `tests/test_phase5_complaint_e2e.py`, [P5-D review](../phase5/REVIEW_GEMINI_P5_D_2026-10-13.md) |
 | Ops reports/usage/import | `opsconsole/server.py`, `opsconsole/evaluation.py`, `opsconsole/usage.py` |
 | Harness R10–R12 | `evals/harness/schema.py`, `evals/harness/grader.py`, `evals/harness/validator.py`, tests liên quan |
 | Deploy guard R13 | `scripts/check_deploy_eligibility.py`, `.github/workflows/deploy-ec2.yml`, `tests/test_deploy_guard.py` |
-| Gemini làm ngay | [review](../phase4/REVIEW_GEMINI_PHASE4_2026-10-07.md) → [plan](../phase4/PLAN_REVIEW_HANDOFF_GEMINI_2026-10-07.md) → [acceptance](../phase4/PHASE_4_ACCEPTANCE_CRITERIA.md) |
+| P5-D candidate CI | [P5-D execution handoff](../phase5/PHASE_5_D_EXECUTION_HANDOFF.md) → [Phase 5 acceptance](../phase5/PHASE_5_ACCEPTANCE_CRITERIA.md) → [matrix](../03_EVALUATION/ACCEPTANCE_MATRIX.md) |
 
 Path trong bảng tính từ repo root. Chọn 2–3 file đầu rồi mở dependency khi cần. Không nạp toàn bộ `data/`, `evals/`, `scratch/`, `artifacts/`; chỉ lấy case/report liên quan. Bỏ bytecode, secret/env và `__pycache__/` khỏi context.
 
-## 9. Phạm vi tiếp theo và điều kiện dừng
+## 9. Current delivery state and boundaries
 
 | Bước | Ai thực hiện | Phạm vi / kết quả |
 |---|---|---|
-| 1. Technical closure | Gemini | DONE tại 8a666fc: K7/C6 sạch, checklist kỹ thuật đạt theo evidence; dừng sửa code. |
-| 2. Evidence | Gemini / reviewer độc lập mới | Giao packet 8a666fc + acceptance v1 + frozen diff; xác minh đúng 8 mục và ký độc lập. |
-| 3. Sign-off | Model khác/human mới | Chưa tham gia N1–N5; chỉ nhận acceptance + frozen diff/evidence, xác minh 8 mục. Không dùng reviewer/agents cũ hoặc Gemini tác giả tự ký. |
-| 4. Owner review/merge | Owner và người được giao merge | 8/8 PASS + independent PASS; xem mixed-packaging eligibility, merge theo policy. |
-| 5. G2 offline | Gemini theo handoff | Merged checkout/SHA: CI, contracts/frozen hashes, mock replay đúng harness SHA. PASS thì kết thúc review build harness. |
-| 6. Sau G2 | Owner/Gemini theo lane plan | Lane preflight → G3 approval → G4 live smoke evidence → G5 readiness → G6 full-run approval → G7 measured. |
+| Phase 4 / G2 | Accepted | G2 offline replay PASS trên merged SHA `8868c5c`; Phase 4 criteria/evidence remain authoritative for frozen K1–K8. |
+| P5-C | Merged/deployed | `a34b479`; owner-provided runtime/smoke evidence is recorded in the acceptance matrix. |
+| P5-D | Implementation re-review only | D-R2/D-R3 PASS. D-R1 PostgreSQL/pgvector test exists but local execution was SKIPPED; no candidate SHA/CI, so K7/K8 remain pending. |
+| Next | Candidate CI, then stop | Create immutable candidate → run CI `offline` with pgvector test not skipped → Codex checks same-SHA evidence. Stop before owner merge review/deploy/live. |
+| P5-K3 / P5-E / G5–G7 | Pending / HOLD | Real OAuth, later phases and measurement gates need their own acceptance/authorization; none is implied by offline CI or operational smoke. |
 
-**Đúng 8 mục, không K9:** K1 hash mutation reject; K2 blocked denominator; K3 malformed tool/safety types reject; K4 CI xanh; K5 >=563 tests, 0 failures/errors; K6 mock 250; K7 patch whitespace; K8 C1–C6 contracts. C6 chính là K7.
-
-Một mục FAIL thì chỉ sửa nguyên nhân mục đó. Ngoài 8 mục → Phase 5 backlog, không block merge. **8/8 PASS + independent PASS thì dừng review harness, chuyển owner review.** G2 không cấp READY FOR MEASUREMENT; chỉ G5 cấp khi có evidence/approval tương ứng. Cập nhật bản đồ là bước chuẩn bị tài liệu; chưa thực thi các bước sửa/merge/live trên đây.
+This map is a navigation aid, not an acceptance verdict or deployment instruction. For current status, consult linked status/matrix/criteria; for source details, follow package/file links above. Historical plans and evidence remain preserved and should be read with their own snapshot dates.

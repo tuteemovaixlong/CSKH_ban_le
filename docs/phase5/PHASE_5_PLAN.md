@@ -7,13 +7,13 @@ Xây một đường kiểm thử dev/synthetic có dữ liệu bán hàng mô p
 ## Hiện trạng đầu vào
 
 - G2 baseline SHA: `8868c5c498b1c64241bc791eb0166d82415cfeb0`.
-- Current merged/deployed SHA: `80f51569b3bef5ae0793bac1593fb91e39558477`.
-- EC2 deployment và 4 containers: healthy; deploy workflow 38119061325 và controlled HTTPS smoke PASS. Report: `/opt/retailops/e2e-reports/LIVE_SMOKE_20261011T074654Z.json`.
+- Current merged SHA: `a34b479eeb633ba55090f43a1f4ed7d85f6a3c9a`; deploy run `38335308481` rerun/job `115122302562` succeeded at 2026-10-13 11:06 (+07). Owner snapshot at `2026-10-13T04:36:57Z` confirms web/admin running `deployed.env` digest `sha256:2c058277…`, PostgreSQL healthy, and Caddy public/admin overlay networks and mount. Both post-deploy smoke reports pass and P5-K1 is closed (owner-pasted report excerpts; see acceptance/evidence).
+- EC2 deployment và 4 containers được quan sát healthy ngày 2026-10-11; deploy workflow 38119061325 và controlled HTTPS smoke PASS. Report: `/opt/retailops/e2e-reports/LIVE_SMOKE_20261011T074654Z.json`. Không suy ra trạng thái nguồn EC2 hiện tại từ snapshot này.
 - Reservation cũ `e2e-live-smoke/C-001` vẫn được giữ nguyên và không dùng làm smoke.
 - Google OAuth đã có state/nonce, profile `email/name/sub`, role mapping và session binding.
 - `/api/session` hiện trả tenant, principal, customer, name và role.
 - `live-e2e.py --mode smoke` đã nhận tenant/customer/order; full mode giữ baseline.
-- Chưa có adapter hoàn chỉnh nhận event đơn hàng từ một hệ thống bán hàng bên ngoài.
+- P5-C candidate `3ff5d0e` (45/45 targeted + independent sign-off) đã merge thành `a34b479` và deploy; runtime digest/health/topology cùng P5-K1 smoke PASS. Xem [evidence](PHASE_5_C_EVIDENCE.md).
 
 ## Điều kiện liền kề bắt buộc: G2 sau merge
 
@@ -44,14 +44,16 @@ Nguồn hiện tại: log owner gửi ngày 2026-10-10, chưa đọc trực ti�
 
 Real Google OAuth live remains pending; the controlled smoke does not call Google OAuth or model inference.
 
-### P5-C — Sales simulator và import contract — REMEDIATED / AWAITING RE-REVIEW
+### P5-C — Sales simulator và import contract — MERGED / DEPLOYED / ACCEPTED
 
 Simulator chỉ chạy offline/dev và phát event JSON qua adapter được kiểm soát. Mỗi event có đủ 11 trường: `source_system`, `event_id`, `tenant`, `external_customer_id`, `order_id`, trạng thái, items, total, currency, timestamp và signature.
 
 Adapter kiểm schema, HMAC/signature, tenant/customer mapping, timestamp hợp lệ và idempotency theo `source_system + event_id`. Adapter ghi audit event và dùng service boundary; simulator không ghi thẳng DB; không dùng email làm khóa; rollback sạch sẽ khi lỗi DB.
-Evidence: [PHASE_5_C_EVIDENCE.md](PHASE_5_C_EVIDENCE.md), suite `tests/test_phase5_sales_simulator_import.py` (15/15 PASS), `tests/test_phase5_sales_review_fixes.py` (26 test cho N1–N4) và `tests/test_phase5_sales_postgres.py` (10 test PostgreSQL); N1–N4 của independent review đã sửa, chờ re-review — chưa deploy, chưa P5-D.
+Evidence: [PHASE_5_C_EVIDENCE.md](PHASE_5_C_EVIDENCE.md), suite P5-C + regression **45/45 PASS**, offline CI run `38335308462` SUCCESS trên merged `a34b479`; N1–N4 đã sửa và independent sign-off PASS trước merge. Deploy run `38335308481` / job `115122302562` SUCCESS; post-deploy runtime digest/health/topology PASS. Both smoke reports PASS with expected image, distinct synthetic tenants/identity tuples, checks true, credentials revoked; P5-K1 PASS.
 
-### P5-D — Cùng account chạy complaint E2E — NEXT
+### P5-D — Complaint E2E on the same customer identity — implementation re-review PASS; candidate CI pending
+
+Codex re-review xác nhận D-R2 lifecycle binding/replay/checksum test và D-R3 notebook sync PASS. D-R1 có substantive disposable PostgreSQL/pgvector assertions (real ingest/search and complaint path), nhưng test bị **SKIPPED local** vì thiếu DSN; chưa có immutable candidate SHA/CI. Do đó P5-K7/K8 acceptance pending CI chạy test pgvector không skip trên cùng candidate. See [current review](REVIEW_GEMINI_P5_D_2026-10-13.md), [current evidence](PHASE_5_D_EVIDENCE.md), [current recheck set](evidence/P5_D_REVIEW_20261013_CURRENT/), and [candidate-verification handoff](PHASE_5_D_EXECUTION_HANDOFF.md). Chưa owner review/merge/deploy/live; P5-K3 OAuth là prerequisite riêng cho live work.
 
 1. Google test account đăng nhập.
 2. Import `order.created`/`order.paid` cho đúng external customer.

@@ -1,0 +1,30 @@
+[
+  {
+    "check": "targeted_p5d.log",
+    "exit_code": 0
+  },
+  {
+    "check": "phase5_suite.log",
+    "exit_code": 0
+  },
+  {
+    "check": "audit_remediation.log",
+    "exit_code": 0
+  },
+  {
+    "check": "workflow_business_regressions.log",
+    "exit_code": 0
+  },
+  {
+    "check": "notebook_sync_check.log",
+    "exit_code": 0
+  },
+  {
+    "check": "docs_contract.log",
+    "exit_code": 0
+  },
+  {
+    "check": "diff_check.log",
+    "exit_code": 0
+  }
+]

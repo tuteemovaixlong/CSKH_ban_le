@@ -1,0 +1,26 @@
+test_colab_agent_notebook_sync (tests.test_audit_remediation.TestAuditRemediation)
+Ensure notebooks/colab_agent.ipynb matches codebase so CI never fails on stale artifact. ... ok
+test_dispute_agent_does_not_hallucinate_order_or_product_id (tests.test_audit_remediation.TestAuditRemediation)
+Dispute agent must not invent O-302 or hardcode inventory if no order is provided. ... ok
+test_f04_tool_cache_hit_populates_bound_versions_and_sources (tests.test_audit_remediation.TestAuditRemediation)
+F04: When ToolCache hits, bound.versions & bound.knowledge.sources must still be populated. ... ok
+test_f06_request_human_support_creates_escalation_feedback (tests.test_audit_remediation.TestAuditRemediation)
+F06: Invoking request_human_support automatically records a human_handoff escalation in DB. ... ok
+test_f11_attachment_digest_prevents_mismatched_replay (tests.test_audit_remediation.TestAuditRemediation)
+F11: Changing attachment data under the same filename must generate a different digest. ... ok
+test_manager_kpis_real_data_without_dummy_fallback (tests.test_audit_remediation.TestAuditRemediation)
+When database has no feedback ratings, avg_csat must be None, not 4.8. ... ok
+test_multiagent_protocol_compatibility_with_system_message (tests.test_audit_remediation.TestAuditRemediation)
+Protocol must accept system message at index 0 and build_request must use it. ... ok
+test_multiagent_through_real_proxy_pipeline (tests.test_audit_remediation.TestAuditRemediation)
+Multi-agent worker calls must pass strict RemoteAgent / inference_proxy validation pipeline. ... ok
+test_p03_catalog_save_catches_oserror_gracefully (tests.test_audit_remediation.TestAuditRemediation)
+P0.3: Catalog.save() should handle filesystem errors (e.g. read-only fs) gracefully without crash. ... Catalog file C:\Users\HP\AppData\Local\Temp\tmpez64gaqf\products.json cannot be written (read-only filesystem); mutation kept in-memory: Read-only filesystem
+ok
+test_staff_reply_does_not_prematurely_resolve_handoff (tests.test_audit_remediation.TestAuditRemediation)
+Staff replying must keep ticket active in human mode; only staff_resolve should resolve it. ... ok
+
+----------------------------------------------------------------------
+Ran 10 tests in 2.118s
+
+OK

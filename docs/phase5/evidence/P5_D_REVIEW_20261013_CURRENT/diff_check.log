@@ -1,0 +1,11 @@
+warning: in the working copy of 'docs/CURRENT_PROJECT_STATUS.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/PLAN_ROADMAP_INDEX.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/phase4/PHASE_4_ACCEPTANCE_CRITERIA.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/phase4/PHASE_5_BACKLOG.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/phase5/PHASE_5_ACCEPTANCE_CRITERIA.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/phase5/PHASE_5_EXECUTION_HANDOFF.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/phase5/PHASE_5_PLAN.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'retailops/sales/fixtures.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'retailops/sales/simulator.py', LF will be replaced by CRLF the next time Git touches it
+EXIT_CODE=0
