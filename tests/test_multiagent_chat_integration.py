@@ -132,12 +132,17 @@ class MultiAgentChatIntegrationTests(unittest.TestCase):
         self.assertEqual(trace["orchestrator"], "multiagent_langgraph")
         self.assertEqual(trace["supervisor_intent"], "dispute_complaint")
         self.assertIn("dispute_agent", " ".join(trace["subagent_history"]))
+        self.assertIn("dispute_agent:proposal_ready", trace["subagent_history"])
+
+        tool_names = [t.get("name") for t in trace.get("tools", [])]
+        self.assertIn("get_order", tool_names)
 
         proposal = result.get("action_proposal")
         self.assertIsNotNone(proposal)
         self.assertEqual(proposal["action"], "exchange_1to1")
         self.assertEqual(proposal["order_id"], "O-101")
         self.assertEqual(proposal["status"], "pending_staff_approval")
+        self.assertIn("Đổi mới 1-1", result["message"])
 
     def test_dispute_size_creates_size_exchange_proposal(self):
         result = self.chat("Tôi thử áo đơn O-101 bị chật quá, muốn đổi sang size L")

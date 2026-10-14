@@ -123,6 +123,15 @@ class MockDisputeChatGateway:
                         "prompt_eval_count": 60,
                         "eval_count": 30,
                     }
+                return {
+                    "message": {
+                        "role": "assistant",
+                        "content": "Dạ hiện tại kho tri thức chính sách của shop chưa có tài liệu quy định phù hợp cho nội dung này. Để đảm bảo quyền lợi khiếu nại của anh/chị, em xin phép ghi nhận thông tin và chuyển chuyên viên CSKH hỗ trợ trực tiếp, không tự ý áp dụng quy định chưa được xác thực nhé ạ!",
+                    },
+                    "done_reason": "stop",
+                    "prompt_eval_count": 50,
+                    "eval_count": 25,
+                }
 
             return {
                 "message": {
@@ -616,7 +625,31 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         self.assertNotIn(policy_a_marker, chat_res3["message"])
         self.assertNotIn(policy_a_marker, json.dumps(sources3))
 
-        # 3. Safe unavailable behavior: when store has no schema (standard SQLite default)
+        # 3. Safe no-evidence behavior: migrated tenant schema with zero matching documents
+        with self.sessions.resolve(self.cust1_cookie) as b1:
+            b1.application.store.schema = "tenant_empty"
+            if hasattr(b1.application, "tool_cache"):
+                b1.application.tool_cache.bump_epoch(self.tenant_id, self.cust1_id)
+
+        status, conv_empty, _ = self.request("/api/conversations", {}, cookie=self.cust1_cookie)
+        chat_body_empty = {
+            "conversation_id": conv_empty["conversation_id"],
+            "text": "Khiếu nại đổi trả theo chính sách của shop",
+            "request_id": str(uuid.uuid4()),
+        }
+        with patch.object(KnowledgeRepository, "search", fake_repo_search):
+            status, chat_res_empty, _ = self.request("/api/chat", chat_body_empty, cookie=self.cust1_cookie)
+        self.assertEqual(status, 200)
+        self.assertEqual(search_calls[-1]["schema"], "tenant_empty")
+        empty_tools = [t for t in chat_res_empty["trace"].get("tools", []) if t.get("name") == "search_knowledge"]
+        self.assertGreaterEqual(len(empty_tools), 1)
+        self.assertEqual(empty_tools[0]["status"], "ok")
+        self.assertEqual(chat_res_empty.get("sources", []), [])
+        self.assertNotIn("[KB:", chat_res_empty["message"])
+        self.assertNotIn(policy_a_marker, chat_res_empty["message"])
+        self.assertNotIn(policy_b_marker, chat_res_empty["message"])
+
+        # 4. Safe unavailable behavior: when store has no schema (standard SQLite default)
         with self.sessions.resolve(self.cust1_cookie) as b1:
             if hasattr(b1.application.store, "schema"):
                 delattr(b1.application.store, "schema")
@@ -1170,7 +1203,7 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         }
 
         # 9. Serialize and save report and checksum manifest to disk
-        evidence_dir = Path(__file__).resolve().parents[1] / "docs" / "phase5" / "evidence"
+        evidence_dir = self.directory / "evidence"
         evidence_dir.mkdir(parents=True, exist_ok=True)
         report_file = evidence_dir / "P5_D_LIFECYCLE_REPORT.json"
         manifest_file = evidence_dir / "P5_D_LIFECYCLE_MANIFEST.json"
@@ -1470,7 +1503,11 @@ class Phase5ComplaintPgvectorTests(unittest.TestCase):
         }
         status, chat_res_empty = self.request("/api/chat", chat_body_empty, cookie=c_cookie)
         self.assertEqual(status, 200)
+        empty_tools = [t for t in chat_res_empty.get("trace", {}).get("tools", []) if t.get("name") == "search_knowledge"]
+        self.assertGreaterEqual(len(empty_tools), 1)
+        self.assertEqual(empty_tools[0]["status"], "ok")
         self.assertEqual(chat_res_empty.get("sources", []), [])
+        self.assertNotIn("[KB:", chat_res_empty["message"])
         self.assertNotIn(self.policy_a_marker, chat_res_empty["message"])
         self.assertNotIn(self.policy_b_marker, chat_res_empty["message"])
 

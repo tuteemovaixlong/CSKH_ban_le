@@ -54,7 +54,10 @@ class RagContractTests(unittest.TestCase):
                      [candidate('Completely irrelevant astronomy stars.', score=0.9)]):
             tool = KnowledgeTool(self.tool.store)
             self.repo.return_value.search.return_value = rows
-            self.assertEqual(tool.search('returns')['results'], [])
+            res = tool.search('returns')
+            self.assertEqual(res['results'], [])
+            self.assertEqual(res['status'], 'no_evidence')
+            self.assertNotIn('[KB:', json.dumps(res))
             self.assertEqual(tool.sources, [])
 
     def test_unavailable_and_unmigrated_store_are_not_silently_seeded(self):

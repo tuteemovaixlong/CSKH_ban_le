@@ -59,6 +59,7 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
     action_proposal = None
     final_content = None
     refusal_set = False
+    knowledge_called = False
     trace = state.setdefault("trace", {})
     try:
         response = gateway.chat(prompt_messages, True, timeout)
@@ -151,6 +152,8 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
                                     "Nếu cần hỗ trợ thêm, anh/chị vui lòng liên hệ nhân viên CSKH để được trợ giúp nhé ạ!"
                                 )
                     else:
+                        if name == "search_knowledge":
+                            knowledge_called = True
                         result = execute(name, args)
                         state["tool_count"] += 1
                         trace.setdefault("tools", []).append({"name": name, "status": "error" if isinstance(result, dict) and result.get("error") else "ok"})
@@ -172,7 +175,8 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
                     pass
 
         # Check domain heuristic for SOP 2 (Defect / Warranty Exchange 1-1)
-        if not final_content and any(w in lower_msg for w in ["kẹt khóa", "bung chỉ", "hỏng khóa", "lỗi chỉ", "rách", "đổi 1-1", "đổi mới", "bảo hành"]):
+        sop2_defect_terms = ["kẹt khóa", "bung chỉ", "hỏng khóa", "lỗi chỉ", "rách", "đổi 1-1", "đổi mới"]
+        if not refusal_set and (any(w in lower_msg for w in sop2_defect_terms) or (not knowledge_called and "bảo hành" in lower_msg)):
             if extracted_oid:
                 bound_oid = bound_context.get("order_id") or bound_obj.get("order_id")
                 is_order_ok = True
