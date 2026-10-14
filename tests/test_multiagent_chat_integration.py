@@ -290,8 +290,7 @@ class MultiAgentChatIntegrationTests(unittest.TestCase):
 
     def test_dispute_defect_no_order_id_preserves_model_safe_handoff(self):
         """P5-K7 continuation regression: when customer submits a defect complaint without an
-        order ID and the model provides a safe staff handoff, preserve the model's handoff
-        instead of overriding it with an unsupported policy promise.
+        order ID, safely request order ID without promising warranty or exchange terms.
         """
         from retailops.workflow.subagents.dispute_agent import run_dispute_agent
 
@@ -315,9 +314,118 @@ class MultiAgentChatIntegrationTests(unittest.TestCase):
         }
         res_state = run_dispute_agent(state, lambda name, args: {}, MockSafeHandoffGateway())
         self.assertIsNone(res_state.get("action_proposal"))
-        self.assertIn("chuyên viên CSKH", res_state["messages"][-1]["content"])
-        self.assertNotIn("Đổi mới 1-1", res_state["messages"][-1]["content"])
-        self.assertNotIn("miễn phí 2 chiều", res_state["messages"][-1]["content"])
+        reply = res_state["messages"][-1]["content"]
+        self.assertIn("Mã đơn hàng", reply)
+        self.assertNotIn("Đổi mới 1-1", reply)
+        self.assertNotIn("miễn phí 2 chiều", reply)
+        self.assertNotIn("thay sản phẩm", reply)
+        self.assertNotIn("miễn phí", reply)
+
+    def test_dispute_defect_irrelevant_retrieval_rejects_unsupported_warranty_promise(self):
+        """P5-K7 round 2 regression: when customer submits a defect complaint and retrieval
+        returns only unrelated delivery policy, the agent must reject the model's unsupported
+        warranty/exchange claim, produce no action proposal, and return deterministic safe handoff.
+        """
+        import json
+        from retailops.workflow.subagents.dispute_agent import run_dispute_agent
+
+        def mock_execute(name, args):
+            if name == "search_knowledge":
+                return {
+                    "status": "evidence_found",
+                    "results": [
+                        {
+                            "citation_id": "KB:shipping-policy-01",
+                            "source_key": "shipping.md",
+                            "title": "Chính sách vận chuyển giao hàng",
+                            "excerpt": "Giao hàng từ 2-3 ngày làm việc trên toàn quốc.",
+                            "content_sha256": "1" * 64,
+                            "truncated": False,
+                        }
+                    ],
+                }
+            return {}
+
+        class MockHallucinatingWarrantyGateway:
+            def __init__(self):
+                self.calls = 0
+
+            def chat(self, msgs, allow_tools, timeout):
+                self.calls += 1
+                if self.calls == 1:
+                    return {
+                        "message": {
+                            "role": "assistant",
+                            "tool_calls": [
+                                {
+                                    "id": "call_search_1",
+                                    "function": {
+                                        "name": "search_knowledge",
+                                        "arguments": json.dumps({"query": "chính sách giao hàng"}),
+                                    },
+                                }
+                            ],
+                        },
+                        "prompt_eval_count": 50,
+                        "eval_count": 20,
+                    }
+                return {
+                    "message": {
+                        "role": "assistant",
+                        "content": "Sản phẩm lỗi sẽ được đổi mới miễn phí trong 30 ngày ạ.",
+                    },
+                    "prompt_eval_count": 70,
+                    "eval_count": 25,
+                }
+
+        state = {
+            "messages": [{"role": "user", "content": "Áo đơn O-101 bị kẹt khóa và bung chỉ, kiểm tra chính sách đổi 1-1"}],
+            "fresh": [],
+            "subagent_history": [],
+            "tool_count": 0,
+            "trace": {},
+        }
+        res_state = run_dispute_agent(state, mock_execute, MockHallucinatingWarrantyGateway())
+        self.assertIsNone(res_state.get("action_proposal"))
+        self.assertNotIn("dispute_agent:proposal_ready", res_state.get("subagent_history", []))
+        reply = res_state["messages"][-1]["content"]
+        self.assertNotIn("đổi mới miễn phí trong 30 ngày", reply.lower())
+        self.assertNotIn("đổi mới 1-1", reply.lower())
+        self.assertIn("chuyên viên CSKH", reply)
+        self.assertIn("chưa có tài liệu quy định phù hợp", reply)
+
+    def test_dispute_defect_no_order_rejects_paraphrased_replacement_promise(self):
+        """P5-K7 round 2 regression: when customer submits a defect complaint without an order ID,
+        a model response containing a handoff keyword plus paraphrased free-replacement promise
+        must be rejected in favor of a neutral order request without remedy or fee promises.
+        """
+        from retailops.workflow.subagents.dispute_agent import run_dispute_agent
+
+        class MockParaphrasedPromiseGateway:
+            def chat(self, msgs, allow_tools, timeout):
+                return {
+                    "message": {
+                        "role": "assistant",
+                        "content": "Dạ em chuyển CSKH, shop sẽ thay sản phẩm mới miễn phí cho anh/chị ngay ạ.",
+                    },
+                    "prompt_eval_count": 45,
+                    "eval_count": 25,
+                }
+
+        state = {
+            "messages": [{"role": "user", "content": "Sản phẩm mua về bị kẹt khóa và bung chỉ shop ơi"}],
+            "fresh": [],
+            "subagent_history": [],
+            "tool_count": 0,
+            "trace": {},
+        }
+        res_state = run_dispute_agent(state, lambda name, args: {}, MockParaphrasedPromiseGateway())
+        self.assertIsNone(res_state.get("action_proposal"))
+        self.assertNotIn("dispute_agent:proposal_ready", res_state.get("subagent_history", []))
+        reply = res_state["messages"][-1]["content"]
+        self.assertNotIn("thay sản phẩm mới miễn phí", reply.lower())
+        self.assertNotIn("miễn phí", reply.lower())
+        self.assertIn("Mã đơn hàng", reply)
 
     def test_dispute_size_creates_size_exchange_proposal(self):
         result = self.chat("Tôi thử áo đơn O-101 bị chật quá, muốn đổi sang size L")
