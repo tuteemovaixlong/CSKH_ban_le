@@ -178,14 +178,7 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
                 except Exception:
                     pass
 
-        bound_knowledge = bound_obj.get("knowledge") if isinstance(bound_obj.get("knowledge"), dict) else {}
-        if isinstance(bound_knowledge, dict) and bound_knowledge.get("sources"):
-            knowledge_has_evidence = True
-
-        knowledge_no_evidence = (
-            (knowledge_called and not knowledge_has_evidence)
-            or (isinstance(bound_knowledge, dict) and bound_knowledge.get("searches", 0) > 0 and not bound_knowledge.get("sources") and not knowledge_has_evidence)
-        )
+        knowledge_no_evidence = bool(knowledge_called and not knowledge_has_evidence)
 
         if knowledge_no_evidence:
             refusal_set = True
@@ -263,14 +256,14 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
                         except Exception:
                             pass
 
-                        if warranty_days is None and not knowledge_has_evidence:
+                        if warranty_days is None:
                             action_proposal = None
                             final_content = (
                                 f"Dạ em rất tiếc, hệ thống chưa xác định được thời hạn bảo hành của sản phẩm thuộc đơn hàng {extracted_oid}. "
                                 "Anh/chị vui lòng liên hệ nhân viên CSKH để được hỗ trợ kiểm tra bảo hành và xử lý khiếu nại chính xác nhé ạ!"
                             )
                         else:
-                            w_desc = f"{warranty_days} ngày" if warranty_days is not None else "theo quy định của shop"
+                            w_desc = f"{warranty_days} ngày"
                             action_proposal = {
                                 "action": "exchange_1to1",
                                 "order_id": extracted_oid,
@@ -284,11 +277,18 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
                                 "Em đã xác định được một phương án đổi phù hợp này; nếu anh/chị muốn tiếp tục, hệ thống cần ghi nhận yêu cầu để CSKH xem xét hỗ trợ ạ."
                             )
             else:
-                final_content = (
-                    "Dạ shop chân thành xin lỗi anh/chị về sự cố sản phẩm gặp lỗi/kẹt khóa/bung chỉ! "
-                    "Shop áp dụng chính sách Đổi mới 1-1 tận nhà hoàn toàn miễn phí 2 chiều trong thời hạn bảo hành. "
-                    "Anh/chị vui lòng cung cấp Mã đơn hàng (ví dụ: O-101) để em kiểm tra bảo hành và hỗ trợ mình ngay nhé ạ!"
-                )
+                action_proposal = None
+                model_reply = final_content or message.get("content") or ""
+                unsupported_claims = ["đổi mới 1-1", "đổi 1-1", "miễn phí 2 chiều", "chính sách bảo hành"]
+                has_unsupported_claim = any(c in model_reply.lower() for c in unsupported_claims)
+                is_safe_staff_handoff = any(k in model_reply.lower() for k in ("cskh", "chuyên viên", "nhân viên tư vấn", "trực tiếp"))
+                if is_safe_staff_handoff and not has_unsupported_claim:
+                    final_content = model_reply
+                else:
+                    final_content = (
+                        "Dạ shop rất tiếc về sự cố sản phẩm anh/chị gặp phải. "
+                        "Anh/chị vui lòng cung cấp Mã đơn hàng (ví dụ: O-101) để em hỗ trợ kiểm tra thông tin và phương án xử lý phù hợp nhé ạ!"
+                    )
         # Check domain heuristic for SOP 3 (Size Exchange 2-Way)
         elif any(w in lower_msg for w in ["đổi size", "không vừa", "chật", "rộng", "đổi sang size"]):
             if extracted_oid:

@@ -1310,6 +1310,75 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         self.assertNotIn("Đổi mới 1-1", chat_res["message"])
         self.assertNotIn("áp dụng chính sách bảo hành", chat_res["message"])
 
+    def test_17_defect_complaint_stale_knowledge_no_warranty_days_safe_handoff(self):
+        """P5-K7 continuation regression: stale conversation-level knowledge from an earlier
+        unrelated query must NOT authorize a warranty claim or exchange proposal when catalog
+        product has no structured warranty days.
+        """
+        self.test_01_same_identity_binding_import_and_session()
+
+        # Set product P-601 warranty_days to NULL in tenant database
+        bstore = self.sessions.business_store(self.tenant_id)
+        with bstore.connection(write=True) as db:
+            db.execute("UPDATE products SET warranty_days = NULL WHERE id = 'P-601'")
+
+        status, conv, _ = self.request("/api/conversations", {}, cookie=self.cust1_cookie)
+        self.assertEqual(status, 201)
+        cid = conv["conversation_id"]
+
+        chat_body = {
+            "conversation_id": cid,
+            "text": "Khiếu nại đơn O-90001 bị kẹt khóa và bung chỉ, shop xử lý giúp tôi",
+            "request_id": str(uuid.uuid4()),
+        }
+        status, chat_res, _ = self.request("/api/chat", chat_body, cookie=self.cust1_cookie)
+        self.assertEqual(status, 200)
+
+        # 1. No search_knowledge executed this turn
+        tool_names = [t.get("name") for t in chat_res["trace"].get("tools", [])]
+        self.assertNotIn("search_knowledge", tool_names)
+
+        # 2. No exchange proposal created
+        self.assertIsNone(chat_res.get("action_proposal"))
+        self.assertNotIn("dispute_agent:proposal_ready", chat_res["trace"].get("subagent_history", []))
+        self.assertIn("dispute_agent:listening", chat_res["trace"].get("subagent_history", []))
+
+        # 3. Safe handoff to CSKH without asserting warranty or 1-1 exchange
+        self.assertNotIn("Đổi mới 1-1", chat_res["message"])
+        self.assertNotIn("theo quy định của shop", chat_res["message"])
+        self.assertIn("chưa xác định được thời hạn bảo hành", chat_res["message"])
+        self.assertIn("nhân viên CSKH", chat_res["message"])
+
+    def test_18_defect_complaint_no_order_id_safe_handoff_without_exchange_promise(self):
+        """P5-K7 continuation regression: when customer submits a defect complaint without an
+        order ID and without policy evidence, do not promise free 1:1 exchange or assert shop
+        warranty policy; ask for order ID safely.
+        """
+        self.test_01_same_identity_binding_import_and_session()
+
+        status, conv, _ = self.request("/api/conversations", {}, cookie=self.cust1_cookie)
+        self.assertEqual(status, 201)
+        cid = conv["conversation_id"]
+
+        chat_body = {
+            "conversation_id": cid,
+            "text": "Khiếu nại sản phẩm áo bị kẹt khóa và bung chỉ shop ơi",
+            "request_id": str(uuid.uuid4()),
+        }
+        status, chat_res, _ = self.request("/api/chat", chat_body, cookie=self.cust1_cookie)
+        self.assertEqual(status, 200)
+
+        # 1. No proposal created
+        self.assertIsNone(chat_res.get("action_proposal"))
+        self.assertNotIn("dispute_agent:proposal_ready", chat_res["trace"].get("subagent_history", []))
+        self.assertIn("dispute_agent:listening", chat_res["trace"].get("subagent_history", []))
+
+        # 2. Asks for order ID safely without promising free exchange terms or shop warranty
+        self.assertNotIn("Đổi mới 1-1", chat_res["message"])
+        self.assertNotIn("miễn phí 2 chiều", chat_res["message"])
+        self.assertNotIn("áp dụng chính sách", chat_res["message"])
+        self.assertIn("Mã đơn hàng", chat_res["message"])
+
 
 @unittest.skipUnless(DSN, "RAG pgvector integration requires a disposable PostgreSQL database with pgvector.")
 class Phase5ComplaintPgvectorTests(unittest.TestCase):
