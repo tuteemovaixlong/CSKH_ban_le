@@ -32,6 +32,26 @@ class MockMultiAgentChatGateway:
         if last_msg.get("role") == "tool":
             tool_name = last_msg.get("tool_name", "")
             tool_res = last_msg.get("content", "")
+            if tool_name == "search_knowledge":
+                res_data = {}
+                try:
+                    res_data = json.loads(tool_res) if isinstance(tool_res, str) else tool_res
+                except Exception:
+                    pass
+                if isinstance(res_data, dict) and not res_data.get("results"):
+                    return {
+                        "message": {
+                            "role": "assistant",
+                            "content": (
+                                "Dạ hiện tại kho tri thức chính sách của shop chưa có tài liệu quy định phù hợp cho trường hợp khiếu nại này. "
+                                "Để đảm bảo quyền lợi của anh/chị, em xin phép ghi nhận thông tin và chuyển chuyên viên CSKH hỗ trợ trực tiếp, "
+                                "không tự ý áp dụng quy định chưa được xác thực nhé ạ!"
+                            ),
+                        },
+                        "done_reason": "stop",
+                        "prompt_eval_count": 80,
+                        "eval_count": 30,
+                    }
             return {
                 "message": {
                     "role": "assistant",
@@ -40,6 +60,26 @@ class MockMultiAgentChatGateway:
                 "done_reason": "stop",
                 "prompt_eval_count": 80,
                 "eval_count": 25
+            }
+
+        # If tools are allowed and user asks about policy
+        if allow_tools and any(kw in content.lower() for kw in ("chính sách", "quy định", "chính sách bảo hành")):
+            return {
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "search_knowledge",
+                                "arguments": {"query": "chính sách bảo hành đổi mới hàng lỗi"}
+                            }
+                        }
+                    ]
+                },
+                "done_reason": "tool_calls",
+                "prompt_eval_count": 60,
+                "eval_count": 15
             }
 
         # If tools are allowed and user asks about order tracking
@@ -143,6 +183,28 @@ class MultiAgentChatIntegrationTests(unittest.TestCase):
         self.assertEqual(proposal["order_id"], "O-101")
         self.assertEqual(proposal["status"], "pending_staff_approval")
         self.assertIn("Đổi mới 1-1", result["message"])
+
+    def test_dispute_defect_no_policy_evidence_preserves_safe_handoff_without_exchange_proposal(self):
+        """P5-K7 regression: when search_knowledge returns no policy evidence on a defect complaint,
+        preserve the safe staff handoff and do NOT produce an unsupported exchange proposal.
+        """
+        result = self.chat("Áo đơn O-101 bị kẹt khóa và bung chỉ, kiểm tra chính sách đổi 1-1")
+        self.assertEqual(result["action"], "reply")
+        trace = result["trace"]
+        self.assertEqual(trace["orchestrator"], "multiagent_langgraph")
+        self.assertEqual(trace["supervisor_intent"], "dispute_complaint")
+        self.assertIn("dispute_agent", " ".join(trace["subagent_history"]))
+
+        tool_names = [t.get("name") for t in trace.get("tools", [])]
+        self.assertIn("search_knowledge", tool_names)
+
+        # Truthful safe handoff preserved, no exchange proposal created
+        self.assertIsNone(result.get("action_proposal"))
+        self.assertNotIn("dispute_agent:proposal_ready", trace["subagent_history"])
+        self.assertIn("dispute_agent:listening", trace["subagent_history"])
+        self.assertIn("chuyên viên CSKH", result["message"])
+        self.assertNotIn("Đổi mới 1-1", result["message"])
+        self.assertNotIn("áp dụng chính sách bảo hành", result["message"])
 
     def test_dispute_size_creates_size_exchange_proposal(self):
         result = self.chat("Tôi thử áo đơn O-101 bị chật quá, muốn đổi sang size L")

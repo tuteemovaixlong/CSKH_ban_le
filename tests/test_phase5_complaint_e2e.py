@@ -1276,6 +1276,40 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         self.assertNotIn("refresh_token", report_text)
         self.assertNotIn("@gmail.com", report_text)
 
+    def test_16_defect_complaint_no_policy_evidence_preserves_safe_handoff_without_exchange_proposal(self):
+        """P5-K7 regression: when a defect complaint query triggers search_knowledge but
+        retrieval returns no policy evidence, preserve truthful safe staff handoff and
+        do NOT create an unsupported exchange proposal or assert shop warranty.
+        """
+        self.test_01_same_identity_binding_import_and_session()
+
+        status, conv, _ = self.request("/api/conversations", {}, cookie=self.cust1_cookie)
+        self.assertEqual(status, 201)
+        cid = conv["conversation_id"]
+
+        chat_body = {
+            "conversation_id": cid,
+            "text": "Khiếu nại đơn O-90001 bị kẹt khóa và bung chỉ, kiểm tra chính sách đổi 1-1",
+            "request_id": str(uuid.uuid4()),
+        }
+        status, chat_res, _ = self.request("/api/chat", chat_body, cookie=self.cust1_cookie)
+        self.assertEqual(status, 200)
+
+        # 1. search_knowledge tool was executed
+        tool_names = [t.get("name") for t in chat_res["trace"].get("tools", [])]
+        self.assertIn("search_knowledge", tool_names)
+        self.assertEqual(chat_res.get("sources", []), [])
+
+        # 2. No unsupported exchange proposal produced
+        self.assertIsNone(chat_res.get("action_proposal"))
+        self.assertNotIn("dispute_agent:proposal_ready", chat_res["trace"].get("subagent_history", []))
+        self.assertIn("dispute_agent:listening", chat_res["trace"].get("subagent_history", []))
+
+        # 3. Truthful safe staff handoff preserved without asserting shop warranty or exchange policy
+        self.assertIn("chuyên viên CSKH", chat_res["message"])
+        self.assertNotIn("Đổi mới 1-1", chat_res["message"])
+        self.assertNotIn("áp dụng chính sách bảo hành", chat_res["message"])
+
 
 @unittest.skipUnless(DSN, "RAG pgvector integration requires a disposable PostgreSQL database with pgvector.")
 class Phase5ComplaintPgvectorTests(unittest.TestCase):

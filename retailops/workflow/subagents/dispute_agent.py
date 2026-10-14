@@ -60,6 +60,7 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
     final_content = None
     refusal_set = False
     knowledge_called = False
+    knowledge_has_evidence = False
     trace = state.setdefault("trace", {})
     try:
         response = gateway.chat(prompt_messages, True, timeout)
@@ -155,6 +156,9 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
                         if name == "search_knowledge":
                             knowledge_called = True
                         result = execute(name, args)
+                        if name == "search_knowledge":
+                            if isinstance(result, dict) and not result.get("error") and (result.get("status") == "evidence_found" or bool(result.get("results"))):
+                                knowledge_has_evidence = True
                         state["tool_count"] += 1
                         trace.setdefault("tools", []).append({"name": name, "status": "error" if isinstance(result, dict) and result.get("error") else "ok"})
                         tool_content = json.dumps(result, ensure_ascii=False) if isinstance(result, (dict, list)) else str(result)
@@ -174,9 +178,28 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
                 except Exception:
                     pass
 
+        bound_knowledge = bound_obj.get("knowledge") if isinstance(bound_obj.get("knowledge"), dict) else {}
+        if isinstance(bound_knowledge, dict) and bound_knowledge.get("sources"):
+            knowledge_has_evidence = True
+
+        knowledge_no_evidence = (
+            (knowledge_called and not knowledge_has_evidence)
+            or (isinstance(bound_knowledge, dict) and bound_knowledge.get("searches", 0) > 0 and not bound_knowledge.get("sources") and not knowledge_has_evidence)
+        )
+
+        if knowledge_no_evidence:
+            refusal_set = True
+            action_proposal = None
+            if not final_content:
+                final_content = (
+                    "Dạ hiện tại kho tri thức chính sách của shop chưa có tài liệu quy định phù hợp cho nội dung này. "
+                    "Để đảm bảo quyền lợi khiếu nại của anh/chị, em xin phép ghi nhận thông tin và chuyển chuyên viên CSKH hỗ trợ trực tiếp, "
+                    "không tự ý áp dụng quy định chưa được xác thực nhé ạ!"
+                )
+
         # Check domain heuristic for SOP 2 (Defect / Warranty Exchange 1-1)
         sop2_defect_terms = ["kẹt khóa", "bung chỉ", "hỏng khóa", "lỗi chỉ", "rách", "đổi 1-1", "đổi mới"]
-        if not refusal_set and (any(w in lower_msg for w in sop2_defect_terms) or (not knowledge_called and "bảo hành" in lower_msg)):
+        if not refusal_set and not knowledge_called and any(w in lower_msg for w in sop2_defect_terms + ["bảo hành"]):
             if extracted_oid:
                 bound_oid = bound_context.get("order_id") or bound_obj.get("order_id")
                 is_order_ok = True
@@ -240,19 +263,26 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
                         except Exception:
                             pass
 
-                        w_desc = f"{warranty_days} ngày" if warranty_days is not None else "tiêu chuẩn của hãng/shop"
-                        action_proposal = {
-                            "action": "exchange_1to1",
-                            "order_id": extracted_oid,
-                            "reason": "Hàng lỗi vận chuyển/kẹt khóa/bung chỉ",
-                            "details": f"Đổi mới 1-1 tận nhà (Bảo hành {w_desc})",
-                            "status": "pending_staff_approval"
-                        }
-                        final_content = (
-                            f"Dạ shop chân thành xin lỗi anh/chị về sự cố của đơn hàng {extracted_oid}! "
-                            f"Shop áp dụng chính sách bảo hành {w_desc} và hỗ trợ Đổi mới 1-1 cho sản phẩm lỗi. "
-                            "Em đã xác định được một phương án đổi phù hợp này; nếu anh/chị muốn tiếp tục, hệ thống cần ghi nhận yêu cầu để CSKH xem xét hỗ trợ ạ."
-                        )
+                        if warranty_days is None and not knowledge_has_evidence:
+                            action_proposal = None
+                            final_content = (
+                                f"Dạ em rất tiếc, hệ thống chưa xác định được thời hạn bảo hành của sản phẩm thuộc đơn hàng {extracted_oid}. "
+                                "Anh/chị vui lòng liên hệ nhân viên CSKH để được hỗ trợ kiểm tra bảo hành và xử lý khiếu nại chính xác nhé ạ!"
+                            )
+                        else:
+                            w_desc = f"{warranty_days} ngày" if warranty_days is not None else "theo quy định của shop"
+                            action_proposal = {
+                                "action": "exchange_1to1",
+                                "order_id": extracted_oid,
+                                "reason": "Hàng lỗi vận chuyển/kẹt khóa/bung chỉ",
+                                "details": f"Đổi mới 1-1 tận nhà (Bảo hành {w_desc})",
+                                "status": "pending_staff_approval"
+                            }
+                            final_content = (
+                                f"Dạ shop chân thành xin lỗi anh/chị về sự cố của đơn hàng {extracted_oid}! "
+                                f"Shop áp dụng chính sách bảo hành {w_desc} và hỗ trợ Đổi mới 1-1 cho sản phẩm lỗi. "
+                                "Em đã xác định được một phương án đổi phù hợp này; nếu anh/chị muốn tiếp tục, hệ thống cần ghi nhận yêu cầu để CSKH xem xét hỗ trợ ạ."
+                            )
             else:
                 final_content = (
                     "Dạ shop chân thành xin lỗi anh/chị về sự cố sản phẩm gặp lỗi/kẹt khóa/bung chỉ! "
