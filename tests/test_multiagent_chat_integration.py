@@ -536,6 +536,155 @@ class MultiAgentChatIntegrationTests(unittest.TestCase):
         self.assertNotIn("miễn phí", reply.lower())
         self.assertIn("Mã đơn hàng", reply)
 
+    def test_dispute_defect_unrelated_retrieval_rejects_warranty_promise_on_general_complaint(self):
+        """P5-K7 round 4 regression (R4-A): when customer submits a general complaint query
+        ('Khiếu nại đơn O-101 về quy định của shop') and retrieval returns only unrelated shipping
+        evidence, do NOT treat it as support for a warranty/replacement promise. Return the existing
+        neutral safe response/handoff; create no unsupported proposal.
+        """
+        import json
+        from retailops.workflow.subagents.dispute_agent import run_dispute_agent
+
+        def mock_execute(name, args):
+            if name == "search_knowledge":
+                return {
+                    "status": "evidence_found",
+                    "results": [
+                        {
+                            "citation_id": "KB:shipping-policy-01",
+                            "source_key": "shipping.md",
+                            "title": "Chính sách vận chuyển",
+                            "excerpt": "Giao hàng toàn quốc từ 2-3 ngày.",
+                            "content_sha256": "3" * 64,
+                            "truncated": False,
+                        }
+                    ],
+                }
+            return {}
+
+        class MockR4AWarrantyPromiseGateway:
+            def __init__(self):
+                self.calls = 0
+
+            def chat(self, msgs, allow_tools, timeout):
+                self.calls += 1
+                if self.calls == 1:
+                    return {
+                        "message": {
+                            "role": "assistant",
+                            "tool_calls": [
+                                {
+                                    "id": "call_search_r4a",
+                                    "function": {
+                                        "name": "search_knowledge",
+                                        "arguments": json.dumps({"query": "quy định của shop"}),
+                                    },
+                                }
+                            ],
+                        },
+                        "prompt_eval_count": 50,
+                        "eval_count": 20,
+                    }
+                return {
+                    "message": {
+                        "role": "assistant",
+                        "content": "Dạ shop áp dụng bảo hành đổi mới 1-1 miễn phí trong 30 ngày cho sản phẩm lỗi ạ.",
+                    },
+                    "prompt_eval_count": 70,
+                    "eval_count": 25,
+                }
+
+        state = {
+            "messages": [{"role": "user", "content": "Khiếu nại đơn O-101 về quy định của shop"}],
+            "fresh": [],
+            "subagent_history": [],
+            "tool_count": 0,
+            "trace": {},
+        }
+        res_state = run_dispute_agent(state, mock_execute, MockR4AWarrantyPromiseGateway())
+        self.assertIsNone(res_state.get("action_proposal"))
+        self.assertNotIn("dispute_agent:proposal_ready", res_state.get("subagent_history", []))
+        reply = res_state["messages"][-1]["content"]
+        self.assertNotIn("đổi mới 1-1", reply.lower())
+        self.assertNotIn("miễn phí trong 30 ngày", reply.lower())
+        self.assertIn("chuyên viên CSKH", reply)
+        self.assertIn("chưa có tài liệu quy định phù hợp", reply)
+
+    def test_dispute_defect_unrecognized_seam_phrase_with_order_triggers_safe_complaint_workflow(self):
+        """P5-K7 round 4 regression (R4-B): an unrecognized defect wording with an order ID
+        ('Áo đơn O-101 có đường chỉ bị lệch nhẹ shop ơi') must trigger the existing safe complaint
+        workflow—validate the owned order and obtain relevant policy evidence or safely hand off,
+        rather than allowing a direct free-replacement promise without support.
+        """
+        from retailops.workflow.subagents.dispute_agent import run_dispute_agent
+
+        class MockDirectPromiseGateway:
+            def chat(self, msgs, allow_tools, timeout):
+                return {
+                    "message": {
+                        "role": "assistant",
+                        "content": "Dạ shop sẽ đổi mới 1-1 miễn phí tận nhà cho đơn hàng O-101 của anh/chị ngay ạ.",
+                    },
+                    "prompt_eval_count": 45,
+                    "eval_count": 25,
+                }
+
+        # Check A: When warranty_days is None (no verified policy evidence), safely hand off to CSKH with no proposal
+        calls_a = []
+        def mock_exec_no_warranty(name, args):
+            calls_a.append((name, args))
+            if name == "get_order":
+                return {"status": "ok", "order": {"id": "O-101", "product_id": "P-101"}}
+            if name == "get_product":
+                return {"status": "ok", "product": {"id": "P-101", "warranty_days": None}}
+            return {}
+
+        state_a = {
+            "messages": [{"role": "user", "content": "Áo đơn O-101 có đường chỉ bị lệch nhẹ shop ơi"}],
+            "fresh": [],
+            "subagent_history": [],
+            "tool_count": 0,
+            "trace": {},
+        }
+        res_a = run_dispute_agent(state_a, mock_exec_no_warranty, MockDirectPromiseGateway())
+        self.assertIn(("get_order", {"order_id": "O-101"}), calls_a)
+        self.assertIn(("get_product", {"product_id": "P-101"}), calls_a)
+        self.assertIsNone(res_a.get("action_proposal"))
+        self.assertNotIn("dispute_agent:proposal_ready", res_a.get("subagent_history", []))
+        reply_a = res_a["messages"][-1]["content"]
+        self.assertNotIn("đổi mới 1-1 miễn phí", reply_a.lower())
+        self.assertIn("CSKH", reply_a)
+        self.assertIn("chưa xác định được thời hạn bảo hành", reply_a)
+
+        # Check B: When order and warranty are verified (positive supported path), create exchange_1to1 proposal
+        calls_b = []
+        def mock_exec_with_warranty(name, args):
+            calls_b.append((name, args))
+            if name == "get_order":
+                return {"status": "ok", "order": {"id": "O-101", "product_id": "P-101"}}
+            if name == "get_product":
+                return {"status": "ok", "product": {"id": "P-101", "warranty_days": 30}}
+            return {}
+
+        state_b = {
+            "messages": [{"role": "user", "content": "Áo đơn O-101 có đường chỉ bị lệch nhẹ shop ơi"}],
+            "fresh": [],
+            "subagent_history": [],
+            "tool_count": 0,
+            "trace": {},
+        }
+        res_b = run_dispute_agent(state_b, mock_exec_with_warranty, MockDirectPromiseGateway())
+        self.assertIn(("get_order", {"order_id": "O-101"}), calls_b)
+        self.assertIn(("get_product", {"product_id": "P-101"}), calls_b)
+        proposal_b = res_b.get("action_proposal")
+        self.assertIsNotNone(proposal_b)
+        self.assertEqual(proposal_b["action"], "exchange_1to1")
+        self.assertEqual(proposal_b["order_id"], "O-101")
+        self.assertEqual(proposal_b["status"], "pending_staff_approval")
+        reply_b = res_b["messages"][-1]["content"]
+        self.assertIn("30 ngày", reply_b)
+        self.assertIn("Đổi mới 1-1", reply_b)
+
     def test_dispute_size_creates_size_exchange_proposal(self):
         result = self.chat("Tôi thử áo đơn O-101 bị chật quá, muốn đổi sang size L")
         self.assertEqual(result["action"], "reply")
