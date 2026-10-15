@@ -21,6 +21,119 @@ DISPUTE_SYSTEM_PROMPT = (
     "- Luôn giữ thái độ ân cần, đồng cảm, chuyên nghiệp."
 )
 
+_DEFECT_WARRANTY_QUERY_TERMS = (
+    "kẹt khóa", "bung chỉ", "hỏng khóa", "lỗi chỉ", "lỗi đường may", "bung đường may",
+    "sứt chỉ", "đứt chỉ", "gãy khóa", "bung cúc", "đứt cúc", "rách", "bị thủng",
+    "đổi 1-1", "1 đổi 1", "đổi mới", "bảo hành",
+    "sản phẩm lỗi", "hàng lỗi", "lỗi sản phẩm", "bị lỗi", "lỗi",
+    "bị hỏng", "hư hỏng", "bị hư", "hỏng", "hư",
+    "trầy xước", "bị xước", "bị trầy", "móp méo", "bị vỡ", "bị nứt", "bị bể",
+    "ố màu", "phai màu", "loang màu", "lem màu", "bị bẩn", "xù lông", "kém chất lượng",
+    "ket khoa", "bung chi", "hong khoa", "loi chi", "loi duong may", "bung duong may",
+    "sut chi", "dut chi", "gay khoa", "bung cuc", "dut cuc", "rach", "bi thung",
+    "doi 1-1", "1 doi 1", "doi moi", "bao hanh",
+    "san pham loi", "hang loi", "loi san pham", "bi loi", "loi",
+    "bi hong", "hu hong", "bi hu", "hong", "hu",
+    "tray xuoc", "bi xuoc", "bi tray", "mop meo", "bi vo", "bi nut", "bi be",
+    "o mau", "phai mau", "loang mau", "lem mau", "bi ban", "xu long", "kem chat luong",
+)
+
+_EXCERPT_EXCLUSION_PATTERNS = (
+    "không áp dụng", "không được áp dụng", "không thuộc phạm vi", "không nằm trong phạm vi",
+    "không hỗ trợ", "không được hỗ trợ", "không bảo hành", "không được bảo hành",
+    "không nhận bảo hành", "không đổi mới", "không được đổi mới", "không đổi 1-1",
+    "không nhận đổi", "không giải quyết", "không tiếp nhận", "không chịu trách nhiệm",
+    "không bao gồm", "loại trừ", "ngoại trừ", "từ chối bảo hành", "từ chối đổi",
+    "từ chối", "miễn trừ", "chưa áp dụng", "chưa hỗ trợ", "chưa có chính sách",
+    "không bị lỗi", "không lỗi", "không rách", "không hư hỏng", "không hỏng",
+    "chỉ áp dụng đổi size", "chỉ áp dụng cho sản phẩm nguyên tem",
+    "khong ap dung", "khong duoc ap dung", "khong thuoc pham vi", "khong nam trong pham vi",
+    "khong ho tro", "khong duoc ho tro", "khong bao hanh", "khong duoc bao hanh",
+    "khong nhan bao hanh", "khong doi moi", "khong duoc doi moi", "khong doi 1-1",
+    "khong nhan doi", "khong giai quyet", "khong tiep nhan", "khong chiu trach nhiem",
+    "khong bao gom", "loai tru", "ngoai tru", "tu choi bao hanh", "tu choi doi",
+    "tu choi", "mien tru", "chua ap dung", "chua ho tro", "chua co chinh sach",
+    "khong bi loi", "khong loi", "khong rach", "khong hu hong", "khong hong",
+    "chi ap dung doi size", "chi ap dung cho san pham nguyen tem",
+)
+
+_EXCERPT_DEFECT_SUBJECT_TERMS = (
+    "bảo hành", "đổi mới", "đổi 1-1", "1 đổi 1",
+    "hàng lỗi", "sản phẩm lỗi", "lỗi sản phẩm", "bị lỗi",
+    "lỗi từ nhà sản xuất", "lỗi nhà sản xuất", "lỗi sản xuất", "lỗi kỹ thuật", "lỗi vận chuyển",
+    "lỗi đường may", "bung đường may", "bung chỉ", "lỗi chỉ", "sứt chỉ", "đứt chỉ",
+    "kẹt khóa", "hỏng khóa", "gãy khóa", "rách", "hư hỏng", "trầy xước", "móp méo",
+    "bao hanh", "doi moi", "doi 1-1", "1 doi 1",
+    "hang loi", "san pham loi", "loi san pham", "bi loi",
+    "loi tu nha san xuat", "loi nha san xuat", "loi san xuat", "loi ky thuat", "loi van chuyen",
+    "loi duong may", "bung duong may", "bung chi", "loi chi", "sut chi", "dut chi",
+    "ket khoa", "hong khoa", "gay khoa", "rach", "hu hong", "tray xuoc", "mop meo",
+)
+
+_EXCERPT_AFFIRMATIVE_REMEDY_TERMS = (
+    "đổi mới", "đổi 1-1", "1 đổi 1", "hỗ trợ đổi", "được đổi", "áp dụng đổi", "sẽ đổi",
+    "thay sản phẩm", "thay mới", "gửi bù",
+    "hỗ trợ bảo hành", "được bảo hành", "áp dụng bảo hành", "áp dụng chính sách bảo hành",
+    "chính sách bảo hành:", "quy định bảo hành:", "bảo hành miễn phí",
+    "doi moi", "doi 1-1", "1 doi 1", "ho tro doi", "duoc doi", "ap dung doi", "se doi",
+    "thay san pham", "thay moi", "gui bu",
+    "ho tro bao hanh", "duoc bao hanh", "ap dung bao hanh", "ap dung chinh sach bao hanh",
+    "chinh sach bao hanh:", "quy dinh bao hanh:", "bao hanh mien phi",
+)
+
+
+def _has_whole_term(text: str, terms: Any) -> bool:
+    for term in terms:
+        if re.search(rf"(?<!\w){re.escape(term)}(?!\w)", text):
+            return True
+    return False
+
+
+def _is_defect_warranty_query(user_msg: str) -> bool:
+    cleaned = (user_msg or "").lower()
+    for benign in ("xin lỗi", "xin loi", "trả lời", "tra loi", "thứ lỗi", "thu loi", "màu hồng", "mau hong", "hoa hồng", "hoa hong"):
+        cleaned = cleaned.replace(benign, " ")
+    return _has_whole_term(cleaned, _DEFECT_WARRANTY_QUERY_TERMS)
+
+
+def _excerpt_supports_defect_warranty(excerpt: Any) -> bool:
+    if not isinstance(excerpt, str) or not excerpt.strip():
+        return False
+    lower_excerpt = excerpt.lower()
+    if any(pat in lower_excerpt for pat in _EXCERPT_EXCLUSION_PATTERNS):
+        return False
+
+    benign_negations = (
+        "không mất phí", "không tốn phí", "không tính phí", "không thu phí",
+        "không cần", "không giới hạn",
+        "khong mat phi", "khong ton phi", "khong tinh phi", "khong thu phi",
+        "khong can", "khong gioi han",
+    )
+    clause_negations = (
+        "không", "khong", "chưa", "chua", "loại trừ", "loai tru",
+        "ngoại trừ", "ngoai tru", "từ chối", "tu choi", "miễn trừ", "mien tru",
+        "trừ khi", "tru khi", "trừ trường hợp", "tru truong hop",
+    )
+
+    for raw_clause in re.split(r"[.!?\n;]+", lower_excerpt):
+        clause = raw_clause.strip()
+        if not clause:
+            continue
+        cleaned_clause = clause
+        for benign in benign_negations:
+            cleaned_clause = cleaned_clause.replace(benign, " ")
+        if _has_whole_term(cleaned_clause, clause_negations):
+            continue
+        has_subject = _has_whole_term(cleaned_clause, _EXCERPT_DEFECT_SUBJECT_TERMS)
+        has_remedy = (
+            any(term in cleaned_clause for term in _EXCERPT_AFFIRMATIVE_REMEDY_TERMS)
+            or bool(re.search(r"bảo hành\s+\d+\s*(?:ngày|tháng|năm)|bao hanh\s+\d+\s*(?:ngay|thang|nam)", cleaned_clause))
+        )
+        if has_subject and has_remedy:
+            return True
+    return False
+
+
 def _is_relevant_defect_warranty_evidence(search_res: Any, user_msg: str) -> bool:
     """Check if retrieved knowledge results actually establish relevant defect/warranty policy."""
     if not isinstance(search_res, dict) or search_res.get("error"):
@@ -29,40 +142,16 @@ def _is_relevant_defect_warranty_evidence(search_res: Any, user_msg: str) -> boo
     if not results or not isinstance(results, list):
         return False
 
-    lower_query = (user_msg or "").lower()
-    defect_terms = (
-        "kẹt khóa", "bung chỉ", "hỏng khóa", "lỗi chỉ", "rách",
-        "đổi 1-1", "đổi mới", "bảo hành", "lỗi", "hỏng", "hư",
-        "sản phẩm lỗi", "hàng lỗi", "trầy xước",
-        "ket khoa", "bung chi", "hong khoa", "loi chi", "rach",
-        "doi 1-1", "doi moi", "bao hanh", "loi", "hong", "hu",
-        "san pham loi", "hang loi", "tray xuoc"
-    )
-    is_defect = any(w in lower_query for w in defect_terms)
-
-    if is_defect:
-        warranty_defect_terms = (
-            "bảo hành", "đổi mới", "đổi 1-1", "đổi hàng", "đổi trả",
-            "trả hàng", "hoàn tiền", "hàng lỗi", "sản phẩm lỗi",
-            "lỗi từ nhà sản xuất", "lỗi nhà sản xuất", "lỗi vận chuyển",
-            "bung chỉ", "kẹt khóa", "hỏng khóa", "lỗi chỉ", "rách",
-            "chính sách đổi", "quy định đổi", "quy định bảo hành",
-            "chính sách bảo hành", "chính sách đổi trả",
-            "bao hanh", "doi moi", "doi 1-1", "doi hang", "doi tra",
-            "tra hang", "hoan tien", "hang loi", "san pham loi",
-            "loi tu nha san xuat", "loi nha san xuat", "loi van chuyen",
-            "chinh sach doi", "quy dinh doi", "quy dinh bao hanh",
-            "chinh sach bao hanh", "chinh sach doi tra"
-        )
+    if _is_defect_warranty_query(user_msg):
         for doc in results:
             if not isinstance(doc, dict):
                 continue
-            combined = f"{doc.get('title', '')} {doc.get('excerpt', '')} {doc.get('source_key', '')}".lower()
-            if any(term in combined for term in warranty_defect_terms):
+            if _excerpt_supports_defect_warranty(doc.get("excerpt", "")):
                 return True
         return False
 
-    return bool(results)
+    return any(isinstance(doc, dict) and bool(str(doc.get("excerpt") or "").strip()) for doc in results)
+
 
 
 def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeout: int = 30) -> MultiAgentState:
@@ -227,8 +316,14 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
             refusal_set = True
             action_proposal = None
             unsupported_terms = (
-                "đổi mới", "đổi 1-1", "đổi hàng", "đổi trả", "thay sản phẩm",
-                "bảo hành", "miễn phí", "áp dụng chính sách", "quy định đổi"
+                "đổi mới", "đổi 1-1", "1-1", "1 đổi 1", "đổi hàng", "đổi trả", "trả hàng",
+                "thay sản phẩm", "thay mới", "gửi bù", "gửi lại", "đền bù", "bồi thường",
+                "hoàn tiền", "bảo hành", "miễn phí", "freeship", "2 chiều",
+                "áp dụng chính sách", "quy định đổi", "hỗ trợ đổi", "sẽ đổi", "được đổi",
+                "doi moi", "doi 1-1", "1 doi 1", "doi hang", "doi tra", "tra hang",
+                "thay san pham", "thay moi", "gui bu", "gui lai", "den bu", "boi thuong",
+                "hoan tien", "bao hanh", "mien phi", "2 chieu",
+                "ap dung chinh sach", "quy dinh doi", "ho tro doi", "se doi", "duoc doi",
             )
             safe_handoff_terms = ("cskh", "chuyên viên", "nhân viên tư vấn", "nhân viên cskh")
             lower_final = (final_content or "").lower()
@@ -243,8 +338,7 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
                 )
 
         # Check domain heuristic for SOP 2 (Defect / Warranty Exchange 1-1)
-        sop2_defect_terms = ["kẹt khóa", "bung chỉ", "hỏng khóa", "lỗi chỉ", "rách", "đổi 1-1", "đổi mới"]
-        if not refusal_set and not knowledge_called and any(w in lower_msg for w in sop2_defect_terms + ["bảo hành"]):
+        if not refusal_set and not knowledge_called and _is_defect_warranty_query(last_user_msg):
             if extracted_oid:
                 bound_oid = bound_context.get("order_id") or bound_obj.get("order_id")
                 is_order_ok = True
@@ -596,7 +690,13 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
                 "Em đã mở bảng xem lại đề xuất trên màn hình, anh/chị vui lòng kiểm tra và bấm 'Xác nhận hủy' để hệ thống xử lý an toàn nhé ạ!"
             )
         else:
-            if not final_content:
+            if not extracted_oid and not knowledge_has_evidence and not refusal_set:
+                action_proposal = None
+                final_content = (
+                    "Dạ shop rất tiếc về sự cố sản phẩm anh/chị gặp phải. "
+                    "Anh/chị vui lòng cung cấp Mã đơn hàng (ví dụ: O-101) để em hỗ trợ kiểm tra thông tin và phương án xử lý phù hợp nhé ạ!"
+                )
+            elif not final_content:
                 final_content = message.get("content") or "Dạ shop rất tiếc vì trải nghiệm chưa trọn vẹn này của anh/chị. Anh/chị cho em xin mã đơn hàng và tình trạng gặp phải để em hỗ trợ xử lý ngay nhé ạ!"
 
     except ApiError as exc:
