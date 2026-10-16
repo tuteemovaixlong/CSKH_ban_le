@@ -506,6 +506,278 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
         self.assertEqual(ctx.exception.status, 503)
         self.assertEqual(ctx.exception.code, "tenant_unavailable")
 
+    def test_inactive_or_smoke_target_tenant_rejected_with_tenant_unavailable(self):
+        """P5-K3 remediation: Inactive tenant or smoke-prefixed tenant (case-insensitive) in selector raises 503 tenant_unavailable."""
+        self.sessions.provision_tenant("shop-inactive", "Inactive Shop", seed_demo=True)
+        self.sessions.provision_tenant("e2e-smoke-999", "Smoke Shop", seed_demo=True)
+        self.sessions.provision_tenant("E2E-UPPER-999", "Upper Smoke Shop", seed_demo=True)
+        self.sessions.provision_tenant("Smoke-Mixed-999", "Mixed Smoke Shop", seed_demo=True)
+        with self.sessions.control.connection(write=True) as db:
+            db.execute("UPDATE tenants SET active=0 WHERE id='shop-inactive'")
+
+        for bad_tid in (
+            "shop-inactive",
+            "e2e-smoke-999",
+            "E2E-UPPER-999",
+            "Smoke-Mixed-999",
+            "SYNTHETIC-DEMO-999",
+            "smoke-test-1",
+            "synthetic-demo-1",
+        ):
+            self.sessions.default_tenant_id = bad_tid
+            try:
+                with self.assertRaises(ApiError) as ctx:
+                    self.sessions.resolve_google_tenant(sub="sub-any-1")
+                self.assertEqual(ctx.exception.status, 503)
+                self.assertEqual(ctx.exception.code, "tenant_unavailable")
+            finally:
+                self.sessions.default_tenant_id = None
+
+        # Also verify uppercase/mixed-case smoke tenants are excluded from fallback when no real store exists
+        only_smoke_dir = self.directory / "only_case_smoke"
+        only_smoke_sessions = PersistentSessions(only_smoke_dir, data_mode="persistent-demo")
+        only_smoke_sessions.provision_tenant("E2E-UPPER-ONLY", "Upper Smoke", seed_demo=False)
+        only_smoke_sessions.provision_tenant("Smoke-Mixed-Only", "Mixed Smoke", seed_demo=False)
+        only_smoke_sessions.provision_tenant("SYNTHETIC-UPPER-ONLY", "Synth Upper", seed_demo=False)
+        with self.assertRaises(ApiError) as ctx_fb:
+            only_smoke_sessions.resolve_google_tenant(sub="sub-case-smoke-fallback")
+        self.assertEqual(ctx_fb.exception.status, 503)
+        self.assertEqual(ctx_fb.exception.code, "ambiguous_tenant")
+
+    def test_empty_env_selector_falls_back_to_legacy_and_strips_whitespace(self):
+        """P5-K3 remediation: Empty RETAILOPS_DEMO_TENANT_ID falls back to GOOGLE_AUTH_TENANT_ID; whitespace/quotes trimmed."""
+        from retailops.config import Settings
+
+        self.sessions.provision_tenant("store-alpha", "Store Alpha", seed_demo=True)
+        self.sessions.provision_tenant("store-beta", "Store Beta", seed_demo=True)
+
+        # 1. Empty RETAILOPS_DEMO_TENANT_ID falls back to GOOGLE_AUTH_TENANT_ID in both Settings and resolve_google_tenant
+        env_fallback = {
+            "RETAILOPS_PUBLIC_ORIGIN": "https://retailops.example.com",
+            "RETAILOPS_DATA_MODE": "persistent-demo",
+            "RETAILOPS_DEMO_TENANT_ID": "   ",
+            "GOOGLE_AUTH_TENANT_ID": ' "store-beta" ',
+        }
+        settings = Settings.from_environment("public", environ=env_fallback)
+        self.assertEqual(settings.demo_tenant_id, "store-beta")
+
+        with patch.dict(os.environ, {"RETAILOPS_DEMO_TENANT_ID": "", "GOOGLE_AUTH_TENANT_ID": "  store-beta  "}, clear=False):
+            self.assertEqual(self.sessions.resolve_google_tenant(sub="new-sub-fallback"), "store-beta")
+
+        # 2. Conflicting non-empty RETAILOPS_DEMO_TENANT_ID and GOOGLE_AUTH_TENANT_ID fail closed
+        env_conflict = {
+            "RETAILOPS_PUBLIC_ORIGIN": "https://retailops.example.com",
+            "RETAILOPS_DATA_MODE": "persistent-demo",
+            "RETAILOPS_DEMO_TENANT_ID": "store-alpha",
+            "GOOGLE_AUTH_TENANT_ID": "store-beta",
+        }
+        with self.assertRaises(ValueError):
+            Settings.from_environment("public", environ=env_conflict)
+
+        with patch.dict(os.environ, {"RETAILOPS_DEMO_TENANT_ID": "store-alpha", "GOOGLE_AUTH_TENANT_ID": "store-beta"}, clear=False):
+            with self.assertRaises(ApiError) as ctx:
+                self.sessions.resolve_google_tenant(sub="new-sub-conflict")
+            self.assertEqual(ctx.exception.status, 503)
+            self.assertEqual(ctx.exception.code, "ambiguous_tenant")
+
+    def test_membership_resolution_ignores_deactivated_tenants_and_rejects_multi_active_memberships(self):
+        """P5-K3 remediation: Membership lookup joins active tenants (t.active=1), ignores case-insensitive smoke memberships, and fails closed if >=2 active non-smoke memberships exist."""
+        self.sessions.provision_tenant("store-deactivated", "Deactivated Store", seed_demo=True)
+        self.sessions.provision_tenant("store-active-1", "Active Store 1", seed_demo=True)
+        self.sessions.provision_tenant("store-active-2", "Active Store 2", seed_demo=True)
+        self.sessions.provision_tenant("e2e-smoke-ignore", "Smoke Store", seed_demo=True)
+        self.sessions.provision_tenant("E2E-UPPER-IGNORE", "Upper Smoke Store", seed_demo=True)
+
+        issuer = "https://accounts.google.com"
+        sub = "google-sub-deactivated-check-01"
+        email = "member.check@example.com"
+
+        # Provision memberships in store-deactivated, store-active-1, e2e-smoke-ignore, and E2E-UPPER-IGNORE
+        self.sessions.login_google(email=email, name="Member", sub=sub, issuer=issuer, email_verified=True, tenant_id="store-deactivated")
+        self.sessions.login_google(email=email, name="Member", sub=sub, issuer=issuer, email_verified=True, tenant_id="store-active-1")
+        self.sessions.control.get_or_create_google_member(
+            "e2e-smoke-ignore", email, "Member", sub=sub, issuer=issuer, email_verified=True
+        )
+        self.sessions.control.get_or_create_google_member(
+            "E2E-UPPER-IGNORE", email, "Member", sub=sub, issuer=issuer, email_verified=True
+        )
+
+        # Deactivate store-deactivated while keeping its membership active=1
+        with self.sessions.control.connection(write=True) as db:
+            db.execute("UPDATE tenants SET active=0 WHERE id='store-deactivated'")
+
+        # With 2 active non-smoke stores in DB (store-active-1, store-active-2) and no default_tenant_id,
+        # principal has 1 active membership in an active non-smoke store -> resolves store-active-1!
+        resolved = self.sessions.resolve_google_tenant(sub=sub, issuer=issuer)
+        self.assertEqual(resolved, "store-active-1")
+
+        # If the principal ALSO gets an active membership in store-active-2 (now 2 active non-smoke memberships),
+        # and no default_tenant_id is configured, resolve_google_tenant must fail closed with 503 ambiguous_tenant.
+        self.sessions.login_google(email=email, name="Member", sub=sub, issuer=issuer, email_verified=True, tenant_id="store-active-2")
+        with self.assertRaises(ApiError) as ctx:
+            self.sessions.resolve_google_tenant(sub=sub, issuer=issuer)
+        self.assertEqual(ctx.exception.status, 503)
+        self.assertEqual(ctx.exception.code, "ambiguous_tenant")
+
+        # If a principal ONLY has a membership in a deactivated tenant while 2 active non-smoke tenants exist,
+        # it must not return the deactivated tenant; it must fail closed with 503 ambiguous_tenant.
+        sub_only_inactive = "google-sub-only-inactive-02"
+        with self.sessions.control.connection(write=True) as db:
+            db.execute("UPDATE tenants SET active=1 WHERE id='store-deactivated'")
+        self.sessions.login_google(
+            email="only.inactive@example.com",
+            name="Only Inactive",
+            sub=sub_only_inactive,
+            issuer=issuer,
+            email_verified=True,
+            tenant_id="store-deactivated",
+        )
+        with self.sessions.control.connection(write=True) as db:
+            db.execute("UPDATE tenants SET active=0 WHERE id='store-deactivated'")
+        with self.assertRaises(ApiError) as ctx2:
+            self.sessions.resolve_google_tenant(sub=sub_only_inactive, issuer=issuer)
+        self.assertEqual(ctx2.exception.status, 503)
+        self.assertEqual(ctx2.exception.code, "ambiguous_tenant")
+
+    def test_bootstrap_and_compose_wiring_contract_for_tenant_selector(self):
+        """P5-K3 remediation (C.6): Settings -> build_public_app -> Sessions wiring and Compose env_file contract."""
+        from retailops.bootstrap import build_public_app
+        from retailops.config import Settings
+        from retailops.core import ROOT
+
+        env = {
+            "RETAILOPS_PUBLIC_ORIGIN": "https://retailops.example.com",
+            "RETAILOPS_DATA_MODE": "persistent-demo",
+            "RETAILOPS_OUTPUT": str(self.directory),
+            "RETAILOPS_DEMO_TENANT_ID": "configured-store-01",
+        }
+        settings = Settings.from_environment("public", environ=env)
+        self.assertEqual(settings.demo_tenant_id, "configured-store-01")
+        # Secret-free summary does not leak access_token or database_url
+        summary = settings.summary()
+        self.assertNotIn("access_token", summary)
+        self.assertNotIn("database_url", summary)
+
+        app = build_public_app(settings)
+        self.assertEqual(app.sessions.default_tenant_id, "configured-store-01")
+
+        # Verify PostgresSessions path in build_public_app passes default_tenant_id
+        pg_env = {
+            "RETAILOPS_PUBLIC_ORIGIN": "https://retailops.example.com",
+            "RETAILOPS_DATA_MODE": "persistent-demo",
+            "RETAILOPS_STORAGE_BACKEND": "postgresql",
+            "RETAILOPS_DATABASE_URL": "postgresql://retailops:secretpass@postgres:5432/retailops",
+            "RETAILOPS_DEMO_TENANT_ID": "pg-configured-store",
+        }
+        with patch("retailops.storage.postgres.validate_dsn"), patch("retailops.identity.postgres.PostgresSessions") as mock_pg_sessions:
+            pg_settings = Settings.from_environment("public", environ=pg_env)
+            self.assertEqual(pg_settings.demo_tenant_id, "pg-configured-store")
+            build_public_app(pg_settings)
+            mock_pg_sessions.assert_called_once()
+            _, kwargs = mock_pg_sessions.call_args
+            self.assertEqual(kwargs.get("default_tenant_id"), "pg-configured-store")
+
+        compose_pub = ROOT / "deploy" / "compose.public.yaml"
+        compose_pg = ROOT / "deploy" / "compose.postgres.yaml"
+        if compose_pub.is_file() and compose_pg.is_file():
+            pub_text = compose_pub.read_text(encoding="utf-8")
+            pg_text = compose_pg.read_text(encoding="utf-8")
+            self.assertIn("- public.env", pub_text)
+            self.assertNotIn("RETAILOPS_DEMO_TENANT_ID", pg_text)
+            self.assertNotIn("GOOGLE_AUTH_TENANT_ID", pg_text)
+
+    def test_start_public_web_env_validator_preserves_tenant_selector_and_rejects_invalid_keys(self):
+        """P5-K3 remediation (C.7): deploy/start-public-web.sh public.env validator accepts tenant selectors, rejects RETAILOPS_DATA_MODE=live, rejects case-insensitive smoke prefixes, and rejects unsupported keys without leaking secrets."""
+        import subprocess
+        import sys
+        from retailops.core import ROOT
+
+        script_path = ROOT / "deploy" / "start-public-web.sh"
+        if not script_path.is_file():
+            self.skipTest("deploy/start-public-web.sh not present in standalone bundle")
+
+        script_text = script_path.read_text(encoding="utf-8")
+        marker = 'python3 - "$PUBLIC_HOSTNAME" "$staging_dir/public.env" <<\'PY\'\n'
+        self.assertIn(marker, script_text)
+        py_block = script_text.split(marker, 1)[1].split("\nPY\n", 1)[0]
+
+        def run_validator(public_env_content, host="retailops.example.com"):
+            with tempfile.TemporaryDirectory() as tmp:
+                tmp_path = Path(tmp)
+                if public_env_content is not None:
+                    (tmp_path / "public.env").write_text(public_env_content, encoding="utf-8")
+                staged = tmp_path / "staged_public.env"
+                proc = subprocess.run(
+                    [sys.executable, "-", host, str(staged)],
+                    input=py_block,
+                    cwd=tmp_path,
+                    text=True,
+                    capture_output=True,
+                    timeout=10,
+                )
+                staged_text = staged.read_text(encoding="utf-8") if staged.is_file() else ""
+                return proc, staged_text
+
+        invite_secret = "secret_invite_token_value_1234567890abcdef"
+        # 1. Valid RETAILOPS_DEMO_TENANT_ID is accepted, trimmed, and preserved
+        proc_ok, staged_ok = run_validator(
+            f"RETAILOPS_PUBLIC_INVITE_TOKEN={invite_secret}\n"
+            "RETAILOPS_DATA_MODE=persistent-demo\n"
+            'RETAILOPS_DEMO_TENANT_ID="  demo-store-main  "\n'
+        )
+        self.assertEqual(proc_ok.returncode, 0, proc_ok.stderr)
+        self.assertIn("RETAILOPS_DEMO_TENANT_ID=demo-store-main\n", staged_ok)
+        self.assertIn("RETAILOPS_DATA_MODE=persistent-demo\n", staged_ok)
+
+        # 2. Legacy GOOGLE_AUTH_TENANT_ID is accepted and preserved
+        proc_legacy, staged_legacy = run_validator(
+            f"RETAILOPS_PUBLIC_INVITE_TOKEN={invite_secret}\n"
+            "GOOGLE_AUTH_TENANT_ID=legacy-store-01\n"
+        )
+        self.assertEqual(proc_legacy.returncode, 0, proc_legacy.stderr)
+        self.assertIn("GOOGLE_AUTH_TENANT_ID=legacy-store-01\n", staged_legacy)
+
+        # 3. Smoke-prefixed tenant selector (lowercase, uppercase, mixed-case) is rejected without printing secret values
+        for bad_smoke in ("e2e-smoke-12345", "E2E-UPPER-12345", "Smoke-Mixed-12345", "SYNTHETIC-12345"):
+            proc_smoke, _ = run_validator(
+                f"RETAILOPS_PUBLIC_INVITE_TOKEN={invite_secret}\n"
+                f"RETAILOPS_DEMO_TENANT_ID={bad_smoke}\n"
+            )
+            self.assertNotEqual(proc_smoke.returncode, 0)
+            self.assertIn("Invalid RETAILOPS_DEMO_TENANT_ID in public.env.", proc_smoke.stderr)
+            self.assertNotIn(invite_secret, proc_smoke.stderr)
+            self.assertNotIn(bad_smoke, proc_smoke.stderr)
+
+        # 4. RETAILOPS_DATA_MODE=live is rejected by start-public-web.sh
+        proc_live, _ = run_validator(
+            f"RETAILOPS_PUBLIC_INVITE_TOKEN={invite_secret}\n"
+            "RETAILOPS_DATA_MODE=live\n"
+        )
+        self.assertNotEqual(proc_live.returncode, 0)
+        self.assertIn("Invalid data mode.", proc_live.stderr)
+        self.assertNotIn(invite_secret, proc_live.stderr)
+
+        # 5. Conflicting RETAILOPS_DEMO_TENANT_ID and GOOGLE_AUTH_TENANT_ID rejected
+        proc_conflict, _ = run_validator(
+            f"RETAILOPS_PUBLIC_INVITE_TOKEN={invite_secret}\n"
+            "RETAILOPS_DEMO_TENANT_ID=store-a\n"
+            "GOOGLE_AUTH_TENANT_ID=store-b\n"
+        )
+        self.assertNotEqual(proc_conflict.returncode, 0)
+        self.assertIn("Conflicting tenant selectors in public.env.", proc_conflict.stderr)
+        self.assertNotIn(invite_secret, proc_conflict.stderr)
+
+        # 6. Unsupported key rejected without leaking secret value
+        leaked_api_secret = "sk_live_super_secret_do_not_print_999"
+        proc_bad_key, _ = run_validator(
+            f"RETAILOPS_PUBLIC_INVITE_TOKEN={invite_secret}\n"
+            f"RETAILOPS_API_KEY={leaked_api_secret}\n"
+        )
+        self.assertNotEqual(proc_bad_key.returncode, 0)
+        self.assertIn("public.env contains unsupported settings", proc_bad_key.stderr)
+        self.assertNotIn(leaked_api_secret, proc_bad_key.stderr)
+        self.assertNotIn(invite_secret, proc_bad_key.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

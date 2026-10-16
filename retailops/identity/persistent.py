@@ -18,6 +18,34 @@ from retailops.identity.store import IdentityStore
 from retailops.inference_gate import InferenceGate
 
 
+SMOKE_TENANT_PREFIXES = ('e2e-', 'smoke-', 'synthetic-')
+
+
+def _clean_tenant_id(value):
+    if value is None:
+        return ''
+    text = str(value).strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in ('"', "'"):
+        text = text[1:-1].strip()
+    return text
+
+
+def _is_smoke_tenant_id(value):
+    return _clean_tenant_id(value).lower().startswith(SMOKE_TENANT_PREFIXES)
+
+
+def _env_tenant_id(env=None, *, strict_conflict=False):
+    mapping = os.environ if env is None else env
+    primary = _clean_tenant_id(mapping.get('RETAILOPS_DEMO_TENANT_ID'))
+    legacy = _clean_tenant_id(mapping.get('GOOGLE_AUTH_TENANT_ID'))
+    if primary and legacy and primary != legacy:
+        if strict_conflict:
+            require(False, 503, 'ambiguous_tenant',
+                    'Cấu hình tenant cho đăng nhập Google bị xung đột giữa RETAILOPS_DEMO_TENANT_ID và GOOGLE_AUTH_TENANT_ID.')
+        return None
+    return (primary or legacy) or None
+
+
 class PersistentSessions:
     # Separate cookie prevents a disposable demo session being reused in this mode.
     cookie_name = '__Host-retailops_account'
@@ -29,7 +57,7 @@ class PersistentSessions:
         self.directory.mkdir(parents=True, exist_ok=True)
         if data_mode is not None:
             self.data_mode = data_mode
-        self.default_tenant_id = default_tenant_id or os.environ.get('RETAILOPS_DEMO_TENANT_ID') or os.environ.get('GOOGLE_AUTH_TENANT_ID')
+        self.default_tenant_id = _clean_tenant_id(default_tenant_id) or _env_tenant_id()
         self.control = IdentityStore(self.directory/'identity.sqlite3', tenant_stores=self.business_store, data_mode=data_mode)
         self.infer, self.api_infer = infer, api_infer
         self.api_daily_limit, self.capacity = api_daily_limit, capacity
@@ -64,9 +92,15 @@ class PersistentSessions:
         return self.control.login(token, self.session_seconds, self.capacity)
 
     def resolve_google_tenant(self, sub=None, issuer='https://accounts.google.com', tenant_id=None):
-        target_tid = tenant_id or getattr(self, 'default_tenant_id', None) or os.environ.get('RETAILOPS_DEMO_TENANT_ID') or os.environ.get('GOOGLE_AUTH_TENANT_ID')
+        target_tid = (
+            _clean_tenant_id(tenant_id)
+            or _clean_tenant_id(getattr(self, 'default_tenant_id', None))
+            or _env_tenant_id(strict_conflict=True)
+        )
         with self.control.connection() as db:
             if target_tid:
+                require(not _is_smoke_tenant_id(target_tid),
+                        503, 'tenant_unavailable', f'Cửa hàng {target_tid} không tồn tại hoặc chưa kích hoạt.')
                 row = db.execute('SELECT id FROM tenants WHERE id=? AND active=1', (target_tid,)).fetchone()
                 require(row is not None, 503, 'tenant_unavailable', f'Cửa hàng {target_tid} không tồn tại hoặc chưa kích hoạt.')
                 return target_tid
@@ -78,17 +112,22 @@ class PersistentSessions:
                                  (issuer_clean, sub_clean)).fetchone()
                 if ext:
                     mems = db.execute(
-                        'SELECT tenant_id FROM memberships WHERE principal_id=? AND active=1',
+                        '''SELECT m.tenant_id FROM memberships m
+                           JOIN tenants t ON t.id = m.tenant_id
+                           WHERE m.principal_id=? AND m.active=1 AND t.active=1''',
                         (ext['principal_id'],)
                     ).fetchall()
-                    non_smoke_mems = [m['tenant_id'] for m in mems if not str(m['tenant_id']).startswith(('e2e-', 'smoke-', 'synthetic-'))]
+                    non_smoke_mems = [m['tenant_id'] for m in mems if not _is_smoke_tenant_id(m['tenant_id'])]
                     if len(non_smoke_mems) == 1:
                         return non_smoke_mems[0]
+                    if len(non_smoke_mems) > 1:
+                        require(False, 503, 'ambiguous_tenant',
+                                'Hệ thống có nhiều cửa hàng; cần cấu hình rõ cửa hàng (tenant) cho đăng nhập Google thay vì chọn ngẫu nhiên.')
 
             rows = db.execute('SELECT id FROM tenants WHERE active=1').fetchall()
             require(len(rows) > 0, 503, 'no_active_tenant', 'Chưa có cửa hàng nào hoạt động trên hệ thống.')
 
-            non_smoke = [r['id'] for r in rows if not str(r['id']).startswith(('e2e-', 'smoke-', 'synthetic-'))]
+            non_smoke = [r['id'] for r in rows if not _is_smoke_tenant_id(r['id'])]
             if len(non_smoke) == 1:
                 return non_smoke[0]
 

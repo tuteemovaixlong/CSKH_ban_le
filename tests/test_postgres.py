@@ -1083,6 +1083,62 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             from tests import reconcile_interleaving_cases
         reconcile_interleaving_cases.run(self, self.sessions, 'shop-a')
 
+    def test_google_tenant_resolution_and_active_membership_on_postgres(self):
+        """P5-K3 remediation (PostgreSQL): multi-tenant fail-closed ambiguous_tenant, configured selector,
+        selector conflict, case-insensitive smoke-tenant rejection, multi-membership fail-closed,
+        and active-tenant membership join on PostgresSessions."""
+        self.sessions.provision_tenant('e2e-smoke-pg-01', 'PG Smoke Tenant', seed_demo=True)
+        self.sessions.provision_tenant('E2E-UPPER-PG-02', 'PG Upper Smoke Tenant', seed_demo=True)
+
+        # 1. With shop-a and shop-b active and no default_tenant_id, unlinked Google sub fails closed with 503 ambiguous_tenant
+        with self.assertRaises(ApiError) as ctx_amb:
+            self.sessions.resolve_google_tenant(sub='pg-google-sub-unlinked-1')
+        self.assertEqual(ctx_amb.exception.status, 503)
+        self.assertEqual(ctx_amb.exception.code, 'ambiguous_tenant')
+
+        # 2. Smoke tenant (lowercase, uppercase, mixed-case) in selector rejected with 503 tenant_unavailable
+        for bad_smoke in ('e2e-smoke-pg-01', 'E2E-UPPER-PG-02', 'Smoke-Mixed-PG-03', 'SYNTHETIC-PG-04'):
+            pg_smoke_sessions = PostgresSessions(DSN, default_tenant_id=bad_smoke)
+            with self.assertRaises(ApiError) as ctx_smoke:
+                pg_smoke_sessions.resolve_google_tenant(sub='pg-google-sub-unlinked-1')
+            self.assertEqual(ctx_smoke.exception.status, 503)
+            self.assertEqual(ctx_smoke.exception.code, 'tenant_unavailable')
+
+        # 3. Configured RETAILOPS_DEMO_TENANT_ID / default_tenant_id resolves deterministically;
+        #    empty RETAILOPS_DEMO_TENANT_ID falls back to GOOGLE_AUTH_TENANT_ID; conflicting selectors fail closed
+        pg_cfg_sessions = PostgresSessions(DSN, default_tenant_id='  shop-b  ')
+        self.assertEqual(pg_cfg_sessions.resolve_google_tenant(sub='pg-google-sub-unlinked-1'), 'shop-b')
+
+        with patch.dict(os.environ, {'RETAILOPS_DEMO_TENANT_ID': '   ', 'GOOGLE_AUTH_TENANT_ID': ' "shop-b" '}, clear=False):
+            pg_fb_sessions = PostgresSessions(DSN)
+            self.assertEqual(pg_fb_sessions.default_tenant_id, 'shop-b')
+            self.assertEqual(pg_fb_sessions.resolve_google_tenant(sub='pg-google-sub-unlinked-1'), 'shop-b')
+
+        with patch.dict(os.environ, {'RETAILOPS_DEMO_TENANT_ID': 'shop-a', 'GOOGLE_AUTH_TENANT_ID': 'shop-b'}, clear=False):
+            pg_conflict_sessions = PostgresSessions(DSN)
+            self.assertIsNone(pg_conflict_sessions.default_tenant_id)
+            with self.assertRaises(ApiError) as ctx_conf:
+                pg_conflict_sessions.resolve_google_tenant(sub='pg-google-sub-unlinked-1')
+            self.assertEqual(ctx_conf.exception.status, 503)
+            self.assertEqual(ctx_conf.exception.code, 'ambiguous_tenant')
+
+        # 4. Principal with >=2 active non-smoke memberships (shop-a and shop-b both active=1) fails closed with 503 ambiguous_tenant;
+        #    when shop-a is deactivated (active=0), resolves the single remaining active non-smoke membership (shop-b) while ignoring smoke memberships
+        sub_mem = 'pg-google-sub-member-01'
+        self.sessions.login_google('pg.member@example.com', 'PG Member', sub=sub_mem, email_verified=True, tenant_id='shop-a')
+        self.sessions.login_google('pg.member@example.com', 'PG Member', sub=sub_mem, email_verified=True, tenant_id='shop-b')
+        self.sessions.control.get_or_create_google_member('e2e-smoke-pg-01', 'pg.member@example.com', 'PG Member', sub=sub_mem, email_verified=True)
+        self.sessions.control.get_or_create_google_member('E2E-UPPER-PG-02', 'pg.member@example.com', 'PG Member', sub=sub_mem, email_verified=True)
+
+        with self.assertRaises(ApiError) as ctx_multi_mem:
+            self.sessions.resolve_google_tenant(sub=sub_mem)
+        self.assertEqual(ctx_multi_mem.exception.status, 503)
+        self.assertEqual(ctx_multi_mem.exception.code, 'ambiguous_tenant')
+
+        with transaction(DSN, write=True) as db:
+            db.execute("UPDATE tenants SET active=0 WHERE id='shop-a'")
+        self.assertEqual(self.sessions.resolve_google_tenant(sub=sub_mem), 'shop-b')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -38,6 +38,9 @@ def main():
             "database migrate", "Public HTTPS did not become ready after PostgreSQL cutover.")
     require("deploy/enable-pgvector.sh", PGVECTOR, "pg_dump", "CREATE EXTENSION IF NOT EXISTS vector",
             "database migrate", "PGVECTOR_PUBLIC_HEALTH_OK", "PGVECTOR_ENABLE_COMPLETE")
+    require("deploy/start-public-web.sh", "RETAILOPS_DEMO_TENANT_ID", "GOOGLE_AUTH_TENANT_ID",
+            "required <= set(values) <= (required | optional)",
+            "Conflicting tenant selectors in public.env.")
     print("DEPLOYMENT_CONTRACT_OK")
 
 
