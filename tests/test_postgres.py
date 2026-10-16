@@ -1095,9 +1095,13 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             with transaction(DSN, write=False) as db:
                 links = db.execute("SELECT count(*) AS cnt FROM customer_links").fetchone()["cnt"]
                 mems = db.execute("SELECT count(*) AS cnt FROM memberships").fetchone()["cnt"]
-                custs = db.execute("SELECT count(*) AS cnt FROM customers").fetchone()["cnt"]
                 sess = db.execute("SELECT count(*) AS cnt FROM sessions").fetchone()["cnt"]
-            return (links, mems, custs, sess)
+                trows = db.execute("SELECT id, storage_key FROM tenants ORDER BY id").fetchall()
+            custs = {}
+            for trow in trows:
+                with transaction(DSN, tenant_schema(trow["storage_key"]), write=False) as bdb:
+                    custs[trow["id"]] = bdb.execute("SELECT count(*) AS cnt FROM customers").fetchone()["cnt"]
+            return (links, mems, sess, custs)
 
         # 1. With shop-a and shop-b active and no default_tenant_id, unlinked Google sub fails closed with 503 ambiguous_tenant
         before_unlinked = pg_snapshot_counts()
