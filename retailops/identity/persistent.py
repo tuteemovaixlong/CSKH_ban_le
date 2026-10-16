@@ -92,18 +92,23 @@ class PersistentSessions:
         return self.control.login(token, self.session_seconds, self.capacity)
 
     def resolve_google_tenant(self, sub=None, issuer='https://accounts.google.com', tenant_id=None):
-        target_tid = (
-            _clean_tenant_id(tenant_id)
-            or _clean_tenant_id(getattr(self, 'default_tenant_id', None))
-            or _env_tenant_id(strict_conflict=True)
-        )
+        explicit_tid = _clean_tenant_id(tenant_id)
+        default_tid = _clean_tenant_id(getattr(self, 'default_tenant_id', None))
+        env_tid = _env_tenant_id(strict_conflict=True)
+        if default_tid and env_tid and default_tid != env_tid:
+            require(False, 503, 'ambiguous_tenant',
+                    'Cấu hình cửa hàng (tenant) cho đăng nhập Google bị xung đột; cần quản trị viên kiểm tra.')
+        configured_tid = default_tid or env_tid
+        if explicit_tid and configured_tid and explicit_tid != configured_tid:
+            require(False, 503, 'ambiguous_tenant',
+                    'Cấu hình cửa hàng (tenant) cho đăng nhập Google bị xung đột; cần quản trị viên kiểm tra.')
+        target_tid = explicit_tid or configured_tid
         with self.control.connection() as db:
             if target_tid:
                 require(not _is_smoke_tenant_id(target_tid),
                         503, 'tenant_unavailable', f'Cửa hàng {target_tid} không tồn tại hoặc chưa kích hoạt.')
                 row = db.execute('SELECT id FROM tenants WHERE id=? AND active=1', (target_tid,)).fetchone()
                 require(row is not None, 503, 'tenant_unavailable', f'Cửa hàng {target_tid} không tồn tại hoặc chưa kích hoạt.')
-                return target_tid
 
             if sub:
                 sub_clean = str(sub).strip()
@@ -118,11 +123,24 @@ class PersistentSessions:
                         (ext['principal_id'],)
                     ).fetchall()
                     non_smoke_mems = [m['tenant_id'] for m in mems if not _is_smoke_tenant_id(m['tenant_id'])]
+                    if len(non_smoke_mems) == 0:
+                        require(False, 503, 'ambiguous_tenant',
+                                'Tài khoản Google đã liên kết không có cửa hàng đang hoạt động hợp lệ; không tự động chuyển sang cửa hàng khác.')
+                    if configured_tid and (len(non_smoke_mems) != 1 or configured_tid != non_smoke_mems[0]):
+                        require(False, 503, 'ambiguous_tenant',
+                                'Cấu hình cửa hàng (tenant) mặc định xung đột với cửa hàng đã liên kết của tài khoản Google này.')
+                    if explicit_tid:
+                        if explicit_tid not in non_smoke_mems:
+                            require(False, 503, 'ambiguous_tenant',
+                                    'Cửa hàng chỉ định xung đột với cửa hàng đã liên kết của tài khoản Google này.')
+                        return explicit_tid
                     if len(non_smoke_mems) == 1:
                         return non_smoke_mems[0]
-                    if len(non_smoke_mems) > 1:
-                        require(False, 503, 'ambiguous_tenant',
-                                'Hệ thống có nhiều cửa hàng; cần cấu hình rõ cửa hàng (tenant) cho đăng nhập Google thay vì chọn ngẫu nhiên.')
+                    require(False, 503, 'ambiguous_tenant',
+                            'Hệ thống có nhiều cửa hàng; cần cấu hình rõ cửa hàng (tenant) cho đăng nhập Google thay vì chọn ngẫu nhiên.')
+
+            if target_tid:
+                return target_tid
 
             rows = db.execute('SELECT id FROM tenants WHERE active=1').fetchall()
             require(len(rows) > 0, 503, 'no_active_tenant', 'Chưa có cửa hàng nào hoạt động trên hệ thống.')

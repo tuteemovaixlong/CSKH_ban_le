@@ -440,12 +440,15 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
         sub = "google-sub-cross-tenant-777"
         email = "cross.tenant@example.com"
 
-        # Login to Tenant 1
+        # Login to Tenant 1 (initial onboarding of unknown Google identity)
         sec1 = self.sessions.login_google(email=email, name="Cross User", sub=sub, issuer=issuer, email_verified=True, tenant_id=t1)
         mem1 = self.sessions.control.resolve(self.sessions.cookie_id(f"__Host-retailops_account={sec1}"))
         pid1, cid1 = mem1["principal_id"], mem1["customer_id"]
 
-        # Login to Tenant 2
+        # Provision existing Google identity in Tenant 2 via control plane before login to Tenant 2
+        self.sessions.control.get_or_create_google_member(
+            t2, email, "Cross User", sub=sub, issuer=issuer, email_verified=True
+        )
         sec2 = self.sessions.login_google(email=email, name="Cross User", sub=sub, issuer=issuer, email_verified=True, tenant_id=t2)
         mem2 = self.sessions.control.resolve(self.sessions.cookie_id(f"__Host-retailops_account={sec2}"))
         pid2, cid2 = mem2["principal_id"], mem2["customer_id"]
@@ -581,12 +584,29 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
             self.assertEqual(ctx.exception.code, "ambiguous_tenant")
 
     def test_membership_resolution_ignores_deactivated_tenants_and_rejects_multi_active_memberships(self):
-        """P5-K3 remediation: Membership lookup joins active tenants (t.active=1), ignores case-insensitive smoke memberships, and fails closed if >=2 active non-smoke memberships exist."""
+        """P5-K3 remediation: Membership lookup joins active tenants (t.active=1), ignores case-insensitive smoke memberships,
+        fails closed on inactive-only + single-active-store, multiple active memberships, and selector/identity conflicts,
+        and preserves unknown identity onboarding in single-store demo without side effects on failure."""
         self.sessions.provision_tenant("store-deactivated", "Deactivated Store", seed_demo=True)
         self.sessions.provision_tenant("store-active-1", "Active Store 1", seed_demo=True)
         self.sessions.provision_tenant("store-active-2", "Active Store 2", seed_demo=True)
         self.sessions.provision_tenant("e2e-smoke-ignore", "Smoke Store", seed_demo=True)
         self.sessions.provision_tenant("E2E-UPPER-IGNORE", "Upper Smoke Store", seed_demo=True)
+
+        def snapshot_counts():
+            with self.sessions.control.connection() as db:
+                links = db.execute("SELECT count(*) AS cnt FROM customer_links").fetchone()["cnt"]
+                mems = db.execute("SELECT count(*) AS cnt FROM memberships").fetchone()["cnt"]
+                sess = db.execute("SELECT count(*) AS cnt FROM sessions").fetchone()["cnt"]
+            custs = {}
+            for tid in ("store-deactivated", "store-active-1", "store-active-2"):
+                with self.sessions.control.connection() as db:
+                    skey = db.execute("SELECT storage_key FROM tenants WHERE id=?", (tid,)).fetchone()["storage_key"]
+                from retailops.business.store import BusinessStore
+                bstore = BusinessStore(self.sessions.directory / "tenants" / f"{skey}.sqlite3", create=False)
+                with bstore.connection() as bdb:
+                    custs[tid] = bdb.execute("SELECT count(*) AS cnt FROM customers").fetchone()["cnt"]
+            return (links, mems, sess, custs)
 
         issuer = "https://accounts.google.com"
         sub = "google-sub-deactivated-check-01"
@@ -594,7 +614,9 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
 
         # Provision memberships in store-deactivated, store-active-1, e2e-smoke-ignore, and E2E-UPPER-IGNORE
         self.sessions.login_google(email=email, name="Member", sub=sub, issuer=issuer, email_verified=True, tenant_id="store-deactivated")
-        self.sessions.login_google(email=email, name="Member", sub=sub, issuer=issuer, email_verified=True, tenant_id="store-active-1")
+        self.sessions.control.get_or_create_google_member(
+            "store-active-1", email, "Member", sub=sub, issuer=issuer, email_verified=True
+        )
         self.sessions.control.get_or_create_google_member(
             "e2e-smoke-ignore", email, "Member", sub=sub, issuer=issuer, email_verified=True
         )
@@ -607,20 +629,58 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
             db.execute("UPDATE tenants SET active=0 WHERE id='store-deactivated'")
 
         # With 2 active non-smoke stores in DB (store-active-1, store-active-2) and no default_tenant_id,
-        # principal has 1 active membership in an active non-smoke store -> resolves store-active-1!
-        resolved = self.sessions.resolve_google_tenant(sub=sub, issuer=issuer)
-        self.assertEqual(resolved, "store-active-1")
+        # principal has 1 active membership in an active non-smoke store -> login_google resolves store-active-1!
+        sec_active1 = self.sessions.login_google(email=email, name="Member", sub=sub, issuer=issuer, email_verified=True)
+        mem_active1 = self.sessions.control.resolve(self.sessions.cookie_id(f"__Host-retailops_account={sec_active1}"))
+        self.assertEqual(mem_active1["tenant_id"], "store-active-1")
 
-        # If the principal ALSO gets an active membership in store-active-2 (now 2 active non-smoke memberships),
-        # and no default_tenant_id is configured, resolve_google_tenant must fail closed with 503 ambiguous_tenant.
-        self.sessions.login_google(email=email, name="Member", sub=sub, issuer=issuer, email_verified=True, tenant_id="store-active-2")
-        with self.assertRaises(ApiError) as ctx:
-            self.sessions.resolve_google_tenant(sub=sub, issuer=issuer)
-        self.assertEqual(ctx.exception.status, 503)
-        self.assertEqual(ctx.exception.code, "ambiguous_tenant")
+        # (d) Selector conflicting with an existing identity (default_tenant_id, env vars, or explicit tenant_id)
+        #     must fail closed on full login_google() and produce ZERO new links, memberships, customers, or sessions.
+        before_d = snapshot_counts()
+        self.sessions.default_tenant_id = "store-active-2"
+        try:
+            with self.assertRaises(ApiError) as ctx_d1:
+                self.sessions.login_google(email=email, name="Member", sub=sub, issuer=issuer, email_verified=True)
+            self.assertEqual(ctx_d1.exception.status, 503)
+            self.assertEqual(ctx_d1.exception.code, "ambiguous_tenant")
+        finally:
+            self.sessions.default_tenant_id = None
+        with patch.dict(os.environ, {"RETAILOPS_DEMO_TENANT_ID": "store-active-2"}, clear=False):
+            with self.assertRaises(ApiError) as ctx_d2:
+                self.sessions.login_google(email=email, name="Member", sub=sub, issuer=issuer, email_verified=True)
+            self.assertEqual(ctx_d2.exception.status, 503)
+            self.assertEqual(ctx_d2.exception.code, "ambiguous_tenant")
+        with self.assertRaises(ApiError) as ctx_d3:
+            self.sessions.login_google(email=email, name="Member", sub=sub, issuer=issuer, email_verified=True, tenant_id="store-active-2")
+        self.assertEqual(ctx_d3.exception.status, 503)
+        self.assertEqual(ctx_d3.exception.code, "ambiguous_tenant")
+        self.assertEqual(snapshot_counts(), before_d)
 
-        # If a principal ONLY has a membership in a deactivated tenant while 2 active non-smoke tenants exist,
-        # it must not return the deactivated tenant; it must fail closed with 503 ambiguous_tenant.
+        # (b) Multiple active memberships: if the principal ALSO has an active membership in store-active-2,
+        #     full login_google() without explicit tenant_id (even with default_tenant_id set) must fail closed
+        #     with 503 ambiguous_tenant and produce ZERO new links, memberships, customers, or sessions.
+        self.sessions.control.get_or_create_google_member(
+            "store-active-2", email, "Member", sub=sub, issuer=issuer, email_verified=True
+        )
+        before_b = snapshot_counts()
+        with self.assertRaises(ApiError) as ctx_b1:
+            self.sessions.login_google(email=email, name="Member", sub=sub, issuer=issuer, email_verified=True)
+        self.assertEqual(ctx_b1.exception.status, 503)
+        self.assertEqual(ctx_b1.exception.code, "ambiguous_tenant")
+        self.sessions.default_tenant_id = "store-active-1"
+        try:
+            with self.assertRaises(ApiError) as ctx_b2:
+                self.sessions.login_google(email=email, name="Member", sub=sub, issuer=issuer, email_verified=True)
+            self.assertEqual(ctx_b2.exception.status, 503)
+            self.assertEqual(ctx_b2.exception.code, "ambiguous_tenant")
+        finally:
+            self.sessions.default_tenant_id = None
+        self.assertEqual(snapshot_counts(), before_b)
+
+        # (a) Inactive-only membership + EXACTLY ONE other active non-smoke store:
+        #     known identity whose only membership is in a deactivated tenant (or deactivated membership)
+        #     must NOT fall through to the sole active store ('store-active-1') on login_google(),
+        #     and must produce ZERO new customer_links, memberships, business customers, or sessions.
         sub_only_inactive = "google-sub-only-inactive-02"
         with self.sessions.control.connection(write=True) as db:
             db.execute("UPDATE tenants SET active=1 WHERE id='store-deactivated'")
@@ -633,11 +693,59 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
             tenant_id="store-deactivated",
         )
         with self.sessions.control.connection(write=True) as db:
-            db.execute("UPDATE tenants SET active=0 WHERE id='store-deactivated'")
-        with self.assertRaises(ApiError) as ctx2:
-            self.sessions.resolve_google_tenant(sub=sub_only_inactive, issuer=issuer)
-        self.assertEqual(ctx2.exception.status, 503)
-        self.assertEqual(ctx2.exception.code, "ambiguous_tenant")
+            # Leave ONLY 'store-active-1' active among non-smoke stores!
+            db.execute("UPDATE tenants SET active=0 WHERE id IN ('store-deactivated', 'store-active-2')")
+            db.execute("DELETE FROM sessions")
+
+        before_a = snapshot_counts()
+        with self.assertRaises(ApiError) as ctx_a1:
+            self.sessions.login_google(
+                email="only.inactive@example.com",
+                name="Only Inactive",
+                sub=sub_only_inactive,
+                issuer=issuer,
+                email_verified=True,
+            )
+        self.assertEqual(ctx_a1.exception.status, 503)
+        self.assertEqual(ctx_a1.exception.code, "ambiguous_tenant")
+
+        self.sessions.default_tenant_id = "store-active-1"
+        try:
+            with self.assertRaises(ApiError) as ctx_a2:
+                self.sessions.login_google(
+                    email="only.inactive@example.com",
+                    name="Only Inactive",
+                    sub=sub_only_inactive,
+                    issuer=issuer,
+                    email_verified=True,
+                )
+            self.assertEqual(ctx_a2.exception.status, 503)
+            self.assertEqual(ctx_a2.exception.code, "ambiguous_tenant")
+        finally:
+            self.sessions.default_tenant_id = None
+        self.assertEqual(snapshot_counts(), before_a)
+
+        # Also test when the tenant stays active=1 ('store-active-1') but the membership row itself is deactivated (m.active=0):
+        with self.sessions.control.connection(write=True) as db:
+            db.execute("UPDATE memberships SET active=0 WHERE tenant_id='store-active-1'")
+        before_a_mem = snapshot_counts()
+        with self.assertRaises(ApiError) as ctx_a3:
+            self.sessions.login_google(email=email, name="Member", sub=sub, issuer=issuer, email_verified=True)
+        self.assertEqual(ctx_a3.exception.status, 503)
+        self.assertEqual(ctx_a3.exception.code, "ambiguous_tenant")
+        self.assertEqual(snapshot_counts(), before_a_mem)
+
+        # (c) Unknown identity onboarding in a single-store demo ('store-active-1' is the sole active non-smoke store):
+        #     genuinely new Google identity succeeds on login_google() and resolves to 'store-active-1'.
+        sec_new_single = self.sessions.login_google(
+            email="new.single@example.com",
+            name="New Single Customer",
+            sub="google-sub-new-single-store-03",
+            issuer=issuer,
+            email_verified=True,
+        )
+        mem_new_single = self.sessions.control.resolve(self.sessions.cookie_id(f"__Host-retailops_account={sec_new_single}"))
+        self.assertEqual(mem_new_single["tenant_id"], "store-active-1")
 
     def test_bootstrap_and_compose_wiring_contract_for_tenant_selector(self):
         """P5-K3 remediation (C.6): Settings -> build_public_app -> Sessions wiring and Compose env_file contract."""
