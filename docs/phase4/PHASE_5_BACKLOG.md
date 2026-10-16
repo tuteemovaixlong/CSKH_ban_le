@@ -18,6 +18,16 @@
 | P5-08 | G4/G5 future | Offline checker có thể kiểm provider/lane labels; không thay thế live evidence/identity/completeness/budget thật. | Làm lane preflight/smoke/evidence acceptance ở workstream kế tiếp, authorization riêng. | FUTURE — không block harness merge |
 | P5-09 | Operational smoke 2026-10-09→10 | Tenant cũ bị `customer_reserved`; isolation đã merge PR #37 tại `dd0947a`. Owner gửi `LIVE_E2E_SMOKE_OK` report `LIVE_SMOKE_20261010T042118Z.json`; chưa đọc raw JSON trực tiếp. | Smoke dùng tenant mới; giữ reservation cũ. Không dùng operational smoke làm evidence real-model/G5. | DONE — P5-A, theo log owner |
 | P5-10 | G4→G5 next workstream | Cần kiểm chứng danh tính Google test, ánh xạ customer bên ngoài và luồng khiếu nại cùng một session. | Xây sales simulator offline/dev với event ký, idempotency, mapping external customer → RetailOps customer; test complaint/proposal/confirmation/audit. | PLANNED — Phase 5 |
+| P5-11 | P5-C PR #39 whitespace | Full PR diff `80f5156..3ff5d0e` còn trailing whitespace từ commit trước; remediation diff `39be636..3ff5d0e` và docs working tree sạch. | Dọn whitespace riêng sau owner review, không đổi runtime hoặc mở lại scope nghiệm thu. | BACKLOG — nonblocking P5-C |
+| P5-12 | Post-tool dispute inference errors | P5-D patch catches broad `Exception` around the second gateway call in `run_dispute_agent` and silently continues; provider/rate-limit failures may be hidden instead of following the existing error path. | Review provider error propagation and add a focused regression in a separate bounded task; not part of the fixed D-R1/D-R2 acceptance assertions. | BACKLOG — nonblocking to current D-R1/D-R2 review |
+
+### P5-11 — P5-C PR whitespace
+
+Snapshot `3ff5d0ee8d4d53df6772a697d2638c9e65bbe7e6`, xác minh 2026-10-13: `git diff --check 80f51569b3bef5ae0793bac1593fb91e39558477 HEAD` báo `docs/phase5/PHASE_5_C_EVIDENCE.md:3–6`, `retailops/sales/events.py:53`, `retailops/sales/simulator.py:45`. Header evidence đã được chuẩn hóa trong docs working tree; code giữ nguyên. Đây là hygiene, không ảnh hưởng P5-K4–K6; không nhận vào frozen runtime patch.
+
+### P5-12 — Post-tool dispute inference error propagation
+
+Codex noticed in the changed `retailops/workflow/subagents/dispute_agent.py` second-response path that `except Exception: pass` can suppress gateway/provider errors after a tool call. This was not included in the bounded D-R1/D-R2 re-review; track separately and do not use it to expand the current acceptance gate.
 
 ## Quy tắc tiếp nhận phát hiện sau freeze
 

@@ -59,6 +59,7 @@ class SalesSimulator:
     def create_order_event(
         self,
         *,
+        event_id: Optional[str] = None,
         order_id: Optional[str] = None,
         external_customer_id: Optional[str] = None,
         status: str = "delivered",
@@ -76,7 +77,7 @@ class SalesSimulator:
         effective_tenant = tenant or self.tenant_id
         effective_order_id = order_id or f"ORD-SIM-{uuid.uuid4().hex[:8].upper()}"
         effective_cust_id = external_customer_id or f"ext_cust_{uuid.uuid4().hex[:8]}"
-        event_id = f"evt_{uuid.uuid4().hex}"
+        event_id = event_id or f"evt_{uuid.uuid4().hex}"
 
         if items is None:
             # Default to 1 realistic item

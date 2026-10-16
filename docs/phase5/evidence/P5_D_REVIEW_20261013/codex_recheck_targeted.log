@@ -1,0 +1,36 @@
+test_01_same_identity_binding_import_and_session (tests.test_phase5_complaint_e2e.Phase5ComplaintE2ETests)
+P5-K7: Sales import and customer session share the identical customer_id binding. ... ok
+test_02_order_visibility_isolation_across_customers_and_tenants (tests.test_phase5_complaint_e2e.Phase5ComplaintE2ETests)
+P5-K6/K7: Customer 1 sees O-90001; Customer 2 and other tenant receive 404. ... ok
+test_03_complaint_routing_cancellation_dispute_agent (tests.test_phase5_complaint_e2e.Phase5ComplaintE2ETests)
+P5-K7: Supervisor routes cancellation complaint to dispute_agent and prepares proposal. ... ok
+test_04_complaint_routing_defect_exchange_proposal (tests.test_phase5_complaint_e2e.Phase5ComplaintE2ETests)
+P5-K7: Supervisor routes defect complaint to dispute_agent, generating 1-1 exchange proposal. ... ok
+test_05_complaint_routing_human_escalation_on_rage_or_explicit_request (tests.test_phase5_complaint_e2e.Phase5ComplaintE2ETests)
+P5-K7: Severe threats or explicit human requests escalate safely to human_escalation node. ... ok
+test_06_dispute_worker_cross_customer_refusal_no_leak (tests.test_phase5_complaint_e2e.Phase5ComplaintE2ETests)
+P5-K7: Dispute worker refuses to process another customer's order and leaks no information. ... ok
+test_07_tenant_policy_rag_isolation (tests.test_phase5_complaint_e2e.Phase5ComplaintE2ETests)
+P5-K7: Knowledge retrieval safely reports unavailable/scoped status without inventing policies. ... ok
+test_08_no_pre_confirmation_mutation (tests.test_phase5_complaint_e2e.Phase5ComplaintE2ETests)
+P5-K7/K8: Complaint chat and proposal preparation produce zero mutations on orders. ... ok
+test_09_confirmation_rejected_for_wrong_customer_or_session (tests.test_phase5_complaint_e2e.Phase5ComplaintE2ETests)
+P5-K8: Customer 2 cannot confirm Customer 1's cancellation proposal. ... ok
+test_10_confirmation_rejected_for_stale_order_version (tests.test_phase5_complaint_e2e.Phase5ComplaintE2ETests)
+P5-K8: Confirmation fails if order version was modified before confirmation. ... ok
+test_11_confirmation_idempotency_and_replay (tests.test_phase5_complaint_e2e.Phase5ComplaintE2ETests)
+P5-K8: Confirmation succeeds once, exact replay returns replayed=True, conflicting key raises 409. ... ok
+test_12_proposal_dismissal_preserves_order_state (tests.test_phase5_complaint_e2e.Phase5ComplaintE2ETests)
+P5-K8: Dismissing a cancellation proposal preserves pending order status and closes proposal. ... ok
+test_13_persistence_reload_and_audit_replay (tests.test_phase5_complaint_e2e.Phase5ComplaintE2ETests)
+P5-K8: Reopen session storage, confirm persistent audit trails, and replay events cleanly. ... ok
+test_14_failure_path_delivered_order_cannot_be_cancelled (tests.test_phase5_complaint_e2e.Phase5ComplaintE2ETests)
+P5-K7/K8: Delivered orders refuse cancellation proposals via both chat and API. ... ok
+test_15_raw_evidence_and_checksum_integrity (tests.test_phase5_complaint_e2e.Phase5ComplaintE2ETests)
+P5-K8: Fixtures and evidence have verified SHA256 checksums and leak no real secrets or PII. ... ok
+
+----------------------------------------------------------------------
+Ran 15 tests in 6.931s
+
+OK
+EXIT_CODE=0

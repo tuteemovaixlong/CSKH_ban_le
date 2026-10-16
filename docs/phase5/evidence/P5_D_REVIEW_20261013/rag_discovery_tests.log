@@ -1,0 +1,19 @@
+test_chat_returns_real_evidence_without_writes_or_cross_tenant_data (test_rag_chat.RagChatPostgresTests) ... skipped 'RAG integration requires a disposable pgvector database in CI.'
+test_completed_replay_keeps_exact_source_snapshot_without_model_io (test_rag_chat.RagChatPostgresTests) ... skipped 'RAG integration requires a disposable pgvector database in CI.'
+test_finished_graph_before_history_commit_restores_sources (test_rag_chat.RagChatPostgresTests) ... skipped 'RAG integration requires a disposable pgvector database in CI.'
+test_missing_citation_is_not_committed_as_success (test_rag_chat.RagChatPostgresTests) ... skipped 'RAG integration requires a disposable pgvector database in CI.'
+test_model_cannot_supply_tenant_or_call_unlisted_mutation (test_rag_chat.RagChatPostgresTests) ... skipped 'RAG integration requires a disposable pgvector database in CI.'
+test_no_matches_does_not_fabricate_source (test_rag_chat.RagChatPostgresTests) ... skipped 'RAG integration requires a disposable pgvector database in CI.'
+test_previous_turn_citation_requires_fresh_retrieval (test_rag_chat.RagChatPostgresTests) ... skipped 'RAG integration requires a disposable pgvector database in CI.'
+test_retry_after_invalid_citation_resumes_saved_evidence (test_rag_chat.RagChatPostgresTests) ... skipped 'RAG integration requires a disposable pgvector database in CI.'
+test_untrusted_document_cannot_add_write_tools (test_rag_chat.RagChatPostgresTests) ... skipped 'RAG integration requires a disposable pgvector database in CI.'
+test_v2_migration_is_not_run_by_chat (test_rag_chat.RagChatPostgresTests) ... skipped 'RAG integration requires a disposable pgvector database in CI.'
+test_viewer_can_read_policy_but_cannot_mutate (test_rag_chat.RagChatPostgresTests) ... skipped 'RAG integration requires a disposable pgvector database in CI.'
+test_old_checkpoint_is_rejected_without_repeating_model (test_rag_chat.RagFallbackTests) ... ok
+test_old_proxy_is_rejected_before_new_tool_contract_is_used (test_rag_chat.RagFallbackTests) ... ok
+test_sqlite_returns_typed_unavailable_and_orders_still_work (test_rag_chat.RagFallbackTests) ... ok
+
+----------------------------------------------------------------------
+Ran 14 tests in 0.375s
+
+OK (skipped=11)

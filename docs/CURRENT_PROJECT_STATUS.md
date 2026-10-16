@@ -1,29 +1,37 @@
 # BÁO CÁO TIẾN ĐỘ & TRẠNG THÁI HỆ THỐNG RETAILOPS 2026
 
-## Cập nhật hiện hành — Phase 5 handoff (2026-10-11)
+## Cập nhật hiện hành — Phase 5 handoff (2026-10-13)
+
+Ma trận nghiệm thu cấp dự án: [ACCEPTANCE_MATRIX.md](03_EVALUATION/ACCEPTANCE_MATRIX.md). Đây là bảng điều phối; acceptance criteria theo phase vẫn là nguồn quyết định.
 
 - G2 đã PASS trên `8868c5c498b1c64241bc791eb0166d82415cfeb0`.
-- Phase 5 P5-A smoke isolation và G4 controlled smoke đã PASS; latest deployed evidence dùng merged SHA `80f51569b3bef5ae0793bac1593fb91e39558477` và report `/opt/retailops/e2e-reports/LIVE_SMOKE_20261011T074654Z.json`.
+- P5-K1 controlled smoke **PASS** trên deploy P5-C: hai report `LIVE_SMOKE_20261013T040523Z.json` và `LIVE_SMOKE_20261013T040555Z.json` đều `pass=true`, cùng digest `sha256:2c058277…`, các runtime/session/order/logout checks đều true; dùng hai tenant synthetic riêng, credentials đã revoke.
 - Phase 5 P5-B Google test identity & tenant isolation đã merge trên [PR #38](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/38) tại merged SHA `80f51569b3bef5ae0793bac1593fb91e39558477`; full CI và deploy workflow [38119061325](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/38119061325) PASSED. P5-K2 runtime health PASS; smoke report `/opt/retailops/e2e-reports/LIVE_SMOKE_20261011T074654Z.json`.
-- Phase 5 P5-C sales simulator và import contract đã sửa N1–N4 và 4 finding PR #39 (prior import authority, event collision rejection & stored tuple heal, exact replay 300s drift-bypass, cấm NaN/Infinity timestamp); 15/15 test gốc + 30 test review-fix + 13 test PostgreSQL contract PASS. P5-K4–K6 REMEDIATED, chờ re-review/CI của PR #39; xem [PHASE_5_C_EVIDENCE.md](phase5/PHASE_5_C_EVIDENCE.md).
-- EC2 image `sha256:64d15c4aee299d4468422aa563b42cfce4631883090d832389d69f36b716091e`; web/admin/PostgreSQL/Caddy healthy; reservation cũ được giữ nguyên.
-- Bước kế tiếp là re-review P5-C (PR #39); P5-D complaint E2E vẫn HOLD cho tới khi P5-K4–K6 được reviewer xác nhận.
+- Phase 5 P5-C sales simulator và import contract đã merge qua [PR #39](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/39) tại merged SHA `a34b479eeb633ba55090f43a1f4ed7d85f6a3c9a`; 45/45 targeted PASS, CI run [38335308462](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/38335308462) PASS. Independent sign-off GPT-6.1 Sol đã ký trên candidate `3ff5d0e` trước merge. P5-K4–K6 **PASS offline/merged**.
+- Deploy workflow rerun [38335308481](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/38335308481), deploy job `115122302562`, **SUCCESS ngày 2026-10-13 lúc 11:06 (+07)** trên merged SHA `a34b479eeb633ba55090f43a1f4ed7d85f6a3c9a`.
+- **EC2 post-deploy snapshot do owner cung cấp lúc `2026-10-13T04:36:57Z` (11:36:57 +07):** `deployed.env` trỏ tới image `sha256:2c05827775460a5c56c41855dcd1a216e9c529e89a75614e553e91e00b922c1e`; web và admin đều chạy đúng digest/image ID đó và healthy; PostgreSQL healthy; Caddy running trên cả `retailops-web_default` và `retailops-web_admin_internal`, có mount `/etc/caddy/admin`. Đây là đối chiếu runtime sau deploy, khớp với rollout path thành công trên merged `a34b479`. Snapshot cũ không timestamp với prefix `64d15c4…` đã bị thay thế làm bằng chứng hiện hành.
+- Owner đã paste các trường cần thiết từ cả hai JSON: tenant/principal/customer/order tuple, runtime image/health, toàn bộ checks và cleanup. Evidence này đủ đóng P5-K1; raw files vẫn nằm trên EC2.
+- **P5-D offline re-review:** current source review confirms D-R2 lifecycle binding/replay/checksum test and D-R3 notebook sync PASS. D-R1 now has substantive disposable PostgreSQL/pgvector assertions, but the integration test was **SKIPPED locally** without `RETAILOPS_TEST_DATABASE_URL`; no immutable P5-D candidate SHA or candidate CI exists. Therefore P5-K7/K8 are **not accepted yet**; see [current review](phase5/REVIEW_GEMINI_P5_D_2026-10-13.md), [evidence](phase5/PHASE_5_D_EVIDENCE.md), and [current recheck set](phase5/evidence/P5_D_REVIEW_20261013_CURRENT/).
+- **Bước tiếp theo:** chỉ chuẩn bị immutable P5-D candidate và CI phải chạy thật pgvector test; chưa chuyển sang owner merge review, deploy hoặc live complaint. P5-K3 (live Google OAuth) vẫn là prerequisite riêng trước live K7/K8. G4 per-lane model/DB/KB và G5 chưa được nghiệm thu.
 - Chưa có G5 `READY FOR MEASUREMENT`, chưa chạy full benchmark live/paid.
 
 > Nguồn chi tiết: [Phase 5 acceptance](phase5/PHASE_5_ACCEPTANCE_CRITERIA.md) và [Phase 5 handoff](phase5/PHASE_5_EXECUTION_HANDOFF.md).
 
-> **Giới hạn evidence:** smoke PASS theo log owner; chưa đọc trực tiếp JSON trên EC2. Đây là operational smoke login/session/orders/logout, không gọi Google OAuth/model. G4 per-lane model/DB/KB và G5 chưa được nghiệm thu.
+> **Giới hạn evidence:** các trường chọn lọc từ hai smoke JSON được owner paste; raw files chưa được archive trong repo. Đây là operational smoke login/session/orders/logout, không gọi Google OAuth/model. P5-K3 live OAuth, G4 per-lane model/DB/KB và G5 chưa được nghiệm thu.
 
 > **Trạng thái:** ACTIVE OPERATIONAL STATUS & EVIDENCE REPORT<br>
 > **Rà soát toàn diện trước đây:** tài liệu `b93eb5a`, application snapshot `main` tại `c6c7a1a` (lịch sử, không đại diện trạng thái PR hiện tại).<br>
-> **Đồng bộ Module 2.5 ngày 2026-10-06:** PR #34 merged tại `47ba72a`; PR #35 (PR B) merged tại `b3a0ccd72c1d025b3af567486943123bf3e05526`. **PR B MERGED & POSTMERGE VERIFIED**. Artifact CI main [run 37418383578](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37418383578), ID `11392265139`: 10 batch × 100 mẫu/endpoint, nearest-rank P99 unrounded float đạt SLO $\le 50$ms; 60 chat HTTP 200, tool hook và saturation 1+5; 5/5 CI check-runs trên main completed/success; Ops Console [run 37418383604](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37418383604) completed/success. Hoàn thành Module 2.5; sẵn sàng chuyển giao Phase 4. Xem <a href="review%20gpt%206%20astra.md">review hiện hành</a>.
-> **EC2 Host:** `retailops-dev` / `i-0fd116d8927d0e412` / **t3.large** (Sẵn sàng tắt máy sau phiên làm việc để tối ưu chi phí cloud)<br>
-> **Deploy status:** Baseline lịch sử đã có container build/live rolling deploy PASS; PR A/N08 đã merge trong Git, không suy ra đã deploy. PR B/#35 chưa deploy; review này không thực hiện kiểm tra EC2 live.<br>
+> **Các dòng quoted Module 2.5/EC2/deploy bên dưới là metadata lịch sử (2026-10-06), không phải trạng thái runtime hiện tại.**<br>
+> **LỊCH SỬ — Module 2.5 (2026-10-06; không phải trạng thái hiện hành):** PR #34 merged tại `47ba72a`; PR #35 (PR B) merged tại `b3a0ccd72c1d025b3af567486943123bf3e05526`. **PR B MERGED & POSTMERGE VERIFIED**. Artifact CI main [run 37418383578](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37418383578), ID `11392265139`: 10 batch × 100 mẫu/endpoint, nearest-rank P99 unrounded float đạt SLO $\le 50$ms; 60 chat HTTP 200, tool hook và saturation 1+5; 5/5 CI check-runs trên main completed/success; Ops Console [run 37418383604](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37418383604) completed/success. Hoàn thành Module 2.5; sẵn sàng chuyển giao Phase 4. Xem <a href="review%20gpt%206%20astra.md">review lịch sử</a>.
+> **EC2 Host (snapshot lịch sử):** `retailops-dev` / `i-0fd116d8927d0e412` / **t3.large** (không dùng làm bằng chứng trạng thái hiện tại)<br>
+> **Deploy status (snapshot lịch sử):** Baseline lịch sử đã có container build/live rolling deploy PASS; PR A/N08 đã merge trong Git, không suy ra đã deploy. PR B/#35 chưa deploy; review này không thực hiện kiểm tra EC2 live.<br>
 > **Lộ trình kỹ thuật tổng thể:** Xem chi tiết tại [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md)<br>
 > **Kế hoạch đợt build tiếp theo:** [PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT.md](PLAN_CONCURRENCY_RELATIONAL_KNOWLEDGE_SPRINT.md)<br>
 > **Báo cáo sự cố & bàn giao:** [INCIDENT_RECOVERY_2026-09-21.md](INCIDENT_RECOVERY_2026-09-21.md) và [SESSION_HANDOFF_2026-10-03.md](SESSION_HANDOFF_2026-10-03.md)
 
 ---
+
+> **LỊCH SỬ / NOT CURRENT STATE:** Các mục tiến độ chi tiết sau đây ghi nhận mốc kỹ thuật trước Phase 5. Khi có mâu thuẫn, dùng snapshot đầu file, [acceptance matrix](03_EVALUATION/ACCEPTANCE_MATRIX.md) và các acceptance/evidence theo phase; không dùng các chỉ dẫn deploy cũ làm lệnh vận hành hiện hành.
 
 ## 1. BẢNG ĐỐI CHIẾU TIẾN ĐỘ 6 MODULE THEO KHUNG MINH CHỨNG (EVIDENCE RUBRIC)
 
@@ -148,6 +156,8 @@ Theo chuẩn phân cấp minh chứng của [`RELEASE_MANIFEST.md`](RELEASE_MANI
 
 ## 3. LỘ TRÌNH TRIỂN KHAI TIẾP THEO (NEXT PHASES ROADMAP)
 
+> **Lưu ý:** sơ đồ phụ thuộc và các tên Phase 5 trong mục này là roadmap lịch sử trước workstream hiện hành. Thứ tự/kết quả cần làm tiếp xem [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md), [Phase 5 plan](phase5/PHASE_5_PLAN.md) và ma trận nghiệm thu.
+
 Hệ thống tuân thủ nghiêm ngặt lộ trình phụ thuộc kỹ thuật 7 giai đoạn đã thống nhất:
 
 * **Phase 0**: Documentation Truth & Reconciliation — Đã hoàn tất đồng bộ toàn bộ tài liệu dự án, ma trận trạng thái, loại bỏ số liệu giả định.
@@ -166,6 +176,8 @@ Hệ thống tuân thủ nghiêm ngặt lộ trình phụ thuộc kỹ thuật 7
 ---
 
 ## 4. QUY TRÌNH BẬT MÁY & ĐỒNG BỘ IP SÁNG MAI (COLD-START & IP REBIND RUNBOOK)
+
+> **ĐÃ SUPERSEDE:** hướng dẫn dưới đây tham chiếu deploy run `35892629094` (#149) và không đảm bảo giữ cấu hình admin overlay. Không dùng làm lệnh triển khai hiện hành. Làm theo [EC2_WEB_WORKFLOW.md](EC2_WEB_WORKFLOW.md) và workflow deploy mới nhất; khi xác minh Caddy/admin, cần kiểm tra overlay `deploy/compose.admin.yaml` cùng `admin.env`.
 
 Khi dừng máy qua đêm và bật lại vào sáng hôm sau, AWS sẽ cấp Public IPv4 mới cho instance `i-0fd116d8927d0e412` (do không dùng Elastic IP). Quy trình 4 bước đơn giản để kích hoạt lại toàn bộ hệ thống:
 

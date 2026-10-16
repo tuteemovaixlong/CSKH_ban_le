@@ -1,0 +1,60 @@
+{
+  "after_confirmation_state": {
+    "order_cancelled_events": 1,
+    "order_status": "cancelled",
+    "order_version": 2,
+    "replayed": false
+  },
+  "after_reopen_replay_state": {
+    "order_cancelled_events": 1,
+    "order_status": "cancelled",
+    "order_version": 2,
+    "replayed": true
+  },
+  "before_confirmation_state": {
+    "order_cancelled_events": 0,
+    "order_status": "pending",
+    "order_version": 1
+  },
+  "generated_at_utc": "2026-10-14T05:16:47.996973+00:00",
+  "identity_tuple": {
+    "customer_id": "cust_b5eed1d7c0334cf490e787caed8d2149",
+    "event_id": "evt_p5d_lifecycle_001",
+    "external_customer_id": "ext_pos_p5d_001",
+    "order_id": "O-90001",
+    "principal_id": "prin_75c47dc0c33843819ae51a519df30c7d",
+    "source_system": "pos_online",
+    "tenant_id": "tenant-p5d-demo"
+  },
+  "lifecycle_ids": {
+    "conversation_id": "7ecaa4e3-366b-4087-9018-a93b6910315d",
+    "idempotency_key": "idem_p5d_lifecycle_valid_0001",
+    "proposal_id": "03665543-8bdd-49a6-a38a-e34edb91d843"
+  },
+  "proposal_binding": {
+    "bound_to_complaint": true,
+    "complaint_action": "cancel_order",
+    "complaint_order_id": "O-90001",
+    "complaint_order_version": 1,
+    "complaint_reason": "ordered_by_mistake",
+    "persisted_order_id": "O-90001",
+    "persisted_order_version": 1,
+    "persisted_proposal_id": "03665543-8bdd-49a6-a38a-e34edb91d843",
+    "persisted_reason": "ordered_by_mistake"
+  },
+  "schema_version": "retailops_p5d_lifecycle_v1",
+  "security_checks": {
+    "contains_real_pii": false,
+    "contains_real_secrets": false,
+    "cross_tenant_confirm_denied": true,
+    "pre_confirmation_mutation": false,
+    "wrong_customer_confirm_denied": true
+  },
+  "trace": {
+    "proposal_action": "cancel_order",
+    "supervisor_intent": "dispute_complaint",
+    "tools_called": [
+      "prepare_cancellation"
+    ]
+  }
+}

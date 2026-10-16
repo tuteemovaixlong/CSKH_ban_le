@@ -1,0 +1,155 @@
+test_01_same_identity_binding_import_and_session (test_phase5_complaint_e2e.Phase5ComplaintE2ETests)
+P5-K7: Sales import and customer session share the identical customer_id binding. ... ok
+test_02_order_visibility_isolation_across_customers_and_tenants (test_phase5_complaint_e2e.Phase5ComplaintE2ETests)
+P5-K6/K7: Customer 1 sees O-90001; Customer 2 and other tenant receive 404. ... ok
+test_03_complaint_routing_cancellation_dispute_agent (test_phase5_complaint_e2e.Phase5ComplaintE2ETests)
+P5-K7: Supervisor routes cancellation complaint to dispute_agent and prepares proposal. ... ok
+test_04_complaint_routing_defect_exchange_proposal (test_phase5_complaint_e2e.Phase5ComplaintE2ETests)
+P5-K7: Supervisor routes defect complaint to dispute_agent, generating 1-1 exchange proposal. ... ok
+test_05_complaint_routing_human_escalation_on_rage_or_explicit_request (test_phase5_complaint_e2e.Phase5ComplaintE2ETests)
+P5-K7: Severe threats or explicit human requests escalate safely to human_escalation node. ... ok
+test_06_dispute_worker_cross_customer_refusal_no_leak (test_phase5_complaint_e2e.Phase5ComplaintE2ETests)
+P5-K7: Dispute worker refuses to process another customer's order and leaks no information. ... ok
+test_07_tenant_policy_rag_isolation (test_phase5_complaint_e2e.Phase5ComplaintE2ETests)
+P5-K7 (D-R1): Real tenant policy retrieval via complaint/dispute flow, asserting: ... ok
+test_08_no_pre_confirmation_mutation (test_phase5_complaint_e2e.Phase5ComplaintE2ETests)
+P5-K7/K8: Complaint chat and proposal preparation produce zero mutations on orders. ... ok
+test_09_confirmation_rejected_for_wrong_customer_or_session (test_phase5_complaint_e2e.Phase5ComplaintE2ETests)
+P5-K8: Customer 2 cannot confirm Customer 1's cancellation proposal. ... ok
+test_10_confirmation_rejected_for_stale_order_version (test_phase5_complaint_e2e.Phase5ComplaintE2ETests)
+P5-K8: Confirmation fails if order version was modified before confirmation. ... ok
+test_11_confirmation_idempotency_and_replay (test_phase5_complaint_e2e.Phase5ComplaintE2ETests)
+P5-K8: Confirmation succeeds once, exact replay returns replayed=True, conflicting key raises 409. ... ok
+test_12_proposal_dismissal_preserves_order_state (test_phase5_complaint_e2e.Phase5ComplaintE2ETests)
+P5-K8: Dismissing a cancellation proposal preserves pending order status and closes proposal. ... ok
+test_13_persistence_reload_and_audit_replay (test_phase5_complaint_e2e.Phase5ComplaintE2ETests)
+P5-K8: Reopen session storage, confirm persistent audit trails, and replay events cleanly. ... ok
+test_14_failure_path_delivered_order_cannot_be_cancelled (test_phase5_complaint_e2e.Phase5ComplaintE2ETests)
+P5-K7/K8: Delivered orders refuse cancellation proposals via both chat and API. ... ok
+test_15_integrated_lifecycle_raw_report_and_tamper_verification (test_phase5_complaint_e2e.Phase5ComplaintE2ETests)
+P5-K8 (D-R2): Full integrated lifecycle: ... ok
+test_pgvector_complaint_tenant_policy_isolation (test_phase5_complaint_e2e.Phase5ComplaintPgvectorTests)
+Verify real PostgreSQL + pgvector complaint tenant policy isolation when DSN is present. ... skipped 'RAG pgvector integration requires a disposable PostgreSQL database with pgvector.'
+test_api_session_profile_and_tenant_customer_isolation (test_phase5_google_identity.Phase5GoogleIdentityTests)
+P5-B: /api/session, /api/profile and order isolation between customers and tenants. ... ok
+test_configured_demo_tenant_via_env_or_property (test_phase5_google_identity.Phase5GoogleIdentityTests)
+P5-B: Configured demo tenant via default_tenant_id or env resolves deterministically. ... ok
+test_email_never_used_as_sole_key (test_phase5_google_identity.Phase5GoogleIdentityTests)
+P5-B: Distinct Google sub IDs with identical email NEVER share principal or customer. ... ok
+test_email_update_with_same_sub_preserves_principal_and_customer (test_phase5_google_identity.Phase5GoogleIdentityTests)
+P5-B: Email change with identical sub preserves identity and updates verified email. ... ok
+test_external_identity_audit_events_recorded (test_phase5_google_identity.Phase5GoogleIdentityTests)
+P5-B: External identity creation and linking emit audit events into identity_events. ... ok
+test_google_identity_mapping_issuer_sub_verified_email (test_phase5_google_identity.Phase5GoogleIdentityTests)
+P5-B: (issuer, sub, verified_email) maps deterministically to principal and customer. ... ok
+test_invalid_or_nonexistent_tenant_raises_error (test_phase5_google_identity.Phase5GoogleIdentityTests)
+P5-B: Explicit login to nonexistent tenant raises 503 tenant_unavailable. ... ok
+test_live_mode_security_guards (test_phase5_google_identity.Phase5GoogleIdentityTests)
+P5-B: In live mode, missing sub is rejected (400 missing_sub) and no demo orders seeded. ... ok
+test_no_order_by_id_limit_1_refuses_ambiguous_tenant (test_phase5_google_identity.Phase5GoogleIdentityTests)
+P5-B: When multiple tenants exist and none is configured, Google login refuses to guess via ORDER BY id LIMIT 1. ... ok
+test_same_google_identity_across_tenants_gets_isolated_customers (test_phase5_google_identity.Phase5GoogleIdentityTests)
+P5-B: One Google principal logging into Tenant 1 and Tenant 2 receives separate customer_ids. ... ok
+test_smoke_tenant_is_never_selected_as_google_fallback (test_phase5_google_identity.Phase5GoogleIdentityTests)
+P5-B: Smoke/synthetic tenants (e2e-, smoke-, synthetic-) are rejected as Google demo fallback. ... ok
+test_unverified_email_cannot_link_to_legacy_principal (test_phase5_google_identity.Phase5GoogleIdentityTests)
+P5-B: Unverified email cannot link to an existing legacy principal. ... ok
+test_event_id_collision_rejected_on_postgresql (test_phase5_sales_postgres.PostgresSalesImportTests) ... skipped 'PostgreSQL integration runs in CI with a dedicated test database.'
+test_exact_replay_after_300s_heals_mapping_on_postgresql (test_phase5_sales_postgres.PostgresSalesImportTests) ... skipped 'PostgreSQL integration runs in CI with a dedicated test database.'
+test_fresh_schema_contains_p5c_tables_with_constraints (test_phase5_sales_postgres.PostgresSalesImportTests) ... skipped 'PostgreSQL integration runs in CI with a dedicated test database.'
+test_import_replay_and_tenant_scoped_mapping (test_phase5_sales_postgres.PostgresSalesImportTests) ... skipped 'PostgreSQL integration runs in CI with a dedicated test database.'
+test_legacy_schema_without_p5c_tables_is_migrated_idempotently (test_phase5_sales_postgres.PostgresSalesImportTests) ... skipped 'PostgreSQL integration runs in CI with a dedicated test database.'
+test_link_external_customer_conflict_on_postgresql (test_phase5_sales_postgres.PostgresSalesImportTests) ... skipped 'PostgreSQL integration runs in CI with a dedicated test database.'
+test_migration_preserves_existing_p5c_rows (test_phase5_sales_postgres.PostgresSalesImportTests) ... skipped 'PostgreSQL integration runs in CI with a dedicated test database.'
+test_money_columns_hold_values_above_32_bits (test_phase5_sales_postgres.PostgresSalesImportTests) ... skipped 'PostgreSQL integration runs in CI with a dedicated test database.'
+test_n1_other_customer_cannot_take_over_order (test_phase5_sales_postgres.PostgresSalesImportTests) ... skipped 'PostgreSQL integration runs in CI with a dedicated test database.'
+test_n4_identity_failure_after_commit_recovers_by_replay_and_reconcile (test_phase5_sales_postgres.PostgresSalesImportTests) ... skipped 'PostgreSQL integration runs in CI with a dedicated test database.'
+test_n4_next_event_after_identity_failure_reuses_customer (test_phase5_sales_postgres.PostgresSalesImportTests) ... skipped 'PostgreSQL integration runs in CI with a dedicated test database.'
+test_prior_business_import_authoritative_on_postgresql (test_phase5_sales_postgres.PostgresSalesImportTests) ... skipped 'PostgreSQL integration runs in CI with a dedicated test database.'
+test_rollback_leaves_no_traces_on_postgresql (test_phase5_sales_postgres.PostgresSalesImportTests) ... skipped 'PostgreSQL integration runs in CI with a dedicated test database.'
+test_import_cannot_take_over_seeded_demo_order (test_phase5_sales_review_fixes.N1OrderOwnershipTests) ... Rejected order ownership change tenant=shop-alpha-01 source=sales_simulator event_id=evt_5617c2031b6d489a881b77692eaab1b4 order_id=O-101
+ok
+test_other_customer_cannot_take_over_existing_order (test_phase5_sales_review_fixes.N1OrderOwnershipTests) ... Rejected order ownership change tenant=shop-alpha-01 source=sales_simulator event_id=evt_66c6e3543fb148aebed84d9b23ec1233 order_id=O-OWN-001
+ok
+test_owner_change_through_explicit_link_is_also_blocked (test_phase5_sales_review_fixes.N1OrderOwnershipTests)
+Pre-linking an external id to the victim does not let another id steal the order either. ... Rejected order ownership change tenant=shop-alpha-01 source=sales_simulator event_id=evt_06a8758facc843e5b4c659e9cc2455ce order_id=O-OWN-004
+ok
+test_same_customer_can_still_update_its_own_order (test_phase5_sales_review_fixes.N1OrderOwnershipTests) ... ok
+test_same_external_id_from_other_source_is_a_different_customer_and_cannot_take_over (test_phase5_sales_review_fixes.N1OrderOwnershipTests) ... Rejected order ownership change tenant=shop-alpha-01 source=pos_online event_id=evt_6193e2fbb582494db3b801d919a49fe1 order_id=O-OWN-003
+ok
+test_business_ddl_has_p5c_tables_and_is_idempotent (test_phase5_sales_review_fixes.N2PostgresDdlContractTests) ... ok
+test_existing_schema_migration_paths_apply_p5c_ddl (test_phase5_sales_review_fixes.N2PostgresDdlContractTests) ... ok
+test_identity_ddl_has_mapping_table_with_tenant_scoped_uniqueness (test_phase5_sales_review_fixes.N2PostgresDdlContractTests) ... ok
+test_imported_events_enforces_idempotency_key (test_phase5_sales_review_fixes.N2PostgresDdlContractTests) ... ok
+test_exact_schema_accepts_valid_event_with_optional_item_fields (test_phase5_sales_review_fixes.N3StrictSchemaTests) ... ok
+test_numeric_strictness_does_not_allow_signature_bypass (test_phase5_sales_review_fixes.N3StrictSchemaTests) ... ok
+test_rejects_bad_item_shapes (test_phase5_sales_review_fixes.N3StrictSchemaTests) ... ok
+test_rejects_bool_numbers (test_phase5_sales_review_fixes.N3StrictSchemaTests) ... ok
+test_rejects_extra_item_field (test_phase5_sales_review_fixes.N3StrictSchemaTests) ... ok
+test_rejects_extra_top_level_field_even_when_signed (test_phase5_sales_review_fixes.N3StrictSchemaTests) ... ok
+test_rejects_float_numbers_even_when_integral (test_phase5_sales_review_fixes.N3StrictSchemaTests) ... ok
+test_rejects_malformed_text_fields (test_phase5_sales_review_fixes.N3StrictSchemaTests) ... ok
+test_rejects_nan_and_infinity_timestamps (test_phase5_sales_review_fixes.N3StrictSchemaTests) ... ok
+test_rejects_numeric_strings_and_none (test_phase5_sales_review_fixes.N3StrictSchemaTests) ... ok
+test_rejects_out_of_range_values (test_phase5_sales_review_fixes.N3StrictSchemaTests) ... ok
+test_cache_is_invalidated_even_when_identity_write_fails (test_phase5_sales_review_fixes.N4MappingRecoveryTests) ... Identity mapping write failed after business commit tenant=shop-alpha-01 source=sales_simulator customer=cust_155c89a76f794d8e882815274e785e0e: RuntimeError
+ok
+test_event_id_collision_rejected_with_different_payload_or_customer (test_phase5_sales_review_fixes.N4MappingRecoveryTests)
+Finding 2: Replay with same (source_system, event_id) rejects collision if payload/customer differ. ... Rejected event_id collision source=sales_simulator event_id=evt_0a701e6ddb1641c483e00b33ff149349: stored_ext=coll_buyer1 incoming_ext=coll_intruder
+Rejected event_id collision source=sales_simulator event_id=evt_0a701e6ddb1641c483e00b33ff149349: stored_ext=coll_buyer1 incoming_ext=coll_buyer1
+Rejected event_id collision source=sales_simulator event_id=evt_0a701e6ddb1641c483e00b33ff149349: stored_ext=coll_buyer1 incoming_ext=coll_buyer1
+ok
+test_exact_replay_after_300s_bypasses_drift_check_and_heals_mapping (test_phase5_sales_review_fixes.N4MappingRecoveryTests)
+Finding 3: Exact replay can heal mapping after 300s, but new event still drift-checks. ... Identity mapping write failed after business commit tenant=shop-alpha-01 source=sales_simulator customer=cust_e22308b2cdd645c69a430a43e353454b: RuntimeError
+ok
+test_identity_failure_after_business_commit_is_retryable_and_heals_on_replay (test_phase5_sales_review_fixes.N4MappingRecoveryTests) ... Identity mapping write failed after business commit tenant=shop-alpha-01 source=sales_simulator customer=cust_c5550079e8924d2d9ced64e98a34f8ab: RuntimeError
+ok
+test_link_external_customer_is_insert_if_absent (test_phase5_sales_review_fixes.N4MappingRecoveryTests) ... ok
+test_mapping_conflict_is_not_masked_as_pending (test_phase5_sales_review_fixes.N4MappingRecoveryTests)
+A 4xx conflict from the identity store is a real error and must surface unchanged. ... ok
+test_next_event_of_same_external_customer_reuses_committed_customer (test_phase5_sales_review_fixes.N4MappingRecoveryTests) ... Identity mapping write failed after business commit tenant=shop-alpha-01 source=sales_simulator customer=cust_c53ce6c3192f4b2f99bbc03c96a08403: ApiError
+ok
+test_prior_business_import_is_authoritative_and_conflicting_mapping_rejected (test_phase5_sales_review_fixes.N4MappingRecoveryTests)
+Finding 1: Prior business import is authoritative, preventing conflicting mapping from splitting customer. ... Identity mapping conflict tenant=shop-alpha-01 source=sales_simulator ext_cust=auth_buyer: prior=cust_5076b35de28e4d7cbe112f5b2b8628e8 mapped=cust_intruder_99
+ok
+test_reconcile_is_idempotent_and_reports_conflicts_without_overwriting (test_phase5_sales_review_fixes.N4MappingRecoveryTests) ... Identity mapping write failed after business commit tenant=shop-alpha-01 source=sales_simulator customer=cust_a750c4d34e1f4130b6733287a8e0a6fa: RuntimeError
+ok
+test_repeated_identity_failures_never_create_second_customer (test_phase5_sales_review_fixes.N4MappingRecoveryTests) ... Identity mapping write failed after business commit tenant=shop-alpha-01 source=sales_simulator customer=cust_56e97791507847a2904accbefea62fdb: RuntimeError
+Identity mapping write failed after business commit tenant=shop-alpha-01 source=sales_simulator customer=cust_56e97791507847a2904accbefea62fdb: RuntimeError
+Identity mapping write failed after business commit tenant=shop-alpha-01 source=sales_simulator customer=cust_56e97791507847a2904accbefea62fdb: RuntimeError
+ok
+test_atomic_rollback_on_database_error_leaves_no_traces (test_phase5_sales_simulator_import.Phase5SalesSimulatorImportTests)
+Simulated error during order processing rolls back transaction completely. ... ok
+test_customer_order_visibility_and_isolation (test_phase5_sales_simulator_import.Phase5SalesSimulatorImportTests)
+P5-K6: Customer only sees their imported order; accessing other customer's order is forbidden. ... ok
+test_explicit_customer_link (test_phase5_sales_simulator_import.Phase5SalesSimulatorImportTests)
+Can explicitly pre-link external_customer_id to an existing customer_id. ... ok
+test_hmac_signature_verification_and_tamper_rejection (test_phase5_sales_simulator_import.Phase5SalesSimulatorImportTests)
+Valid HMAC signature succeeds; any payload tampering is rejected. ... ok
+test_idempotent_event_ingestion_and_replay_detection (test_phase5_sales_simulator_import.Phase5SalesSimulatorImportTests)
+P5-K5: Replaying the same event does not duplicate orders, items, or audit records. ... ok
+test_multi_item_order_persists_to_order_items (test_phase5_sales_simulator_import.Phase5SalesSimulatorImportTests)
+Multi-item orders store individual line items in order_items with summary in orders. ... ok
+test_pre_signed_fixtures_validation (test_phase5_sales_simulator_import.Phase5SalesSimulatorImportTests)
+Signed fixtures are verified against canonical contract. ... ok
+test_schema_strictly_rejects_email_as_external_customer_id (test_phase5_sales_simulator_import.Phase5SalesSimulatorImportTests)
+P5-K4 rule: 'Kh�ng d�ng email l�m kh�a' � emails are rejected as external_customer_id. ... ok
+test_schema_validation_rejects_invalid_status_and_items (test_phase5_sales_simulator_import.Phase5SalesSimulatorImportTests)
+Invalid statuses, empty items, or mismatched totals are rejected. ... ok
+test_schema_validation_rejects_missing_fields (test_phase5_sales_simulator_import.Phase5SalesSimulatorImportTests)
+Missing canonical fields are rejected with descriptive ApiError. ... ok
+test_simulator_emits_valid_canonical_event_without_db (test_phase5_sales_simulator_import.Phase5SalesSimulatorImportTests)
+Simulator emits valid canonical 11-field events and does NOT write directly to DB. ... ok
+test_tenant_scoped_customer_mapping_and_cross_tenant_isolation (test_phase5_sales_simulator_import.Phase5SalesSimulatorImportTests)
+P5-K4: external_customer_id is tenant-scoped; same external ID in 2 tenants maps to distinct RetailOps customers. ... ok
+test_tenant_validation_rejects_unknown_or_inactive (test_phase5_sales_simulator_import.Phase5SalesSimulatorImportTests)
+Unknown or inactive tenants are rejected. ... ok
+test_timestamp_drift_validation (test_phase5_sales_simulator_import.Phase5SalesSimulatorImportTests)
+Rejects events with timestamps too far in the past or future. ... ok
+test_tool_cache_invalidation_after_import (test_phase5_sales_simulator_import.Phase5SalesSimulatorImportTests)
+Ingesting an order invalidates ToolCache for the mapped customer. ... ok
+
+----------------------------------------------------------------------
+Ran 86 tests in 14.787s
+
+OK (skipped=14)
