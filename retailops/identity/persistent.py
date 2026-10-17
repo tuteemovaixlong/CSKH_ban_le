@@ -91,7 +91,7 @@ class PersistentSessions:
     def login(self, token):
         return self.control.login(token, self.session_seconds, self.capacity)
 
-    def resolve_google_tenant(self, sub=None, issuer='https://accounts.google.com', tenant_id=None):
+    def resolve_google_tenant(self, sub=None, issuer='https://accounts.google.com', tenant_id=None, email=None, email_verified=False):
         explicit_tid = _clean_tenant_id(tenant_id)
         default_tid = _clean_tenant_id(getattr(self, 'default_tenant_id', None))
         env_tid = _env_tenant_id(strict_conflict=True)
@@ -115,12 +115,29 @@ class PersistentSessions:
                 issuer_clean = str(issuer).strip() if issuer else 'https://accounts.google.com'
                 ext = db.execute('SELECT principal_id FROM external_identities WHERE issuer=? AND sub=?',
                                  (issuer_clean, sub_clean)).fetchone()
-                if ext:
+                principal_id = ext['principal_id'] if ext else None
+                if not principal_id and email_verified and email and sub_clean:
+                    email_clean = str(email).strip().lower()
+                    if email_clean:
+                        prefix = re.sub(r'[^a-zA-Z0-9_-]', '_', email_clean.split('@')[0])[:25]
+                        hash_suffix = hashlib.sha256(email_clean.encode()).hexdigest()[:10]
+                        legacy_pid = f"g_{prefix}_{hash_suffix}"
+                        legacy_p = db.execute('SELECT id FROM principals WHERE id=?', (legacy_pid,)).fetchone()
+                        if not legacy_p:
+                            legacy_p = db.execute('SELECT id FROM principals WHERE id=?', (email_clean,)).fetchone()
+                        if legacy_p:
+                            already_bound = db.execute(
+                                'SELECT sub FROM external_identities WHERE issuer=? AND principal_id=?',
+                                (issuer_clean, legacy_p['id'])
+                            ).fetchone()
+                            if not (already_bound and already_bound['sub'] != sub_clean):
+                                principal_id = legacy_p['id']
+                if principal_id:
                     mems = db.execute(
                         '''SELECT m.tenant_id FROM memberships m
                            JOIN tenants t ON t.id = m.tenant_id
                            WHERE m.principal_id=? AND m.active=1 AND t.active=1''',
-                        (ext['principal_id'],)
+                        (principal_id,)
                     ).fetchall()
                     non_smoke_mems = [m['tenant_id'] for m in mems if not _is_smoke_tenant_id(m['tenant_id'])]
                     if len(non_smoke_mems) == 0:
@@ -153,7 +170,7 @@ class PersistentSessions:
                     'Hệ thống có nhiều cửa hàng; cần cấu hình rõ cửa hàng (tenant) cho đăng nhập Google thay vì chọn ngẫu nhiên.')
 
     def login_google(self, email, name, role='customer', sub=None, issuer='https://accounts.google.com', email_verified=False, live=False, tenant_id=None):
-        tenant_id = self.resolve_google_tenant(sub=sub, issuer=issuer, tenant_id=tenant_id)
+        tenant_id = self.resolve_google_tenant(sub=sub, issuer=issuer, tenant_id=tenant_id, email=email, email_verified=email_verified)
         is_live = live or getattr(self, 'data_mode', None) in ('production', 'live')
         mid, cid = self.control.get_or_create_google_member(
             tenant_id, email, name, role=role, sub=sub, issuer=issuer, email_verified=email_verified, live=is_live

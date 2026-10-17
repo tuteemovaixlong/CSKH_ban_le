@@ -598,6 +598,14 @@ class IdentityStore:
                             # Bound to another sub! Do not merge identities
                             principal_id = None
                         else:
+                            active_mem = db.execute(
+                                '''SELECT m.id FROM memberships m
+                                   JOIN tenants t ON t.id = m.tenant_id
+                                   WHERE m.principal_id=? AND m.tenant_id=? AND m.active=1 AND t.active=1''',
+                                (legacy_p['id'], tenant_id)
+                            ).fetchone()
+                            require(active_mem is not None, 503, 'ambiguous_tenant',
+                                    'Tài khoản đã tồn tại không có cửa hàng đang hoạt động hợp lệ; không tự động chuyển sang cửa hàng khác.')
                             principal_id = legacy_p['id']
                             db.execute(
                                 'INSERT INTO external_identities (id, issuer, sub, principal_id, email, created_at) '

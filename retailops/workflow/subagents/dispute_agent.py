@@ -223,6 +223,7 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
     knowledge_called = False
     knowledge_has_evidence = False
     knowledge_has_defect_warranty_evidence = False
+    retrieved_citations: list[str] = []
     trace = state.setdefault("trace", {})
     try:
         response = gateway.chat(prompt_messages, True, timeout)
@@ -323,8 +324,13 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
                                 knowledge_has_defect_warranty_evidence = True
                             if isinstance(result, dict) and not result.get("error"):
                                 res_list = result.get("results")
-                                if isinstance(res_list, list) and any(isinstance(doc, dict) and bool(str(doc.get("excerpt") or "").strip()) for doc in res_list):
-                                    knowledge_has_evidence = True
+                                if isinstance(res_list, list):
+                                    for doc in res_list:
+                                        if isinstance(doc, dict) and bool(str(doc.get("excerpt") or "").strip()):
+                                            knowledge_has_evidence = True
+                                            cid_val = str(doc.get("citation_id") or "").strip()
+                                            if cid_val and cid_val not in retrieved_citations:
+                                                retrieved_citations.append(cid_val)
                         state["tool_count"] += 1
                         trace.setdefault("tools", []).append({"name": name, "status": "error" if isinstance(result, dict) and result.get("error") else "ok"})
                         tool_content = json.dumps(result, ensure_ascii=False) if isinstance(result, (dict, list)) else str(result)
@@ -363,6 +369,7 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
         if knowledge_no_evidence:
             refusal_set = True
             action_proposal = None
+            state["drop_knowledge_sources"] = True
             if not final_content or has_unsupported or not has_safe_handoff:
                 final_content = (
                     "Dạ hiện tại kho tri thức chính sách của shop chưa có tài liệu quy định phù hợp cho nội dung này. "
@@ -371,16 +378,16 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
                 )
 
         # Check domain heuristic for SOP 2 (Defect / Warranty Exchange 1-1)
-        if not refusal_set and not knowledge_called and _is_defect_warranty_query(last_user_msg):
+        if not refusal_set and (is_defect_query or has_warranty_promise):
             if extracted_oid:
                 bound_oid = bound_context.get("order_id") or bound_obj.get("order_id")
                 is_order_ok = True
                 order_data = {}
-                # N02: Luôn gọi get_order để revalidate quyền sở hữu mới nhất
+                # N02 & P5-K7: Luôn gọi get_order để revalidate quyền sở hữu mới nhất (kể cả khi search_knowledge có kết quả)
                 try:
                     order_res = execute("get_order", {"order_id": extracted_oid})
                     state["tool_count"] += 1
-                    is_order_ok = isinstance(order_res, dict) and not order_res.get("error")
+                    is_order_ok = isinstance(order_res, dict) and not order_res.get("error") and bool(order_res.get("order"))
                     trace.setdefault("tools", []).append({"name": "get_order", "status": "ok" if is_order_ok else "error"})
                     if is_order_ok and isinstance(order_res, dict):
                         order_data = order_res.get("order", {})
@@ -397,6 +404,8 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
 
                 if not is_order_ok:
                     action_proposal = None
+                    refusal_set = True
+                    state["drop_knowledge_sources"] = True
                     final_content = (
                         f"Dạ em rất tiếc, hệ thống không tìm thấy đơn hàng {extracted_oid} "
                         f"(hoặc đơn không thuộc tài khoản của anh/chị). "
@@ -416,6 +425,8 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
 
                     if not pid:
                         action_proposal = None
+                        refusal_set = True
+                        state["drop_knowledge_sources"] = True
                         final_content = (
                             f"Dạ em rất tiếc, hệ thống chưa xác định được thông tin sản phẩm của đơn hàng {extracted_oid}. "
                             "Anh/chị vui lòng kiểm tra lại đơn hàng hoặc liên hệ CSKH để được hỗ trợ kiểm tra bảo hành chính xác nhé ạ!"
@@ -425,24 +436,30 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
                         try:
                             prod_res = execute("get_product", {"product_id": pid})
                             state["tool_count"] += 1
-                            if isinstance(prod_res, dict) and not prod_res.get("error"):
+                            is_prod_ok = isinstance(prod_res, dict) and not prod_res.get("error")
+                            trace.setdefault("tools", []).append({"name": "get_product", "status": "ok" if is_prod_ok else "error"})
+                            if is_prod_ok:
                                 prod_data = prod_res.get("product", prod_res)
                                 if isinstance(prod_data, dict) and prod_data.get("warranty_days") is not None:
                                     warranty_days = prod_data["warranty_days"]
                         except ApiError as exc:
                             if exc.status == 429 or exc.status >= 500:
                                 raise
+                            trace.setdefault("tools", []).append({"name": "get_product", "status": "error"})
                         except Exception:
-                            pass
+                            trace.setdefault("tools", []).append({"name": "get_product", "status": "error"})
 
                         if warranty_days is None:
                             action_proposal = None
+                            refusal_set = True
+                            state["drop_knowledge_sources"] = True
                             final_content = (
                                 f"Dạ em rất tiếc, hệ thống chưa xác định được thời hạn bảo hành của sản phẩm thuộc đơn hàng {extracted_oid}. "
                                 "Anh/chị vui lòng liên hệ nhân viên CSKH để được hỗ trợ kiểm tra bảo hành và xử lý khiếu nại chính xác nhé ạ!"
                             )
                         else:
                             w_desc = f"{warranty_days} ngày"
+                            cite_suffix = f" [{retrieved_citations[0]}]" if retrieved_citations else ""
                             action_proposal = {
                                 "action": "exchange_1to1",
                                 "order_id": extracted_oid,
@@ -452,11 +469,12 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
                             }
                             final_content = (
                                 f"Dạ shop chân thành xin lỗi anh/chị về sự cố của đơn hàng {extracted_oid}! "
-                                f"Shop áp dụng chính sách bảo hành {w_desc} và hỗ trợ Đổi mới 1-1 cho sản phẩm lỗi. "
+                                f"Shop áp dụng chính sách bảo hành {w_desc} và hỗ trợ Đổi mới 1-1 cho sản phẩm lỗi{cite_suffix}. "
                                 "Em đã xác định được một phương án đổi phù hợp này; nếu anh/chị muốn tiếp tục, hệ thống cần ghi nhận yêu cầu để CSKH xem xét hỗ trợ ạ."
                             )
             else:
                 action_proposal = None
+                state["drop_knowledge_sources"] = True
                 final_content = (
                     "Dạ shop rất tiếc về sự cố sản phẩm anh/chị gặp phải. "
                     "Anh/chị vui lòng cung cấp Mã đơn hàng (ví dụ: O-101) để em hỗ trợ kiểm tra thông tin và phương án xử lý phù hợp nhé ạ!"
@@ -723,6 +741,34 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
                 "Em đã mở bảng xem lại đề xuất trên màn hình, anh/chị vui lòng kiểm tra và bấm 'Xác nhận hủy' để hệ thống xử lý an toàn nhé ạ!"
             )
         else:
+            if not refusal_set and extracted_oid:
+                is_order_ok = True
+                try:
+                    order_res = execute("get_order", {"order_id": extracted_oid})
+                    state["tool_count"] += 1
+                    is_order_ok = isinstance(order_res, dict) and not order_res.get("error") and bool(order_res.get("order"))
+                    trace.setdefault("tools", []).append({"name": "get_order", "status": "ok" if is_order_ok else "error"})
+                except ApiError as exc:
+                    if exc.status == 429 or exc.status >= 500:
+                        raise
+                    is_order_ok = False
+                    state["tool_count"] += 1
+                    trace.setdefault("tools", []).append({"name": "get_order", "status": "error"})
+                except Exception:
+                    is_order_ok = False
+                    state["tool_count"] += 1
+                    trace.setdefault("tools", []).append({"name": "get_order", "status": "error"})
+
+                if not is_order_ok:
+                    action_proposal = None
+                    refusal_set = True
+                    state["drop_knowledge_sources"] = True
+                    final_content = (
+                        f"Dạ em rất tiếc, hệ thống không tìm thấy đơn hàng {extracted_oid} "
+                        f"(hoặc đơn không thuộc tài khoản của anh/chị). "
+                        "Anh/chị vui lòng kiểm tra lại chính xác Mã đơn hàng để em có thể tra cứu và hỗ trợ mình ngay nhé ạ!"
+                    )
+
             if not extracted_oid and not knowledge_has_evidence and not refusal_set:
                 action_proposal = None
                 final_content = (
@@ -735,6 +781,7 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
                 has_unsupported = any(term in lower_cand for term in _UNSUPPORTED_REMEDY_TERMS)
                 if has_unsupported:
                     action_proposal = None
+                    state["drop_knowledge_sources"] = True
                     if extracted_oid:
                         final_content = (
                             f"Dạ em rất tiếc, hệ thống chưa xác định được thời hạn bảo hành của sản phẩm thuộc đơn hàng {extracted_oid}. "
@@ -764,6 +811,18 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
 
     if action_proposal:
         state["action_proposal"] = action_proposal
+
+    if state.get("drop_knowledge_sources"):
+        if isinstance(state.get("bound"), dict) and isinstance(state["bound"].get("knowledge"), dict):
+            state["bound"]["knowledge"]["sources"] = []
+        for cell in (getattr(execute, "__closure__", None) or ()):
+            try:
+                cell_val = cell.cell_contents
+            except ValueError:
+                continue
+            kn = getattr(cell_val, "knowledge", None)
+            if kn is not None and isinstance(getattr(kn, "sources", None), list):
+                kn.sources.clear()
 
     msg = {"role": "assistant", "content": final_content}
     state["messages"].append(msg)

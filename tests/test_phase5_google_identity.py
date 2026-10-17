@@ -593,11 +593,22 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
         self.sessions.provision_tenant("e2e-smoke-ignore", "Smoke Store", seed_demo=True)
         self.sessions.provision_tenant("E2E-UPPER-IGNORE", "Upper Smoke Store", seed_demo=True)
 
-        def snapshot_counts():
+        def snapshot_state():
             with self.sessions.control.connection() as db:
-                links = db.execute("SELECT count(*) AS cnt FROM customer_links").fetchone()["cnt"]
-                mems = db.execute("SELECT count(*) AS cnt FROM memberships").fetchone()["cnt"]
-                sess = db.execute("SELECT count(*) AS cnt FROM sessions").fetchone()["cnt"]
+                prins = {r["id"] for r in db.execute("SELECT id FROM principals").fetchall()}
+                exts = {
+                    (r["id"], r["issuer"], r["sub"], r["principal_id"])
+                    for r in db.execute("SELECT id, issuer, sub, principal_id FROM external_identities").fetchall()
+                }
+                links = {
+                    (r["id"], r["tenant_id"], r["principal_id"], r["customer_id"])
+                    for r in db.execute("SELECT id, tenant_id, principal_id, customer_id FROM customer_links").fetchall()
+                }
+                mems = {
+                    (r["id"], r["tenant_id"], r["principal_id"], r["customer_id"], r["active"])
+                    for r in db.execute("SELECT id, tenant_id, principal_id, customer_id, active FROM memberships").fetchall()
+                }
+                sess = {r["id"] for r in db.execute("SELECT id FROM sessions").fetchall()}
             custs = {}
             for tid in ("store-deactivated", "store-active-1", "store-active-2"):
                 with self.sessions.control.connection() as db:
@@ -605,8 +616,16 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
                 from retailops.business.store import BusinessStore
                 bstore = BusinessStore(self.sessions.directory / "tenants" / f"{skey}.sqlite3", create=False)
                 with bstore.connection() as bdb:
-                    custs[tid] = bdb.execute("SELECT count(*) AS cnt FROM customers").fetchone()["cnt"]
-            return (links, mems, sess, custs)
+                    c_ids = {r["id"] for r in bdb.execute("SELECT id FROM customers").fetchall()}
+                    custs[tid] = (len(c_ids), c_ids)
+            return (
+                (len(prins), prins),
+                (len(exts), exts),
+                (len(links), links),
+                (len(mems), mems),
+                (len(sess), sess),
+                custs,
+            )
 
         issuer = "https://accounts.google.com"
         sub = "google-sub-deactivated-check-01"
@@ -634,9 +653,10 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
         mem_active1 = self.sessions.control.resolve(self.sessions.cookie_id(f"__Host-retailops_account={sec_active1}"))
         self.assertEqual(mem_active1["tenant_id"], "store-active-1")
 
-        # (d) Selector conflicting with an existing identity (default_tenant_id, env vars, or explicit tenant_id)
-        #     must fail closed on full login_google() and produce ZERO new links, memberships, customers, or sessions.
-        before_d = snapshot_counts()
+        # (d) Selector conflicting with an existing identity (default_tenant_id, RETAILOPS_DEMO_TENANT_ID,
+        #     legacy GOOGLE_AUTH_TENANT_ID alone, or explicit tenant_id) must fail closed on full login_google()
+        #     and produce ZERO new principals, external_identities, links, memberships, customers, or sessions.
+        before_d = snapshot_state()
         self.sessions.default_tenant_id = "store-active-2"
         try:
             with self.assertRaises(ApiError) as ctx_d1:
@@ -650,11 +670,16 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
                 self.sessions.login_google(email=email, name="Member", sub=sub, issuer=issuer, email_verified=True)
             self.assertEqual(ctx_d2.exception.status, 503)
             self.assertEqual(ctx_d2.exception.code, "ambiguous_tenant")
+        with patch.dict(os.environ, {"RETAILOPS_DEMO_TENANT_ID": "", "GOOGLE_AUTH_TENANT_ID": "store-active-2"}, clear=False):
+            with self.assertRaises(ApiError) as ctx_d_leg:
+                self.sessions.login_google(email=email, name="Member", sub=sub, issuer=issuer, email_verified=True)
+            self.assertEqual(ctx_d_leg.exception.status, 503)
+            self.assertEqual(ctx_d_leg.exception.code, "ambiguous_tenant")
         with self.assertRaises(ApiError) as ctx_d3:
             self.sessions.login_google(email=email, name="Member", sub=sub, issuer=issuer, email_verified=True, tenant_id="store-active-2")
         self.assertEqual(ctx_d3.exception.status, 503)
         self.assertEqual(ctx_d3.exception.code, "ambiguous_tenant")
-        self.assertEqual(snapshot_counts(), before_d)
+        self.assertEqual(snapshot_state(), before_d)
 
         # (b) Multiple active memberships: if the principal ALSO has an active membership in store-active-2,
         #     full login_google() without explicit tenant_id (even with default_tenant_id set) must fail closed
@@ -662,7 +687,7 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
         self.sessions.control.get_or_create_google_member(
             "store-active-2", email, "Member", sub=sub, issuer=issuer, email_verified=True
         )
-        before_b = snapshot_counts()
+        before_b = snapshot_state()
         with self.assertRaises(ApiError) as ctx_b1:
             self.sessions.login_google(email=email, name="Member", sub=sub, issuer=issuer, email_verified=True)
         self.assertEqual(ctx_b1.exception.status, 503)
@@ -675,7 +700,7 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
             self.assertEqual(ctx_b2.exception.code, "ambiguous_tenant")
         finally:
             self.sessions.default_tenant_id = None
-        self.assertEqual(snapshot_counts(), before_b)
+        self.assertEqual(snapshot_state(), before_b)
 
         # (a) Inactive-only membership + EXACTLY ONE other active non-smoke store:
         #     known identity whose only membership is in a deactivated tenant (or deactivated membership)
@@ -697,7 +722,7 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
             db.execute("UPDATE tenants SET active=0 WHERE id IN ('store-deactivated', 'store-active-2')")
             db.execute("DELETE FROM sessions")
 
-        before_a = snapshot_counts()
+        before_a = snapshot_state()
         with self.assertRaises(ApiError) as ctx_a1:
             self.sessions.login_google(
                 email="only.inactive@example.com",
@@ -723,17 +748,91 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
             self.assertEqual(ctx_a2.exception.code, "ambiguous_tenant")
         finally:
             self.sessions.default_tenant_id = None
-        self.assertEqual(snapshot_counts(), before_a)
+        self.assertEqual(snapshot_state(), before_a)
 
         # Also test when the tenant stays active=1 ('store-active-1') but the membership row itself is deactivated (m.active=0):
         with self.sessions.control.connection(write=True) as db:
             db.execute("UPDATE memberships SET active=0 WHERE tenant_id='store-active-1'")
-        before_a_mem = snapshot_counts()
+        before_a_mem = snapshot_state()
         with self.assertRaises(ApiError) as ctx_a3:
             self.sessions.login_google(email=email, name="Member", sub=sub, issuer=issuer, email_verified=True)
         self.assertEqual(ctx_a3.exception.status, 503)
         self.assertEqual(ctx_a3.exception.code, "ambiguous_tenant")
-        self.assertEqual(snapshot_counts(), before_a_mem)
+        self.assertEqual(snapshot_state(), before_a_mem)
+
+        # (e) Verified-email legacy principal (no external_identities row yet) whose only membership is inactive
+        #     (in deactivated 'store-deactivated' or with m.active=0 in 'store-active-1') must fail closed BEFORE any writes
+        #     (no new external_identities, customer_links, memberships, customers, or sessions) when logging in with its first Google sub.
+        legacy_inactive_email = "legacy.inactive@example.com"
+        leg_inact_prefix = re.sub(r"[^a-zA-Z0-9_-]", "_", legacy_inactive_email.split("@")[0])[:25]
+        leg_inact_hash = hashlib.sha256(legacy_inactive_email.encode()).hexdigest()[:10]
+        leg_inact_pid = f"g_{leg_inact_prefix}_{leg_inact_hash}"
+        leg_inact_cid = f"CG-{leg_inact_hash[:8]}"
+        with self.sessions.control.connection(write=True) as db:
+            db.execute("INSERT INTO principals (id, name) VALUES (?, ?)", (leg_inact_pid, "Legacy Inactive"))
+            db.execute(
+                "INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) "
+                "VALUES ('m-leg-inact-1', 'store-deactivated', ?, ?, 'customer', 1, 1)",
+                (leg_inact_pid, leg_inact_cid),
+            )
+            db.execute(
+                "INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) "
+                "VALUES ('m-leg-inact-2', 'store-active-1', ?, ?, 'customer', 0, 1)",
+                (leg_inact_pid, leg_inact_cid),
+            )
+
+        before_leg_inact = snapshot_state()
+        with self.assertRaises(ApiError) as ctx_leg1:
+            self.sessions.login_google(
+                email=legacy_inactive_email,
+                name="Legacy Inactive",
+                sub="new-sub-for-legacy-inactive",
+                issuer=issuer,
+                email_verified=True,
+            )
+        self.assertEqual(ctx_leg1.exception.status, 503)
+        self.assertEqual(ctx_leg1.exception.code, "ambiguous_tenant")
+
+        self.sessions.default_tenant_id = "store-active-1"
+        try:
+            with self.assertRaises(ApiError) as ctx_leg2:
+                self.sessions.login_google(
+                    email=legacy_inactive_email,
+                    name="Legacy Inactive",
+                    sub="new-sub-for-legacy-inactive",
+                    issuer=issuer,
+                    email_verified=True,
+                )
+            self.assertEqual(ctx_leg2.exception.status, 503)
+            self.assertEqual(ctx_leg2.exception.code, "ambiguous_tenant")
+        finally:
+            self.sessions.default_tenant_id = None
+        self.assertEqual(snapshot_state(), before_leg_inact)
+
+        # Positive control for verified-email legacy principal: active membership in active 'store-active-1' links cleanly
+        legacy_active_email = "legacy.active@example.com"
+        leg_act_prefix = re.sub(r"[^a-zA-Z0-9_-]", "_", legacy_active_email.split("@")[0])[:25]
+        leg_act_hash = hashlib.sha256(legacy_active_email.encode()).hexdigest()[:10]
+        leg_act_pid = f"g_{leg_act_prefix}_{leg_act_hash}"
+        leg_act_cid = f"CG-{leg_act_hash[:8]}"
+        with self.sessions.control.connection(write=True) as db:
+            db.execute("INSERT INTO principals (id, name) VALUES (?, ?)", (leg_act_pid, "Legacy Active"))
+            db.execute(
+                "INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) "
+                "VALUES ('m-leg-act-1', 'store-active-1', ?, ?, 'customer', 1, 1)",
+                (leg_act_pid, leg_act_cid),
+            )
+        sec_leg_ok = self.sessions.login_google(
+            email=legacy_active_email,
+            name="Legacy Active",
+            sub="new-sub-for-legacy-active",
+            issuer=issuer,
+            email_verified=True,
+        )
+        mem_leg_ok = self.sessions.control.resolve(self.sessions.cookie_id(f"__Host-retailops_account={sec_leg_ok}"))
+        self.assertEqual(mem_leg_ok["tenant_id"], "store-active-1")
+        self.assertEqual(mem_leg_ok["principal_id"], leg_act_pid)
+        self.assertEqual(mem_leg_ok["customer_id"], leg_act_cid)
 
         # (c) Unknown identity onboarding in a single-store demo ('store-active-1' is the sole active non-smoke store):
         #     genuinely new Google identity succeeds on login_google() and resolves to 'store-active-1'.

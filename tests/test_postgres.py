@@ -1086,30 +1086,50 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
     def test_google_tenant_resolution_and_active_membership_on_postgres(self):
         """P5-K3 remediation (PostgreSQL): full login_google() and resolve_google_tenant() regressions for
         (a) inactive-only membership + single active store, (b) multiple active memberships,
-        (c) unknown identity onboarding in single-store demo, (d) selector conflicting with existing identity,
-        and case-insensitive smoke-tenant exclusion with zero side effects on failure."""
+        (c) unknown identity onboarding in single-store demo, (d) selector conflicting with existing identity
+        (including legacy GOOGLE_AUTH_TENANT_ID), (e) verified-email legacy principal inactive-only fail-closed
+        plus same-tenant legacy positive control, and case-insensitive smoke-tenant exclusion with zero side effects on failure."""
         self.sessions.provision_tenant('e2e-smoke-pg-01', 'PG Smoke Tenant', seed_demo=True)
         self.sessions.provision_tenant('E2E-UPPER-PG-02', 'PG Upper Smoke Tenant', seed_demo=True)
 
-        def pg_snapshot_counts():
+        def pg_snapshot_state():
             with transaction(DSN, write=False) as db:
-                links = db.execute("SELECT count(*) AS cnt FROM customer_links").fetchone()["cnt"]
-                mems = db.execute("SELECT count(*) AS cnt FROM memberships").fetchone()["cnt"]
-                sess = db.execute("SELECT count(*) AS cnt FROM sessions").fetchone()["cnt"]
+                prins = {r["id"] for r in db.execute("SELECT id FROM principals").fetchall()}
+                exts = {
+                    (r["id"], r["issuer"], r["sub"], r["principal_id"])
+                    for r in db.execute("SELECT id, issuer, sub, principal_id FROM external_identities").fetchall()
+                }
+                links = {
+                    (r["id"], r["tenant_id"], r["principal_id"], r["customer_id"])
+                    for r in db.execute("SELECT id, tenant_id, principal_id, customer_id FROM customer_links").fetchall()
+                }
+                mems = {
+                    (r["id"], r["tenant_id"], r["principal_id"], r["customer_id"], r["active"])
+                    for r in db.execute("SELECT id, tenant_id, principal_id, customer_id, active FROM memberships").fetchall()
+                }
+                sess = {r["id"] for r in db.execute("SELECT id FROM sessions").fetchall()}
                 trows = db.execute("SELECT id, storage_key FROM tenants ORDER BY id").fetchall()
             custs = {}
             for trow in trows:
                 with transaction(DSN, tenant_schema(trow["storage_key"]), write=False) as bdb:
-                    custs[trow["id"]] = bdb.execute("SELECT count(*) AS cnt FROM customers").fetchone()["cnt"]
-            return (links, mems, sess, custs)
+                    c_ids = {r["id"] for r in bdb.execute("SELECT id FROM customers").fetchall()}
+                    custs[trow["id"]] = (len(c_ids), c_ids)
+            return (
+                (len(prins), prins),
+                (len(exts), exts),
+                (len(links), links),
+                (len(mems), mems),
+                (len(sess), sess),
+                custs,
+            )
 
         # 1. With shop-a and shop-b active and no default_tenant_id, unlinked Google sub fails closed with 503 ambiguous_tenant
-        before_unlinked = pg_snapshot_counts()
+        before_unlinked = pg_snapshot_state()
         with self.assertRaises(ApiError) as ctx_amb:
             self.sessions.login_google('unlinked@example.com', 'Unlinked', sub='pg-google-sub-unlinked-1', email_verified=True)
         self.assertEqual(ctx_amb.exception.status, 503)
         self.assertEqual(ctx_amb.exception.code, 'ambiguous_tenant')
-        self.assertEqual(pg_snapshot_counts(), before_unlinked)
+        self.assertEqual(pg_snapshot_state(), before_unlinked)
 
         # 2. Smoke tenant (lowercase, uppercase, mixed-case) in selector rejected with 503 tenant_unavailable
         for bad_smoke in ('e2e-smoke-pg-01', 'E2E-UPPER-PG-02', 'Smoke-Mixed-PG-03', 'SYNTHETIC-PG-04'):
@@ -1118,7 +1138,7 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
                 pg_smoke_sessions.login_google('unlinked@example.com', 'Unlinked', sub='pg-google-sub-unlinked-1', email_verified=True)
             self.assertEqual(ctx_smoke.exception.status, 503)
             self.assertEqual(ctx_smoke.exception.code, 'tenant_unavailable')
-        self.assertEqual(pg_snapshot_counts(), before_unlinked)
+        self.assertEqual(pg_snapshot_state(), before_unlinked)
 
         # 3. Configured RETAILOPS_DEMO_TENANT_ID / default_tenant_id resolves deterministically for unknown identity;
         #    empty RETAILOPS_DEMO_TENANT_ID falls back to GOOGLE_AUTH_TENANT_ID; conflicting selectors fail closed
@@ -1137,7 +1157,7 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
                 pg_conflict_sessions.login_google('unlinked@example.com', 'Unlinked', sub='pg-google-sub-unlinked-1', email_verified=True)
             self.assertEqual(ctx_conf.exception.status, 503)
             self.assertEqual(ctx_conf.exception.code, 'ambiguous_tenant')
-        self.assertEqual(pg_snapshot_counts(), before_unlinked)
+        self.assertEqual(pg_snapshot_state(), before_unlinked)
 
         # 4. Provision known identity in shop-a (and smoke tenants which must be ignored)
         sub_mem = 'pg-google-sub-member-01'
@@ -1145,9 +1165,10 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         self.sessions.control.get_or_create_google_member('e2e-smoke-pg-01', 'pg.member@example.com', 'PG Member', sub=sub_mem, email_verified=True)
         self.sessions.control.get_or_create_google_member('E2E-UPPER-PG-02', 'pg.member@example.com', 'PG Member', sub=sub_mem, email_verified=True)
 
-        # (d) Selector conflicting with an existing identity (default_tenant_id, env var, or explicit tenant_id='shop-b')
-        #     must fail closed on full login_google() and produce ZERO new customer_links, memberships, customers, or sessions.
-        before_d = pg_snapshot_counts()
+        # (d) Selector conflicting with an existing identity (default_tenant_id, RETAILOPS_DEMO_TENANT_ID,
+        #     legacy GOOGLE_AUTH_TENANT_ID alone, or explicit tenant_id='shop-b') must fail closed on full login_google()
+        #     and produce ZERO new principals, external_identities, customer_links, memberships, customers, or sessions.
+        before_d = pg_snapshot_state()
         pg_wrong_default = PostgresSessions(DSN, default_tenant_id='shop-b')
         with self.assertRaises(ApiError) as ctx_d1:
             pg_wrong_default.login_google('pg.member@example.com', 'PG Member', sub=sub_mem, email_verified=True)
@@ -1158,16 +1179,21 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
                 self.sessions.login_google('pg.member@example.com', 'PG Member', sub=sub_mem, email_verified=True)
             self.assertEqual(ctx_d2.exception.status, 503)
             self.assertEqual(ctx_d2.exception.code, 'ambiguous_tenant')
+        with patch.dict(os.environ, {'RETAILOPS_DEMO_TENANT_ID': '', 'GOOGLE_AUTH_TENANT_ID': 'shop-b'}, clear=False):
+            with self.assertRaises(ApiError) as ctx_d_leg:
+                self.sessions.login_google('pg.member@example.com', 'PG Member', sub=sub_mem, email_verified=True)
+            self.assertEqual(ctx_d_leg.exception.status, 503)
+            self.assertEqual(ctx_d_leg.exception.code, 'ambiguous_tenant')
         with self.assertRaises(ApiError) as ctx_d3:
             self.sessions.login_google('pg.member@example.com', 'PG Member', sub=sub_mem, email_verified=True, tenant_id='shop-b')
         self.assertEqual(ctx_d3.exception.status, 503)
         self.assertEqual(ctx_d3.exception.code, 'ambiguous_tenant')
-        self.assertEqual(pg_snapshot_counts(), before_d)
+        self.assertEqual(pg_snapshot_state(), before_d)
 
         # (b) Multiple active memberships: add active membership in shop-b; full login_google() without explicit tenant_id
         #     (and even with default_tenant_id='shop-a') must fail closed with 503 ambiguous_tenant and zero side effects.
         self.sessions.control.get_or_create_google_member('shop-b', 'pg.member@example.com', 'PG Member', sub=sub_mem, email_verified=True)
-        before_b = pg_snapshot_counts()
+        before_b = pg_snapshot_state()
         with self.assertRaises(ApiError) as ctx_b1:
             self.sessions.login_google('pg.member@example.com', 'PG Member', sub=sub_mem, email_verified=True)
         self.assertEqual(ctx_b1.exception.status, 503)
@@ -1177,7 +1203,7 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             pg_default_a.login_google('pg.member@example.com', 'PG Member', sub=sub_mem, email_verified=True)
         self.assertEqual(ctx_b2.exception.status, 503)
         self.assertEqual(ctx_b2.exception.code, 'ambiguous_tenant')
-        self.assertEqual(pg_snapshot_counts(), before_b)
+        self.assertEqual(pg_snapshot_state(), before_b)
 
         # (a) Inactive-only membership + single active store:
         #     create sub_only_inactive in shop-a, then deactivate shop-a so shop-b is the SOLE active non-smoke store.
@@ -1193,7 +1219,7 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         mem_b = self.sessions.control.resolve(self.sessions.cookie_id(f'__Host-retailops_account={sec_b}'))
         self.assertEqual(mem_b['tenant_id'], 'shop-b')
 
-        before_a = pg_snapshot_counts()
+        before_a = pg_snapshot_state()
         with self.assertRaises(ApiError) as ctx_a1:
             self.sessions.login_google('pg.inactive@example.com', 'PG Inactive', sub=sub_only_inactive, email_verified=True)
         self.assertEqual(ctx_a1.exception.status, 503)
@@ -1202,17 +1228,75 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             pg_wrong_default.login_google('pg.inactive@example.com', 'PG Inactive', sub=sub_only_inactive, email_verified=True)
         self.assertEqual(ctx_a2.exception.status, 503)
         self.assertEqual(ctx_a2.exception.code, 'ambiguous_tenant')
-        self.assertEqual(pg_snapshot_counts(), before_a)
+        self.assertEqual(pg_snapshot_state(), before_a)
 
         # Also test when tenant shop-b stays active=1 but sub_mem's membership row in shop-b is deactivated (m.active=0):
         with transaction(DSN, write=True) as db:
             db.execute("UPDATE memberships SET active=0 WHERE tenant_id='shop-b' AND customer_id=%s", (mem_b['customer_id'],))
-        before_a_mem = pg_snapshot_counts()
+        before_a_mem = pg_snapshot_state()
         with self.assertRaises(ApiError) as ctx_a3:
             self.sessions.login_google('pg.member@example.com', 'PG Member', sub=sub_mem, email_verified=True)
         self.assertEqual(ctx_a3.exception.status, 503)
         self.assertEqual(ctx_a3.exception.code, 'ambiguous_tenant')
-        self.assertEqual(pg_snapshot_counts(), before_a_mem)
+        self.assertEqual(pg_snapshot_state(), before_a_mem)
+
+        # (e) Verified-email legacy principal (no external_identities row yet) whose only membership is inactive
+        #     (in deactivated 'shop-a' or with m.active=0 in 'shop-b') must fail closed BEFORE any writes
+        #     (no new external_identities, customer_links, memberships, customers, or sessions) when logging in with its first Google sub.
+        import re
+        legacy_inactive_email = 'pg.legacy.inactive@example.com'
+        leg_inact_prefix = re.sub(r'[^a-zA-Z0-9_-]', '_', legacy_inactive_email.split('@')[0])[:25]
+        leg_inact_hash = hashlib.sha256(legacy_inactive_email.encode()).hexdigest()[:10]
+        leg_inact_pid = f"g_{leg_inact_prefix}_{leg_inact_hash}"
+        leg_inact_cid = f"CG-{leg_inact_hash[:8]}"
+        with transaction(DSN, write=True) as db:
+            db.execute("INSERT INTO principals (id, name) VALUES (%s, %s)", (leg_inact_pid, 'PG Legacy Inactive'))
+            db.execute(
+                "INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) "
+                "VALUES ('m-pg-leg-inact-1', 'shop-a', %s, %s, 'customer', 1, 1)",
+                (leg_inact_pid, leg_inact_cid),
+            )
+            db.execute(
+                "INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) "
+                "VALUES ('m-pg-leg-inact-2', 'shop-b', %s, %s, 'customer', 0, 1)",
+                (leg_inact_pid, leg_inact_cid),
+            )
+
+        before_leg_inact = pg_snapshot_state()
+        with self.assertRaises(ApiError) as ctx_leg1:
+            self.sessions.login_google(
+                legacy_inactive_email, 'PG Legacy Inactive', sub='pg-new-sub-legacy-inactive', email_verified=True
+            )
+        self.assertEqual(ctx_leg1.exception.status, 503)
+        self.assertEqual(ctx_leg1.exception.code, 'ambiguous_tenant')
+        with self.assertRaises(ApiError) as ctx_leg2:
+            pg_wrong_default.login_google(
+                legacy_inactive_email, 'PG Legacy Inactive', sub='pg-new-sub-legacy-inactive', email_verified=True
+            )
+        self.assertEqual(ctx_leg2.exception.status, 503)
+        self.assertEqual(ctx_leg2.exception.code, 'ambiguous_tenant')
+        self.assertEqual(pg_snapshot_state(), before_leg_inact)
+
+        # Positive control for verified-email legacy principal: active membership in active 'shop-b' links cleanly
+        legacy_active_email = 'pg.legacy.active@example.com'
+        leg_act_prefix = re.sub(r'[^a-zA-Z0-9_-]', '_', legacy_active_email.split('@')[0])[:25]
+        leg_act_hash = hashlib.sha256(legacy_active_email.encode()).hexdigest()[:10]
+        leg_act_pid = f"g_{leg_act_prefix}_{leg_act_hash}"
+        leg_act_cid = f"CG-{leg_act_hash[:8]}"
+        with transaction(DSN, write=True) as db:
+            db.execute("INSERT INTO principals (id, name) VALUES (%s, %s)", (leg_act_pid, 'PG Legacy Active'))
+            db.execute(
+                "INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) "
+                "VALUES ('m-pg-leg-act-1', 'shop-b', %s, %s, 'customer', 1, 1)",
+                (leg_act_pid, leg_act_cid),
+            )
+        sec_leg_ok = self.sessions.login_google(
+            legacy_active_email, 'PG Legacy Active', sub='pg-new-sub-legacy-active', email_verified=True
+        )
+        mem_leg_ok = self.sessions.control.resolve(self.sessions.cookie_id(f'__Host-retailops_account={sec_leg_ok}'))
+        self.assertEqual(mem_leg_ok['tenant_id'], 'shop-b')
+        self.assertEqual(mem_leg_ok['principal_id'], leg_act_pid)
+        self.assertEqual(mem_leg_ok['customer_id'], leg_act_cid)
 
         # (c) Unknown identity onboarding in a single-store demo ('shop-b' is the sole active non-smoke store):
         #     genuinely new Google identity succeeds on login_google() and resolves to 'shop-b'.
