@@ -1383,10 +1383,10 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         """P5-K7 one-pass E2E regression: when relevant defect/warranty policy evidence is retrieved
         via search_knowledge during /api/chat:
         1. Missing explicit order (O-999) executes get_order, returns safe order-not-found clarification,
-           clears unreferenced sources, emits no remedy promise, creates no proposal, and mutates no DB rows.
+           clears unreferenced sources, emits no remedy promise, creates no proposal, and mutates no business state.
         2. Foreign/unowned explicit order (Customer 2 naming Customer 1's order O-90001) executes get_order,
            returns safe order-not-found/not-owned clarification, clears unreferenced sources, emits no remedy promise,
-           creates no proposal, and mutates no DB rows.
+           creates no proposal, and mutates no business state.
         3. Positive control: Customer 1 naming owned order O-90001 with relevant KB evidence executes
            search_knowledge + get_order + get_product, preserves valid [KB:...] citation in sources/message,
            creates exchange_1to1 proposal (pending_staff_approval), and leaves O-90001 unmutated pre-confirmation.
@@ -1410,6 +1410,117 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
 
         bstore = self.sessions.business_store(self.tenant_id)
 
+        def snapshot_business_state(target_order_id: str, actor_customer_id: str) -> dict:
+            with bstore.connection() as db:
+                ord_row = db.execute(
+                    "SELECT id, customer_id, product_id, name, variant, amount, status, version, cancel_reason "
+                    "FROM orders WHERE id = ?",
+                    (target_order_id,),
+                ).fetchone()
+                all_orders = [
+                    (
+                        r["id"],
+                        r["customer_id"],
+                        r["product_id"],
+                        r["status"],
+                        r["version"],
+                        r["cancel_reason"],
+                        r["amount"],
+                    )
+                    for r in db.execute(
+                        "SELECT id, customer_id, product_id, status, version, cancel_reason, amount "
+                        "FROM orders ORDER BY id"
+                    ).fetchall()
+                ]
+                order_items_for_target = [
+                    (
+                        r["id"],
+                        r["order_id"],
+                        r["product_id"],
+                        r["quantity"],
+                        r["unit_price"],
+                        r["subtotal"],
+                    )
+                    for r in db.execute(
+                        "SELECT id, order_id, product_id, quantity, unit_price, subtotal "
+                        "FROM order_items WHERE order_id = ? ORDER BY id",
+                        (target_order_id,),
+                    ).fetchall()
+                ]
+                proposals_for_order = [
+                    (
+                        r["id"],
+                        r["customer_id"],
+                        r["order_id"],
+                        r["order_version"],
+                        r["reason"],
+                        r["state"],
+                        r["confirm_key"],
+                        r["result"],
+                    )
+                    for r in db.execute(
+                        "SELECT id, customer_id, order_id, order_version, reason, state, confirm_key, result "
+                        "FROM proposals WHERE order_id = ? ORDER BY id",
+                        (target_order_id,),
+                    ).fetchall()
+                ]
+                proposals_for_actor = [
+                    (
+                        r["id"],
+                        r["customer_id"],
+                        r["order_id"],
+                        r["order_version"],
+                        r["reason"],
+                        r["state"],
+                        r["confirm_key"],
+                        r["result"],
+                    )
+                    for r in db.execute(
+                        "SELECT id, customer_id, order_id, order_version, reason, state, confirm_key, result "
+                        "FROM proposals WHERE customer_id = ? ORDER BY id",
+                        (actor_customer_id,),
+                    ).fetchall()
+                ]
+                complaint_feedback_rows = [
+                    (
+                        r["id"],
+                        r["conversation_id"],
+                        r["customer_id"],
+                        r["feedback_type"],
+                        r["reason_code"],
+                        r["comment"],
+                    )
+                    for r in db.execute(
+                        "SELECT id, conversation_id, customer_id, feedback_type, reason_code, comment "
+                        "FROM conversation_feedback ORDER BY id"
+                    ).fetchall()
+                ]
+                business_mutation_events = [
+                    (r["id"], r["customer_id"], r["kind"], r["order_id"], r["payload"])
+                    for r in db.execute(
+                        "SELECT id, customer_id, kind, order_id, payload "
+                        "FROM business_events WHERE kind != 'agent_replied' OR order_id IS NOT NULL ORDER BY id"
+                    ).fetchall()
+                ]
+                actor_conv_focus = [
+                    (r["id"], r["customer_id"], r["order_id"], r["product_id"])
+                    for r in db.execute(
+                        "SELECT id, customer_id, order_id, product_id "
+                        "FROM conversations WHERE customer_id = ? ORDER BY id",
+                        (actor_customer_id,),
+                    ).fetchall()
+                ]
+            return {
+                "target_order": dict(ord_row) if ord_row is not None else None,
+                "all_orders": all_orders,
+                "order_items_for_target": order_items_for_target,
+                "proposals_for_order": proposals_for_order,
+                "proposals_for_actor": proposals_for_actor,
+                "complaint_feedback_rows": complaint_feedback_rows,
+                "business_mutation_events": business_mutation_events,
+                "actor_conv_focus": actor_conv_focus,
+            }
+
         # 1. Missing explicit order O-999 (Customer 1)
         status, conv_miss, _ = self.request("/api/conversations", {}, cookie=self.cust1_cookie)
         self.assertEqual(status, 201)
@@ -1418,9 +1529,16 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
             "text": "Khiếu nại đơn O-999 bị kẹt khóa và bung chỉ, kiểm tra chính sách đổi 1-1",
             "request_id": str(uuid.uuid4()),
         }
+        before_miss = snapshot_business_state("O-999", self.cust1_id)
         with patch.object(KnowledgeRepository, "search", fake_defect_repo_search):
             status, res_miss, _ = self.request("/api/chat", body_miss, cookie=self.cust1_cookie)
+        after_miss = snapshot_business_state("O-999", self.cust1_id)
         self.assertEqual(status, 200)
+        self.assertEqual(before_miss, after_miss)
+        self.assertIsNone(after_miss["target_order"])
+        self.assertEqual(after_miss["proposals_for_order"], [])
+        self.assertEqual(after_miss["proposals_for_actor"], [])
+        self.assertEqual(after_miss["complaint_feedback_rows"], [])
         miss_tools = [t.get("name") for t in res_miss["trace"].get("tools", [])]
         self.assertIn("search_knowledge", miss_tools)
         self.assertIn("get_order", miss_tools)
@@ -1438,9 +1556,21 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
             "text": "Khiếu nại đơn O-90001 bị kẹt khóa và bung chỉ, kiểm tra chính sách đổi 1-1",
             "request_id": str(uuid.uuid4()),
         }
+        before_for = snapshot_business_state("O-90001", self.cust2_id)
         with patch.object(KnowledgeRepository, "search", fake_defect_repo_search):
             status, res_for, _ = self.request("/api/chat", body_for, cookie=self.cust2_cookie)
+        after_for = snapshot_business_state("O-90001", self.cust2_id)
         self.assertEqual(status, 200)
+        self.assertEqual(before_for, after_for)
+        self.assertIsNotNone(after_for["target_order"])
+        self.assertEqual(after_for["target_order"]["id"], "O-90001")
+        self.assertEqual(after_for["target_order"]["customer_id"], self.cust1_id)
+        self.assertEqual(after_for["target_order"]["status"], "pending")
+        self.assertEqual(after_for["target_order"]["version"], 1)
+        self.assertIsNone(after_for["target_order"]["cancel_reason"])
+        self.assertEqual(after_for["proposals_for_order"], [])
+        self.assertEqual(after_for["proposals_for_actor"], [])
+        self.assertEqual(after_for["complaint_feedback_rows"], [])
         for_tools = [t.get("name") for t in res_for["trace"].get("tools", [])]
         self.assertIn("search_knowledge", for_tools)
         self.assertIn("get_order", for_tools)
