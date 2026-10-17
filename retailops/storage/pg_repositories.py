@@ -37,10 +37,11 @@ class PostgresIdentityStore(IdentityStore):
                         db.raw.execute(statement)
         try:
             with self.connection(write=True) as db:
-                db.raw.execute("""
-                    ALTER TABLE memberships DROP CONSTRAINT IF EXISTS memberships_role_check;
-                    ALTER TABLE memberships ADD CONSTRAINT memberships_role_check CHECK (role IN ('customer', 'viewer', 'staff', 'manager'));
-                """)
+                db.raw.execute("ALTER TABLE memberships DROP CONSTRAINT IF EXISTS memberships_role_check")
+                db.raw.execute(
+                    "ALTER TABLE memberships ADD CONSTRAINT memberships_role_check "
+                    "CHECK (role IN ('customer', 'viewer', 'staff', 'manager', 'platform_admin'))"
+                )
         except Exception:
             pass
 

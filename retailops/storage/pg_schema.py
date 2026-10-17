@@ -79,7 +79,7 @@ IDENTITY_DDL = [
     'CREATE TABLE principals (id TEXT PRIMARY KEY, name TEXT NOT NULL)',
     '''CREATE TABLE memberships (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
         principal_id TEXT NOT NULL REFERENCES principals(id), customer_id TEXT NOT NULL,
-        role TEXT NOT NULL CHECK(role IN ('customer','viewer','staff','manager')), active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+        role TEXT NOT NULL CHECK(role IN ('customer','viewer','staff','manager','platform_admin')), active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
         auth_version INTEGER NOT NULL DEFAULT 1, UNIQUE(tenant_id,principal_id))''',
     '''CREATE TABLE credentials (hash TEXT PRIMARY KEY, membership_id TEXT NOT NULL REFERENCES memberships(id),
         created_at DOUBLE PRECISION NOT NULL)''',
@@ -144,6 +144,29 @@ P5C_IDENTITY_DDL = [
         UNIQUE(tenant_id, source_system, external_customer_id))''',
     '''CREATE INDEX IF NOT EXISTS idx_ext_cust_mappings_tenant_cust
         ON external_customer_mappings(tenant_id, customer_id)''',
+    '''CREATE TABLE IF NOT EXISTS membership_quota_overrides (
+        membership_id TEXT PRIMARY KEY REFERENCES memberships(id),
+        daily_limit INTEGER NOT NULL CHECK(daily_limit BETWEEN 1 AND 10000),
+        effective_at DOUBLE PRECISION NOT NULL,
+        expires_at DOUBLE PRECISION,
+        reason TEXT NOT NULL,
+        updated_by TEXT NOT NULL,
+        updated_at DOUBLE PRECISION NOT NULL)''',
+    '''CREATE TABLE IF NOT EXISTS admin_audit_log (
+        id BIGSERIAL PRIMARY KEY,
+        created_at DOUBLE PRECISION NOT NULL,
+        correlation_id TEXT NOT NULL,
+        actor_principal_id TEXT NOT NULL,
+        actor_role TEXT NOT NULL,
+        tenant_id TEXT NOT NULL,
+        target_membership_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        outcome TEXT NOT NULL CHECK(outcome IN ('allowed', 'denied')),
+        before_json TEXT NOT NULL,
+        after_json TEXT NOT NULL,
+        reason TEXT NOT NULL)''',
+    'CREATE INDEX IF NOT EXISTS idx_admin_audit_tenant ON admin_audit_log(tenant_id, id DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_admin_audit_target ON admin_audit_log(target_membership_id, id DESC)',
 ]
 
 BUSINESS_DDL.extend(P5C_BUSINESS_DDL)

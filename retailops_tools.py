@@ -40,8 +40,17 @@ class BoundTools:
             return self.knowledge.search(args['query'])
         if name == 'list_orders':
             orders = self.store.orders(self.customer)
-            return {'orders': [self.read_order(o['id'], focus=False) for o in orders[:10]],
-                    'truncated': len(orders) > 10}
+            sliced = orders[:10]
+            truncated = len(orders) > 10
+            res = {
+                'orders': [self.read_order(o['id'], focus=False) for o in sliced],
+                'truncated': truncated,
+                'returned_count': len(sliced),
+                'total_count': len(orders),
+            }
+            if truncated:
+                res['note'] = f'Showing {len(sliced)} of {len(orders)} orders; list is truncated and not complete.'
+            return res
         if name == 'get_order':
             return {'order': self.read_order(args['order_id'])}
         if name == 'search_products':
@@ -66,7 +75,8 @@ class BoundTools:
             return {'products': products[:10], 'source': self.catalog.source,
                     'note': 'Null or absent attributes are unknown; listed variants do not imply stock.'}
         if name == 'get_product':
-            product = self.catalog.products.get(args['product_id'])
+            raw_pid = args['product_id']
+            product = self.catalog.products.get(raw_pid) if (isinstance(raw_pid, str) and raw_pid.isascii()) else None
             if product is None:
                 return {'error': 'product_not_found', 'message': 'No matching product in the catalog.'}
             if self.context['product_id'] != product['id']:
@@ -215,6 +225,8 @@ class BoundTools:
             pid = args['product_id']
             size = args['size'].upper().strip()
             color = args['color'].strip()
+            if not isinstance(pid, str) or not pid.isascii():
+                return {'error': 'product_not_found', 'message': f'Sản phẩm {pid} không tồn tại trong kho.'}
             product = self.catalog.products.get(pid) or (self.store.get_product(pid) if hasattr(self, 'store') and self.store else None)
             if not product:
                 return {'error': 'product_not_found', 'message': f'Sản phẩm {pid} không tồn tại trong kho.'}

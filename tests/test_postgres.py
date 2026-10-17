@@ -1343,6 +1343,205 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         mem_new_single = self.sessions.control.resolve(self.sessions.cookie_id(f'__Host-retailops_account={sec_new_single}'))
         self.assertEqual(mem_new_single['tenant_id'], 'shop-b')
 
+    def test_phase5_e_postgres_governance_and_ai_boundaries(self):
+        """Phase 5-E PostgreSQL parity: AI3 boundaries, ADM1-ADM6 governance/quota/audit, and DATA1-DATA2 hygiene."""
+        store_a = self.sessions.business_store('shop-a')
+
+        # 1. AI3: Entity/owner boundary and Unicode confusables / SQL-like IDs on PostgresBusinessStore
+        self.assertEqual(store_a.lookup('C-001', 'O-101')['id'], 'O-101')
+        for bad_oid in ('O-201', 'O-999', "O-101' OR '1'='1", 'O-101\u200b', 'O-\uff11\uff10\uff11'):
+            with self.assertRaises(ApiError) as ctx_oid:
+                store_a.lookup('C-001', bad_oid)
+            self.assertEqual(ctx_oid.exception.status, 404, bad_oid)
+        for bad_pid in ("P-602' OR '1'='1", 'P-602\u200b', 'P-\uff16\uff10\uff12'):
+            self.assertIsNone(store_a.get_product(bad_pid), bad_pid)
+
+        # 2. DATA1 & DATA2 on PostgresBusinessStore
+        created_sample = store_a.ensure_customer_with_sample_order('CG-PG-P5E', 'Khách PG P5E')
+        sample_oid = created_sample['order_id']
+        raw_sample = store_a.lookup('CG-PG-P5E', sample_oid)
+        self.assertEqual(raw_sample['name'], 'Quần tây ống đứng tôn dáng')
+        self.assertEqual(raw_sample['product_id'], 'P-602')
+
+        p604 = store_a.get_product('P-604')
+        self.assertIsNotNone(p604)
+        self.assertIsNone(p604['stock'])
+        self.assertIsNone(p604['material'])
+        self.assertIsNone(p604['care'])
+        self.assertIn('bộ xếp hình gỗ', [a.lower() for a in p604.get('aliases', [])])
+
+        store_a.add_product({
+            'id': 'P-PG-NULL-STOCK',
+            'name': 'SP PG Null Stock',
+            'category': 'Phụ kiện',
+            'price': None,
+            'stock': None,
+            'variants': ['Tiêu chuẩn'],
+        })
+        p_null = store_a.get_product('P-PG-NULL-STOCK')
+        self.assertEqual(len(p_null['variants']), 1)
+        self.assertIsNone(p_null['variants'][0]['stock'])
+
+        store_a.add_product({
+            'id': 'P-PG-ZERO-STOCK',
+            'name': 'SP PG Zero Stock',
+            'category': 'Phụ kiện',
+            'price': 99000,
+            'stock': 0,
+            'variants': ['Đen'],
+        })
+        p_zero = store_a.get_product('P-PG-ZERO-STOCK')
+        self.assertEqual(len(p_zero['variants']), 1)
+        self.assertEqual(p_zero['variants'][0]['stock'], 0)
+
+        # 3. ADM1..ADM6 on PostgresSessions + PublicWeb
+        mgr_a = self.member('mgr_a_p5e', 'shop-a', 'C-002', 'manager')
+        padmin = self.member('padmin_p5e', 'shop-a', 'C-003', 'platform_admin')
+        cookie_alice = self.login(self.alice)
+        cookie_other = self.login(self.other)
+        cookie_mgr_a = self.login(mgr_a)
+        cookie_padmin = self.login(padmin)
+
+        # Unauthenticated -> 401
+        code_unauth, _, _ = self.request('/api/admin/accounts')
+        self.assertEqual(code_unauth, 401)
+
+        # Customer -> 403 permission_denied + audit log
+        code_cust, body_cust, _ = self.request('/api/admin/accounts', cookie=cookie_alice)
+        self.assertEqual(code_cust, 403)
+        self.assertEqual(body_cust['error'], 'permission_denied')
+
+        # Manager A lists shop-a accounts cleanly without secret exposure
+        code_list, body_list, _ = self.request('/api/admin/accounts', cookie=cookie_mgr_a)
+        self.assertEqual(code_list, 200)
+        self.assertEqual(body_list['tenant_id'], 'shop-a')
+        self.assertTrue(all(a['tenant_id'] == 'shop-a' for a in body_list['accounts']))
+        self.assertNotIn('token', json.dumps(body_list['accounts']))
+        self.assertNotIn('hash', json.dumps(body_list['accounts']))
+
+        # Manager A cross-tenant access to shop-b denied with 403
+        code_cross, _, _ = self.request('/api/admin/accounts', cookie=cookie_mgr_a, QUERY_STRING='tenant_id=shop-b')
+        self.assertEqual(code_cross, 403)
+
+        # Platform admin requires explicit tenant_id
+        code_pa_missing, body_pa_missing, _ = self.request('/api/admin/accounts', cookie=cookie_padmin)
+        self.assertEqual(code_pa_missing, 400)
+        self.assertEqual(body_pa_missing['error'], 'missing_tenant_id')
+
+        code_pa_b, body_pa_b, _ = self.request('/api/admin/accounts', cookie=cookie_padmin, QUERY_STRING='tenant_id=shop-b')
+        self.assertEqual(code_pa_b, 200)
+        self.assertEqual(body_pa_b['tenant_id'], 'shop-b')
+
+        # ADM3: Self-lockout blocked; suspend Alice -> immediate session revocation; reactivate -> new login works
+        code_self, body_self, _ = self.request(
+            f'/api/admin/accounts/{mgr_a[0]}/suspend',
+            {'reason': 'Test self lockout'},
+            cookie_mgr_a,
+        )
+        self.assertEqual(code_self, 400)
+        self.assertEqual(body_self['error'], 'self_lockout_forbidden')
+
+        code_susp, body_susp, _ = self.request(
+            f'/api/admin/accounts/{self.alice[0]}/suspend',
+            {'reason': 'PG test suspend customer', 'correlation_id': 'pg-corr-susp-1'},
+            cookie_mgr_a,
+        )
+        self.assertEqual(code_susp, 200)
+        self.assertFalse(body_susp['account']['active'])
+
+        code_sess_after, _, _ = self.request('/api/session', cookie=cookie_alice)
+        self.assertEqual(code_sess_after, 401)
+
+        code_react, body_react, _ = self.request(
+            f'/api/admin/accounts/{self.alice[0]}/reactivate',
+            {'reason': 'PG test reactivate customer', 'correlation_id': 'pg-corr-react-1'},
+            cookie_mgr_a,
+        )
+        self.assertEqual(code_react, 200)
+        self.assertTrue(body_react['account']['active'])
+        self.assertEqual(body_react['account']['customer_id'], 'C-001')
+
+        # Old cookie remains dead; new login works
+        self.assertEqual(self.request('/api/session', cookie=cookie_alice)[0], 401)
+        cookie_alice = self.login(self.alice)
+        self.assertEqual(self.request('/api/session', cookie=cookie_alice)[0], 200)
+
+        # ADM4: Quota override persists across restart and enforces bounded limit per membership
+        code_q_bad, _, _ = self.request(
+            f'/api/admin/accounts/{self.alice[0]}/quota',
+            {'daily_limit': 0, 'reason': 'Bad limit'},
+            cookie_mgr_a,
+        )
+        self.assertEqual(code_q_bad, 400)
+
+        code_q_ok, body_q_ok, _ = self.request(
+            f'/api/admin/accounts/{self.alice[0]}/quota',
+            {'daily_limit': 2, 'reason': 'Nâng hạn mức PG cho Alice', 'correlation_id': 'pg-corr-quota-1'},
+            cookie_mgr_a,
+        )
+        self.assertEqual(code_q_ok, 200)
+        self.assertEqual(body_q_ok['account']['quota']['limit'], 2)
+        self.assertEqual(body_q_ok['account']['quota']['default_limit'], 1)
+
+        # Restart PostgresSessions and verify override=2 survived in PostgreSQL (default_limit=1)
+        self.restart()
+        code_get_a, body_get_a, _ = self.request(f'/api/admin/accounts/{self.alice[0]}', cookie=cookie_mgr_a)
+        self.assertEqual(code_get_a, 200)
+        self.assertEqual(body_get_a['account']['quota']['limit'], 2)
+
+        # Alice can make 2 API chat calls (whereas default_limit=1), and 3rd fails with 429 api_daily_limit
+        _, conv_a, _ = self.request('/api/conversations', {'provider_id': 'api'}, cookie_alice)
+        c1, _, _ = self.request(
+            '/api/chat',
+            {'conversation_id': conv_a['conversation_id'], 'request_id': 'req_pg_q_turn_00001', 'text': 'Lần 1'},
+            cookie_alice,
+        )
+        self.assertEqual(c1, 200)
+        c2, _, _ = self.request(
+            '/api/chat',
+            {'conversation_id': conv_a['conversation_id'], 'request_id': 'req_pg_q_turn_00002', 'text': 'Lần 2'},
+            cookie_alice,
+        )
+        self.assertEqual(c2, 200)
+        c3, body_c3, _ = self.request(
+            '/api/chat',
+            {'conversation_id': conv_a['conversation_id'], 'request_id': 'req_pg_q_turn_00003', 'text': 'Lần 3'},
+            cookie_alice,
+        )
+        self.assertEqual(c3, 429)
+        self.assertEqual(body_c3['error'], 'api_daily_limit')
+
+        # Other tenant member (shop-b) is unaffected
+        _, conv_b, _ = self.request('/api/conversations', {'provider_id': 'api'}, cookie_other)
+        cb1, _, _ = self.request(
+            '/api/chat',
+            {'conversation_id': conv_b['conversation_id'], 'request_id': 'req_pg_other_000001', 'text': 'Shop B turn 1'},
+            cookie_other,
+        )
+        self.assertEqual(cb1, 200)
+
+        # ADM5: Append-only admin_audit_log and transactional rollback on audit failure
+        code_post_audit, body_post_audit, _ = self.request('/api/admin/audit-log', {'action': 'delete'}, cookie_mgr_a)
+        self.assertEqual(code_post_audit, 405)
+        self.assertEqual(body_post_audit['error'], 'audit_log_append_only')
+
+        code_logs, body_logs, _ = self.request('/api/admin/audit-log', cookie=cookie_mgr_a)
+        self.assertEqual(code_logs, 200)
+        corrs = {r['correlation_id'] for r in body_logs['audit_logs']}
+        self.assertIn('pg-corr-susp-1', corrs)
+        self.assertIn('pg-corr-react-1', corrs)
+        self.assertIn('pg-corr-quota-1', corrs)
+
+        # Simulate failure inside record_admin_audit -> PostgreSQL transaction rolls back suspension
+        with patch.object(self.sessions.control, 'record_admin_audit', side_effect=RuntimeError('pg_simulated_audit_fail')):
+            with self.assertRaises(RuntimeError):
+                self.sessions.control.admin_suspend_account(
+                    {'principal_id': 'mgr_a_p5e', 'role': 'manager', 'tenant_id': 'shop-a', 'membership_id': mgr_a[0]},
+                    self.alice[0],
+                    reason='Should rollback on PG',
+                )
+        self.assertEqual(self.request('/api/session', cookie=cookie_alice)[0], 200)
+
 
 if __name__ == '__main__':
     unittest.main()
