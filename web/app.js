@@ -582,7 +582,7 @@ function renderOrder() {
     const q = orderSearchQuery.toLowerCase();
     filtered = filtered.filter(o =>
       o.id.toLowerCase().includes(q) ||
-      (o.name && o.name.toLowerCase().includes(q)) ||
+      ((o.display_name || o.name) && (o.display_name || o.name).toLowerCase().includes(q)) ||
       (o.customer_id && o.customer_id.toLowerCase().includes(q))
     );
   }
@@ -623,7 +623,7 @@ function renderOrder() {
           el('span', 'order-card-badge ' + item.status, statuses[item.status] || item.status)
         );
 
-        const title = el('div', 'order-card-title', item.name || 'Sản phẩm');
+        const title = el('div', 'order-card-title', item.display_name || item.name || 'Sản phẩm');
 
         const footer = el('div', 'order-card-footer');
         footer.append(el('span', 'order-card-price', money(item.amount)));
@@ -650,7 +650,7 @@ function renderOrder() {
   const top = el('div', 'order-line');
   top.append(el('h3', '', order.id), el('span', 'badge ' + order.status, statuses[order.status]));
   const item = el('div', 'item'), copy = el('div');
-  copy.append(el('strong', '', order.name), el('p', '', order.variant));
+  copy.append(el('strong', '', order.display_name || order.name), el('p', '', order.variant));
   item.append(copy);
   const total = el('div', 'detail-row total');
   total.append(el('span', '', 'Tổng cộng'), el('strong', '', money(order.amount)));
@@ -724,7 +724,7 @@ function openProposal(proposal) {
   // Proposal ID is a stable idempotency key, not an authentication credential.
   pending = {...proposal, key: proposal.proposal_id};
   byId('confirm-title').textContent = 'Hủy đơn ' + proposal.order.id + '?';
-  byId('confirm-description').textContent = proposal.order.name + ' · ' + money(proposal.order.amount)
+  byId('confirm-description').textContent = (proposal.order.display_name || proposal.order.name) + ' · ' + money(proposal.order.amount)
     + '. Hết hạn: ' + new Date(proposal.expires_at * 1000).toLocaleTimeString('vi-VN') + '.';
   byId('confirm-reason').textContent = reasons[proposal.reason];
   byId('confirm-error').textContent = ''; byId('confirm-dialog').showModal();
@@ -2169,7 +2169,7 @@ async function loadManagerOrdersTable() {
   if (searchQ) {
     filtered = filtered.filter(o =>
       o.id.toLowerCase().includes(searchQ) ||
-      (o.name && o.name.toLowerCase().includes(searchQ)) ||
+      ((o.display_name || o.name) && (o.display_name || o.name).toLowerCase().includes(searchQ)) ||
       (o.customer_id && o.customer_id.toLowerCase().includes(searchQ))
     );
   }
@@ -2185,7 +2185,7 @@ async function loadManagerOrdersTable() {
     const tr = el('tr');
     const tdId = el('td'); tdId.innerHTML = `<strong>${o.id}</strong>`;
     const tdCust = el('td', '', o.customer_id || 'Khách');
-    const tdName = el('td', '', o.name);
+    const tdName = el('td', '', o.display_name || o.name);
     const tdVar = el('td', '', o.variant);
     const tdAmount = el('td', '', money(o.amount));
     const tdStatus = el('td');

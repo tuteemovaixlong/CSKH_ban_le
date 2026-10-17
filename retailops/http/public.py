@@ -72,7 +72,11 @@ class PublicWeb:
         loopback_health = method == 'GET' and path == '/healthz' and env.get('REMOTE_ADDR') in ('127.0.0.1', '::1') and host in ('127.0.0.1:8000', 'localhost:8000')
         require(host == self.host or loopback_health, 403, 'invalid_host', 'Địa chỉ web không hợp lệ.')
         require(method in ('GET', 'POST'), 405, 'method_not_allowed', 'Phương thức không được hỗ trợ.')
-        require(not env.get('QUERY_STRING') or path == '/auth/google/callback', 400, 'unexpected_query', 'Đường dẫn không nhận tham số truy vấn.')
+        allow_query = (
+            path in ('/auth/google/callback', '/api/admin/accounts', '/api/admin/audit-log')
+            or path.startswith('/api/admin/accounts/')
+        )
+        require(not env.get('QUERY_STRING') or allow_query, 400, 'unexpected_query', 'Đường dẫn không nhận tham số truy vấn.')
 
         # Emergency maintenance mode check for auth and provisioning routes
         if path in ('/auth/google/config', '/auth/google/login', '/auth/google/callback') or (path == '/api/login' and method == 'POST'):
@@ -196,7 +200,16 @@ class PublicWeb:
                 headers.append(('Set-Cookie', f'{self.sessions.cookie_name}=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0'))
                 return 200, {'logged_out': True}, mime, headers
             app.current_binding = binding
-            status, result = api_result(app, binding.customer_id, method, path, body, env.get('HTTP_IDEMPOTENCY_KEY'), binding=binding)
+            status, result = api_result(
+                app,
+                binding.customer_id,
+                method,
+                path,
+                body,
+                env.get('HTTP_IDEMPOTENCY_KEY'),
+                binding=binding,
+                query=env.get('QUERY_STRING', ''),
+            )
             if path in ('/api/session', '/api/profile'):
                 result.update(self.sessions.metadata())
                 if binding.principal_id is not None:

@@ -183,8 +183,8 @@ class BusinessStore:
                 aliases = json.dumps(p.get("aliases", []), ensure_ascii=False)
                 category = p.get("category")
                 price = p.get("price")
-                stock = p.get("stock", 0)
-                warranty_days = p.get("warranty_days", 90)
+                stock = p.get("stock") if "stock" in p else 0
+                warranty_days = p.get("warranty_days") if "warranty_days" in p else 90
                 description = p.get("description", "")
                 raw_variants = p.get("variants", [])
                 variants_json = json.dumps(raw_variants, ensure_ascii=False)
@@ -214,8 +214,12 @@ class BusinessStore:
                     size, color = _parse_variant_string(v_str)
                     if pid in STOCK_MAP and size in STOCK_MAP[pid]:
                         var_stock = STOCK_MAP[pid][size]
+                    elif stock is None:
+                        var_stock = None
+                    elif stock <= 0:
+                        var_stock = 0
                     else:
-                        var_stock = max(1, stock // len(raw_variants)) if raw_variants and stock else 5
+                        var_stock = max(1, stock // len(raw_variants)) if raw_variants else stock
 
                     var_id = f"{pid}-{size or 'STD'}-{color or 'STD'}".replace(" ", "_")
                     conn.execute("""
@@ -262,6 +266,8 @@ class BusinessStore:
         }
 
     def get_product(self, pid):
+        if not isinstance(pid, str) or not pid.isascii() or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', pid):
+            return None
         with self.connection() as db:
             row = db.execute("SELECT * FROM products WHERE id=?", (pid,)).fetchone()
             if not row:
@@ -319,7 +325,12 @@ class BusinessStore:
 
             for v_str in raw_variants:
                 size, color = _parse_variant_string(v_str)
-                var_stock = max(0, stock // len(raw_variants)) if raw_variants and stock is not None else stock
+                if stock is None:
+                    var_stock = None
+                elif stock <= 0:
+                    var_stock = 0
+                else:
+                    var_stock = max(0, stock // len(raw_variants)) if raw_variants else stock
                 var_id = f"{pid}-{size or 'STD'}-{color or 'STD'}".replace(" ", "_")
                 db.execute("""
                     INSERT INTO product_variants(id, product_id, variant_name, size, color, stock, price)
@@ -554,6 +565,8 @@ class BusinessStore:
 
     @staticmethod
     def owned(db, customer, oid):
+        if not isinstance(oid, str) or not oid.isascii() or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', oid):
+            require(False, 404, "order_not_found", "Không tìm thấy đơn hàng của bạn.")
         row = db.execute("SELECT * FROM orders WHERE id=? AND customer_id=?", (oid, customer)).fetchone()
         require(row is not None, 404, "order_not_found", "Không tìm thấy đơn hàng của bạn.")
         return dict(row)

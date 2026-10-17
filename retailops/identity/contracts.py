@@ -16,6 +16,8 @@ class SessionBinding:
     tenant_id: str | None = None
     principal_id: str | None = None
     display_name: str | None = None
+    membership_id: str | None = None
+    role: str | None = None
 
 
 class SessionBackend(Protocol):

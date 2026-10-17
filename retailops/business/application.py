@@ -266,8 +266,13 @@ class Application:
                 if provider_id == 'api' and not reserved:
                     self.quota_store.reserve_api_attempt(self.api_daily_limit)
                     reserved = True
+            from retailops.guardrails.topic_filter import (
+                is_read_only_lookup_intent,
+                sanitize_output_against_canary_leak,
+            )
+            read_only_lookup = is_read_only_lookup_intent(text)
             bound = BoundTools(self.store, self.catalog, customer, snapshot, identity,
-                               can_cancel=CANCEL in self.permissions)
+                               can_cancel=(CANCEL in self.permissions and not read_only_lookup))
 
             tool_execution_count = 0
             tools_called_in_turn = []
@@ -344,6 +349,16 @@ class Application:
             else:
                 answer = run_agent(gated_gateway, text, self.store.history(customer, snapshot['id']), execute, identity,
                                    saver=saver, capture=capture, restore=restore, before_model=before_model, attachment=attachment)
+
+            if read_only_lookup:
+                bound.cancel_order = None
+                answer.pop('action_proposal', None)
+
+            leaked, safe_msg = sanitize_output_against_canary_leak(text, answer.get('message', ''))
+            if leaked:
+                answer['message'] = safe_msg
+                bound.cancel_order = None
+                answer.pop('action_proposal', None)
 
             # N01: Rollback cancel_order and mutated context if target order is invalid, unverified, or mismatched
             if bound.cancel_order:

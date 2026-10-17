@@ -8,7 +8,7 @@ from retailops_conversation import normalize
 
 from agent_protocol import classify_user_text
 from retailops.guardrails.sentiment import analyze_sentiment
-from retailops.guardrails.topic_filter import check_topic_safety
+from retailops.guardrails.topic_filter import check_topic_safety, is_read_only_lookup_intent
 from retailops.workflow.state import MultiAgentState, WorkerType
 
 HUMAN_ESCALATION_KEYWORDS = [
@@ -248,8 +248,10 @@ def run_supervisor(state: MultiAgentState) -> MultiAgentState:
         "như thế nào", "thế nào", "ra sao"
     ])
 
+    read_only_lookup = is_read_only_lookup_intent(last_user_msg)
+
     # 4. Actionable Cancellation & Refund (Dispute priority)
-    if any(kw in lower_msg for kw in ["hủy đơn", "hủy hàng", "muốn hủy", "hủy luôn", "hoàn tiền"]):
+    if not read_only_lookup and any(kw in lower_msg for kw in ["hủy đơn", "hủy hàng", "muốn hủy", "hủy luôn", "hoàn tiền"]):
         state["intent"] = "dispute_complaint"
         state["next_worker"] = "dispute_agent"
         routing_reason = "dispute_cancellation_refund"
@@ -266,7 +268,7 @@ def run_supervisor(state: MultiAgentState) -> MultiAgentState:
         state["next_worker"] = "policy_agent"
         routing_reason = "policy_conditions_faq"
     # 7. Actionable Exchange, Defect & Inventory (SOP 2, SOP 3)
-    elif any(kw in lower_msg for kw in DISPUTE_KEYWORDS):
+    elif not read_only_lookup and any(kw in lower_msg for kw in DISPUTE_KEYWORDS):
         state["intent"] = "dispute_complaint"
         state["next_worker"] = "dispute_agent"
         routing_reason = "dispute_exchange_defect"

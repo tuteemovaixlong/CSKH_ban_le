@@ -233,15 +233,20 @@ class PersistentSessions:
                                   self.api_daily_limit, role=member['role'],
                                   tenant_id=tenant_id, tool_cache=tool_cache)
                 app.quota_store = AccountQuotaStore(self.control, member['id'])
+                app.identity_store = self.control
+                app.data_mode = getattr(self, 'data_mode', 'persistent-demo')
                 app.inference_gate = getattr(self, 'inference_gate', None) or InferenceGate()
                 app.default_provider = 'api' if self.api_infer is not None else 'custom'
                 self.apps[key] = app
                 if len(self.apps) > self.capacity:
                     self.apps.popitem(last=False)  # Drop only a Python object; never delete business files.
             app = self.apps[key]
+            app.identity_store = self.control
+            app.data_mode = getattr(self, 'data_mode', 'persistent-demo')
             self.apps.move_to_end(key)
         yield SessionBinding(app, member['customer_id'], member['storage_key'],
-                             tenant_id=member['tenant_id'], principal_id=member['principal_id'], display_name=member['name'])
+                             tenant_id=member['tenant_id'], principal_id=member['principal_id'],
+                             display_name=member['name'], membership_id=member['id'], role=member['role'])
 
     def logout(self, header):
         self.control.logout(self.cookie_id(header))
