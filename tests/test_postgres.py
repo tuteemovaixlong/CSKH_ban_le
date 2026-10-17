@@ -1356,12 +1356,18 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         for bad_pid in ("P-602' OR '1'='1", 'P-602\u200b', 'P-\uff16\uff10\uff12'):
             self.assertIsNone(store_a.get_product(bad_pid), bad_pid)
 
-        # 2. DATA1 & DATA2 on PostgresBusinessStore
-        created_sample = store_a.ensure_customer_with_sample_order('CG-PG-P5E', 'Khách PG P5E')
-        sample_oid = created_sample['order_id']
-        raw_sample = store_a.lookup('CG-PG-P5E', sample_oid)
-        self.assertEqual(raw_sample['name'], 'Quần tây ống đứng tôn dáng')
-        self.assertEqual(raw_sample['product_id'], 'P-602')
+        # 2. DATA1 & DATA2 on PostgresSessions + PostgresBusinessStore
+        sec_sample = self.sessions.login_google(
+            'pg.p5e.sample@example.com', 'PG P5E Sample', sub='pg-sub-p5e-data1', email_verified=True, tenant_id='shop-a'
+        )
+        cookie_sample = f"{self.sessions.cookie_name}={sec_sample}"
+        code_ord, body_ord, _ = self.request('/api/orders', cookie=cookie_sample)
+        self.assertEqual(code_ord, 200)
+        p602_ords = [o for o in body_ord['orders'] if o.get('product_id') == 'P-602']
+        self.assertEqual(len(p602_ords), 1)
+        self.assertEqual(p602_ords[0]['display_name'], 'Bộ xếp hình gỗ cho bé')
+        self.assertEqual(p602_ords[0]['name'], 'Quần tây ống đứng tôn dáng')
+        self.assertEqual(p602_ords[0]['product_id'], 'P-602')
 
         p604 = store_a.get_product('P-604')
         self.assertIsNotNone(p604)
@@ -1376,11 +1382,11 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             'category': 'Phụ kiện',
             'price': None,
             'stock': None,
-            'variants': ['Tiêu chuẩn'],
+            'variants': ['Đỏ · Size S', 'Xanh · Size M'],
         })
-        p_null = store_a.get_product('P-PG-NULL-STOCK')
-        self.assertEqual(len(p_null['variants']), 1)
-        self.assertIsNone(p_null['variants'][0]['stock'])
+        var_null = store_a.get_variant_stock('P-PG-NULL-STOCK', 'S', 'Đỏ')
+        self.assertIsNone(var_null.stock)
+        self.assertEqual(var_null.status, 'stock_unknown')
 
         store_a.add_product({
             'id': 'P-PG-ZERO-STOCK',
@@ -1388,11 +1394,11 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             'category': 'Phụ kiện',
             'price': 99000,
             'stock': 0,
-            'variants': ['Đen'],
+            'variants': ['Đỏ · Size S', 'Xanh · Size M'],
         })
-        p_zero = store_a.get_product('P-PG-ZERO-STOCK')
-        self.assertEqual(len(p_zero['variants']), 1)
-        self.assertEqual(p_zero['variants'][0]['stock'], 0)
+        var_zero = store_a.get_variant_stock('P-PG-ZERO-STOCK', 'S', 'Đỏ')
+        self.assertEqual(var_zero.stock, 0)
+        self.assertEqual(var_zero.status, 'ok')
 
         # 3. ADM1..ADM6 on PostgresSessions + PublicWeb
         mgr_a = self.member('mgr_a_p5e', 'shop-a', 'C-002', 'manager')
