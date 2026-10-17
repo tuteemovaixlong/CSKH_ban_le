@@ -1371,8 +1371,10 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
 
         p604 = store_a.get_product('P-604')
         self.assertIsNotNone(p604)
+        self.assertIsNone(p604['price'])
         self.assertIsNone(p604['stock'])
-        self.assertIsNone(p604['material'])
+        self.assertIsNone(p604['warranty_days'])
+        self.assertEqual(p604['material'], 'Gỗ')
         self.assertIsNone(p604['care'])
         self.assertIn('bộ xếp hình gỗ', [a.lower() for a in p604.get('aliases', [])])
 
