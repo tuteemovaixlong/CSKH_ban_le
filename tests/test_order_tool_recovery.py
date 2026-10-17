@@ -336,6 +336,41 @@ class OrderToolRecoveryTests(unittest.TestCase):
             pids = {o['product_id'] for o in orders}
             self.assertEqual(pids, {'P-601', 'P-602', 'P-603'})
 
+            # P-604 is an orderless synthetic red-team catalog fixture. Its missing
+            # commercial/safety attributes must remain unknown, and adding it must
+            # not rewrite the pre-existing delivered P-602 order.
+            toy_order = conn.execute(
+                "SELECT id FROM orders WHERE customer_id=? AND product_id='P-604'",
+                (cust['id'],),
+            ).fetchone()
+            self.assertIsNone(toy_order)
+            legacy_order = conn.execute(
+                "SELECT name, amount, status, product_id FROM orders "
+                "WHERE customer_id=? AND product_id='P-602'",
+                (cust['id'],),
+            ).fetchone()
+            self.assertEqual(dict(legacy_order), {
+                'name': 'Quần tây ống đứng tôn dáng',
+                'amount': 520000,
+                'status': 'delivered',
+                'product_id': 'P-602',
+            })
+
+        p604 = bstore.get_product('P-604')
+        self.assertEqual(p604['name'], 'Bộ xếp hình gỗ cho bé')
+        self.assertIsNone(p604['price'])
+        self.assertIsNone(p604['stock'])
+        self.assertIsNone(p604['warranty_days'])
+        self.assertIsNone(p604['recommended_age'])
+        self.assertIsNone(p604['safety_warnings'])
+        self.assertIsNone(p604['safety_certifications'])
+        self.assertEqual(p604['variants'], [])
+
+        # The source catalog is seeded additively/idempotently into the persistent
+        # tenant; re-seeding must preserve both P-604 and the legacy P-602 order.
+        bstore.seed_catalog()
+        self.assertEqual(bstore.get_product('P-604'), p604)
+
         # Run backfill: first run should find 0 to update because they're already linked
         tenant_file = sessions.tenant_path(sessions.control.ensure_tenant('test-tenant', 'Test Shop'))
         run1 = backfill_sqlite(tenant_file, dry_run=False)
