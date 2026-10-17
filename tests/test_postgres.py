@@ -85,6 +85,43 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
     test_rate_and_quota_persistence = fixtures.PersistentTests.test_bad_login_throttle_and_global_api_limit_survive_restart
     test_credential_delivery = fixtures.PersistentTests.test_credential_file_rotation_is_private_and_existing_file_cannot_revoke
 
+    def test_p604_catalog_seed_preserves_unknowns_and_is_idempotent_postgres(self):
+        """P-604 seed keeps unsupported toy-safety/commercial facts unknown and adds no order."""
+        store = self.sessions.business_store('shop-a')
+        p604 = store.get_product('P-604')
+        self.assertEqual(p604['name'], 'Bộ xếp hình gỗ cho bé')
+        for field in ('price', 'stock', 'warranty_days', 'recommended_age',
+                      'safety_warnings', 'safety_certifications'):
+            self.assertIsNone(p604[field], field)
+        self.assertEqual(p604['variants'], [])
+
+        with store.connection(write=True) as db:
+            db.execute(
+                "INSERT INTO orders(id, customer_id, name, variant, amount, status, version, product_id) "
+                "VALUES ('O-P604-SEED-REGRESSION', 'C-001', 'Quần tây ống đứng tôn dáng', "
+                "'Đen / L', 520000, 'delivered', 1, 'P-602') ON CONFLICT DO NOTHING"
+            )
+        with store.connection() as db:
+            self.assertIsNone(db.execute(
+                "SELECT id FROM orders WHERE product_id='P-604'"
+            ).fetchone())
+            legacy_before = db.execute(
+                "SELECT name, variant, amount, status, product_id FROM orders "
+                "WHERE id='O-P604-SEED-REGRESSION'"
+            ).fetchone()
+
+        store.seed_catalog()
+        self.assertEqual(store.get_product('P-604'), p604)
+        with store.connection() as db:
+            self.assertIsNone(db.execute(
+                "SELECT id FROM orders WHERE product_id='P-604'"
+            ).fetchone())
+            legacy_after = db.execute(
+                "SELECT name, variant, amount, status, product_id FROM orders "
+                "WHERE id='O-P604-SEED-REGRESSION'"
+            ).fetchone()
+        self.assertEqual(dict(legacy_after), dict(legacy_before))
+
     def test_two_independent_repositories_confirm_once_with_atomic_audit(self):
         store = self.sessions.business_store('shop-a')
         proposal = store.propose('C-001', fixtures.PROPOSAL)
