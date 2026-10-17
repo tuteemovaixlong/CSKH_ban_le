@@ -1379,6 +1379,239 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         self.assertNotIn("áp dụng chính sách", chat_res["message"])
         self.assertIn("Mã đơn hàng", chat_res["message"])
 
+    def test_19_defect_complaint_relevant_retrieval_enforces_order_ownership_and_positive_control(self):
+        """P5-K7 one-pass E2E regression: when relevant defect/warranty policy evidence is retrieved
+        via search_knowledge during /api/chat:
+        1. Missing explicit order (O-999) executes get_order, returns safe order-not-found clarification,
+           clears unreferenced sources, emits no remedy promise, creates no proposal, and mutates no business state.
+        2. Foreign/unowned explicit order (Customer 2 naming Customer 1's order O-90001) executes get_order,
+           returns safe order-not-found/not-owned clarification, clears unreferenced sources, emits no remedy promise,
+           creates no proposal, and mutates no business state.
+        3. Positive control: Customer 1 naming owned order O-90001 with relevant KB evidence executes
+           search_knowledge + get_order + get_product, preserves valid [KB:...] citation in sources/message,
+           creates exchange_1to1 proposal (pending_staff_approval), and leaves O-90001 unmutated pre-confirmation.
+        """
+        self.test_01_same_identity_binding_import_and_session()
+
+        with self.sessions.resolve(self.cust1_cookie) as b1:
+            b1.application.store.schema = "tenant_alpha"
+        with self.sessions.resolve(self.cust2_cookie) as b2:
+            b2.application.store.schema = "tenant_alpha"
+
+        defect_policy_doc = {
+            "chunk": "Chính sách bảo hành sản phẩm lỗi của shop: Sản phẩm bị kẹt khóa, bung chỉ hoặc lỗi đường may được bảo hành đổi mới 1-1 trong 30 ngày.",
+            "source_key": "policies/warranty_defect.md",
+            "title": "Chính sách bảo hành sản phẩm lỗi",
+            "score": 0.92,
+        }
+
+        def fake_defect_repo_search(repo_self, query, limit=5):
+            return [dict(defect_policy_doc)]
+
+        bstore = self.sessions.business_store(self.tenant_id)
+
+        def snapshot_business_state(target_order_id: str, actor_customer_id: str) -> dict:
+            with bstore.connection() as db:
+                ord_row = db.execute(
+                    "SELECT id, customer_id, product_id, name, variant, amount, status, version, cancel_reason "
+                    "FROM orders WHERE id = ?",
+                    (target_order_id,),
+                ).fetchone()
+                all_orders = [
+                    (
+                        r["id"],
+                        r["customer_id"],
+                        r["product_id"],
+                        r["status"],
+                        r["version"],
+                        r["cancel_reason"],
+                        r["amount"],
+                    )
+                    for r in db.execute(
+                        "SELECT id, customer_id, product_id, status, version, cancel_reason, amount "
+                        "FROM orders ORDER BY id"
+                    ).fetchall()
+                ]
+                order_items_for_target = [
+                    (
+                        r["id"],
+                        r["order_id"],
+                        r["product_id"],
+                        r["quantity"],
+                        r["unit_price"],
+                        r["subtotal"],
+                    )
+                    for r in db.execute(
+                        "SELECT id, order_id, product_id, quantity, unit_price, subtotal "
+                        "FROM order_items WHERE order_id = ? ORDER BY id",
+                        (target_order_id,),
+                    ).fetchall()
+                ]
+                proposals_for_order = [
+                    (
+                        r["id"],
+                        r["customer_id"],
+                        r["order_id"],
+                        r["order_version"],
+                        r["reason"],
+                        r["state"],
+                        r["confirm_key"],
+                        r["result"],
+                    )
+                    for r in db.execute(
+                        "SELECT id, customer_id, order_id, order_version, reason, state, confirm_key, result "
+                        "FROM proposals WHERE order_id = ? ORDER BY id",
+                        (target_order_id,),
+                    ).fetchall()
+                ]
+                proposals_for_actor = [
+                    (
+                        r["id"],
+                        r["customer_id"],
+                        r["order_id"],
+                        r["order_version"],
+                        r["reason"],
+                        r["state"],
+                        r["confirm_key"],
+                        r["result"],
+                    )
+                    for r in db.execute(
+                        "SELECT id, customer_id, order_id, order_version, reason, state, confirm_key, result "
+                        "FROM proposals WHERE customer_id = ? ORDER BY id",
+                        (actor_customer_id,),
+                    ).fetchall()
+                ]
+                complaint_feedback_rows = [
+                    (
+                        r["id"],
+                        r["conversation_id"],
+                        r["customer_id"],
+                        r["feedback_type"],
+                        r["reason_code"],
+                        r["comment"],
+                    )
+                    for r in db.execute(
+                        "SELECT id, conversation_id, customer_id, feedback_type, reason_code, comment "
+                        "FROM conversation_feedback ORDER BY id"
+                    ).fetchall()
+                ]
+                business_mutation_events = [
+                    (r["id"], r["customer_id"], r["kind"], r["order_id"], r["payload"])
+                    for r in db.execute(
+                        "SELECT id, customer_id, kind, order_id, payload "
+                        "FROM business_events WHERE kind != 'agent_replied' OR order_id IS NOT NULL ORDER BY id"
+                    ).fetchall()
+                ]
+                actor_conv_focus = [
+                    (r["id"], r["customer_id"], r["order_id"], r["product_id"])
+                    for r in db.execute(
+                        "SELECT id, customer_id, order_id, product_id "
+                        "FROM conversations WHERE customer_id = ? ORDER BY id",
+                        (actor_customer_id,),
+                    ).fetchall()
+                ]
+            return {
+                "target_order": dict(ord_row) if ord_row is not None else None,
+                "all_orders": all_orders,
+                "order_items_for_target": order_items_for_target,
+                "proposals_for_order": proposals_for_order,
+                "proposals_for_actor": proposals_for_actor,
+                "complaint_feedback_rows": complaint_feedback_rows,
+                "business_mutation_events": business_mutation_events,
+                "actor_conv_focus": actor_conv_focus,
+            }
+
+        # 1. Missing explicit order O-999 (Customer 1)
+        status, conv_miss, _ = self.request("/api/conversations", {}, cookie=self.cust1_cookie)
+        self.assertEqual(status, 201)
+        body_miss = {
+            "conversation_id": conv_miss["conversation_id"],
+            "text": "Khiếu nại đơn O-999 bị kẹt khóa và bung chỉ, kiểm tra chính sách đổi 1-1",
+            "request_id": str(uuid.uuid4()),
+        }
+        before_miss = snapshot_business_state("O-999", self.cust1_id)
+        with patch.object(KnowledgeRepository, "search", fake_defect_repo_search):
+            status, res_miss, _ = self.request("/api/chat", body_miss, cookie=self.cust1_cookie)
+        after_miss = snapshot_business_state("O-999", self.cust1_id)
+        self.assertEqual(status, 200)
+        self.assertEqual(before_miss, after_miss)
+        self.assertIsNone(after_miss["target_order"])
+        self.assertEqual(after_miss["proposals_for_order"], [])
+        self.assertEqual(after_miss["proposals_for_actor"], [])
+        self.assertEqual(after_miss["complaint_feedback_rows"], [])
+        miss_tools = [t.get("name") for t in res_miss["trace"].get("tools", [])]
+        self.assertIn("search_knowledge", miss_tools)
+        self.assertIn("get_order", miss_tools)
+        self.assertIsNone(res_miss.get("action_proposal"))
+        self.assertEqual(res_miss.get("sources", []), [])
+        self.assertIn("không tìm thấy đơn hàng O-999", res_miss["message"])
+        self.assertNotIn("Đổi mới 1-1", res_miss["message"])
+        self.assertNotIn("áp dụng chính sách bảo hành", res_miss["message"])
+
+        # 2. Foreign/unowned explicit order O-90001 queried by Customer 2
+        status, conv_for, _ = self.request("/api/conversations", {}, cookie=self.cust2_cookie)
+        self.assertEqual(status, 201)
+        body_for = {
+            "conversation_id": conv_for["conversation_id"],
+            "text": "Khiếu nại đơn O-90001 bị kẹt khóa và bung chỉ, kiểm tra chính sách đổi 1-1",
+            "request_id": str(uuid.uuid4()),
+        }
+        before_for = snapshot_business_state("O-90001", self.cust2_id)
+        with patch.object(KnowledgeRepository, "search", fake_defect_repo_search):
+            status, res_for, _ = self.request("/api/chat", body_for, cookie=self.cust2_cookie)
+        after_for = snapshot_business_state("O-90001", self.cust2_id)
+        self.assertEqual(status, 200)
+        self.assertEqual(before_for, after_for)
+        self.assertIsNotNone(after_for["target_order"])
+        self.assertEqual(after_for["target_order"]["id"], "O-90001")
+        self.assertEqual(after_for["target_order"]["customer_id"], self.cust1_id)
+        self.assertEqual(after_for["target_order"]["status"], "pending")
+        self.assertEqual(after_for["target_order"]["version"], 1)
+        self.assertIsNone(after_for["target_order"]["cancel_reason"])
+        self.assertEqual(after_for["proposals_for_order"], [])
+        self.assertEqual(after_for["proposals_for_actor"], [])
+        self.assertEqual(after_for["complaint_feedback_rows"], [])
+        for_tools = [t.get("name") for t in res_for["trace"].get("tools", [])]
+        self.assertIn("search_knowledge", for_tools)
+        self.assertIn("get_order", for_tools)
+        self.assertIsNone(res_for.get("action_proposal"))
+        self.assertEqual(res_for.get("sources", []), [])
+        self.assertIn("không tìm thấy đơn hàng O-90001", res_for["message"])
+        self.assertIn("không thuộc tài khoản", res_for["message"])
+        self.assertNotIn("Đổi mới 1-1", res_for["message"])
+        self.assertNotIn("Áo sơ mi lụa", res_for["message"])
+
+        # 3. Positive control: Owned order O-90001 queried by Customer 1 with relevant KB evidence
+        status, conv_ok, _ = self.request("/api/conversations", {}, cookie=self.cust1_cookie)
+        self.assertEqual(status, 201)
+        body_ok = {
+            "conversation_id": conv_ok["conversation_id"],
+            "text": "Khiếu nại đơn O-90001 bị kẹt khóa và bung chỉ, kiểm tra chính sách đổi 1-1",
+            "request_id": str(uuid.uuid4()),
+        }
+        with patch.object(KnowledgeRepository, "search", fake_defect_repo_search):
+            status, res_ok, _ = self.request("/api/chat", body_ok, cookie=self.cust1_cookie)
+        self.assertEqual(status, 200)
+        ok_tools = [t.get("name") for t in res_ok["trace"].get("tools", [])]
+        self.assertIn("search_knowledge", ok_tools)
+        self.assertIn("get_order", ok_tools)
+        self.assertIn("get_product", ok_tools)
+        prop_ok = res_ok.get("action_proposal")
+        self.assertIsNotNone(prop_ok)
+        self.assertEqual(prop_ok["action"], "exchange_1to1")
+        self.assertEqual(prop_ok["order_id"], "O-90001")
+        self.assertEqual(prop_ok["status"], "pending_staff_approval")
+        sources_ok = res_ok.get("sources", [])
+        self.assertEqual(len(sources_ok), 1)
+        self.assertEqual(sources_ok[0]["source_key"], "policies/warranty_defect.md")
+        self.assertIn(f"[{sources_ok[0]['citation_id']}]", res_ok["message"])
+
+        # Confirm zero pre-confirmation DB mutation on O-90001
+        with bstore.connection() as db:
+            ord_row = db.execute("SELECT status, version FROM orders WHERE id='O-90001'").fetchone()
+            self.assertEqual(ord_row["status"], "pending")
+            self.assertEqual(ord_row["version"], 1)
+
 
 @unittest.skipUnless(DSN, "RAG pgvector integration requires a disposable PostgreSQL database with pgvector.")
 class Phase5ComplaintPgvectorTests(unittest.TestCase):

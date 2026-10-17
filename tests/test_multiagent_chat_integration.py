@@ -685,6 +685,156 @@ class MultiAgentChatIntegrationTests(unittest.TestCase):
         self.assertIn("30 ngày", reply_b)
         self.assertIn("Đổi mới 1-1", reply_b)
 
+    def test_dispute_defect_relevant_retrieval_validates_order_ownership_and_rejects_missing_or_foreign_order(self):
+        """P5-K7 one-pass regression: relevant defect/warranty policy retrieved via search_knowledge
+        must NEVER suppress deterministic get_order/get_product ownership and warranty validation.
+        Covers:
+        1. Missing explicit order (O-999) + relevant KB evidence -> get_order called, safe abstention/clarification, no remedy promise, no proposal.
+        2. Foreign/unowned explicit order (O-90002 owned by another customer) + relevant KB evidence -> get_order called, safe abstention/clarification, no remedy promise, no proposal.
+        3. Positive control: owned order (O-101) + relevant KB evidence -> get_order & get_product called, [KB:...] citation preserved, exchange_1to1 proposal created.
+        """
+        import json
+        from retailops.core import ApiError
+        from retailops.workflow.subagents.dispute_agent import run_dispute_agent
+
+        relevant_kb_result = {
+            "status": "evidence_found",
+            "results": [
+                {
+                    "citation_id": "KB:abcdef0123456789abcdef01",
+                    "source_key": "warranty.md",
+                    "title": "Chính sách bảo hành sản phẩm lỗi",
+                    "excerpt": "Sản phẩm bị lỗi đường may, kẹt khóa hoặc bung chỉ được bảo hành đổi mới 1-1 trong 30 ngày.",
+                    "content_sha256": "4" * 64,
+                    "truncated": False,
+                }
+            ],
+        }
+
+        class MockRelevantKBPromiseGateway:
+            def __init__(self, target_oid):
+                self.calls = 0
+                self.target_oid = target_oid
+
+            def chat(self, msgs, allow_tools, timeout):
+                self.calls += 1
+                if self.calls == 1:
+                    return {
+                        "message": {
+                            "role": "assistant",
+                            "tool_calls": [
+                                {
+                                    "id": "call_kb_rel_1",
+                                    "function": {
+                                        "name": "search_knowledge",
+                                        "arguments": json.dumps({"query": "chính sách bảo hành sản phẩm lỗi"}),
+                                    },
+                                }
+                            ],
+                        },
+                        "prompt_eval_count": 50,
+                        "eval_count": 20,
+                    }
+                return {
+                    "message": {
+                        "role": "assistant",
+                        "content": f"Theo chính sách bảo hành [KB:abcdef0123456789abcdef01], shop sẽ đổi mới 1-1 miễn phí cho đơn {self.target_oid} ạ.",
+                    },
+                    "prompt_eval_count": 70,
+                    "eval_count": 25,
+                }
+
+        # 1. Negative case A: Missing explicit order O-999
+        calls_missing = []
+        def exec_missing(name, args):
+            calls_missing.append((name, args))
+            if name == "search_knowledge":
+                return relevant_kb_result
+            if name == "get_order":
+                raise ApiError(404, "order_not_found", "Không tìm thấy đơn hàng.")
+            return {}
+
+        state_missing = {
+            "messages": [{"role": "user", "content": "Áo đơn O-999 bị lỗi đường may và kẹt khóa, kiểm tra chính sách bảo hành đổi 1-1"}],
+            "fresh": [],
+            "subagent_history": [],
+            "tool_count": 0,
+            "trace": {},
+        }
+        res_missing = run_dispute_agent(state_missing, exec_missing, MockRelevantKBPromiseGateway("O-999"))
+        self.assertIn(("get_order", {"order_id": "O-999"}), calls_missing)
+        self.assertIsNone(res_missing.get("action_proposal"))
+        self.assertNotIn("dispute_agent:proposal_ready", res_missing.get("subagent_history", []))
+        self.assertIn("dispute_agent:listening", res_missing.get("subagent_history", []))
+        self.assertTrue(res_missing.get("drop_knowledge_sources"))
+        reply_missing = res_missing["messages"][-1]["content"]
+        self.assertIn("không tìm thấy đơn hàng O-999", reply_missing)
+        self.assertNotIn("đổi mới 1-1", reply_missing.lower())
+        self.assertNotIn("miễn phí", reply_missing.lower())
+
+        # 2. Negative case B: Foreign/unowned explicit order O-90002 (belongs to another customer)
+        calls_foreign = []
+        def exec_foreign(name, args):
+            calls_foreign.append((name, args))
+            if name == "search_knowledge":
+                return relevant_kb_result
+            if name == "get_order":
+                # BoundTools.execute('get_order') scopes by session customer_id and raises 404 on foreign order
+                raise ApiError(404, "order_not_found", "Đơn hàng thuộc tài khoản khác.")
+            return {}
+
+        state_foreign = {
+            "messages": [{"role": "user", "content": "Áo đơn O-90002 bị lỗi đường may và bung chỉ, kiểm tra chính sách bảo hành đổi 1-1"}],
+            "fresh": [],
+            "subagent_history": [],
+            "tool_count": 0,
+            "trace": {},
+        }
+        res_foreign = run_dispute_agent(state_foreign, exec_foreign, MockRelevantKBPromiseGateway("O-90002"))
+        self.assertIn(("get_order", {"order_id": "O-90002"}), calls_foreign)
+        self.assertIsNone(res_foreign.get("action_proposal"))
+        self.assertNotIn("dispute_agent:proposal_ready", res_foreign.get("subagent_history", []))
+        self.assertIn("dispute_agent:listening", res_foreign.get("subagent_history", []))
+        self.assertTrue(res_foreign.get("drop_knowledge_sources"))
+        reply_foreign = res_foreign["messages"][-1]["content"]
+        self.assertIn("không tìm thấy đơn hàng O-90002", reply_foreign)
+        self.assertIn("không thuộc tài khoản", reply_foreign)
+        self.assertNotIn("đổi mới 1-1", reply_foreign.lower())
+        self.assertNotIn("miễn phí", reply_foreign.lower())
+
+        # 3. Positive control: Owned order O-101 + relevant KB evidence
+        calls_owned = []
+        def exec_owned(name, args):
+            calls_owned.append((name, args))
+            if name == "search_knowledge":
+                return relevant_kb_result
+            if name == "get_order":
+                return {"status": "ok", "order": {"id": "O-101", "product_id": "P-101"}}
+            if name == "get_product":
+                return {"status": "ok", "product": {"id": "P-101", "warranty_days": 30}}
+            return {}
+
+        state_owned = {
+            "messages": [{"role": "user", "content": "Áo đơn O-101 bị lỗi đường may và kẹt khóa, kiểm tra chính sách bảo hành đổi 1-1"}],
+            "fresh": [],
+            "subagent_history": [],
+            "tool_count": 0,
+            "trace": {},
+        }
+        res_owned = run_dispute_agent(state_owned, exec_owned, MockRelevantKBPromiseGateway("O-101"))
+        self.assertIn(("get_order", {"order_id": "O-101"}), calls_owned)
+        self.assertIn(("get_product", {"product_id": "P-101"}), calls_owned)
+        self.assertFalse(res_owned.get("drop_knowledge_sources", False))
+        prop_owned = res_owned.get("action_proposal")
+        self.assertIsNotNone(prop_owned)
+        self.assertEqual(prop_owned["action"], "exchange_1to1")
+        self.assertEqual(prop_owned["order_id"], "O-101")
+        self.assertEqual(prop_owned["status"], "pending_staff_approval")
+        reply_owned = res_owned["messages"][-1]["content"]
+        self.assertIn("30 ngày", reply_owned)
+        self.assertIn("Đổi mới 1-1", reply_owned)
+        self.assertIn("[KB:abcdef0123456789abcdef01]", reply_owned)
+
     def test_dispute_size_creates_size_exchange_proposal(self):
         result = self.chat("Tôi thử áo đơn O-101 bị chật quá, muốn đổi sang size L")
         self.assertEqual(result["action"], "reply")

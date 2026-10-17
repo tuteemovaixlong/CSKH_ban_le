@@ -2,7 +2,7 @@
 import threading
 from collections import OrderedDict
 
-from retailops.identity.persistent import PersistentSessions
+from retailops.identity.persistent import PersistentSessions, _clean_tenant_id, _env_tenant_id
 from retailops.storage.pg_repositories import PostgresBusinessStore, PostgresIdentityStore
 from retailops.storage.postgres import check_schema, tenant_schema
 from retailops.core import ApiError
@@ -14,8 +14,7 @@ class PostgresSessions(PersistentSessions):
         self.dsn = dsn
         if data_mode is not None:
             self.data_mode = data_mode
-        import os
-        self.default_tenant_id = default_tenant_id or os.environ.get('RETAILOPS_DEMO_TENANT_ID') or os.environ.get('GOOGLE_AUTH_TENANT_ID')
+        self.default_tenant_id = _clean_tenant_id(default_tenant_id) or _env_tenant_id()
         self.control = PostgresIdentityStore(dsn)
         self.infer, self.api_infer = infer, api_infer
         self.api_daily_limit, self.capacity = api_daily_limit, capacity

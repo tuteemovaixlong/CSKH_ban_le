@@ -57,6 +57,23 @@ def database_settings(env):
     return backend, value
 
 
+def normalize_tenant_id(value):
+    if value is None:
+        return ''
+    text = str(value).strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in ('"', "'"):
+        text = text[1:-1].strip()
+    return text
+
+
+def tenant_selector(env):
+    primary = normalize_tenant_id(env.get('RETAILOPS_DEMO_TENANT_ID', ''))
+    legacy = normalize_tenant_id(env.get('GOOGLE_AUTH_TENANT_ID', ''))
+    if primary and legacy and primary != legacy:
+        raise ValueError('RETAILOPS_DEMO_TENANT_ID and GOOGLE_AUTH_TENANT_ID conflict; set only RETAILOPS_DEMO_TENANT_ID.')
+    return primary or legacy
+
+
 @dataclass(frozen=True)
 class Settings:
     interface: str
@@ -80,6 +97,7 @@ class Settings:
     demo_tenant_id: str = ''
 
     def __post_init__(self):
+        object.__setattr__(self, 'demo_tenant_id', normalize_tenant_id(self.demo_tenant_id))
         if self.interface not in ('public', 'private'):
             raise ValueError('Interface must be public or private.')
         if self.data_mode not in (DATA_MODE, 'persistent-demo', 'live'):
@@ -137,7 +155,7 @@ class Settings:
             ),
             api_daily_turn_limit=integer(env, 'RETAILOPS_API_DAILY_TURN_LIMIT', 20, 1, 10000),
             storage_backend=backend, database_url=database_url,
-            demo_tenant_id=env.get('RETAILOPS_DEMO_TENANT_ID', env.get('GOOGLE_AUTH_TENANT_ID', '')),
+            demo_tenant_id=tenant_selector(env),
         )
 
     def summary(self):

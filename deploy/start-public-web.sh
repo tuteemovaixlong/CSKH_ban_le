@@ -91,8 +91,18 @@ values.setdefault('RETAILOPS_DATA_MODE', 'synthetic-demo')
 assert re.fullmatch(r'[A-Za-z0-9_-]{32,128}', values['RETAILOPS_PUBLIC_INVITE_TOKEN']), 'Invalid public invite token.'
 assert values['RETAILOPS_PUBLIC_CUSTOM_ENABLED'] in ('true','false'), 'Custom flag must be true or false.'
 assert values['RETAILOPS_DATA_MODE'] in ('synthetic-demo','persistent-demo'), 'Invalid data mode.'
-allowed={'RETAILOPS_PUBLIC_HOST','RETAILOPS_PUBLIC_ORIGIN','RETAILOPS_PUBLIC_INVITE_TOKEN','RETAILOPS_PUBLIC_CUSTOM_ENABLED','RETAILOPS_DATA_MODE'}
-assert set(values) == allowed, 'public.env contains unsupported settings. Put API settings in api.env.'
+required={'RETAILOPS_PUBLIC_HOST','RETAILOPS_PUBLIC_ORIGIN','RETAILOPS_PUBLIC_INVITE_TOKEN','RETAILOPS_PUBLIC_CUSTOM_ENABLED','RETAILOPS_DATA_MODE'}
+optional={'RETAILOPS_DEMO_TENANT_ID','GOOGLE_AUTH_TENANT_ID'}
+assert required <= set(values) <= (required | optional), 'public.env contains unsupported settings. Put API settings in api.env.'
+for key in optional:
+    if key in values:
+        tid = values[key].strip()
+        if len(tid) >= 2 and tid[0] == tid[-1] and tid[0] in ('"', "'"):
+            tid = tid[1:-1].strip()
+        assert not tid or (re.fullmatch(r'[A-Za-z0-9_-]{1,64}', tid) and not tid.lower().startswith(('e2e-','smoke-','synthetic-'))), f'Invalid {key} in public.env.'
+        values[key] = tid
+if values.get('RETAILOPS_DEMO_TENANT_ID') and values.get('GOOGLE_AUTH_TENANT_ID'):
+    assert values['RETAILOPS_DEMO_TENANT_ID'] == values['GOOGLE_AUTH_TENANT_ID'], 'Conflicting tenant selectors in public.env.'
 Path(destination).write_text(''.join(key+'='+value+'\n' for key,value in values.items()))
 PY
 if [[ -f public.env ]]; then
