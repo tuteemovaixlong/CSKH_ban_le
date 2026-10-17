@@ -1379,26 +1379,26 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         self.assertIn('bộ xếp hình gỗ', [a.lower() for a in p604.get('aliases', [])])
 
         store_a.add_product({
-            'id': 'P-PG-NULL-STOCK',
+            'id': 'P-9605',
             'name': 'SP PG Null Stock',
             'category': 'Phụ kiện',
             'price': None,
             'stock': None,
             'variants': ['Đỏ · Size S', 'Xanh · Size M'],
         })
-        var_null = store_a.get_variant_stock('P-PG-NULL-STOCK', 'S', 'Đỏ')
+        var_null = store_a.get_variant_stock('P-9605', 'S', 'Đỏ')
         self.assertIsNone(var_null.stock)
         self.assertEqual(var_null.status, 'stock_unknown')
 
         store_a.add_product({
-            'id': 'P-PG-ZERO-STOCK',
+            'id': 'P-9606',
             'name': 'SP PG Zero Stock',
             'category': 'Phụ kiện',
             'price': 99000,
             'stock': 0,
             'variants': ['Đỏ · Size S', 'Xanh · Size M'],
         })
-        var_zero = store_a.get_variant_stock('P-PG-ZERO-STOCK', 'S', 'Đỏ')
+        var_zero = store_a.get_variant_stock('P-9606', 'S', 'Đỏ')
         self.assertEqual(var_zero.stock, 0)
         self.assertEqual(var_zero.status, 'ok')
 
