@@ -189,11 +189,13 @@ function collectText(node) {
   await run('loadAdminAccounts()');
   assert.equal(get('admin-accounts-tbody').children.length, 1);
   assert.ok(collectText(get('admin-accounts-tbody').children[0]).includes('m_cust_1'));
+  assert.ok(collectText(get('admin-accounts-tbody').children[0]).includes('2026-10-19T00:00:00Z'));
 
   await run('inspectAdminAccount("m_cust_1")');
   assert.equal(get('admin-account-detail-panel').hidden, false);
   assert.ok(get('admin-selected-account-title').textContent.includes('m_cust_1'));
   assert.equal(get('admin-selected-account-status').textContent, 'active');
+  assert.ok(get('admin-selected-account-meta').textContent.includes('2026-10-19T00:00:00Z'));
 
   // Unconfirmed action fails closed in UI without sending POST
   get('admin-action-confirm').checked = false;
@@ -203,38 +205,57 @@ function collectText(node) {
   assert.equal(requests.length, reqBeforeUnconfirmed);
   assert.equal(get('admin-governance-error').hidden, false);
 
-  // Confirmed suspend -> reactivate -> revoke-sessions -> quota override -> audit log refresh
+  // Confirmed suspend -> reactivate -> revoke-sessions -> quota override -> clear quota override -> audit log refresh
   get('admin-action-confirm').checked = true;
   await run('submitAdminAccountAction("suspend")');
+  assert.equal(get('admin-action-confirm').checked, false);
   assert.equal(get('admin-selected-account-status').textContent, 'suspended');
   assert.ok(collectText(get('admin-audit-log-tbody')).includes('suspend_account'));
 
+  get('admin-action-confirm').checked = true;
   get('admin-action-reason').value = 'Kích hoạt lại tài khoản';
   await run('submitAdminAccountAction("reactivate")');
   assert.equal(get('admin-selected-account-status').textContent, 'active');
 
+  get('admin-action-confirm').checked = true;
   get('admin-action-reason').value = 'Thu hồi phiên đăng nhập';
   await run('submitAdminAccountAction("revoke-sessions")');
   assert.ok(collectText(get('admin-audit-log-tbody')).includes('revoke_sessions'));
 
+  get('admin-action-confirm').checked = true;
   get('admin-action-reason').value = 'Tăng hạn mức API';
   get('admin-quota-limit').value = '50';
   await run('submitAdminAccountAction("quota")');
   assert.ok(collectText(get('admin-selected-account-meta')).includes('3/50 (override)'));
   assert.ok(collectText(get('admin-audit-log-tbody')).includes('set_quota_override'));
 
+  // Clear quota override by leaving #admin-quota-limit empty (R4.4)
+  get('admin-action-confirm').checked = true;
+  get('admin-action-reason').value = 'Xóa ghi đè hạn mức về mặc định';
+  get('admin-quota-limit').value = '';
+  await run('submitAdminAccountAction("quota")');
+  assert.ok(collectText(get('admin-selected-account-meta')).includes('3/20'));
+  assert.ok(!collectText(get('admin-selected-account-meta')).includes('(override)'));
+
   // Error handling (403/400/404) surfaces cleanly in #admin-governance-error
   forceAdminError = { status: 403, error: 'tenant_scope_denied', message: 'Quản lý cửa hàng chỉ được phép thao tác trên tài khoản thuộc cửa hàng của mình.' };
+  get('admin-action-confirm').checked = true;
   await run('submitAdminAccountAction("suspend")');
   assert.equal(get('admin-governance-error').hidden, false);
   assert.ok(get('admin-governance-error').textContent.includes('cửa hàng của mình'));
   forceAdminError = null;
 
-  // Platform admin has cross-tenant selector unlocked
+  // Platform admin has cross-tenant selector unlocked; changing tenant clears selected account and blocks stale mutation (R4.2)
   mockSessionRole = 'platform_admin';
   await run('openSession()');
   assert.equal(get('admin-tenant-id-input').readOnly, false);
   assert.ok(get('admin-governance-scope-badge').textContent.includes('PLATFORM_ADMIN'));
+  await run('inspectAdminAccount("m_cust_1")');
+  assert.equal(run('selectedAdminMembershipId'), 'm_cust_1');
+  get('admin-tenant-id-input').value = 'tenant_b';
+  get('admin-tenant-id-input').oninput();
+  assert.equal(run('selectedAdminMembershipId'), null);
+  assert.equal(get('admin-account-detail-panel').hidden, true);
 
   await get('logout').onclick();
   assert.equal(authenticated,false);assert.equal(reloaded,true);

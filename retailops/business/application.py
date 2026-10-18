@@ -267,12 +267,22 @@ class Application:
                     self.quota_store.reserve_api_attempt(self.api_daily_limit)
                     reserved = True
             from retailops.guardrails.topic_filter import (
+                enforce_final_answer_grounding,
                 is_read_only_lookup_intent,
                 sanitize_output_against_canary_leak,
+                sanitize_structured_payload,
             )
             read_only_lookup = is_read_only_lookup_intent(text)
-            bound = BoundTools(self.store, self.catalog, customer, snapshot, identity,
-                               can_cancel=(CANCEL in self.permissions and not read_only_lookup))
+            bound = BoundTools(
+                self.store,
+                self.catalog,
+                customer,
+                snapshot,
+                identity,
+                can_cancel=(CANCEL in self.permissions and not read_only_lookup),
+                read_only=read_only_lookup,
+                user_text=text,
+            )
 
             tool_execution_count = 0
             tools_called_in_turn = []
@@ -352,41 +362,49 @@ class Application:
 
             if read_only_lookup:
                 bound.cancel_order = None
+                bound.human_support = None
                 answer.pop('action_proposal', None)
+                answer.pop('requires_human', None)
+
+            grounded_msg = enforce_final_answer_grounding(
+                text,
+                answer.get('message', ''),
+                messages=answer.get('messages'),
+                bound=bound,
+                catalog=getattr(self.catalog, 'products', None),
+            )
+            answer['message'] = grounded_msg
 
             leaked, safe_msg = sanitize_output_against_canary_leak(text, answer.get('message', ''))
             if leaked:
                 answer['message'] = safe_msg
                 bound.cancel_order = None
                 answer.pop('action_proposal', None)
+
             if isinstance(answer.get('messages'), list):
+                _, sanitized_msgs = sanitize_structured_payload(answer['messages'], user_text=text)
+                answer['messages'] = sanitized_msgs
                 for idx in range(len(answer['messages']) - 1, -1, -1):
                     msg_item = answer['messages'][idx]
                     if isinstance(msg_item, dict) and msg_item.get('role') == 'assistant':
-                        if idx == len(answer['messages']) - 1 or not msg_item.get('tool_calls'):
-                            if leaked:
-                                msg_item['content'] = answer['message']
-                            else:
-                                item_leaked, item_safe = sanitize_output_against_canary_leak(
-                                    text, str(msg_item.get('content') or '')
-                                )
-                                if item_leaked:
-                                    msg_item['content'] = item_safe
+                        if idx == len(answer['messages']) - 1:
+                            msg_item['content'] = answer['message']
+                            break
+
             if isinstance(answer.get('trace'), dict):
+                _, sanitized_trace = sanitize_structured_payload(
+                    answer['trace'],
+                    user_text=text,
+                    preserve_keys=('reasoning', 'thought', '_reasoning'),
+                )
+                answer['trace'] = sanitized_trace
                 for final_key in ('final_reply', 'assistant_message', 'final_message'):
                     if final_key in answer['trace'] and isinstance(answer['trace'][final_key], str):
                         if leaked:
                             answer['trace'][final_key] = answer['message']
-                        else:
-                            k_leaked, k_safe = sanitize_output_against_canary_leak(text, answer['trace'][final_key])
-                            if k_leaked:
-                                answer['trace'][final_key] = k_safe
-                if isinstance(answer['trace'].get('steps'), list):
-                    for st in answer['trace']['steps']:
-                        if isinstance(st, dict) and st.get('action') == 'final_answer' and isinstance(st.get('summary'), str):
-                            st_leaked, st_safe = sanitize_output_against_canary_leak(text, st['summary'])
-                            if st_leaked:
-                                st['summary'] = st_safe
+
+            if getattr(bound, 'human_support', None):
+                _, bound.human_support = sanitize_structured_payload(bound.human_support, user_text=text)
 
             # N01: Rollback cancel_order and mutated context if target order is invalid, unverified, or mismatched
             if bound.cancel_order:

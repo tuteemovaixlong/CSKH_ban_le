@@ -14,6 +14,11 @@ from datetime import datetime, timedelta, timezone
 from contextlib import contextmanager
 from pathlib import Path
 from retailops.core import ApiError, REASONS, fields, require
+from retailops.guardrails.topic_filter import (
+    SAFE_REFUSAL_MESSAGE,
+    contains_canary_or_secret,
+    sanitize_structured_payload,
+)
 from retailops.schema import migrate
 from retailops.business.schema import initialize as initialize_schema, ensure_import_tables
 
@@ -236,10 +241,49 @@ class BusinessStore:
 
     def seed_demo_sample_orders(self, customer_id, db=None):
         def _do_seed_orders(conn):
-            existing = conn.execute("SELECT 1 FROM orders WHERE customer_id=? LIMIT 1", (customer_id,)).fetchone()
-            if existing:
+            existing_rows = conn.execute(
+                "SELECT id, product_id, name FROM orders WHERE customer_id=? ORDER BY id ASC",
+                (customer_id,),
+            ).fetchall()
+            if existing_rows:
+                if len(existing_rows) == 3:
+                    by_pid = {str(r["product_id"]): dict(r) for r in existing_rows}
+                    p601 = by_pid.get("P-601")
+                    p602 = by_pid.get("P-602")
+                    p603 = by_pid.get("P-603")
+                    if (
+                        p601
+                        and p602
+                        and p603
+                        and re.fullmatch(r"O-[78]\d{5}", str(p601["id"]))
+                        and re.fullmatch(r"O-[78]\d{5}", str(p602["id"]))
+                        and re.fullmatch(r"O-[78]\d{5}", str(p603["id"]))
+                        and int(str(p602["id"])[2:]) == int(str(p601["id"])[2:]) + 1
+                        and int(str(p603["id"])[2:]) == int(str(p601["id"])[2:]) + 2
+                        and p602.get("name") == "Quần tây ống đứng tôn dáng"
+                    ):
+                        p602_oid = str(p602["id"])
+                        imported = conn.execute(
+                            "SELECT 1 FROM imported_events WHERE order_id=? LIMIT 1",
+                            (p602_oid,),
+                        ).fetchone()
+                        has_prov = conn.execute(
+                            "SELECT 1 FROM business_events WHERE customer_id=? AND order_id=? AND kind='demo_sample_fixture_seeded' LIMIT 1",
+                            (customer_id, p602_oid),
+                        ).fetchone()
+                        if imported is None and has_prov is None:
+                            self.log(
+                                conn,
+                                customer_id,
+                                "demo_sample_fixture_seeded",
+                                p602_oid,
+                                fixture="google_demo_sample_v1",
+                                product_id="P-602",
+                                canonical_name="Quần tây ống đứng tôn dáng",
+                                display_name="Bộ xếp hình gỗ cho bé",
+                            )
                 return []
-            seed_base = 700000 + (abs(hash(customer_id)) % 200000)
+            seed_base = 700000 + (abs(hash(customer_id)) % 199990)
             p602_oid = f"O-{seed_base + 2}"
             sample_orders = [
                 (f"O-{seed_base + 1}", customer_id, "Áo sơ mi lụa công sở", "Trắng / M", 450000, "pending", 1, None, "P-601"),
@@ -726,6 +770,10 @@ class BusinessStore:
         if row:
             require(row['input_hash'] == digest, 409, 'request_conflict', 'Mã yêu cầu đã dùng cho nội dung khác.')
             result = json.loads(row['result'])
+            if isinstance(result, dict):
+                if isinstance(result.get('message'), str) and contains_canary_or_secret(result['message']):
+                    result['message'] = SAFE_REFUSAL_MESSAGE
+                _, result = sanitize_structured_payload(result, preserve_reasoning=True)
             result['turn_id'] = row['id'] if 'id' in row else row[0]
             # The answer is explicitly an old result. Never reopen a stale cancel card.
             return {**result, 'replayed': True, 'action': 'reply'}
@@ -744,7 +792,7 @@ class BusinessStore:
         turns, characters, count = [], 0, 0
         preserved_recent_image = False
         for row in rows:
-            raw = json.loads(row['messages'])
+            _, raw = sanitize_structured_payload(json.loads(row['messages']), preserve_reasoning=True)
             clean_turn = []
             for m in raw:
                 role = m.get('role')
@@ -851,6 +899,8 @@ class BusinessStore:
         comment = body.get('comment')
         if comment is not None:
             require(isinstance(comment, str) and len(comment) <= 1000, 400, 'comment_too_long', 'Nhận xét tối đa 1000 ký tự.')
+            if contains_canary_or_secret(comment):
+                _, comment = sanitize_structured_payload(comment, preserve_reasoning=False)
 
         now = time.time()
         with self.connection(write=True) as db:
@@ -886,7 +936,13 @@ class BusinessStore:
             if clauses:
                 query += ' WHERE ' + ' AND '.join(clauses)
             query += ' ORDER BY id DESC'
-            return [dict(r) for r in db.execute(query, tuple(params))]
+            out = []
+            for r in db.execute(query, tuple(params)):
+                d = dict(r)
+                if isinstance(d.get('comment'), str) and contains_canary_or_secret(d['comment']):
+                    _, d['comment'] = sanitize_structured_payload(d['comment'], preserve_reasoning=False)
+                out.append(d)
+            return out
 
     def escalations(self, limit=20):
         with self.connection() as db:
@@ -899,7 +955,13 @@ class BusinessStore:
                 WHERE f.feedback_type = 'human_handoff'
                 ORDER BY f.id DESC LIMIT ?
             ''', (limit,)).fetchall()
-        return [dict(r) for r in rows]
+        out = []
+        for r in rows:
+            d = dict(r)
+            if isinstance(d.get('comment'), str) and contains_canary_or_secret(d['comment']):
+                _, d['comment'] = sanitize_structured_payload(d['comment'], preserve_reasoning=False)
+            out.append(d)
+        return out
 
     def list_conversations(self, customer, limit=20):
         with self.connection() as db:
@@ -943,6 +1005,8 @@ class BusinessStore:
                                 snippet = res['message'].strip()[:80]
                         except Exception:
                             pass
+                if snippet and contains_canary_or_secret(snippet):
+                    snippet = SAFE_REFUSAL_MESSAGE[:80]
 
                 handoff = db.execute('''
                     SELECT reason_code FROM conversation_feedback
@@ -972,10 +1036,43 @@ class BusinessStore:
                 SELECT * FROM conversation_feedback WHERE conversation_id=?
                 ORDER BY id ASC
             ''', (cid,)).fetchall()
+        clean_turns = []
+        for t in turns:
+            td = dict(t)
+            if isinstance(td.get('messages'), str):
+                try:
+                    parsed_msgs = json.loads(td['messages'])
+                    _, cleaned_msgs = sanitize_structured_payload(parsed_msgs, preserve_reasoning=True)
+                    td['messages'] = json.dumps(cleaned_msgs, ensure_ascii=False)
+                except Exception:
+                    _, td['messages'] = sanitize_structured_payload(td['messages'], preserve_reasoning=True)
+            elif isinstance(td.get('messages'), (list, dict)):
+                _, td['messages'] = sanitize_structured_payload(td['messages'], preserve_reasoning=True)
+            if isinstance(td.get('result'), str):
+                try:
+                    parsed_res = json.loads(td['result'])
+                    if isinstance(parsed_res, dict) and isinstance(parsed_res.get('message'), str) and contains_canary_or_secret(parsed_res['message']):
+                        parsed_res['message'] = SAFE_REFUSAL_MESSAGE
+                    _, cleaned_res = sanitize_structured_payload(parsed_res, preserve_reasoning=True)
+                    td['result'] = json.dumps(cleaned_res, ensure_ascii=False)
+                except Exception:
+                    _, td['result'] = sanitize_structured_payload(td['result'], preserve_reasoning=True)
+            elif isinstance(td.get('result'), dict):
+                parsed_res = dict(td['result'])
+                if isinstance(parsed_res.get('message'), str) and contains_canary_or_secret(parsed_res['message']):
+                    parsed_res['message'] = SAFE_REFUSAL_MESSAGE
+                _, td['result'] = sanitize_structured_payload(parsed_res, preserve_reasoning=True)
+            clean_turns.append(td)
+        clean_feedbacks = []
+        for f in feedbacks:
+            fd = dict(f)
+            if isinstance(fd.get('comment'), str) and contains_canary_or_secret(fd['comment']):
+                _, fd['comment'] = sanitize_structured_payload(fd['comment'], preserve_reasoning=False)
+            clean_feedbacks.append(fd)
         return {
             'conversation': dict(conv) if conv else None,
-            'turns': [dict(t) for t in turns],
-            'feedbacks': [dict(f) for f in feedbacks]
+            'turns': clean_turns,
+            'feedbacks': clean_feedbacks
         }
 
     def staff_reply(self, customer_id, cid, staff_name, message):

@@ -346,7 +346,9 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             mid, act_kind = m_admin_act[1], m_admin_act[2]
             corr_id = (body.get('correlation_id') if isinstance(body, dict) else None) or idempotency_key
             raw_reason = (body.get('reason') if isinstance(body, dict) else None) or act_kind
-            # Enforce permission/scope check before field validation so spoofed/unauthorized attempts always log 'denied' and return 403
+            qparams = _parse_query_dict(query, {'tenant_id'}) if query else {}
+            expected_tid = (body.get('tenant_id') if isinstance(body, dict) else None) or qparams.get('tenant_id')
+            # Enforce permission/scope check before field validation so spoofed/unauthorized attempts always log 'denied' and return 403/409
             control._load_target_for_admin_mutation(
                 actor, mid,
                 'set_quota_override' if act_kind == 'quota' else (
@@ -354,29 +356,30 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 ),
                 str(raw_reason),
                 correlation_id=corr_id,
+                expected_tenant_id=expected_tid,
             )
             require(isinstance(body, dict), 400, 'invalid_body', 'Yêu cầu phải là đối tượng JSON.')
             if act_kind in ('suspend', 'reactivate', 'revoke-sessions'):
                 require(
-                    {'reason'}.issubset(set(body)) and set(body).issubset({'reason', 'correlation_id'}),
+                    {'reason'}.issubset(set(body)) and set(body).issubset({'reason', 'correlation_id', 'tenant_id'}),
                     400,
                     'invalid_fields',
                     'Các trường của yêu cầu quản trị không hợp lệ.',
                 )
                 if act_kind == 'suspend':
                     return (200, control.admin_suspend_account(
-                        actor, mid, reason=body['reason'], correlation_id=corr_id, default_limit=app.api_daily_limit
+                        actor, mid, reason=body['reason'], correlation_id=corr_id, default_limit=app.api_daily_limit, expected_tenant_id=expected_tid
                     ))
                 if act_kind == 'reactivate':
                     return (200, control.admin_reactivate_account(
-                        actor, mid, reason=body['reason'], correlation_id=corr_id, default_limit=app.api_daily_limit
+                        actor, mid, reason=body['reason'], correlation_id=corr_id, default_limit=app.api_daily_limit, expected_tenant_id=expected_tid
                     ))
                 return (200, control.admin_revoke_sessions(
-                    actor, mid, reason=body['reason'], correlation_id=corr_id, default_limit=app.api_daily_limit
+                    actor, mid, reason=body['reason'], correlation_id=corr_id, default_limit=app.api_daily_limit, expected_tenant_id=expected_tid
                 ))
             require(
                 {'daily_limit', 'reason'}.issubset(set(body))
-                and set(body).issubset({'daily_limit', 'reason', 'expires_at', 'effective_at', 'correlation_id'}),
+                and set(body).issubset({'daily_limit', 'reason', 'expires_at', 'effective_at', 'correlation_id', 'tenant_id'}),
                 400,
                 'invalid_fields',
                 'Các trường cập nhật hạn mức không hợp lệ.',
@@ -390,6 +393,7 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 effective_at=body.get('effective_at'),
                 correlation_id=corr_id,
                 default_limit=app.api_daily_limit,
+                expected_tenant_id=expected_tid,
             ))
         if path == "/api/chat":
             try:

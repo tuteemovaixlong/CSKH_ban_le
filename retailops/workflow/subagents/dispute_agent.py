@@ -232,6 +232,8 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
         trace["model_calls"] = trace.get("model_calls", 0) + 1
         trace["prompt_tokens"] = trace.get("prompt_tokens", 0) + (response.get("prompt_eval_count") or 0)
         trace["generated_tokens"] = trace.get("generated_tokens", 0) + (response.get("eval_count") or 0)
+        if response.get("reasoning"):
+            trace["reasoning"] = str(response["reasoning"])
         message = response.get("message", {})
         calls = message.get("tool_calls", [])
 
@@ -355,9 +357,13 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
                     trace["model_calls"] = trace.get("model_calls", 0) + 1
                     trace["prompt_tokens"] = trace.get("prompt_tokens", 0) + (second_resp.get("prompt_eval_count") or 0)
                     trace["generated_tokens"] = trace.get("generated_tokens", 0) + (second_resp.get("eval_count") or 0)
+                    if second_resp.get("reasoning"):
+                        trace["reasoning"] = str(second_resp["reasoning"])
                     second_msg = second_resp.get("message", {})
                     if second_msg.get("content"):
                         final_content = second_msg.get("content")
+                except (AgentError, ApiError, TimeoutError):
+                    raise
                 except Exception:
                     pass
 
@@ -816,7 +822,9 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
     except Exception as exc:
         if type(exc).__name__ == "AgentError":
             raise
-        if isinstance(exc, (TimeoutError, ConnectionError)):
+        if isinstance(exc, TimeoutError):
+            raise AgentError('agent_timeout', 'Model đã vượt thời gian xử lý. Chat chưa thay đổi đơn.', trace) from exc
+        if isinstance(exc, ConnectionError):
             raise ApiError(503, 'service_unavailable', 'Dịch vụ tạm thời gián đoạn.') from exc
         raise
 

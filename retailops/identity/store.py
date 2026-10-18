@@ -1146,15 +1146,25 @@ class IdentityStore:
         require(type(limit) is int and 1 <= limit <= 200, 400, 'invalid_limit', 'Giới hạn danh sách không hợp lệ.')
         q_clean = str(query).strip().lower() if query else ''
         with self.connection() as db:
-            rows = db.execute(
-                '''SELECT m.*, p.name AS principal_name
-                   FROM memberships m
-                   JOIN principals p ON p.id = m.principal_id
-                   WHERE m.tenant_id = ?
-                   ORDER BY m.id ASC
-                   LIMIT ?''',
-                (effective_tid, limit),
-            ).fetchall()
+            if q_clean:
+                rows = db.execute(
+                    '''SELECT m.*, p.name AS principal_name
+                       FROM memberships m
+                       JOIN principals p ON p.id = m.principal_id
+                       WHERE m.tenant_id = ?
+                       ORDER BY m.id ASC''',
+                    (effective_tid,),
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    '''SELECT m.*, p.name AS principal_name
+                       FROM memberships m
+                       JOIN principals p ON p.id = m.principal_id
+                       WHERE m.tenant_id = ?
+                       ORDER BY m.id ASC
+                       LIMIT ?''',
+                    (effective_tid, limit),
+                ).fetchall()
             accounts = []
             for row in rows:
                 if q_clean:
@@ -1162,6 +1172,8 @@ class IdentityStore:
                     if q_clean not in haystack:
                         continue
                 accounts.append(self._build_account_view(db, row, default_limit=default_limit))
+                if len(accounts) >= limit:
+                    break
         return {'tenant_id': effective_tid, 'accounts': accounts, 'count': len(accounts)}
 
     def admin_get_account(self, actor, membership_id, *, tenant_id=None, default_limit=20, correlation_id=None):
@@ -1209,7 +1221,7 @@ class IdentityStore:
         with self.connection() as db:
             return {'account': self._build_account_view(db, row, default_limit=default_limit)}
 
-    def _load_target_for_admin_mutation(self, actor, membership_id, action, reason, correlation_id=None):
+    def _load_target_for_admin_mutation(self, actor, membership_id, action, reason, correlation_id=None, expected_tenant_id=None):
         mid = str(membership_id or '').strip()
         require(bool(mid), 400, 'invalid_membership_id', 'Mã tài khoản không hợp lệ.')
         with self.connection() as db:
@@ -1220,11 +1232,12 @@ class IdentityStore:
                    WHERE m.id = ?''',
                 (mid,),
             ).fetchone()
+        exp_tid = str(expected_tenant_id).strip() if (expected_tenant_id is not None and str(expected_tenant_id).strip()) else ''
         if row is None:
             actor_tid = str((actor or {}).get('tenant_id') or '').strip()
             self._check_admin_scope(
                 actor,
-                actor_tid or 'unknown',
+                exp_tid or actor_tid or 'unknown',
                 action,
                 target_membership_id=mid,
                 reason=reason or action,
@@ -1239,6 +1252,26 @@ class IdentityStore:
             reason=reason or action,
             correlation_id=correlation_id,
         )
+        if exp_tid and exp_tid != row['tenant_id']:
+            with self.connection(write=True) as db:
+                self.record_admin_audit(
+                    db,
+                    actor_principal_id=(actor or {}).get('principal_id'),
+                    actor_role=(actor or {}).get('role'),
+                    tenant_id=exp_tid,
+                    target_membership_id=mid,
+                    action=action,
+                    outcome='denied',
+                    before_state={'target_tenant_id': row['tenant_id']},
+                    after_state={
+                        'error': 'tenant_scope_mismatch',
+                        'expected_tenant_id': exp_tid,
+                        'actual_tenant_id': row['tenant_id'],
+                    },
+                    reason=reason or action,
+                    correlation_id=correlation_id,
+                )
+            raise ApiError(409, 'tenant_scope_mismatch', 'Tài khoản mục tiêu không thuộc cửa hàng (tenant_id) đang chọn.')
         actor_role = str((actor or {}).get('role') or '')
         if actor_role == 'manager' and row['role'] == 'platform_admin':
             with self.connection(write=True) as db:
@@ -1258,8 +1291,15 @@ class IdentityStore:
             raise ApiError(403, 'permission_denied', 'Quản lý cửa hàng không thể thao tác trên tài khoản quản trị nền tảng.')
         return row
 
-    def admin_suspend_account(self, actor, membership_id, *, reason, correlation_id=None, default_limit=20):
-        row = self._load_target_for_admin_mutation(actor, membership_id, 'suspend_account', str(reason or 'suspend_account'), correlation_id=correlation_id)
+    def admin_suspend_account(self, actor, membership_id, *, reason, correlation_id=None, default_limit=20, expected_tenant_id=None):
+        row = self._load_target_for_admin_mutation(
+            actor,
+            membership_id,
+            'suspend_account',
+            str(reason or 'suspend_account'),
+            correlation_id=correlation_id,
+            expected_tenant_id=expected_tenant_id,
+        )
         reason_clean = self._validate_admin_reason(reason)
         mid = row['id']
         actor_dict = actor if isinstance(actor, dict) else {}
@@ -1328,8 +1368,15 @@ class IdentityStore:
             view = self._build_account_view(db, updated, default_limit=default_limit, now_ts=now_ts)
         return {'status': 'ok', 'account': view, 'audit_correlation_id': audit['correlation_id']}
 
-    def admin_reactivate_account(self, actor, membership_id, *, reason, correlation_id=None, default_limit=20):
-        row = self._load_target_for_admin_mutation(actor, membership_id, 'reactivate_account', str(reason or 'reactivate_account'), correlation_id=correlation_id)
+    def admin_reactivate_account(self, actor, membership_id, *, reason, correlation_id=None, default_limit=20, expected_tenant_id=None):
+        row = self._load_target_for_admin_mutation(
+            actor,
+            membership_id,
+            'reactivate_account',
+            str(reason or 'reactivate_account'),
+            correlation_id=correlation_id,
+            expected_tenant_id=expected_tenant_id,
+        )
         reason_clean = self._validate_admin_reason(reason)
         mid = row['id']
         actor_dict = actor if isinstance(actor, dict) else {}
@@ -1385,8 +1432,15 @@ class IdentityStore:
             view = self._build_account_view(db, updated, default_limit=default_limit, now_ts=now_ts)
         return {'status': 'ok', 'account': view, 'audit_correlation_id': audit['correlation_id']}
 
-    def admin_revoke_sessions(self, actor, membership_id, *, reason, correlation_id=None, default_limit=20):
-        row = self._load_target_for_admin_mutation(actor, membership_id, 'revoke_sessions', str(reason or 'revoke_sessions'), correlation_id=correlation_id)
+    def admin_revoke_sessions(self, actor, membership_id, *, reason, correlation_id=None, default_limit=20, expected_tenant_id=None):
+        row = self._load_target_for_admin_mutation(
+            actor,
+            membership_id,
+            'revoke_sessions',
+            str(reason or 'revoke_sessions'),
+            correlation_id=correlation_id,
+            expected_tenant_id=expected_tenant_id,
+        )
         reason_clean = self._validate_admin_reason(reason)
         mid = row['id']
         actor_dict = actor if isinstance(actor, dict) else {}
@@ -1456,20 +1510,29 @@ class IdentityStore:
         effective_at=None,
         correlation_id=None,
         default_limit=20,
+        expected_tenant_id=None,
         _now=None,
     ):
-        row = self._load_target_for_admin_mutation(actor, membership_id, 'set_quota_override', str(reason or 'set_quota_override'), correlation_id=correlation_id)
-        reason_clean = self._validate_admin_reason(reason)
-        require(
-            type(daily_limit) is int and 1 <= daily_limit <= 10000,
-            400,
-            'invalid_quota_limit',
-            'Hạn mức ngày phải là số nguyên từ 1 đến 10000.',
+        row = self._load_target_for_admin_mutation(
+            actor,
+            membership_id,
+            'set_quota_override',
+            str(reason or 'set_quota_override'),
+            correlation_id=correlation_id,
+            expected_tenant_id=expected_tenant_id,
         )
+        reason_clean = self._validate_admin_reason(reason)
+        if daily_limit is not None:
+            require(
+                type(daily_limit) is int and 1 <= daily_limit <= 10000,
+                400,
+                'invalid_quota_limit',
+                'Hạn mức ngày phải là số nguyên từ 1 đến 10000 (hoặc null để xóa ghi đè).',
+            )
         now_ts = float(_now if _now is not None else time.time())
         eff_ts = float(effective_at) if effective_at is not None else now_ts
         exp_ts = None
-        if expires_at is not None:
+        if daily_limit is not None and expires_at is not None:
             require(
                 isinstance(expires_at, (int, float)) and not isinstance(expires_at, bool) and float(expires_at) > eff_ts,
                 400,
@@ -1499,31 +1562,40 @@ class IdentityStore:
                 'default_limit': default_limit,
                 'override': dict(prev_ov) if prev_ov is not None else None,
             }
-            db.execute(
-                '''INSERT INTO membership_quota_overrides (
-                       membership_id, daily_limit, effective_at, expires_at, reason, updated_by, updated_at
-                   ) VALUES (?,?,?,?,?,?,?)
-                   ON CONFLICT(membership_id) DO UPDATE SET
-                       daily_limit=excluded.daily_limit,
-                       effective_at=excluded.effective_at,
-                       expires_at=excluded.expires_at,
-                       reason=excluded.reason,
-                       updated_by=excluded.updated_by,
-                       updated_at=excluded.updated_at''',
-                (mid, daily_limit, eff_ts, exp_ts, reason_clean, actor_pid, now_ts),
-            )
-            self.event(db, 'quota_override_set', cur['tenant_id'], mid)
-            after_state = {
-                'default_limit': default_limit,
-                'override': {
-                    'daily_limit': daily_limit,
-                    'effective_at': eff_ts,
-                    'expires_at': exp_ts,
-                    'reason': reason_clean,
-                    'updated_by': actor_pid,
-                    'updated_at': now_ts,
-                },
-            }
+            if daily_limit is None:
+                db.execute('DELETE FROM membership_quota_overrides WHERE membership_id=?', (mid,))
+                self.event(db, 'quota_override_cleared', cur['tenant_id'], mid)
+                after_state = {
+                    'default_limit': default_limit,
+                    'override': None,
+                    'cleared': True,
+                }
+            else:
+                db.execute(
+                    '''INSERT INTO membership_quota_overrides (
+                           membership_id, daily_limit, effective_at, expires_at, reason, updated_by, updated_at
+                       ) VALUES (?,?,?,?,?,?,?)
+                       ON CONFLICT(membership_id) DO UPDATE SET
+                           daily_limit=excluded.daily_limit,
+                           effective_at=excluded.effective_at,
+                           expires_at=excluded.expires_at,
+                           reason=excluded.reason,
+                           updated_by=excluded.updated_by,
+                           updated_at=excluded.updated_at''',
+                    (mid, daily_limit, eff_ts, exp_ts, reason_clean, actor_pid, now_ts),
+                )
+                self.event(db, 'quota_override_set', cur['tenant_id'], mid)
+                after_state = {
+                    'default_limit': default_limit,
+                    'override': {
+                        'daily_limit': daily_limit,
+                        'effective_at': eff_ts,
+                        'expires_at': exp_ts,
+                        'reason': reason_clean,
+                        'updated_by': actor_pid,
+                        'updated_at': now_ts,
+                    },
+                }
             audit = self.record_admin_audit(
                 db,
                 actor_principal_id=actor_pid,

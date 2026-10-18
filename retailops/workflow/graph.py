@@ -152,7 +152,8 @@ def run_multiagent(gateway: Any, text: str, history: list, execute: Any, identit
     final_state["trace"]["supervisor_intent"] = final_state.get("intent")
     final_state["trace"]["subagent_history"] = final_state.get("subagent_history")
 
-    if final_state.get("requires_human"):
+    from retailops.guardrails.topic_filter import is_read_only_lookup_intent
+    if final_state.get("requires_human") and not is_read_only_lookup_intent(text):
         human_reason = final_state.get("human_reason") or "Khách hàng yêu cầu hỗ trợ trực tiếp từ nhân viên"
         try:
             execute("request_human_support", {"reason": human_reason})

@@ -119,7 +119,12 @@ def call_model(gateway, messages, allow_tools, deadline, trace, *, allowed_tools
             else:
                 trace['reasoning'] += '\n---\n' + str(step_thought)
     except (AgentError, RuntimeError, ValueError, OSError, KeyError, TypeError) as exc:
-        code = exc.code if isinstance(exc, AgentError) else 'agent_response_failed'
+        if isinstance(exc, AgentError):
+            code = exc.code
+        elif isinstance(exc, TimeoutError):
+            code = 'agent_timeout'
+        else:
+            code = 'agent_response_failed'
         trace['reported_cost_usd'] = None
         trace['usage_incomplete'] = True
         err_entry = {'code': code, 'call': trace['model_calls']}

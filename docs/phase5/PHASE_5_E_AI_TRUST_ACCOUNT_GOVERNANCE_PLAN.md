@@ -1,7 +1,7 @@
 # Phase 5-E Plan — AI Trust & Account Operations Readiness
 
 **Ngày lập:** 2026-10-17
-**Trạng thái (2026-10-18):** CANDIDATE IMPLEMENTED / CHANGES REQUIRED. PR #43 head `7b94f9cd9bfb214fed86831e99cbbd1f69ca2dfb`, CI/Ops 5/5 SUCCESS; [review độc lập](REVIEW_ARGON_P5_E_2026-10-18.md) yêu cầu sửa R1–R6 theo [handoff hiện hành](PHASE_5_E_EXECUTION_HANDOFF.md). Chưa merge/nghiệm thu. Phạm vi và 14 criteria giữ nguyên.
+**Trạng thái (2026-10-18):** READY FOR CODEX RE-REVIEW / CHANGES REQUIRED (overall). PR #43 head `baa70b15731fd82b909c36e0b89cb7d9b41ca342`, base `44540eab516831d5c8232dd80392b8e20c6cd47e`, tested merge ref `d3655b89e165ba09db53ac7ad13e9b4a787cb3fe`; [CI 39099835679](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/39099835679) / [Ops Console 39099835635](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/39099835635) report 5/5 SUCCESS theo metadata. Local P5-E targeted run là 14/14 PASS, 0 skip. [Review độc lập](REVIEW_ARGON_P5_E_2026-10-18.md) vẫn ghi CHANGES REQUIRED theo các finding bounded; candidate đã sẵn sàng cho Codex re-review nhưng chưa merge/nghiệm thu/deploy. Phạm vi và 14 criteria giữ nguyên.
 **Vị trí:** Workstream sau P5-D/PR #42; bounded AI-lane G4 là evidence riêng và vẫn pending. P5-E phải PASS trước P5-F (G5 preflight) và mọi full/performance measurement. P5-K1…K8 và nghĩa của G4–G7 không bị sửa.
 
 ## Mục tiêu
@@ -22,7 +22,7 @@ Không suy ra có SQL injection chỉ từ chuỗi ID độc hại trong prompt;
 
 ## Baseline đã đối chiếu trước implementation (2026-10-17)
 
-Các dòng dưới mô tả baseline đầu vào, không phải phủ nhận candidate mới. Candidate API governance đã có; UI chưa có và còn các blocker trong review 2026-10-18.
+Các dòng dưới mô tả baseline đầu vào, không phải phủ nhận candidate mới. Candidate đã có API/UI governance và targeted checks; các finding bounded còn mở được ghi dưới đây và trong [review](REVIEW_ARGON_P5_E_2026-10-18.md).
 
 - Có quota API hằng ngày theo membership, counter/reservation và endpoint khách xem usage của chính mình; giới hạn ứng dụng đang được cấu hình tập trung. Xem `retailops/account_usage.py`, `retailops/http/routes.py`, `retailops/config.py`.
 - **Chưa có API/giao diện để quản trị hạn mức hoặc trạng thái tài khoản người khác.** CLI operator hỗ trợ một số thao tác bootstrap, không phải control plane self-service.
@@ -30,6 +30,21 @@ Các dòng dưới mô tả baseline đầu vào, không phải phủ nhận can
 - LLM-09 đã chỉ ra provider reasoning có thể được lưu vào trace/conversation và render trong UI. Owner chấp nhận hành vi này trong bản hiện tại; P5-E không sửa/hide CoT. Có thể bổ sung tùy chọn bật/tắt như backlog, không block performance gate.
 - Trong source checkout đang review, `persistent.py` còn seed ba đơn P-601/P-602/P-603; P-604 không được gắn vào đơn mẫu. Catalog P-604 chưa có thuộc tính thương mại đầy đủ. Owner làm rõ rằng yêu cầu hiện tại là **chỉ đổi tên hiển thị của fixture demo** vì lý do cá nhân; không cần đổi giá hay nghiệp vụ. Không đổi `product_id`, giá, trạng thái, biến thể hoặc dữ liệu catalog để giả P-602 thành P-604; không dùng nhãn UI mới làm evidence/tool result. Giữ rõ ranh giới giữa display label demo và dữ liệu sản phẩm/order thực.
 - Tách **lỗi đã tái hiện** khỏi **guard regression**: audit source hiện tại cho thấy P-604 không có variants và `get_variant_stock` trả trạng thái unknown; chưa chứng minh P-604 hiện bị báo tồn kho dương. Tuy nhiên đường seed tổng quát có fallback tạo 5 đơn vị khi variant có nhưng stock null/0; bổ sung regression để không bịa tồn kho cho mọi sản phẩm thiếu dữ liệu. Không ghi nhận “P-604 false stock=10” như lỗi hiện hành nếu không có repro trên candidate merged.
+
+## Kết quả review candidate và bounded findings (2026-10-18)
+
+Candidate `baa70b15731fd82b909c36e0b89cb7d9b41ca342` đã đạt trạng thái **READY FOR CODEX RE-REVIEW**, nhưng overall verdict vẫn **CHANGES REQUIRED**. Metadata CI/Ops 5/5 SUCCESS và local P5-E 14/14 PASS, 0 skip chỉ mô tả các kiểm tra đã chạy; không phải claim merge, deploy hoặc PASS nghiệm thu. Các finding còn lại được giới hạn trong 14 acceptance criteria hiện hành:
+
+- **AI1:** kiểm tra tiếp tool arguments/results và đường replay legacy để bảo đảm canary/prompt không lọt qua bề mặt trung gian.
+- **AI2:** `request_human_support` có side effect khi intent là read-only; cần giữ đúng ranh giới action/confirmation.
+- **AI4:** final answer phải ground vào tool result, kể cả missing/unknown và list truncation.
+- **ADM2:** search phải áp tenant scope trước limit; không để giới hạn kết quả làm thay đổi phạm vi được phép.
+- **ADM3:** tenant selection cũ/stale phải bị từ chối hoặc làm mới trước lifecycle action; không dùng selection đã hết scope.
+- **ADM4:** còn thiếu reset và có mismatch khi clear per-membership override; phải giữ đúng UTC/bounds và trạng thái quota.
+- **DATA1:** xử lý edge của generated-ID regex và giới hạn với legacy order; không gán nhãn display-only thành nguồn sự thật.
+- **R6:** evidence/docs cần map đúng candidate head → base → tested merge ref, CI/Ops metadata, local count/skip và limitations.
+
+Raw CoT vẫn được owner chấp nhận cho bản khóa luận; không thêm gate hoặc biến finding thành tiêu chí mới. Cross-link điều phối: [P5-E review](REVIEW_ARGON_P5_E_2026-10-18.md), [execution handoff](PHASE_5_E_EXECUTION_HANDOFF.md), [acceptance matrix](../03_EVALUATION/ACCEPTANCE_MATRIX.md), [current status](../CURRENT_PROJECT_STATUS.md).
 
 ## Phạm vi
 

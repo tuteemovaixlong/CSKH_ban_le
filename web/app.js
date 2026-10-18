@@ -2368,6 +2368,15 @@ function syncAdminGovernanceVisibility() {
   }
 }
 
+function clearAdminSelectedAccount() {
+  selectedAdminMembershipId = null;
+  selectedAdminAccount = null;
+  const panel = byId('admin-account-detail-panel');
+  if (panel) panel.hidden = true;
+  const confirmCb = byId('admin-action-confirm');
+  if (confirmCb) confirmCb.checked = false;
+}
+
 function buildAdminQueryString(extra = {}) {
   const params = new URLSearchParams();
   const tenantVal = (byId('admin-tenant-id-input')?.value || '').trim();
@@ -2389,10 +2398,17 @@ async function loadAdminAccounts() {
     return;
   }
   const searchQ = (byId('admin-account-search-input')?.value || '').trim();
+  const requestedTenant = (byId('admin-tenant-id-input')?.value || '').trim();
+  if (selectedAdminAccount && requestedTenant && selectedAdminAccount.tenant_id !== requestedTenant) {
+    clearAdminSelectedAccount();
+  }
   try {
     setAdminGovernanceMessage('', '');
     const res = await api('/api/admin/accounts' + buildAdminQueryString({ q: searchQ }));
     adminAccounts = res.accounts || [];
+    if (selectedAdminAccount && res.tenant_id && selectedAdminAccount.tenant_id !== res.tenant_id) {
+      clearAdminSelectedAccount();
+    }
     tbody.replaceChildren();
     if (!adminAccounts.length) {
       const tr = el('tr');
@@ -2407,9 +2423,10 @@ async function loadAdminAccounts() {
       const usedVal = q.used ?? q.attempts_used ?? 0;
       const limitVal = q.limit ?? q.effective_daily_limit ?? q.default_limit ?? q.default_daily_limit ?? '—';
       const hasOv = Boolean(q.override || q.has_override);
+      const resetUtc = q.next_reset_utc || '00:00 UTC';
       const statusStr = acct.status || (acct.active === false ? 'suspended' : 'active');
       const sessCount = acct.active_session_count ?? acct.active_sessions ?? 0;
-      const quotaText = `${usedVal}/${limitVal}` + (hasOv ? ' (override)' : '');
+      const quotaText = `${usedVal}/${limitVal}` + (hasOv ? ' (override)' : '') + ` · reset: ${resetUtc}`;
       const tdMid = el('td', '', acct.membership_id);
       const tdName = el('td', '', `${acct.display_name || acct.customer_id || acct.principal_id || '—'} (${acct.customer_id || '—'})`);
       const tdRole = el('td', '', acct.role || 'customer');
@@ -2450,6 +2467,7 @@ async function inspectAdminAccount(membershipId) {
     const usedVal = q.used ?? q.attempts_used ?? 0;
     const limitVal = q.limit ?? q.effective_daily_limit ?? q.default_limit ?? q.default_daily_limit ?? '—';
     const hasOv = Boolean(q.override || q.has_override);
+    const resetUtc = q.next_reset_utc || '00:00 UTC';
     const ovLimit = q.override?.daily_limit ?? q.override_daily_limit ?? null;
     const ovExpires = q.override?.expires_at ?? q.override_expires_at ?? null;
     const panel = byId('admin-account-detail-panel');
@@ -2462,7 +2480,7 @@ async function inspectAdminAccount(membershipId) {
     }
     if (byId('admin-selected-account-meta')) {
       byId('admin-selected-account-meta').textContent =
-        `Tenant: ${acct.tenant_id} · Vai trò: ${acct.role} · Mã KH: ${acct.customer_id || '—'} · Phiên hoạt động: ${sessCount} · Quota hôm nay: ${usedVal}/${limitVal}${hasOv ? ' (override)' : ''}`;
+        `Tenant: ${acct.tenant_id} · Vai trò: ${acct.role} · Mã KH: ${acct.customer_id || '—'} · Phiên hoạt động: ${sessCount} · Quota hôm nay: ${usedVal}/${limitVal}${hasOv ? ' (override)' : ''} · Reset UTC: ${resetUtc}`;
     }
     const qLimitInput = byId('admin-quota-limit');
     if (qLimitInput) {
@@ -2521,6 +2539,13 @@ async function submitAdminAccountAction(actionKind) {
     setAdminGovernanceMessage('Vui lòng chọn một tài khoản trước khi thực hiện thao tác.', '');
     return;
   }
+  const activeTenantInput = (byId('admin-tenant-id-input')?.value || '').trim();
+  const expectedTenantId = activeTenantInput || currentSessionTenantId || '';
+  if (selectedAdminAccount && selectedAdminAccount.tenant_id && expectedTenantId && selectedAdminAccount.tenant_id !== expectedTenantId) {
+    clearAdminSelectedAccount();
+    setAdminGovernanceMessage('Tài khoản đang chọn không thuộc cửa hàng (tenant_id) hiện tại. Vui lòng tải lại danh sách và chọn lại tài khoản.', '');
+    return;
+  }
   const confirmed = Boolean(byId('admin-action-confirm')?.checked);
   if (!confirmed) {
     setAdminGovernanceMessage('Cần tích xác nhận trước khi thực thi thao tác quản trị.', '');
@@ -2545,9 +2570,16 @@ async function submitAdminAccountAction(actionKind) {
       payload.expires_at = Number(expiresRaw);
     }
   }
+  if (expectedTenantId) {
+    payload.tenant_id = expectedTenantId;
+  } else if (selectedAdminAccount?.tenant_id) {
+    payload.tenant_id = selectedAdminAccount.tenant_id;
+  }
   try {
     setAdminGovernanceMessage('', '');
     await api(endpoint, payload);
+    const confirmCb = byId('admin-action-confirm');
+    if (confirmCb) confirmCb.checked = false;
     setAdminGovernanceMessage('', `Đã thực hiện ${actionKind} cho tài khoản ${selectedAdminMembershipId}.`);
     await Promise.all([
       inspectAdminAccount(selectedAdminMembershipId),
@@ -2560,6 +2592,11 @@ async function submitAdminAccountAction(actionKind) {
   }
 }
 
+const adminTenantInputEl = byId('admin-tenant-id-input');
+if (adminTenantInputEl) {
+  adminTenantInputEl.oninput = () => clearAdminSelectedAccount();
+  adminTenantInputEl.onchange = () => clearAdminSelectedAccount();
+}
 const btnLoadAdminAccounts = byId('btn-load-admin-accounts');
 if (btnLoadAdminAccounts) btnLoadAdminAccounts.onclick = () => loadAdminAccounts();
 const btnLoadAdminAudit = byId('btn-load-admin-audit-log');

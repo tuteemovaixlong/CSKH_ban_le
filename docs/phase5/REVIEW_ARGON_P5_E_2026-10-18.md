@@ -1,94 +1,85 @@
-# Independent Review — Argon P5-E (2026-10-18)
+# Independent Review — Argon P5-E candidate `baa70b1` (2026-10-18)
 
-**Verdict: CHANGES REQUIRED — tiếp tục P5-E trên PR #43; chưa merge/deploy hoặc chuyển sang performance.**
+**Verdict: CHANGES REQUIRED — chưa merge, deploy hoặc chuyển sang performance.**
 
-**Phạm vi:** đúng 14 tiêu chí đã chốt; không audit toàn repo hoặc mở lại P5-D/K3/K7. Nguồn chuẩn: [criteria](PHASE_5_E_ACCEPTANCE_CRITERIA.md), [plan](PHASE_5_E_AI_TRUST_ACCOUNT_GOVERNANCE_PLAN.md), [manual-test input](PHASE_5_E_MANUAL_TEST_REVIEW_2026-10-17.md), [acceptance matrix](../03_EVALUATION/ACCEPTANCE_MATRIX.md). Prompt sửa gộp nằm trong [handoff hiện hành](PHASE_5_E_EXECUTION_HANDOFF.md).
+Review này đánh giá candidate cuối của Argon sau gói remediation R1–R6. Acceptance vẫn đúng **14 tiêu chí P5-E**; không thêm gate mới và không mở lại P5-D/K3/K7. Review cũ của candidate `7b94f9c` được giữ làm lịch sử.
 
-## Candidate và kết quả thuận lợi
+## Candidate và bằng chứng
 
-- Baseline: `44540eab516831d5c8232dd80392b8e20c6cd47e`; candidate: `7b94f9cd9bfb214fed86831e99cbbd1f69ca2dfb`.
-- Branch `feat/phase5-e-ai-trust-account-governance`, worktree `C:/Users/HP/AppData/Local/Temp/retailops_p5e_wt` sạch; diff baseline → candidate: 28 file, 2771 dòng thêm / 44 dòng xóa, whitespace PASS. Workspace chính đang bẩn được giữ nguyên.
-- [PR #43](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/43) OPEN, chưa merge. [CI 39048991412](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/39048991412) và [Ops Console 39048991359](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/39048991359) SUCCESS; metadata xác nhận 5 checks offline, Colab Python313, portable Ubuntu/Windows và postgres SUCCESS trên head candidate. PR merge ref qua metadata: `5d812f36d4e690a8e48fab6c18dba15300369395`, không phải commit đã merge vào main.
-- Argon giữ nguyên ngữ nghĩa 14 criteria và handoff/manual review; không thấy tự hạ acceptance. Có code thật cho session/tenant authorization, quota override, revoke, audit transaction, read-only intent và unknown stock. Ops Console v1 vẫn read-only.
-- CI xanh chưa chứng minh đủ acceptance: review xác nhận ba lỗi runtime, một phần UI chưa làm và các khoảng trống test/evidence dưới đây. Tất cả thuộc scope ban đầu.
+- Baseline PR #42: `44540eab516831d5c8232dd80392b8e20c6cd47e`.
+- Candidate: `baa70b15731fd82b909c36e0b89cb7d9b41ca342`, branch `feat/phase5-e-ai-trust-account-governance`, worktree `C:/Users/HP/AppData/Local/Temp/retailops_p5e_wt` (sạch).
+- Candidate trước remediation: `7b94f9cd9bfb214fed86831e99cbbd1f69ca2dfb`.
+- [PR #43](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/43) vẫn OPEN.
+- Tested merge ref: `d3655b89e165ba09db53ac7ad13e9b4a787cb3fe`.
+- [CI run 39099835679](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/39099835679) và [Ops Console run 39099835635](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/39099835635): metadata xác nhận 5/5 job SUCCESS trên đúng head `baa70b1`.
+- Đã chạy lại: 14 test P5-E/0 skip, UI session mặc định và persistent, notebook sync, deployment contract, docs contract và `git diff --check` — PASS.
+- Số `701/0 skip` trong offline job là evidence do Argon báo; không dùng số này thay cho re-review source-level.
 
-## R1 — Final answer bị lộ lại qua transcript/history (P1; AI1)
+## Những phần Argon đã sửa tốt
 
-[application.py:357](https://github.com/tuteemovaixlong/CSKH_ban_le/blob/7b94f9cd9bfb214fed86831e99cbbd1f69ca2dfb/retailops/business/application.py#L357) chỉ lọc `answer['message']`; dòng 409 vẫn truyền `answer['messages']` gốc vào `finish_turn`. `agent_turns.messages` giữ assistant final content chưa lọc; transcript API trả bản sao này cho khách đã đăng nhập.
+1. **R2/ADM1–ADM4:** migration SQLite legacy dùng connection riêng, tắt FK trước transaction, kiểm tra FK, rollback và reopen. Disposable baseline có membership/credential/session được nâng cấp, tạo `platform_admin` được và không còn bảng tạm. R2 đủ cơ sở đóng trong review này.
+2. **R3/DATA1:** nhãn `Bộ xếp hình gỗ cho bé` được phát ra theo provenance server-side; order thủ công/import/non-demo không bị relabel.
+3. **R4/ADM:** UI account/quota đã tồn tại và gọi control plane `/api/admin/accounts*`, audit, suspend/reactivate/revoke; manager bị giới hạn tenant, `platform_admin` có tenant selector; Ops Console vẫn read-only.
+4. **AI6/ADM5/ADM6:** manifest hash được pin, audit transaction/CSRF/control-plane boundary có code và regression tương ứng.
 
-Repro offline với mock model trả canary giả (không secret thật): `model_calls=1`, `chat_message_leaks=false`, `trace_leaks=false`, nhưng `persisted_assistant_final_leaks=true`; GET transcript trả 200 và final copy vẫn có canary. Cả root reviewer và subagent tái hiện được.
+## Findings còn mở trong scope 14 tiêu chí
 
-**Đóng R1:** đồng bộ các bản sao assistant final output trước persist/replay/transcript; kiểm final-output fields trong trace nếu có. Regression phải kiểm chat, stored assistant messages, transcript, replay và tool arguments/results theo AI1. Không suy ra đã lộ secret production. **Không yêu cầu ẩn/lọc `trace.reasoning` hay CoT**; quyết định owner giữ nguyên.
+### R1 — AI1: structured tool data vẫn có thể rò canary (P1)
 
-## R2 — SQLite legacy role migration không nâng cấp được DB có dữ liệu (P1; ADM1/ADM4)
+Application chỉ làm sạch final text. Assistant message có `tool_calls`, tool arguments/results, trace step summaries, `human_support` và các bản ghi feedback vẫn có thể giữ canary. Repro offline với mock model cho thấy canary xuất hiện trong persisted `agent_turns.messages`, transcript/trace và `conversation_feedback.comment`. Replay các turn cũ cũng trả `result` nguyên trạng trước khi có sanitizer.
 
-[identity/store.py:188](https://github.com/tuteemovaixlong/CSKH_ban_le/blob/7b94f9cd9bfb214fed86831e99cbbd1f69ca2dfb/retailops/identity/store.py#L188) chạy `PRAGMA foreign_keys=OFF` trong transaction `BEGIN IMMEDIATE` nên không đổi chế độ FK. Khi membership có credential/session tham chiếu, `DROP TABLE memberships` thất bại; `except Exception: pass` nuốt lỗi, giữ CHECK role cũ và bảng tạm dở dang.
+**Đóng:** làm sạch/redact các kênh structured trước response và trước persist; xử lý replay/transcript của row cũ theo policy an toàn; test single-agent và multi-agent cho chat response, tool args/results, trace, persisted messages, result, replay và feedback. Giữ raw `trace.reasoning`/CoT theo quyết định owner.
 
-Repro bằng source IdentityStore **đúng baseline `44540ea`** → tạo manager/credential giả → mở DB bằng candidate: `role_upgraded=false`, `partial_table_remaining=true`, tạo platform_admin bị `IntegrityError`. Root và subagent cùng tái hiện.
+### R2 — ADM1/ADM4: đã đủ bằng chứng đóng
 
-**Đóng R2:** migration có version/transaction và rollback an toàn, không nuốt lỗi. Test baseline DB có membership/credential/session → upgrade → reopen/idempotency; assert FK integrity, binding/data preservation, role mới tạo được và không bảng tạm sót. Chỉ dùng disposable DB, không migrate EC2/production.
+Không mở thêm bug hunt cho migration. Chỉ bổ sung assertion nếu cần chứng minh rollback sau bước destructive; không migrate DB thật.
 
-## R3 — Display label chưa giới hạn đúng fixture demo (P2; DATA1)
+### R3 — DATA1: provenance đúng, còn giới hạn fixture cần ghi rõ (P2)
 
-[routes.py:24](https://github.com/tuteemovaixlong/CSKH_ban_le/blob/7b94f9cd9bfb214fed86831e99cbbd1f69ca2dfb/retailops/http/routes.py#L24) chỉ kiểm data mode, P-602, tên cũ và ID sáu chữ số; không kiểm nguồn seed của tenant/customer/order. Order giả `O-123456`, customer `non_demo_customer`, không xuất phát từ demo seed, vẫn nhận nhãn đồ chơi trong persistent-demo. Root và subagent cùng tái hiện.
+`seed_demo_sample_orders()` trả sớm nếu customer đã có order, nên order demo cũ không được thêm provenance và giữ tên cũ. Seed ID cũng có thể rơi vào `O-900000`/ `O-900001`, trong khi helper/formatter chỉ nhận `O-[78]xxxxx`. Sửa bounded fixture contract hoặc ghi limitation có test; không backfill EC2/production.
 
-**Đóng R3:** dùng provenance fixture phía server, không dựa vào hình dạng ID. Positive demo và negative imported/manual/non-demo; test API list/detail/focus, UI và snapshot mọi business field. Tool/catalog giữ canonical facts; không chuyển P-602 thành P-604 hoặc đổi giá/status/variant. Record không chứng minh được nguồn fixture phải giữ canonical name và ghi limitation; không backfill/chỉnh DB thật.
+### R4 — ADM2–ADM4: UI/API integration gaps (P2)
 
-## R4 — Thiếu UI quản trị account/quota (scope incomplete; ADM1–ADM6)
+- Đổi tenant selector có thể giữ selected membership và confirmation cũ; thao tác tiếp theo có thể nhắm account của tenant trước.
+- API trả `quota.next_reset_utc` nhưng UI không render thời điểm reset.
+- UI ghi “để trống = xóa override”, nhưng gửi `daily_limit: null` và backend trả `400 invalid_quota_limit`; giá trị `0` cũng lệch contract.
+- Account search áp `LIMIT 50` trước khi lọc `q`, nên account sau trang đầu có thể bị báo không tìm thấy.
 
-Candidate có HTTP API nhưng `web/` không gọi `/api/admin/accounts*` hay `/api/admin/audit-log`. `web/index.html:242` chỉ có KPI/products/SOPs/orders/audit; diff app.js chỉ dùng `display_name`. Criteria ADM1 đã ghi **“API và UI đều enforce”**; ADR chỉ mô tả API, không có owner decision hoãn UI.
+**Đóng:** reset selection/confirmation khi đổi scope, kiểm tra selected account thuộc scope hiện tại trước mọi write; hiển thị reset UTC; thống nhất semantics clear override giữa UI/API/schema/audit; lọc/search đúng trước pagination hoặc thêm pagination; test qua HTTP/UI thật, không chỉ mock Node.
 
-**Đóng R4:** UI gọn dùng API đã có: account list/detail, usage/limit/reset, suspend/reactivate/revoke và quota override với reason/confirmation. Manager giới hạn tenant, platform_admin chọn scope rõ; customer/viewer/staff bị từ chối. Test role denial, authorized actions, error states và action→audit. Backend vẫn quyết định quyền. Giữ Ops Console v1 read-only, không mở rộng role policy hoặc xây dashboard ngoài yêu cầu.
+### R5 — AI2/AI4/AI5 và backend parity: regression còn thiếu (P1/P2)
 
-## R5 — Required tests/evidence chưa đủ (các AC hiện có)
+- Read-only guard hiện khóa cancellation nhưng hostile model vẫn gọi `request_human_support`, tạo `human_handoff` dù người dùng chỉ yêu cầu tra cứu.
+- Không có final-answer grounding guard: tool trả `P-604` với price/stock/warranty `null`, model vẫn có thể trả dữ kiện bịa.
+- PG test chưa chứng minh đầy đủ final-response AI4 và upstream provider `429`; provider-style timeout path cũng cần assertion mapping đúng contract.
 
-1. **AI6:** [test file:87](https://github.com/tuteemovaixlong/CSKH_ban_le/blob/7b94f9cd9bfb214fed86831e99cbbd1f69ca2dfb/tests/test_phase5_e_ai_trust_and_governance.py#L87) tính EXPECTED_MANIFEST_SHA256 từ manifest lúc import rồi test tính lại cùng biểu thức; sửa prompt vẫn PASS. Pin hash literal/artifact độc lập và tamper-negative.
-2. **Backend parity:** class P5-E mới luôn dựng SQLite BusinessStore. Có DSN trong job không làm nó thành PG-backed. PG mega-test có AI3/governance/DATA/quota429; chưa chạy hostile read-only AI2, final-output AI1, timeout/provider429/503 AI5 hoặc CSRF ADM6 trên PG-backed path. Bổ sung integration cần thiết; helper thuần như hash không cần nhân đôi theo DB.
-3. **ADM4:** test đúng AccountQuotaStore per-membership override với concurrent reservations, UTC-day boundary, effective/expiry và reopen trên SQLite/PG. Existing test quota global `control.reserve_api_attempt` không thay được đường override mới; các test mới hiện tuần tự.
-4. **AI4/DATA1:** bổ sung end-to-end final response cho missing facts/false-success/list truncation, UI display label và non-demo negative. Payload tool hoặc static source assertion đơn lẻ chưa chứng minh output/UI contract. R1 phải có assertions cả output/tool surfaces trong criteria.
+**Đóng:** allowlist side-effect tools trong read-only mode; thêm hostile mock final-answer tests cho unknown facts/false success/list truncation; bổ sung PG-backed assertions cho các path phụ thuộc DB; không gọi live model/paid provider.
 
-Đây là danh sách hữu hạn từ criteria; không yêu cầu live model, bộ fuzz/benchmark mới hoặc nhân đôi mọi pure-unit test.
+### R6 — evidence và docs phải khớp candidate cuối
 
-## R6 — Evidence và docs cần ghi đúng candidate (reporting)
+Docs điều hướng phải trỏ `baa70b1`, tested merge ref `d3655b89`, CI `39099835679`, Ops `39099835635`, 14 test/0 skip local và verdict **CHANGES REQUIRED**. Review lịch sử không được tự sửa thành PASS. Evidence phải phân biệt implementer self-report với Codex verification và ghi rõ limitations ở R1/R3/R4/R5.
 
-[Evidence Argon tại candidate](https://github.com/tuteemovaixlong/CSKH_ban_le/blob/7b94f9cd9bfb214fed86831e99cbbd1f69ca2dfb/docs/phase5/PHASE_5_E_EVIDENCE_2026-10-17.md) thiếu candidate SHA/PR/run/job URL và head→tested-ref mapping; số 700/0 skip chỉ nằm attachment. Các cột PG “covered in offline job” mô tả quá rộng. Candidate status/roadmap còn snapshot P5-D cũ vì clean baseline chưa có docs sync ở workspace chính.
+## Bảng verdict 14 tiêu chí
 
-**Đóng R6:** evidence theo từng AC có command/exit/count/skip/backend, head/base/tested ref và CI links. Nhập chọn lọc current-status/navigation từ workspace chính, không reset/copy đè toàn repo hoặc lấy code bẩn vào PR. Giữ nguyên review này như verdict trên `7b94f9c`; implementer cập nhật self-evidence, không tự sửa verdict reviewer thành PASS.
-
-## Bảng đủ 14 AC tại candidate được review
-
-`SUPPORTED` là source/test có evidence thuận lợi, chưa phải ký toàn P5-E hoặc xác minh mọi raw CI count.
-
-| AC | Kết luận | Còn lại |
+| Tiêu chí | Verdict hiện tại | Ghi chú |
 |---|---|---|
-| AI1 | FAIL — final-copy leak | R1/R5 |
-| AI2 | PARTIAL — SQLite controls PASS | PG read-only/confirmation R5 |
-| AI3 | SUPPORTED — owner/invalid-ID SQLite + PG source | Exact execution evidence R6 |
-| AI4 | PARTIAL — tool facts/truncation có | Final-response contract R5 |
-| AI5 | PARTIAL — SQLite faults, PG quota429 có | PG timeout/provider429/503 R5 |
-| AI6 | FAIL — hash tự tính | Pin + tamper-negative R5 |
-| ADM1 | FAIL / INCOMPLETE | Migration R2 và UI R4 |
-| ADM2 | SUPPORTED API / UI NOT IMPLEMENTED | UI scope/secret-denial R4 |
-| ADM3 | SUPPORTED API / UI NOT IMPLEMENTED | UI lifecycle/confirmation R4 |
-| ADM4 | PARTIAL | R2/R4; override concurrency/UTC/PG expiry R5 |
-| ADM5 | SUPPORTED API — audit/denial/rollback | UI action→audit R4/R6 |
-| ADM6 | PARTIAL — SQLite CSRF/Ops read-only | UI R4, PG-backed CSRF R5 |
-| DATA1 | FAIL — non-fixture relabel | R3/R5 |
-| DATA2 | SUPPORTED — unknown/null/zero + controls SQLite/PG | Preserve regression, record evidence R6 |
+| AI1 | **FAIL / CHANGES REQUIRED** | Tool args/results, feedback và replay còn kênh leak |
+| AI2 | **FAIL / CHANGES REQUIRED** | `request_human_support` vẫn có side effect trong read-only |
+| AI3 | **SUPPORTED** | Owner/tenant/ID boundary có regression SQLite/PG |
+| AI4 | **FAIL / CHANGES REQUIRED** | Chưa chặn final answer bịa unknown facts |
+| AI5 | **PARTIAL** | Có timeout/429/503 tests nhưng thiếu provider-path parity |
+| AI6 | **PASS (bounded offline)** | Literal hash + tamper-negative; không paid call |
+| ADM1 | **PARTIAL** | R2 tốt; UI/scope integration còn gap |
+| ADM2 | **PARTIAL** | API scope có; search/UI contract còn gap |
+| ADM3 | **PARTIAL** | Lifecycle có; stale selection/scope guard cần test/fix |
+| ADM4 | **PARTIAL** | Backend quota tốt; reset/clear/concurrency UI contract còn gap |
+| ADM5 | **SUPPORTED** | Append-only audit và rollback có evidence |
+| ADM6 | **SUPPORTED / RE-VERIFY** | CSRF/control-plane/Ops read-only có evidence |
+| DATA1 | **PARTIAL** | Provenance fix đúng; legacy/ID-range limitation cần đóng hoặc ghi contract |
+| DATA2 | **SUPPORTED** | Unknown/null/zero inventory controls giữ nguyên |
 
-## Kiểm chứng và giới hạn
+## Quyết định
 
-- Local `python -m unittest tests.test_phase5_e_ai_trust_and_governance -v`: **13/13 PASS, 0 skip**, 6.186s, exit 0.
-- Notebook sync, docs contract **4/4**, deployment contract, `node --check web/app.js`, sáu Node suites chat_focus/model_status/knowledge_sources/shipment_ui/provider_selector/public_session và candidate-range whitespace: **PASS**.
-- R1/R2/R3: tái hiện bằng disposable data/mock model, không network hay secret thật. AI6 hash gap được xác nhận từ source và negative conceptual mutation.
-- GitHub metadata: **5/5 SUCCESS**, PostgreSQL16/pgvector service/prepare/test steps SUCCESS. Argon báo host/container mỗi lượt 700 PASS/0 skip; reviewer chưa đọc độc lập raw logs vì public log API trả 403. Không gọi thiếu raw count là CI failure.
-- `node --check web/ops_console.js` trong evidence Argon không hợp lệ: file không tồn tại; chạy lại trả MODULE_NOT_FOUND. Sửa danh sách command theo đường dẫn thật, không tạo file giả.
-- Không chạy lại full suite hoặc PG local khi không có disposable DSN; CI đã xanh. Không dùng thiếu DSN làm lỗi code. Không kiểm tra EC2/live model trong lượt này.
+P5-E hiện **READY FOR A BOUNDED REMEDIATION PASS, không READY FOR MERGE**. Chỉ sửa R1, R3, R4, R5 và R6; R2 không mở rộng. Sau candidate mới + CI + evidence + self-review, Codex sẽ re-review độc lập. Không merge/deploy/AWS/SSM/EC2/OAuth live/production DB/config/performance/paid tests. G4 AI-lane vẫn là track riêng; P5-F/G5–G7 vẫn HOLD.
 
-## Quyết định và điểm dừng
-
-Review/handoff và các docs điều hướng/trạng thái liên quan đã được đồng bộ trong **workspace chính**, tổng cộng 18 tài liệu. Docs contract 4/4, related local links, inventory 181 file / 136 Markdown / 45 khác và `git diff --check -- docs` PASS; 14 dòng định nghĩa AC vẫn khớp candidate. Candidate worktree giữ sạch tại `7b94f9c`; các docs reviewer cập nhật chưa được đưa vào PR #43. Argon cần đọc handoff ở đúng workspace chính rồi nhập chọn lọc, như chỉ dẫn R6.
-
-Argon tạo được implementation lớn và giữ workspace/criteria đúng. Cần đóng **R1–R6 trong một lượt sửa trên PR #43 hiện có**, không làm lại P5-E hoặc thêm gate. Candidate mới + CI + evidence + self-review rồi dừng cho re-review đúng danh sách này; finding ngoài scope chỉ ghi backlog.
-
-P5-E chưa nghiệm thu. G4 AI-lane vẫn riêng; không có quyền merge/deploy/AWS/EC2/OAuth live/production DB/performance/paid tests từ review này.
+Đọc cùng: [criteria](PHASE_5_E_ACCEPTANCE_CRITERIA.md), [plan](PHASE_5_E_AI_TRUST_ACCOUNT_GOVERNANCE_PLAN.md), [manual input](PHASE_5_E_MANUAL_TEST_REVIEW_2026-10-17.md), [acceptance matrix](../03_EVALUATION/ACCEPTANCE_MATRIX.md), [current status](../CURRENT_PROJECT_STATUS.md), [roadmap](../PLAN_ROADMAP_INDEX.md), [codebase map](../00_OVERVIEW/CODEBASE_MAP.md), [handoff](PHASE_5_E_EXECUTION_HANDOFF.md).

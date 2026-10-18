@@ -103,12 +103,15 @@ def run_supervisor(state: MultiAgentState) -> MultiAgentState:
     sentiment_result = analyze_sentiment(last_user_msg)
     state["sentiment"] = sentiment_result.sentiment
     state["strict_mode"] = sentiment_result.strict_mode_required
+    read_only_lookup = is_read_only_lookup_intent(last_user_msg)
 
     # Check if asking general operating hours or policy about human agents
     is_hours_inquiry = any(w in lower_msg for w in ["khung giờ", "giờ làm việc", "mấy giờ đến mấy giờ", "khi nào có", "kênh hotline"])
 
     # Extreme anger or boycott / platform report threat trigger (SOP 5)
-    is_extreme_rage = any(kw in lower_msg for kw in EXTREME_RAGE_KEYWORDS) or bool(re.search(r'(?<!điều )\bkiện\b', lower_msg))
+    is_extreme_rage = (not read_only_lookup) and (
+        any(kw in lower_msg for kw in EXTREME_RAGE_KEYWORDS) or bool(re.search(r'(?<!điều )\bkiện\b', lower_msg))
+    )
     if is_extreme_rage:
         state["intent"] = "dispute_complaint"
         state["next_worker"] = "human_escalation"
@@ -126,7 +129,7 @@ def run_supervisor(state: MultiAgentState) -> MultiAgentState:
         return state
 
     # 3. Check for Explicit Human Escalation Request (SOP 6)
-    if not is_hours_inquiry and any(kw in lower_msg for kw in HUMAN_ESCALATION_KEYWORDS):
+    if not read_only_lookup and not is_hours_inquiry and any(kw in lower_msg for kw in HUMAN_ESCALATION_KEYWORDS):
         state["intent"] = "dispute_complaint"
         state["next_worker"] = "human_escalation"
         state["requires_human"] = True

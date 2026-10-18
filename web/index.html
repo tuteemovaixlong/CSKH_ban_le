@@ -507,8 +507,8 @@
               <input type="text" id="admin-action-reason" placeholder="Nhập lý do kiểm toán (audit reason)..." style="width:100%;">
             </div>
             <div>
-              <label for="admin-quota-limit" style="display:block; font-size:12px; font-weight:600; margin-bottom:4px;">Giới hạn lượt API/ngày (0..10000, để trống = xóa override):</label>
-              <input type="number" id="admin-quota-limit" min="0" max="10000" placeholder="Ví dụ: 50">
+              <label for="admin-quota-limit" style="display:block; font-size:12px; font-weight:600; margin-bottom:4px;">Giới hạn lượt API/ngày (1..10000, để trống = xóa override):</label>
+              <input type="number" id="admin-quota-limit" min="1" max="10000" placeholder="Ví dụ: 50">
             </div>
             <div>
               <label for="admin-quota-expires" style="display:block; font-size:12px; font-weight:600; margin-bottom:4px;">Hết hạn override (epoch giây, tùy chọn):</label>

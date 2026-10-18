@@ -10,14 +10,16 @@ ROOT = Path(__file__).resolve().parent
 
 
 class BoundTools:
-    def __init__(self, store, catalog, customer, snapshot, identity, *, can_cancel=True):
+    def __init__(self, store, catalog, customer, snapshot, identity, *, can_cancel=True, read_only=False, user_text=''):
         self.store, self.catalog, self.customer, self.snapshot = store, catalog, customer, snapshot
         self.conversation_id = snapshot.get('id') if isinstance(snapshot, dict) else None
         self.context = {k: (snapshot.get(k) if isinstance(snapshot, dict) else None) for k in ('order_id', 'product_id')}
         self.identity = identity
         self.versions = {}
         self.cancel_order = None
-        self.can_cancel = can_cancel
+        self.can_cancel = bool(can_cancel) and not bool(read_only)
+        self.read_only = bool(read_only)
+        self.user_text = str(user_text or '')
         self.knowledge = KnowledgeTool(store)
         self.shipment = None
         self.human_support = None
@@ -262,7 +264,18 @@ class BoundTools:
                 'status_text': f'Còn {stock} sản phẩm trong kho' if in_stock else f'Sản phẩm {product.get("name")} (màu {color}, size {size}) tạm thời hết hàng.'
             }
         if name == 'request_human_support':
-            reason = args['reason'].strip()
+            if self.read_only:
+                self.human_support = None
+                return {
+                    'status': 'read_only_blocked',
+                    'escalated': False,
+                    'message': 'Truy vấn hiện tại ở chế độ chỉ đọc (read-only); không thực hiện chuyển tiếp hoặc thay đổi trạng thái.',
+                }
+            from retailops.guardrails.topic_filter import contains_canary_or_secret
+
+            reason = str(args.get('reason') or '').strip()
+            if contains_canary_or_secret(reason, user_text=self.user_text):
+                reason = 'Khách hàng yêu cầu hỗ trợ trực tiếp từ nhân viên [REDACTED_BY_OUTPUT_GUARD]'
             res = {
                 'status': 'escalated_to_human',
                 'reason': reason,

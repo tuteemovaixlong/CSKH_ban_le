@@ -43,14 +43,14 @@ We separate platform-wide administration, tenant-scoped administration, and non-
 
 - **Ops Console v1 (`opsconsole/server.py`):** Remains 100% read-only (`GET` only; `405 read_only_console` for non-GET), isolated from business/identity databases, model credentials, and Docker sockets.
 - **Account Governance Control Plane (`/api/admin/accounts*` on `PublicWeb`):**
-  - `GET /api/admin/accounts` — Scoped list/search by `tenant_id` (`platform_admin` only for cross-tenant), `q` (membership ID, principal ID, customer ID, display name, or verified external email), `role`, and `active` status.
+  - `GET /api/admin/accounts` — Scoped list/search by `tenant_id` (`platform_admin` only for cross-tenant), `q` (membership ID, principal ID, customer ID, display name, or verified external email — filtered **before** applying `limit` `1..200`), `role`, and `active` status.
   - `GET /api/admin/accounts/{membership_id}` — Scoped detail view returning account metadata, active session count, current UTC day API usage, effective daily limit, active quota override (if any), and `next_reset_utc`.
   - `POST /api/admin/accounts/{membership_id}/suspend` — Suspends membership (`active = 0`), increments `auth_version`, deletes all `sessions` for the membership, and writes `admin_audit_log`.
   - `POST /api/admin/accounts/{membership_id}/reactivate` — Reactivates membership (`active = 1`), increments `auth_version`, preserves `tenant_id`/`principal_id`/`customer_id` bindings, and writes `admin_audit_log`.
   - `POST /api/admin/accounts/{membership_id}/revoke-sessions` — Keeps `active` unchanged, increments `auth_version`, deletes all `sessions` for the membership, and writes `admin_audit_log`.
-  - `POST /api/admin/accounts/{membership_id}/quota` — Sets or clears a per-membership quota override (`daily_limit` in `1..10000`, optional `expires_at`, mandatory `reason`), and writes `admin_audit_log`.
+  - `POST /api/admin/accounts/{membership_id}/quota` — Sets (`daily_limit` in `1..10000`, optional `effective_at`/`expires_at`) or clears (`daily_limit: null` / `None`, deleting the row in `membership_quota_overrides` and restoring `default_limit`) a per-membership quota override with mandatory `reason`, and writes `admin_audit_log`.
   - `GET /api/admin/audit-log` — Read-only query of `admin_audit_log` (scoped to `actor.tenant_id` for `manager`, or optional `tenant_id` filter for `platform_admin`).
-- All `POST /api/admin/*` endpoints enforce `check_origin(handler)` CSRF protection, strict JSON schema validation, and mandatory non-empty `reason` (`1..500` characters).
+- All `POST /api/admin/*` endpoints enforce `check_origin(handler)` CSRF protection, strict JSON schema validation, optional `tenant_id` scope verification (`409 tenant_scope_mismatch` + denied audit entry if the operator's selected `tenant_id` does not match the target membership's `tenant_id`), and mandatory non-empty `reason` (`1..500` characters).
 
 ### 2.3 Quota Override Storage & Effective Limit Resolution (`P5-E-ADM4`)
 
@@ -65,7 +65,7 @@ We separate platform-wide administration, tenant-scoped administration, and non-
 2. **Resolution in `AccountQuotaStore.reserve_api_attempt(default_limit)`:**
    - Inside an atomic write transaction (`with self.control.connection(write=True) as db:`), resolve the effective daily limit for `self.membership_id`:
      - If a row exists in `membership_quota_overrides` with `effective_at <= now` and `(expires_at IS NULL OR expires_at > now)`, `effective_limit = override.daily_limit`.
-     - Otherwise, `effective_limit = default_limit` (the global default `app.api_daily_limit`).
+     - Otherwise (or after clearing an override via `daily_limit = None`), `effective_limit = default_limit` (the global default `app.api_daily_limit`).
    - Check `provider_daily_usage` for `(day = current_utc_day, provider_id = f"api:{membership_id}")`.
    - If `attempts >= effective_limit`, fail closed with `429 api_daily_limit`.
    - Otherwise increment `attempts` atomically (`INSERT ... ON CONFLICT(day, provider_id) DO UPDATE SET attempts = attempts + 1`).
@@ -90,7 +90,7 @@ We separate platform-wide administration, tenant-scoped administration, and non-
    - `reason` (`TEXT NOT NULL`)
 2. **Atomicity & Immutability:**
    - Every allowed admin write executes the state mutation and the `INSERT INTO admin_audit_log` inside the **same** database transaction. If the audit write fails, the state mutation rolls back automatically.
-   - Denied operator attempts (e.g., cross-tenant access by a tenant `manager`) commit a `denied` audit record before raising `403 permission_denied`.
+   - Denied operator attempts (e.g., cross-tenant access by a tenant `manager` or `tenant_scope_mismatch`) commit a `denied` audit record before raising `403`/`409`.
    - No `UPDATE` or `DELETE` method or HTTP route is exposed for `admin_audit_log`.
    - Snapshots (`before_json`, `after_json`) never include session secrets, credential hashes, OAuth tokens, or customer chat messages.
 
@@ -98,12 +98,13 @@ We separate platform-wide administration, tenant-scoped administration, and non-
 
 - Legacy SQLite identity databases created before Phase 5-E define `memberships.role` with a 4-role `CHECK (role IN ('customer', 'viewer', 'staff', 'manager'))` and child foreign keys from `credentials(membership_id)`, `sessions(membership_id)`, and `membership_quota_overrides(membership_id)`.
 - Because SQLite ignores `PRAGMA foreign_keys = OFF` inside an active transaction, `upgrade_sqlite_memberships_role_constraint(path)` opens a connection with `isolation_level = None`, verifies `PRAGMA foreign_keys = OFF` **before** `BEGIN IMMEDIATE`, rebuilds `memberships` via `memberships_p5e_new` with the 5-role constraint (`customer`, `viewer`, `staff`, `manager`, `platform_admin`), runs `PRAGMA foreign_key_check` before `COMMIT`, and restores `PRAGMA foreign_keys = ON`.
-- Migration errors are **never swallowed**; any failure rolls back the transaction cleanly without leaving `memberships_p5e_new` behind or corrupting foreign keys.
+- Migration errors are **never swallowed**; any failure rolls back the transaction cleanly (including after `DROP TABLE memberships`) without leaving `memberships_p5e_new` behind or corrupting foreign keys.
 
 ### 2.6 Account & Quota Governance UI (`R4`)
 
 - The operator UI for `P5-E-ADM1..ADM6` lives in `web/index.html` + `web/app.js` inside the authenticated Manager/Admin Console on `PublicWeb` (keeping `opsconsole/server.py` and `opsconsole/static/app.js` strictly read-only).
 - Visibility & Scope:
   - Hidden and blocked for `customer`, `viewer`, and `staff` sessions.
-  - Visible in `#tab-btn-accounts` (`Tài khoản & Quota`) for `manager` (locked to own `tenant_id`) and `platform_admin` (with explicit `#admin-account-tenant-input` selector).
-- Consumes `/api/admin/accounts`, `/api/admin/accounts/{id}`, `/api/admin/accounts/{id}/suspend`, `/api/admin/accounts/{id}/reactivate`, `/api/admin/accounts/{id}/revoke-sessions`, `/api/admin/accounts/{id}/quota`, and `/api/admin/audit-log` with mandatory reason and explicit confirmation before any state-changing action.
+  - Visible in `#tab-btn-accounts` (`Tài khoản & Quota`) for `manager` (locked to own `tenant_id`) and `platform_admin` (with explicit `#admin-tenant-id-input` selector).
+  - Changing `#admin-tenant-id-input` immediately clears `#admin-selected-membership-id` (`clearAdminSelectedAccount()`) and hides `#admin-account-detail-panel` so stale cross-tenant selections cannot be submitted; admin POST payloads also include `tenant_id` verified by the server.
+- Displays `quota.next_reset_utc` in both the account table and the detail inspector, and provides explicit controls to suspend, reactivate, revoke sessions, set bounded quota overrides (`1..10000`), and clear quota overrides (`daily_limit: null`) with mandatory reason and explicit confirmation checkbox reset after each action.
