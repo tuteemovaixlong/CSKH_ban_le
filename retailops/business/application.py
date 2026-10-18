@@ -359,6 +359,34 @@ class Application:
                 answer['message'] = safe_msg
                 bound.cancel_order = None
                 answer.pop('action_proposal', None)
+            if isinstance(answer.get('messages'), list):
+                for idx in range(len(answer['messages']) - 1, -1, -1):
+                    msg_item = answer['messages'][idx]
+                    if isinstance(msg_item, dict) and msg_item.get('role') == 'assistant':
+                        if idx == len(answer['messages']) - 1 or not msg_item.get('tool_calls'):
+                            if leaked:
+                                msg_item['content'] = answer['message']
+                            else:
+                                item_leaked, item_safe = sanitize_output_against_canary_leak(
+                                    text, str(msg_item.get('content') or '')
+                                )
+                                if item_leaked:
+                                    msg_item['content'] = item_safe
+            if isinstance(answer.get('trace'), dict):
+                for final_key in ('final_reply', 'assistant_message', 'final_message'):
+                    if final_key in answer['trace'] and isinstance(answer['trace'][final_key], str):
+                        if leaked:
+                            answer['trace'][final_key] = answer['message']
+                        else:
+                            k_leaked, k_safe = sanitize_output_against_canary_leak(text, answer['trace'][final_key])
+                            if k_leaked:
+                                answer['trace'][final_key] = k_safe
+                if isinstance(answer['trace'].get('steps'), list):
+                    for st in answer['trace']['steps']:
+                        if isinstance(st, dict) and st.get('action') == 'final_answer' and isinstance(st.get('summary'), str):
+                            st_leaked, st_safe = sanitize_output_against_canary_leak(text, st['summary'])
+                            if st_leaked:
+                                st['summary'] = st_safe
 
             # N01: Rollback cancel_order and mutated context if target order is invalid, unverified, or mismatched
             if bound.cancel_order:

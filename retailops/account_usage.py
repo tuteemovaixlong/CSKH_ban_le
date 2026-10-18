@@ -87,14 +87,15 @@ class AccountQuotaStore:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=31)).date().isoformat()
         db.execute('DELETE FROM provider_daily_usage WHERE day < ?', (cutoff,))
 
-    def reserve_api_attempt(self, limit):
+    def reserve_api_attempt(self, limit, *, _now=None):
         """Reserve one account API turn before provider I/O."""
         if type(limit) is not int or not 1 <= limit <= 10000:
             raise ValueError('API daily limit must be from 1 to 10000.')
-        day = time.strftime('%Y-%m-%d', time.gmtime())
+        now_val = float(_now if _now is not None else time.time())
+        day = datetime.fromtimestamp(now_val, tz=timezone.utc).date().isoformat()
         key = self._key('api', 'attempts')
         with self.control.connection(write=True) as db:
-            effective_limit, _ = self._resolve_effective_limit(db, limit)
+            effective_limit, _ = self._resolve_effective_limit(db, limit, now_ts=now_val)
             row = db.execute('SELECT attempts FROM provider_daily_usage WHERE day=? AND provider_id=?',
                              (day, key)).fetchone()
             used = 0 if row is None else row['attempts']
@@ -132,10 +133,10 @@ class AccountQuotaStore:
                 self._increment(db, day, self._key(provider, 'cost_known'), 1)
             self._prune(db)
 
-    def snapshot(self, api_daily_limit, *, api_configured=False, custom_configured=False):
+    def snapshot(self, api_daily_limit, *, api_configured=False, custom_configured=False, _now=None):
         if type(api_daily_limit) is not int or not 1 <= api_daily_limit <= 10000:
             raise ValueError('API daily limit must be from 1 to 10000.')
-        now = datetime.now(timezone.utc)
+        now = datetime.fromtimestamp(float(_now), tz=timezone.utc) if _now is not None else datetime.now(timezone.utc)
         day = now.date().isoformat()
         prefix = f'acct:{self.subject}:'
         with self.control.connection() as db:

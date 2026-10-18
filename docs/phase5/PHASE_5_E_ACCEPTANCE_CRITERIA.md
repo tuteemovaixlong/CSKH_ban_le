@@ -2,6 +2,8 @@
 
 P5-E là workstream mới theo yêu cầu owner ngày 2026-10-17, trước P5-F/G5. Đây là gate sản phẩm AI/account operations; không thay đổi Phase 5 K1–K8 hoặc state machine G4–G7. PASS chỉ dựa trên evidence của cùng candidate SHA.
 
+> **Disposition 2026-10-18:** [review candidate PR #43](REVIEW_ARGON_P5_E_2026-10-18.md) = CHANGES REQUIRED; xem đủ 14 verdict và [remediation handoff](PHASE_5_E_EXECUTION_HANDOFF.md). Các điều kiện PASS bên dưới không thay đổi.
+
 ## A. AI trust / customer interaction
 
 | ID | Điều kiện PASS | Bằng chứng bắt buộc |

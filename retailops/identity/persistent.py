@@ -182,18 +182,7 @@ class PersistentSessions:
                     bstore.seed_catalog(bdb)
                 bdb.execute("INSERT INTO customers VALUES (?,?) ON CONFLICT DO NOTHING", (cid, name or email))
                 if not is_live and getattr(self, 'seed_sample_orders', True):
-                    existing = bdb.execute("SELECT 1 FROM orders WHERE customer_id=? LIMIT 1", (cid,)).fetchone()
-                    if not existing:
-                        # Seed 3 representative orders with valid IDs (e.g. O-700101, O-700102, O-700103)
-                        seed_base = 700000 + (abs(hash(cid)) % 200000)
-                        sample_orders = [
-                            (f"O-{seed_base + 1}", cid, "Áo sơ mi lụa công sở", "Trắng / M", 450000, "pending", 1, None, "P-601"),
-                            (f"O-{seed_base + 2}", cid, "Quần tây ống đứng tôn dáng", "Đen / L", 520000, "delivered", 1, None, "P-602"),
-                            (f"O-{seed_base + 3}", cid, "Giày lười da bò cao cấp", "Nâu / 41", 890000, "delivered", 1, None, "P-603"),
-                        ]
-                        for ord_row in sample_orders:
-                            bdb.execute("""INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id)
-                                           VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING""", ord_row)
+                    bstore.seed_demo_sample_orders(cid, db=bdb)
         except Exception as ex:
             import logging
             logging.getLogger("retailops_identity").error("Failed to provision customer in business store: %s", ex)

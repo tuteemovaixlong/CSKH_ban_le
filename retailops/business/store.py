@@ -234,6 +234,69 @@ class BusinessStore:
             with self.connection(write=True) as conn:
                 _do_seed(conn)
 
+    def seed_demo_sample_orders(self, customer_id, db=None):
+        def _do_seed_orders(conn):
+            existing = conn.execute("SELECT 1 FROM orders WHERE customer_id=? LIMIT 1", (customer_id,)).fetchone()
+            if existing:
+                return []
+            seed_base = 700000 + (abs(hash(customer_id)) % 200000)
+            p602_oid = f"O-{seed_base + 2}"
+            sample_orders = [
+                (f"O-{seed_base + 1}", customer_id, "Áo sơ mi lụa công sở", "Trắng / M", 450000, "pending", 1, None, "P-601"),
+                (p602_oid, customer_id, "Quần tây ống đứng tôn dáng", "Đen / L", 520000, "delivered", 1, None, "P-602"),
+                (f"O-{seed_base + 3}", customer_id, "Giày lười da bò cao cấp", "Nâu / 41", 890000, "delivered", 1, None, "P-603"),
+            ]
+            for ord_row in sample_orders:
+                conn.execute(
+                    """INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id)
+                       VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING""",
+                    ord_row,
+                )
+            self.log(
+                conn,
+                customer_id,
+                "demo_sample_fixture_seeded",
+                p602_oid,
+                fixture="google_demo_sample_v1",
+                product_id="P-602",
+                canonical_name="Quần tây ống đứng tôn dáng",
+                display_name="Bộ xếp hình gỗ cho bé",
+            )
+            return [r[0] for r in sample_orders]
+
+        if db is not None:
+            return _do_seed_orders(db)
+        with self.connection(write=True) as conn:
+            return _do_seed_orders(conn)
+
+    def is_demo_sample_order(self, customer_id, order_id) -> bool:
+        if not isinstance(customer_id, str) or not customer_id or not isinstance(order_id, str) or not order_id:
+            return False
+        if not re.fullmatch(r"O-[78]\d{5}", order_id):
+            return False
+        with self.connection() as db:
+            imported = db.execute(
+                "SELECT 1 FROM imported_events WHERE order_id=? LIMIT 1",
+                (order_id,),
+            ).fetchone()
+            if imported is not None:
+                return False
+            prov = db.execute(
+                "SELECT payload FROM business_events WHERE customer_id=? AND order_id=? AND kind='demo_sample_fixture_seeded' ORDER BY id ASC LIMIT 1",
+                (customer_id, order_id),
+            ).fetchone()
+            if prov is None:
+                return False
+            try:
+                payload = json.loads(prov["payload"]) if isinstance(prov["payload"], str) else (prov["payload"] or {})
+            except Exception:
+                payload = {}
+            return (
+                payload.get("fixture") == "google_demo_sample_v1"
+                and payload.get("product_id") == "P-602"
+                and payload.get("display_name") == "Bộ xếp hình gỗ cho bé"
+            )
+
     @staticmethod
     def _row_to_product(row):
         d = dict(row)
@@ -534,7 +597,7 @@ class BusinessStore:
     def manager_events(self, limit=100):
         with self.connection() as db:
             rows = db.execute(
-                "SELECT id, customer_id, created_at, kind, order_id, payload FROM business_events ORDER BY id DESC LIMIT ?",
+                "SELECT id, customer_id, created_at, kind, order_id, payload FROM business_events WHERE kind != 'demo_sample_fixture_seeded' ORDER BY id DESC LIMIT ?",
                 (limit,)
             ).fetchall()
         result = []
@@ -602,7 +665,7 @@ class BusinessStore:
     def events(self, customer):
         with self.connection() as db:
             result = [dict(r) for r in db.execute(
-                "SELECT id,created_at,kind,order_id,payload FROM business_events WHERE customer_id=? ORDER BY id DESC LIMIT 30", (customer,))]
+                "SELECT id,created_at,kind,order_id,payload FROM business_events WHERE customer_id=? AND kind != 'demo_sample_fixture_seeded' ORDER BY id DESC LIMIT 30", (customer,))]
         for row in result:
             row["payload"] = json.loads(row["payload"])
         return result

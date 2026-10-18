@@ -35,15 +35,12 @@ class PostgresIdentityStore(IdentityStore):
                     # P5-C: an already-current schema gets the additive, idempotent mapping-table DDL.
                     for statement in P5C_IDENTITY_DDL:
                         db.raw.execute(statement)
-        try:
-            with self.connection(write=True) as db:
-                db.raw.execute("ALTER TABLE memberships DROP CONSTRAINT IF EXISTS memberships_role_check")
-                db.raw.execute(
-                    "ALTER TABLE memberships ADD CONSTRAINT memberships_role_check "
-                    "CHECK (role IN ('customer', 'viewer', 'staff', 'manager', 'platform_admin'))"
-                )
-        except Exception:
-            pass
+        with self.connection(write=True) as db:
+            db.raw.execute("ALTER TABLE memberships DROP CONSTRAINT IF EXISTS memberships_role_check")
+            db.raw.execute(
+                "ALTER TABLE memberships ADD CONSTRAINT memberships_role_check "
+                "CHECK (role IN ('customer', 'viewer', 'staff', 'manager', 'platform_admin'))"
+            )
 
     def connection(self, write=False):
         return transaction(self.dsn, IDENTITY_SCHEMA, write=write)

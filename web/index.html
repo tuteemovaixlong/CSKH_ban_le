@@ -245,6 +245,7 @@
         <button class="manager-nav-tab" data-tab="sops" id="tab-btn-sops">⚖️ Trung tâm 6 SOPs</button>
         <button class="manager-nav-tab" data-tab="orders" id="tab-btn-orders">📋 Đơn hàng Shop</button>
         <button class="manager-nav-tab" data-tab="audit" id="tab-btn-audit">📜 Nhật ký Kiểm toán</button>
+        <button class="manager-nav-tab" data-tab="accounts" id="tab-btn-accounts">🛡️ Tài khoản & Quota</button>
       </div>
 
       <div class="manager-tab-content active" id="tab-content-kpis">
@@ -450,6 +451,97 @@
             </thead>
             <tbody id="manager-audit-tbody">
               <tr><td colspan="5" style="text-align:center; padding:24px;">Đang tải nhật ký kiểm toán...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="manager-tab-content" id="tab-content-accounts">
+        <div class="manager-products-toolbar" id="admin-governance-toolbar">
+          <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; flex:1;">
+            <label for="admin-tenant-id-input" style="font-size:13px; font-weight:600;">Cửa hàng (Tenant):</label>
+            <input type="text" id="admin-tenant-id-input" class="manager-search-input" style="max-width:160px;" placeholder="Mặc định theo phiên">
+            <input type="text" id="admin-account-search-input" class="manager-search-input" style="max-width:240px;" placeholder="Tìm kiếm membership / email / mã KH...">
+            <button type="button" class="secondary" id="btn-load-admin-accounts">🔍 Tải danh sách tài khoản</button>
+            <button type="button" class="secondary" id="btn-load-admin-audit-log">📜 Tải nhật ký quản trị</button>
+          </div>
+          <span class="small-tag" id="admin-governance-scope-badge">SCOPE: TENANT</span>
+        </div>
+
+        <p id="admin-governance-error" class="error" role="alert" hidden></p>
+        <p id="admin-governance-status" class="muted" hidden></p>
+
+        <div class="manager-table-responsive" style="margin-bottom:16px;">
+          <table class="manager-data-table" id="admin-accounts-table">
+            <thead>
+              <tr>
+                <th>Membership ID</th>
+                <th>Khách Hàng / Tên</th>
+                <th>Vai Trò</th>
+                <th>Cửa Hàng</th>
+                <th>Trạng Thái</th>
+                <th>Phiên Hoạt Động</th>
+                <th>Quota Hôm Nay (UTC)</th>
+                <th>Thao Tác</th>
+              </tr>
+            </thead>
+            <tbody id="admin-accounts-tbody">
+              <tr><td colspan="8" style="text-align:center; padding:20px;">Mở tab hoặc bấm Tải danh sách tài khoản để xem.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <section id="admin-account-detail-panel" class="card" style="padding:14px; margin-bottom:16px;" hidden>
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px;">
+            <div>
+              <span class="small-tag">ACCOUNT &amp; QUOTA GOVERNANCE</span>
+              <h3 id="admin-selected-account-title" style="margin:4px 0 0;">Chi tiết tài khoản</h3>
+            </div>
+            <span class="badge" id="admin-selected-account-status">—</span>
+          </div>
+          <div id="admin-selected-account-meta" class="muted" style="font-size:13px; margin-bottom:12px;"></div>
+
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:10px; margin-bottom:12px;">
+            <div>
+              <label for="admin-action-reason" style="display:block; font-size:12px; font-weight:600; margin-bottom:4px;">Lý do thao tác quản trị (bắt buộc):</label>
+              <input type="text" id="admin-action-reason" placeholder="Nhập lý do kiểm toán (audit reason)..." style="width:100%;">
+            </div>
+            <div>
+              <label for="admin-quota-limit" style="display:block; font-size:12px; font-weight:600; margin-bottom:4px;">Giới hạn lượt API/ngày (0..10000, để trống = xóa override):</label>
+              <input type="number" id="admin-quota-limit" min="0" max="10000" placeholder="Ví dụ: 50">
+            </div>
+            <div>
+              <label for="admin-quota-expires" style="display:block; font-size:12px; font-weight:600; margin-bottom:4px;">Hết hạn override (epoch giây, tùy chọn):</label>
+              <input type="number" id="admin-quota-expires" placeholder="Để trống nếu không hết hạn">
+            </div>
+          </div>
+
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <label style="display:inline-flex; align-items:center; gap:6px; font-size:13px; margin-right:8px;">
+              <input type="checkbox" id="admin-action-confirm"> Xác nhận thực thi thao tác quản trị
+            </label>
+            <button type="button" class="danger" id="btn-admin-suspend">⛔ Đình chỉ (Suspend)</button>
+            <button type="button" class="secondary" id="btn-admin-reactivate">✅ Kích hoạt lại (Reactivate)</button>
+            <button type="button" class="secondary" id="btn-admin-revoke-sessions">🔒 Thu hồi phiên (Revoke Sessions)</button>
+            <button type="button" class="primary" id="btn-admin-set-quota">⚙️ Cập nhật Quota Override</button>
+          </div>
+        </section>
+
+        <div class="manager-table-responsive">
+          <h4 style="margin:8px 0;">Nhật ký Audit Quản Trị Tài Khoản &amp; Quota (Append-Only)</h4>
+          <table class="manager-data-table" id="admin-audit-log-table">
+            <thead>
+              <tr>
+                <th>Thời Gian</th>
+                <th>Actor / Vai Trò</th>
+                <th>Action</th>
+                <th>Target Membership</th>
+                <th>Kết Quả</th>
+                <th>Lý Do &amp; Chi Tiết</th>
+              </tr>
+            </thead>
+            <tbody id="admin-audit-log-tbody">
+              <tr><td colspan="6" style="text-align:center; padding:18px;">Chưa tải nhật ký audit quản trị.</td></tr>
             </tbody>
           </table>
         </div>

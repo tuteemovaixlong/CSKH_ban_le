@@ -1,5 +1,7 @@
 # P5-E Manual Test Review — 2026-10-17
 
+> **Input snapshot, giữ nguyên kết luận test tay.** Trạng thái implementation hiện hành xem [independent review 2026-10-18](REVIEW_ARGON_P5_E_2026-10-18.md): PR #43 / `7b94f9c…`, CI 5/5 SUCCESS, **CHANGES REQUIRED R1–R6**. Hướng dẫn bắt đầu implementation ở cuối snapshot đã consumed; tiếp tục candidate theo [handoff hiện hành](PHASE_5_E_EXECUTION_HANDOFF.md).
+
 ## Tóm tắt quyết định
 
 Các transcript người dùng cung cấp cho thấy có việc cần làm trước performance, nhưng **không phải mọi prompt hiểm hóc đều chứng minh một lỗi backend**. Tạo P5-E bounded để sửa/regression các hành vi có repro, bổ sung governance tài khoản/quota đã thiếu, và xử lý đúng tên hiển thị của demo fixture. Không mở đợt rà soát vô hạn.

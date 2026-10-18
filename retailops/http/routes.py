@@ -22,12 +22,20 @@ def _format_order_for_api(order, app=None):
         return order
     out = dict(order)
     data_mode = getattr(app, 'data_mode', 'synthetic-demo') if app is not None else 'synthetic-demo'
+    store = getattr(app, 'store', None) if app is not None else None
+    is_demo_fixture = (
+        callable(getattr(store, 'is_demo_sample_order', None))
+        and store.is_demo_sample_order(out.get('customer_id'), out.get('id'))
+    )
     if (
         data_mode in ('synthetic-demo', 'persistent-demo')
+        and is_demo_fixture
         and out.get('product_id') == 'P-602'
         and out.get('name') == 'Quần tây ống đứng tôn dáng'
+        and out.get('variant') == 'Đen / L'
+        and out.get('amount') == 520000
         and isinstance(out.get('id'), str)
-        and re.fullmatch(r'O-\d{6}', out['id'])
+        and re.fullmatch(r'O-[78]\d{5}', out['id'])
     ):
         out['display_name'] = 'Bộ xếp hình gỗ cho bé'
     return out

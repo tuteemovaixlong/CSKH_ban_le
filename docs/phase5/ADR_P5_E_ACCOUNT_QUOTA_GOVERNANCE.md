@@ -93,3 +93,17 @@ We separate platform-wide administration, tenant-scoped administration, and non-
    - Denied operator attempts (e.g., cross-tenant access by a tenant `manager`) commit a `denied` audit record before raising `403 permission_denied`.
    - No `UPDATE` or `DELETE` method or HTTP route is exposed for `admin_audit_log`.
    - Snapshots (`before_json`, `after_json`) never include session secrets, credential hashes, OAuth tokens, or customer chat messages.
+
+### 2.5 SQLite Legacy Role Constraint Migration (`R2`)
+
+- Legacy SQLite identity databases created before Phase 5-E define `memberships.role` with a 4-role `CHECK (role IN ('customer', 'viewer', 'staff', 'manager'))` and child foreign keys from `credentials(membership_id)`, `sessions(membership_id)`, and `membership_quota_overrides(membership_id)`.
+- Because SQLite ignores `PRAGMA foreign_keys = OFF` inside an active transaction, `upgrade_sqlite_memberships_role_constraint(path)` opens a connection with `isolation_level = None`, verifies `PRAGMA foreign_keys = OFF` **before** `BEGIN IMMEDIATE`, rebuilds `memberships` via `memberships_p5e_new` with the 5-role constraint (`customer`, `viewer`, `staff`, `manager`, `platform_admin`), runs `PRAGMA foreign_key_check` before `COMMIT`, and restores `PRAGMA foreign_keys = ON`.
+- Migration errors are **never swallowed**; any failure rolls back the transaction cleanly without leaving `memberships_p5e_new` behind or corrupting foreign keys.
+
+### 2.6 Account & Quota Governance UI (`R4`)
+
+- The operator UI for `P5-E-ADM1..ADM6` lives in `web/index.html` + `web/app.js` inside the authenticated Manager/Admin Console on `PublicWeb` (keeping `opsconsole/server.py` and `opsconsole/static/app.js` strictly read-only).
+- Visibility & Scope:
+  - Hidden and blocked for `customer`, `viewer`, and `staff` sessions.
+  - Visible in `#tab-btn-accounts` (`Tài khoản & Quota`) for `manager` (locked to own `tenant_id`) and `platform_admin` (with explicit `#admin-account-tenant-input` selector).
+- Consumes `/api/admin/accounts`, `/api/admin/accounts/{id}`, `/api/admin/accounts/{id}/suspend`, `/api/admin/accounts/{id}/reactivate`, `/api/admin/accounts/{id}/revoke-sessions`, `/api/admin/accounts/{id}/quota`, and `/api/admin/audit-log` with mandatory reason and explicit confirmation before any state-changing action.

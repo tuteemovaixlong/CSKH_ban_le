@@ -184,22 +184,6 @@ def migrate_legacy_collisions(db, tenant_stores=None):
         db.execute('ALTER TABLE reconciliation_journal ADD COLUMN plan_hash TEXT')
     except Exception:
         pass
-    try:
-        mem_ddl = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='memberships'").fetchone()
-        if mem_ddl and mem_ddl[0] and 'platform_admin' not in mem_ddl[0]:
-            db.execute('PRAGMA foreign_keys=OFF')
-            db.execute('''CREATE TABLE memberships_p5e_new (
-                id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
-                principal_id TEXT NOT NULL REFERENCES principals(id), customer_id TEXT NOT NULL,
-                role TEXT NOT NULL CHECK(role IN ('customer','viewer','staff','manager','platform_admin')),
-                active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
-                auth_version INTEGER NOT NULL DEFAULT 1, UNIQUE(tenant_id,principal_id))''')
-            db.execute('INSERT INTO memberships_p5e_new SELECT id, tenant_id, principal_id, customer_id, role, active, auth_version FROM memberships')
-            db.execute('DROP TABLE memberships')
-            db.execute('ALTER TABLE memberships_p5e_new RENAME TO memberships')
-            db.execute('PRAGMA foreign_keys=ON')
-    except Exception:
-        pass
 
     # Helper to resolve tenant business database connection
     def get_tenant_db_conn(t_id):
@@ -421,6 +405,64 @@ def valid_name(value):
     return isinstance(value, str) and 0 < len(value.strip()) <= 100
 
 
+def upgrade_sqlite_memberships_role_constraint(path, *, fail_hook=None):
+    """Safely rebuild legacy SQLite memberships table to allow 'platform_admin' role
+    when credentials, sessions, or quota overrides reference memberships(id).
+
+    SQLite requires PRAGMA foreign_keys=OFF to be executed outside any active transaction
+    before rebuilding a referenced parent table, then verified via PRAGMA foreign_key_check
+    inside the transaction before committing. Never swallows errors or leaves temporary tables behind.
+    """
+    db = sqlite3.connect(Path(path), timeout=5, isolation_level=None)
+    db.row_factory = sqlite3.Row
+    try:
+        mem_ddl = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='memberships'").fetchone()
+        has_temp = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='memberships_p5e_new'").fetchone()
+        needs_rebuild = bool(mem_ddl and mem_ddl[0] and 'platform_admin' not in mem_ddl[0])
+        if not needs_rebuild and not has_temp:
+            return False
+        db.execute('PRAGMA foreign_keys=OFF')
+        fk_state = db.execute('PRAGMA foreign_keys').fetchone()
+        if fk_state and fk_state[0] != 0:
+            raise sqlite3.OperationalError('Unable to disable SQLite foreign_keys outside transaction for schema rebuild.')
+        db.execute('BEGIN IMMEDIATE')
+        try:
+            db.execute('DROP TABLE IF EXISTS memberships_p5e_new')
+            if needs_rebuild:
+                existing_cols = {r[1] for r in db.execute('PRAGMA table_info(memberships)').fetchall()}
+                auth_ver_expr = 'COALESCE(auth_version, 1)' if 'auth_version' in existing_cols else '1'
+                db.execute('''CREATE TABLE memberships_p5e_new (
+                    id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
+                    principal_id TEXT NOT NULL REFERENCES principals(id), customer_id TEXT NOT NULL,
+                    role TEXT NOT NULL CHECK(role IN ('customer','viewer','staff','manager','platform_admin')),
+                    active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+                    auth_version INTEGER NOT NULL DEFAULT 1, UNIQUE(tenant_id,principal_id))''')
+                db.execute(
+                    f'INSERT INTO memberships_p5e_new (id, tenant_id, principal_id, customer_id, role, active, auth_version) '
+                    f'SELECT id, tenant_id, principal_id, customer_id, role, active, {auth_ver_expr} FROM memberships'
+                )
+                if callable(fail_hook):
+                    fail_hook(db)
+                db.execute('DROP TABLE memberships')
+                db.execute('ALTER TABLE memberships_p5e_new RENAME TO memberships')
+            fk_violations = db.execute('PRAGMA foreign_key_check').fetchall()
+            if fk_violations:
+                raise sqlite3.IntegrityError(
+                    f"Foreign key integrity check failed after memberships migration: {[tuple(r) for r in fk_violations]}"
+                )
+            db.execute('COMMIT')
+            return needs_rebuild
+        except Exception:
+            if db.in_transaction:
+                db.execute('ROLLBACK')
+            raise
+    finally:
+        try:
+            db.execute('PRAGMA foreign_keys=ON')
+        finally:
+            db.close()
+
+
 class IdentityStore:
     def __init__(self, path, tenant_stores=None, data_mode=None):
         self.path = Path(path)
@@ -431,9 +473,17 @@ class IdentityStore:
             db.execute('PRAGMA journal_mode=WAL')
         with self.connection(write=True) as db:
             migrate(db, 'identity', initialize)
+        self.upgrade_memberships_role_constraint()
+        with self.connection(write=True) as db:
             migrate_legacy_collisions(db, tenant_stores=tenant_stores)
 
+    def upgrade_memberships_role_constraint(self, *, fail_hook=None):
+        hook = fail_hook if fail_hook is not None else getattr(self, '_migration_fail_hook', None)
+        return upgrade_sqlite_memberships_role_constraint(self.path, fail_hook=hook)
+
     def migrate_legacy_collisions(self, tenant_stores=None):
+        if hasattr(self, 'path'):
+            self.upgrade_memberships_role_constraint()
         stores = tenant_stores if tenant_stores is not None else self.tenant_stores
         with self.connection(write=True) as db:
             migrate_legacy_collisions(db, tenant_stores=stores)

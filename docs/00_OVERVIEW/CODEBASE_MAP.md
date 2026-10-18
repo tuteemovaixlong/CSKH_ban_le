@@ -1,7 +1,7 @@
 # Codebase Map — RetailOps hiện tại
 
-> Cập nhật **2026-10-14**. Local checkout tại `feat/phase5-sales-simulator-import`, HEAD `3ff5d0ee8d4d53df6772a697d2638c9e65bbe7e6`.
-> Working tree có thay đổi chưa commit trong P5-D implementation/tests/docs; bản đồ mô tả cấu trúc checkout hiện tại, không đồng nghĩa các thay đổi đó đã được merge/deploy.
+> Cập nhật **2026-10-18** (P5-E candidate review; merged/runtime evidence vẫn theo mốc riêng). Local checkout vẫn ở `feat/phase5-sales-simulator-import`, HEAD `dd544800…`, và có nhiều thay đổi chưa commit; không reset/pull đè. PR #41 K3/K7 merged `8ef8278108c6d82e03d3c89ae304946ec4b53254`; deploy run `39007432153` failed at SSM preflight. Latest PR #42 `44540eab516831d5c8232dd80392b8e20c6cd47e` has 5/5 checks and deploy run `39015954088` succeeded per owner evidence. Its scope added orderless P-604 and left P-602 sample order unchanged; current-runtime full reconciliation and live acceptance are not inferred from workflow success.
+> Current requested work: P5-E AI Trust & Account Operations plus demo display-label/inventory-truth regression. CoT is accepted by owner and not a gate. See [P5-E candidate review](../phase5/REVIEW_ARGON_P5_E_2026-10-18.md), [plan](../phase5/PHASE_5_E_AI_TRUST_ACCOUNT_GOVERNANCE_PLAN.md), [acceptance](../phase5/PHASE_5_E_ACCEPTANCE_CRITERIA.md), and [Argon handoff](../phase5/PHASE_5_E_EXECUTION_HANDOFF.md). Do not merge/deploy/modify live DB in this workstream.
 > Runtime/deploy evidence được theo dõi riêng trong [current status](../CURRENT_PROJECT_STATUS.md) và [acceptance matrix](../03_EVALUATION/ACCEPTANCE_MATRIX.md).
 
 ## Đọc nhanh: hệ thống và việc sắp làm
@@ -13,12 +13,15 @@ RetailOps là web CSKH bán lẻ: đăng nhập/session → chat đa agent → t
 | Runtime, identity, workflow, cache/concurrency | Có trong code; deployed baseline và evidence được ghi riêng trong [project status](../CURRENT_PROJECT_STATUS.md). |
 | Phase 4 harness / G2 | K1–K8 đã nghiệm thu theo Phase 4 criteria; G2 offline replay đã PASS trên merged SHA `8868c5c`. |
 | Phase 5 A–C | Identity, sales simulator/import và runtime smoke đã có evidence; P5-C merge/deploy tại `a34b479`; xem [Phase 5 matrix](../03_EVALUATION/ACCEPTANCE_MATRIX.md). |
-| Phase 5-D | D-R2/D-R3 implementation re-review PASS; D-R1 có test PostgreSQL/pgvector nhưng local test bị SKIPPED do thiếu DSN. P5-K7/K8 chưa accepted; chưa có candidate SHA/CI. |
-| Chưa thực hiện | CI cho candidate P5-D chưa chạy xác nhận pgvector không skip. OAuth thật P5-K3, G5/full measurement cũng chưa được nghiệm thu. |
+| Phase 5-D / PR #41 | PR #40 merged/deploy-smoked at `709928…`; PR #41 K3/K7 merged `8ef8278…`; auto-deploy run `39007432153` failed at SSM preflight. |
+| PR #42 / P-604 | Merged `44540ea…`; CI 5/5 and deploy workflow `39015954088` succeeded. P-604 is catalog-only; P-602 sample order remains unchanged. |
+| P5-K3 | Offline implementation/regression gates merged in PR #41; post-merge CI PASS. Live OAuth and EC2 `ambiguous_tenant` root-cause confirmation remain pending/unconfirmed. |
+| P5-E | Candidate `7b94f9c…` trong worktree riêng `C:/Users/HP/AppData/Local/Temp/retailops_p5e_wt`, PR #43; CI/Ops 5/5 SUCCESS, independent review **CHANGES REQUIRED R1–R6**, chưa merge/nghiệm thu. CoT được chấp nhận. |
+| Còn chờ | P5-E R1–R6 remediation/CI/re-review; latest-release K1/K2 reconciliation; live K3/K7/K8. G4 AI-lane evidence and G5–G7 remain pending/held. |
 
-**Bước kế tiếp:** tạo immutable P5-D candidate → chạy CI job `offline` với PostgreSQL/pgvector không skip → Codex xác minh đúng SHA/evidence → dừng trước owner review/merge. Không cần EC2 cho bước CI này; không chạy live OAuth, paid model, P5-E hoặc G5.
+**Bước kế tiếp:** Tiếp tục R1–R6 trên PR #43/worktree P5-E hiện có theo [review](../phase5/REVIEW_ARGON_P5_E_2026-10-18.md) và [handoff](../phase5/PHASE_5_E_EXECUTION_HANDOFF.md); không reset về baseline. Candidate modules: guardrails topic_filter, business Application/store/tools, identity store/role/PG schema, AccountQuotaStore, public admin routes và web display label. API governance đã có trong candidate; UI account/quota còn thiếu. Workspace chính chưa chứa implementation P5-E; không coi bản đồ này là tuyên bố merged/deployed. EC2 không cần cho remediation/CI.
 
-Nguồn chuẩn cho trạng thái hiện tại: [Phase 5 acceptance](../phase5/PHASE_5_ACCEPTANCE_CRITERIA.md), [acceptance matrix](../03_EVALUATION/ACCEPTANCE_MATRIX.md), [current status](../CURRENT_PROJECT_STATUS.md), [P5-D review](../phase5/REVIEW_GEMINI_P5_D_2026-10-13.md) và [P5-D handoff](../phase5/PHASE_5_D_EXECUTION_HANDOFF.md). Phase 4 criteria/evidence vẫn là hồ sơ có thẩm quyền cho G2/K1–K8.
+Nguồn chuẩn cho trạng thái hiện tại: [Phase 5 acceptance](../phase5/PHASE_5_ACCEPTANCE_CRITERIA.md), [acceptance matrix](../03_EVALUATION/ACCEPTANCE_MATRIX.md), [current status](../CURRENT_PROJECT_STATUS.md), [Phase 5 parent handoff](../phase5/PHASE_5_EXECUTION_HANDOFF.md) và [P5-E implementation handoff](../phase5/PHASE_5_E_EXECUTION_HANDOFF.md). [P5-D review](../phase5/REVIEW_GEMINI_P5_D_2026-10-13.md) / [evidence](../phase5/PHASE_5_D_EVIDENCE.md) là hồ sơ lịch sử; D-specific execution handoff đã consumed. Phase 4 criteria/evidence vẫn là hồ sơ có thẩm quyền cho G2/K1–K8.
 
 ## 1. Kiến trúc và luồng dữ liệu
 
@@ -50,7 +53,7 @@ Mũi tên biểu diễn quan hệ chính, không phải mọi lời gọi. Graph
 
 ## 2. Bản đồ thư mục
 
-Inventory quét ngày **2026-10-14**: **70 file Python trong `retailops/`**, **8 file `retailops_*.py` ở repo root**, **12 file Python trong `evals/harness/`**, **61 file trong `tests/`**, **19 Python scripts**, **21 file deploy**, **6 web assets**, **14 file trong `opsconsole/`**, và **157 file docs**. Đếm file theo working tree; loại `.git`, bytecode/cache, `node_modules`, virtualenv, `_archive/` và nội dung sinh lớn trong `scratch/`/`artifacts/` khỏi phân tích nội dung. Fixtures, reports và evidence không được đọc tuần tự như source code.
+Inventory directory: các số đếm ngoài `docs/` được quét ngày **2026-10-15** (**70** file Python trong `retailops/`, **8** `retailops_*.py` ở repo root, **12** file Python trong `evals/harness/`, **61** file trong `tests/`, **19** Python scripts, **21** file deploy, **6** web assets, **14** file trong `opsconsole/`); `docs/` được đếm lại ngày **2026-10-17**: **179 files, gồm 134 Markdown**, tính cả archive và compatibility pointers. Đây là kiểm kê cấu trúc, không phải rà soát nội dung toàn repo; loại `.git`, bytecode/cache, `node_modules`, virtualenv, `_archive/` và nội dung sinh lớn trong `scratch/`/`artifacts/` khỏi phân tích. Fixtures, reports và evidence không được đọc tuần tự như source code.
 
 | Khu vực | Vai trò | File nên mở trước |
 |---|---|---|
@@ -176,7 +179,7 @@ P5-D candidate verification phải dùng job `offline` trong `ci.yml`, job này 
 | Ops reports/usage/import | `opsconsole/server.py`, `opsconsole/evaluation.py`, `opsconsole/usage.py` |
 | Harness R10–R12 | `evals/harness/schema.py`, `evals/harness/grader.py`, `evals/harness/validator.py`, tests liên quan |
 | Deploy guard R13 | `scripts/check_deploy_eligibility.py`, `.github/workflows/deploy-ec2.yml`, `tests/test_deploy_guard.py` |
-| P5-D candidate CI | [P5-D execution handoff](../phase5/PHASE_5_D_EXECUTION_HANDOFF.md) → [Phase 5 acceptance](../phase5/PHASE_5_ACCEPTANCE_CRITERIA.md) → [matrix](../03_EVALUATION/ACCEPTANCE_MATRIX.md) |
+| P5-D candidate CI (historical evidence) | [P5-D evidence](../phase5/PHASE_5_D_EVIDENCE.md) / [review](../phase5/REVIEW_GEMINI_P5_D_2026-10-13.md) → [Phase 5 acceptance](../phase5/PHASE_5_ACCEPTANCE_CRITERIA.md) → [matrix](../03_EVALUATION/ACCEPTANCE_MATRIX.md). Do not reuse the consumed D execution trigger. |
 
 Path trong bảng tính từ repo root. Chọn 2–3 file đầu rồi mở dependency khi cần. Không nạp toàn bộ `data/`, `evals/`, `scratch/`, `artifacts/`; chỉ lấy case/report liên quan. Bỏ bytecode, secret/env và `__pycache__/` khỏi context.
 
@@ -186,8 +189,9 @@ Path trong bảng tính từ repo root. Chọn 2–3 file đầu rồi mở depe
 |---|---|---|
 | Phase 4 / G2 | Accepted | G2 offline replay PASS trên merged SHA `8868c5c`; Phase 4 criteria/evidence remain authoritative for frozen K1–K8. |
 | P5-C | Merged/deployed | `a34b479`; owner-provided runtime/smoke evidence is recorded in the acceptance matrix. |
-| P5-D | Implementation re-review only | D-R2/D-R3 PASS. D-R1 PostgreSQL/pgvector test exists but local execution was SKIPPED; no candidate SHA/CI, so K7/K8 remain pending. |
-| Next | Candidate CI, then stop | Create immutable candidate → run CI `offline` with pgvector test not skipped → Codex checks same-SHA evidence. Stop before owner merge review/deploy/live. |
-| P5-K3 / P5-E / G5–G7 | Pending / HOLD | Real OAuth, later phases and measurement gates need their own acceptance/authorization; none is implied by offline CI or operational smoke. |
+| P5-D | Merged/deploy-smoked | Candidate `dd54480` passed Section 17 independent source review and offline CI on merge ref `18c7e5f…`; PR #40 merged at `709928…`; deploy run `38886385884` reports image `64c18…` and web/admin smoke. Latest runtime/report reconciliation and live K3/K7/K8 remain pending. |
+| Next — P5-E | Review CHANGES REQUIRED R1–R6 trên PR #43 / `7b94f9c…` | Continue existing P5-E worktree, preserve primary dirty tree, candidate/CI/evidence then independent re-review; no EC2 for offline work. |
+| Later — P5-D runtime/K1–K2 | Read-only runtime/report reconciliation | Inspect existing post-deploy reports and timestamped service/image state; no redeploy. Not a prerequisite for the offline K7 assertion task. |
+| P5-K3 live OAuth / remaining G4 / P5-F/G5–G7 | Pending / HOLD | Live OAuth, per-lane G4 evidence, measurement gates need their own acceptance/authorization; none is implied by offline CI or operational smoke. |
 
 This map is a navigation aid, not an acceptance verdict or deployment instruction. For current status, consult linked status/matrix/criteria; for source details, follow package/file links above. Historical plans and evidence remain preserved and should be read with their own snapshot dates.

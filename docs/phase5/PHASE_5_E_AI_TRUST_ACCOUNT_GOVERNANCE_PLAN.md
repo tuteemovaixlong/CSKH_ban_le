@@ -1,7 +1,7 @@
 # Phase 5-E Plan — AI Trust & Account Operations Readiness
 
 **Ngày lập:** 2026-10-17
-**Trạng thái:** PLANNED — owner đã yêu cầu mở workstream; chưa có code change, chưa nghiệm thu.
+**Trạng thái (2026-10-18):** CANDIDATE IMPLEMENTED / CHANGES REQUIRED. PR #43 head `7b94f9cd9bfb214fed86831e99cbbd1f69ca2dfb`, CI/Ops 5/5 SUCCESS; [review độc lập](REVIEW_ARGON_P5_E_2026-10-18.md) yêu cầu sửa R1–R6 theo [handoff hiện hành](PHASE_5_E_EXECUTION_HANDOFF.md). Chưa merge/nghiệm thu. Phạm vi và 14 criteria giữ nguyên.
 **Vị trí:** Workstream sau P5-D/PR #42; bounded AI-lane G4 là evidence riêng và vẫn pending. P5-E phải PASS trước P5-F (G5 preflight) và mọi full/performance measurement. P5-K1…K8 và nghĩa của G4–G7 không bị sửa.
 
 ## Mục tiêu
@@ -20,7 +20,9 @@
 
 Không suy ra có SQL injection chỉ từ chuỗi ID độc hại trong prompt; chưa có bằng chứng câu SQL được thực thi. Cần kiểm tra validation/ownership tại ranh giới tool/API, bao gồm Unicode confusable, mà không dùng dữ liệu thật.
 
-## Hiện trạng đã đối chiếu trong repo
+## Baseline đã đối chiếu trước implementation (2026-10-17)
+
+Các dòng dưới mô tả baseline đầu vào, không phải phủ nhận candidate mới. Candidate API governance đã có; UI chưa có và còn các blocker trong review 2026-10-18.
 
 - Có quota API hằng ngày theo membership, counter/reservation và endpoint khách xem usage của chính mình; giới hạn ứng dụng đang được cấu hình tập trung. Xem `retailops/account_usage.py`, `retailops/http/routes.py`, `retailops/config.py`.
 - **Chưa có API/giao diện để quản trị hạn mức hoặc trạng thái tài khoản người khác.** CLI operator hỗ trợ một số thao tác bootstrap, không phải control plane self-service.
