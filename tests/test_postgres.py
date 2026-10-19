@@ -1605,10 +1605,16 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             self.assertEqual(ctx_to.exception.status, 504)
             self.assertEqual(ctx_to.exception.code, 'agent_timeout')
 
+        def _pg_api(app_inst, cust_id, method, path, body_payload):
+            try:
+                return api_result(app_inst, cust_id, method, path, body_payload)
+            except ApiError as exc:
+                return exc.status, {'error': exc.code, 'message': exc.message, **({'trace': exc.trace} if exc.trace else {})}
+
         # Provider HTTP 429 -> 429 api_rate_limited (consumes attempt 1 of 2 on provider_daily_usage)
         app_rl = Application(store_a, {}, api_infer=_PgRateLimitGw(), api_daily_limit=2, orchestrator='single_agent')
         conv_rl = app_rl.new_conversation('C-001', {'provider_id': 'api'})
-        rl_code, rl_body = api_result(
+        rl_code, rl_body = _pg_api(
             app_rl,
             'C-001',
             'POST',
@@ -1622,7 +1628,7 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         # Daily API quota HTTP 429 -> 2nd attempt succeeds (200), 3rd attempt rejected with 429 api_daily_limit
         app_quota_pg = Application(store_a, {}, api_infer=_PgHealthyApiGw(), api_daily_limit=2, orchestrator='single_agent')
         conv_q_pg = app_quota_pg.new_conversation('C-001', {'provider_id': 'api'})
-        q_ok_code, q_ok_body = api_result(
+        q_ok_code, q_ok_body = _pg_api(
             app_quota_pg,
             'C-001',
             'POST',
@@ -1632,7 +1638,7 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         self.assertEqual(q_ok_code, 200)
         self.assertEqual(q_ok_body['action'], 'reply')
 
-        q_lim_code, q_lim_body = api_result(
+        q_lim_code, q_lim_body = _pg_api(
             app_quota_pg,
             'C-001',
             'POST',
