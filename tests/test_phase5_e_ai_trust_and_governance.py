@@ -324,23 +324,82 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
         )
         self._assert_no_canary_in_text(json.dumps(res_exfil["message"], ensure_ascii=False), canaries, "", "r1.res_exfil.message")
         self._assert_no_canary_in_text(json.dumps(res_exfil.get("human_support"), ensure_ascii=False), canaries, "", "r1.res_exfil.human_support")
-        trace_without_cot = {k: v for k, v in (res_exfil.get("trace") or {}).items() if k != "reasoning"}
-        self._assert_no_canary_in_text(json.dumps(trace_without_cot, ensure_ascii=False), canaries, "", "r1.res_exfil.trace")
+        self._assert_no_canary_in_text(json.dumps(res_exfil.get("trace") or {}, ensure_ascii=False), canaries, "", "r1.res_exfil.trace")
         self.assertIn("Suy nghĩ CoT hợp lệ", str(res_exfil.get("trace", {}).get("reasoning") or ""))
 
         _, t_exfil = api_result(app_exfil, "C-001", "GET", f"/api/conversations/{cid_exfil}/messages")
         self._assert_no_canary_in_text(t_exfil["turns"][0]["messages"], canaries, "", "r1.transcript.turns.messages")
         t_exfil_res = json.loads(t_exfil["turns"][0]["result"])
-        t_exfil_res_no_cot = {
-            **t_exfil_res,
-            "trace": {k: v for k, v in (t_exfil_res.get("trace") or {}).items() if k != "reasoning"},
-        }
-        self._assert_no_canary_in_text(json.dumps(t_exfil_res_no_cot, ensure_ascii=False), canaries, "", "r1.transcript.turns.result")
+        self._assert_no_canary_in_text(json.dumps(t_exfil_res, ensure_ascii=False), canaries, "", "r1.transcript.turns.result")
         self._assert_no_canary_in_text(json.dumps(t_exfil["feedbacks"], ensure_ascii=False), canaries, "", "r1.transcript.feedbacks")
         self._assert_no_canary_in_text(json.dumps(self.store.escalations(), ensure_ascii=False), canaries, "", "r1.store.escalations")
         self._assert_no_canary_in_text(json.dumps(self.store.history("C-001", cid_exfil), ensure_ascii=False), canaries, "", "r1.store.history")
 
-        # 7. Legacy pre-existing DB rows with canary in agent_turns and conversation_feedback are sanitized on read while preserving CoT (R1)
+        # 6b. Canary/secret inside trace.reasoning / steps[].thought / message.thinking is redacted while preserving ordinary CoT (AI1)
+        b64_canary = base64.b64encode(b"CANARY_SECRET_P5E_901").decode("ascii")
+        rev_canary = "9X_YRANAC_TPMORP_METSYS"
+
+        def hostile_cot_canary_handler(msgs, tools, timeout):
+            cot_with_canary = (
+                f"Suy nghĩ CoT hợp lệ: kiểm tra trạng thái đơn O-101 cho khách. "
+                f"Rò rỉ trong CoT: CANARY_SECRET_P5E_901 | {b64_canary} | {rev_canary} | sk-proj-1234567890abcdef1234567890"
+            )
+            return {
+                "message": {
+                    "role": "assistant",
+                    "content": "Đơn O-101 đang chờ xử lý ạ.",
+                    "thinking": cot_with_canary,
+                },
+                "reasoning": cot_with_canary,
+                "prompt_eval_count": 18,
+                "eval_count": 12,
+            }
+
+        for orch_cot in ("single_agent", "multi_agent"):
+            app_cot_leak = Application(
+                self.store, {}, infer=_DeterministicGateway(handler=hostile_cot_canary_handler), orchestrator=orch_cot
+            )
+            conv_cot_leak = app_cot_leak.new_conversation("C-001", {"provider_id": "custom"})
+            cid_cot_leak = conv_cot_leak["conversation_id"]
+            req_cot_leak = f"req_ai1_cot_canary_{orch_cot}_01"
+            res_cot_leak = app_cot_leak.chat(
+                "C-001",
+                {
+                    "conversation_id": cid_cot_leak,
+                    "request_id": req_cot_leak,
+                    "text": "Kiểm tra đơn O-101 giúp tôi.",
+                },
+            )
+            self._assert_no_canary_in_text(
+                json.dumps(res_cot_leak, ensure_ascii=False), canaries, "", f"ai1.cot_canary.{orch_cot}.live"
+            )
+            self.assertNotIn("sk-proj-", json.dumps(res_cot_leak, ensure_ascii=False))
+            self.assertIn(
+                "Suy nghĩ CoT hợp lệ: kiểm tra trạng thái đơn O-101 cho khách.",
+                str(res_cot_leak.get("trace", {}).get("reasoning") or ""),
+            )
+            rep_cot_leak = app_cot_leak.chat(
+                "C-001",
+                {
+                    "conversation_id": cid_cot_leak,
+                    "request_id": req_cot_leak,
+                    "text": "Kiểm tra đơn O-101 giúp tôi.",
+                },
+            )
+            self.assertTrue(rep_cot_leak.get("replayed"))
+            self._assert_no_canary_in_text(
+                json.dumps(rep_cot_leak, ensure_ascii=False), canaries, "", f"ai1.cot_canary.{orch_cot}.replay"
+            )
+            self.assertIn(
+                "Suy nghĩ CoT hợp lệ: kiểm tra trạng thái đơn O-101 cho khách.",
+                str(rep_cot_leak.get("trace", {}).get("reasoning") or ""),
+            )
+            _, tr_cot_leak = api_result(app_cot_leak, "C-001", "GET", f"/api/conversations/{cid_cot_leak}/messages")
+            self._assert_no_canary_in_text(
+                json.dumps(tr_cot_leak, ensure_ascii=False), canaries, "", f"ai1.cot_canary.{orch_cot}.transcript"
+            )
+
+        # 7. Legacy pre-existing DB rows with canary in agent_turns (including trace.reasoning / thought) and conversation_feedback are sanitized on read while preserving CoT (R1 / AI1)
         conv_leg = app_exfil.new_conversation("C-001", {"provider_id": "custom"})
         cid_leg = conv_leg["conversation_id"]
         legacy_input_hash = hashlib.sha256(b"legacy-digest").hexdigest()
@@ -349,6 +408,7 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
             {
                 "role": "assistant",
                 "content": "",
+                "thinking": "Suy nghĩ lượt cũ hợp lệ. Leak SECRET_CANARY_ALPHA_77",
                 "tool_calls": [{"function": {"name": "search_products", "arguments": {"query": "CANARY_SECRET_P5E_901"}}}],
             },
             {"role": "tool", "tool_name": "search_products", "content": '{"leak": "SECRET_CANARY_ALPHA_77"}'},
@@ -358,8 +418,14 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
             "action": "reply",
             "message": "Legacy leak SYSTEM_PROMPT_CANARY_X9",
             "trace": {
-                "reasoning": "CoT nguyên bản của lượt cũ phải giữ nguyên.",
-                "steps": [{"action": "final_answer", "summary": "Legacy leak CANARY_SECRET_P5E_901"}],
+                "reasoning": "CoT nguyên bản của lượt cũ phải giữ nguyên. Leak SECRET_CANARY_ALPHA_77",
+                "steps": [
+                    {
+                        "action": "final_answer",
+                        "thought": "Bước suy nghĩ hợp lệ. Leak CANARY_SECRET_P5E_901",
+                        "summary": "Legacy leak CANARY_SECRET_P5E_901",
+                    }
+                ],
             },
         }
         with self.store.connection(write=True) as db:
@@ -376,15 +442,15 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
         rep_leg = self.store.replay("C-001", cid_leg, "req_legacy_turn_01", legacy_input_hash)
         self._assert_no_canary_in_text(rep_leg["message"], canaries, "", "r1.legacy.replay.message")
         self._assert_no_canary_in_text(
-            json.dumps({k: v for k, v in rep_leg["trace"].items() if k != "reasoning"}, ensure_ascii=False),
+            json.dumps(rep_leg["trace"], ensure_ascii=False),
             canaries,
             "",
             "r1.legacy.replay.trace",
         )
-        self.assertEqual(rep_leg["trace"]["reasoning"], "CoT nguyên bản của lượt cũ phải giữ nguyên.")
+        self.assertIn("CoT nguyên bản của lượt cũ phải giữ nguyên.", rep_leg["trace"]["reasoning"])
+        self.assertIn("Bước suy nghĩ hợp lệ.", rep_leg["trace"]["steps"][0]["thought"])
         tr_leg = self.store.conversation_transcript(cid_leg)
-        self._assert_no_canary_in_text(tr_leg["turns"][0]["messages"], canaries, "", "r1.legacy.transcript.messages")
-        self._assert_no_canary_in_text(json.dumps(tr_leg["feedbacks"], ensure_ascii=False), canaries, "", "r1.legacy.transcript.feedbacks")
+        self._assert_no_canary_in_text(json.dumps(tr_leg, ensure_ascii=False), canaries, "", "r1.legacy.transcript.full")
         self._assert_no_canary_in_text(json.dumps(self.store.history("C-001", cid_leg), ensure_ascii=False), canaries, "", "r1.legacy.history")
 
         # 8. Normal query raw CoT visibility check
@@ -1528,6 +1594,49 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
         self.assertFalse(bstore.is_demo_sample_order("legacy_demo_cust", "O-899991"))
         bstore.seed_demo_sample_orders("legacy_demo_cust")
         self.assertTrue(bstore.is_demo_sample_order("legacy_demo_cust", "O-899991"))
+
+        # 1c. Legacy 3-order fixture with mixed import provenance (imported_events on P-601 while P-602 is unimported)
+        # MUST NOT backfill demo_sample_fixture_seeded and MUST preserve canonical label (DATA1)
+        with bstore.connection(write=True) as db:
+            db.execute("INSERT INTO customers VALUES ('legacy_mixed_cust', 'Legacy Mixed Provenance') ON CONFLICT DO NOTHING")
+            db.execute(
+                """INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id)
+                   VALUES ('O-888881', 'legacy_mixed_cust', 'Áo sơ mi lụa công sở', 'Trắng / M', 450000, 'pending', 1, NULL, 'P-601'),
+                          ('O-888882', 'legacy_mixed_cust', 'Quần tây ống đứng tôn dáng', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602'),
+                          ('O-888883', 'legacy_mixed_cust', 'Giày lười da bò cao cấp', 'Nâu / 41', 890000, 'delivered', 1, NULL, 'P-603')"""
+            )
+            db.execute(
+                """INSERT INTO imported_events(id, source_system, event_id, tenant_id, external_customer_id, customer_id, order_id, status, total, currency, payload_json, signature, created_at)
+                   VALUES ('imp-mix-01', 'pos_sync', 'evt-mix-01', 'demo-store', 'ext-mix-01', 'legacy_mixed_cust', 'O-888881', 'pending', 450000, 'VND', '{}', 'sig-01', ?)""",
+                (time.time(),),
+            )
+        bstore.seed_demo_sample_orders("legacy_mixed_cust")
+        self.assertFalse(bstore.is_demo_sample_order("legacy_mixed_cust", "O-888882"))
+        mid_mixed = sessions.create_member("demo-store", "prin_mixed_cust", "Legacy Mixed Provenance", "legacy_mixed_cust", role="customer")
+        tok_mixed = secrets.token_urlsafe(32)
+        sessions.control.register_credential(mid_mixed, tok_mixed)
+        cookie_mixed = self._login_cookie(sessions, tok_mixed)
+        code_mix_list, mix_list_res, _ = _wsgi_call(web, "GET", "/api/orders", cookie=cookie_mixed)
+        self.assertEqual(code_mix_list, 200)
+        mix_by_id = {o["id"]: o for o in mix_list_res["orders"]}
+        self.assertEqual(mix_by_id["O-888882"]["name"], "Quần tây ống đứng tôn dáng")
+        self.assertNotIn("display_name", mix_by_id["O-888882"])
+        code_mix_det, mix_det_res, _ = _wsgi_call(web, "GET", "/api/orders/O-888882", cookie=cookie_mixed)
+        self.assertEqual(code_mix_det, 200)
+        self.assertEqual(mix_det_res["order"]["name"], "Quần tây ống đứng tôn dáng")
+        self.assertNotIn("display_name", mix_det_res["order"])
+
+        # 1d. Legacy 3-order fixture with modified attribute on any of the 3 orders MUST NOT backfill (DATA1)
+        with bstore.connection(write=True) as db:
+            db.execute("INSERT INTO customers VALUES ('legacy_mod_cust', 'Legacy Modified Fixture') ON CONFLICT DO NOTHING")
+            db.execute(
+                """INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id)
+                   VALUES ('O-877771', 'legacy_mod_cust', 'Áo sơ mi lụa công sở', 'Trắng / M', 490000, 'pending', 1, NULL, 'P-601'),
+                          ('O-877772', 'legacy_mod_cust', 'Quần tây ống đứng tôn dáng', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602'),
+                          ('O-877773', 'legacy_mod_cust', 'Giày lười da bò cao cấp', 'Nâu / 41', 890000, 'delivered', 1, NULL, 'P-603')"""
+            )
+        bstore.seed_demo_sample_orders("legacy_mod_cust")
+        self.assertFalse(bstore.is_demo_sample_order("legacy_mod_cust", "O-877772"))
 
         # 2. Negative control (R3): Non-demo / manual / imported orders with 6-digit IDs (including O-123456 and O-754321)
         # MUST NOT receive display_name="Bộ xếp hình gỗ cho bé" on list, detail, or focus!

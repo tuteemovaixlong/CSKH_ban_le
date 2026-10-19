@@ -239,10 +239,82 @@ class BusinessStore:
             with self.connection(write=True) as conn:
                 _do_seed(conn)
 
+    _DEMO_SAMPLE_FIXTURE_SPEC = {
+        "P-601": {
+            "offset": 1,
+            "name": "Áo sơ mi lụa công sở",
+            "variant": "Trắng / M",
+            "amount": 450000,
+            "status": "pending",
+            "version": 1,
+            "cancel_reason": None,
+        },
+        "P-602": {
+            "offset": 2,
+            "name": "Quần tây ống đứng tôn dáng",
+            "variant": "Đen / L",
+            "amount": 520000,
+            "status": "delivered",
+            "version": 1,
+            "cancel_reason": None,
+        },
+        "P-603": {
+            "offset": 3,
+            "name": "Giày lười da bò cao cấp",
+            "variant": "Nâu / 41",
+            "amount": 890000,
+            "status": "delivered",
+            "version": 1,
+            "cancel_reason": None,
+        },
+    }
+
+    @classmethod
+    def _row_matches_demo_fixture_spec(cls, row: dict, pid: str) -> bool:
+        spec = cls._DEMO_SAMPLE_FIXTURE_SPEC.get(pid)
+        if not spec or not isinstance(row, dict):
+            return False
+        try:
+            amt = int(row.get("amount")) if row.get("amount") is not None else -1
+            ver = int(row.get("version")) if row.get("version") is not None else -1
+        except (TypeError, ValueError):
+            return False
+        return (
+            str(row.get("product_id")) == pid
+            and row.get("name") == spec["name"]
+            and row.get("variant") == spec["variant"]
+            and amt == spec["amount"]
+            and row.get("status") == spec["status"]
+            and ver == spec["version"]
+            and row.get("cancel_reason") is None
+        )
+
+    @staticmethod
+    def _has_import_or_item_provenance(conn, customer_id: str, order_ids: tuple[str, str, str]) -> bool:
+        oid1, oid2, oid3 = order_ids
+        imp = conn.execute(
+            "SELECT 1 FROM imported_events WHERE customer_id=? OR order_id IN (?, ?, ?) LIMIT 1",
+            (customer_id, oid1, oid2, oid3),
+        ).fetchone()
+        if imp is not None:
+            return True
+        items = conn.execute(
+            "SELECT 1 FROM order_items WHERE order_id IN (?, ?, ?) LIMIT 1",
+            (oid1, oid2, oid3),
+        ).fetchone()
+        if items is not None:
+            return True
+        sales_ev = conn.execute(
+            "SELECT 1 FROM business_events WHERE (customer_id=? OR order_id IN (?, ?, ?)) AND kind='sales_event_imported' LIMIT 1",
+            (customer_id, oid1, oid2, oid3),
+        ).fetchone()
+        return sales_ev is not None
+
     def seed_demo_sample_orders(self, customer_id, db=None):
         def _do_seed_orders(conn):
             existing_rows = conn.execute(
-                "SELECT id, product_id, name FROM orders WHERE customer_id=? ORDER BY id ASC",
+                "SELECT id, customer_id, name, variant, amount, status, version, cancel_reason, product_id "
+                "FROM orders WHERE customer_id=? ORDER BY id ASC",
                 (customer_id,),
             ).fetchall()
             if existing_rows:
@@ -258,30 +330,35 @@ class BusinessStore:
                         and re.fullmatch(r"O-[78]\d{5}", str(p601["id"]))
                         and re.fullmatch(r"O-[78]\d{5}", str(p602["id"]))
                         and re.fullmatch(r"O-[78]\d{5}", str(p603["id"]))
-                        and int(str(p602["id"])[2:]) == int(str(p601["id"])[2:]) + 1
-                        and int(str(p603["id"])[2:]) == int(str(p601["id"])[2:]) + 2
-                        and p602.get("name") == "Quần tây ống đứng tôn dáng"
                     ):
-                        p602_oid = str(p602["id"])
-                        imported = conn.execute(
-                            "SELECT 1 FROM imported_events WHERE order_id=? LIMIT 1",
-                            (p602_oid,),
-                        ).fetchone()
-                        has_prov = conn.execute(
-                            "SELECT 1 FROM business_events WHERE customer_id=? AND order_id=? AND kind='demo_sample_fixture_seeded' LIMIT 1",
-                            (customer_id, p602_oid),
-                        ).fetchone()
-                        if imported is None and has_prov is None:
-                            self.log(
-                                conn,
-                                customer_id,
-                                "demo_sample_fixture_seeded",
-                                p602_oid,
-                                fixture="google_demo_sample_v1",
-                                product_id="P-602",
-                                canonical_name="Quần tây ống đứng tôn dáng",
-                                display_name="Bộ xếp hình gỗ cho bé",
-                            )
+                        n1 = int(str(p601["id"])[2:])
+                        n2 = int(str(p602["id"])[2:])
+                        n3 = int(str(p603["id"])[2:])
+                        if (
+                            700001 <= n1 <= 899990
+                            and n2 == n1 + 1
+                            and n3 == n1 + 2
+                            and self._row_matches_demo_fixture_spec(p601, "P-601")
+                            and self._row_matches_demo_fixture_spec(p602, "P-602")
+                            and self._row_matches_demo_fixture_spec(p603, "P-603")
+                        ):
+                            oid_triplet = (str(p601["id"]), str(p602["id"]), str(p603["id"]))
+                            p602_oid = oid_triplet[1]
+                            has_prov = conn.execute(
+                                "SELECT 1 FROM business_events WHERE customer_id=? AND order_id=? AND kind='demo_sample_fixture_seeded' LIMIT 1",
+                                (customer_id, p602_oid),
+                            ).fetchone()
+                            if has_prov is None and not self._has_import_or_item_provenance(conn, customer_id, oid_triplet):
+                                self.log(
+                                    conn,
+                                    customer_id,
+                                    "demo_sample_fixture_seeded",
+                                    p602_oid,
+                                    fixture="google_demo_sample_v1",
+                                    product_id="P-602",
+                                    canonical_name="Quần tây ống đứng tôn dáng",
+                                    display_name="Bộ xếp hình gỗ cho bé",
+                                )
                 return []
             seed_base = 700000 + (abs(hash(customer_id)) % 199990)
             p602_oid = f"O-{seed_base + 2}"
@@ -318,12 +395,19 @@ class BusinessStore:
             return False
         if not re.fullmatch(r"O-[78]\d{5}", order_id):
             return False
+        n2 = int(order_id[2:])
+        if not (700002 <= n2 <= 899991):
+            return False
+        oid_triplet = (f"O-{n2 - 1}", order_id, f"O-{n2 + 1}")
         with self.connection() as db:
-            imported = db.execute(
-                "SELECT 1 FROM imported_events WHERE order_id=? LIMIT 1",
-                (order_id,),
+            p602_row = db.execute(
+                "SELECT id, customer_id, name, variant, amount, status, version, cancel_reason, product_id "
+                "FROM orders WHERE id=? AND customer_id=? LIMIT 1",
+                (order_id, customer_id),
             ).fetchone()
-            if imported is not None:
+            if p602_row is None or not self._row_matches_demo_fixture_spec(dict(p602_row), "P-602"):
+                return False
+            if self._has_import_or_item_provenance(db, customer_id, oid_triplet):
                 return False
             prov = db.execute(
                 "SELECT payload FROM business_events WHERE customer_id=? AND order_id=? AND kind='demo_sample_fixture_seeded' ORDER BY id ASC LIMIT 1",
@@ -649,6 +733,7 @@ class BusinessStore:
             d = dict(r)
             try:
                 d['payload'] = json.loads(d['payload']) if isinstance(d['payload'], str) else d['payload']
+                _, d['payload'] = sanitize_structured_payload(d['payload'], preserve_reasoning=True)
             except Exception:
                 pass
             result.append(d)
@@ -712,6 +797,7 @@ class BusinessStore:
                 "SELECT id,created_at,kind,order_id,payload FROM business_events WHERE customer_id=? AND kind != 'demo_sample_fixture_seeded' ORDER BY id DESC LIMIT 30", (customer,))]
         for row in result:
             row["payload"] = json.loads(row["payload"])
+            _, row["payload"] = sanitize_structured_payload(row["payload"], preserve_reasoning=True)
         return result
 
     def new_conversation(self, customer, provider_id='custom'):

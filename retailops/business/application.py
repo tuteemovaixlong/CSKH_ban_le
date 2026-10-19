@@ -395,7 +395,7 @@ class Application:
                 _, sanitized_trace = sanitize_structured_payload(
                     answer['trace'],
                     user_text=text,
-                    preserve_keys=('reasoning', 'thought', '_reasoning'),
+                    preserve_keys=('reasoning', 'thought', '_reasoning', 'thinking'),
                 )
                 answer['trace'] = sanitized_trace
                 for final_key in ('final_reply', 'assistant_message', 'final_message'):
@@ -504,6 +504,13 @@ class Application:
             raise
         except AgentError as exc:
             exc_trace = exc.trace if isinstance(getattr(exc, 'trace', None), dict) else {}
+            if exc_trace:
+                from retailops.guardrails.topic_filter import sanitize_structured_payload
+                _, exc_trace = sanitize_structured_payload(
+                    exc_trace,
+                    user_text=text,
+                    preserve_keys=('reasoning', 'thought', '_reasoning', 'thinking'),
+                )
             http_status = getattr(exc, 'http_status', None) or exc_trace.get('http_status')
             if not http_status:
                 if exc.code in ('api_rate_limited', 'model_busy'):

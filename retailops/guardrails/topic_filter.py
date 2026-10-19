@@ -76,7 +76,7 @@ _PROMPT_LEAK_REGEXES = (
     re.compile(r"\bRETAILOPS_CANARY_[A-Za-z0-9_-]+\b", re.IGNORECASE),
     re.compile(r"You support a Vietnamese retail customer of RetailOps Shop using server-bound read-only tools", re.IGNORECASE),
     re.compile(r"Bạn là Chuyên viên Tiếp nhận Khiếu nại, Bảo hành & Đổi trả của shop Thương Mại Điện Tử", re.IGNORECASE),
-    re.compile(r"\b(?:sk-or-v1-[A-Za-z0-9_-]{16,}|sk-ant-[A-Za-z0-9_-]{16,}|AIza[0-9A-Za-z_-]{20,})\b"),
+    re.compile(r"\b(?:sk-(?:proj-|or-v1-|ant-)?[A-Za-z0-9_-]{16,}|AIza[0-9A-Za-z_-]{20,})\b"),
     re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"),
 )
 
@@ -158,7 +158,11 @@ def extract_canary_candidates(user_text: str = "", extra_canaries: list[str] | N
     if isinstance(user_text, str) and user_text:
         for m in re.findall(r"[A-Za-z0-9_-]{4,128}", user_text):
             upper_m = m.upper()
-            if any(k in upper_m for k in ("CANARY", "YRANAC", "SECRET", "TERCES", "API_KEY", "TOKEN")):
+            has_canary_term = any(k in upper_m for k in ("CANARY", "YRANAC"))
+            has_secret_id = any(k in upper_m for k in ("SECRET", "TERCES", "API_KEY", "TOKEN")) and (
+                any(ch in m for ch in "_-0123456789") or len(m) >= 10
+            )
+            if has_canary_term or has_secret_id:
                 candidates.append(m)
                 candidates.append(m[::-1])
         for b64_m in re.findall(r"[A-Za-z0-9+/=_-]{8,160}", user_text):
@@ -238,17 +242,81 @@ def sanitize_output_against_canary_leak(
     return (False, output_text)
 
 
+def sanitize_reasoning_text(
+    text: str,
+    *,
+    user_text: str = "",
+    extra_canaries: list[str] | None = None,
+    redact_text: str = "[REDACTED_BY_OUTPUT_GUARD]",
+) -> tuple[bool, str]:
+    """Narrowly filter canary/secret/system-prompt markers from preserved CoT (reasoning/thought/thinking)
+    while retaining ordinary visible Chain-of-Thought."""
+    import base64
+
+    if not isinstance(text, str) or not text:
+        return (False, text)
+    if not contains_canary_or_secret(text, canaries=extra_canaries, user_text=user_text):
+        return (False, text)
+
+    cleaned = text
+    for rx in _PROMPT_LEAK_REGEXES:
+        cleaned = rx.sub(redact_text, cleaned)
+
+    markers = sorted(extract_canary_candidates(user_text=user_text, extra_canaries=extra_canaries), key=len, reverse=True)
+    for marker in markers:
+        for variant in (marker, marker[::-1]):
+            if len(variant) >= 4:
+                cleaned = re.sub(re.escape(variant), redact_text, cleaned, flags=re.IGNORECASE)
+        for raw_variant in (marker, marker[::-1], marker.upper(), marker.lower()):
+            raw_bytes = raw_variant.encode("utf-8")
+            for enc in (base64.b64encode(raw_bytes).decode("ascii"), base64.urlsafe_b64encode(raw_bytes).decode("ascii")):
+                for tok in (enc, enc.rstrip("=")):
+                    if len(tok) >= 6:
+                        cleaned = re.sub(re.escape(tok), redact_text, cleaned, flags=re.IGNORECASE)
+            hex_str = raw_bytes.hex()
+            if len(hex_str) >= 8:
+                cleaned = re.sub(re.escape(hex_str), redact_text, cleaned, flags=re.IGNORECASE)
+
+    for b64_token in set(re.findall(r"[A-Za-z0-9+/=_-]{8,256}", cleaned)):
+        if b64_token == redact_text.strip("[]"):
+            continue
+        padded = b64_token + ("=" * ((4 - len(b64_token) % 4) % 4))
+        leaked_tok = False
+        for decoder in (base64.b64decode, base64.urlsafe_b64decode):
+            try:
+                decoded = decoder(padded.encode("ascii")).decode("utf-8", errors="ignore").lower()
+                if decoded and any(m.lower() in decoded or m.lower()[::-1] in decoded for m in markers):
+                    leaked_tok = True
+                    break
+            except Exception:
+                pass
+        if leaked_tok:
+            cleaned = cleaned.replace(b64_token, redact_text)
+
+    if contains_canary_or_secret(cleaned, canaries=extra_canaries, user_text=user_text):
+        lines = cleaned.split("\n")
+        safe_lines = [
+            redact_text if contains_canary_or_secret(ln, canaries=extra_canaries, user_text=user_text) else ln
+            for ln in lines
+        ]
+        cleaned = "\n".join(safe_lines)
+        if contains_canary_or_secret(cleaned, canaries=extra_canaries, user_text=user_text):
+            cleaned = redact_text
+
+    return (True, cleaned)
+
+
 def sanitize_structured_payload(
     payload,
     *,
     user_text: str = "",
     extra_canaries: list[str] | None = None,
-    preserve_keys: tuple[str, ...] = ("reasoning", "thought", "_reasoning"),
+    preserve_keys: tuple[str, ...] = ("reasoning", "thought", "_reasoning", "thinking"),
     preserve_reasoning: bool = True,
     redact_text: str = "[REDACTED_BY_OUTPUT_GUARD]",
 ):
     """Recursively sanitize dicts, lists, and JSON strings against canary/secret exfiltration,
-    while preserving raw Chain-of-Thought fields (reasoning / thought) and user input messages."""
+    while preserving ordinary Chain-of-Thought fields (reasoning / thought) and user input messages."""
     import json
 
     effective_preserve_keys = preserve_keys if preserve_reasoning else ()
@@ -304,13 +372,47 @@ def sanitize_structured_payload(
                 if tc_leaked:
                     out["tool_calls"] = tc_safe
                     leaked = True
+            for rk in ("thinking", "reasoning", "_reasoning", "thought"):
+                if rk in out and isinstance(out[rk], str) and out[rk]:
+                    if preserve_reasoning:
+                        r_leaked, r_safe = sanitize_reasoning_text(
+                            out[rk], user_text=user_text, extra_canaries=extra_canaries, redact_text=redact_text
+                        )
+                    else:
+                        r_leaked, r_safe = sanitize_structured_payload(
+                            out[rk],
+                            user_text=user_text,
+                            extra_canaries=extra_canaries,
+                            preserve_keys=(),
+                            preserve_reasoning=False,
+                            redact_text=redact_text,
+                        )
+                    if r_leaked:
+                        out[rk] = r_safe
+                        leaked = True
             return leaked, out
 
         out_dict = {}
         any_leaked = False
         for k, v in payload.items():
             if k in effective_preserve_keys:
-                out_dict[k] = v
+                if isinstance(v, str):
+                    r_leaked, r_safe = sanitize_reasoning_text(
+                        v, user_text=user_text, extra_canaries=extra_canaries, redact_text=redact_text
+                    )
+                    out_dict[k] = r_safe
+                    any_leaked = any_leaked or r_leaked
+                else:
+                    sub_leaked, sub_v = sanitize_structured_payload(
+                        v,
+                        user_text=user_text,
+                        extra_canaries=extra_canaries,
+                        preserve_keys=effective_preserve_keys,
+                        preserve_reasoning=preserve_reasoning,
+                        redact_text=redact_text,
+                    )
+                    out_dict[k] = sub_v
+                    any_leaked = any_leaked or sub_leaked
                 continue
             if k in ("message", "final_reply", "assistant_message", "final_message") and isinstance(v, str) and v:
                 c_leaked, c_safe = sanitize_output_against_canary_leak(user_text, v, extra_canaries=extra_canaries)

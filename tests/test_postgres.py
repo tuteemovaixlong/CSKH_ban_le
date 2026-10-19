@@ -1386,9 +1386,9 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
                     'message': {
                         'role': 'assistant',
                         'content': 'Đơn O-101 có mã bí mật CANARY_SECRET_P5E_901 và hex ' + b'CANARY_SECRET_P5E_901'.hex(),
-                        'thinking': 'PG CoT reasoning preserved.',
+                        'thinking': 'PG CoT reasoning preserved. Leak CANARY_SECRET_P5E_901 and sk-proj-9876543210abcdefghij',
                     },
-                    'reasoning': 'PG CoT reasoning preserved.',
+                    'reasoning': 'PG CoT reasoning preserved. Leak CANARY_SECRET_P5E_901 and sk-proj-9876543210abcdefghij',
                     'prompt_eval_count': 15,
                     'eval_count': 10,
                 }
@@ -1419,6 +1419,8 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         )
         self.assertTrue(rep_ai1.get('replayed'))
         self.assertNotIn('CANARY_SECRET_P5E_901', json.dumps(rep_ai1, ensure_ascii=False))
+        self.assertNotIn('sk-proj-9876543210', json.dumps(rep_ai1, ensure_ascii=False))
+        self.assertIn('PG CoT reasoning preserved.', str(rep_ai1.get('trace', {}).get('reasoning') or ''))
 
         t_code, t_body = api_result(app_ai1, 'C-001', 'GET', f'/api/conversations/{cid_ai1}/messages')
         self.assertEqual(t_code, 200)
@@ -1429,11 +1431,12 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         self.assertEqual(assistant_msgs[-1]['content'], res_ai1['message'])
         self.assertNotIn('CANARY_SECRET_P5E_901', json.dumps(persisted_msgs, ensure_ascii=False))
         self.assertNotIn('CANARY_SECRET_P5E_901', json.dumps(persisted_res, ensure_ascii=False))
+        self.assertNotIn('sk-proj-9876543210', json.dumps(persisted_res, ensure_ascii=False))
         self.assertNotIn('CANARY_SECRET_P5E_901', json.dumps(store_a.feedbacks('C-001'), ensure_ascii=False))
         self.assertNotIn('CANARY_SECRET_P5E_901', json.dumps(store_a.escalations(limit=20), ensure_ascii=False))
         self.assertEqual(res_ai1['message'], persisted_res['message'])
 
-        # Pre-existing legacy poisoned row read-time sanitization on PostgresBusinessStore (R1)
+        # Pre-existing legacy poisoned row read-time sanitization (including trace.reasoning / thought) on PostgresBusinessStore (R1 / AI1)
         with store_a.connection(write=True) as db:
             db.execute(
                 "INSERT INTO agent_turns(conversation_id, customer_id, request_id, input_hash, messages, result, created_at) "
@@ -1443,11 +1446,15 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
                     'C-001',
                     'req_pg_ai1_legacy_poison_01',
                     'hash_pg_legacy_01',
-                    json.dumps([{'role': 'assistant', 'content': 'Leak CANARY_SECRET_P5E_901'}], ensure_ascii=False),
+                    json.dumps([{'role': 'assistant', 'content': 'Leak CANARY_SECRET_P5E_901', 'thinking': 'PG legacy thinking ok. Leak CANARY_SECRET_P5E_901'}], ensure_ascii=False),
                     json.dumps(
                         {
                             'message': 'Leak CANARY_SECRET_P5E_901',
-                            'trace': {'reasoning': 'Raw PG legacy CoT preserved.', 'events': [{'detail': 'Leak CANARY_SECRET_P5E_901'}]},
+                            'trace': {
+                                'reasoning': 'Raw PG legacy CoT preserved. Leak CANARY_SECRET_P5E_901',
+                                'steps': [{'action': 'final_answer', 'thought': 'PG step thought ok. Leak SECRET_CANARY_ALPHA_77'}],
+                                'events': [{'detail': 'Leak CANARY_SECRET_P5E_901'}],
+                            },
                         },
                         ensure_ascii=False,
                     ),
@@ -1456,8 +1463,11 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             )
         legacy_rep = store_a.replay('C-001', cid_ai1, 'req_pg_ai1_legacy_poison_01', 'hash_pg_legacy_01')
         self.assertNotIn('CANARY_SECRET_P5E_901', json.dumps(legacy_rep, ensure_ascii=False))
-        self.assertEqual(legacy_rep['trace']['reasoning'], 'Raw PG legacy CoT preserved.')
+        self.assertNotIn('SECRET_CANARY_ALPHA_77', json.dumps(legacy_rep, ensure_ascii=False))
+        self.assertIn('Raw PG legacy CoT preserved.', legacy_rep['trace']['reasoning'])
+        self.assertIn('PG step thought ok.', legacy_rep['trace']['steps'][0]['thought'])
         self.assertNotIn('CANARY_SECRET_P5E_901', json.dumps(store_a.conversation_transcript(cid_ai1), ensure_ascii=False))
+        self.assertNotIn('SECRET_CANARY_ALPHA_77', json.dumps(store_a.conversation_transcript(cid_ai1), ensure_ascii=False))
 
         # 1b. AI2: Read-only lookup blocks hostile prepare_cancellation AND hostile request_human_support while preserving explicit confirmation gate on PG
         class _PgHostileCancelGw(_PgHostileCanaryGw):
@@ -1561,27 +1571,91 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         self.assertIn('không tìm thấy', res_ai4_nf['message'].lower())
         self.assertNotIn('500.000', res_ai4_nf['message'])
 
-        # 1d. AI5: Timeout (504 including raw TimeoutError), quota (429), and upstream failure (503) truthfulness on PostgresBusinessStore
+        # 1d. AI5: Timeout (504 including raw TimeoutError), provider 429 (api_rate_limited), daily quota 429 (api_daily_limit), and upstream failure (503) truthfulness & business state invariance on PostgresBusinessStore
+        with store_a.connection(write=True) as db:
+            db.execute("DELETE FROM provider_daily_usage WHERE provider_id='api'")
+            pg_ai5_orders_before = [dict(r) for r in db.execute("SELECT id, customer_id, status, version, cancel_reason, amount FROM orders ORDER BY id").fetchall()]
+            pg_ai5_proposals_before = [dict(r) for r in db.execute("SELECT id, customer_id, order_id, state FROM proposals ORDER BY id").fetchall()]
+
         class _PgRawTimeoutGw(_PgHostileCanaryGw):
             def chat(self, messages, tools=False, timeout=30):
                 raise TimeoutError('pg socket timed out')
+
+        class _PgRateLimitGw(_PgHostileCanaryGw):
+            def chat(self, messages, tools=False, timeout=30):
+                raise AgentError('api_rate_limited', 'Nhà cung cấp API đang giới hạn tốc độ.', {'http_status': 429})
+
+        class _PgHealthyApiGw(_PgHostileCanaryGw):
+            def chat(self, messages, tools=False, timeout=30):
+                return {
+                    'message': {'role': 'assistant', 'content': 'Đơn O-101 đang ở trạng thái chờ xử lý (pending).'},
+                    'prompt_eval_count': 12,
+                    'eval_count': 8,
+                }
 
         class _PgFailGw(_PgHostileCanaryGw):
             def chat(self, messages, tools=False, timeout=30):
                 raise AgentError('agent_response_failed', 'Upstream model unavailable.', {'http_status': 503})
 
-        app_to = Application(store_a, {}, infer=_PgRawTimeoutGw(), orchestrator='single_agent')
-        conv_to = app_to.new_conversation('C-001', {'provider_id': 'custom'})
-        with self.assertRaises(ApiError) as ctx_to:
-            app_to.chat('C-001', {'conversation_id': conv_to['conversation_id'], 'request_id': 'req_pg_ai5_to_01', 'text': 'Kiểm tra đơn O-101'})
-        self.assertEqual(ctx_to.exception.status, 504)
-        self.assertEqual(ctx_to.exception.code, 'agent_timeout')
+        for orch_to in ('single_agent', 'multi_agent'):
+            app_to = Application(store_a, {}, infer=_PgRawTimeoutGw(), orchestrator=orch_to)
+            conv_to = app_to.new_conversation('C-001', {'provider_id': 'custom'})
+            with self.assertRaises(ApiError) as ctx_to:
+                app_to.chat('C-001', {'conversation_id': conv_to['conversation_id'], 'request_id': f'req_pg_ai5_to_{orch_to}_01', 'text': 'Kiểm tra đơn O-101'})
+            self.assertEqual(ctx_to.exception.status, 504)
+            self.assertEqual(ctx_to.exception.code, 'agent_timeout')
+
+        # Provider HTTP 429 -> 429 api_rate_limited (consumes attempt 1 of 2 on provider_daily_usage)
+        app_rl = Application(store_a, {}, api_infer=_PgRateLimitGw(), api_daily_limit=2, orchestrator='single_agent')
+        conv_rl = app_rl.new_conversation('C-001', {'provider_id': 'api'})
+        rl_code, rl_body = api_result(
+            app_rl,
+            'C-001',
+            'POST',
+            '/api/chat',
+            {'conversation_id': conv_rl['conversation_id'], 'request_id': 'req_pg_ai5_ratelimit_01', 'text': 'Hủy đơn O-101'},
+        )
+        self.assertEqual(rl_code, 429)
+        self.assertEqual(rl_body['error'], 'api_rate_limited')
+        self.assertIn('giới hạn tốc độ', rl_body['message'].lower())
+
+        # Daily API quota HTTP 429 -> 2nd attempt succeeds (200), 3rd attempt rejected with 429 api_daily_limit
+        app_quota_pg = Application(store_a, {}, api_infer=_PgHealthyApiGw(), api_daily_limit=2, orchestrator='single_agent')
+        conv_q_pg = app_quota_pg.new_conversation('C-001', {'provider_id': 'api'})
+        q_ok_code, q_ok_body = api_result(
+            app_quota_pg,
+            'C-001',
+            'POST',
+            '/api/chat',
+            {'conversation_id': conv_q_pg['conversation_id'], 'request_id': 'req_pg_ai5_quota_turn_02', 'text': 'Kiểm tra đơn O-101'},
+        )
+        self.assertEqual(q_ok_code, 200)
+        self.assertEqual(q_ok_body['action'], 'reply')
+
+        q_lim_code, q_lim_body = api_result(
+            app_quota_pg,
+            'C-001',
+            'POST',
+            '/api/chat',
+            {'conversation_id': conv_q_pg['conversation_id'], 'request_id': 'req_pg_ai5_quota_turn_03', 'text': 'Hủy đơn O-101'},
+        )
+        self.assertEqual(q_lim_code, 429)
+        self.assertEqual(q_lim_body['error'], 'api_daily_limit')
+        self.assertIn('hết lượt chat api hôm nay', q_lim_body['message'].lower())
 
         app_503 = Application(store_a, {}, infer=_PgFailGw(), orchestrator='single_agent')
         conv_503 = app_503.new_conversation('C-001', {'provider_id': 'custom'})
         with self.assertRaises(ApiError) as ctx_503:
             app_503.chat('C-001', {'conversation_id': conv_503['conversation_id'], 'request_id': 'req_pg_ai5_503_01', 'text': 'Kiểm tra đơn O-101'})
         self.assertEqual(ctx_503.exception.status, 503)
+        self.assertEqual(ctx_503.exception.code, 'agent_response_failed')
+
+        with store_a.connection(write=True) as db:
+            pg_ai5_orders_after = [dict(r) for r in db.execute("SELECT id, customer_id, status, version, cancel_reason, amount FROM orders ORDER BY id").fetchall()]
+            pg_ai5_proposals_after = [dict(r) for r in db.execute("SELECT id, customer_id, order_id, state FROM proposals ORDER BY id").fetchall()]
+            db.execute("DELETE FROM provider_daily_usage WHERE provider_id='api'")
+        self.assertEqual(pg_ai5_orders_after, pg_ai5_orders_before)
+        self.assertEqual(pg_ai5_proposals_after, pg_ai5_proposals_before)
         self.assertEqual(store_a.lookup('C-001', 'O-101')['status'], 'pending')
 
         # 2. DATA1 & DATA2 on PostgresSessions + PostgresBusinessStore
@@ -1615,6 +1689,41 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         code_foc_s, body_foc_s, _ = self.request(f"/api/conversations/{conv_s['conversation_id']}/focus", {'order_id': sample_oid}, cookie_sample)
         self.assertEqual(code_foc_s, 200)
         self.assertEqual(body_foc_s['order']['display_name'], 'Bộ xếp hình gỗ cho bé')
+
+        # DATA1 Mixed import provenance & modified fixture attribute on PostgreSQL MUST keep canonical label (no display_name)
+        with store_a.connection(write=True) as db:
+            db.execute("INSERT INTO customers(id, name) VALUES ('pg_legacy_mixed', 'PG Legacy Mixed') ON CONFLICT DO NOTHING")
+            db.execute(
+                "INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id) VALUES "
+                "('O-888881', 'pg_legacy_mixed', 'Áo sơ mi lụa công sở', 'Trắng / M', 450000, 'pending', 1, NULL, 'P-601'), "
+                "('O-888882', 'pg_legacy_mixed', 'Quần tây ống đứng tôn dáng', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602'), "
+                "('O-888883', 'pg_legacy_mixed', 'Giày lười da bò cao cấp', 'Nâu / 41', 890000, 'delivered', 1, NULL, 'P-603') "
+                "ON CONFLICT DO NOTHING"
+            )
+            db.execute(
+                "INSERT INTO imported_events(id, source_system, event_id, tenant_id, external_customer_id, customer_id, order_id, status, total, currency, payload_json, signature, created_at) "
+                "VALUES ('pg-imp-mix-01', 'pos_sync', 'pg-evt-mix-01', 'shop-a', 'ext-pg-mix-01', 'pg_legacy_mixed', 'O-888881', 'pending', 450000, 'VND', '{}', 'sig-pg-01', ?) "
+                "ON CONFLICT DO NOTHING",
+                (time.time(),),
+            )
+            db.execute("INSERT INTO customers(id, name) VALUES ('pg_legacy_mod', 'PG Legacy Mod') ON CONFLICT DO NOTHING")
+            db.execute(
+                "INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id) VALUES "
+                "('O-877771', 'pg_legacy_mod', 'Áo sơ mi lụa công sở', 'Trắng / M', 490000, 'pending', 1, NULL, 'P-601'), "
+                "('O-877772', 'pg_legacy_mod', 'Quần tây ống đứng tôn dáng', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602'), "
+                "('O-877773', 'pg_legacy_mod', 'Giày lười da bò cao cấp', 'Nâu / 41', 890000, 'delivered', 1, NULL, 'P-603') "
+                "ON CONFLICT DO NOTHING"
+            )
+        store_a.seed_demo_sample_orders('pg_legacy_mixed')
+        self.assertFalse(store_a.is_demo_sample_order('pg_legacy_mixed', 'O-888882'))
+        store_a.seed_demo_sample_orders('pg_legacy_mod')
+        self.assertFalse(store_a.is_demo_sample_order('pg_legacy_mod', 'O-877772'))
+        pg_mix_member = self.member('pg_mix_member', 'shop-a', 'pg_legacy_mixed', 'customer')
+        cookie_pg_mix = self.login(pg_mix_member)
+        code_pg_mix, body_pg_mix, _ = self.request('/api/orders/O-888882', cookie=cookie_pg_mix)
+        self.assertEqual(code_pg_mix, 200)
+        self.assertEqual(body_pg_mix['order']['name'], 'Quần tây ống đứng tôn dáng')
+        self.assertNotIn('display_name', body_pg_mix['order'])
 
         # DATA1 Negative control on PostgreSQL (R3): non-demo 6-digit P-602 orders (O-123456, O-754321) do NOT get display_name
         with store_a.connection(write=True) as db:
