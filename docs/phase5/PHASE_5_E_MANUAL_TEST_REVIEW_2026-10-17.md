@@ -1,6 +1,6 @@
 # P5-E Manual Test Review — 2026-10-17
 
-> **Input snapshot, giữ nguyên kết luận test tay.** Trạng thái implementation hiện hành xem [independent review 2026-10-18](REVIEW_ARGON_P5_E_2026-10-18.md): PR #43 / `7b94f9c…`, CI 5/5 SUCCESS, **CHANGES REQUIRED R1–R6**. Hướng dẫn bắt đầu implementation ở cuối snapshot đã consumed; tiếp tục candidate theo [handoff hiện hành](PHASE_5_E_EXECUTION_HANDOFF.md).
+> **Input snapshot; historical manual observations are retained.** Current candidate: PR #43 reviewed snapshot `982801144702b703eb9af3d4d1435a3a75b1b1e4` → Round 3 remediated code candidate `97b11bbcaa67a7b2f4297e63437d5802ee789384` (base `44540eab516831d5c8232dd80392b8e20c6cd47e`, tested merge ref `e10f9b1f24c30533c36f4b6d77aec6fb51e1baa1`, [CI 39203490030](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/39203490030) & [Ops Console 39203490035](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/39203490035) `SUCCESS`). See [independent review](REVIEW_ARGON_P5_E_2026-10-18.md), [evidence](PHASE_5_E_EVIDENCE_2026-10-18.md), and [handoff](PHASE_5_E_EXECUTION_HANDOFF.md).
 
 ## Tóm tắt quyết định
 
