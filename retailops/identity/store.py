@@ -1,5 +1,6 @@
 """Durable principals, memberships and revocable sessions; credentials stored as hashes."""
 import hashlib
+import json
 import logging
 import re
 import secrets
@@ -25,7 +26,7 @@ def initialize(db):
         'CREATE TABLE principals (id TEXT PRIMARY KEY, name TEXT NOT NULL)',
         '''CREATE TABLE memberships (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
             principal_id TEXT NOT NULL REFERENCES principals(id), customer_id TEXT NOT NULL,
-            role TEXT NOT NULL CHECK(role IN ('customer','viewer','staff','manager')), active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+            role TEXT NOT NULL CHECK(role IN ('customer','viewer','staff','manager','platform_admin')), active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
             auth_version INTEGER NOT NULL DEFAULT 1, UNIQUE(tenant_id,principal_id))''',
         '''CREATE TABLE credentials (hash TEXT PRIMARY KEY, membership_id TEXT NOT NULL REFERENCES memberships(id),
             created_at REAL NOT NULL)''',
@@ -67,6 +68,29 @@ def initialize(db):
             updated_at REAL NOT NULL,
             UNIQUE(tenant_id, source_system, external_customer_id))''',
         'CREATE INDEX IF NOT EXISTS idx_ext_cust_mappings_tenant_cust ON external_customer_mappings(tenant_id, customer_id)',
+        '''CREATE TABLE IF NOT EXISTS membership_quota_overrides (
+            membership_id TEXT PRIMARY KEY REFERENCES memberships(id),
+            daily_limit INTEGER NOT NULL CHECK(daily_limit BETWEEN 1 AND 10000),
+            effective_at REAL NOT NULL,
+            expires_at REAL,
+            reason TEXT NOT NULL,
+            updated_by TEXT NOT NULL,
+            updated_at REAL NOT NULL)''',
+        '''CREATE TABLE IF NOT EXISTS admin_audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at REAL NOT NULL,
+            correlation_id TEXT NOT NULL,
+            actor_principal_id TEXT NOT NULL,
+            actor_role TEXT NOT NULL,
+            tenant_id TEXT NOT NULL,
+            target_membership_id TEXT NOT NULL,
+            action TEXT NOT NULL,
+            outcome TEXT NOT NULL CHECK(outcome IN ('allowed', 'denied')),
+            before_json TEXT NOT NULL,
+            after_json TEXT NOT NULL,
+            reason TEXT NOT NULL)''',
+        'CREATE INDEX IF NOT EXISTS idx_admin_audit_tenant ON admin_audit_log(tenant_id, id DESC)',
+        'CREATE INDEX IF NOT EXISTS idx_admin_audit_target ON admin_audit_log(target_membership_id, id DESC)',
     ]
     for statement in statements:
         db.execute(statement)
@@ -131,6 +155,31 @@ def migrate_legacy_collisions(db, tenant_stores=None):
         UNIQUE(tenant_id, source_system, external_customer_id)
     )''')
     db.execute('CREATE INDEX IF NOT EXISTS idx_ext_cust_mappings_tenant_cust ON external_customer_mappings(tenant_id, customer_id)')
+    db.execute('''CREATE TABLE IF NOT EXISTS membership_quota_overrides (
+        membership_id TEXT PRIMARY KEY REFERENCES memberships(id),
+        daily_limit INTEGER NOT NULL CHECK(daily_limit BETWEEN 1 AND 10000),
+        effective_at REAL NOT NULL,
+        expires_at REAL,
+        reason TEXT NOT NULL,
+        updated_by TEXT NOT NULL,
+        updated_at REAL NOT NULL
+    )''')
+    db.execute('''CREATE TABLE IF NOT EXISTS admin_audit_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at REAL NOT NULL,
+        correlation_id TEXT NOT NULL,
+        actor_principal_id TEXT NOT NULL,
+        actor_role TEXT NOT NULL,
+        tenant_id TEXT NOT NULL,
+        target_membership_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        outcome TEXT NOT NULL CHECK(outcome IN ('allowed', 'denied')),
+        before_json TEXT NOT NULL,
+        after_json TEXT NOT NULL,
+        reason TEXT NOT NULL
+    )''')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_admin_audit_tenant ON admin_audit_log(tenant_id, id DESC)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_admin_audit_target ON admin_audit_log(target_membership_id, id DESC)')
     try:
         db.execute('ALTER TABLE reconciliation_journal ADD COLUMN plan_hash TEXT')
     except Exception:
@@ -356,6 +405,64 @@ def valid_name(value):
     return isinstance(value, str) and 0 < len(value.strip()) <= 100
 
 
+def upgrade_sqlite_memberships_role_constraint(path, *, fail_hook=None):
+    """Safely rebuild legacy SQLite memberships table to allow 'platform_admin' role
+    when credentials, sessions, or quota overrides reference memberships(id).
+
+    SQLite requires PRAGMA foreign_keys=OFF to be executed outside any active transaction
+    before rebuilding a referenced parent table, then verified via PRAGMA foreign_key_check
+    inside the transaction before committing. Never swallows errors or leaves temporary tables behind.
+    """
+    db = sqlite3.connect(Path(path), timeout=5, isolation_level=None)
+    db.row_factory = sqlite3.Row
+    try:
+        mem_ddl = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='memberships'").fetchone()
+        has_temp = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='memberships_p5e_new'").fetchone()
+        needs_rebuild = bool(mem_ddl and mem_ddl[0] and 'platform_admin' not in mem_ddl[0])
+        if not needs_rebuild and not has_temp:
+            return False
+        db.execute('PRAGMA foreign_keys=OFF')
+        fk_state = db.execute('PRAGMA foreign_keys').fetchone()
+        if fk_state and fk_state[0] != 0:
+            raise sqlite3.OperationalError('Unable to disable SQLite foreign_keys outside transaction for schema rebuild.')
+        db.execute('BEGIN IMMEDIATE')
+        try:
+            db.execute('DROP TABLE IF EXISTS memberships_p5e_new')
+            if needs_rebuild:
+                existing_cols = {r[1] for r in db.execute('PRAGMA table_info(memberships)').fetchall()}
+                auth_ver_expr = 'COALESCE(auth_version, 1)' if 'auth_version' in existing_cols else '1'
+                db.execute('''CREATE TABLE memberships_p5e_new (
+                    id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
+                    principal_id TEXT NOT NULL REFERENCES principals(id), customer_id TEXT NOT NULL,
+                    role TEXT NOT NULL CHECK(role IN ('customer','viewer','staff','manager','platform_admin')),
+                    active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+                    auth_version INTEGER NOT NULL DEFAULT 1, UNIQUE(tenant_id,principal_id))''')
+                db.execute(
+                    f'INSERT INTO memberships_p5e_new (id, tenant_id, principal_id, customer_id, role, active, auth_version) '
+                    f'SELECT id, tenant_id, principal_id, customer_id, role, active, {auth_ver_expr} FROM memberships'
+                )
+                if callable(fail_hook):
+                    fail_hook(db)
+                db.execute('DROP TABLE memberships')
+                db.execute('ALTER TABLE memberships_p5e_new RENAME TO memberships')
+            fk_violations = db.execute('PRAGMA foreign_key_check').fetchall()
+            if fk_violations:
+                raise sqlite3.IntegrityError(
+                    f"Foreign key integrity check failed after memberships migration: {[tuple(r) for r in fk_violations]}"
+                )
+            db.execute('COMMIT')
+            return needs_rebuild
+        except Exception:
+            if db.in_transaction:
+                db.execute('ROLLBACK')
+            raise
+    finally:
+        try:
+            db.execute('PRAGMA foreign_keys=ON')
+        finally:
+            db.close()
+
+
 class IdentityStore:
     def __init__(self, path, tenant_stores=None, data_mode=None):
         self.path = Path(path)
@@ -366,9 +473,17 @@ class IdentityStore:
             db.execute('PRAGMA journal_mode=WAL')
         with self.connection(write=True) as db:
             migrate(db, 'identity', initialize)
+        self.upgrade_memberships_role_constraint()
+        with self.connection(write=True) as db:
             migrate_legacy_collisions(db, tenant_stores=tenant_stores)
 
+    def upgrade_memberships_role_constraint(self, *, fail_hook=None):
+        hook = fail_hook if fail_hook is not None else getattr(self, '_migration_fail_hook', None)
+        return upgrade_sqlite_memberships_role_constraint(self.path, fail_hook=hook)
+
     def migrate_legacy_collisions(self, tenant_stores=None):
+        if hasattr(self, 'path'):
+            self.upgrade_memberships_role_constraint()
         stores = tenant_stores if tenant_stores is not None else self.tenant_stores
         with self.connection(write=True) as db:
             migrate_legacy_collisions(db, tenant_stores=stores)
@@ -828,3 +943,715 @@ class IdentityStore:
         return {'id': mapping_id, 'tenant_id': tenant_clean, 'source_system': source_clean,
                 'external_customer_id': ext_cust_clean, 'customer_id': cid_clean,
                 'created_at': now, 'updated_at': now, 'created': True}
+
+    @staticmethod
+    def _sanitize_audit_payload(payload):
+        forbidden = {
+            'token', 'secret', 'token_hash', 'hash', 'password', 'cookie',
+            'oauth_code', 'oauth_state', 'messages', 'chat', 'prompt', 'content',
+        }
+        if isinstance(payload, dict):
+            return {
+                str(k): IdentityStore._sanitize_audit_payload(v)
+                for k, v in payload.items()
+                if str(k).lower() not in forbidden
+            }
+        if isinstance(payload, list):
+            return [IdentityStore._sanitize_audit_payload(item) for item in payload]
+        return payload
+
+    def record_admin_audit(
+        self,
+        db,
+        *,
+        actor_principal_id,
+        actor_role,
+        tenant_id,
+        target_membership_id,
+        action,
+        outcome,
+        before_state,
+        after_state,
+        reason,
+        correlation_id=None,
+        now=None,
+    ):
+        require(outcome in ('allowed', 'denied'), 400, 'invalid_audit_outcome', 'Trạng thái audit không hợp lệ.')
+        now_ts = float(now if now is not None else time.time())
+        corr_id = str(correlation_id).strip() if correlation_id else str(uuid.uuid4())
+        before_str = json.dumps(self._sanitize_audit_payload(before_state or {}), ensure_ascii=False, sort_keys=True)
+        after_str = json.dumps(self._sanitize_audit_payload(after_state or {}), ensure_ascii=False, sort_keys=True)
+        entry = {
+            'created_at': now_ts,
+            'correlation_id': corr_id,
+            'actor_principal_id': str(actor_principal_id or 'unknown'),
+            'actor_role': str(actor_role or 'unknown'),
+            'tenant_id': str(tenant_id or 'unknown'),
+            'target_membership_id': str(target_membership_id or '*'),
+            'action': str(action),
+            'outcome': outcome,
+            'before_json': before_str,
+            'after_json': after_str,
+            'reason': str(reason or ''),
+        }
+        hook = getattr(self, '_audit_write_hook', None)
+        if callable(hook):
+            hook(db, entry)
+        db.execute(
+            '''INSERT INTO admin_audit_log (
+                   created_at, correlation_id, actor_principal_id, actor_role,
+                   tenant_id, target_membership_id, action, outcome,
+                   before_json, after_json, reason
+               ) VALUES (?,?,?,?,?,?,?,?,?,?,?)''',
+            (
+                entry['created_at'],
+                entry['correlation_id'],
+                entry['actor_principal_id'],
+                entry['actor_role'],
+                entry['tenant_id'],
+                entry['target_membership_id'],
+                entry['action'],
+                entry['outcome'],
+                entry['before_json'],
+                entry['after_json'],
+                entry['reason'],
+            ),
+        )
+        return entry
+
+    def _check_admin_scope(
+        self,
+        actor,
+        target_tenant_id,
+        action,
+        *,
+        target_membership_id='*',
+        reason='permission_check',
+        correlation_id=None,
+    ):
+        actor_dict = actor if isinstance(actor, dict) else {}
+        actor_role = str(actor_dict.get('role') or '')
+        actor_pid = str(actor_dict.get('principal_id') or 'unknown')
+        actor_tid = str(actor_dict.get('tenant_id') or '').strip()
+        target_tid = str(target_tenant_id or '').strip()
+
+        if actor_role not in ('manager', 'platform_admin'):
+            with self.connection(write=True) as db:
+                self.record_admin_audit(
+                    db,
+                    actor_principal_id=actor_pid,
+                    actor_role=actor_role or 'customer',
+                    tenant_id=target_tid or actor_tid or 'unknown',
+                    target_membership_id=target_membership_id,
+                    action=action,
+                    outcome='denied',
+                    before_state={},
+                    after_state={'error': 'permission_denied'},
+                    reason=reason or 'unauthorized_role',
+                    correlation_id=correlation_id,
+                )
+            raise ApiError(403, 'permission_denied', 'Tài khoản này không có quyền quản trị tài khoản.')
+
+        if actor_role == 'manager':
+            if not actor_tid or (target_tid and target_tid != actor_tid):
+                with self.connection(write=True) as db:
+                    self.record_admin_audit(
+                        db,
+                        actor_principal_id=actor_pid,
+                        actor_role=actor_role,
+                        tenant_id=target_tid or actor_tid or 'unknown',
+                        target_membership_id=target_membership_id,
+                        action=action,
+                        outcome='denied',
+                        before_state={},
+                        after_state={'error': 'cross_tenant_denied', 'actor_tenant_id': actor_tid, 'target_tenant_id': target_tid},
+                        reason=reason or 'cross_tenant_access',
+                        correlation_id=correlation_id,
+                    )
+                raise ApiError(403, 'permission_denied', 'Quản lý cửa hàng không có quyền truy cập hoặc thao tác trên cửa hàng khác.')
+            return actor_tid
+
+        require(bool(target_tid), 400, 'missing_tenant_id', 'Quản trị viên nền tảng phải chỉ định rõ tenant_id.')
+        return target_tid
+
+    @staticmethod
+    def _validate_admin_reason(reason):
+        require(isinstance(reason, str) and 0 < len(reason.strip()) <= 500,
+                400, 'invalid_reason', 'Cần nhập lý do thao tác quản trị (1-500 ký tự).')
+        return reason.strip()
+
+    def _build_account_view(self, db, row, default_limit=20, now_ts=None):
+        from retailops.account_usage import AccountQuotaStore
+        now_val = float(now_ts if now_ts is not None else time.time())
+        mid = row['id']
+        sess_row = db.execute(
+            'SELECT count(*) AS cnt FROM sessions WHERE membership_id=? AND auth_version=? AND expires_at>?',
+            (mid, row['auth_version'], now_val),
+        ).fetchone()
+        active_sessions = int(sess_row['cnt']) if sess_row else 0
+        audit_row = db.execute(
+            'SELECT max(created_at) AS last_at FROM admin_audit_log WHERE target_membership_id=?',
+            (mid,),
+        ).fetchone()
+        last_audit_at = float(audit_row['last_at']) if (audit_row and audit_row['last_at'] is not None) else None
+
+        quota_store = AccountQuotaStore(self, mid)
+        eff_limit, override_info = quota_store._resolve_effective_limit(db, default_limit, now_ts=now_val)
+        day_utc = datetime.fromtimestamp(now_val, tz=timezone.utc).date().isoformat()
+        att_key = quota_store._key('api', 'attempts')
+        att_row = db.execute(
+            'SELECT attempts FROM provider_daily_usage WHERE day=? AND provider_id=?',
+            (day_utc, att_key),
+        ).fetchone()
+        used = int(att_row['attempts']) if att_row else 0
+        dt_now = datetime.fromtimestamp(now_val, tz=timezone.utc)
+        tomorrow = datetime.combine(dt_now.date() + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
+
+        return {
+            'membership_id': mid,
+            'tenant_id': row['tenant_id'],
+            'principal_id': row['principal_id'],
+            'customer_id': row['customer_id'],
+            'display_name': row['principal_name'],
+            'role': row['role'],
+            'active': bool(row['active']),
+            'auth_version': int(row['auth_version']),
+            'active_session_count': active_sessions,
+            'last_audit_at': last_audit_at,
+            'quota': {
+                'day_utc': day_utc,
+                'used': used,
+                'limit': eff_limit,
+                'default_limit': default_limit,
+                'remaining': max(0, eff_limit - used),
+                'exhausted': used >= eff_limit,
+                'override': override_info,
+                'next_reset_utc': tomorrow.strftime('%Y-%m-%dT%H:%M:%SZ'),
+            },
+        }
+
+    def admin_list_accounts(self, actor, *, tenant_id=None, query=None, limit=50, default_limit=20, correlation_id=None):
+        actor_dict = actor if isinstance(actor, dict) else {}
+        actor_role = str(actor_dict.get('role') or '')
+        actor_tid = str(actor_dict.get('tenant_id') or '').strip()
+        requested_tid = str(tenant_id).strip() if tenant_id is not None and str(tenant_id).strip() else (actor_tid if actor_role == 'manager' else '')
+        effective_tid = self._check_admin_scope(
+            actor,
+            requested_tid,
+            'list_accounts',
+            target_membership_id='*',
+            reason='list_accounts',
+            correlation_id=correlation_id,
+        )
+        require(type(limit) is int and 1 <= limit <= 200, 400, 'invalid_limit', 'Giới hạn danh sách không hợp lệ.')
+        q_clean = str(query).strip().lower() if query else ''
+        with self.connection() as db:
+            if q_clean:
+                rows = db.execute(
+                    '''SELECT m.*, p.name AS principal_name
+                       FROM memberships m
+                       JOIN principals p ON p.id = m.principal_id
+                       WHERE m.tenant_id = ?
+                       ORDER BY m.id ASC''',
+                    (effective_tid,),
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    '''SELECT m.*, p.name AS principal_name
+                       FROM memberships m
+                       JOIN principals p ON p.id = m.principal_id
+                       WHERE m.tenant_id = ?
+                       ORDER BY m.id ASC
+                       LIMIT ?''',
+                    (effective_tid, limit),
+                ).fetchall()
+            accounts = []
+            for row in rows:
+                if q_clean:
+                    haystack = f"{row['id']} {row['principal_id']} {row['customer_id']} {row['principal_name']} {row['role']}".lower()
+                    if q_clean not in haystack:
+                        continue
+                accounts.append(self._build_account_view(db, row, default_limit=default_limit))
+                if len(accounts) >= limit:
+                    break
+        return {'tenant_id': effective_tid, 'accounts': accounts, 'count': len(accounts)}
+
+    def admin_get_account(self, actor, membership_id, *, tenant_id=None, default_limit=20, correlation_id=None):
+        mid = str(membership_id or '').strip()
+        require(bool(mid), 400, 'invalid_membership_id', 'Mã tài khoản không hợp lệ.')
+        with self.connection() as db:
+            row = db.execute(
+                '''SELECT m.*, p.name AS principal_name
+                   FROM memberships m
+                   JOIN principals p ON p.id = m.principal_id
+                   WHERE m.id = ?''',
+                (mid,),
+            ).fetchone()
+        if row is None:
+            actor_role = str((actor or {}).get('role') or '')
+            actor_tid = str((actor or {}).get('tenant_id') or '').strip()
+            self._check_admin_scope(
+                actor,
+                tenant_id or actor_tid or 'unknown',
+                'get_account',
+                target_membership_id=mid,
+                reason='get_account_not_found',
+                correlation_id=correlation_id,
+            )
+            raise ApiError(404, 'account_not_found', 'Không tìm thấy tài khoản trong cửa hàng.')
+        target_tid = row['tenant_id']
+        if tenant_id and str(tenant_id).strip() != target_tid:
+            self._check_admin_scope(
+                actor,
+                str(tenant_id).strip(),
+                'get_account',
+                target_membership_id=mid,
+                reason='tenant_mismatch',
+                correlation_id=correlation_id,
+            )
+            raise ApiError(404, 'account_not_found', 'Không tìm thấy tài khoản trong cửa hàng.')
+        self._check_admin_scope(
+            actor,
+            target_tid,
+            'get_account',
+            target_membership_id=mid,
+            reason='get_account',
+            correlation_id=correlation_id,
+        )
+        with self.connection() as db:
+            return {'account': self._build_account_view(db, row, default_limit=default_limit)}
+
+    def _load_target_for_admin_mutation(self, actor, membership_id, action, reason, correlation_id=None, expected_tenant_id=None):
+        mid = str(membership_id or '').strip()
+        require(bool(mid), 400, 'invalid_membership_id', 'Mã tài khoản không hợp lệ.')
+        with self.connection() as db:
+            row = db.execute(
+                '''SELECT m.*, p.name AS principal_name
+                   FROM memberships m
+                   JOIN principals p ON p.id = m.principal_id
+                   WHERE m.id = ?''',
+                (mid,),
+            ).fetchone()
+        exp_tid = str(expected_tenant_id).strip() if (expected_tenant_id is not None and str(expected_tenant_id).strip()) else ''
+        if row is None:
+            actor_tid = str((actor or {}).get('tenant_id') or '').strip()
+            self._check_admin_scope(
+                actor,
+                exp_tid or actor_tid or 'unknown',
+                action,
+                target_membership_id=mid,
+                reason=reason or action,
+                correlation_id=correlation_id,
+            )
+            raise ApiError(404, 'account_not_found', 'Không tìm thấy tài khoản.')
+        self._check_admin_scope(
+            actor,
+            row['tenant_id'],
+            action,
+            target_membership_id=mid,
+            reason=reason or action,
+            correlation_id=correlation_id,
+        )
+        if exp_tid and exp_tid != row['tenant_id']:
+            with self.connection(write=True) as db:
+                self.record_admin_audit(
+                    db,
+                    actor_principal_id=(actor or {}).get('principal_id'),
+                    actor_role=(actor or {}).get('role'),
+                    tenant_id=exp_tid,
+                    target_membership_id=mid,
+                    action=action,
+                    outcome='denied',
+                    before_state={'target_tenant_id': row['tenant_id']},
+                    after_state={
+                        'error': 'tenant_scope_mismatch',
+                        'expected_tenant_id': exp_tid,
+                        'actual_tenant_id': row['tenant_id'],
+                    },
+                    reason=reason or action,
+                    correlation_id=correlation_id,
+                )
+            raise ApiError(409, 'tenant_scope_mismatch', 'Tài khoản mục tiêu không thuộc cửa hàng (tenant_id) đang chọn.')
+        actor_role = str((actor or {}).get('role') or '')
+        if actor_role == 'manager' and row['role'] == 'platform_admin':
+            with self.connection(write=True) as db:
+                self.record_admin_audit(
+                    db,
+                    actor_principal_id=(actor or {}).get('principal_id'),
+                    actor_role=actor_role,
+                    tenant_id=row['tenant_id'],
+                    target_membership_id=mid,
+                    action=action,
+                    outcome='denied',
+                    before_state={'role': row['role']},
+                    after_state={'error': 'privilege_escalation_denied'},
+                    reason=reason or action,
+                    correlation_id=correlation_id,
+                )
+            raise ApiError(403, 'permission_denied', 'Quản lý cửa hàng không thể thao tác trên tài khoản quản trị nền tảng.')
+        return row
+
+    def admin_suspend_account(self, actor, membership_id, *, reason, correlation_id=None, default_limit=20, expected_tenant_id=None):
+        row = self._load_target_for_admin_mutation(
+            actor,
+            membership_id,
+            'suspend_account',
+            str(reason or 'suspend_account'),
+            correlation_id=correlation_id,
+            expected_tenant_id=expected_tenant_id,
+        )
+        reason_clean = self._validate_admin_reason(reason)
+        mid = row['id']
+        actor_dict = actor if isinstance(actor, dict) else {}
+        if actor_dict.get('membership_id') == mid or (
+            actor_dict.get('principal_id') and actor_dict.get('principal_id') == row['principal_id']
+            and actor_dict.get('tenant_id') == row['tenant_id']
+        ):
+            raise ApiError(400, 'self_lockout_forbidden', 'Không thể tự khóa tài khoản đang đăng nhập của chính mình.')
+
+        now_ts = time.time()
+        with self.connection(write=True) as db:
+            cur = db.execute(
+                '''SELECT m.*, p.name AS principal_name
+                   FROM memberships m
+                   JOIN principals p ON p.id = m.principal_id
+                   WHERE m.id = ?''',
+                (mid,),
+            ).fetchone()
+            require(cur is not None, 404, 'account_not_found', 'Không tìm thấy tài khoản.')
+            sess_cnt = db.execute(
+                'SELECT count(*) AS cnt FROM sessions WHERE membership_id=?',
+                (mid,),
+            ).fetchone()['cnt']
+            before_state = {
+                'active': bool(cur['active']),
+                'auth_version': int(cur['auth_version']),
+                'role': cur['role'],
+                'customer_id': cur['customer_id'],
+                'active_sessions': int(sess_cnt),
+            }
+            new_auth_ver = int(cur['auth_version']) + 1
+            db.execute(
+                'UPDATE memberships SET active=0, auth_version=? WHERE id=?',
+                (new_auth_ver, mid),
+            )
+            db.execute('DELETE FROM sessions WHERE membership_id=?', (mid,))
+            self.event(db, 'account_suspended', cur['tenant_id'], mid)
+            after_state = {
+                'active': False,
+                'auth_version': new_auth_ver,
+                'role': cur['role'],
+                'customer_id': cur['customer_id'],
+                'active_sessions': 0,
+            }
+            audit = self.record_admin_audit(
+                db,
+                actor_principal_id=actor_dict.get('principal_id'),
+                actor_role=actor_dict.get('role'),
+                tenant_id=cur['tenant_id'],
+                target_membership_id=mid,
+                action='suspend_account',
+                outcome='allowed',
+                before_state=before_state,
+                after_state=after_state,
+                reason=reason_clean,
+                correlation_id=correlation_id,
+                now=now_ts,
+            )
+            updated = db.execute(
+                '''SELECT m.*, p.name AS principal_name
+                   FROM memberships m
+                   JOIN principals p ON p.id = m.principal_id
+                   WHERE m.id = ?''',
+                (mid,),
+            ).fetchone()
+            view = self._build_account_view(db, updated, default_limit=default_limit, now_ts=now_ts)
+        return {'status': 'ok', 'account': view, 'audit_correlation_id': audit['correlation_id']}
+
+    def admin_reactivate_account(self, actor, membership_id, *, reason, correlation_id=None, default_limit=20, expected_tenant_id=None):
+        row = self._load_target_for_admin_mutation(
+            actor,
+            membership_id,
+            'reactivate_account',
+            str(reason or 'reactivate_account'),
+            correlation_id=correlation_id,
+            expected_tenant_id=expected_tenant_id,
+        )
+        reason_clean = self._validate_admin_reason(reason)
+        mid = row['id']
+        actor_dict = actor if isinstance(actor, dict) else {}
+        now_ts = time.time()
+        with self.connection(write=True) as db:
+            cur = db.execute(
+                '''SELECT m.*, p.name AS principal_name
+                   FROM memberships m
+                   JOIN principals p ON p.id = m.principal_id
+                   WHERE m.id = ?''',
+                (mid,),
+            ).fetchone()
+            require(cur is not None, 404, 'account_not_found', 'Không tìm thấy tài khoản.')
+            before_state = {
+                'active': bool(cur['active']),
+                'auth_version': int(cur['auth_version']),
+                'role': cur['role'],
+                'customer_id': cur['customer_id'],
+            }
+            new_auth_ver = int(cur['auth_version']) + 1
+            db.execute(
+                'UPDATE memberships SET active=1, auth_version=? WHERE id=?',
+                (new_auth_ver, mid),
+            )
+            self.event(db, 'account_reactivated', cur['tenant_id'], mid)
+            after_state = {
+                'active': True,
+                'auth_version': new_auth_ver,
+                'role': cur['role'],
+                'customer_id': cur['customer_id'],
+            }
+            audit = self.record_admin_audit(
+                db,
+                actor_principal_id=actor_dict.get('principal_id'),
+                actor_role=actor_dict.get('role'),
+                tenant_id=cur['tenant_id'],
+                target_membership_id=mid,
+                action='reactivate_account',
+                outcome='allowed',
+                before_state=before_state,
+                after_state=after_state,
+                reason=reason_clean,
+                correlation_id=correlation_id,
+                now=now_ts,
+            )
+            updated = db.execute(
+                '''SELECT m.*, p.name AS principal_name
+                   FROM memberships m
+                   JOIN principals p ON p.id = m.principal_id
+                   WHERE m.id = ?''',
+                (mid,),
+            ).fetchone()
+            view = self._build_account_view(db, updated, default_limit=default_limit, now_ts=now_ts)
+        return {'status': 'ok', 'account': view, 'audit_correlation_id': audit['correlation_id']}
+
+    def admin_revoke_sessions(self, actor, membership_id, *, reason, correlation_id=None, default_limit=20, expected_tenant_id=None):
+        row = self._load_target_for_admin_mutation(
+            actor,
+            membership_id,
+            'revoke_sessions',
+            str(reason or 'revoke_sessions'),
+            correlation_id=correlation_id,
+            expected_tenant_id=expected_tenant_id,
+        )
+        reason_clean = self._validate_admin_reason(reason)
+        mid = row['id']
+        actor_dict = actor if isinstance(actor, dict) else {}
+        now_ts = time.time()
+        with self.connection(write=True) as db:
+            cur = db.execute(
+                '''SELECT m.*, p.name AS principal_name
+                   FROM memberships m
+                   JOIN principals p ON p.id = m.principal_id
+                   WHERE m.id = ?''',
+                (mid,),
+            ).fetchone()
+            require(cur is not None, 404, 'account_not_found', 'Không tìm thấy tài khoản.')
+            sess_cnt = db.execute(
+                'SELECT count(*) AS cnt FROM sessions WHERE membership_id=?',
+                (mid,),
+            ).fetchone()['cnt']
+            before_state = {
+                'active': bool(cur['active']),
+                'auth_version': int(cur['auth_version']),
+                'active_sessions': int(sess_cnt),
+            }
+            new_auth_ver = int(cur['auth_version']) + 1
+            db.execute(
+                'UPDATE memberships SET auth_version=? WHERE id=?',
+                (new_auth_ver, mid),
+            )
+            db.execute('DELETE FROM sessions WHERE membership_id=?', (mid,))
+            self.event(db, 'sessions_revoked', cur['tenant_id'], mid)
+            after_state = {
+                'active': bool(cur['active']),
+                'auth_version': new_auth_ver,
+                'active_sessions': 0,
+            }
+            audit = self.record_admin_audit(
+                db,
+                actor_principal_id=actor_dict.get('principal_id'),
+                actor_role=actor_dict.get('role'),
+                tenant_id=cur['tenant_id'],
+                target_membership_id=mid,
+                action='revoke_sessions',
+                outcome='allowed',
+                before_state=before_state,
+                after_state=after_state,
+                reason=reason_clean,
+                correlation_id=correlation_id,
+                now=now_ts,
+            )
+            updated = db.execute(
+                '''SELECT m.*, p.name AS principal_name
+                   FROM memberships m
+                   JOIN principals p ON p.id = m.principal_id
+                   WHERE m.id = ?''',
+                (mid,),
+            ).fetchone()
+            view = self._build_account_view(db, updated, default_limit=default_limit, now_ts=now_ts)
+        return {'status': 'ok', 'account': view, 'audit_correlation_id': audit['correlation_id']}
+
+    def admin_set_quota_override(
+        self,
+        actor,
+        membership_id,
+        *,
+        daily_limit,
+        reason,
+        expires_at=None,
+        effective_at=None,
+        correlation_id=None,
+        default_limit=20,
+        expected_tenant_id=None,
+        _now=None,
+    ):
+        row = self._load_target_for_admin_mutation(
+            actor,
+            membership_id,
+            'set_quota_override',
+            str(reason or 'set_quota_override'),
+            correlation_id=correlation_id,
+            expected_tenant_id=expected_tenant_id,
+        )
+        reason_clean = self._validate_admin_reason(reason)
+        if daily_limit is not None:
+            require(
+                type(daily_limit) is int and 1 <= daily_limit <= 10000,
+                400,
+                'invalid_quota_limit',
+                'Hạn mức ngày phải là số nguyên từ 1 đến 10000 (hoặc null để xóa ghi đè).',
+            )
+        now_ts = float(_now if _now is not None else time.time())
+        eff_ts = float(effective_at) if effective_at is not None else now_ts
+        exp_ts = None
+        if daily_limit is not None and expires_at is not None:
+            require(
+                isinstance(expires_at, (int, float)) and not isinstance(expires_at, bool) and float(expires_at) > eff_ts,
+                400,
+                'invalid_expires_at',
+                'Thời điểm hết hạn ghi đè hạn mức phải lớn hơn thời điểm bắt đầu có hiệu lực.',
+            )
+            exp_ts = float(expires_at)
+
+        mid = row['id']
+        actor_dict = actor if isinstance(actor, dict) else {}
+        actor_pid = str(actor_dict.get('principal_id') or 'unknown')
+        with self.connection(write=True) as db:
+            cur = db.execute(
+                '''SELECT m.*, p.name AS principal_name
+                   FROM memberships m
+                   JOIN principals p ON p.id = m.principal_id
+                   WHERE m.id = ?''',
+                (mid,),
+            ).fetchone()
+            require(cur is not None, 404, 'account_not_found', 'Không tìm thấy tài khoản.')
+            prev_ov = db.execute(
+                'SELECT daily_limit, effective_at, expires_at, reason, updated_by, updated_at '
+                'FROM membership_quota_overrides WHERE membership_id=?',
+                (mid,),
+            ).fetchone()
+            before_state = {
+                'default_limit': default_limit,
+                'override': dict(prev_ov) if prev_ov is not None else None,
+            }
+            if daily_limit is None:
+                db.execute('DELETE FROM membership_quota_overrides WHERE membership_id=?', (mid,))
+                self.event(db, 'quota_override_cleared', cur['tenant_id'], mid)
+                after_state = {
+                    'default_limit': default_limit,
+                    'override': None,
+                    'cleared': True,
+                }
+            else:
+                db.execute(
+                    '''INSERT INTO membership_quota_overrides (
+                           membership_id, daily_limit, effective_at, expires_at, reason, updated_by, updated_at
+                       ) VALUES (?,?,?,?,?,?,?)
+                       ON CONFLICT(membership_id) DO UPDATE SET
+                           daily_limit=excluded.daily_limit,
+                           effective_at=excluded.effective_at,
+                           expires_at=excluded.expires_at,
+                           reason=excluded.reason,
+                           updated_by=excluded.updated_by,
+                           updated_at=excluded.updated_at''',
+                    (mid, daily_limit, eff_ts, exp_ts, reason_clean, actor_pid, now_ts),
+                )
+                self.event(db, 'quota_override_set', cur['tenant_id'], mid)
+                after_state = {
+                    'default_limit': default_limit,
+                    'override': {
+                        'daily_limit': daily_limit,
+                        'effective_at': eff_ts,
+                        'expires_at': exp_ts,
+                        'reason': reason_clean,
+                        'updated_by': actor_pid,
+                        'updated_at': now_ts,
+                    },
+                }
+            audit = self.record_admin_audit(
+                db,
+                actor_principal_id=actor_pid,
+                actor_role=actor_dict.get('role'),
+                tenant_id=cur['tenant_id'],
+                target_membership_id=mid,
+                action='set_quota_override',
+                outcome='allowed',
+                before_state=before_state,
+                after_state=after_state,
+                reason=reason_clean,
+                correlation_id=correlation_id,
+                now=now_ts,
+            )
+            view = self._build_account_view(db, cur, default_limit=default_limit, now_ts=now_ts)
+        return {'status': 'ok', 'account': view, 'audit_correlation_id': audit['correlation_id']}
+
+    def admin_list_audit_logs(self, actor, *, tenant_id=None, target_membership_id=None, limit=100, correlation_id=None):
+        actor_dict = actor if isinstance(actor, dict) else {}
+        actor_role = str(actor_dict.get('role') or '')
+        actor_tid = str(actor_dict.get('tenant_id') or '').strip()
+        requested_tid = str(tenant_id).strip() if tenant_id is not None and str(tenant_id).strip() else (actor_tid if actor_role == 'manager' else '')
+        effective_tid = self._check_admin_scope(
+            actor,
+            requested_tid,
+            'list_audit_logs',
+            target_membership_id=str(target_membership_id or '*'),
+            reason='list_audit_logs',
+            correlation_id=correlation_id,
+        )
+        require(type(limit) is int and 1 <= limit <= 500, 400, 'invalid_limit', 'Giới hạn truy vấn audit không hợp lệ.')
+        with self.connection() as db:
+            if target_membership_id:
+                rows = db.execute(
+                    '''SELECT * FROM admin_audit_log
+                       WHERE tenant_id=? AND target_membership_id=?
+                       ORDER BY id DESC LIMIT ?''',
+                    (effective_tid, str(target_membership_id).strip(), limit),
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    '''SELECT * FROM admin_audit_log
+                       WHERE tenant_id=?
+                       ORDER BY id DESC LIMIT ?''',
+                    (effective_tid, limit),
+                ).fetchall()
+        logs = []
+        for r in rows:
+            d = dict(r)
+            try:
+                d['before'] = json.loads(d.get('before_json') or '{}')
+            except Exception:
+                d['before'] = {}
+            try:
+                d['after'] = json.loads(d.get('after_json') or '{}')
+            except Exception:
+                d['after'] = {}
+            logs.append(d)
+        return {'tenant_id': effective_tid, 'audit_logs': logs, 'count': len(logs)}

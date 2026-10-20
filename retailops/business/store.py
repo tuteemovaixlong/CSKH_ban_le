@@ -14,6 +14,11 @@ from datetime import datetime, timedelta, timezone
 from contextlib import contextmanager
 from pathlib import Path
 from retailops.core import ApiError, REASONS, fields, require
+from retailops.guardrails.topic_filter import (
+    SAFE_REFUSAL_MESSAGE,
+    contains_canary_or_secret,
+    sanitize_structured_payload,
+)
 from retailops.schema import migrate
 from retailops.business.schema import initialize as initialize_schema, ensure_import_tables
 
@@ -183,8 +188,8 @@ class BusinessStore:
                 aliases = json.dumps(p.get("aliases", []), ensure_ascii=False)
                 category = p.get("category")
                 price = p.get("price")
-                stock = p.get("stock", 0)
-                warranty_days = p.get("warranty_days", 90)
+                stock = p.get("stock") if "stock" in p else 0
+                warranty_days = p.get("warranty_days") if "warranty_days" in p else 90
                 description = p.get("description", "")
                 raw_variants = p.get("variants", [])
                 variants_json = json.dumps(raw_variants, ensure_ascii=False)
@@ -214,8 +219,12 @@ class BusinessStore:
                     size, color = _parse_variant_string(v_str)
                     if pid in STOCK_MAP and size in STOCK_MAP[pid]:
                         var_stock = STOCK_MAP[pid][size]
+                    elif stock is None:
+                        var_stock = None
+                    elif stock <= 0:
+                        var_stock = 0
                     else:
-                        var_stock = max(1, stock // len(raw_variants)) if raw_variants and stock else 5
+                        var_stock = max(1, stock // len(raw_variants)) if raw_variants else stock
 
                     var_id = f"{pid}-{size or 'STD'}-{color or 'STD'}".replace(" ", "_")
                     conn.execute("""
@@ -229,6 +238,192 @@ class BusinessStore:
         else:
             with self.connection(write=True) as conn:
                 _do_seed(conn)
+
+    _DEMO_SAMPLE_FIXTURE_SPEC = {
+        "P-601": {
+            "offset": 1,
+            "name": "Áo sơ mi lụa công sở",
+            "variant": "Trắng / M",
+            "amount": 450000,
+            "status": "pending",
+            "version": 1,
+            "cancel_reason": None,
+        },
+        "P-602": {
+            "offset": 2,
+            "name": "Quần tây ống đứng tôn dáng",
+            "variant": "Đen / L",
+            "amount": 520000,
+            "status": "delivered",
+            "version": 1,
+            "cancel_reason": None,
+        },
+        "P-603": {
+            "offset": 3,
+            "name": "Giày lười da bò cao cấp",
+            "variant": "Nâu / 41",
+            "amount": 890000,
+            "status": "delivered",
+            "version": 1,
+            "cancel_reason": None,
+        },
+    }
+
+    @classmethod
+    def _row_matches_demo_fixture_spec(cls, row: dict, pid: str) -> bool:
+        spec = cls._DEMO_SAMPLE_FIXTURE_SPEC.get(pid)
+        if not spec or not isinstance(row, dict):
+            return False
+        try:
+            amt = int(row.get("amount")) if row.get("amount") is not None else -1
+            ver = int(row.get("version")) if row.get("version") is not None else -1
+        except (TypeError, ValueError):
+            return False
+        return (
+            str(row.get("product_id")) == pid
+            and row.get("name") == spec["name"]
+            and row.get("variant") == spec["variant"]
+            and amt == spec["amount"]
+            and row.get("status") == spec["status"]
+            and ver == spec["version"]
+            and row.get("cancel_reason") is None
+        )
+
+    @staticmethod
+    def _has_import_or_item_provenance(conn, customer_id: str, order_ids: tuple[str, str, str]) -> bool:
+        oid1, oid2, oid3 = order_ids
+        imp = conn.execute(
+            "SELECT 1 FROM imported_events WHERE customer_id=? OR order_id IN (?, ?, ?) LIMIT 1",
+            (customer_id, oid1, oid2, oid3),
+        ).fetchone()
+        if imp is not None:
+            return True
+        items = conn.execute(
+            "SELECT 1 FROM order_items WHERE order_id IN (?, ?, ?) LIMIT 1",
+            (oid1, oid2, oid3),
+        ).fetchone()
+        if items is not None:
+            return True
+        sales_ev = conn.execute(
+            "SELECT 1 FROM business_events WHERE (customer_id=? OR order_id IN (?, ?, ?)) AND kind='sales_event_imported' LIMIT 1",
+            (customer_id, oid1, oid2, oid3),
+        ).fetchone()
+        return sales_ev is not None
+
+    def seed_demo_sample_orders(self, customer_id, db=None):
+        def _do_seed_orders(conn):
+            existing_rows = conn.execute(
+                "SELECT id, customer_id, name, variant, amount, status, version, cancel_reason, product_id "
+                "FROM orders WHERE customer_id=? ORDER BY id ASC",
+                (customer_id,),
+            ).fetchall()
+            if existing_rows:
+                if len(existing_rows) == 3:
+                    by_pid = {str(r["product_id"]): dict(r) for r in existing_rows}
+                    p601 = by_pid.get("P-601")
+                    p602 = by_pid.get("P-602")
+                    p603 = by_pid.get("P-603")
+                    if (
+                        p601
+                        and p602
+                        and p603
+                        and re.fullmatch(r"O-[78]\d{5}", str(p601["id"]))
+                        and re.fullmatch(r"O-[78]\d{5}", str(p602["id"]))
+                        and re.fullmatch(r"O-[78]\d{5}", str(p603["id"]))
+                    ):
+                        n1 = int(str(p601["id"])[2:])
+                        n2 = int(str(p602["id"])[2:])
+                        n3 = int(str(p603["id"])[2:])
+                        if (
+                            700001 <= n1 <= 899990
+                            and n2 == n1 + 1
+                            and n3 == n1 + 2
+                            and self._row_matches_demo_fixture_spec(p601, "P-601")
+                            and self._row_matches_demo_fixture_spec(p602, "P-602")
+                            and self._row_matches_demo_fixture_spec(p603, "P-603")
+                        ):
+                            oid_triplet = (str(p601["id"]), str(p602["id"]), str(p603["id"]))
+                            p602_oid = oid_triplet[1]
+                            has_prov = conn.execute(
+                                "SELECT 1 FROM business_events WHERE customer_id=? AND order_id=? AND kind='demo_sample_fixture_seeded' LIMIT 1",
+                                (customer_id, p602_oid),
+                            ).fetchone()
+                            if has_prov is None and not self._has_import_or_item_provenance(conn, customer_id, oid_triplet):
+                                self.log(
+                                    conn,
+                                    customer_id,
+                                    "demo_sample_fixture_seeded",
+                                    p602_oid,
+                                    fixture="google_demo_sample_v1",
+                                    product_id="P-602",
+                                    canonical_name="Quần tây ống đứng tôn dáng",
+                                    display_name="Bộ xếp hình gỗ cho bé",
+                                )
+                return []
+            seed_base = 700000 + (abs(hash(customer_id)) % 199990)
+            p602_oid = f"O-{seed_base + 2}"
+            sample_orders = [
+                (f"O-{seed_base + 1}", customer_id, "Áo sơ mi lụa công sở", "Trắng / M", 450000, "pending", 1, None, "P-601"),
+                (p602_oid, customer_id, "Quần tây ống đứng tôn dáng", "Đen / L", 520000, "delivered", 1, None, "P-602"),
+                (f"O-{seed_base + 3}", customer_id, "Giày lười da bò cao cấp", "Nâu / 41", 890000, "delivered", 1, None, "P-603"),
+            ]
+            for ord_row in sample_orders:
+                conn.execute(
+                    """INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id)
+                       VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING""",
+                    ord_row,
+                )
+            self.log(
+                conn,
+                customer_id,
+                "demo_sample_fixture_seeded",
+                p602_oid,
+                fixture="google_demo_sample_v1",
+                product_id="P-602",
+                canonical_name="Quần tây ống đứng tôn dáng",
+                display_name="Bộ xếp hình gỗ cho bé",
+            )
+            return [r[0] for r in sample_orders]
+
+        if db is not None:
+            return _do_seed_orders(db)
+        with self.connection(write=True) as conn:
+            return _do_seed_orders(conn)
+
+    def is_demo_sample_order(self, customer_id, order_id) -> bool:
+        if not isinstance(customer_id, str) or not customer_id or not isinstance(order_id, str) or not order_id:
+            return False
+        if not re.fullmatch(r"O-[78]\d{5}", order_id):
+            return False
+        n2 = int(order_id[2:])
+        if not (700002 <= n2 <= 899991):
+            return False
+        oid_triplet = (f"O-{n2 - 1}", order_id, f"O-{n2 + 1}")
+        with self.connection() as db:
+            p602_row = db.execute(
+                "SELECT id, customer_id, name, variant, amount, status, version, cancel_reason, product_id "
+                "FROM orders WHERE id=? AND customer_id=? LIMIT 1",
+                (order_id, customer_id),
+            ).fetchone()
+            if p602_row is None or not self._row_matches_demo_fixture_spec(dict(p602_row), "P-602"):
+                return False
+            if self._has_import_or_item_provenance(db, customer_id, oid_triplet):
+                return False
+            prov = db.execute(
+                "SELECT payload FROM business_events WHERE customer_id=? AND order_id=? AND kind='demo_sample_fixture_seeded' ORDER BY id ASC LIMIT 1",
+                (customer_id, order_id),
+            ).fetchone()
+            if prov is None:
+                return False
+            try:
+                payload = json.loads(prov["payload"]) if isinstance(prov["payload"], str) else (prov["payload"] or {})
+            except Exception:
+                payload = {}
+            return (
+                payload.get("fixture") == "google_demo_sample_v1"
+                and payload.get("product_id") == "P-602"
+                and payload.get("display_name") == "Bộ xếp hình gỗ cho bé"
+            )
 
     @staticmethod
     def _row_to_product(row):
@@ -262,6 +457,8 @@ class BusinessStore:
         }
 
     def get_product(self, pid):
+        if not isinstance(pid, str) or not pid.isascii() or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', pid):
+            return None
         with self.connection() as db:
             row = db.execute("SELECT * FROM products WHERE id=?", (pid,)).fetchone()
             if not row:
@@ -319,7 +516,12 @@ class BusinessStore:
 
             for v_str in raw_variants:
                 size, color = _parse_variant_string(v_str)
-                var_stock = max(0, stock // len(raw_variants)) if raw_variants and stock is not None else stock
+                if stock is None:
+                    var_stock = None
+                elif stock <= 0:
+                    var_stock = 0
+                else:
+                    var_stock = max(0, stock // len(raw_variants)) if raw_variants else stock
                 var_id = f"{pid}-{size or 'STD'}-{color or 'STD'}".replace(" ", "_")
                 db.execute("""
                     INSERT INTO product_variants(id, product_id, variant_name, size, color, stock, price)
@@ -523,7 +725,7 @@ class BusinessStore:
     def manager_events(self, limit=100):
         with self.connection() as db:
             rows = db.execute(
-                "SELECT id, customer_id, created_at, kind, order_id, payload FROM business_events ORDER BY id DESC LIMIT ?",
+                "SELECT id, customer_id, created_at, kind, order_id, payload FROM business_events WHERE kind != 'demo_sample_fixture_seeded' ORDER BY id DESC LIMIT ?",
                 (limit,)
             ).fetchall()
         result = []
@@ -531,6 +733,7 @@ class BusinessStore:
             d = dict(r)
             try:
                 d['payload'] = json.loads(d['payload']) if isinstance(d['payload'], str) else d['payload']
+                _, d['payload'] = sanitize_structured_payload(d['payload'], preserve_reasoning=True)
             except Exception:
                 pass
             result.append(d)
@@ -554,6 +757,8 @@ class BusinessStore:
 
     @staticmethod
     def owned(db, customer, oid):
+        if not isinstance(oid, str) or not oid.isascii() or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', oid):
+            require(False, 404, "order_not_found", "Không tìm thấy đơn hàng của bạn.")
         row = db.execute("SELECT * FROM orders WHERE id=? AND customer_id=?", (oid, customer)).fetchone()
         require(row is not None, 404, "order_not_found", "Không tìm thấy đơn hàng của bạn.")
         return dict(row)
@@ -589,9 +794,10 @@ class BusinessStore:
     def events(self, customer):
         with self.connection() as db:
             result = [dict(r) for r in db.execute(
-                "SELECT id,created_at,kind,order_id,payload FROM business_events WHERE customer_id=? ORDER BY id DESC LIMIT 30", (customer,))]
+                "SELECT id,created_at,kind,order_id,payload FROM business_events WHERE customer_id=? AND kind != 'demo_sample_fixture_seeded' ORDER BY id DESC LIMIT 30", (customer,))]
         for row in result:
             row["payload"] = json.loads(row["payload"])
+            _, row["payload"] = sanitize_structured_payload(row["payload"], preserve_reasoning=True)
         return result
 
     def new_conversation(self, customer, provider_id='custom'):
@@ -650,6 +856,10 @@ class BusinessStore:
         if row:
             require(row['input_hash'] == digest, 409, 'request_conflict', 'Mã yêu cầu đã dùng cho nội dung khác.')
             result = json.loads(row['result'])
+            if isinstance(result, dict):
+                if isinstance(result.get('message'), str) and contains_canary_or_secret(result['message']):
+                    result['message'] = SAFE_REFUSAL_MESSAGE
+                _, result = sanitize_structured_payload(result, preserve_reasoning=True)
             result['turn_id'] = row['id'] if 'id' in row else row[0]
             # The answer is explicitly an old result. Never reopen a stale cancel card.
             return {**result, 'replayed': True, 'action': 'reply'}
@@ -668,7 +878,7 @@ class BusinessStore:
         turns, characters, count = [], 0, 0
         preserved_recent_image = False
         for row in rows:
-            raw = json.loads(row['messages'])
+            _, raw = sanitize_structured_payload(json.loads(row['messages']), preserve_reasoning=True)
             clean_turn = []
             for m in raw:
                 role = m.get('role')
@@ -775,6 +985,8 @@ class BusinessStore:
         comment = body.get('comment')
         if comment is not None:
             require(isinstance(comment, str) and len(comment) <= 1000, 400, 'comment_too_long', 'Nhận xét tối đa 1000 ký tự.')
+            if contains_canary_or_secret(comment):
+                _, comment = sanitize_structured_payload(comment, preserve_reasoning=False)
 
         now = time.time()
         with self.connection(write=True) as db:
@@ -810,7 +1022,13 @@ class BusinessStore:
             if clauses:
                 query += ' WHERE ' + ' AND '.join(clauses)
             query += ' ORDER BY id DESC'
-            return [dict(r) for r in db.execute(query, tuple(params))]
+            out = []
+            for r in db.execute(query, tuple(params)):
+                d = dict(r)
+                if isinstance(d.get('comment'), str) and contains_canary_or_secret(d['comment']):
+                    _, d['comment'] = sanitize_structured_payload(d['comment'], preserve_reasoning=False)
+                out.append(d)
+            return out
 
     def escalations(self, limit=20):
         with self.connection() as db:
@@ -823,7 +1041,13 @@ class BusinessStore:
                 WHERE f.feedback_type = 'human_handoff'
                 ORDER BY f.id DESC LIMIT ?
             ''', (limit,)).fetchall()
-        return [dict(r) for r in rows]
+        out = []
+        for r in rows:
+            d = dict(r)
+            if isinstance(d.get('comment'), str) and contains_canary_or_secret(d['comment']):
+                _, d['comment'] = sanitize_structured_payload(d['comment'], preserve_reasoning=False)
+            out.append(d)
+        return out
 
     def list_conversations(self, customer, limit=20):
         with self.connection() as db:
@@ -867,6 +1091,8 @@ class BusinessStore:
                                 snippet = res['message'].strip()[:80]
                         except Exception:
                             pass
+                if snippet and contains_canary_or_secret(snippet):
+                    snippet = SAFE_REFUSAL_MESSAGE[:80]
 
                 handoff = db.execute('''
                     SELECT reason_code FROM conversation_feedback
@@ -896,10 +1122,43 @@ class BusinessStore:
                 SELECT * FROM conversation_feedback WHERE conversation_id=?
                 ORDER BY id ASC
             ''', (cid,)).fetchall()
+        clean_turns = []
+        for t in turns:
+            td = dict(t)
+            if isinstance(td.get('messages'), str):
+                try:
+                    parsed_msgs = json.loads(td['messages'])
+                    _, cleaned_msgs = sanitize_structured_payload(parsed_msgs, preserve_reasoning=True)
+                    td['messages'] = json.dumps(cleaned_msgs, ensure_ascii=False)
+                except Exception:
+                    _, td['messages'] = sanitize_structured_payload(td['messages'], preserve_reasoning=True)
+            elif isinstance(td.get('messages'), (list, dict)):
+                _, td['messages'] = sanitize_structured_payload(td['messages'], preserve_reasoning=True)
+            if isinstance(td.get('result'), str):
+                try:
+                    parsed_res = json.loads(td['result'])
+                    if isinstance(parsed_res, dict) and isinstance(parsed_res.get('message'), str) and contains_canary_or_secret(parsed_res['message']):
+                        parsed_res['message'] = SAFE_REFUSAL_MESSAGE
+                    _, cleaned_res = sanitize_structured_payload(parsed_res, preserve_reasoning=True)
+                    td['result'] = json.dumps(cleaned_res, ensure_ascii=False)
+                except Exception:
+                    _, td['result'] = sanitize_structured_payload(td['result'], preserve_reasoning=True)
+            elif isinstance(td.get('result'), dict):
+                parsed_res = dict(td['result'])
+                if isinstance(parsed_res.get('message'), str) and contains_canary_or_secret(parsed_res['message']):
+                    parsed_res['message'] = SAFE_REFUSAL_MESSAGE
+                _, td['result'] = sanitize_structured_payload(parsed_res, preserve_reasoning=True)
+            clean_turns.append(td)
+        clean_feedbacks = []
+        for f in feedbacks:
+            fd = dict(f)
+            if isinstance(fd.get('comment'), str) and contains_canary_or_secret(fd['comment']):
+                _, fd['comment'] = sanitize_structured_payload(fd['comment'], preserve_reasoning=False)
+            clean_feedbacks.append(fd)
         return {
             'conversation': dict(conv) if conv else None,
-            'turns': [dict(t) for t in turns],
-            'feedbacks': [dict(f) for f in feedbacks]
+            'turns': clean_turns,
+            'feedbacks': clean_feedbacks
         }
 
     def staff_reply(self, customer_id, cid, staff_name, message):

@@ -14,6 +14,8 @@ let humanPollingTimer = null;
 const renderedStaffTurnIds = new Set();
 let currentAttachment = null;
 let orderScope = 'customer', managerFilter = 'all', orderSearchQuery = '';
+let currentSessionRole = 'customer', currentSessionTenantId = null;
+let adminAccounts = [], selectedAdminMembershipId = null, selectedAdminAccount = null;
 
 function openLightbox(src, caption) {
   const dlg = byId('image-lightbox-dialog');
@@ -582,7 +584,7 @@ function renderOrder() {
     const q = orderSearchQuery.toLowerCase();
     filtered = filtered.filter(o =>
       o.id.toLowerCase().includes(q) ||
-      (o.name && o.name.toLowerCase().includes(q)) ||
+      ((o.display_name || o.name) && (o.display_name || o.name).toLowerCase().includes(q)) ||
       (o.customer_id && o.customer_id.toLowerCase().includes(q))
     );
   }
@@ -623,7 +625,7 @@ function renderOrder() {
           el('span', 'order-card-badge ' + item.status, statuses[item.status] || item.status)
         );
 
-        const title = el('div', 'order-card-title', item.name || 'Sản phẩm');
+        const title = el('div', 'order-card-title', item.display_name || item.name || 'Sản phẩm');
 
         const footer = el('div', 'order-card-footer');
         footer.append(el('span', 'order-card-price', money(item.amount)));
@@ -650,7 +652,7 @@ function renderOrder() {
   const top = el('div', 'order-line');
   top.append(el('h3', '', order.id), el('span', 'badge ' + order.status, statuses[order.status]));
   const item = el('div', 'item'), copy = el('div');
-  copy.append(el('strong', '', order.name), el('p', '', order.variant));
+  copy.append(el('strong', '', order.display_name || order.name), el('p', '', order.variant));
   item.append(copy);
   const total = el('div', 'detail-row total');
   total.append(el('span', '', 'Tổng cộng'), el('strong', '', money(order.amount)));
@@ -724,7 +726,7 @@ function openProposal(proposal) {
   // Proposal ID is a stable idempotency key, not an authentication credential.
   pending = {...proposal, key: proposal.proposal_id};
   byId('confirm-title').textContent = 'Hủy đơn ' + proposal.order.id + '?';
-  byId('confirm-description').textContent = proposal.order.name + ' · ' + money(proposal.order.amount)
+  byId('confirm-description').textContent = (proposal.order.display_name || proposal.order.name) + ' · ' + money(proposal.order.amount)
     + '. Hết hạn: ' + new Date(proposal.expires_at * 1000).toLocaleTimeString('vi-VN') + '.';
   byId('confirm-reason').textContent = reasons[proposal.reason];
   byId('confirm-error').textContent = ''; byId('confirm-dialog').showModal();
@@ -1226,7 +1228,9 @@ async function openConversationHistoryDialog() {
 
 async function openSession() {
   const session = await api('/api/session');
-  document.body.dataset.role = session.role || 'customer';
+  currentSessionRole = session.role || 'customer';
+  currentSessionTenantId = session.tenant_id || null;
+  document.body.dataset.role = currentSessionRole;
   canCancel = Array.isArray(session.permissions) ? session.permissions.includes('orders:cancel') : true;
   byId('profile-name').textContent = session.name || 'Khách hàng';
   byId('profile-avatar').textContent = (session.name || 'KH').slice(0, 2).toUpperCase();
@@ -1235,12 +1239,14 @@ async function openSession() {
     viewer: 'Chỉ xem dữ liệu mẫu',
     staff: 'Chuyên viên CSKH',
     manager: 'Quản lý cửa hàng',
+    platform_admin: 'Quản trị nền tảng',
     admin: 'Quản trị viên'
   };
   byId('profile-role').textContent = roleNames[session.role] || (canCancel ? 'Khách hàng giả lập' : 'Chỉ xem dữ liệu mẫu');
   byId('greeting').textContent = 'XIN CHÀO, ' + (session.name || 'BẠN').toUpperCase();
   document.querySelectorAll('[data-prompt]').forEach(button => { button.hidden = persistentAccount; });
   byId('message').placeholder = persistentAccount ? 'Hỏi về đơn hàng hoặc sản phẩm của bạn…' : 'Ví dụ: Tôi muốn hủy đơn O-101…';
+  syncAdminGovernanceVisibility();
   
   // Unlock UI immediately upon verified identity
   byId('demo-token').value = '';
@@ -1289,7 +1295,7 @@ async function openSession() {
   await restoreProposals().catch(() => {});
   if (session.role === 'staff') {
     openStaffDesk();
-  } else if (session.role === 'manager') {
+  } else if (session.role === 'manager' || session.role === 'platform_admin') {
     openManagerConsole();
   }
 }
@@ -1872,7 +1878,12 @@ const btnCloseMgr = byId('close-manager-console');
 const btnRefreshMgr = byId('refresh-manager-data');
 
 function openManagerConsole() {
+  if (currentSessionRole !== 'manager' && currentSessionRole !== 'platform_admin') {
+    setAdminGovernanceMessage('Tài khoản hiện tại không có quyền mở Bảng Quản Trị.', '');
+    return;
+  }
   if (!mgrDialog || typeof mgrDialog.showModal !== 'function') return;
+  syncAdminGovernanceVisibility();
   mgrDialog.showModal();
   loadManagerData();
 }
@@ -1886,23 +1897,35 @@ if (btnRefreshMgr) btnRefreshMgr.onclick = () => loadManagerData();
 // Tabs switcher
 document.querySelectorAll('.manager-nav-tab').forEach(tab => {
   tab.onclick = () => {
+    const target = tab.dataset.tab;
+    if (target === 'accounts' && currentSessionRole !== 'manager' && currentSessionRole !== 'platform_admin') {
+      setAdminGovernanceMessage('Tài khoản này không có quyền truy cập Quản trị Tài khoản & Quota.', '');
+      return;
+    }
     document.querySelectorAll('.manager-nav-tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.manager-tab-content').forEach(c => c.classList.remove('active'));
     tab.classList.add('active');
-    const target = tab.dataset.tab;
     currentManagerTab = target;
     const content = byId('tab-content-' + target);
     if (content) content.classList.add('active');
+    if (target === 'accounts') {
+      loadAdminAccounts().catch(() => {});
+      loadAdminAuditLog().catch(() => {});
+    }
   };
 });
 
 async function loadManagerData() {
-  await Promise.all([
+  const tasks = [
     loadManagerKPIs(),
     loadManagerProducts(),
     loadManagerOrdersTable(),
     loadManagerAuditTrail()
-  ]);
+  ];
+  if (persistentAccount && (currentSessionRole === 'manager' || currentSessionRole === 'platform_admin')) {
+    tasks.push(loadAdminAccounts().catch(() => {}), loadAdminAuditLog().catch(() => {}));
+  }
+  await Promise.all(tasks);
 }
 
 async function loadManagerKPIs() {
@@ -2169,7 +2192,7 @@ async function loadManagerOrdersTable() {
   if (searchQ) {
     filtered = filtered.filter(o =>
       o.id.toLowerCase().includes(searchQ) ||
-      (o.name && o.name.toLowerCase().includes(searchQ)) ||
+      ((o.display_name || o.name) && (o.display_name || o.name).toLowerCase().includes(searchQ)) ||
       (o.customer_id && o.customer_id.toLowerCase().includes(searchQ))
     );
   }
@@ -2185,7 +2208,7 @@ async function loadManagerOrdersTable() {
     const tr = el('tr');
     const tdId = el('td'); tdId.innerHTML = `<strong>${o.id}</strong>`;
     const tdCust = el('td', '', o.customer_id || 'Khách');
-    const tdName = el('td', '', o.name);
+    const tdName = el('td', '', o.display_name || o.name);
     const tdVar = el('td', '', o.variant);
     const tdAmount = el('td', '', money(o.amount));
     const tdStatus = el('td');
@@ -2291,3 +2314,299 @@ document.querySelectorAll('.filter-chip').forEach(chip => {
     renderOrder();
   };
 });
+
+// ==========================================================================
+// Tab 6: Account & Quota Governance (P5-E ADM1–ADM6)
+// ==========================================================================
+function setAdminGovernanceMessage(errorText, statusText) {
+  const errEl = byId('admin-governance-error');
+  if (errEl) {
+    errEl.textContent = errorText || '';
+    errEl.hidden = !errorText;
+  }
+  const stEl = byId('admin-governance-status');
+  if (stEl) {
+    stEl.textContent = statusText || '';
+    stEl.hidden = !statusText;
+  }
+}
+
+function syncAdminGovernanceVisibility() {
+  const isAdminOrMgr = currentSessionRole === 'manager' || currentSessionRole === 'platform_admin';
+  const tabBtn = byId('tab-btn-accounts');
+  const tabContent = byId('tab-content-accounts');
+  const detailPanel = byId('admin-account-detail-panel');
+  if (tabBtn) {
+    tabBtn.hidden = !isAdminOrMgr;
+    if (tabBtn.style) tabBtn.style.display = isAdminOrMgr ? '' : 'none';
+  }
+  if (tabContent) {
+    tabContent.hidden = !isAdminOrMgr;
+    if (!isAdminOrMgr) tabContent.classList?.remove?.('active');
+  }
+  if (!isAdminOrMgr && detailPanel) {
+    detailPanel.hidden = true;
+  }
+  const tenantInput = byId('admin-tenant-id-input');
+  const scopeBadge = byId('admin-governance-scope-badge');
+  if (tenantInput) {
+    if (currentSessionRole === 'platform_admin') {
+      tenantInput.readOnly = false;
+      tenantInput.disabled = false;
+      if (!tenantInput.value && currentSessionTenantId) {
+        tenantInput.value = currentSessionTenantId;
+      }
+    } else {
+      tenantInput.value = currentSessionTenantId || '';
+      tenantInput.readOnly = true;
+    }
+  }
+  if (scopeBadge) {
+    scopeBadge.textContent = currentSessionRole === 'platform_admin'
+      ? 'SCOPE: PLATFORM_ADMIN (CROSS-TENANT)'
+      : `SCOPE: MANAGER (${currentSessionTenantId || 'TENANT'})`;
+  }
+}
+
+function clearAdminSelectedAccount() {
+  selectedAdminMembershipId = null;
+  selectedAdminAccount = null;
+  const panel = byId('admin-account-detail-panel');
+  if (panel) panel.hidden = true;
+  const confirmCb = byId('admin-action-confirm');
+  if (confirmCb) confirmCb.checked = false;
+}
+
+function buildAdminQueryString(extra = {}) {
+  const params = new URLSearchParams();
+  const tenantVal = (byId('admin-tenant-id-input')?.value || '').trim();
+  if (tenantVal) params.set('tenant_id', tenantVal);
+  for (const [k, v] of Object.entries(extra)) {
+    if (v !== undefined && v !== null && String(v).trim() !== '') {
+      params.set(k, String(v).trim());
+    }
+  }
+  const qs = params.toString();
+  return qs ? ('?' + qs) : '';
+}
+
+async function loadAdminAccounts() {
+  const tbody = byId('admin-accounts-tbody');
+  if (!tbody) return;
+  if (currentSessionRole !== 'manager' && currentSessionRole !== 'platform_admin') {
+    setAdminGovernanceMessage('Tài khoản hiện tại không có quyền quản trị tài khoản.', '');
+    return;
+  }
+  const searchQ = (byId('admin-account-search-input')?.value || '').trim();
+  const requestedTenant = (byId('admin-tenant-id-input')?.value || '').trim();
+  if (selectedAdminAccount && requestedTenant && selectedAdminAccount.tenant_id !== requestedTenant) {
+    clearAdminSelectedAccount();
+  }
+  try {
+    setAdminGovernanceMessage('', '');
+    const res = await api('/api/admin/accounts' + buildAdminQueryString({ q: searchQ }));
+    adminAccounts = res.accounts || [];
+    if (selectedAdminAccount && res.tenant_id && selectedAdminAccount.tenant_id !== res.tenant_id) {
+      clearAdminSelectedAccount();
+    }
+    tbody.replaceChildren();
+    if (!adminAccounts.length) {
+      const tr = el('tr');
+      tr.innerHTML = '<td colspan="8" style="text-align:center; padding:20px; color:#64748b;">Không có tài khoản nào trong phạm vi truy vấn.</td>';
+      tbody.append(tr);
+      return;
+    }
+    for (const acct of adminAccounts) {
+      const tr = el('tr');
+      tr.dataset.membershipId = acct.membership_id;
+      const q = acct.quota || {};
+      const usedVal = q.used ?? q.attempts_used ?? 0;
+      const limitVal = q.limit ?? q.effective_daily_limit ?? q.default_limit ?? q.default_daily_limit ?? '—';
+      const hasOv = Boolean(q.override || q.has_override);
+      const resetUtc = q.next_reset_utc || '00:00 UTC';
+      const statusStr = acct.status || (acct.active === false ? 'suspended' : 'active');
+      const sessCount = acct.active_session_count ?? acct.active_sessions ?? 0;
+      const quotaText = `${usedVal}/${limitVal}` + (hasOv ? ' (override)' : '') + ` · reset: ${resetUtc}`;
+      const tdMid = el('td', '', acct.membership_id);
+      const tdName = el('td', '', `${acct.display_name || acct.customer_id || acct.principal_id || '—'} (${acct.customer_id || '—'})`);
+      const tdRole = el('td', '', acct.role || 'customer');
+      const tdTenant = el('td', '', acct.tenant_id || '—');
+      const tdStatus = el('td', '', statusStr);
+      const tdSessions = el('td', '', String(sessCount));
+      const tdQuota = el('td', '', quotaText);
+      const tdAct = el('td');
+      const btnInspect = el('button', 'btn-action-sm admin-inspect-btn', '⚙ Quản lý');
+      btnInspect.type = 'button';
+      btnInspect.dataset.membershipId = acct.membership_id;
+      btnInspect.onclick = () => inspectAdminAccount(acct.membership_id);
+      tdAct.append(btnInspect);
+      tr.append(tdMid, tdName, tdRole, tdTenant, tdStatus, tdSessions, tdQuota, tdAct);
+      tbody.append(tr);
+    }
+  } catch (err) {
+    setAdminGovernanceMessage(err.message || 'Không thể tải danh sách tài khoản.', '');
+    tbody.replaceChildren();
+    const tr = el('tr');
+    tr.innerHTML = `<td colspan="8" style="text-align:center; padding:20px; color:#ef4444;">${err.message || 'Lỗi tải danh sách tài khoản.'}</td>`;
+    tbody.append(tr);
+  }
+}
+
+async function inspectAdminAccount(membershipId) {
+  if (!membershipId) return;
+  try {
+    setAdminGovernanceMessage('', '');
+    const res = await api('/api/admin/accounts/' + encodeURIComponent(membershipId) + buildAdminQueryString());
+    const acct = res.account;
+    if (!acct) return;
+    selectedAdminMembershipId = acct.membership_id;
+    selectedAdminAccount = acct;
+    const statusStr = acct.status || (acct.active === false ? 'suspended' : 'active');
+    const sessCount = acct.active_session_count ?? acct.active_sessions ?? 0;
+    const q = acct.quota || {};
+    const usedVal = q.used ?? q.attempts_used ?? 0;
+    const limitVal = q.limit ?? q.effective_daily_limit ?? q.default_limit ?? q.default_daily_limit ?? '—';
+    const hasOv = Boolean(q.override || q.has_override);
+    const resetUtc = q.next_reset_utc || '00:00 UTC';
+    const ovLimit = q.override?.daily_limit ?? q.override_daily_limit ?? null;
+    const ovExpires = q.override?.expires_at ?? q.override_expires_at ?? null;
+    const panel = byId('admin-account-detail-panel');
+    if (panel) panel.hidden = false;
+    if (byId('admin-selected-account-title')) {
+      byId('admin-selected-account-title').textContent = `${acct.display_name || acct.customer_id || acct.membership_id} (${acct.membership_id})`;
+    }
+    if (byId('admin-selected-account-status')) {
+      byId('admin-selected-account-status').textContent = statusStr;
+    }
+    if (byId('admin-selected-account-meta')) {
+      byId('admin-selected-account-meta').textContent =
+        `Tenant: ${acct.tenant_id} · Vai trò: ${acct.role} · Mã KH: ${acct.customer_id || '—'} · Phiên hoạt động: ${sessCount} · Quota hôm nay: ${usedVal}/${limitVal}${hasOv ? ' (override)' : ''} · Reset UTC: ${resetUtc}`;
+    }
+    const qLimitInput = byId('admin-quota-limit');
+    if (qLimitInput) {
+      qLimitInput.value = (ovLimit !== null && ovLimit !== undefined) ? String(ovLimit) : '';
+    }
+    const qExpInput = byId('admin-quota-expires');
+    if (qExpInput) {
+      qExpInput.value = ovExpires ? String(Math.floor(ovExpires)) : '';
+    }
+  } catch (err) {
+    setAdminGovernanceMessage(err.message || 'Không thể tải chi tiết tài khoản.', '');
+  }
+}
+
+async function loadAdminAuditLog(targetMembershipId = null) {
+  const tbody = byId('admin-audit-log-tbody');
+  if (!tbody) return;
+  if (currentSessionRole !== 'manager' && currentSessionRole !== 'platform_admin') {
+    return;
+  }
+  try {
+    const res = await api('/api/admin/audit-log' + buildAdminQueryString(
+      targetMembershipId ? { membership_id: targetMembershipId } : {}
+    ));
+    const logs = res.audit_logs || [];
+    tbody.replaceChildren();
+    if (!logs.length) {
+      const tr = el('tr');
+      tr.innerHTML = '<td colspan="6" style="text-align:center; padding:18px; color:#64748b;">Chưa có bản ghi audit quản trị.</td>';
+      tbody.append(tr);
+      return;
+    }
+    for (const item of logs) {
+      const tr = el('tr');
+      const tdTime = el('td', '', item.created_at ? new Date(item.created_at * 1000).toLocaleString('vi-VN') : '—');
+      const tdActor = el('td', '', `${item.actor_principal_id || '—'} (${item.actor_role || '—'})`);
+      const tdAction = el('td', '', item.action || '—');
+      const tdTarget = el('td', '', item.target_membership_id || '—');
+      const tdOutcome = el('td', '', item.outcome || '—');
+      const afterObj = item.after || item.after_state;
+      const tdReason = el('td', '', `${item.reason || ''} ${afterObj ? JSON.stringify(afterObj) : ''}`.trim());
+      tr.append(tdTime, tdActor, tdAction, tdTarget, tdOutcome, tdReason);
+      tbody.append(tr);
+    }
+  } catch (err) {
+    setAdminGovernanceMessage(err.message || 'Không thể tải nhật ký audit quản trị.', '');
+  }
+}
+
+async function submitAdminAccountAction(actionKind) {
+  if (currentSessionRole !== 'manager' && currentSessionRole !== 'platform_admin') {
+    setAdminGovernanceMessage('Tài khoản hiện tại không có quyền thực hiện thao tác quản trị.', '');
+    return;
+  }
+  if (!selectedAdminMembershipId) {
+    setAdminGovernanceMessage('Vui lòng chọn một tài khoản trước khi thực hiện thao tác.', '');
+    return;
+  }
+  const activeTenantInput = (byId('admin-tenant-id-input')?.value || '').trim();
+  const expectedTenantId = activeTenantInput || currentSessionTenantId || '';
+  if (selectedAdminAccount && selectedAdminAccount.tenant_id && expectedTenantId && selectedAdminAccount.tenant_id !== expectedTenantId) {
+    clearAdminSelectedAccount();
+    setAdminGovernanceMessage('Tài khoản đang chọn không thuộc cửa hàng (tenant_id) hiện tại. Vui lòng tải lại danh sách và chọn lại tài khoản.', '');
+    return;
+  }
+  const confirmed = Boolean(byId('admin-action-confirm')?.checked);
+  if (!confirmed) {
+    setAdminGovernanceMessage('Cần tích xác nhận trước khi thực thi thao tác quản trị.', '');
+    return;
+  }
+  const reason = (byId('admin-action-reason')?.value || '').trim();
+  if (!reason) {
+    setAdminGovernanceMessage('Vui lòng nhập lý do thao tác quản trị.', '');
+    return;
+  }
+  const mid = encodeURIComponent(selectedAdminMembershipId);
+  let endpoint = `/api/admin/accounts/${mid}/${actionKind}`;
+  let payload = { reason };
+  if (actionKind === 'quota') {
+    const limitRaw = (byId('admin-quota-limit')?.value ?? '').trim();
+    const expiresRaw = (byId('admin-quota-expires')?.value ?? '').trim();
+    payload = {
+      reason,
+      daily_limit: limitRaw === '' ? null : parseInt(limitRaw, 10)
+    };
+    if (expiresRaw !== '') {
+      payload.expires_at = Number(expiresRaw);
+    }
+  }
+  if (expectedTenantId) {
+    payload.tenant_id = expectedTenantId;
+  } else if (selectedAdminAccount?.tenant_id) {
+    payload.tenant_id = selectedAdminAccount.tenant_id;
+  }
+  try {
+    setAdminGovernanceMessage('', '');
+    await api(endpoint, payload);
+    const confirmCb = byId('admin-action-confirm');
+    if (confirmCb) confirmCb.checked = false;
+    setAdminGovernanceMessage('', `Đã thực hiện ${actionKind} cho tài khoản ${selectedAdminMembershipId}.`);
+    await Promise.all([
+      inspectAdminAccount(selectedAdminMembershipId),
+      loadAdminAccounts(),
+      loadAdminAuditLog(selectedAdminMembershipId)
+    ]);
+  } catch (err) {
+    setAdminGovernanceMessage(err.message || 'Thao tác quản trị thất bại.', '');
+    await loadAdminAuditLog(selectedAdminMembershipId).catch(() => {});
+  }
+}
+
+const adminTenantInputEl = byId('admin-tenant-id-input');
+if (adminTenantInputEl) {
+  adminTenantInputEl.oninput = () => clearAdminSelectedAccount();
+  adminTenantInputEl.onchange = () => clearAdminSelectedAccount();
+}
+const btnLoadAdminAccounts = byId('btn-load-admin-accounts');
+if (btnLoadAdminAccounts) btnLoadAdminAccounts.onclick = () => loadAdminAccounts();
+const btnLoadAdminAudit = byId('btn-load-admin-audit-log');
+if (btnLoadAdminAudit) btnLoadAdminAudit.onclick = () => loadAdminAuditLog();
+const btnAdminSuspend = byId('btn-admin-suspend');
+if (btnAdminSuspend) btnAdminSuspend.onclick = () => submitAdminAccountAction('suspend');
+const btnAdminReactivate = byId('btn-admin-reactivate');
+if (btnAdminReactivate) btnAdminReactivate.onclick = () => submitAdminAccountAction('reactivate');
+const btnAdminRevoke = byId('btn-admin-revoke-sessions');
+if (btnAdminRevoke) btnAdminRevoke.onclick = () => submitAdminAccountAction('revoke-sessions');
+const btnAdminSetQuota = byId('btn-admin-set-quota');
+if (btnAdminSetQuota) btnAdminSetQuota.onclick = () => submitAdminAccountAction('quota');
+syncAdminGovernanceVisibility();

@@ -4,9 +4,49 @@ import math
 from pathlib import Path
 import re
 import time
+import urllib.parse
 from retailops.core import ApiError, fields, require
 from retailops.workflow import approval
-from retailops.business.permissions import CANCEL, STAFF, MANAGER
+from retailops.business.permissions import CANCEL, STAFF, MANAGER, PLATFORM_ADMIN
+
+
+def _admin_control(app):
+    control = getattr(app, 'identity_store', None) or getattr(getattr(app, 'quota_store', None), 'control', None)
+    if control is None or not hasattr(control, 'admin_list_accounts'):
+        raise ApiError(404, 'admin_governance_unavailable', 'Quản trị tài khoản chỉ có trên phiên đăng nhập persistent.')
+    return control
+
+
+def _format_order_for_api(order, app=None):
+    if not isinstance(order, dict):
+        return order
+    out = dict(order)
+    data_mode = getattr(app, 'data_mode', 'synthetic-demo') if app is not None else 'synthetic-demo'
+    store = getattr(app, 'store', None) if app is not None else None
+    is_demo_fixture = (
+        callable(getattr(store, 'is_demo_sample_order', None))
+        and store.is_demo_sample_order(out.get('customer_id'), out.get('id'))
+    )
+    if (
+        data_mode in ('synthetic-demo', 'persistent-demo')
+        and is_demo_fixture
+        and out.get('product_id') == 'P-602'
+        and out.get('name') == 'Quần tây ống đứng tôn dáng'
+        and out.get('variant') == 'Đen / L'
+        and out.get('amount') == 520000
+        and isinstance(out.get('id'), str)
+        and re.fullmatch(r'O-[78]\d{5}', out['id'])
+    ):
+        out['display_name'] = 'Bộ xếp hình gỗ cho bé'
+    return out
+
+
+def _parse_query_dict(query_str, allowed_keys):
+    if not query_str:
+        return {}
+    parsed = urllib.parse.parse_qs(query_str, keep_blank_values=True)
+    require(set(parsed).issubset(set(allowed_keys)), 400, 'invalid_query_params', 'Tham số truy vấn không hợp lệ.')
+    return {k: (v[-1] if v else '') for k, v in parsed.items()}
 
 
 def _account_usage(app):
@@ -90,23 +130,32 @@ def _extract_actor(app, customer, binding=None):
     principal_id = None
     tenant_id = None
     display_name = None
+    membership_id = None
+    role = None
     if binding:
         principal_id = getattr(binding, 'principal_id', None)
         tenant_id = getattr(binding, 'tenant_id', None)
         display_name = getattr(binding, 'display_name', None)
+        membership_id = getattr(binding, 'membership_id', None)
+        role = getattr(binding, 'role', None)
+    if not membership_id:
+        membership_id = getattr(getattr(app, 'quota_store', None), 'membership_id', None)
     if not principal_id:
         principal_id = getattr(app, 'principal_id', None) or ('manager' if getattr(app, 'role', '') == 'manager' else customer)
     return {
         "principal_id": principal_id,
-        "role": getattr(app, 'role', 'customer'),
+        "role": role or getattr(app, 'role', 'customer'),
         "tenant_id": tenant_id or getattr(app, 'tenant_id', None),
         "customer_id": customer,
+        "membership_id": membership_id,
         "display_name": display_name,
         "actor_type": "principal"
     }
 
 
-def api_result(app, customer, method, path, body=None, idempotency_key=None, binding=None):
+def api_result(app, customer, method, path, body=None, idempotency_key=None, binding=None, query=None):
+    if isinstance(path, str) and '?' in path and not query:
+        path, query = path.split('?', 1)
     if method == "GET":
         if path in ("/api/session", "/api/profile"):
             actor = _extract_actor(app, customer, binding=binding)
@@ -128,14 +177,59 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             return (200, res)
         if path == '/api/account/usage':
             return (200, _account_usage(app))
+        if path == '/api/admin/accounts':
+            control = _admin_control(app)
+            actor = _extract_actor(app, customer, binding=binding)
+            qparams = _parse_query_dict(query, {'tenant_id', 'q', 'limit'})
+            lim = 50
+            if 'limit' in qparams and qparams['limit'] != '':
+                ok_lim, lim_val = _parse_non_negative_int(qparams['limit'])
+                require(ok_lim and 1 <= lim_val <= 200, 400, 'invalid_limit', 'Giới hạn danh sách không hợp lệ.')
+                lim = lim_val
+            return (200, control.admin_list_accounts(
+                actor,
+                tenant_id=qparams.get('tenant_id'),
+                query=qparams.get('q'),
+                limit=lim,
+                default_limit=app.api_daily_limit,
+                correlation_id=idempotency_key,
+            ))
+        m_admin_acct = re.fullmatch(r'/api/admin/accounts/([A-Za-z0-9_-]{1,64})', path)
+        if m_admin_acct:
+            control = _admin_control(app)
+            actor = _extract_actor(app, customer, binding=binding)
+            qparams = _parse_query_dict(query, {'tenant_id'})
+            return (200, control.admin_get_account(
+                actor,
+                m_admin_acct[1],
+                tenant_id=qparams.get('tenant_id'),
+                default_limit=app.api_daily_limit,
+                correlation_id=idempotency_key,
+            ))
+        if path == '/api/admin/audit-log':
+            control = _admin_control(app)
+            actor = _extract_actor(app, customer, binding=binding)
+            qparams = _parse_query_dict(query, {'tenant_id', 'membership_id', 'limit'})
+            lim = 100
+            if 'limit' in qparams and qparams['limit'] != '':
+                ok_lim, lim_val = _parse_non_negative_int(qparams['limit'])
+                require(ok_lim and 1 <= lim_val <= 500, 400, 'invalid_limit', 'Giới hạn truy vấn audit không hợp lệ.')
+                lim = lim_val
+            return (200, control.admin_list_audit_logs(
+                actor,
+                tenant_id=qparams.get('tenant_id'),
+                target_membership_id=qparams.get('membership_id'),
+                limit=lim,
+                correlation_id=idempotency_key,
+            ))
         if path == "/api/providers":
             return (200, app.providers())
         if path == "/api/orders":
-            if getattr(app, 'role', '') == 'manager':
+            if getattr(app, 'role', '') in ('manager', 'platform_admin'):
                 with app.store.connection() as db:
-                    all_orders = [dict(r) for r in db.execute("SELECT * FROM orders ORDER BY id DESC LIMIT 50")]
+                    all_orders = [_format_order_for_api(dict(r), app) for r in db.execute("SELECT * FROM orders ORDER BY id DESC LIMIT 50")]
                 return (200, {"orders": all_orders, "scope": "store_all"})
-            return (200, {"orders": app.store.orders(customer), "scope": "customer"})
+            return (200, {"orders": [_format_order_for_api(o, app) for o in app.store.orders(customer)], "scope": "customer"})
         if path == "/api/manager/products":
             app.require_permission(MANAGER)
             prods = app.catalog.all_products()
@@ -220,7 +314,7 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             return (200, {"events": app.store.manager_events(limit=100)})
         m = re.fullmatch(r"/api/orders/([A-Z]{1,6}-[0-9]{1,8})", path)
         if m:
-            return (200, {"order": app.store.lookup(customer, m[1])})
+            return (200, {"order": _format_order_for_api(app.store.lookup(customer, m[1]), app)})
         if path == "/api/staff/escalations":
             app.require_permission(STAFF)
             return (200, {"escalations": app.store.escalations()})
@@ -239,7 +333,68 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             return (201, app.new_conversation(customer, body))
         focus = re.fullmatch(r'/api/conversations/([a-f0-9-]{36})/focus', path)
         if focus:
-            return (200, app.focus(customer, focus[1], body))
+            res = app.focus(customer, focus[1], body)
+            if isinstance(res, dict) and 'order' in res:
+                res = {**res, 'order': _format_order_for_api(res['order'], app)}
+            return (200, res)
+        if path.startswith('/api/admin/audit-log'):
+            raise ApiError(405, 'audit_log_append_only', 'Nhật ký audit quản trị là chỉ-ghi-thêm (append-only); không hỗ trợ sửa hoặc xóa.')
+        m_admin_act = re.fullmatch(r'/api/admin/accounts/([A-Za-z0-9_-]{1,64})/(suspend|reactivate|revoke-sessions|quota)', path)
+        if m_admin_act:
+            control = _admin_control(app)
+            actor = _extract_actor(app, customer, binding=binding)
+            mid, act_kind = m_admin_act[1], m_admin_act[2]
+            corr_id = (body.get('correlation_id') if isinstance(body, dict) else None) or idempotency_key
+            raw_reason = (body.get('reason') if isinstance(body, dict) else None) or act_kind
+            qparams = _parse_query_dict(query, {'tenant_id'}) if query else {}
+            expected_tid = (body.get('tenant_id') if isinstance(body, dict) else None) or qparams.get('tenant_id')
+            # Enforce permission/scope check before field validation so spoofed/unauthorized attempts always log 'denied' and return 403/409
+            control._load_target_for_admin_mutation(
+                actor, mid,
+                'set_quota_override' if act_kind == 'quota' else (
+                    'revoke_sessions' if act_kind == 'revoke-sessions' else f'{act_kind}_account'
+                ),
+                str(raw_reason),
+                correlation_id=corr_id,
+                expected_tenant_id=expected_tid,
+            )
+            require(isinstance(body, dict), 400, 'invalid_body', 'Yêu cầu phải là đối tượng JSON.')
+            if act_kind in ('suspend', 'reactivate', 'revoke-sessions'):
+                require(
+                    {'reason'}.issubset(set(body)) and set(body).issubset({'reason', 'correlation_id', 'tenant_id'}),
+                    400,
+                    'invalid_fields',
+                    'Các trường của yêu cầu quản trị không hợp lệ.',
+                )
+                if act_kind == 'suspend':
+                    return (200, control.admin_suspend_account(
+                        actor, mid, reason=body['reason'], correlation_id=corr_id, default_limit=app.api_daily_limit, expected_tenant_id=expected_tid
+                    ))
+                if act_kind == 'reactivate':
+                    return (200, control.admin_reactivate_account(
+                        actor, mid, reason=body['reason'], correlation_id=corr_id, default_limit=app.api_daily_limit, expected_tenant_id=expected_tid
+                    ))
+                return (200, control.admin_revoke_sessions(
+                    actor, mid, reason=body['reason'], correlation_id=corr_id, default_limit=app.api_daily_limit, expected_tenant_id=expected_tid
+                ))
+            require(
+                {'daily_limit', 'reason'}.issubset(set(body))
+                and set(body).issubset({'daily_limit', 'reason', 'expires_at', 'effective_at', 'correlation_id', 'tenant_id'}),
+                400,
+                'invalid_fields',
+                'Các trường cập nhật hạn mức không hợp lệ.',
+            )
+            return (200, control.admin_set_quota_override(
+                actor,
+                mid,
+                daily_limit=body['daily_limit'],
+                reason=body['reason'],
+                expires_at=body.get('expires_at'),
+                effective_at=body.get('effective_at'),
+                correlation_id=corr_id,
+                default_limit=app.api_daily_limit,
+                expected_tenant_id=expected_tid,
+            ))
         if path == "/api/chat":
             try:
                 result = app.chat(customer, body)

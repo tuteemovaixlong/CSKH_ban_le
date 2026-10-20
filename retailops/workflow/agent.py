@@ -55,6 +55,9 @@ def run(gateway, text, history, execute, identity, timeout=110, *, saver=None,
         except AgentError as exc:
             trace['reported_cost_usd'] = None
             raise AgentError(exc.code, str(exc), trace) from None
+        except TimeoutError:
+            trace['reported_cost_usd'] = None
+            raise AgentError('agent_timeout', 'Model đã vượt thời gian xử lý. Chat chưa thay đổi đơn.', trace) from None
         except (RuntimeError, ValueError, OSError, KeyError, TypeError):
             trace['reported_cost_usd'] = None
             raise AgentError('agent_response_failed', 'Không nhận được câu trả lời hợp lệ từ model. Chat chưa thực hiện thay đổi đơn.', trace) from None

@@ -39,12 +39,38 @@ class AccountQuotaStore:
         if not isinstance(membership_id, str) or not membership_id:
             raise ValueError('Account usage requires a membership id.')
         self.control = control
+        self.membership_id = membership_id
         self.subject = hashlib.sha256(membership_id.encode()).hexdigest()[:24]
 
     def _key(self, provider, metric):
         if provider not in _PROVIDERS or metric not in _METRICS + ('attempts',):
             raise ValueError('Invalid account usage metric.')
         return f'acct:{self.subject}:{provider}:{metric}'
+
+    def _resolve_effective_limit(self, db, default_limit, now_ts=None):
+        now_val = float(now_ts if now_ts is not None else time.time())
+        try:
+            row = db.execute(
+                'SELECT daily_limit, effective_at, expires_at, reason, updated_by, updated_at '
+                'FROM membership_quota_overrides WHERE membership_id=?',
+                (self.membership_id,)
+            ).fetchone()
+        except Exception:
+            row = None
+        if row is not None:
+            eff_at = float(row['effective_at'] or 0.0)
+            exp_at = float(row['expires_at']) if row['expires_at'] is not None else None
+            if eff_at <= now_val and (exp_at is None or exp_at > now_val):
+                override_info = {
+                    'daily_limit': int(row['daily_limit']),
+                    'effective_at': eff_at,
+                    'expires_at': exp_at,
+                    'reason': row['reason'],
+                    'updated_by': row['updated_by'],
+                    'updated_at': float(row['updated_at']),
+                }
+                return int(row['daily_limit']), override_info
+        return default_limit, None
 
     @staticmethod
     def _increment(db, day, key, amount):
@@ -61,17 +87,19 @@ class AccountQuotaStore:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=31)).date().isoformat()
         db.execute('DELETE FROM provider_daily_usage WHERE day < ?', (cutoff,))
 
-    def reserve_api_attempt(self, limit):
+    def reserve_api_attempt(self, limit, *, _now=None):
         """Reserve one account API turn before provider I/O."""
         if type(limit) is not int or not 1 <= limit <= 10000:
             raise ValueError('API daily limit must be from 1 to 10000.')
-        day = time.strftime('%Y-%m-%d', time.gmtime())
+        now_val = float(_now if _now is not None else time.time())
+        day = datetime.fromtimestamp(now_val, tz=timezone.utc).date().isoformat()
         key = self._key('api', 'attempts')
         with self.control.connection(write=True) as db:
+            effective_limit, _ = self._resolve_effective_limit(db, limit, now_ts=now_val)
             row = db.execute('SELECT attempts FROM provider_daily_usage WHERE day=? AND provider_id=?',
                              (day, key)).fetchone()
             used = 0 if row is None else row['attempts']
-            require(used < limit, 429, 'api_daily_limit',
+            require(used < effective_limit, 429, 'api_daily_limit',
                     'Tài khoản đã hết lượt chat API hôm nay (UTC). Bạn có thể chọn custom model đang được cấu hình.')
             self._increment(db, day, key, 1)
             # Preserve the legacy provider-wide counter for operations visibility only.
@@ -105,13 +133,14 @@ class AccountQuotaStore:
                 self._increment(db, day, self._key(provider, 'cost_known'), 1)
             self._prune(db)
 
-    def snapshot(self, api_daily_limit, *, api_configured=False, custom_configured=False):
+    def snapshot(self, api_daily_limit, *, api_configured=False, custom_configured=False, _now=None):
         if type(api_daily_limit) is not int or not 1 <= api_daily_limit <= 10000:
             raise ValueError('API daily limit must be from 1 to 10000.')
-        now = datetime.now(timezone.utc)
+        now = datetime.fromtimestamp(float(_now), tz=timezone.utc) if _now is not None else datetime.now(timezone.utc)
         day = now.date().isoformat()
         prefix = f'acct:{self.subject}:'
         with self.control.connection() as db:
+            effective_limit, override_info = self._resolve_effective_limit(db, api_daily_limit, now_ts=now.timestamp())
             rows = db.execute('SELECT provider_id,attempts FROM provider_daily_usage WHERE day=? AND provider_id LIKE ?',
                               (day, prefix + '%')).fetchall()
         values = {row['provider_id']: row['attempts'] for row in rows}
@@ -158,12 +187,16 @@ class AccountQuotaStore:
             'schema': 'retailops-account-usage-v1',
             'day_utc': day,
             'reset_at': tomorrow.timestamp(),
+            'next_reset_utc': tomorrow.strftime('%Y-%m-%dT%H:%M:%SZ'),
             'api_configured': bool(api_configured),
             'custom_configured': bool(custom_configured),
             'api_quota': {
-                'limit': api_daily_limit,
+                'limit': effective_limit,
+                'default_limit': api_daily_limit,
                 'used': api_used,
-                'remaining': max(0, api_daily_limit - api_used),
+                'remaining': max(0, effective_limit - api_used),
+                'override': override_info,
+                'next_reset_utc': tomorrow.strftime('%Y-%m-%dT%H:%M:%SZ'),
                 'scope': 'membership / UTC day',
                 'reservation_policy': 'reserved before provider I/O; failed or timed-out API attempts may consume quota',
             },
