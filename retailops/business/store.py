@@ -301,19 +301,18 @@ class BusinessStore:
     @staticmethod
     def _tombstone_table_exists(conn) -> bool:
         try:
-            row = conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='order_purge_tombstones'"
-            ).fetchone()
-            return row is not None
-        except Exception:
-            try:
+            if hasattr(conn, "raw"):
                 row = conn.execute(
                     "SELECT 1 FROM information_schema.tables "
                     "WHERE table_schema = current_schema() AND table_name = 'order_purge_tombstones'"
                 ).fetchone()
                 return row is not None
-            except Exception:
-                return False
+            row = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='order_purge_tombstones'"
+            ).fetchone()
+            return row is not None
+        except Exception:
+            return False
 
     def is_order_purged(self, order_id: str, db=None) -> bool:
         if not isinstance(order_id, str) or not order_id.strip():

@@ -8,7 +8,7 @@
 |---|---|
 | Source/base SHA | `ef40d131ef9244fa51844ae8990a05888990cdc8` (`origin/main`, PR #43 merge) |
 | Candidate SHA / branch | Branch `fix/phase5-fix-a-manager-nav-order-cleanup` in isolated worktree `C:/Users/HP/AppData/Local/Temp/retailops_fix_a_wt` (dirty workspace `feat/phase5-sales-simulator-import` untouched) |
-| PR | Opened from `fix/phase5-fix-a-manager-nav-order-cleanup` → `main` |
+| PR | [#44](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/44) (`fix/phase5-fix-a-manager-nav-order-cleanup` → `main`) |
 | Independent review | Review packet [PHASE_5_FIX_A_REVIEW_2026-10-20.md](PHASE_5_FIX_A_REVIEW_2026-10-20.md); automated CI gates (`ci.yml` + `ops-console.yml`) |
 | Files changed | `web/index.html`, `web/styles.css`, `web/app.js`, `data/products.json`, `retailops/business/schema.py`, `retailops/business/store.py`, `retailops/http/routes.py`, `retailops/identity/persistent.py`, `retailops/sales/adapter.py`, `retailops/sales/fixtures.py`, `retailops/sales/simulator.py`, `retailops/storage/pg_schema.py`, `retailops/storage/pg_repositories.py`, `notebooks/colab_agent.ipynb`, `scripts/purge_demo_order.py`, `tests/test_phase5_fix_a.py`, `tests/test_public_session.js`, `tests/test_postgres.py`, `tests/test_order_tool_recovery.py`, `tests/test_phase5_e_ai_trust_and_governance.py`, `docs/phase5_fix_A/*`, `docs/03_EVALUATION/ACCEPTANCE_MATRIX.md`, `docs/CURRENT_PROJECT_STATUS.md`, `docs/PLAN_ROADMAP_INDEX.md`, `docs/phase5/README.md`, `docs/README.md` |
 
