@@ -1,7 +1,7 @@
 # Phase 5 Fix A — Review: Manager navigation & demo-order cleanup
 
-**Ngày:** 2026-10-20  
-**Trạng thái:** Review đã lập từ source checkout và ảnh do chủ dự án cung cấp; code remediation và automated regression (`tests/test_phase5_fix_a.py`, `tests/test_postgres.py`, `tests/test_public_session.js`) đã được triển khai trên nhánh `fix/phase5-fix-a-manager-nav-order-cleanup` (base `ef40d131ef9244fa51844ae8990a05888990cdc8`). Trạng thái mất hàng tab trên ảnh chụp màn hình đầu tiên vẫn được ghi nhận là **unreproduced trên production runtime** (chỉ xác minh được trong source việc `openManagerConsole()` trước đây không reset `currentManagerTab` về `kpis` và thiếu nút quay về tổng quan cố định trong từng tab/header). One-time production DB cleanup (`FIXA-DEPLOY2`) vẫn **PENDING** vì môi trường thực thi cục bộ không có AWS/SSM credentials và chưa truy vấn trực tiếp tenant trên EC2.  
+**Ngày:** 2026-10-20
+**Trạng thái:** Review đã lập từ source checkout và ảnh do chủ dự án cung cấp; code remediation và automated regression (`tests/test_phase5_fix_a.py`, `tests/test_postgres.py`, `tests/test_public_session.js`) đã được triển khai trên nhánh `fix/phase5-fix-a-manager-nav-order-cleanup` (base `ef40d131ef9244fa51844ae8990a05888990cdc8`). Trạng thái mất hàng tab trên ảnh chụp màn hình đầu tiên vẫn được ghi nhận là **unreproduced trên production runtime** (chỉ xác minh được trong source việc `openManagerConsole()` trước đây không reset `currentManagerTab` về `kpis` và thiếu nút quay về tổng quan cố định trong từng tab/header). One-time production DB cleanup (`FIXA-DEPLOY2`) vẫn **PENDING** vì môi trường thực thi cục bộ không có AWS/SSM credentials và chưa truy vấn trực tiếp tenant trên EC2.
 **Phạm vi:** đúng hai vấn đề; xem [acceptance criteria](PHASE_5_FIX_A_ACCEPTANCE_CRITERIA.md) và [handoff](PHASE_5_FIX_A_EXECUTION_HANDOFF.md).
 
 ## Tóm tắt
