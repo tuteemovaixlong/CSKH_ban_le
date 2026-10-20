@@ -47,7 +47,7 @@ FIXTURE_ORDER_MULTI_ITEM: Dict[str, Any] = {
         },
         {
             "product_id": "P-602",
-            "product_title": "Quần tây ống đứng tôn dáng",
+            "product_title": "Quần tây đen hàn quốc",
             "variant_name": "Đen / L",
             "quantity": 1,
             "unit_price": 520000,

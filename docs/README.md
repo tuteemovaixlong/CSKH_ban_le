@@ -5,6 +5,7 @@
 ## Workstream hiện hành
 
 - [Phase 5 — Identity, Sales Simulator và Complaint E2E](phase5/README.md)
+- [Phase 5 Fix A — Store Manager navigation & demo-order cleanup](phase5_fix_A/README.md) ([review](phase5_fix_A/PHASE_5_FIX_A_REVIEW_2026-10-20.md) · [criteria](phase5_fix_A/PHASE_5_FIX_A_ACCEPTANCE_CRITERIA.md) · [evidence](phase5_fix_A/PHASE_5_FIX_A_EVIDENCE.md) · [handoff](phase5_fix_A/PHASE_5_FIX_A_EXECUTION_HANDOFF.md))
 - [Phase 4 execution handoff](phase4/PHASE_4_EXECUTION_HANDOFF.md)
 
 | Muốn hiểu | Mở |

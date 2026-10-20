@@ -350,7 +350,7 @@ class OrderToolRecoveryTests(unittest.TestCase):
                 (cust['id'],),
             ).fetchone()
             self.assertEqual(dict(legacy_order), {
-                'name': 'Quần tây ống đứng tôn dáng',
+                'name': 'Quần tây đen hàn quốc',
                 'amount': 520000,
                 'status': 'delivered',
                 'product_id': 'P-602',

@@ -258,6 +258,22 @@ class SalesImportAdapter:
         replay = None
 
         with bstore.connection(write=True) as db:
+            bstore._ensure_purge_tombstone_table(db)
+            tombstoned = db.execute(
+                "SELECT 1 FROM order_purge_tombstones WHERE order_id=? LIMIT 1",
+                (order_id,),
+            ).fetchone()
+            if tombstoned is not None:
+                logger.warning(
+                    "Rejected import for purged tombstoned order tenant=%s source=%s event_id=%s order_id=%s",
+                    tenant_id, source_system, event_id, order_id,
+                )
+                raise ApiError(
+                    409,
+                    "order_purged_tombstone",
+                    f"Đơn hàng {order_id} đã được quản trị viên xóa khỏi hệ thống (tombstone); không được phép tái tạo.",
+                )
+
             # Idempotency check: (source_system, event_id)
             existing_event = db.execute(
                 "SELECT * FROM imported_events WHERE source_system=? AND event_id=?",

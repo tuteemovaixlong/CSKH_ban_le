@@ -31,7 +31,7 @@ def _format_order_for_api(order, app=None):
         data_mode in ('synthetic-demo', 'persistent-demo')
         and is_demo_fixture
         and out.get('product_id') == 'P-602'
-        and out.get('name') == 'Quần tây ống đứng tôn dáng'
+        and out.get('name') == 'Quần tây đen hàn quốc'
         and out.get('variant') == 'Đen / L'
         and out.get('amount') == 520000
         and isinstance(out.get('id'), str)

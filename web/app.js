@@ -1869,6 +1869,15 @@ if (chatPanelEl && typeof chatPanelEl.addEventListener === 'function') {
 let managerProducts = [];
 let editingProductId = null;
 let currentManagerTab = 'kpis';
+const MANAGER_TAB_KEYS = ['kpis', 'products', 'sops', 'orders', 'audit', 'accounts'];
+const MANAGER_BACK_KPI_BTN_IDS = [
+  'btn-manager-back-to-kpis',
+  'btn-products-back-to-kpis',
+  'btn-sops-back-to-kpis',
+  'btn-orders-back-to-kpis',
+  'btn-audit-back-to-kpis',
+  'btn-accounts-back-to-kpis'
+];
 
 const mgrDialog = byId('manager-console-dialog');
 const btnOpenMgrHeader = byId('btn-open-manager-console');
@@ -1877,6 +1886,80 @@ const btnOpenMgrBanner = byId('btn-panel-manager-banner');
 const btnCloseMgr = byId('close-manager-console');
 const btnRefreshMgr = byId('refresh-manager-data');
 
+function switchManagerTab(target = 'kpis', options = {}) {
+  const normalized = MANAGER_TAB_KEYS.includes(target) ? target : 'kpis';
+  if (normalized === 'accounts' && currentSessionRole !== 'manager' && currentSessionRole !== 'platform_admin') {
+    setAdminGovernanceMessage('Tài khoản này không có quyền truy cập Quản trị Tài khoản & Quota.', '');
+    return false;
+  }
+
+  document.querySelectorAll('.manager-nav-tab').forEach(t => {
+    const isMatch = t.dataset && t.dataset.tab === normalized;
+    t.classList.toggle('active', isMatch);
+    t.setAttribute('aria-selected', isMatch ? 'true' : 'false');
+    t.tabIndex = isMatch ? 0 : -1;
+  });
+  document.querySelectorAll('.manager-tab-content').forEach(c => {
+    const isMatch = c.id === ('tab-content-' + normalized);
+    c.classList.toggle('active', isMatch);
+    c.hidden = !isMatch;
+  });
+
+  for (const key of MANAGER_TAB_KEYS) {
+    const isMatch = key === normalized;
+    const btn = byId('tab-btn-' + key);
+    if (btn) {
+      if (!btn.dataset) btn.dataset = {};
+      btn.dataset.tab = key;
+      btn.classList.remove('active');
+      if (isMatch) btn.classList.add('active');
+      btn.setAttribute('aria-selected', isMatch ? 'true' : 'false');
+      btn.tabIndex = isMatch ? 0 : -1;
+      if (isMatch && options.focusTab && typeof btn.focus === 'function') {
+        btn.focus();
+      }
+    }
+    const panel = byId('tab-content-' + key);
+    if (panel) {
+      panel.classList.remove('active');
+      if (isMatch) panel.classList.add('active');
+      panel.hidden = !isMatch;
+    }
+  }
+
+  currentManagerTab = normalized;
+  const headerBackBtn = byId('btn-manager-back-to-kpis');
+  if (headerBackBtn) {
+    headerBackBtn.hidden = (normalized === 'kpis');
+  }
+  const tabBar = byId('manager-nav-tabs');
+  if (tabBar) {
+    tabBar.hidden = false;
+  }
+  if (normalized === 'accounts') {
+    loadAdminAccounts().catch(() => {});
+    loadAdminAuditLog().catch(() => {});
+  }
+  return true;
+}
+
+function handleManagerTabKeydown(e, currentKey) {
+  if (!e || !['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(e.key)) return;
+  const visibleKeys = MANAGER_TAB_KEYS.filter(k => {
+    const btn = byId('tab-btn-' + k);
+    return !btn || !btn.hidden;
+  });
+  if (!visibleKeys.length) return;
+  const idx = Math.max(0, visibleKeys.indexOf(currentKey));
+  let nextIdx = idx;
+  if (e.key === 'ArrowRight') nextIdx = (idx + 1) % visibleKeys.length;
+  else if (e.key === 'ArrowLeft') nextIdx = (idx - 1 + visibleKeys.length) % visibleKeys.length;
+  else if (e.key === 'Home') nextIdx = 0;
+  else if (e.key === 'End') nextIdx = visibleKeys.length - 1;
+  if (typeof e.preventDefault === 'function') e.preventDefault();
+  switchManagerTab(visibleKeys[nextIdx], { focusTab: true });
+}
+
 function openManagerConsole() {
   if (currentSessionRole !== 'manager' && currentSessionRole !== 'platform_admin') {
     setAdminGovernanceMessage('Tài khoản hiện tại không có quyền mở Bảng Quản Trị.', '');
@@ -1884,6 +1967,8 @@ function openManagerConsole() {
   }
   if (!mgrDialog || typeof mgrDialog.showModal !== 'function') return;
   syncAdminGovernanceVisibility();
+  switchManagerTab('kpis');
+  mgrDialog.scrollTop = 0;
   mgrDialog.showModal();
   loadManagerData();
 }
@@ -1894,26 +1979,30 @@ if (btnOpenMgrBanner) btnOpenMgrBanner.onclick = openManagerConsole;
 if (btnCloseMgr && mgrDialog) btnCloseMgr.onclick = () => mgrDialog.close();
 if (btnRefreshMgr) btnRefreshMgr.onclick = () => loadManagerData();
 
-// Tabs switcher
+// Tabs switcher & persistent return-to-overview actions
+for (const key of MANAGER_TAB_KEYS) {
+  const btn = byId('tab-btn-' + key);
+  if (btn) {
+    if (!btn.dataset) btn.dataset = {};
+    btn.dataset.tab = key;
+    btn.onclick = () => switchManagerTab(key);
+    btn.onkeydown = (e) => handleManagerTabKeydown(e, key);
+  }
+}
 document.querySelectorAll('.manager-nav-tab').forEach(tab => {
-  tab.onclick = () => {
-    const target = tab.dataset.tab;
-    if (target === 'accounts' && currentSessionRole !== 'manager' && currentSessionRole !== 'platform_admin') {
-      setAdminGovernanceMessage('Tài khoản này không có quyền truy cập Quản trị Tài khoản & Quota.', '');
-      return;
-    }
-    document.querySelectorAll('.manager-nav-tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.manager-tab-content').forEach(c => c.classList.remove('active'));
-    tab.classList.add('active');
-    currentManagerTab = target;
-    const content = byId('tab-content-' + target);
-    if (content) content.classList.add('active');
-    if (target === 'accounts') {
-      loadAdminAccounts().catch(() => {});
-      loadAdminAuditLog().catch(() => {});
-    }
-  };
+  const key = tab.dataset?.tab;
+  if (key) {
+    tab.onclick = () => switchManagerTab(key);
+    tab.onkeydown = (e) => handleManagerTabKeydown(e, key);
+  }
 });
+for (const backId of MANAGER_BACK_KPI_BTN_IDS) {
+  const backBtn = byId(backId);
+  if (backBtn) {
+    backBtn.onclick = () => switchManagerTab('kpis', { focusTab: true });
+  }
+}
+switchManagerTab('kpis');
 
 async function loadManagerData() {
   const tasks = [
@@ -2341,7 +2430,7 @@ function syncAdminGovernanceVisibility() {
     if (tabBtn.style) tabBtn.style.display = isAdminOrMgr ? '' : 'none';
   }
   if (tabContent) {
-    tabContent.hidden = !isAdminOrMgr;
+    tabContent.hidden = !isAdminOrMgr || currentManagerTab !== 'accounts';
     if (!isAdminOrMgr) tabContent.classList?.remove?.('active');
   }
   if (!isAdminOrMgr && detailPanel) {

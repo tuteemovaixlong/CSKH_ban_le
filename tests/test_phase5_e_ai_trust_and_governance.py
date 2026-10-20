@@ -1550,7 +1550,7 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
         expected_canonical = {
             "id": sample_oid,
             "customer_id": sample_cid,
-            "name": "Quần tây ống đứng tôn dáng",
+            "name": "Quần tây đen hàn quốc",
             "variant": "Đen / L",
             "amount": 520000,
             "status": "delivered",
@@ -1588,7 +1588,7 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
             db.execute(
                 """INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id)
                    VALUES ('O-899990', 'legacy_demo_cust', 'Áo sơ mi lụa công sở', 'Trắng / M', 450000, 'pending', 1, NULL, 'P-601'),
-                          ('O-899991', 'legacy_demo_cust', 'Quần tây ống đứng tôn dáng', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602'),
+                          ('O-899991', 'legacy_demo_cust', 'Quần tây đen hàn quốc', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602'),
                           ('O-899992', 'legacy_demo_cust', 'Giày lười da bò cao cấp', 'Nâu / 41', 890000, 'delivered', 1, NULL, 'P-603')"""
             )
         self.assertFalse(bstore.is_demo_sample_order("legacy_demo_cust", "O-899991"))
@@ -1694,10 +1694,10 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
         self.assertNotIn("display_name", nd_foc_res["order"])
         self.assertEqual(nd_foc_res["order"], expected_non_demo_123456)
 
-        # 3. Tool/Catalog SSOT: P-602 is still Quần tây ống đứng tôn dáng (520000), P-604 is Bộ xếp hình gỗ cho bé (price=None)
+        # 3. Tool/Catalog SSOT: P-602 is Quần tây đen hàn quốc (520000), P-604 is Bộ xếp hình gỗ cho bé (price=None)
         p602 = bstore.get_product("P-602")
         p604 = bstore.get_product("P-604")
-        self.assertEqual(p602["name"], "Quần tây ống đứng tôn dáng")
+        self.assertEqual(p602["name"], "Quần tây đen hàn quốc")
         self.assertEqual(p602["price"], 520000)
         self.assertEqual(p604["name"], "Bộ xếp hình gỗ cho bé")
         self.assertIsNone(p604["price"])

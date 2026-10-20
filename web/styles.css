@@ -3169,6 +3169,7 @@ body[data-role="staff"] #toggle-staff-desk {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
+  flex-shrink: 0;
   padding-bottom: 16px;
   border-bottom: 1px solid #e2e8f0;
   margin-bottom: 16px;
@@ -3190,15 +3191,25 @@ body[data-role="staff"] #toggle-staff-desk {
 .manager-header-actions {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 /* Navigation Tabs */
 .manager-nav-tabs {
   display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  min-height: 44px;
   gap: 8px;
   border-bottom: 2px solid #e2e8f0;
   margin-bottom: 20px;
   overflow-x: auto;
+  overflow-y: hidden;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: #ffffff;
+  padding-top: 4px;
 }
 
 .manager-nav-tab {
@@ -3212,6 +3223,7 @@ body[data-role="staff"] #toggle-staff-desk {
   color: #64748b;
   cursor: pointer;
   white-space: nowrap;
+  flex-shrink: 0;
   transition: all 0.2s ease;
 }
 
@@ -3228,11 +3240,16 @@ body[data-role="staff"] #toggle-staff-desk {
   display: none;
   flex-direction: column;
   gap: 16px;
-  flex: 1;
+  flex: 1 0 auto;
+  min-height: 0;
 }
 
 .manager-tab-content.active {
   display: flex;
+}
+
+.manager-tab-content[hidden] {
+  display: none !important;
 }
 
 /* Tab 1: KPIs */

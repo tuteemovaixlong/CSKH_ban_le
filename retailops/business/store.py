@@ -141,7 +141,12 @@ class BusinessStore:
                     pass
             db.executemany("INSERT INTO customers VALUES (?,?) ON CONFLICT DO NOTHING", customers)
             self.seed_catalog(db)
-            db.executemany("INSERT INTO orders(id, customer_id, name, variant, amount, status, product_id) VALUES (?,?,?,?,?,?,?) ON CONFLICT DO NOTHING", orders)
+            self._ensure_purge_tombstone_table(db)
+            tombstoned_oids = {
+                str(r["order_id"]) for r in db.execute("SELECT order_id FROM order_purge_tombstones").fetchall()
+            }
+            orders_to_seed = [o for o in orders if o[0] not in tombstoned_oids]
+            db.executemany("INSERT INTO orders(id, customer_id, name, variant, amount, status, product_id) VALUES (?,?,?,?,?,?,?) ON CONFLICT DO NOTHING", orders_to_seed)
             order_to_product = {
                 'O-101': 'P-101', 'O-102': 'P-102', 'O-202': 'P-202',
                 'O-301': 'P-103', 'O-302': 'P-104', 'O-303': 'P-203', 'O-304': 'P-401',
@@ -251,7 +256,7 @@ class BusinessStore:
         },
         "P-602": {
             "offset": 2,
-            "name": "Quần tây ống đứng tôn dáng",
+            "name": "Quần tây đen hàn quốc",
             "variant": "Đen / L",
             "amount": 520000,
             "status": "delivered",
@@ -268,6 +273,84 @@ class BusinessStore:
             "cancel_reason": None,
         },
     }
+
+    @staticmethod
+    def _ensure_purge_tombstone_table(conn):
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS order_purge_tombstones (
+                order_id TEXT PRIMARY KEY,
+                tenant_id TEXT NOT NULL,
+                customer_id TEXT NOT NULL,
+                product_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                amount INTEGER NOT NULL,
+                snapshot_name TEXT NOT NULL,
+                variant TEXT,
+                reason TEXT NOT NULL,
+                operator_id TEXT NOT NULL,
+                purged_at DOUBLE PRECISION NOT NULL,
+                pre_counts_json TEXT NOT NULL,
+                post_counts_json TEXT NOT NULL
+            )"""
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_order_purge_tombstones_customer "
+            "ON order_purge_tombstones(customer_id, product_id)"
+        )
+
+    @staticmethod
+    def _tombstone_table_exists(conn) -> bool:
+        try:
+            if hasattr(conn, "raw"):
+                row = conn.execute(
+                    "SELECT 1 FROM information_schema.tables "
+                    "WHERE table_schema = current_schema() AND table_name = 'order_purge_tombstones'"
+                ).fetchone()
+                return row is not None
+            row = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='order_purge_tombstones'"
+            ).fetchone()
+            return row is not None
+        except Exception:
+            return False
+
+    def is_order_purged(self, order_id: str, db=None) -> bool:
+        if not isinstance(order_id, str) or not order_id.strip():
+            return False
+        oid = order_id.strip()
+
+        def _check(conn):
+            if not self._tombstone_table_exists(conn):
+                return False
+            row = conn.execute(
+                "SELECT 1 FROM order_purge_tombstones WHERE order_id=? LIMIT 1",
+                (oid,),
+            ).fetchone()
+            return row is not None
+
+        if db is not None:
+            return _check(db)
+        with self.connection() as conn:
+            return _check(conn)
+
+    def get_purge_tombstone(self, order_id: str, db=None):
+        if not isinstance(order_id, str) or not order_id.strip():
+            return None
+        oid = order_id.strip()
+
+        def _fetch(conn):
+            if not self._tombstone_table_exists(conn):
+                return None
+            row = conn.execute(
+                "SELECT * FROM order_purge_tombstones WHERE order_id=? LIMIT 1",
+                (oid,),
+            ).fetchone()
+            return dict(row) if row is not None else None
+
+        if db is not None:
+            return _fetch(db)
+        with self.connection() as conn:
+            return _fetch(conn)
 
     @classmethod
     def _row_matches_demo_fixture_spec(cls, row: dict, pid: str) -> bool:
@@ -312,6 +395,13 @@ class BusinessStore:
 
     def seed_demo_sample_orders(self, customer_id, db=None):
         def _do_seed_orders(conn):
+            self._ensure_purge_tombstone_table(conn)
+            cust_tombstones = conn.execute(
+                "SELECT order_id, product_id FROM order_purge_tombstones WHERE customer_id=?",
+                (customer_id,),
+            ).fetchall()
+            if cust_tombstones:
+                return []
             existing_rows = conn.execute(
                 "SELECT id, customer_id, name, variant, amount, status, version, cancel_reason, product_id "
                 "FROM orders WHERE customer_id=? ORDER BY id ASC",
@@ -356,7 +446,7 @@ class BusinessStore:
                                     p602_oid,
                                     fixture="google_demo_sample_v1",
                                     product_id="P-602",
-                                    canonical_name="Quần tây ống đứng tôn dáng",
+                                    canonical_name="Quần tây đen hàn quốc",
                                     display_name="Bộ xếp hình gỗ cho bé",
                                 )
                 return []
@@ -364,31 +454,401 @@ class BusinessStore:
             p602_oid = f"O-{seed_base + 2}"
             sample_orders = [
                 (f"O-{seed_base + 1}", customer_id, "Áo sơ mi lụa công sở", "Trắng / M", 450000, "pending", 1, None, "P-601"),
-                (p602_oid, customer_id, "Quần tây ống đứng tôn dáng", "Đen / L", 520000, "delivered", 1, None, "P-602"),
+                (p602_oid, customer_id, "Quần tây đen hàn quốc", "Đen / L", 520000, "delivered", 1, None, "P-602"),
                 (f"O-{seed_base + 3}", customer_id, "Giày lười da bò cao cấp", "Nâu / 41", 890000, "delivered", 1, None, "P-603"),
             ]
+            tombstoned_oids = {
+                str(r["order_id"])
+                for r in conn.execute(
+                    "SELECT order_id FROM order_purge_tombstones WHERE order_id IN (?, ?, ?)",
+                    (sample_orders[0][0], sample_orders[1][0], sample_orders[2][0]),
+                ).fetchall()
+            }
+            inserted_oids = []
             for ord_row in sample_orders:
+                if ord_row[0] in tombstoned_oids:
+                    continue
                 conn.execute(
                     """INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id)
                        VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING""",
                     ord_row,
                 )
-            self.log(
-                conn,
-                customer_id,
-                "demo_sample_fixture_seeded",
-                p602_oid,
-                fixture="google_demo_sample_v1",
-                product_id="P-602",
-                canonical_name="Quần tây ống đứng tôn dáng",
-                display_name="Bộ xếp hình gỗ cho bé",
-            )
-            return [r[0] for r in sample_orders]
+                inserted_oids.append(ord_row[0])
+            if p602_oid in inserted_oids:
+                self.log(
+                    conn,
+                    customer_id,
+                    "demo_sample_fixture_seeded",
+                    p602_oid,
+                    fixture="google_demo_sample_v1",
+                    product_id="P-602",
+                    canonical_name="Quần tây đen hàn quốc",
+                    display_name="Bộ xếp hình gỗ cho bé",
+                )
+            return inserted_oids
 
         if db is not None:
             return _do_seed_orders(db)
         with self.connection(write=True) as conn:
             return _do_seed_orders(conn)
+
+    def _collect_purge_reference_counts(
+        self, conn, *, order_id: str, customer_id: str, product_id: str
+    ) -> dict:
+        orders_target = int(
+            conn.execute("SELECT COUNT(*) AS cnt FROM orders WHERE id=?", (order_id,)).fetchone()["cnt"]
+        )
+        orders_total = int(
+            conn.execute("SELECT COUNT(*) AS cnt FROM orders").fetchone()["cnt"]
+        )
+        customer_orders_total = int(
+            conn.execute("SELECT COUNT(*) AS cnt FROM orders WHERE customer_id=?", (customer_id,)).fetchone()["cnt"]
+        )
+        sibling_order_ids = [
+            str(r["id"])
+            for r in conn.execute(
+                "SELECT id FROM orders WHERE customer_id=? AND id<>? ORDER BY id ASC",
+                (customer_id, order_id),
+            ).fetchall()
+        ]
+        order_items_target = int(
+            conn.execute("SELECT COUNT(*) AS cnt FROM order_items WHERE order_id=?", (order_id,)).fetchone()["cnt"]
+        )
+        proposals_target = int(
+            conn.execute("SELECT COUNT(*) AS cnt FROM proposals WHERE order_id=?", (order_id,)).fetchone()["cnt"]
+        )
+        confirmed_proposals_target = int(
+            conn.execute(
+                "SELECT COUNT(*) AS cnt FROM proposals WHERE order_id=? AND state='confirmed'",
+                (order_id,),
+            ).fetchone()["cnt"]
+        )
+        conversations_linked = int(
+            conn.execute("SELECT COUNT(*) AS cnt FROM conversations WHERE order_id=?", (order_id,)).fetchone()["cnt"]
+        )
+        conversations_total = int(
+            conn.execute("SELECT COUNT(*) AS cnt FROM conversations WHERE customer_id=?", (customer_id,)).fetchone()["cnt"]
+        )
+        business_events_target = int(
+            conn.execute("SELECT COUNT(*) AS cnt FROM business_events WHERE order_id=?", (order_id,)).fetchone()["cnt"]
+        )
+        imported_events_target = int(
+            conn.execute("SELECT COUNT(*) AS cnt FROM imported_events WHERE order_id=?", (order_id,)).fetchone()["cnt"]
+        )
+        tombstones_target = 0
+        if self._tombstone_table_exists(conn):
+            tombstones_target = int(
+                conn.execute(
+                    "SELECT COUNT(*) AS cnt FROM order_purge_tombstones WHERE order_id=?",
+                    (order_id,),
+                ).fetchone()["cnt"]
+            )
+        prod_row = conn.execute("SELECT * FROM products WHERE id=?", (product_id,)).fetchone()
+        cust_row = conn.execute("SELECT id, name FROM customers WHERE id=?", (customer_id,)).fetchone()
+        product_snapshot = self._row_to_product(prod_row) if prod_row is not None else None
+        if isinstance(product_snapshot, dict):
+            product_snapshot = {
+                "id": product_snapshot.get("id"),
+                "name": product_snapshot.get("name"),
+                "price": product_snapshot.get("price"),
+                "stock": product_snapshot.get("stock"),
+                "warranty_days": product_snapshot.get("warranty_days"),
+                "variants": product_snapshot.get("variants"),
+            }
+        return {
+            "orders_target": orders_target,
+            "orders_total": orders_total,
+            "customer_orders_total": customer_orders_total,
+            "sibling_order_ids": sibling_order_ids,
+            "order_items_target": order_items_target,
+            "proposals_target": proposals_target,
+            "confirmed_proposals_target": confirmed_proposals_target,
+            "conversations_linked": conversations_linked,
+            "conversations_total": conversations_total,
+            "business_events_target": business_events_target,
+            "imported_events_target": imported_events_target,
+            "tombstones_target": tombstones_target,
+            "product_exists": 1 if prod_row is not None else 0,
+            "product_snapshot": product_snapshot,
+            "customer_exists": 1 if cust_row is not None else 0,
+        }
+
+    def purge_demo_order(
+        self,
+        *,
+        tenant_id: str,
+        order_id: str,
+        customer_id: str,
+        product_id: str,
+        status: str,
+        amount: int,
+        snapshot_name: str,
+        execute: bool = False,
+        reason: str = "",
+        operator_id: str = "cli-operator",
+    ) -> dict:
+        require(
+            isinstance(tenant_id, str) and tenant_id.strip()
+            and isinstance(order_id, str) and order_id.strip()
+            and isinstance(customer_id, str) and customer_id.strip()
+            and isinstance(product_id, str) and product_id.strip()
+            and isinstance(status, str) and status.strip()
+            and type(amount) is int and amount >= 0
+            and isinstance(snapshot_name, str) and snapshot_name.strip(),
+            400,
+            "invalid_purge_parameters",
+            "Cần cung cấp đầy đủ tenant_id và toàn bộ tuple kỳ vọng (order_id, customer_id, product_id, status, amount, snapshot_name).",
+        )
+        tenant_clean = tenant_id.strip()
+        oid = order_id.strip()
+        cid = customer_id.strip()
+        pid = product_id.strip()
+        st = status.strip()
+        sname = snapshot_name.strip()
+        if execute:
+            require(
+                isinstance(reason, str) and reason.strip() and isinstance(operator_id, str) and operator_id.strip(),
+                400,
+                "purge_reason_required",
+                "Chế độ thực thi (--execute) bắt buộc phải có reason và operator_id để lưu kiểm toán.",
+            )
+
+        with self.connection(write=bool(execute)) as conn:
+            if execute:
+                self._ensure_purge_tombstone_table(conn)
+            existing_tombstone = None
+            if self._tombstone_table_exists(conn):
+                t_row = conn.execute(
+                    "SELECT * FROM order_purge_tombstones WHERE order_id=? LIMIT 1",
+                    (oid,),
+                ).fetchone()
+                if t_row is not None:
+                    existing_tombstone = dict(t_row)
+
+            by_id_rows = conn.execute(
+                "SELECT id, customer_id, name, variant, amount, status, version, cancel_reason, product_id "
+                "FROM orders WHERE id=?",
+                (oid,),
+            ).fetchall()
+
+            if existing_tombstone is not None and len(by_id_rows) == 0:
+                require(
+                    existing_tombstone.get("tenant_id") == tenant_clean
+                    and existing_tombstone.get("customer_id") == cid
+                    and existing_tombstone.get("product_id") == pid
+                    and existing_tombstone.get("status") == st
+                    and int(existing_tombstone.get("amount", -1)) == int(amount)
+                    and existing_tombstone.get("snapshot_name") == sname,
+                    409,
+                    "purge_tombstone_mismatch",
+                    "Tombstone hiện có của đơn hàng không khớp với tuple yêu cầu.",
+                )
+                post_counts = self._collect_purge_reference_counts(
+                    conn, order_id=oid, customer_id=cid, product_id=pid
+                )
+                return {
+                    "status": "already_purged",
+                    "mode": "execute" if execute else "dry_run",
+                    "executed": False,
+                    "idempotent_replay": True,
+                    "tenant_id": tenant_clean,
+                    "order_id": oid,
+                    "tombstone": existing_tombstone,
+                    "post_counts": post_counts,
+                    "catalog_product": post_counts["product_snapshot"],
+                }
+
+            by_tuple_rows = conn.execute(
+                "SELECT id, customer_id, name, variant, amount, status, version, cancel_reason, product_id "
+                "FROM orders WHERE customer_id=? AND product_id=? AND status=? AND amount=? AND name=?",
+                (cid, pid, st, int(amount), sname),
+            ).fetchall()
+
+            require(
+                len(by_id_rows) > 0,
+                404,
+                "purge_target_not_found",
+                f"Không tìm thấy đơn hàng {oid} trong tenant {tenant_clean}.",
+            )
+            require(
+                len(by_id_rows) == 1 and len(by_tuple_rows) <= 1,
+                409,
+                "purge_target_ambiguous",
+                f"Phát hiện nhiều bản ghi trùng lặp cho tuple của đơn {oid}; hủy thao tác fail-closed.",
+            )
+
+            target = dict(by_id_rows[0])
+            mismatches = []
+            if str(target.get("customer_id")) != cid:
+                mismatches.append("customer_id")
+            if str(target.get("product_id")) != pid:
+                mismatches.append("product_id")
+            if str(target.get("status")) != st:
+                mismatches.append("status")
+            try:
+                target_amt = int(target.get("amount")) if target.get("amount") is not None else -1
+            except (TypeError, ValueError):
+                target_amt = -1
+            if target_amt != int(amount):
+                mismatches.append("amount")
+            if str(target.get("name")) != sname:
+                mismatches.append("name")
+            if len(by_tuple_rows) == 1 and str(by_tuple_rows[0]["id"]) != oid:
+                mismatches.append("order_id")
+            require(
+                not mismatches,
+                409,
+                "purge_tuple_mismatch",
+                f"Đơn hàng {oid} không khớp toàn bộ tuple kỳ vọng ({', '.join(mismatches)}); hủy thao tác fail-closed.",
+            )
+
+            pre_counts = self._collect_purge_reference_counts(
+                conn, order_id=oid, customer_id=cid, product_id=pid
+            )
+            require(
+                pre_counts["confirmed_proposals_target"] == 0,
+                409,
+                "purge_unclassified_reference",
+                f"Đơn hàng {oid} có proposal đã confirmed ({pre_counts['confirmed_proposals_target']}); hủy thao tác fail-closed.",
+            )
+            require(
+                pre_counts["product_exists"] == 1 and pre_counts["customer_exists"] == 1,
+                409,
+                "purge_context_missing",
+                f"Không tìm thấy sản phẩm {pid} hoặc khách hàng {cid} trong tenant {tenant_clean}.",
+            )
+
+            if not execute:
+                return {
+                    "status": "dry_run_verified",
+                    "mode": "dry_run",
+                    "executed": False,
+                    "idempotent_replay": False,
+                    "tenant_id": tenant_clean,
+                    "matched_order": target,
+                    "pre_counts": pre_counts,
+                    "planned_mutations": {
+                        "delete_orders": 1,
+                        "delete_order_items": pre_counts["order_items_target"],
+                        "delete_proposals": pre_counts["proposals_target"],
+                        "unlink_conversations": pre_counts["conversations_linked"],
+                        "insert_tombstone": 1,
+                        "insert_audit_event": 1,
+                    },
+                    "preserved_history": {
+                        "business_events_retained": pre_counts["business_events_target"],
+                        "imported_events_retained": pre_counts["imported_events_target"],
+                    },
+                    "catalog_product": pre_counts["product_snapshot"],
+                }
+
+            unlinked_convs = conn.execute(
+                "UPDATE conversations SET order_id=NULL WHERE order_id=?",
+                (oid,),
+            ).rowcount
+            deleted_proposals = conn.execute(
+                "DELETE FROM proposals WHERE order_id=?",
+                (oid,),
+            ).rowcount
+            deleted_items = conn.execute(
+                "DELETE FROM order_items WHERE order_id=?",
+                (oid,),
+            ).rowcount
+            deleted_orders = conn.execute(
+                "DELETE FROM orders WHERE id=? AND customer_id=? AND product_id=? AND status=? AND amount=? AND name=?",
+                (oid, cid, pid, st, int(amount), sname),
+            ).rowcount
+            require(
+                deleted_orders == 1,
+                409,
+                "purge_delete_count_mismatch",
+                f"Số dòng xóa khỏi bảng orders là {deleted_orders} (kỳ vọng 1); rollback.",
+            )
+
+            now = time.time()
+            self.log(
+                conn,
+                cid,
+                "demo_order_purged_by_operator",
+                oid,
+                tenant_id=tenant_clean,
+                product_id=pid,
+                snapshot_name=sname,
+                variant=target.get("variant"),
+                amount=int(amount),
+                status=st,
+                operator_id=operator_id.strip(),
+                reason=reason.strip(),
+            )
+            conn.execute(
+                """INSERT INTO order_purge_tombstones(
+                    order_id, tenant_id, customer_id, product_id, status, amount,
+                    snapshot_name, variant, reason, operator_id, purged_at,
+                    pre_counts_json, post_counts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    oid,
+                    tenant_clean,
+                    cid,
+                    pid,
+                    st,
+                    int(amount),
+                    sname,
+                    target.get("variant"),
+                    reason.strip(),
+                    operator_id.strip(),
+                    now,
+                    json.dumps(pre_counts, ensure_ascii=False),
+                    "{}",
+                ),
+            )
+            post_counts = self._collect_purge_reference_counts(
+                conn, order_id=oid, customer_id=cid, product_id=pid
+            )
+            conn.execute(
+                "UPDATE order_purge_tombstones SET post_counts_json=? WHERE order_id=?",
+                (json.dumps(post_counts, ensure_ascii=False), oid),
+            )
+
+            require(
+                post_counts["orders_target"] == 0
+                and post_counts["orders_total"] == pre_counts["orders_total"] - 1
+                and post_counts["customer_orders_total"] == pre_counts["customer_orders_total"] - 1
+                and post_counts["sibling_order_ids"] == pre_counts["sibling_order_ids"]
+                and post_counts["product_exists"] == 1
+                and post_counts["product_snapshot"] == pre_counts["product_snapshot"]
+                and post_counts["customer_exists"] == 1
+                and post_counts["conversations_total"] == pre_counts["conversations_total"]
+                and post_counts["imported_events_target"] == pre_counts["imported_events_target"]
+                and post_counts["business_events_target"] == pre_counts["business_events_target"] + 1
+                and post_counts["tombstones_target"] == 1,
+                500,
+                "purge_postcondition_failed",
+                "Kiểm tra hậu điều kiện sau khi xóa đơn không khớp kỳ vọng; rollback toàn bộ giao dịch.",
+            )
+
+            return {
+                "status": "purged",
+                "mode": "execute",
+                "executed": True,
+                "idempotent_replay": False,
+                "tenant_id": tenant_clean,
+                "purged_order": target,
+                "pre_counts": pre_counts,
+                "post_counts": post_counts,
+                "deleted_counts": {
+                    "orders": deleted_orders,
+                    "order_items": deleted_items,
+                    "proposals": deleted_proposals,
+                    "conversations_unlinked": unlinked_convs,
+                },
+                "preserved_history": {
+                    "business_events_before": pre_counts["business_events_target"],
+                    "business_events_after": post_counts["business_events_target"],
+                    "imported_events_retained": post_counts["imported_events_target"],
+                },
+                "catalog_product": post_counts["product_snapshot"],
+            }
 
     def is_demo_sample_order(self, customer_id, order_id) -> bool:
         if not isinstance(customer_id, str) or not customer_id or not isinstance(order_id, str) or not order_id:
