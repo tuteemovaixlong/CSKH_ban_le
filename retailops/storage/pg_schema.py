@@ -134,6 +134,21 @@ P5C_BUSINESS_DDL = [
     'CREATE INDEX IF NOT EXISTS idx_imported_events_tenant_order ON imported_events(tenant_id, order_id)',
     '''CREATE INDEX IF NOT EXISTS idx_imported_events_external
         ON imported_events(tenant_id, source_system, external_customer_id)''',
+    '''CREATE TABLE IF NOT EXISTS order_purge_tombstones (
+        order_id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        customer_id TEXT NOT NULL,
+        product_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        amount BIGINT NOT NULL,
+        snapshot_name TEXT NOT NULL,
+        variant TEXT,
+        reason TEXT NOT NULL,
+        operator_id TEXT NOT NULL,
+        purged_at DOUBLE PRECISION NOT NULL,
+        pre_counts_json TEXT NOT NULL,
+        post_counts_json TEXT NOT NULL)''',
+    'CREATE INDEX IF NOT EXISTS idx_order_purge_tombstones_customer ON order_purge_tombstones(customer_id, product_id)',
 ]
 
 P5C_IDENTITY_DDL = [

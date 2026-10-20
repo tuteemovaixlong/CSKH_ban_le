@@ -5,13 +5,27 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 class Element {
-  constructor() { this.children=[]; this.dataset={}; this.value=''; this.disabled=false; this.textContent=''; this.classList={toggle(){}, add(){}, remove(){}, contains(){ return false; }}; }
+  constructor() {
+    this.children=[]; this.dataset={}; this.value=''; this.disabled=false; this.textContent='';
+    this._classes=new Set();
+    this.classList={
+      toggle:(cls, force)=>{
+        const shouldAdd = force === undefined ? !this._classes.has(cls) : Boolean(force);
+        if (shouldAdd) this._classes.add(cls); else this._classes.delete(cls);
+        return shouldAdd;
+      },
+      add:(...cls)=>cls.forEach(c=>this._classes.add(c)),
+      remove:(...cls)=>cls.forEach(c=>this._classes.delete(c)),
+      contains:(cls)=>this._classes.has(cls)
+    };
+  }
   append(...nodes) { this.children.push(...nodes); }
   replaceChildren(...nodes) { this.children=nodes; }
   querySelector() { return this.button ||= new Element(); }
   before() {}
   showModal() {this.open=true;}
   close() {this.open=false;}
+  focus() {this.focused=true;}
   setAttribute(k,v) { this[k]=v; }
   removeAttribute(k) { delete this[k]; }
   remove() {}
@@ -180,12 +194,67 @@ function collectText(node) {
   assert.equal(get('manager-console-dialog').open, undefined);
   assert.ok(get('admin-governance-error').textContent.includes('không có quyền'));
 
-  // Elevate to manager (tenant_a) and verify Account & Quota Governance UI flow
+  // Elevate to manager (tenant_a) and verify Store Manager Navigation (FIXA-UI1..UI4) + Account & Quota Governance UI flow
   mockSessionRole = 'manager';
   await run('openSession()');
   assert.equal(get('tab-btn-accounts').hidden, false);
   assert.equal(get('admin-tenant-id-input').value, 'tenant_a');
   assert.equal(get('admin-tenant-id-input').readOnly, true);
+
+  // FIXA-UI1..UI4: open Store Manager -> defaults to Tổng quan & KPIs -> switch to Hàng hóa & Kho -> return to KPIs -> close & reopen
+  await run('openManagerConsole()');
+  assert.equal(get('manager-console-dialog').open, true);
+  assert.equal(run('currentManagerTab'), 'kpis');
+  assert.equal(get('tab-btn-kpis').classList.contains('active'), true);
+  assert.equal(get('tab-btn-kpis')['aria-selected'], 'true');
+  assert.equal(get('tab-content-kpis').hidden, false);
+  assert.equal(get('tab-content-products').hidden, true);
+  assert.equal(get('btn-manager-back-to-kpis').hidden, true);
+
+  // Navigate to Hàng hóa & Kho (products)
+  get('tab-btn-products').onclick();
+  assert.equal(run('currentManagerTab'), 'products');
+  assert.equal(get('tab-btn-products').classList.contains('active'), true);
+  assert.equal(get('tab-btn-products')['aria-selected'], 'true');
+  assert.equal(get('tab-btn-kpis').classList.contains('active'), false);
+  assert.equal(get('tab-btn-kpis')['aria-selected'], 'false');
+  assert.equal(get('tab-content-products').hidden, false);
+  assert.equal(get('tab-content-kpis').hidden, true);
+  assert.equal(get('btn-manager-back-to-kpis').hidden, false);
+
+  // Return to Tổng quan & KPIs from inside Products toolbar button (FIXA-UI2)
+  get('btn-products-back-to-kpis').onclick();
+  assert.equal(run('currentManagerTab'), 'kpis');
+  assert.equal(get('tab-btn-kpis').classList.contains('active'), true);
+  assert.equal(get('tab-content-kpis').hidden, false);
+  assert.equal(get('tab-content-products').hidden, true);
+  assert.equal(get('btn-manager-back-to-kpis').hidden, true);
+
+  // Navigate to products again, then return via sticky header back button (FIXA-UI2)
+  get('tab-btn-products').onclick();
+  assert.equal(run('currentManagerTab'), 'products');
+  get('btn-manager-back-to-kpis').onclick();
+  assert.equal(run('currentManagerTab'), 'kpis');
+  assert.equal(get('tab-content-kpis').hidden, false);
+
+  // Keyboard navigation across tabs (FIXA-UI3)
+  get('tab-btn-kpis').onkeydown({ key: 'ArrowRight', preventDefault() {} });
+  assert.equal(run('currentManagerTab'), 'products');
+  get('tab-btn-products').onkeydown({ key: 'ArrowLeft', preventDefault() {} });
+  assert.equal(run('currentManagerTab'), 'kpis');
+
+  // Switch to products, close dialog, reopen -> must reset to Tổng quan & KPIs (FIXA-UI1, FIXA-UI4)
+  get('tab-btn-products').onclick();
+  assert.equal(run('currentManagerTab'), 'products');
+  get('close-manager-console').onclick();
+  assert.equal(get('manager-console-dialog').open, false);
+  await run('openManagerConsole()');
+  assert.equal(get('manager-console-dialog').open, true);
+  assert.equal(run('currentManagerTab'), 'kpis');
+  assert.equal(get('tab-btn-kpis').classList.contains('active'), true);
+  assert.equal(get('tab-content-kpis').hidden, false);
+  assert.equal(get('tab-content-products').hidden, true);
+
   await run('loadAdminAccounts()');
   assert.equal(get('admin-accounts-tbody').children.length, 1);
   assert.ok(collectText(get('admin-accounts-tbody').children[0]).includes('m_cust_1'));

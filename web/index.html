@@ -234,21 +234,22 @@
           <p>Điều hành toàn diện: Chỉ số KPI vận hành, Quản lý danh mục hàng hóa & kho, Xử lý khiếu nại 6 SOPs, Bảng đơn hàng shop.</p>
         </div>
         <div class="manager-header-actions">
-          <button class="secondary" id="refresh-manager-data">🔄 Làm mới dữ liệu</button>
-          <button class="secondary" id="close-manager-console">✕ Đóng Bảng Quản Trị</button>
+          <button type="button" class="secondary manager-back-kpis-btn" id="btn-manager-back-to-kpis" data-return-tab="kpis" hidden>📊 Về Tổng quan &amp; KPIs</button>
+          <button type="button" class="secondary" id="refresh-manager-data">🔄 Làm mới dữ liệu</button>
+          <button type="button" class="secondary" id="close-manager-console">✕ Đóng Bảng Quản Trị</button>
         </div>
       </div>
 
-      <div class="manager-nav-tabs" role="tablist">
-        <button class="manager-nav-tab active" data-tab="kpis" id="tab-btn-kpis">📊 Tổng quan & KPIs</button>
-        <button class="manager-nav-tab" data-tab="products" id="tab-btn-products">📦 Hàng hóa & Kho (CRUD)</button>
-        <button class="manager-nav-tab" data-tab="sops" id="tab-btn-sops">⚖️ Trung tâm 6 SOPs</button>
-        <button class="manager-nav-tab" data-tab="orders" id="tab-btn-orders">📋 Đơn hàng Shop</button>
-        <button class="manager-nav-tab" data-tab="audit" id="tab-btn-audit">📜 Nhật ký Kiểm toán</button>
-        <button class="manager-nav-tab" data-tab="accounts" id="tab-btn-accounts">🛡️ Tài khoản & Quota</button>
+      <div class="manager-nav-tabs" id="manager-nav-tabs" role="tablist" aria-label="Điều hướng Bảng Quản Trị">
+        <button type="button" class="manager-nav-tab active" role="tab" aria-selected="true" aria-controls="tab-content-kpis" tabindex="0" data-tab="kpis" id="tab-btn-kpis">📊 Tổng quan &amp; KPIs</button>
+        <button type="button" class="manager-nav-tab" role="tab" aria-selected="false" aria-controls="tab-content-products" tabindex="-1" data-tab="products" id="tab-btn-products">📦 Hàng hóa &amp; Kho (CRUD)</button>
+        <button type="button" class="manager-nav-tab" role="tab" aria-selected="false" aria-controls="tab-content-sops" tabindex="-1" data-tab="sops" id="tab-btn-sops">⚖️ Trung tâm 6 SOPs</button>
+        <button type="button" class="manager-nav-tab" role="tab" aria-selected="false" aria-controls="tab-content-orders" tabindex="-1" data-tab="orders" id="tab-btn-orders">📋 Đơn hàng Shop</button>
+        <button type="button" class="manager-nav-tab" role="tab" aria-selected="false" aria-controls="tab-content-audit" tabindex="-1" data-tab="audit" id="tab-btn-audit">📜 Nhật ký Kiểm toán</button>
+        <button type="button" class="manager-nav-tab" role="tab" aria-selected="false" aria-controls="tab-content-accounts" tabindex="-1" data-tab="accounts" id="tab-btn-accounts">🛡️ Tài khoản &amp; Quota</button>
       </div>
 
-      <div class="manager-tab-content active" id="tab-content-kpis">
+      <div class="manager-tab-content active" role="tabpanel" aria-labelledby="tab-btn-kpis" id="tab-content-kpis">
         <div class="manager-kpi-grid">
           <div class="kpi-card">
             <div class="kpi-icon">🤖</div>
@@ -304,10 +305,11 @@
         </div>
       </div>
 
-      <div class="manager-tab-content" id="tab-content-products">
+      <div class="manager-tab-content" role="tabpanel" aria-labelledby="tab-btn-products" id="tab-content-products" hidden>
         <div class="manager-products-toolbar">
+          <button type="button" class="secondary manager-back-kpis-btn" id="btn-products-back-to-kpis" data-return-tab="kpis">📊 Về Tổng quan &amp; KPIs</button>
           <input type="text" id="product-search-input" placeholder="🔍 Tìm kiếm sản phẩm theo tên, mã SKU, danh mục..." aria-label="Tìm kiếm sản phẩm">
-          <button class="primary" id="btn-open-add-product">➕ Thêm Món Mới</button>
+          <button type="button" class="primary" id="btn-open-add-product">➕ Thêm Món Mới</button>
         </div>
         <div class="manager-table-responsive">
           <table class="manager-data-table" id="manager-products-table">
@@ -330,7 +332,10 @@
         </div>
       </div>
 
-      <div class="manager-tab-content" id="tab-content-sops">
+      <div class="manager-tab-content" role="tabpanel" aria-labelledby="tab-btn-sops" id="tab-content-sops" hidden>
+        <div class="manager-products-toolbar">
+          <button type="button" class="secondary manager-back-kpis-btn" id="btn-sops-back-to-kpis" data-return-tab="kpis">📊 Về Tổng quan &amp; KPIs</button>
+        </div>
         <div class="sop-grid">
           <div class="sop-card">
             <div class="sop-header">
@@ -406,8 +411,9 @@
         </div>
       </div>
 
-      <div class="manager-tab-content" id="tab-content-orders">
+      <div class="manager-tab-content" role="tabpanel" aria-labelledby="tab-btn-orders" id="tab-content-orders" hidden>
         <div class="manager-products-toolbar">
+          <button type="button" class="secondary manager-back-kpis-btn" id="btn-orders-back-to-kpis" data-return-tab="kpis">📊 Về Tổng quan &amp; KPIs</button>
           <input type="text" id="manager-order-search-input" placeholder="🔍 Tìm mã đơn, tên khách, sản phẩm..." aria-label="Tìm kiếm đơn hàng shop">
           <select id="manager-order-status-filter" aria-label="Lọc trạng thái">
             <option value="all">Tất cả trạng thái</option>
@@ -437,7 +443,10 @@
         </div>
       </div>
 
-      <div class="manager-tab-content" id="tab-content-audit">
+      <div class="manager-tab-content" role="tabpanel" aria-labelledby="tab-btn-audit" id="tab-content-audit" hidden>
+        <div class="manager-products-toolbar">
+          <button type="button" class="secondary manager-back-kpis-btn" id="btn-audit-back-to-kpis" data-return-tab="kpis">📊 Về Tổng quan &amp; KPIs</button>
+        </div>
         <div class="manager-table-responsive">
           <table class="manager-data-table" id="manager-audit-table">
             <thead>
@@ -456,9 +465,10 @@
         </div>
       </div>
 
-      <div class="manager-tab-content" id="tab-content-accounts">
+      <div class="manager-tab-content" role="tabpanel" aria-labelledby="tab-btn-accounts" id="tab-content-accounts" hidden>
         <div class="manager-products-toolbar" id="admin-governance-toolbar">
           <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; flex:1;">
+            <button type="button" class="secondary manager-back-kpis-btn" id="btn-accounts-back-to-kpis" data-return-tab="kpis">📊 Về Tổng quan &amp; KPIs</button>
             <label for="admin-tenant-id-input" style="font-size:13px; font-weight:600;">Cửa hàng (Tenant):</label>
             <input type="text" id="admin-tenant-id-input" class="manager-search-input" style="max-width:160px;" placeholder="Mặc định theo phiên">
             <input type="text" id="admin-account-search-input" class="manager-search-input" style="max-width:240px;" placeholder="Tìm kiếm membership / email / mã KH...">

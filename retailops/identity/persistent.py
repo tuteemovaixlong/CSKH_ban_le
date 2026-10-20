@@ -261,3 +261,39 @@ class PersistentSessions:
         return self.sales_adapter.ingest_event(
             event_data, actor_principal_id=actor_principal_id, reference_time=reference_time
         )
+
+    def purge_demo_order(
+        self,
+        *,
+        tenant_id: str,
+        order_id: str,
+        customer_id: str,
+        product_id: str,
+        status: str,
+        amount: int,
+        snapshot_name: str,
+        execute: bool = False,
+        reason: str = "",
+        operator_id: str = "cli-operator",
+    ) -> dict:
+        tenant_clean = _clean_tenant_id(tenant_id)
+        require(tenant_clean is not None, 400, 'invalid_tenant_id', 'Mã cửa hàng (tenant_id) không hợp lệ.')
+        self.control.tenant(tenant_clean)
+        bstore = self.business_store(tenant_clean)
+        result = bstore.purge_demo_order(
+            tenant_id=tenant_clean,
+            order_id=order_id,
+            customer_id=customer_id,
+            product_id=product_id,
+            status=status,
+            amount=amount,
+            snapshot_name=snapshot_name,
+            execute=execute,
+            reason=reason,
+            operator_id=operator_id,
+        )
+        if result.get('executed') and hasattr(self, 'tool_caches') and tenant_clean in self.tool_caches:
+            self.tool_caches[tenant_clean].invalidate(
+                customer=customer_id, tenant_id=tenant_clean, order_id=order_id
+            )
+        return result

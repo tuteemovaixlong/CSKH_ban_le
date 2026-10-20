@@ -1,8 +1,14 @@
 """Same business and identity operations, using PostgreSQL transactions and DDL."""
 from retailops.business.store import BusinessStore
 from retailops.identity.store import IdentityStore
-from retailops.storage.pg_schema import P5C_IDENTITY_DDL, initialize
-from retailops.storage.postgres import IDENTITY_SCHEMA, check_schema, tenant_schema, transaction
+from retailops.storage.pg_schema import P5C_BUSINESS_DDL, P5C_IDENTITY_DDL, initialize
+from retailops.storage.postgres import (
+    BUSINESS_SCHEMA_CURRENT,
+    IDENTITY_SCHEMA,
+    check_schema,
+    tenant_schema,
+    transaction,
+)
 
 
 class PostgresBusinessStore(BusinessStore):
@@ -14,6 +20,11 @@ class PostgresBusinessStore(BusinessStore):
                 self.seed_catalog(db)
         else:
             check_schema(dsn, self.schema, 'business')
+            with self.connection(write=True) as db:
+                row = db.raw.execute("SELECT version FROM retailops_schema WHERE component='business'").fetchone()
+                if row and row.get('version') == BUSINESS_SCHEMA_CURRENT:
+                    for statement in P5C_BUSINESS_DDL:
+                        db.raw.execute(statement)
 
     def connection(self, write=False):
         return transaction(self.dsn, self.schema, write=write)

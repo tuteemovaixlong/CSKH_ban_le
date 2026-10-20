@@ -1677,7 +1677,7 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         self.assertEqual(len(p602_ords), 1)
         sample_oid = p602_ords[0]['id']
         self.assertEqual(p602_ords[0]['display_name'], 'Bộ xếp hình gỗ cho bé')
-        self.assertEqual(p602_ords[0]['name'], 'Quần tây ống đứng tôn dáng')
+        self.assertEqual(p602_ords[0]['name'], 'Quần tây đen hàn quốc')
         self.assertEqual(p602_ords[0]['product_id'], 'P-602')
 
         # Returning demo customer with existing 3-order sample triplet missing provenance backfills provenance idempotently (R3)
@@ -2049,6 +2049,90 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
                     reason='Should rollback on PG',
                 )
         self.assertEqual(self.request('/api/session', cookie=cookie_alice)[0], 200)
+
+        # Phase 5 Fix A (FIXA-DATA1..DATA5) on PostgreSQL: targeted demo order purge, retention, and tombstone replay guard
+        with store_a.connection(write=True) as db:
+            db.execute("INSERT INTO customers(id, name) VALUES ('CG-d9b82ffe', 'PG Fix A Demo Customer') ON CONFLICT DO NOTHING")
+            db.execute(
+                "INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id) VALUES "
+                "('O-819125', 'CG-d9b82ffe', 'Áo sơ mi lụa công sở', 'Trắng / M', 450000, 'pending', 1, NULL, 'P-601'), "
+                "('O-819126', 'CG-d9b82ffe', 'Quần tây ống đứng tôn dáng', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602'), "
+                "('O-819127', 'CG-d9b82ffe', 'Giày lười da bò cao cấp', 'Nâu / 41', 890000, 'delivered', 1, NULL, 'P-603') "
+                "ON CONFLICT DO NOTHING"
+            )
+            db.execute(
+                "INSERT INTO imported_events(id, source_system, event_id, tenant_id, external_customer_id, customer_id, order_id, status, total, currency, payload_json, signature, created_at) "
+                "VALUES ('pg-imp-819126', 'sales_simulator', 'pg-evt-819126', 'shop-a', 'ext-pg-cg', 'CG-d9b82ffe', 'O-819126', 'delivered', 520000, 'VND', '{}', 'sig-pg-819126', ?) "
+                "ON CONFLICT DO NOTHING",
+                (time.time(),),
+            )
+
+        pg_target = dict(
+            tenant_id='shop-a',
+            order_id='O-819126',
+            customer_id='CG-d9b82ffe',
+            product_id='P-602',
+            status='delivered',
+            amount=520000,
+            snapshot_name='Quần tây ống đứng tôn dáng',
+        )
+        with self.assertRaises(ApiError) as ctx_pg_mismatch:
+            self.sessions.purge_demo_order(**{**pg_target, 'amount': 999999})
+        self.assertEqual(ctx_pg_mismatch.exception.code, 'purge_tuple_mismatch')
+
+        pg_dry = self.sessions.purge_demo_order(**pg_target, execute=False)
+        self.assertEqual(pg_dry['status'], 'dry_run_verified')
+        self.assertFalse(pg_dry['executed'])
+        self.assertEqual(pg_dry['pre_counts']['orders_target'], 1)
+        self.assertEqual(pg_dry['pre_counts']['sibling_order_ids'], ['O-819125', 'O-819127'])
+
+        pg_exec = self.sessions.purge_demo_order(
+            **pg_target,
+            execute=True,
+            reason='PG Phase 5 Fix A targeted purge of O-819126',
+            operator_id='pg-test-operator',
+        )
+        self.assertEqual(pg_exec['status'], 'purged')
+        self.assertTrue(pg_exec['executed'])
+        self.assertEqual(pg_exec['post_counts']['orders_target'], 0)
+        self.assertEqual(pg_exec['post_counts']['imported_events_target'], 1)
+        self.assertEqual(pg_exec['post_counts']['tombstones_target'], 1)
+        self.assertEqual(pg_exec['post_counts']['sibling_order_ids'], ['O-819125', 'O-819127'])
+        self.assertEqual(pg_exec['catalog_product']['name'], 'Quần tây đen hàn quốc')
+
+        pg_idem = self.sessions.purge_demo_order(
+            **pg_target,
+            execute=True,
+            reason='PG idempotent check',
+            operator_id='pg-test-operator',
+        )
+        self.assertEqual(pg_idem['status'], 'already_purged')
+        self.assertTrue(pg_idem['idempotent_replay'])
+
+        store_a.seed_demo_sample_orders('CG-d9b82ffe')
+        store_a.seed()
+        self.assertTrue(store_a.is_order_purged('O-819126'))
+        with store_a.connection() as db:
+            rem_oids = [
+                r['id'] for r in db.execute(
+                    "SELECT id FROM orders WHERE customer_id='CG-d9b82ffe' ORDER BY id ASC"
+                ).fetchall()
+            ]
+        self.assertEqual(rem_oids, ['O-819125', 'O-819127'])
+
+        from retailops.sales.simulator import DEFAULT_DEV_SECRET, SalesSimulator
+        pg_sim = SalesSimulator(tenant_id='shop-a', secret_key=DEFAULT_DEV_SECRET)
+        pg_purged_evt = pg_sim.create_order_event(
+            tenant='shop-a',
+            external_customer_id='ext-pg-cg',
+            order_id='O-819126',
+            status='delivered',
+            items=[{'product_id': 'P-602', 'product_title': 'Quần tây ống đứng tôn dáng', 'variant_name': 'Đen / L', 'quantity': 1, 'unit_price': 520000}],
+            event_id='pg-evt-replay-purged-819126',
+        )
+        with self.assertRaises(ApiError) as ctx_pg_tomb:
+            self.sessions.import_sales_event(pg_purged_evt)
+        self.assertEqual(ctx_pg_tomb.exception.code, 'order_purged_tombstone')
 
 
 if __name__ == '__main__':
