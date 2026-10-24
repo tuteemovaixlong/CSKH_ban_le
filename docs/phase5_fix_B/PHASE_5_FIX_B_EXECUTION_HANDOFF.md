@@ -1,6 +1,6 @@
 # Phase 5 Fix B — Controlled handoff
 
-## Prompt cụ thể cho bước tiếp theo — tạo PR và chạy CI
+## Historical PR/CI prompt — consumed on PR #45 (DO NOT REPLAY)
 
 ```text
 Thực hiện gate PR/CI cho Phase 5 Fix B theo handoff này và các tài liệu được liên kết. Independent review R5 ngày 2026-10-24 đã PASS trong phạm vi review tĩnh; đây là bước kiểm chứng CI, chưa phải merge/deploy hoặc cleanup live.
@@ -15,12 +15,14 @@ Thực hiện gate PR/CI cho Phase 5 Fix B theo handoff này và các tài liệ
 8. Dừng sau PR + CI + cập nhật evidence. Không merge, deploy, bật/tắt EC2, dùng AWS/SSM, đọc secret hoặc kết nối/backup/dry-run/purge production DB. Báo kết quả CI, file thay đổi, candidate head/tested merge SHA, PR URL và bước tiếp theo.
 ```
 
-## Trạng thái bàn giao — 2026-10-24
+## Trạng thái bàn giao — 2026-10-24 (sau gate PR/CI trên PR #45)
 
-- Independent [review R5](PHASE_5_FIX_B_REVIEW_R5_2026-10-24.md): **PASS trong phạm vi review tĩnh; READY FOR PR/CI**.
-- Candidate vẫn chưa commit/PR/CI. Local Fix A/B + guard `13/13`; targeted regression trước đó `102/102`; Ops Console `19 tests / 3 skipped`. PostgreSQL thật chưa được kiểm chứng.
-- Kết quả review này đóng gate review tĩnh; chưa đóng `FIXB-PG-CI`, các gate production hay performance.
-- Prompt PR/CI ở đầu file là hướng dẫn cho bước kế tiếp, không phải bằng chứng bước đó đã chạy. Phiên remediation/review hiện tại dừng ở candidate chưa commit.
+- Independent [review R5](PHASE_5_FIX_B_REVIEW_R5_2026-10-24.md): **PASS trong phạm vi review tĩnh**.
+- Nhánh `codex/phase5-fix-b-readonly-purge` đã commit nguyên vẹn candidate R5 tại `7121534364c9d5b060251ec56e2ac71b57faf983` (base `83bee6c5c42d9996a3230208d30ec6e6f0c5de2e`) và mở draft [PR #45](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/45) (tested merge SHA `0e8dee126fb5a70bf0640cb19d1f421b10b6714f`).
+- Toàn bộ 5/5 required GitHub Actions jobs trên candidate `7121534364c9d5b060251ec56e2ac71b57faf983` đạt **SUCCESS**:
+  - [CI `40059900590`](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/40059900590): [`offline` `120770938666`](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/40059900590/job/120770938666) chạy PostgreSQL 16 + `pgvector 0.8.6` (`TEST_PGVECTOR_READY=0.8.6`), host `Ran 715 tests` (`0 skipped`) và packaged container `retailops:ci` `Ran 715 tests` (`0 skipped`), gồm toàn bộ suite Fix B & shared guard (`test_postgres`: `40/40`, `test_phase5_sales_postgres`: `13/13`, `test_phase5_complaint_e2e`: `20/20`, `test_knowledge`: `5/5`, `test_rag_chat`: `14/14`, `test_phase5_fix_a`: `8/8`, `test_postgres_test_guard`: `5/5`); [`colab-python313` `120770938644`](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/40059900590/job/120770938644) `SUCCESS`.
+  - [Ops Console `40059900574`](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/40059900574): [`postgres` `120770938581`](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/40059900574/job/120770938581) `Ran 19 tests` (`0 skipped`); [`portable (ubuntu-24.04)` `120770938571`](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/40059900574/job/120770938571) và [`portable (windows-latest)` `120770938582`](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/40059900574/job/120770938582) mỗi job `Ran 19 tests` với `skipped=2` (hai suite PostgreSQL thiếu DB/DSN trong chế độ portable — không tính là PostgreSQL PASS).
+- Kết quả này đóng `FIXB-CODE-DRYRUN`, `FIXB-BACKEND`, `FIXB-DSN`, `FIXB-AUDIT`, `FIXB-PG-CI`, `FIXB-ERRORS`, `FIXB-DOCS` và candidate synthetic rehearsal (`FIXB-REHEARSAL`). **Chưa merge, chưa deploy, chưa bật/tắt EC2 hay thao tác live DB.** Các gate `FIXB-DEPLOY-APPROVAL`, `FIXB-SOURCE`, `FIXB-ENV`, `FIXB-TARGET`, `FIXB-CATALOG`, `FIXB-BACKUP`, `FIXB-DRYRUN`, `FIXB-EXECUTE`, `FIXB-POSTCHECK`, `FIXB-RETENTION` (live counts) và performance vẫn **BLOCKED / PENDING**.
 
 ## Lịch sử cô đọng — không chạy lại prompt cũ
 
