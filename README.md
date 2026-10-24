@@ -16,7 +16,7 @@ Luồng nghiệp vụ: tra đơn → chọn lý do hủy → xem lại → xác 
 
 ## Bản đồ Tài liệu & Hệ thống
 
-**Cập nhật vận hành gần nhất (2026-10-24):** owner-pasted SSM/psql output báo đã xóa các target legacy order (`O-757461`, `O-819126`, cùng direct delete trước đó cho `O-847064`); xem [biên bản và giới hạn evidence](docs/04_OPERATIONS/ORDER_DATA_CLEANUP_2026-10-24.md). Workstream chặn tự động seed đơn mẫu khi Google login đang thực thi trên nhánh sạch từ `origin/main` (`ae0a2e417baf0bc8011bdb62fc9cf3f7741aac36`); xem [handoff & báo cáo thực thi](docs/phase5/DEMO_ORDER_SEEDING_REMEDIATION_HANDOFF_2026-10-24.md). Cleanup một lần không tự chứng minh đã xóa mọi demo data hoặc đã hoàn tất deploy chặn tái seed.
+**Cập nhật vận hành gần nhất (2026-10-24):** owner-pasted SSM/psql output báo đã xóa các target legacy order (`O-757461`, `O-819126`, cùng direct delete trước đó cho `O-847064`); xem [biên bản và giới hạn evidence](docs/04_OPERATIONS/ORDER_DATA_CLEANUP_2026-10-24.md). [PR #46](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/46) gỡ tự động seed đơn mẫu khi Google login đã merge vào `main` tại `146401f1831b81d5af4a110f6ddc06e50465b9a8` và deploy chính thức lên EC2 qua run [`40089312937`](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/40089312937) (`sha256:25193c65e52e7cf7ec41a3a366fa3f76d63c034f686232f405affa04cf1eab63`, đã xác minh read-only `GET /healthz`, `GET /` và `GET /app.js` trên `https://retailops.98-93-228-155.sslip.io`; bước đối chiếu trực quan bảng Orders trong phiên Chrome đã đăng nhập dành cho chủ dự án); xem [báo cáo thực thi](docs/phase5/DEMO_ORDER_SEEDING_REMEDIATION_HANDOFF_2026-10-24.md).
 
 ### 1. Hiện trạng Vận hành & Bằng chứng Kiểm thử (Ground Truth)
 

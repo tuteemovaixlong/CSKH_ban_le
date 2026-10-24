@@ -1,6 +1,6 @@
 # RetailOps documentation
 
-Đây là điểm vào duy nhất của bộ tài liệu. Đọc theo câu hỏi bạn cần trả lời. Cập nhật vận hành ngày 2026-10-24: owner-pasted DB output báo đã xóa các target legacy orders ([biên bản cleanup](04_OPERATIONS/ORDER_DATA_CLEANUP_2026-10-24.md)), PR #45 đã merge vào `main` tại `ae0a2e417baf0bc8011bdb62fc9cf3f7741aac36`, và workstream chặn tự tạo đơn mẫu khi đăng nhập Google đang thực thi theo [DEMO_ORDER_SEEDING_REMEDIATION_HANDOFF_2026-10-24.md](phase5/DEMO_ORDER_SEEDING_REMEDIATION_HANDOFF_2026-10-24.md).
+Đây là điểm vào duy nhất của bộ tài liệu. Đọc theo câu hỏi bạn cần trả lời. Cập nhật vận hành ngày 2026-10-24: owner-pasted DB output báo đã xóa các target legacy orders ([biên bản cleanup](04_OPERATIONS/ORDER_DATA_CLEANUP_2026-10-24.md)), PR #45 đã merge vào `main` tại `ae0a2e417baf0bc8011bdb62fc9cf3f7741aac36`, và [PR #46](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/46) chặn tự tạo đơn mẫu khi đăng nhập Google đã merge tại `146401f1831b81d5af4a110f6ddc06e50465b9a8` & deploy lên EC2 qua run [`40089312937`](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/40089312937) (`sha256:25193c65e52e7cf7ec41a3a366fa3f76d63c034f686232f405affa04cf1eab63`; xem [báo cáo thực thi](phase5/DEMO_ORDER_SEEDING_REMEDIATION_HANDOFF_2026-10-24.md)).
 
 ## Workstream hiện hành
 
