@@ -2,7 +2,7 @@
 
 **Ngày:** 2026-10-24 (Asia/Bangkok)
 
-**Trạng thái:** CANDIDATE REVIEWED (`PASS`, `0` blocker/high-risk findings trên `a0b96db71cc5913800ebe2b40e9ec78561978cf6`) — Đã rà soát toàn bộ seed call sites trên verified `origin/main` (`ae0a2e417baf0bc8011bdb62fc9cf3f7741aac36`), triển khai thay đổi tối thiểu trên nhánh sạch `fix/phase5-stop-google-login-order-autoseed`, hoàn tất regression tests cục bộ & independent review; đang thực thi cổng PR/CI → official deploy → xác minh runtime/UI read-only.
+**Trạng thái:** MERGED & DEPLOYED TO EC2 (`146401f1831b81d5af4a110f6ddc06e50465b9a8`, image `sha256:25193c65e52e7cf7ec41a3a366fa3f76d63c034f686232f405affa04cf1eab63`); READ-ONLY HTTPS `/healthz` + PUBLIC ASSETS VERIFIED; AUTHENTICATED CHROME ORDERS UI CHECK PENDING OWNER BROWSER SESSION.
 
 **Phạm vi:** gộp quyết định/chỉnh sửa auto-seed với test, independent review, PR/CI, rollout theo quy trình và xác minh runtime/UI thành một workstream. Đây là việc khắc phục vận hành; không tự mở hoặc đóng P5-K/G4–G7.
 
@@ -36,6 +36,25 @@ Ngăn việc đăng nhập Google tự sinh đơn mẫu cho customer zero-order 
 4. `tests/test_postgres.py`, `tests/test_phase5_e_ai_trust_and_governance.py`, `tests/test_order_tool_recovery.py`, `tests/test_public_session.js`: Cập nhật để xác minh `login_google()` luôn để lại `0` đơn trên cả SQLite và PostgreSQL trước khi gọi `seed_demo_sample_orders(...)` tường minh cho các bài kiểm thử provenance `DATA1`/`T06`, đồng thời kiểm thử nhãn `0 đơn hàng` / `1 đơn hàng` vs `0 đơn mẫu`.
 5. `notebooks/colab_agent.ipynb`: Đồng bộ bundle nguồn qua `python scripts/build_agent_notebook.py` (`AGENT_NOTEBOOK_SOURCE_SYNC_OK`).
 6. `docs/PLAN_GOOGLE_ACCOUNT_RBAC_PRODUCTION.md` & các tài liệu trạng thái/index: Đồng bộ mô tả chính xác (ID hash-based, sạch LF line endings, không mang CRLF churn từ working tree gốc) và ghi nhận rõ ranh giới giữa cleanup một lần với code prevention.
+
+## Bằng chứng Kiểm thử, Independent Review, PR/CI, Rollout & Runtime Read-Only
+
+- **Independent read-only review (Gemini 4 Argon):** Verdict **`PASS`** (`BLOCKER: 0`, `HIGH: 0`, `MEDIUM: 0`, `LOW: 1` đã cập nhật câu chữ doc, `NIT: 2` đã dọn khoảng trắng cuối dòng) trên immutable code/test candidate `a0b96db71cc5913800ebe2b40e9ec78561978cf6` (PR HEAD `189db5240fabe69990e0e2e45b9ff004890ceba0`, code/test tree giữ nguyên).
+- **PR & Required GitHub Actions CI (`0 skipped` trên toàn bộ PostgreSQL jobs):**
+  - [PR #46](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/46) (`fix/phase5-stop-google-login-order-autoseed` → `main`, base `ae0a2e417baf0bc8011bdb62fc9cf3f7741aac36`, tested merge ref `50baf11312e4530933c88db3e8292672350340d8`) đạt **5/5 checks `SUCCESS`**:
+    - [CI `40088640697`](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/40088640697): [`offline` `120856594646`](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/40088640697/job/120856594646) trên PostgreSQL 16 + `pgvector 0.8.6` đạt **`Ran 721 tests` → `OK` (`0 skipped`)** trên cả host (`115.064s`) và packaged container `retailops:ci` (`122.421s`), kèm `HEADROOM_ARTIFACT_INTEGRITY_OK`; [`colab-python313` `120856594293`](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/40088640697/job/120856594293) `SUCCESS`.
+    - [Ops Console `40088640680`](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/40088640680): [`postgres` `120856594180`](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/40088640680/job/120856594180) đạt **`Ran 19 tests` → `OK` (`0 skipped`)**; hai job `portable` (`120856594319`, `120856594328`) `SUCCESS` (`skipped=2` do chế độ portable không gắn PostgreSQL service).
+  - Sau khi merge vào `main` tại **`146401f1831b81d5af4a110f6ddc06e50465b9a8`**, post-merge [CI `40089312939`](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/40089312939) (`offline` `120858550842`: `721` tests, `0 skipped` trên host + container; `colab-python313` `120858551090`) và [Ops Console `40089312947`](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/40089312947) (`postgres` `120858551110`: `19` tests, `0 skipped`; `portable` `120858551027`/`120858551180`) đều `SUCCESS`.
+- **Official EC2 Deployment:**
+  - Workflow [`Deploy baseline runner to EC2` run `40089312937`](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/40089312937) (`filter` `120858550841` `SUCCESS`, [`deploy` `120858580750`](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/40089312937/job/120858580750) `SUCCESS` lúc `2026-10-24T11:23:43Z`) trên merged SHA `146401f1831b81d5af4a110f6ddc06e50465b9a8`:
+    - Pinned ECR image: `629089420698.dkr.ecr.us-east-1.amazonaws.com/retailops@sha256:25193c65e52e7cf7ec41a3a366fa3f76d63c034f686232f405affa04cf1eab63` (tag `146401f1831b81d5af4a110f6ddc06e50465b9a8-40089312937-1`).
+    - Rollout & smoke markers: `PUBLIC_WEB_SOURCE_MATCH=74812fabdd34b2f2bbf1b7f05c1b2db67b5e2c6af9b91f8ad2384f066f079f15`, `PUBLIC_WEB_ROLLOUT_OK`, `LIVE_E2E_SMOKE_OK` (`LIVE_SMOKE_20261024T112246Z.json`, `LIVE_SMOKE_20261024T112317Z.json`), `ADMIN_CONSOLE_SMOKE_OK` (`admin-retailops.98-93-228-155.sslip.io`).
+- **Xác minh Runtime/UI Read-Only & Ranh giới Gate Chrome:**
+  - Kiểm tra HTTPS read-only trực tiếp tới `https://retailops.98-93-228-155.sslip.io` (không ghi DB, không mở session, không tạo/sửa/xóa đơn):
+    - `GET /healthz` → HTTP `200` (`status="ok"`, `version="0.9"`, `data_mode="persistent-demo"`, `storage_backend="postgresql"`, `agent_protocol="retailops-agent-v2"`, `hosting="public-https"`).
+    - `GET /` → HTTP `200` với `<body data-auth="cookie" data-data-mode="persistent-demo" data-google-auth="true">`.
+    - `GET /app.js` → HTTP `200`, SHA-256 `708b9ec31790fdd2dc51ee5078cdd92a9aaf032f63fd20cc354c278d444c6be2` (khớp 100% `web/app.js` của commit `146401f1831b81d5af4a110f6ddc06e50465b9a8`, có logic `persistentAccount ? ' đơn hàng' : ' đơn mẫu'`).
+  - **Gate Chrome có xác thực (không giả lập PASS):** Môi trường thực thi của agent không gắn công cụ điều khiển trình duyệt Chrome và không giữ phiên đăng nhập Google OAuth / mã quản trị viên live. Chủ dự án chỉ cần bấm `Ctrl+F5` trên `https://retailops.98-93-228-155.sslip.io` trong phiên Chrome sẵn có (để làm mới cache `app.js` 300s) và xem read-only danh sách Đơn hàng / `📋 Đơn hàng Shop` để xác nhận trực quan rằng đăng nhập lại không tự sinh đơn mới và các đơn đã xóa không tái xuất hiện (không tạo/sửa/xóa đơn).
 
 ## Lịch sử Handoff gốc & Trigger Prompt (Lưu trữ tham chiếu)
 
