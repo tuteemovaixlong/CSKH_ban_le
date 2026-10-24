@@ -2,7 +2,7 @@
 
 > **Mục đích:** bảng điều phối nghiệm thu cấp dự án. File này không thay thế acceptance criteria của từng phase; nó chỉ trỏ tới nguồn chuẩn, evidence, gate và bước kế tiếp.
 >
-> **Cập nhật:** 2026-10-24 (Phase 5 Fix B R6 independent read-only review + PR #45 PostgreSQL/pgvector CI PASS on `1d09e7d` recorded; merge/deploy and live cleanup remain blocked)
+> **Cập nhật:** 2026-10-24 — PR #45 (Fix B) merged to `main` at `ae0a2e417baf0bc8011bdb62fc9cf3f7741aac36`; owner-pasted DB output records removal of targeted legacy rows ([cleanup record](../04_OPERATIONS/ORDER_DATA_CLEANUP_2026-10-24.md)); separate Google-login auto-seed remediation workstream is in progress on `fix/phase5-stop-google-login-order-autoseed` ([handoff](../phase5/DEMO_ORDER_SEEDING_REMEDIATION_HANDOFF_2026-10-24.md)). Does not alter P5-K or G2–G7 acceptance.
 > **Latest merged/deployed snapshot:** PR #42 SHA `44540eab516831d5c8232dd80392b8e20c6cd47e`; checks 5/5 and deploy run `39015954088` succeeded per owner-provided evidence. Earlier P5-D `709928290d0448adf9eb97403cee38650ecbc918`; PR #41 K3/K7 `8ef8278108c6d82e03d3c89ae304946ec4b53254`; preceding P5-C `a34b479eeb633ba55090f43a1f4ed7d85f6a3c9a`.
 > **Active-row audit snapshot:** `ACCEPTANCE_MATRIX_AUDIT_2026-10-17.md`. The snapshot audits these rows; this file and linked phase criteria remain authoritative.
 
@@ -37,6 +37,12 @@
 | G5 | Measurement readiness | Lane evidence, identity, completeness, budget và validated manifest đầy đủ | [Evaluation protocol](EVALUATION_PROTOCOL.md) | Chưa có | HOLD | Không ghi READY FOR MEASUREMENT |
 | G6 | Full measurement approval | Full-run approval/cap riêng | [Evaluation protocol](EVALUATION_PROTOCOL.md) | Chưa có | HOLD | Chờ G5 và owner approval |
 | G7 | Measured result | Raw bundle, aggregate, metrics, statistics, cost và limitations | [Evaluation protocol](EVALUATION_PROTOCOL.md) | Chưa có | HOLD | Chưa chạy live/paid |
+
+## Current operational follow-up (not a P5-K/G acceptance row)
+
+| Workstream | Evidence now | Status | Next action |
+|---|---|---|---|
+| Stop implicit sample-order creation on Google login | Owner-pasted cleanup output confirms the targeted legacy rows are absent ([cleanup record](../04_OPERATIONS/ORDER_DATA_CLEANUP_2026-10-24.md)); clean-branch implementation & regression tests (`a0b96db71cc5913800ebe2b40e9ec78561978cf6`) passed independent read-only review (`0` blocker/high-risk findings; [handoff](../phase5/DEMO_ORDER_SEEDING_REMEDIATION_HANDOFF_2026-10-24.md)). | **CANDIDATE REVIEWED (`PASS`); PENDING CI, MERGE, DEPLOY & RUNTIME VERIFICATION** | Complete required GitHub Actions CI (`0 skipped` on PG jobs), merge, official deploy, and read-only runtime/UI check before marking live prevention PASS. |
 
 ## 2. Phase 4 frozen merge matrix
 

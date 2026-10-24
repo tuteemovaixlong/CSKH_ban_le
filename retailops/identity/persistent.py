@@ -198,8 +198,6 @@ class PersistentSessions:
                 if not is_live:
                     bstore.seed_catalog(bdb)
                 bdb.execute("INSERT INTO customers VALUES (?,?) ON CONFLICT DO NOTHING", (cid, name or email))
-                if not is_live and getattr(self, 'seed_sample_orders', True):
-                    bstore.seed_demo_sample_orders(cid, db=bdb)
         except Exception as ex:
             import logging
             logging.getLogger("retailops_identity").error("Failed to provision customer in business store: %s", ex)

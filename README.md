@@ -16,6 +16,8 @@ Luồng nghiệp vụ: tra đơn → chọn lý do hủy → xem lại → xác 
 
 ## Bản đồ Tài liệu & Hệ thống
 
+**Cập nhật vận hành gần nhất (2026-10-24):** owner-pasted SSM/psql output báo đã xóa các target legacy order (`O-757461`, `O-819126`, cùng direct delete trước đó cho `O-847064`); xem [biên bản và giới hạn evidence](docs/04_OPERATIONS/ORDER_DATA_CLEANUP_2026-10-24.md). Workstream chặn tự động seed đơn mẫu khi Google login đang thực thi trên nhánh sạch từ `origin/main` (`ae0a2e417baf0bc8011bdb62fc9cf3f7741aac36`); xem [handoff & báo cáo thực thi](docs/phase5/DEMO_ORDER_SEEDING_REMEDIATION_HANDOFF_2026-10-24.md). Cleanup một lần không tự chứng minh đã xóa mọi demo data hoặc đã hoàn tất deploy chặn tái seed.
+
 ### 1. Hiện trạng Vận hành & Bằng chứng Kiểm thử (Ground Truth)
 
 | Tài liệu | Nội dung |
@@ -43,6 +45,7 @@ Luồng nghiệp vụ: tra đơn → chọn lý do hủy → xem lại → xác 
 | Danh mục | Kế hoạch chi tiết |
 | --- | --- |
 | **Lộ trình Tổng thể** | [PLAN_ROADMAP_INDEX](docs/PLAN_ROADMAP_INDEX.md) · [PLAN_ADMIN_REMEDIATION_MASTER](docs/PLAN_ADMIN_REMEDIATION_MASTER.md) |
+| **Auto-seed remediation (vận hành)** | [Handoff, rà soát call sites và tiến độ kiểm chứng](docs/phase5/DEMO_ORDER_SEEDING_REMEDIATION_HANDOFF_2026-10-24.md) · [Biên bản cleanup đơn legacy](docs/04_OPERATIONS/ORDER_DATA_CLEANUP_2026-10-24.md) |
 | **Khắc phục UI/UX** | [PLAN_FIX_UI_01](docs/PLAN_FIX_UI_01_TRUTHFUL_UX.md) (UX trung thực) · [PLAN_FIX_UI_02](docs/PLAN_FIX_UI_02_MANAGER_PERSISTENCE.md) (Bền vững hóa Manager) · [PLAN_FIX_UI_03](docs/PLAN_FIX_UI_03_OPSCONSOLE_INTEGRITY.md) (Chuẩn hóa Ops Telemetry) · [PLAN_FIX_UI_04](docs/PLAN_FIX_UI_04_CHAT_HISTORY_RESUME.md) (Khôi phục chat) |
 | **Tính năng Đã Hoàn thành** | [PLAN_RBAC_GOOGLE_AUTH](docs/PLAN_RBAC_GOOGLE_AUTH.md) (Google SSO) · [PLAN_DATA_COLLECTION_FLYWHEEL](docs/PLAN_DATA_COLLECTION_FLYWHEEL.md) (Data Flywheel) · [PLAN_MCP_INTEGRATION](docs/PLAN_MCP_INTEGRATION.md) (FastMCP Server & Adapter) |
 | **Mở rộng Đang Triển khai** | [PLAN_MULTIMODAL_ATTACHMENTS](docs/PLAN_MULTIMODAL_ATTACHMENTS.md) (Vision & File) · [PLAN_OMNICHANNEL_INTEGRATION](docs/PLAN_OMNICHANNEL_INTEGRATION.md) (Đa kênh) · [PLAN_ECOMMERCE_OPS_COPILOT](docs/PLAN_ECOMMERCE_OPS_COPILOT.md) (Co-pilot) |

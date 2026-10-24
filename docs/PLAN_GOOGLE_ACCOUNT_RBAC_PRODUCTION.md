@@ -14,7 +14,7 @@
 - Hệ thống hiện tại có 2 cơ chế:
   1. **Dữ liệu gắn sẵn (Hardcoded Seed Data)**: Trong `retailops/business/store.py`, hàm `seed()` tự động tạo khách hàng mẫu `C-001` (Nguyễn Văn A) và các đơn hàng mẫu `O-101`, `O-102`, `O-202`, `O-301..O-312`. Đối với guest demo, mỗi phiên truy cập được cấp một SQLite DB riêng biệt gắn với session token demo.
   2. **Google OAuth 2.0 (SSO) & Persistent Store**: Đã có khung tại `retailops/http/auth_google.py` và `retailops/identity/persistent.py`, tuy nhiên:
-     - Tại `retailops/identity/persistent.py`, khi tài khoản Google đăng nhập lần đầu vẫn còn đoạn mã chèn 3 đơn hàng giả lập (`sample_orders`: `O-700101..O-700103`).
+     - Trước đợt khắc phục 2026-10-24, tại `retailops/identity/persistent.py`, đường đăng nhập Google trong `persistent-demo` từng tự động gọi seeder tạo 3 đơn mẫu (ID dẫn xuất từ hash `customer_id`, không phải hằng số cố định) cho khách hàng chưa có đơn; hành vi tự tạo đơn khi xác thực đã được gỡ bỏ ở Bước 2.1 bên dưới.
      - Tồn tại lỗ hổng P1 (N08): ID khách hàng phát sinh từ tiền tố `CG-` ghép 8 ký tự hex đầu của SHA-256 email (32-bit entropy). Thực nghiệm đã chứng minh va chạm hash (collision) giữa các email khác nhau trong cùng tenant, dẫn tới hai account khác nhau có nguy cơ cùng trỏ vào một `customer_id`.
      - Vai trò (Role) khi login bị ghi đè bởi cấu hình biến môi trường (`MANAGER_EMAILS`, `STAFF_EMAILS`) thay vì tôn trọng Single Source of Truth (SSOT) từ bảng `memberships` trong cơ sở dữ liệu.
 
@@ -92,8 +92,8 @@ flowchart TD
 ---
 
 ### Giai đoạn 2: Tách biệt Môi trường & Làm sạch Dữ liệu Khách hàng Thực
-- [ ] **Bước 2.1**: Refactor `retailops/identity/persistent.py`:
-  - Loại bỏ hoàn toàn đoạn mã chèn 3 đơn hàng giả lập (`sample_orders`: `O-700101`, `O-700102`, `O-700103`) tại dòng 71-85 khi tài khoản Google đăng nhập.
+- [x] **Bước 2.1**: Refactor `retailops/identity/persistent.py`:
+  - Đã loại bỏ hoàn toàn cơ chế tự động chèn 3 đơn hàng mẫu khi tài khoản Google đăng nhập (`PersistentSessions.login_google` và lớp kế thừa `PostgresSessions`); tài khoản zero-order giữ nguyên **0 đơn** qua lần đăng nhập đầu và các lần đăng nhập tiếp theo (`test_google_login_does_not_seed_sample_orders_for_empty_customer`).
   - Khi khách hàng Google đăng nhập lần đầu:
     - Tạo `principal` và `membership` chuẩn.
     - Tạo bản ghi trong `customers(id, name)` với `id = cust_<uuid4>`, `name = Google User Name`.

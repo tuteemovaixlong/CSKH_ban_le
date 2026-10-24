@@ -99,7 +99,8 @@ class PublicWeb:
             data = (ROOT / 'web' / name).read_bytes()
             if path == '/':
                 from retailops.http.auth_google import is_google_auth_configured
-                mode = b' data-data-mode="persistent-demo"' if getattr(self.sessions, 'data_mode', None) == 'persistent-demo' else b''
+                data_mode = getattr(self.sessions, 'data_mode', None)
+                mode = f' data-data-mode="{data_mode}"'.encode() if data_mode in ('persistent-demo', 'production', 'live') else b''
                 gauth = b' data-google-auth="true"' if is_google_auth_configured() else b''
                 data = data.replace(b'<body>', b'<body data-auth="cookie"' + mode + gauth + b'>')
             return 200, data, mime, headers

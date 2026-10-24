@@ -1664,11 +1664,18 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         self.assertEqual(pg_ai5_proposals_after, pg_ai5_proposals_before)
         self.assertEqual(store_a.lookup('C-001', 'O-101')['status'], 'pending')
 
-        # 2. DATA1 & DATA2 on PostgresSessions + PostgresBusinessStore
-        sec_sample = self.sessions.login_google(
-            'pg.p5e.sample@example.com', 'PG P5E Sample', sub='pg-sub-p5e-data1', email_verified=True, tenant_id='shop-a'
-        )
-        cookie_sample = f"{self.sessions.cookie_name}={sec_sample}"
+        # 2. DATA1 & DATA2 on PostgresSessions + PostgresBusinessStore (and zero-order Google login invariant)
+        for _ in range(2):
+            sec_sample = self.sessions.login_google(
+                'pg.p5e.sample@example.com', 'PG P5E Sample', sub='pg-sub-p5e-data1', email_verified=True, tenant_id='shop-a'
+            )
+            cookie_sample = f"{self.sessions.cookie_name}={sec_sample}"
+            code_zero, body_zero, _ = self.request('/api/orders', cookie=cookie_sample)
+            self.assertEqual(code_zero, 200)
+            self.assertEqual(body_zero['orders'], [])
+
+        sample_cid = self.request('/api/session', cookie=cookie_sample)[1]['customer_id']
+        store_a.seed_demo_sample_orders(sample_cid)
         code_ord, body_ord, _ = self.request('/api/orders', cookie=cookie_sample)
         self.assertEqual(code_ord, 200)
         for o in body_ord['orders']:
@@ -1681,7 +1688,6 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         self.assertEqual(p602_ords[0]['product_id'], 'P-602')
 
         # Returning demo customer with existing 3-order sample triplet missing provenance backfills provenance idempotently (R3)
-        sample_cid = self.request('/api/session', cookie=cookie_sample)[1]['customer_id']
         with store_a.connection(write=True) as db:
             db.execute("DELETE FROM business_events WHERE customer_id=? AND order_id=? AND kind='demo_sample_fixture_seeded'", (sample_cid, sample_oid))
         self.assertFalse(store_a.is_demo_sample_order(sample_cid, sample_oid))
@@ -2133,6 +2139,34 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         with self.assertRaises(ApiError) as ctx_pg_tomb:
             self.sessions.import_sales_event(pg_purged_evt)
         self.assertEqual(ctx_pg_tomb.exception.code, 'order_purged_tombstone')
+
+        # Google login on PostgresSessions preserves imported order and never adds sample orders
+        sec_pg_imp = self.sessions.login_google(
+            'pg.imported.only@example.com', 'PG Imported Only', sub='pg-sub-imp-only-01', email_verified=True, tenant_id='shop-a'
+        )
+        cid_pg_imp = self.request('/api/session', cookie=f"{self.sessions.cookie_name}={sec_pg_imp}")[1]['customer_id']
+        self.sessions.sales_adapter.link_external_customer(
+            tenant_id='shop-a',
+            source_system='sales_simulator',
+            external_customer_id='ext-pg-imp-only-01',
+            customer_id=cid_pg_imp,
+            customer_name='PG Imported Only',
+        )
+        pg_valid_evt = pg_sim.create_order_event(
+            tenant='shop-a',
+            external_customer_id='ext-pg-imp-only-01',
+            order_id='O-920001',
+            status='pending',
+            items=[{'product_id': 'P-601', 'product_title': 'Áo sơ mi lụa công sở', 'variant_name': 'Trắng / M', 'quantity': 1, 'unit_price': 450000}],
+            event_id='pg-evt-imp-only-920001',
+        )
+        self.assertTrue(self.sessions.import_sales_event(pg_valid_evt).success)
+        sec_pg_imp2 = self.sessions.login_google(
+            'pg.imported.only@example.com', 'PG Imported Only', sub='pg-sub-imp-only-01', email_verified=True, tenant_id='shop-a'
+        )
+        code_pg_imp, body_pg_imp, _ = self.request('/api/orders', cookie=f"{self.sessions.cookie_name}={sec_pg_imp2}")
+        self.assertEqual(code_pg_imp, 200)
+        self.assertEqual([o['id'] for o in body_pg_imp['orders']], ['O-920001'])
 
     def test_purge_demo_order_cli_postgres_dry_run_readonly_and_execute_contract(self):
         """Phase 5 Fix B (FIXB-2): Real PostgreSQL CLI dry-run, SET TRANSACTION READ ONLY,

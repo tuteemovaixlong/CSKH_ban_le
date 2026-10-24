@@ -90,6 +90,210 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
         self.assertEqual(member2["principal_id"], principal_id)
         self.assertEqual(member2["customer_id"], customer_id)
 
+    def test_google_login_does_not_seed_sample_orders_for_empty_customer(self):
+        """Persistent-demo Google login leaves orders empty on first and subsequent logins while seeding catalog."""
+        tenant_id = "empty-orders-shop"
+        self.sessions.provision_tenant(tenant_id, "Empty Orders Shop", seed_demo=False)
+        web = PublicWeb("https://retailops.example.com", self.sessions)
+
+        for _ in range(2):
+            secret = self.sessions.login_google(
+                email="empty.orders@example.com",
+                name="Empty Orders Customer",
+                sub="google-empty-orders-01",
+                email_verified=True,
+                tenant_id=tenant_id,
+            )
+            member = self.sessions.control.resolve(
+                self.sessions.cookie_id(f"__Host-retailops_account={secret}")
+            )
+            bstore = self.sessions.business_store(tenant_id)
+            with bstore.connection() as db:
+                cust_row = db.execute(
+                    "SELECT id, name FROM customers WHERE id=?",
+                    (member["customer_id"],),
+                ).fetchone()
+                self.assertIsNotNone(cust_row)
+                self.assertEqual(cust_row["name"], "Empty Orders Customer")
+                orders = db.execute(
+                    "SELECT id FROM orders WHERE customer_id=? ORDER BY id",
+                    (member["customer_id"],),
+                ).fetchall()
+                items = db.execute("SELECT id FROM order_items").fetchall()
+                seeded_events = db.execute(
+                    "SELECT 1 FROM business_events WHERE customer_id=? AND kind='demo_sample_fixture_seeded'",
+                    (member["customer_id"],),
+                ).fetchall()
+            self.assertEqual(orders, [])
+            self.assertEqual(items, [])
+            self.assertEqual(seeded_events, [])
+
+            # Catalog remains seeded in persistent-demo without creating any orders
+            p602 = bstore.get_product("P-602")
+            self.assertIsNotNone(p602)
+            self.assertEqual(p602["name"], "Quần tây đen hàn quốc")
+            p604 = bstore.get_product("P-604")
+            self.assertIsNotNone(p604)
+
+            status, orders_api, _, _ = web.route({
+                "REQUEST_METHOD": "GET",
+                "PATH_INFO": "/api/orders",
+                "HTTP_HOST": "retailops.example.com",
+                "HTTP_COOKIE": f"__Host-retailops_account={secret}",
+            })
+            self.assertEqual(status, 200)
+            self.assertEqual(orders_api["orders"], [])
+
+        # Store Manager view (store_all) also sees zero phantom orders in this unseeded tenant
+        sec_mgr = self.sessions.login_google(
+            email="mgr.empty@example.com",
+            name="Store Manager",
+            role="manager",
+            sub="google-mgr-empty-01",
+            email_verified=True,
+            tenant_id=tenant_id,
+        )
+        status_mgr, mgr_orders_api, _, _ = web.route({
+            "REQUEST_METHOD": "GET",
+            "PATH_INFO": "/api/orders",
+            "HTTP_HOST": "retailops.example.com",
+            "HTTP_COOKIE": f"__Host-retailops_account={sec_mgr}",
+        })
+        self.assertEqual(status_mgr, 200)
+        self.assertEqual(mgr_orders_api["scope"], "store_all")
+        self.assertEqual(mgr_orders_api["orders"], [])
+
+    def test_google_login_preserves_existing_imported_orders_and_never_recreates_purged_orders(self):
+        """Google login preserves existing/imported orders and never recreates tombstoned or deleted orders."""
+        from retailops.sales.simulator import DEFAULT_DEV_SECRET, SalesSimulator
+
+        tenant_id = "preserve-orders-shop"
+        bstore = self.sessions.provision_tenant(tenant_id, "Preserve Orders Shop", seed_demo=False)
+        web = PublicWeb("https://retailops.example.com", self.sessions)
+
+        # 1. Imported order customer: login -> link external customer -> import sales order -> re-login
+        sec1 = self.sessions.login_google(
+            email="imported.buyer@example.com",
+            name="Imported Buyer",
+            sub="sub-imported-buyer-01",
+            email_verified=True,
+            tenant_id=tenant_id,
+        )
+        mem1 = self.sessions.control.resolve(
+            self.sessions.cookie_id(f"__Host-retailops_account={sec1}")
+        )
+        cid1 = mem1["customer_id"]
+        self.sessions.sales_adapter.link_external_customer(
+            tenant_id=tenant_id,
+            source_system="sales_simulator",
+            external_customer_id="ext_imp_buyer_01",
+            customer_id=cid1,
+            customer_name="Imported Buyer",
+        )
+        sim = SalesSimulator(tenant_id=tenant_id, secret_key=DEFAULT_DEV_SECRET)
+        ev = sim.create_order_event(
+            tenant=tenant_id,
+            external_customer_id="ext_imp_buyer_01",
+            order_id="O-910001",
+            status="pending",
+            items=[
+                {
+                    "product_id": "P-601",
+                    "product_title": "Áo sơ mi lụa công sở",
+                    "variant_name": "Trắng / M",
+                    "quantity": 1,
+                    "unit_price": 450000,
+                }
+            ],
+            event_id="evt-imp-preserve-01",
+        )
+        imp = self.sessions.import_sales_event(ev)
+        self.assertTrue(imp.success)
+
+        sec1_relogin = self.sessions.login_google(
+            email="imported.buyer@example.com",
+            name="Imported Buyer",
+            sub="sub-imported-buyer-01",
+            email_verified=True,
+            tenant_id=tenant_id,
+        )
+        st1, res1, _, _ = web.route({
+            "REQUEST_METHOD": "GET",
+            "PATH_INFO": "/api/orders",
+            "HTTP_HOST": "retailops.example.com",
+            "HTTP_COOKIE": f"__Host-retailops_account={sec1_relogin}",
+        })
+        self.assertEqual(st1, 200)
+        self.assertEqual([o["id"] for o in res1["orders"]], ["O-910001"])
+
+        # 2. Customer with purged legacy order (with tombstone) AND customer whose order was deleted to zero rows:
+        # neither re-seeds sample orders on subsequent Google login.
+        sec2 = self.sessions.login_google(
+            email="purged.buyer@example.com",
+            name="Purged Buyer",
+            sub="sub-purged-buyer-01",
+            email_verified=True,
+            tenant_id=tenant_id,
+        )
+        mem2 = self.sessions.control.resolve(
+            self.sessions.cookie_id(f"__Host-retailops_account={sec2}")
+        )
+        cid2 = mem2["customer_id"]
+        seeded_oids = bstore.seed_demo_sample_orders(cid2)
+        self.assertEqual(len(seeded_oids), 3)
+        p602_oid = seeded_oids[1]
+        purge_res = self.sessions.purge_demo_order(
+            tenant_id=tenant_id,
+            order_id=p602_oid,
+            customer_id=cid2,
+            product_id="P-602",
+            status="delivered",
+            amount=520000,
+            snapshot_name="Quần tây đen hàn quốc",
+            execute=True,
+            reason="Test purge tombstone retention across Google re-login",
+            operator_id="test-operator",
+        )
+        self.assertTrue(purge_res["executed"])
+        self.assertTrue(bstore.is_order_purged(p602_oid))
+
+        sec2_relogin = self.sessions.login_google(
+            email="purged.buyer@example.com",
+            name="Purged Buyer",
+            sub="sub-purged-buyer-01",
+            email_verified=True,
+            tenant_id=tenant_id,
+        )
+        st2, res2, _, _ = web.route({
+            "REQUEST_METHOD": "GET",
+            "PATH_INFO": "/api/orders",
+            "HTTP_HOST": "retailops.example.com",
+            "HTTP_COOKIE": f"__Host-retailops_account={sec2_relogin}",
+        })
+        self.assertEqual(st2, 200)
+        self.assertEqual(sorted(o["id"] for o in res2["orders"]), sorted([seeded_oids[0], seeded_oids[2]]))
+        self.assertNotIn(p602_oid, [o["id"] for o in res2["orders"]])
+
+        # Even if remaining sibling orders are removed leaving 0 rows, re-login still leaves 0 orders
+        with bstore.connection(write=True) as db:
+            db.execute("DELETE FROM orders WHERE customer_id=?", (cid2,))
+            db.execute("DELETE FROM order_purge_tombstones WHERE customer_id=?", (cid2,))
+        sec2_relogin_empty = self.sessions.login_google(
+            email="purged.buyer@example.com",
+            name="Purged Buyer",
+            sub="sub-purged-buyer-01",
+            email_verified=True,
+            tenant_id=tenant_id,
+        )
+        st2_empty, res2_empty, _, _ = web.route({
+            "REQUEST_METHOD": "GET",
+            "PATH_INFO": "/api/orders",
+            "HTTP_HOST": "retailops.example.com",
+            "HTTP_COOKIE": f"__Host-retailops_account={sec2_relogin_empty}",
+        })
+        self.assertEqual(st2_empty, 200)
+        self.assertEqual(res2_empty["orders"], [])
+
     def test_no_order_by_id_limit_1_refuses_ambiguous_tenant(self):
         """P5-B: When multiple tenants exist and none is configured, Google login refuses to guess via ORDER BY id LIMIT 1."""
         # Create two distinct stores
@@ -313,7 +517,6 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
 
     def test_api_session_profile_and_tenant_customer_isolation(self):
         """P5-B: /api/session, /api/profile and order isolation between customers and tenants."""
-        self.sessions.seed_sample_orders = False
         tenant_a = "shop-isolated-a"
         tenant_b = "shop-isolated-b"
         self.sessions.provision_tenant(tenant_a, "Shop A", seed_demo=False)
