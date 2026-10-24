@@ -327,10 +327,16 @@ class OrderToolRecoveryTests(unittest.TestCase):
         sessions.login_google('customer1@example.com', 'Customer One')
         bstore = sessions.business_store('test-tenant')
 
-        # Check seeded orders have product_ids
+        # Google login creates customer record and seeds catalog, without implicitly seeding orders
         with bstore.connection() as conn:
             cust = conn.execute("SELECT id FROM customers WHERE name='Customer One'").fetchone()
             self.assertIsNotNone(cust)
+            initial_orders = conn.execute("SELECT id FROM orders WHERE customer_id=?", (cust['id'],)).fetchall()
+            self.assertEqual(initial_orders, [])
+
+        # Explicit demo fixture provisioning seeds valid product_ids (excluding orderless P-604)
+        bstore.seed_demo_sample_orders(cust['id'])
+        with bstore.connection() as conn:
             orders = conn.execute("SELECT id, name, product_id FROM orders WHERE customer_id=?", (cust['id'],)).fetchall()
             self.assertEqual(len(orders), 3)
             pids = {o['product_id'] for o in orders}

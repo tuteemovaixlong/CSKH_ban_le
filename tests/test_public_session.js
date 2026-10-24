@@ -148,13 +148,21 @@ function collectText(node) {
     assert.equal(get('profile-name').textContent, 'Khách B');
     assert.equal(get('order-tabs').children.length, 1);
     assert.equal(get('order-tabs').children[0].textContent, 'O-202');
-    assert.equal(get('order-count').textContent, '1 đơn mẫu');
+    assert.equal(get('order-count').textContent, '1 đơn hàng');
     assert.equal(run('canCancel'), false);
     assert.ok(!get('order-details').children.some(n => n.textContent === 'Yêu cầu hủy đơn này'));
     assert.ok(get('session-note').textContent.includes('đăng xuất vẫn giữ đơn hàng'));
+    assert.ok(!get('session-note').textContent.includes('Dữ liệu mẫu'));
     const beforeCancel = requests.length;
     await run('chooseReason("O-202")');
     assert.equal(requests.length, beforeCancel);
+    mockOrders = [];
+    await run('refresh()');
+    assert.equal(get('order-count').textContent, '0 đơn hàng');
+    mockOrders = null;
+    await run('refresh()');
+  } else {
+    assert.equal(get('order-count').textContent, '0 đơn mẫu');
   }
   assert.ok(requests.every(r=>r.options.credentials==='same-origin'));
   assert.ok(requests.every(r=>!('Authorization' in r.options.headers)));

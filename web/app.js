@@ -131,7 +131,7 @@ const ratingLabels = {
   5: 'Rất hài lòng (5/5 sao)'
 };
 const cookieAuth = document.body?.dataset.auth === 'cookie';
-const persistentAccount = document.body?.dataset.dataMode === 'persistent-demo';
+const persistentAccount = ['persistent-demo', 'production', 'live'].includes(document.body?.dataset.dataMode);
 const sourceLabels = {tool_result: 'Kết quả công cụ đã xác minh', interface: 'Hướng dẫn giao diện', store_data: 'Dữ liệu đơn hàng', llm_agent: 'Hội thoại model', ui_simulation: 'Mô phỏng giao diện'};
 function showContext(context) {
   selected = context?.order_id || null;
@@ -640,7 +640,9 @@ function renderOrder() {
     }
   }
 
-  byId('order-count').textContent = isManager ? (orders.length + ' đơn toàn shop') : (orders.length + ' đơn mẫu');
+  byId('order-count').textContent = isManager
+    ? (orders.length + ' đơn toàn shop')
+    : (orders.length + (persistentAccount ? ' đơn hàng' : ' đơn mẫu'));
   const headerTitle = byId('order-panel-title');
   if (headerTitle) headerTitle.textContent = isManager ? 'Toàn bộ đơn hàng Shop' : 'Đơn hàng của bạn';
 
@@ -1378,7 +1380,7 @@ if (cookieAuth) {
     ? 'Nhập mã truy cập cá nhân do quản trị viên cấp. Phiên có hiệu lực 8 giờ. Đăng nhập lại để tiếp tục xem dữ liệu của tài khoản.'
     : 'Nhập mã mời từ chủ dự án. Mỗi khách có bộ đơn mẫu riêng. Phiên có hiệu lực 8 giờ. Đóng phiên sẽ kết thúc quyền truy cập bộ dữ liệu này.';
   byId('session-note').textContent = persistentAccount
-    ? 'Dữ liệu mẫu thuộc tài khoản của bạn. Hết phiên hoặc đăng xuất vẫn giữ đơn hàng và nhật ký; đăng nhập lại để tiếp tục.'
+    ? 'Dữ liệu thuộc tài khoản của bạn. Hết phiên hoặc đăng xuất vẫn giữ đơn hàng và nhật ký; đăng nhập lại để tiếp tục.'
     : 'Dữ liệu thuộc phiên demo riêng của bạn, có hiệu lực 8 giờ. Tải lại trang giữ trạng thái; đóng phiên rồi đăng nhập tạo bộ đơn mới.';
   const loginButton = byId('login-form').querySelector('button'); loginButton.disabled = true;
   openSession().catch(error => { lockPage(true); if (error.message && !/mã mời|phiên demo/i.test(error.message)) byId('login-error').textContent = error.message; })

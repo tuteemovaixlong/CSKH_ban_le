@@ -1,5 +1,7 @@
 # Phase 5 — Identity, Sales Simulator và Complaint E2E
 
+> **Operational follow-up (2026-10-24):** owner-pasted SSM/psql output records removal of legacy target rows (`O-757461`, `O-819126`, plus earlier direct delete `O-847064`; see [cleanup evidence](../04_OPERATIONS/ORDER_DATA_CLEANUP_2026-10-24.md)), and PR #45 merged to `main` at `ae0a2e417baf0bc8011bdb62fc9cf3f7741aac36`. Separate from P5-K acceptance, the end-to-end remediation disabling implicit sample-order seeding on Google login (`PersistentSessions.login_google` / `PostgresSessions`) is tracked in [DEMO_ORDER_SEEDING_REMEDIATION_HANDOFF_2026-10-24.md](DEMO_ORDER_SEEDING_REMEDIATION_HANDOFF_2026-10-24.md); production prevention is marked PASS only after same-SHA CI, merge, official deploy, and read-only runtime verification complete.
+
 Phase 5 tiếp nối Phase 4 sau merge `8868c5c498b1c64241bc791eb0166d82415cfeb0`. Mục tiêu là tạo một lane dev/synthetic có thể chứng minh:
 
 `Google test account → customer binding → sales-system event → order visibility → complaint chat → proposal/confirmation → audit`.

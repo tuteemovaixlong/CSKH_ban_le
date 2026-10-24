@@ -1539,7 +1539,14 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
         cookie = f"{sessions.cookie_name}={secret}"
         web = PublicWeb("https://shop.example.com", sessions)
 
-        # 1. Positive control: Google demo sample order has server-side demo fixture provenance across list, detail, and focus
+        # Google login itself never implicitly seeds sample orders for zero-order customers
+        code_init, init_orders_res, _ = _wsgi_call(web, "GET", "/api/orders", cookie=cookie)
+        self.assertEqual(code_init, 200)
+        self.assertEqual(init_orders_res["orders"], [])
+        demo_member = sessions.control.resolve(sessions.cookie_id(cookie))
+        sessions.business_store("demo-store").seed_demo_sample_orders(demo_member["customer_id"])
+
+        # 1. Positive control: Explicitly seeded demo sample order has server-side demo fixture provenance across list, detail, and focus
         code_o, orders_res, _ = _wsgi_call(web, "GET", "/api/orders", cookie=cookie)
         self.assertEqual(code_o, 200)
         p602_orders = [o for o in orders_res["orders"] if o.get("product_id") == "P-602"]

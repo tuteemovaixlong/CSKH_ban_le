@@ -1,12 +1,14 @@
 # RetailOps documentation
 
-Đây là điểm vào duy nhất của bộ tài liệu. Đọc theo câu hỏi bạn cần trả lời:
+Đây là điểm vào duy nhất của bộ tài liệu. Đọc theo câu hỏi bạn cần trả lời. Cập nhật vận hành ngày 2026-10-24: owner-pasted DB output báo đã xóa các target legacy orders ([biên bản cleanup](04_OPERATIONS/ORDER_DATA_CLEANUP_2026-10-24.md)), PR #45 đã merge vào `main` tại `ae0a2e417baf0bc8011bdb62fc9cf3f7741aac36`, và workstream chặn tự tạo đơn mẫu khi đăng nhập Google đang thực thi theo [DEMO_ORDER_SEEDING_REMEDIATION_HANDOFF_2026-10-24.md](phase5/DEMO_ORDER_SEEDING_REMEDIATION_HANDOFF_2026-10-24.md).
 
 ## Workstream hiện hành
 
 - [Phase 5 — Identity, Sales Simulator và Complaint E2E](phase5/README.md)
+- [Kết quả cleanup đơn legacy trên database live (2026-10-24)](04_OPERATIONS/ORDER_DATA_CLEANUP_2026-10-24.md)
+- [Handoff & thực thi remediation auto-seed khi Google login](phase5/DEMO_ORDER_SEEDING_REMEDIATION_HANDOFF_2026-10-24.md)
 - [Phase 5 Fix A — Store Manager navigation & demo-order cleanup](phase5_fix_A/README.md) ([review](phase5_fix_A/PHASE_5_FIX_A_REVIEW_2026-10-20.md) · [criteria](phase5_fix_A/PHASE_5_FIX_A_ACCEPTANCE_CRITERIA.md) · [evidence](phase5_fix_A/PHASE_5_FIX_A_EVIDENCE.md) · [handoff](phase5_fix_A/PHASE_5_FIX_A_EXECUTION_HANDOFF.md))
-- [Phase 5 Fix B — controlled demo-order cleanup](phase5_fix_B/README.md) ([review R6](phase5_fix_B/PHASE_5_FIX_B_REVIEW_R6_2026-10-24.md) · [criteria](phase5_fix_B/PHASE_5_FIX_B_ACCEPTANCE_CRITERIA.md) · [evidence](phase5_fix_B/PHASE_5_FIX_B_EVIDENCE.md) · [handoff](phase5_fix_B/PHASE_5_FIX_B_EXECUTION_HANDOFF.md)) — R6 independent read-only review & draft [PR #45](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/45) PostgreSQL/pgvector CI PASS (`5/5 SUCCESS`, `0 skipped` on PG jobs); merge/deploy & live cleanup blocked.
+- [Phase 5 Fix B — controlled demo-order cleanup](phase5_fix_B/README.md) ([review R6](phase5_fix_B/PHASE_5_FIX_B_REVIEW_R6_2026-10-24.md) · [criteria](phase5_fix_B/PHASE_5_FIX_B_ACCEPTANCE_CRITERIA.md) · [evidence](phase5_fix_B/PHASE_5_FIX_B_EVIDENCE.md) · [handoff](phase5_fix_B/PHASE_5_FIX_B_EXECUTION_HANDOFF.md)) — [PR #45](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/45) merged vào `main` tại `ae0a2e417baf0bc8011bdb62fc9cf3f7741aac36`.
 - [Phase 4 execution handoff](phase4/PHASE_4_EXECUTION_HANDOFF.md)
 
 | Muốn hiểu | Mở |
