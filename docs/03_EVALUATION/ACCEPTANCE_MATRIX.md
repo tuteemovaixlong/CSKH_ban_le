@@ -42,7 +42,7 @@
 
 | Workstream | Evidence now | Status | Next action |
 |---|---|---|---|
-| Stop implicit sample-order creation on Google login | Owner-pasted cleanup output confirms the targeted legacy rows are absent ([cleanup record](../04_OPERATIONS/ORDER_DATA_CLEANUP_2026-10-24.md)); clean-branch implementation & regression tests prepared from `ae0a2e4` ([handoff](../phase5/DEMO_ORDER_SEEDING_REMEDIATION_HANDOFF_2026-10-24.md)). | **CANDIDATE IMPLEMENTED; PENDING INDEPENDENT SIGN-OFF, CI, DEPLOY & RUNTIME VERIFICATION** | Complete independent review, required GitHub Actions CI (`0 skipped` on PG jobs), merge, official deploy, and read-only runtime/UI check before marking live prevention PASS. |
+| Stop implicit sample-order creation on Google login | Owner-pasted cleanup output confirms the targeted legacy rows are absent ([cleanup record](../04_OPERATIONS/ORDER_DATA_CLEANUP_2026-10-24.md)); clean-branch implementation & regression tests (`a0b96db71cc5913800ebe2b40e9ec78561978cf6`) passed independent read-only review (`0` blocker/high-risk findings; [handoff](../phase5/DEMO_ORDER_SEEDING_REMEDIATION_HANDOFF_2026-10-24.md)). | **CANDIDATE REVIEWED (`PASS`); PENDING CI, MERGE, DEPLOY & RUNTIME VERIFICATION** | Complete required GitHub Actions CI (`0 skipped` on PG jobs), merge, official deploy, and read-only runtime/UI check before marking live prevention PASS. |
 
 ## 2. Phase 4 frozen merge matrix
 
