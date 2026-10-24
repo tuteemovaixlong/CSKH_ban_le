@@ -60,6 +60,7 @@ from retailops.sales.fixtures import (
     get_signed_fixtures,
 )
 from retailops.sales.simulator import DEFAULT_DEV_SECRET, SalesSimulator
+from scripts.postgres_test_guard import require_disposable_postgres_test_target
 
 DSN = os.environ.get("RETAILOPS_TEST_DATABASE_URL", "")
 
@@ -1620,8 +1621,7 @@ class Phase5ComplaintPgvectorTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         import psycopg
-        if not psycopg.conninfo.conninfo_to_dict(DSN).get("dbname", "").startswith("retailops_test"):
-            raise ValueError("Refusing non-test database.")
+        require_disposable_postgres_test_target(DSN, psycopg.conninfo.conninfo_to_dict)
 
     def clear(self):
         from psycopg import sql

@@ -52,20 +52,32 @@ class PersistentSessions:
     session_seconds = 8 * 3600
     data_mode = 'persistent-demo'
 
-    def __init__(self, directory, infer=None, api_infer=None, api_daily_limit=20, capacity=50, data_mode=None, default_tenant_id=None):
+    def __init__(self, directory, infer=None, api_infer=None, api_daily_limit=20, capacity=50, data_mode=None, default_tenant_id=None, *, maintenance=True, read_only=False):
+        if maintenance and read_only:
+            raise ValueError('Read-only sessions cannot run startup maintenance.')
         self.directory = Path(directory)
-        self.directory.mkdir(parents=True, exist_ok=True)
+        self.maintenance = bool(maintenance)
+        self.read_only = bool(read_only)
+        if self.maintenance:
+            self.directory.mkdir(parents=True, exist_ok=True)
         if data_mode is not None:
             self.data_mode = data_mode
         self.default_tenant_id = _clean_tenant_id(default_tenant_id) or _env_tenant_id()
-        self.control = IdentityStore(self.directory/'identity.sqlite3', tenant_stores=self.business_store, data_mode=data_mode)
+        self.control = IdentityStore(
+            self.directory/'identity.sqlite3',
+            tenant_stores=self.business_store,
+            data_mode=data_mode,
+            initialize_db=self.maintenance,
+            read_only=self.read_only,
+        )
         self.infer, self.api_infer = infer, api_infer
         self.api_daily_limit, self.capacity = api_daily_limit, capacity
         self.inference_gate = InferenceGate()
         self.lock = threading.RLock()
         self.tool_caches = {}
         self.apps = OrderedDict()
-        self.purge()
+        if self.maintenance:
+            self.purge()
 
     def tenant_path(self, tenant):
         require(re.fullmatch(r'[a-f0-9]{32}', tenant['storage_key']),
@@ -82,7 +94,12 @@ class PersistentSessions:
     def business_store(self, tenant_id):
         path = self.tenant_path(self.control.tenant(tenant_id))
         require(path.is_file(), 503, 'tenant_storage_unavailable', 'Kho dữ liệu chưa sẵn sàng; cần quản trị viên kiểm tra.')
-        return BusinessStore(path, create=False)
+        return BusinessStore(
+            path,
+            create=False,
+            initialize_db=self.maintenance,
+            read_only=self.read_only,
+        )
 
     def create_member(self, tenant_id, principal_id, name, customer_id, role='customer'):
         self.business_store(tenant_id).customer(customer_id)
@@ -274,7 +291,7 @@ class PersistentSessions:
         snapshot_name: str,
         execute: bool = False,
         reason: str = "",
-        operator_id: str = "cli-operator",
+        operator_id: str | None = None,
     ) -> dict:
         tenant_clean = _clean_tenant_id(tenant_id)
         require(tenant_clean is not None, 400, 'invalid_tenant_id', 'Mã cửa hàng (tenant_id) không hợp lệ.')

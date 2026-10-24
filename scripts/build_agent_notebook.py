@@ -449,5 +449,5 @@ if __name__ == '__main__':
             raise SystemExit('Notebook is stale: run python scripts/build_agent_notebook.py')
         print('AGENT_NOTEBOOK_SOURCE_SYNC_OK')
     else:
-        target.write_text(content, encoding='utf-8')
+        target.write_text(content, encoding='utf-8', newline='\n')
         print(target.relative_to(ROOT))

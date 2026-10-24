@@ -1,6 +1,6 @@
 # Phase 5 Fix A — Acceptance Criteria
 
-**Status:** IN PROGRESS / CODE & REGRESSION DELIVERED (`FIXA-UI1..UI3`, `FIXA-DATA1..DATA4`, `FIXA-DOC1` PASS offline; `FIXA-CI1..CI2`, `FIXA-UI4`, `FIXA-DEPLOY1` tracked through PR CI & merge deploy; `FIXA-DATA5` / `FIXA-DEPLOY2` live EC2 execution PENDING operator SSM session). Đây là phase riêng cho hai vấn đề manager UI và order demo; không sửa 14 tiêu chí P5-E hoặc 17 tiêu chí P5-DM. Review: [PHASE_5_FIX_A_REVIEW_2026-10-20.md](PHASE_5_FIX_A_REVIEW_2026-10-20.md). Evidence: [PHASE_5_FIX_A_EVIDENCE.md](PHASE_5_FIX_A_EVIDENCE.md).
+**Status:** CODE & REGRESSION DELIVERED (`FIXA-UI1..UI3`, `FIXA-DATA1..DATA4`, `FIXA-DOC1` PASS offline; `FIXA-CI1..CI2`, `FIXA-UI4`, `FIXA-DEPLOY1` tracked through PR CI & merge deploy; `FIXA-DATA5` / `FIXA-DEPLOY2` live EC2 execution **BLOCKED under [Phase 5 Fix B](../phase5_fix_B/README.md)** — retired Fix A runbook commands are `DO NOT RUN / SUPERSEDED`). Đây là phase riêng cho hai vấn đề manager UI và order demo; không sửa 14 tiêu chí P5-E hoặc 17 tiêu chí P5-DM. Review: [PHASE_5_FIX_A_REVIEW_2026-10-20.md](PHASE_5_FIX_A_REVIEW_2026-10-20.md). Evidence: [PHASE_5_FIX_A_EVIDENCE.md](PHASE_5_FIX_A_EVIDENCE.md).
 
 ## A. Manager home navigation
 

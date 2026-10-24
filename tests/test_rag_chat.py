@@ -14,6 +14,7 @@ from retailops.business.store import BusinessStore
 from retailops.core import ApiError
 from retailops.knowledge.chunking import SourceDocument
 from test_conversation import ScriptedAgent, response
+from scripts.postgres_test_guard import require_disposable_postgres_test_target
 
 DSN = os.environ.get('RETAILOPS_TEST_DATABASE_URL', '')
 
@@ -72,8 +73,7 @@ class RagChatPostgresTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         import psycopg
-        if not psycopg.conninfo.conninfo_to_dict(DSN).get('dbname','').startswith('retailops_test'):
-            raise ValueError('Refusing non-test database.')
+        require_disposable_postgres_test_target(DSN, psycopg.conninfo.conninfo_to_dict)
 
     def setUp(self):
         from retailops.storage.pg_repositories import PostgresBusinessStore

@@ -2,7 +2,7 @@
 
 > **Mục đích:** bảng điều phối nghiệm thu cấp dự án. File này không thay thế acceptance criteria của từng phase; nó chỉ trỏ tới nguồn chuẩn, evidence, gate và bước kế tiếp.
 >
-> **Cập nhật:** 2026-10-18 (P5-E independent review; các mốc live/deploy giữ nguyên phạm vi cũ)
+> **Cập nhật:** 2026-10-23 (Phase 5 Fix B dry-run blockers/remediation recorded; live status remains blocked)
 > **Latest merged/deployed snapshot:** PR #42 SHA `44540eab516831d5c8232dd80392b8e20c6cd47e`; checks 5/5 and deploy run `39015954088` succeeded per owner-provided evidence. Earlier P5-D `709928290d0448adf9eb97403cee38650ecbc918`; PR #41 K3/K7 `8ef8278108c6d82e03d3c89ae304946ec4b53254`; preceding P5-C `a34b479eeb633ba55090f43a1f4ed7d85f6a3c9a`.
 > **Active-row audit snapshot:** `ACCEPTANCE_MATRIX_AUDIT_2026-10-17.md`. The snapshot audits these rows; this file and linked phase criteria remain authoritative.
 
@@ -84,11 +84,29 @@ Nguồn chuẩn: [P5-E plan](../phase5/PHASE_5_E_AI_TRUST_ACCOUNT_GOVERNANCE_PLA
 
 ## 3B. Phase 5 Fix A — Manager navigation & demo-order cleanup (2026-10-20)
 
+> **Current operational override (2026-10-23):** The former Fix A evidence Step 3/4 shell commands and the old 4-step execution instruction are retracted and must not be run. The action cell in the historical row below is superseded by [Fix B](../phase5_fix_B/README.md); local SQLite PASS does not authorize PostgreSQL or production use.
+
 This is a separate, bounded owner-requested remediation, not a replacement for P5-DM and not evidence for P5-E/G4/G5. Scope has two tracks: (1) manager console navigation back to “Tổng quan & KPIs”; (2) remove only the exact old demo order snapshot `O-819126` after tenant-scoped verification, while preserving the corrected `P-602` catalog row (`Quần tây đen hàn quốc`). SSOT: [packet index](../phase5_fix_A/README.md), [review](../phase5_fix_A/PHASE_5_FIX_A_REVIEW_2026-10-20.md), [acceptance criteria](../phase5_fix_A/PHASE_5_FIX_A_ACCEPTANCE_CRITERIA.md), [evidence](../phase5_fix_A/PHASE_5_FIX_A_EVIDENCE.md), [Argon handoff](../phase5_fix_A/PHASE_5_FIX_A_EXECUTION_HANDOFF.md).
 
 | Phase | Required evidence | Current evidence | Status | Next action |
 |---|---|---|---|---|
-| P5-Fix-A | `FIXA-UI1…UI4`, `DATA1…DATA5`, `CI1…CI2`, `DEPLOY1…DEPLOY2`, `DOC1` on one isolated candidate from `ef40d131ef9244fa51844ae8990a05888990cdc8`; exact tenant/tuple, validated backup and dry-run before any production write. | [PR #44](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/44) code/test candidate `d39f397a76444f2f1d9704364750c962fdd4c508` (tested merge ref `ef179473c28dd9ca5b90f43bcd48e37ace310c1c`): [CI 39380738696](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/39380738696) (`offline` `118489038860`: `704` tests, `0 skipped`, `pgvector 0.8.6`; `colab-python313` `118489038563`) & [Ops Console 39380738698](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/39380738698) (`postgres` `118489038510`: `19` tests, `0 skipped`; `portable` `118489038886`/`118489039097`: `19` tests, `skipped=2`) `5/5 SUCCESS`; `tests/test_phase5_fix_a.py` (`3/3 PASS`), `tests/test_public_session.js` (2/2 modes PASS), and 5 contract checks PASS. | **CODE & CI PASS; `FIXA-DEPLOY2` (live EC2 DB purge) PENDING** | Verify `deploy-ec2.yml` on merged `main` SHA; owner runs the 4-step Session Manager runbook in [Fix A evidence](../phase5_fix_A/PHASE_5_FIX_A_EVIDENCE.md) (read-only tenant inventory → verified `pg_dump -Fc` backup → dry-run → `--execute`). |
+| P5-Fix-A | `FIXA-UI1…UI4`, `DATA1…DATA5`, `CI1…CI2`, `DEPLOY1…DEPLOY2`, `DOC1` on one isolated candidate from `ef40d131ef9244fa51844ae8990a05888990cdc8`; exact tenant/tuple, validated backup and dry-run before any production write. | [PR #44](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/44) code/test candidate `d39f397a76444f2f1d9704364750c962fdd4c508` (tested merge ref `ef179473c28dd9ca5b90f43bcd48e37ace310c1c`): [CI 39380738696](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/39380738696) (`offline` `118489038860`: `704` tests, `0 skipped`, `pgvector 0.8.6`; `colab-python313` `118489038563`) & [Ops Console 39380738698](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/39380738698) (`postgres` `118489038510`: `19` tests, `0` skipped; `portable` `118489038886`/`118489039097`: `19` tests, `skipped=2`) `5/5 SUCCESS`; UI/data code and CI are accepted on PR #44. | **CODE & CI PASS; LIVE CLEANUP BLOCKED under Fix B** | Do not use retired Fix A evidence commands/runbook. Follow the current [Fix B packet](../phase5_fix_B/README.md) only after its review, PostgreSQL CI, and operational approval gates pass. |
+
+## 3C. Phase 5 Fix B — one-time live demo-order cleanup (2026-10-23)
+
+Source of truth: [Fix B index](../phase5_fix_B/README.md), [independent review R5](../phase5_fix_B/PHASE_5_FIX_B_REVIEW_R5_2026-10-24.md), [historical self-review R3](../phase5_fix_B/PHASE_5_FIX_B_REVIEW_R3_2026-10-23.md), [historical review R2](../phase5_fix_B/PHASE_5_FIX_B_REVIEW_R2_2026-10-23.md), [criteria](../phase5_fix_B/PHASE_5_FIX_B_ACCEPTANCE_CRITERIA.md), [evidence](../phase5_fix_B/PHASE_5_FIX_B_EVIDENCE.md), and [handoff](../phase5_fix_B/PHASE_5_FIX_B_EXECUTION_HANDOFF.md). This is an operational data action, not P5-DM CRUD and not evidence for P5-E/G4/G5/performance.
+
+| Phase | Required evidence | Current evidence | Status | Next action |
+|---|---|---|---|---|
+| P5-Fix-B | Resolve FIXB-1..4 and R4/R5 follow-ups; side-effect-free dry-run; fail-closed backend/DSN and explicit operator attribution; guarded disposable PostgreSQL CLI CI; source/image and tenant/tuple match; backup/restore; rehearsal; read-only live dry-run; final execute approval; post-check/retention. | Independent review R5 (2026-10-24) PASS in static scope. Local Fix A/B 8/8, guard 5/5, targeted regression 102/102; Ops Console 19 tests / 3 skipped. Uncommitted candidate on 83bee6c5c42d9996a3230208d30ec6e6f0c5de2e; PostgreSQL CI NOT RUN, no live operation. | **STATIC REVIEW PASS / READY FOR PR/CI; LIVE BLOCKED** | Follow [PR/CI handoff](../phase5_fix_B/PHASE_5_FIX_B_EXECUTION_HANDOFF.md): record candidate head, tested merge SHA and actual required CI results, with 0 skipped for required PostgreSQL cases. Merge/deploy and live operations await remaining gates. |
+
+## 3D. P5-DM Store Data Management gap
+
+Source/status: [P5-DM entry in the Phase 5 index](../phase5/README.md#p5-dm-store-data-management). This row records project sequencing only; it does not invent or replace phase-specific acceptance criteria.
+
+| Phase | Required evidence | Current evidence | Status | Next action |
+|---|---|---|---|---|
+| P5-DM | Owner-approved plan and criteria for tenant-scoped roles; product/inventory CRUD and archive; simulated external-system import/export adapters with preview, validation, atomic commit and audit; order/customer edits preserving history; tenant isolation and SQLite/PostgreSQL coverage; real-data import disabled until backup/restore and controls pass. | The high-level direction is recorded in the Phase 5 index. Detailed plan, I/O-retention contract, acceptance criteria, evidence ledger and execution handoff are absent from this candidate checkout; no implementation/evidence is claimed. | **PLANNED / NOT READY** | Create and independently review the canonical P5-DM packet and link it here before implementation. Keep synthetic data only; do not enable real CSV or treat this row as performance acceptance. |
 
 ## 4. Review and deployment decision
 

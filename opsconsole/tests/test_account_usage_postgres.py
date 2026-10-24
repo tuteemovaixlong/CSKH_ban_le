@@ -4,11 +4,19 @@ import os
 import unittest
 import uuid
 
+from scripts.postgres_test_guard import require_disposable_postgres_test_target
+
 DSN = os.environ.get('RETAILOPS_TEST_DATABASE_URL')
 
 
 @unittest.skipUnless(DSN, 'Requires dedicated CI PostgreSQL database')
 class AccountUsagePostgresTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        import psycopg
+        require_disposable_postgres_test_target(DSN, psycopg.conninfo.conninfo_to_dict)
+
     def test_membership_quota_route_trace_and_replay(self):
         import psycopg
         from retailops.account_usage import AccountQuotaStore
