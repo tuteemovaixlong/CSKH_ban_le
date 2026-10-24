@@ -1,7 +1,7 @@
 """Real PostgreSQL integration. Requires an explicitly named disposable test database.
 
-Set RETAILOPS_TEST_DATABASE_URL to a database whose name starts with retailops_test.
-The suite drops only RetailOps schemas in that test database, never a normal app DB.
+Set RETAILOPS_TEST_DATABASE_URL to the explicit loopback database named exactly retailops_test and set
+RETAILOPS_ALLOW_DESTRUCTIVE_TEST_DATABASE=1. The suite drops RetailOps schemas in that database.
 """
 import concurrent.futures
 import hashlib
@@ -31,6 +31,7 @@ from retailops.identity.reconcile import get_reconciliation_status, reconcile_co
 from retailops.storage.import_sqlite import import_snapshot
 from retailops.storage.pg_repositories import PostgresBusinessStore, PostgresIdentityStore
 from retailops.storage.postgres import BUSINESS_SCHEMA_CURRENT, IDENTITY_SCHEMA, tenant_schema, transaction
+from scripts.postgres_test_guard import require_disposable_postgres_test_target
 
 DSN = os.environ.get('RETAILOPS_TEST_DATABASE_URL', '')
 
@@ -43,8 +44,7 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         import psycopg
-        if not psycopg.conninfo.conninfo_to_dict(DSN).get('dbname', '').startswith('retailops_test'):
-            raise ValueError('Refusing to modify a database not named retailops_test*.')
+        require_disposable_postgres_test_target(DSN, psycopg.conninfo.conninfo_to_dict)
 
     def clear(self):
         from psycopg import sql
@@ -2133,6 +2133,247 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         with self.assertRaises(ApiError) as ctx_pg_tomb:
             self.sessions.import_sales_event(pg_purged_evt)
         self.assertEqual(ctx_pg_tomb.exception.code, 'order_purged_tombstone')
+
+    def test_purge_demo_order_cli_postgres_dry_run_readonly_and_execute_contract(self):
+        """Phase 5 Fix B (FIXB-2): Real PostgreSQL CLI dry-run, SET TRANSACTION READ ONLY,
+        secret-file DSN wiring, uninitialized tombstone BIGINT creation, rollback, and idempotent execute.
+        """
+        store_a = self.sessions.business_store('shop-a')
+        now = time.time()
+
+        # Seed full target order graph in shop-a and drop order_purge_tombstones to simulate unmigrated tenant schema
+        with store_a.connection(write=True) as db:
+            db.execute("INSERT INTO customers(id, name) VALUES ('CG-d9b82ffe', 'PG CLI Customer') ON CONFLICT DO NOTHING")
+            db.execute(
+                "INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id) VALUES "
+                "('O-819125', 'CG-d9b82ffe', 'Áo sơ mi lụa công sở', 'Trắng / M', 450000, 'pending', 1, NULL, 'P-601'), "
+                "('O-819126', 'CG-d9b82ffe', 'Quần tây ống đứng tôn dáng', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602'), "
+                "('O-819127', 'CG-d9b82ffe', 'Giày lười da bò cao cấp', 'Nâu / 41', 890000, 'delivered', 1, NULL, 'P-603') "
+                "ON CONFLICT DO NOTHING"
+            )
+            db.execute(
+                "INSERT INTO order_items(id, tenant_id, order_id, product_id, variant_id, product_title, variant_name, quantity, unit_price, subtotal, created_at) "
+                "VALUES ('pg-cli-item-819126', 'shop-a', 'O-819126', 'P-602', 'P-602-L-Đen', 'Quần tây ống đứng tôn dáng', 'Đen / L', 1, 520000, 520000, ?)",
+                (now,),
+            )
+            db.execute(
+                "INSERT INTO proposals(id, customer_id, order_id, order_version, reason, expires_at, state, confirm_key, result) "
+                "VALUES ('pg-cli-prop-819126', 'CG-d9b82ffe', 'O-819126', 1, 'Pending cancellation check', ?, 'pending', 'ck-pg-cli-819126', NULL)",
+                (now + 3600,),
+            )
+            db.execute(
+                "INSERT INTO conversations(id, customer_id, order_id, product_id, revision, expires_at, provider_id) "
+                "VALUES ('pg-cli-conv-819126', 'CG-d9b82ffe', 'O-819126', 'P-602', 1, ?, 'custom')",
+                (now + 3600,),
+            )
+            db.execute(
+                "INSERT INTO imported_events(id, source_system, event_id, tenant_id, external_customer_id, customer_id, order_id, status, total, currency, payload_json, signature, created_at) "
+                "VALUES ('pg-cli-imp-819126', 'sales_simulator', 'pg-cli-evt-819126', 'shop-a', 'ext-pg-cli', 'CG-d9b82ffe', 'O-819126', 'delivered', 520000, 'VND', '{}', 'sig-pg-cli-819126', ?)",
+                (now,),
+            )
+            store_a.log(db, 'CG-d9b82ffe', 'order_imported_by_simulator', 'O-819126', source='test')
+            db.raw.execute("DROP TABLE IF EXISTS order_purge_tombstones")
+            self.assertFalse(store_a._tombstone_table_exists(db))
+
+        # Seed expired identity sentinels to prove maintenance=False preserves auth/rate state
+        with self.sessions.control.connection(write=True) as id_db:
+            id_db.execute(
+                "INSERT INTO sessions(id, membership_id, auth_version, expires_at) VALUES (?, ?, 1, 1.0)",
+                ('pg-cli-expired-session-sentinel', self.alice[0]),
+            )
+            id_db.execute(
+                'INSERT INTO identity_rate(bucket, "window", count) VALUES (?, 1, 3)',
+                ('pg-cli-expired-rate-sentinel',),
+            )
+
+        # 1. Server-enforced SET TRANSACTION READ ONLY + read_only_store parity on real PostgreSQL
+        ro_sessions = PostgresSessions(DSN, maintenance=False, read_only=True)
+        ro_bstore = ro_sessions.business_store('shop-a')
+        for ro_store in (ro_sessions.control, ro_bstore):
+            with self.assertRaises(ApiError) as ctx_ro_guard:
+                with ro_store.connection(write=True):
+                    pass
+            self.assertEqual(ctx_ro_guard.exception.status, 409)
+            self.assertEqual(ctx_ro_guard.exception.code, 'read_only_store')
+
+        for write_sql in (
+            "DELETE FROM orders WHERE id='O-819126'",
+            "INSERT INTO customers(id, name) VALUES ('C-RO-PG', 'Blocked')",
+            "CREATE TABLE ro_blocked_ddl (id TEXT)",
+        ):
+            with self.subTest(write_sql=write_sql), self.assertRaises(ApiError) as ctx_ro_db:
+                with ro_bstore.connection(write=False) as ro_db:
+                    ro_db.execute(write_sql)
+            self.assertEqual(ctx_ro_db.exception.status, 409)
+            self.assertEqual(ctx_ro_db.exception.code, 'read_only_store')
+            self.assertNotIn(DSN, ctx_ro_db.exception.message)
+
+        # 2. Prepare RETAILOPS_DATABASE_URL_FILE secret file and run real CLI dry-run subprocess
+        dsn_file = Path(self.temp.name) / 'retailops_database_url'
+        dsn_file.write_text(DSN + '\n', encoding='utf-8')
+        dsn_file.chmod(0o600)
+
+        cli_env = {**os.environ}
+        cli_env['PYTHONDONTWRITEBYTECODE'] = '1'
+        cli_env['RETAILOPS_STORAGE_BACKEND'] = 'postgresql'
+        cli_env['RETAILOPS_DATABASE_URL'] = ''
+        cli_env['RETAILOPS_DATABASE_URL_FILE'] = str(dsn_file)
+        cli_env.pop('RETAILOPS_DATA_DIR', None)
+
+        base_cmd = [
+            sys.executable,
+            '-B',
+            str(ROOT / 'scripts' / 'purge_demo_order.py'),
+            '--tenant-id', 'shop-a',
+            '--order-id', 'O-819126',
+            '--customer-id', 'CG-d9b82ffe',
+            '--product-id', 'P-602',
+            '--status', 'delivered',
+            '--amount', '520000',
+            '--snapshot-name', 'Quần tây ống đứng tôn dáng',
+        ]
+
+        dry_proc = subprocess.run(
+            base_cmd, env=cli_env, cwd=ROOT, text=True, capture_output=True, timeout=20
+        )
+        self.assertEqual(dry_proc.returncode, 0, dry_proc.stderr)
+        self.assertEqual(dry_proc.stderr, '')
+        self.assertNotIn(DSN, dry_proc.stdout + dry_proc.stderr)
+        dry_out = json.loads(dry_proc.stdout)
+        self.assertEqual(dry_out['status'], 'dry_run_verified')
+        self.assertFalse(dry_out['executed'])
+        self.assertEqual(dry_out['pre_counts']['orders_target'], 1)
+        self.assertEqual(dry_out['pre_counts']['order_items_target'], 1)
+        self.assertEqual(dry_out['pre_counts']['proposals_target'], 1)
+        self.assertEqual(dry_out['pre_counts']['conversations_linked'], 1)
+        self.assertEqual(dry_out['pre_counts']['tombstones_target'], 0)
+        self.assertEqual(dry_out['pre_counts']['sibling_order_ids'], ['O-819125', 'O-819127'])
+
+        # Confirm zero DDL and zero cleanup happened during CLI dry-run
+        with store_a.connection() as db:
+            self.assertFalse(store_a._tombstone_table_exists(db))
+            self.assertEqual(
+                db.execute("SELECT COUNT(*) AS cnt FROM orders WHERE id='O-819126'").fetchone()['cnt'], 1
+            )
+        with self.sessions.control.connection() as id_db:
+            self.assertEqual(
+                id_db.execute(
+                    "SELECT COUNT(*) AS cnt FROM sessions WHERE id='pg-cli-expired-session-sentinel'"
+                ).fetchone()['cnt'],
+                1,
+            )
+            self.assertEqual(
+                id_db.execute(
+                    "SELECT COUNT(*) AS cnt FROM identity_rate WHERE bucket='pg-cli-expired-rate-sentinel'"
+                ).fetchone()['cnt'],
+                1,
+            )
+
+        # 3. Subprocess secret-redaction check on malformed DSN
+        bad_canary = 'PG_SUBPROC_SECRET_CANARY_8812'
+        bad_env = {
+            **cli_env,
+            'RETAILOPS_DATABASE_URL': f'postgresql://bad:{bad_canary}@127.0.0.1:notaport/retailops_test',
+            'RETAILOPS_DATABASE_URL_FILE': '',
+        }
+        bad_proc = subprocess.run(
+            base_cmd, env=bad_env, cwd=ROOT, text=True, capture_output=True, timeout=15
+        )
+        self.assertEqual(bad_proc.returncode, 2)
+        self.assertEqual(bad_proc.stdout, '')
+        self.assertNotIn(bad_canary, bad_proc.stdout + bad_proc.stderr)
+        self.assertEqual(json.loads(bad_proc.stderr)['error'], 'database_configuration_invalid')
+
+        # 4. Mid-transaction failure rolls back partial deletes on real PostgreSQL
+        exec_sessions = PostgresSessions(DSN, maintenance=False, read_only=False)
+        with patch.object(
+            PostgresBusinessStore, 'log', side_effect=RuntimeError('pg_purge_mid_tx_rollback')
+        ):
+            with self.assertRaises(RuntimeError):
+                exec_sessions.purge_demo_order(
+                    tenant_id='shop-a',
+                    order_id='O-819126',
+                    customer_id='CG-d9b82ffe',
+                    product_id='P-602',
+                    status='delivered',
+                    amount=520000,
+                    snapshot_name='Quần tây ống đứng tôn dáng',
+                    execute=True,
+                    reason='Should roll back completely',
+                    operator_id='pg-rollback-check',
+                )
+        with store_a.connection() as db:
+            self.assertFalse(store_a._tombstone_table_exists(db))
+            self.assertEqual(
+                db.execute("SELECT COUNT(*) AS cnt FROM orders WHERE id='O-819126'").fetchone()['cnt'], 1
+            )
+            self.assertEqual(
+                db.execute("SELECT COUNT(*) AS cnt FROM order_items WHERE order_id='O-819126'").fetchone()['cnt'], 1
+            )
+            self.assertEqual(
+                db.execute("SELECT COUNT(*) AS cnt FROM proposals WHERE order_id='O-819126'").fetchone()['cnt'], 1
+            )
+            self.assertEqual(
+                db.execute("SELECT COUNT(*) AS cnt FROM conversations WHERE order_id='O-819126'").fetchone()['cnt'], 1
+            )
+
+        # 5. Real CLI --execute via RETAILOPS_DATABASE_URL_FILE creates BIGINT tombstone and purges atomically
+        exec_cmd = base_cmd + [
+            '--execute',
+            '--reason', 'PG CLI integration purge of O-819126',
+            '--operator-id', 'pg-cli-operator',
+        ]
+        exec_proc = subprocess.run(
+            exec_cmd, env=cli_env, cwd=ROOT, text=True, capture_output=True, timeout=20
+        )
+        self.assertEqual(exec_proc.returncode, 0, exec_proc.stderr)
+        self.assertEqual(exec_proc.stderr, '')
+        self.assertNotIn(DSN, exec_proc.stdout + exec_proc.stderr)
+        exec_out = json.loads(exec_proc.stdout)
+        self.assertEqual(exec_out['status'], 'purged')
+        self.assertTrue(exec_out['executed'])
+        self.assertEqual(exec_out['post_counts']['orders_target'], 0)
+        self.assertEqual(exec_out['post_counts']['order_items_target'], 0)
+        self.assertEqual(exec_out['post_counts']['proposals_target'], 0)
+        self.assertEqual(exec_out['post_counts']['conversations_linked'], 0)
+        self.assertEqual(exec_out['post_counts']['conversations_total'], 1)
+        self.assertEqual(exec_out['post_counts']['imported_events_target'], 1)
+        self.assertEqual(exec_out['post_counts']['tombstones_target'], 1)
+        self.assertEqual(exec_out['post_counts']['sibling_order_ids'], ['O-819125', 'O-819127'])
+
+        with store_a.connection() as db:
+            self.assertTrue(store_a._tombstone_table_exists(db))
+            amt_col = db.execute(
+                "SELECT data_type FROM information_schema.columns "
+                "WHERE table_schema = current_schema() "
+                "AND table_name = 'order_purge_tombstones' AND column_name = 'amount'"
+            ).fetchone()
+            self.assertEqual(amt_col['data_type'], 'bigint')
+
+        # Expired identity sentinels remain untouched after --execute (maintenance=False)
+        with self.sessions.control.connection() as id_db:
+            self.assertEqual(
+                id_db.execute(
+                    "SELECT COUNT(*) AS cnt FROM sessions WHERE id='pg-cli-expired-session-sentinel'"
+                ).fetchone()['cnt'],
+                1,
+            )
+            self.assertEqual(
+                id_db.execute(
+                    "SELECT COUNT(*) AS cnt FROM identity_rate WHERE bucket='pg-cli-expired-rate-sentinel'"
+                ).fetchone()['cnt'],
+                1,
+            )
+
+        # 6. Second CLI --execute is idempotent (already_purged)
+        idem_proc = subprocess.run(
+            exec_cmd, env=cli_env, cwd=ROOT, text=True, capture_output=True, timeout=20
+        )
+        self.assertEqual(idem_proc.returncode, 0, idem_proc.stderr)
+        idem_out = json.loads(idem_proc.stdout)
+        self.assertEqual(idem_out['status'], 'already_purged')
+        self.assertTrue(idem_out['idempotent_replay'])
+        self.assertFalse(idem_out['executed'])
 
 
 if __name__ == '__main__':

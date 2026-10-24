@@ -464,18 +464,26 @@ def upgrade_sqlite_memberships_role_constraint(path, *, fail_hook=None):
 
 
 class IdentityStore:
-    def __init__(self, path, tenant_stores=None, data_mode=None):
+    def __init__(self, path, tenant_stores=None, data_mode=None, *, initialize_db=True, read_only=False):
+        if initialize_db and read_only:
+            raise ValueError('Read-only identity stores cannot initialize or migrate a database.')
         self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.initialize = bool(initialize_db)
+        self.read_only = bool(read_only)
+        if self.initialize:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+        elif not self.path.is_file():
+            raise ApiError(503, 'database_unavailable', 'Kho dữ liệu identity chưa tồn tại; không tự khởi tạo khi chạy purge.')
         self.tenant_stores = tenant_stores
         self.data_mode = data_mode
-        with self.connection() as db:
-            db.execute('PRAGMA journal_mode=WAL')
-        with self.connection(write=True) as db:
-            migrate(db, 'identity', initialize)
-        self.upgrade_memberships_role_constraint()
-        with self.connection(write=True) as db:
-            migrate_legacy_collisions(db, tenant_stores=tenant_stores)
+        if self.initialize:
+            with self.connection() as db:
+                db.execute('PRAGMA journal_mode=WAL')
+            with self.connection(write=True) as db:
+                migrate(db, 'identity', initialize)
+            self.upgrade_memberships_role_constraint()
+            with self.connection(write=True) as db:
+                migrate_legacy_collisions(db, tenant_stores=tenant_stores)
 
     def upgrade_memberships_role_constraint(self, *, fail_hook=None):
         hook = fail_hook if fail_hook is not None else getattr(self, '_migration_fail_hook', None)
@@ -490,19 +498,47 @@ class IdentityStore:
 
     @contextmanager
     def connection(self, write=False):
-        db = sqlite3.connect(self.path, timeout=5)
-        db.row_factory = sqlite3.Row
-        db.execute('PRAGMA foreign_keys=ON')
+        if self.read_only and write:
+            raise ApiError(409, 'read_only_store', 'Kho identity đang ở chế độ chỉ đọc.')
+        db = None
         try:
+            if self.read_only:
+                uri = self.path.resolve().as_uri() + '?mode=ro'
+                db = sqlite3.connect(uri, uri=True, timeout=5)
+            else:
+                db = sqlite3.connect(self.path, timeout=5)
+            db.row_factory = sqlite3.Row
+            db.execute('PRAGMA foreign_keys=ON')
             if write:
                 db.execute('BEGIN IMMEDIATE')
             yield db
             db.commit()
+        except (sqlite3.IntegrityError, sqlite3.ProgrammingError):
+            if db is not None:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+            raise
+        except sqlite3.Error as exc:
+            if db is not None:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+            if self.read_only and 'readonly' in str(exc).lower():
+                raise ApiError(409, 'read_only_store', 'Kho identity đang ở chế độ chỉ đọc.') from exc
+            raise ApiError(503, 'database_unavailable', 'Cơ sở dữ liệu tạm thời gián đoạn. Vui lòng thử lại sau ít phút.') from exc
         except Exception:
-            db.rollback()
+            if db is not None:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
             raise
         finally:
-            db.close()
+            if db is not None:
+                db.close()
 
     @staticmethod
     def event(db, kind, tenant=None, membership=None):

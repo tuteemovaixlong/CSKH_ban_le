@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create pgvector in the disposable CI database before integration tests."""
+"""Prepare pgvector only in the explicit disposable loopback CI database."""
 import os
 
 DSN = os.environ.get("RETAILOPS_TEST_DATABASE_URL", "")
@@ -8,10 +8,9 @@ if not DSN:
 
 import psycopg
 from psycopg import sql
+from postgres_test_guard import require_disposable_postgres_test_target
 
-options = psycopg.conninfo.conninfo_to_dict(DSN)
-if not options.get("dbname", "").startswith("retailops_test"):
-    raise SystemExit("Refusing to prepare pgvector outside a retailops_test* database")
+require_disposable_postgres_test_target(DSN, psycopg.conninfo.conninfo_to_dict)
 
 with psycopg.connect(DSN, autocommit=True) as connection:
     connection.execute("CREATE SCHEMA IF NOT EXISTS retailops_extensions")

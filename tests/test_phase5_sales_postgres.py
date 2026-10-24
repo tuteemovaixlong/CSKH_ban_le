@@ -1,7 +1,7 @@
 """P5-C on real PostgreSQL (N2 + cross-store behaviour of N1/N4). Requires a disposable test database.
 
-Set RETAILOPS_TEST_DATABASE_URL to a database whose name starts with retailops_test (same contract as
-test_postgres.py). Only RetailOps schemas inside that database are dropped.
+Set RETAILOPS_TEST_DATABASE_URL to the explicit loopback database named exactly retailops_test and set
+RETAILOPS_ALLOW_DESTRUCTIVE_TEST_DATABASE=1. Only RetailOps schemas inside that database are dropped.
 """
 import argparse
 import os
@@ -18,6 +18,7 @@ from retailops.storage import cli as database_cli
 from retailops.storage.pg_repositories import PostgresIdentityStore
 from retailops.storage.pg_schema import initialize
 from retailops.storage.postgres import IDENTITY_SCHEMA, tenant_schema, transaction
+from scripts.postgres_test_guard import require_disposable_postgres_test_target
 
 DSN = os.environ.get('RETAILOPS_TEST_DATABASE_URL', '')
 P5C_BUSINESS_TABLES = ('order_items', 'imported_events')
@@ -28,8 +29,7 @@ class PostgresSalesImportTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         import psycopg
-        if not psycopg.conninfo.conninfo_to_dict(DSN).get('dbname', '').startswith('retailops_test'):
-            raise ValueError('Refusing to modify a database not named retailops_test*.')
+        require_disposable_postgres_test_target(DSN, psycopg.conninfo.conninfo_to_dict)
 
     def clear(self):
         from psycopg import sql

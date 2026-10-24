@@ -88,6 +88,7 @@ jobs:
           RETAILOPS_UI_TEST_MODE=persistent node tests/test_public_session.js
       - name: Unit, pgvector and HTTP contract tests (no model, no secrets)
         env:
+          RETAILOPS_ALLOW_DESTRUCTIVE_TEST_DATABASE: "1"
           RETAILOPS_HEADROOM_ARTIFACT_PATH: ${{ runner.temp }}/headroom_p99_artifact.json
         run: |
           rm -f "${{ runner.temp }}/headroom_p99_artifact.json"
@@ -186,9 +187,11 @@ jobs:
       - name: Build CPU-only baseline image
         run: docker build -t retailops:ci .
       - name: Verify packaged application and deployment helpers
+        env:
+          RETAILOPS_ALLOW_DESTRUCTIVE_TEST_DATABASE: "1"
         run: |
           docker run --rm --network none --entrypoint sh retailops:ci -c 'test -f /app/deploy/rollout-public-web.sh && test -f /app/deploy/cutover-postgres.sh && test -f /app/deploy/enable-pgvector.sh && test -f /app/deploy/live-e2e.py && test -f /app/data/knowledge/cancellation.md && test -f /app/notebooks/colab_agent.ipynb'
           docker run --rm --network none --entrypoint python retailops:ci -c "compile(open('/app/deploy/live-e2e.py', encoding='utf-8').read(), '/app/deploy/live-e2e.py', 'exec'); print('LIVE_E2E_PACKAGED_SOURCE_OK')"
-          docker run --rm --network host -e RETAILOPS_TEST_DATABASE_URL --entrypoint python retailops:ci -m unittest discover -s tests -v
+          docker run --rm --network host -e RETAILOPS_TEST_DATABASE_URL -e RETAILOPS_ALLOW_DESTRUCTIVE_TEST_DATABASE --entrypoint python retailops:ci -m unittest discover -s tests -v
       - name: Verify HTTPS proxy and cookie session with a temporary test CA
         run: python3 scripts/check_public_https.py

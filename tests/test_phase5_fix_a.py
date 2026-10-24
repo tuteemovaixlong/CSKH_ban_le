@@ -5,18 +5,28 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import secrets
+import sqlite3
+import sys
 import tempfile
 import time
+from types import ModuleType
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
+from retailops.business.store import BusinessStore
 from retailops.core import ApiError, ROOT
 from retailops.http.public import PublicWeb
 from retailops.identity.persistent import PersistentSessions
+from retailops.identity.store import IdentityStore
 from retailops.sales.events import compute_signature
 from retailops.sales.fixtures import FIXTURE_ORDER_MULTI_ITEM
 from retailops.sales.simulator import DEFAULT_DEV_SECRET, DEFAULT_SAMPLE_ITEMS, SalesSimulator
+from retailops.storage.pg_repositories import PostgresBusinessStore, PostgresIdentityStore
+from retailops.storage.postgres import transaction, validate_dsn
 from scripts import purge_demo_order as purge_cli
 
 
@@ -52,6 +62,426 @@ class Phase5FixATests(unittest.TestCase):
 
     def tearDown(self):
         self._tmp.cleanup()
+
+    def test_fixa_purge_cli_fails_closed_without_configured_backend(self):
+        common_args = [
+            "--tenant-id", "demo-store",
+            "--order-id", "O-819126",
+            "--customer-id", "CG-d9b82ffe",
+            "--product-id", "P-602",
+            "--status", "delivered",
+            "--amount", "520000",
+            "--snapshot-name", "Quần tây đen hàn quốc",
+        ]
+        scenarios = (
+            ("no backend selected", ""),
+            ("declared secret file missing", str(self.tmp_path / "missing-dsn")),
+        )
+        for label, dsn_file in scenarios:
+            with self.subTest(label=label):
+                env = {
+                    "RETAILOPS_STORAGE_BACKEND": "",
+                    "RETAILOPS_DATABASE_URL": "",
+                    "RETAILOPS_DATABASE_URL_FILE": dsn_file,
+                    "RETAILOPS_DATA_DIR": "",
+                }
+                stderr = io.StringIO()
+                with patch.dict(os.environ, env), \
+                     patch.object(purge_cli, "PersistentSessions") as sqlite_sessions, \
+                     patch.object(purge_cli, "PostgresSessions") as postgres_sessions, \
+                     redirect_stderr(stderr):
+                    result = purge_cli.main(common_args)
+                self.assertEqual(result, 2)
+                self.assertIn("database_configuration_missing", stderr.getvalue())
+                sqlite_sessions.assert_not_called()
+                postgres_sessions.assert_not_called()
+
+    def test_fixb_purge_cli_execute_requires_explicit_operator_id(self):
+        common_args = [
+            "--tenant-id", "demo-store",
+            "--order-id", "O-819126",
+            "--customer-id", "CG-d9b82ffe",
+            "--product-id", "P-602",
+            "--status", "delivered",
+            "--amount", "520000",
+            "--snapshot-name", "Quần tây đen hàn quốc",
+            "--data-dir", str(self.tmp_path),
+            "--execute", "--reason", "Synthetic audit attribution test",
+        ]
+        clean_env = {
+            "RETAILOPS_STORAGE_BACKEND": "",
+            "RETAILOPS_DATABASE_URL": "",
+            "RETAILOPS_DATABASE_URL_FILE": "",
+            "RETAILOPS_DATA_DIR": "",
+        }
+        for label, operator_args in (("missing", []), ("whitespace", ["--operator-id", "  \t "])):
+            with self.subTest(label=label):
+                stdout, stderr = io.StringIO(), io.StringIO()
+                with patch.dict(os.environ, clean_env), \
+                     patch.object(purge_cli, "PersistentSessions") as sqlite_sessions, \
+                     patch.object(purge_cli, "PostgresSessions") as postgres_sessions, \
+                     redirect_stdout(stdout), redirect_stderr(stderr):
+                    rc = purge_cli.main(common_args + operator_args)
+                self.assertEqual(rc, 2)
+                self.assertEqual(stdout.getvalue(), "")
+                payload = json.loads(stderr.getvalue())
+                self.assertEqual(payload["status"], "aborted")
+                self.assertEqual(payload["http_status"], 400)
+                self.assertEqual(payload["error"], "purge_operator_required")
+                sqlite_sessions.assert_not_called()
+                postgres_sessions.assert_not_called()
+
+    def test_fixb_purge_cli_dsn_validation_backend_conflicts_and_secret_redaction(self):
+        common_args = [
+            "--tenant-id", "demo-store",
+            "--order-id", "O-819126",
+            "--customer-id", "CG-d9b82ffe",
+            "--product-id", "P-602",
+            "--status", "delivered",
+            "--amount", "520000",
+            "--snapshot-name", "Quần tây ống đứng tôn dáng",
+        ]
+        existing_sqlite_dir = self.tmp_path / "existing_sqlite_dir"
+        existing_sqlite_dir.mkdir(parents=True, exist_ok=True)
+
+        canary = "TOP_SECRET_CANARY_TOKEN_99421"
+        malformed_file = self.tmp_path / "malformed-dsn.secret"
+        malformed_file.write_text(f"mysql://admin:{canary}@db.internal:3306/prod\n", encoding="utf-8")
+        incomplete_file = self.tmp_path / "incomplete-dsn.secret"
+        incomplete_file.write_text(f"host=127.0.0.1 user=retailops password={canary}\n", encoding="utf-8")
+        valid_file = self.tmp_path / "valid-dsn.secret"
+        valid_file.write_text(f"postgresql://retailops:{canary}@127.0.0.1:5432/retailops\n", encoding="utf-8")
+        empty_file = self.tmp_path / "empty-dsn.secret"
+        empty_file.write_text("   \n", encoding="utf-8")
+        dir_as_file = self.tmp_path / "dsn-directory"
+        dir_as_file.mkdir(parents=True, exist_ok=True)
+
+        fail_closed_cases = [
+            (
+                "malformed env url with secret",
+                [],
+                {
+                    "RETAILOPS_STORAGE_BACKEND": "postgresql",
+                    "RETAILOPS_DATABASE_URL": f"not-a-valid-dsn://{canary}@host",
+                    "RETAILOPS_DATABASE_URL_FILE": "",
+                    "RETAILOPS_DATA_DIR": "",
+                },
+                "database_configuration_invalid",
+            ),
+            (
+                "malformed secret file scheme",
+                [],
+                {
+                    "RETAILOPS_STORAGE_BACKEND": "postgresql",
+                    "RETAILOPS_DATABASE_URL": "",
+                    "RETAILOPS_DATABASE_URL_FILE": str(malformed_file),
+                    "RETAILOPS_DATA_DIR": "",
+                },
+                "database_configuration_invalid",
+            ),
+            (
+                "incomplete key-value dsn missing dbname",
+                [],
+                {
+                    "RETAILOPS_STORAGE_BACKEND": "",
+                    "RETAILOPS_DATABASE_URL": "",
+                    "RETAILOPS_DATABASE_URL_FILE": str(incomplete_file),
+                    "RETAILOPS_DATA_DIR": "",
+                },
+                "database_configuration_invalid",
+            ),
+            (
+                "uri missing user",
+                [],
+                {
+                    "RETAILOPS_STORAGE_BACKEND": "postgresql",
+                    "RETAILOPS_DATABASE_URL": "postgresql://127.0.0.1:5432/retailops",
+                    "RETAILOPS_DATABASE_URL_FILE": "",
+                    "RETAILOPS_DATA_DIR": "",
+                },
+                "database_configuration_invalid",
+            ),
+            (
+                "uri missing dbname with secret",
+                [],
+                {
+                    "RETAILOPS_STORAGE_BACKEND": "postgresql",
+                    "RETAILOPS_DATABASE_URL": f"postgresql://retailops:{canary}@127.0.0.1:5432/",
+                    "RETAILOPS_DATABASE_URL_FILE": "",
+                    "RETAILOPS_DATA_DIR": "",
+                },
+                "database_configuration_invalid",
+            ),
+            (
+                "uri invalid port with secret",
+                [],
+                {
+                    "RETAILOPS_STORAGE_BACKEND": "postgresql",
+                    "RETAILOPS_DATABASE_URL": f"postgresql://retailops:{canary}@127.0.0.1:badport/retailops",
+                    "RETAILOPS_DATABASE_URL_FILE": "",
+                    "RETAILOPS_DATA_DIR": "",
+                },
+                "database_configuration_invalid",
+            ),
+            (
+                "empty dsn file",
+                [],
+                {
+                    "RETAILOPS_STORAGE_BACKEND": "postgresql",
+                    "RETAILOPS_DATABASE_URL": "",
+                    "RETAILOPS_DATABASE_URL_FILE": str(empty_file),
+                    "RETAILOPS_DATA_DIR": "",
+                },
+                "database_configuration_missing",
+            ),
+            (
+                "directory passed as dsn file",
+                [],
+                {
+                    "RETAILOPS_STORAGE_BACKEND": "postgresql",
+                    "RETAILOPS_DATABASE_URL": "",
+                    "RETAILOPS_DATABASE_URL_FILE": str(dir_as_file),
+                    "RETAILOPS_DATA_DIR": "",
+                },
+                "database_configuration_invalid",
+            ),
+            (
+                "both env url and file set",
+                [],
+                {
+                    "RETAILOPS_STORAGE_BACKEND": "postgresql",
+                    "RETAILOPS_DATABASE_URL": f"postgresql://retailops:{canary}@127.0.0.1:5432/retailops",
+                    "RETAILOPS_DATABASE_URL_FILE": str(valid_file),
+                    "RETAILOPS_DATA_DIR": "",
+                },
+                "database_configuration_invalid",
+            ),
+            (
+                "postgres dsn combined with --data-dir",
+                ["--data-dir", str(existing_sqlite_dir)],
+                {
+                    "RETAILOPS_STORAGE_BACKEND": "",
+                    "RETAILOPS_DATABASE_URL": "",
+                    "RETAILOPS_DATABASE_URL_FILE": str(valid_file),
+                    "RETAILOPS_DATA_DIR": "",
+                },
+                "database_configuration_invalid",
+            ),
+            (
+                "postgres dsn combined with RETAILOPS_DATA_DIR",
+                [],
+                {
+                    "RETAILOPS_STORAGE_BACKEND": "postgresql",
+                    "RETAILOPS_DATABASE_URL": "",
+                    "RETAILOPS_DATABASE_URL_FILE": str(valid_file),
+                    "RETAILOPS_DATA_DIR": str(existing_sqlite_dir),
+                },
+                "database_configuration_invalid",
+            ),
+            (
+                "postgresql backend missing dsn never falls back to RETAILOPS_DATA_DIR",
+                [],
+                {
+                    "RETAILOPS_STORAGE_BACKEND": "postgresql",
+                    "RETAILOPS_DATABASE_URL": "",
+                    "RETAILOPS_DATABASE_URL_FILE": "",
+                    "RETAILOPS_DATA_DIR": str(existing_sqlite_dir),
+                },
+                "database_configuration_missing",
+            ),
+            (
+                "postgresql backend missing dsn never falls back to --data-dir",
+                ["--data-dir", str(existing_sqlite_dir)],
+                {
+                    "RETAILOPS_STORAGE_BACKEND": "postgresql",
+                    "RETAILOPS_DATABASE_URL": "",
+                    "RETAILOPS_DATABASE_URL_FILE": "",
+                    "RETAILOPS_DATA_DIR": "",
+                },
+                "database_configuration_missing",
+            ),
+            (
+                "sqlite backend combined with postgres dsn",
+                ["--data-dir", str(existing_sqlite_dir)],
+                {
+                    "RETAILOPS_STORAGE_BACKEND": "sqlite",
+                    "RETAILOPS_DATABASE_URL": f"postgresql://retailops:{canary}@127.0.0.1:5432/retailops",
+                    "RETAILOPS_DATABASE_URL_FILE": "",
+                    "RETAILOPS_DATA_DIR": "",
+                },
+                "database_configuration_invalid",
+            ),
+            (
+                "whitespace-only RETAILOPS_STORAGE_BACKEND value",
+                ["--data-dir", str(existing_sqlite_dir)],
+                {
+                    "RETAILOPS_STORAGE_BACKEND": "  \t ",
+                    "RETAILOPS_DATABASE_URL": "",
+                    "RETAILOPS_DATABASE_URL_FILE": "",
+                    "RETAILOPS_DATA_DIR": "",
+                },
+                "database_configuration_invalid",
+            ),
+            (
+                "unknown RETAILOPS_STORAGE_BACKEND value",
+                ["--data-dir", str(existing_sqlite_dir)],
+                {
+                    "RETAILOPS_STORAGE_BACKEND": "mysql",
+                    "RETAILOPS_DATABASE_URL": "",
+                    "RETAILOPS_DATABASE_URL_FILE": "",
+                    "RETAILOPS_DATA_DIR": "",
+                },
+                "database_configuration_invalid",
+            ),
+        ]
+
+        for label, extra_args, env, expected_error in fail_closed_cases:
+            with self.subTest(label=label):
+                stdout = io.StringIO()
+                stderr = io.StringIO()
+                with patch.dict(os.environ, env), \
+                     patch.object(purge_cli, "PersistentSessions") as sqlite_sessions, \
+                     patch.object(purge_cli, "PostgresSessions") as postgres_sessions, \
+                     redirect_stdout(stdout), \
+                     redirect_stderr(stderr):
+                    rc = purge_cli.main(common_args + extra_args)
+                self.assertEqual(rc, 2)
+                self.assertEqual(stdout.getvalue(), "")
+                payload = json.loads(stderr.getvalue())
+                self.assertEqual(payload["status"], "aborted")
+                self.assertEqual(payload["http_status"], 503)
+                self.assertEqual(payload["error"], expected_error)
+                self.assertNotIn(canary, stdout.getvalue() + stderr.getvalue())
+                sqlite_sessions.assert_not_called()
+                postgres_sessions.assert_not_called()
+
+        # Unreadable secret file (PermissionError) also fails closed without leaking path/canary
+        unreadable_file = self.tmp_path / f"unreadable-{canary}.secret"
+        unreadable_file.write_text("placeholder", encoding="utf-8")
+        stdout_perm, stderr_perm = io.StringIO(), io.StringIO()
+        with patch.dict(
+            os.environ,
+            {
+                "RETAILOPS_STORAGE_BACKEND": "postgresql",
+                "RETAILOPS_DATABASE_URL": "",
+                "RETAILOPS_DATABASE_URL_FILE": str(unreadable_file),
+                "RETAILOPS_DATA_DIR": "",
+            },
+        ), patch.object(
+            Path, "read_text", side_effect=PermissionError(f"Permission denied: {canary}")
+        ), patch.object(purge_cli, "PersistentSessions") as sqlite_sessions, patch.object(
+            purge_cli, "PostgresSessions"
+        ) as postgres_sessions, redirect_stdout(stdout_perm), redirect_stderr(stderr_perm):
+            rc_perm = purge_cli.main(common_args)
+        self.assertEqual(rc_perm, 2)
+        perm_payload = json.loads(stderr_perm.getvalue())
+        self.assertEqual(perm_payload["error"], "database_configuration_invalid")
+        self.assertNotIn(canary, stdout_perm.getvalue() + stderr_perm.getvalue())
+        sqlite_sessions.assert_not_called()
+        postgres_sessions.assert_not_called()
+
+        # Driver connection exception inside postgres.transaction() redacts raw {exc} secret details
+        class FakeFailingPg(ModuleType):
+            class Error(Exception):
+                pass
+
+            class OperationalError(Error):
+                pass
+
+            def connect(self, *args, **kwargs):
+                raise self.OperationalError(
+                    f"connection to server failed: password={canary} dsn=postgresql://retailops:{canary}@10.0.0.9/db"
+                )
+
+        fake_fail_pg = FakeFailingPg("psycopg")
+        conninfo_mod = ModuleType("psycopg.conninfo")
+        conninfo_mod.conninfo_to_dict = lambda _dsn: {"dbname": "retailops", "user": "retailops"}
+        sql_mod = ModuleType("psycopg.sql")
+        sql_mod.SQL = str
+        sql_mod.Identifier = str
+        rows_mod = ModuleType("psycopg.rows")
+        rows_mod.dict_row = object()
+        fake_fail_pg.conninfo = conninfo_mod
+        fake_fail_pg.sql = sql_mod
+
+        stdout_drv, stderr_drv = io.StringIO(), io.StringIO()
+        with patch.dict(
+            os.environ,
+            {
+                "RETAILOPS_STORAGE_BACKEND": "postgresql",
+                "RETAILOPS_DATABASE_URL": "",
+                "RETAILOPS_DATABASE_URL_FILE": str(valid_file),
+                "RETAILOPS_DATA_DIR": "",
+            },
+        ), patch.dict(
+            sys.modules,
+            {
+                "psycopg": fake_fail_pg,
+                "psycopg.conninfo": conninfo_mod,
+                "psycopg.sql": sql_mod,
+                "psycopg.rows": rows_mod,
+            },
+        ), patch("retailops.storage.postgres.driver", return_value=fake_fail_pg), patch(
+            "retailops.storage.postgres.validate_dsn", wraps=validate_dsn
+        ), redirect_stdout(stdout_drv), redirect_stderr(stderr_drv):
+            rc_drv = purge_cli.main(common_args)
+        self.assertEqual(rc_drv, 2)
+        drv_payload = json.loads(stderr_drv.getvalue())
+        self.assertEqual(drv_payload["error"], "database_unavailable")
+        self.assertEqual(drv_payload["http_status"], 503)
+        self.assertIn("OperationalError", drv_payload["message"])
+        self.assertNotIn(canary, stdout_drv.getvalue() + stderr_drv.getvalue())
+
+    def test_fixa_postgres_read_only_transaction_sets_read_only_first(self):
+        statements = []
+
+        class FakeConnection:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def execute(self, statement, parameters=()):
+                statements.append(str(statement))
+                return self
+
+            def fetchone(self):
+                return {"ok": 1}
+
+        class FakePg(ModuleType):
+            class Error(Exception):
+                pass
+
+            def connect(self, *args, **kwargs):
+                return FakeConnection()
+
+        class FakeSQL(str):
+            def format(self, *args):
+                return str(self).format(*args)
+
+        fake_pg = FakePg("psycopg")
+        sql_module = ModuleType("psycopg.sql")
+        sql_module.SQL = FakeSQL
+        sql_module.Identifier = lambda value: f'"{value}"'
+        rows_module = ModuleType("psycopg.rows")
+        rows_module.dict_row = object()
+        fake_pg.sql = sql_module
+        fake_pg.Error = FakePg.Error
+
+        modules = {
+            "psycopg": fake_pg,
+            "psycopg.sql": sql_module,
+            "psycopg.rows": rows_module,
+        }
+        with patch.dict(sys.modules, modules), \
+             patch("retailops.storage.postgres.driver", return_value=fake_pg):
+            with transaction("synthetic-dsn", "tenant_" + "a" * 32, read_only=True) as db:
+                self.assertEqual(db.execute("SELECT 1").fetchone(), {"ok": 1})
+
+        self.assertEqual(statements[0], "SET TRANSACTION READ ONLY")
+        self.assertIn("SET LOCAL statement_timeout", statements[1])
+        self.assertEqual(statements[-1], "SELECT 1")
 
     def test_fixa_ui1_to_ui4_manager_navigation_assets_and_layout_contract(self):
         html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
@@ -198,6 +628,19 @@ class Phase5FixATests(unittest.TestCase):
             snapshot_name="Quần tây ống đứng tôn dáng",
         )
 
+        # Keep stale rows as sentinels: the CLI dry-run must not perform the
+        # session/rate-limit maintenance that normal app startup performs.
+        manager_record = sessions.control.membership(mid_mgr)
+        with sessions.control.connection(write=True) as db:
+            db.execute(
+                "INSERT INTO sessions(id, membership_id, auth_version, expires_at) VALUES (?,?,?,?)",
+                ("expired-dry-run-sentinel", mid_mgr, manager_record["auth_version"], 0),
+            )
+            db.execute(
+                'INSERT INTO identity_rate(bucket, "window", count) VALUES (?,?,?)',
+                ("expired-dry-run-sentinel", 0, 1),
+            )
+
         # Pre-purge KPI baseline
         code_kpi_before, kpi_before, _ = _wsgi_call(web, "GET", "/api/manager/kpis", cookie=cookie_mgr)
         self.assertEqual(code_kpi_before, 200)
@@ -238,8 +681,11 @@ class Phase5FixATests(unittest.TestCase):
         self.assertEqual(dry_res["pre_counts"]["imported_events_target"], 1)
         self.assertEqual(dry_res["pre_counts"]["sibling_order_ids"], ["O-819125", "O-819127"])
 
-        cli_dry_code = purge_cli.main(
-            [
+        with patch("retailops.identity.store.migrate", side_effect=AssertionError("dry-run migration")), \
+             patch("retailops.business.store.migrate", side_effect=AssertionError("dry-run migration")), \
+             patch("retailops.business.store.ensure_import_tables", side_effect=AssertionError("dry-run DDL")):
+            cli_dry_code = purge_cli.main(
+                [
                 "--data-dir",
                 str(self.tmp_path / "purge_suite"),
                 "--tenant-id",
@@ -256,9 +702,19 @@ class Phase5FixATests(unittest.TestCase):
                 "520000",
                 "--snapshot-name",
                 "Quần tây ống đứng tôn dáng",
-            ]
-        )
+                ]
+            )
         self.assertEqual(cli_dry_code, 0)
+
+        with sessions.control.connection() as db:
+            self.assertEqual(
+                db.execute("SELECT COUNT(*) FROM sessions WHERE id='expired-dry-run-sentinel'").fetchone()[0],
+                1,
+            )
+            self.assertEqual(
+                db.execute("SELECT COUNT(*) FROM identity_rate WHERE bucket='expired-dry-run-sentinel'").fetchone()[0],
+                1,
+            )
 
         # Order still exists after dry-run
         code_det_before, _, _ = _wsgi_call(web, "GET", "/api/orders/O-819126", cookie=cookie_cust)
@@ -393,6 +849,186 @@ class Phase5FixATests(unittest.TestCase):
         imp_res = sessions.import_sales_event(new_p602_event)
         self.assertTrue(imp_res.success)
         self.assertEqual(imp_res.order_id, "O-906020")
+
+    def test_fixb_backend_readonly_error_parity_corrupt_sqlite_and_uninitialized_tombstone_bigint(self):
+        # 1. SQLite & PostgreSQL read-only write attempts both raise ApiError(409, 'read_only_store')
+        parity_dir = self.tmp_path / "parity_suite"
+        sessions = PersistentSessions(parity_dir, api_infer=lambda *a, **k: {})
+        sessions.provision_tenant("demo-store", "Demo Store", seed_demo=True)
+        bstore_rw = sessions.business_store("demo-store")
+
+        ro_id_sqlite = IdentityStore(parity_dir / "identity.sqlite3", initialize_db=False, read_only=True)
+        ro_biz_sqlite = BusinessStore(bstore_rw.path, create=False, initialize_db=False, read_only=True)
+
+        for ro_store in (ro_id_sqlite, ro_biz_sqlite):
+            with self.assertRaises(ApiError) as ctx_guard:
+                with ro_store.connection(write=True):
+                    pass
+            self.assertEqual(ctx_guard.exception.status, 409)
+            self.assertEqual(ctx_guard.exception.code, "read_only_store")
+
+        with self.assertRaises(ApiError) as ctx_sqlite_ro_sql:
+            with ro_biz_sqlite.connection(write=False) as db:
+                db.execute("DELETE FROM orders")
+        self.assertEqual(ctx_sqlite_ro_sql.exception.status, 409)
+        self.assertEqual(ctx_sqlite_ro_sql.exception.code, "read_only_store")
+
+        with self.assertRaises(ApiError) as ctx_sqlite_id_ro_sql:
+            with ro_id_sqlite.connection(write=False) as db:
+                db.execute("DELETE FROM tenants")
+        self.assertEqual(ctx_sqlite_id_ro_sql.exception.status, 409)
+        self.assertEqual(ctx_sqlite_id_ro_sql.exception.code, "read_only_store")
+
+        with patch("retailops.storage.pg_repositories.check_schema"):
+            ro_id_pg = PostgresIdentityStore(
+                "postgresql://retailops:pw@127.0.0.1:5432/retailops",
+                create=False,
+                migrate=False,
+                read_only=True,
+            )
+            ro_biz_pg = PostgresBusinessStore(
+                "postgresql://retailops:pw@127.0.0.1:5432/retailops",
+                "a" * 32,
+                create=False,
+                migrate=False,
+                read_only=True,
+            )
+        for pg_store in (ro_id_pg, ro_biz_pg):
+            with self.assertRaises(ApiError) as ctx_pg_guard:
+                with pg_store.connection(write=True):
+                    pass
+            self.assertEqual(ctx_pg_guard.exception.status, 409)
+            self.assertEqual(ctx_pg_guard.exception.code, "read_only_store")
+
+        # PostgreSQL SQLSTATE 25006 (read_only_sql_transaction) also maps to ApiError(409, 'read_only_store')
+        class FakeReadOnlyPg(ModuleType):
+            class Error(Exception):
+                sqlstate = "25006"
+
+            def connect(self, *args, **kwargs):
+                outer_err = self.Error
+
+                class RoConn:
+                    def __enter__(self):
+                        return self
+
+                    def __exit__(self, exc_type, exc, tb):
+                        return False
+
+                    def execute(self, statement, parameters=()):
+                        if str(statement).startswith("DELETE"):
+                            raise outer_err("cannot execute DELETE in a read-only transaction")
+                        return self
+
+                return RoConn()
+
+        fake_ro_pg = FakeReadOnlyPg("psycopg")
+        sql_mod = ModuleType("psycopg.sql")
+
+        class _FakeSQL(str):
+            def format(self, *args):
+                return str(self).format(*args)
+
+        sql_mod.SQL = _FakeSQL
+        sql_mod.Identifier = lambda v: f'"{v}"'
+        rows_mod = ModuleType("psycopg.rows")
+        rows_mod.dict_row = object()
+        fake_ro_pg.sql = sql_mod
+
+        with patch.dict(
+            sys.modules, {"psycopg": fake_ro_pg, "psycopg.sql": sql_mod, "psycopg.rows": rows_mod}
+        ), patch("retailops.storage.postgres.driver", return_value=fake_ro_pg):
+            with self.assertRaises(ApiError) as ctx_pg_25006:
+                with transaction("synthetic-dsn", "tenant_" + "a" * 32, read_only=True) as db:
+                    db.execute("DELETE FROM orders")
+        self.assertEqual(ctx_pg_25006.exception.status, 409)
+        self.assertEqual(ctx_pg_25006.exception.code, "read_only_store")
+
+        # 2. Corrupt/non-SQLite identity.sqlite3 and tenant.sqlite3 translate cleanly to 503 database_unavailable
+        corrupt_dir = self.tmp_path / "corrupt_sqlite_dir"
+        corrupt_dir.mkdir(parents=True, exist_ok=True)
+        (corrupt_dir / "identity.sqlite3").write_bytes(b"corrupt non-sqlite file bytes")
+
+        ro_corrupt_id = IdentityStore(corrupt_dir / "identity.sqlite3", initialize_db=False, read_only=True)
+        with self.assertRaises(ApiError) as ctx_corrupt_id:
+            ro_corrupt_id.tenant("demo-store")
+        self.assertEqual(ctx_corrupt_id.exception.status, 503)
+        self.assertEqual(ctx_corrupt_id.exception.code, "database_unavailable")
+
+        corrupt_biz_file = corrupt_dir / "corrupt_shop.sqlite3"
+        corrupt_biz_file.write_bytes(b"corrupt non-sqlite business bytes")
+        ro_corrupt_biz = BusinessStore(corrupt_biz_file, create=False, initialize_db=False, read_only=True)
+        with self.assertRaises(ApiError) as ctx_corrupt_biz:
+            ro_corrupt_biz.orders("CG-d9b82ffe")
+        self.assertEqual(ctx_corrupt_biz.exception.status, 503)
+        self.assertEqual(ctx_corrupt_biz.exception.code, "database_unavailable")
+
+        common_cli_args = [
+            "--data-dir", str(corrupt_dir),
+            "--tenant-id", "demo-store",
+            "--order-id", "O-819126",
+            "--customer-id", "CG-d9b82ffe",
+            "--product-id", "P-602",
+            "--status", "delivered",
+            "--amount", "520000",
+            "--snapshot-name", "Quần tây ống đứng tôn dáng",
+        ]
+        clean_env = {
+            "RETAILOPS_STORAGE_BACKEND": "",
+            "RETAILOPS_DATABASE_URL": "",
+            "RETAILOPS_DATABASE_URL_FILE": "",
+            "RETAILOPS_DATA_DIR": "",
+        }
+        stderr_corrupt = io.StringIO()
+        with patch.dict(os.environ, clean_env), redirect_stderr(stderr_corrupt):
+            rc_corrupt = purge_cli.main(common_cli_args)
+        self.assertEqual(rc_corrupt, 2)
+        corrupt_payload = json.loads(stderr_corrupt.getvalue())
+        self.assertEqual(corrupt_payload["http_status"], 503)
+        self.assertEqual(corrupt_payload["error"], "database_unavailable")
+
+        # 3. Uninitialized order_purge_tombstones stays absent on dry-run and is created with BIGINT on --execute
+        with bstore_rw.connection(write=True) as db:
+            db.execute("INSERT INTO customers(id, name) VALUES ('CG-d9b82ffe', 'Demo Customer') ON CONFLICT DO NOTHING")
+            db.execute(
+                "INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id) "
+                "VALUES ('O-819126', 'CG-d9b82ffe', 'Quần tây ống đứng tôn dáng', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602')"
+            )
+            db.execute("DROP TABLE IF EXISTS order_purge_tombstones")
+            self.assertFalse(bstore_rw._tombstone_table_exists(db))
+
+        target_cli_args = [
+            "--data-dir", str(parity_dir),
+            "--tenant-id", "demo-store",
+            "--order-id", "O-819126",
+            "--customer-id", "CG-d9b82ffe",
+            "--product-id", "P-602",
+            "--status", "delivered",
+            "--amount", "520000",
+            "--snapshot-name", "Quần tây ống đứng tôn dáng",
+        ]
+        stdout_dry = io.StringIO()
+        with patch.dict(os.environ, clean_env), redirect_stdout(stdout_dry):
+            rc_dry = purge_cli.main(target_cli_args)
+        self.assertEqual(rc_dry, 0)
+        self.assertEqual(json.loads(stdout_dry.getvalue())["status"], "dry_run_verified")
+        with bstore_rw.connection() as db:
+            self.assertFalse(bstore_rw._tombstone_table_exists(db))
+
+        stdout_exec = io.StringIO()
+        with patch.dict(os.environ, clean_env), redirect_stdout(stdout_exec):
+            rc_exec = purge_cli.main(
+                target_cli_args + ["--execute", "--reason", "Verify BIGINT tombstone creation", "--operator-id", "test-op"]
+            )
+        self.assertEqual(rc_exec, 0)
+        self.assertEqual(json.loads(stdout_exec.getvalue())["status"], "purged")
+        with bstore_rw.connection() as db:
+            self.assertTrue(bstore_rw._tombstone_table_exists(db))
+            cols = {
+                row["name"]: (row["type"].upper(), int(row["notnull"]))
+                for row in db.execute("PRAGMA table_info(order_purge_tombstones)").fetchall()
+            }
+        self.assertEqual(cols["amount"], ("BIGINT", 1))
 
 
 if __name__ == "__main__":

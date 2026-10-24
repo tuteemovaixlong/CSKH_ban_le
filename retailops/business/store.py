@@ -61,20 +61,30 @@ class VariantStockResult(int):
 class BusinessStore:
     CONVERSATION_TTL = 7 * 86400  # 7 days persistent chat history
 
-    def __init__(self, path, *, create=True):
+    def __init__(self, path, *, create=True, initialize_db=True, read_only=False):
+        if initialize_db and read_only:
+            raise ValueError('Read-only business stores cannot initialize or migrate a database.')
         self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.connection(create=create) as db:
-            db.execute('PRAGMA journal_mode=WAL')
-        with self.connection(write=True) as db:
-            migrate(db, 'business', initialize_schema)
-            ensure_import_tables(db)
+        self.initialize = bool(initialize_db)
+        self.read_only = bool(read_only)
+        if self.initialize:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.connection(create=create) as db:
+                db.execute('PRAGMA journal_mode=WAL')
+            with self.connection(write=True) as db:
+                migrate(db, 'business', initialize_schema)
+                ensure_import_tables(db)
+        elif not self.path.is_file():
+            raise ApiError(503, 'database_unavailable', 'Kho dữ liệu cửa hàng chưa tồn tại; không tự khởi tạo khi chạy purge.')
 
     @contextmanager
     def connection(self, write=False, *, create=False):
+        if self.read_only and (write or create):
+            raise ApiError(409, 'read_only_store', 'Kho cửa hàng đang ở chế độ chỉ đọc.')
         # Only explicit construction may create a database. A lost mount must not
         # silently create a blank database while a cached repository is in use.
-        uri = self.path.resolve().as_uri() + ('?mode=rwc' if create else '?mode=rw')
+        mode = 'ro' if self.read_only else ('rwc' if create else 'rw')
+        uri = self.path.resolve().as_uri() + f'?mode={mode}'
         db = None
         try:
             db = sqlite3.connect(uri, uri=True, timeout=5)
@@ -84,12 +94,21 @@ class BusinessStore:
                 db.execute("BEGIN IMMEDIATE")
             yield db
             db.commit()
-        except sqlite3.OperationalError as exc:
+        except (sqlite3.IntegrityError, sqlite3.ProgrammingError):
             if db:
                 try:
                     db.rollback()
                 except Exception:
                     pass
+            raise
+        except sqlite3.Error as exc:
+            if db:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+            if self.read_only and 'readonly' in str(exc).lower():
+                raise ApiError(409, 'read_only_store', 'Kho cửa hàng đang ở chế độ chỉ đọc.') from exc
             raise ApiError(503, 'database_unavailable', 'Cơ sở dữ liệu tạm thời gián đoạn. Vui lòng thử lại sau ít phút.') from exc
         except Exception:
             if db:
@@ -283,7 +302,7 @@ class BusinessStore:
                 customer_id TEXT NOT NULL,
                 product_id TEXT NOT NULL,
                 status TEXT NOT NULL,
-                amount INTEGER NOT NULL,
+                amount BIGINT NOT NULL,
                 snapshot_name TEXT NOT NULL,
                 variant TEXT,
                 reason TEXT NOT NULL,
@@ -585,7 +604,7 @@ class BusinessStore:
         snapshot_name: str,
         execute: bool = False,
         reason: str = "",
-        operator_id: str = "cli-operator",
+        operator_id: str | None = None,
     ) -> dict:
         require(
             isinstance(tenant_id, str) and tenant_id.strip()

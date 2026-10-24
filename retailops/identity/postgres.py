@@ -10,19 +10,24 @@ from retailops.inference_gate import InferenceGate
 
 
 class PostgresSessions(PersistentSessions):
-    def __init__(self, dsn, infer=None, api_infer=None, api_daily_limit=20, capacity=50, data_mode=None, default_tenant_id=None):
+    def __init__(self, dsn, infer=None, api_infer=None, api_daily_limit=20, capacity=50, data_mode=None, default_tenant_id=None, *, maintenance=True, read_only=False):
+        if maintenance and read_only:
+            raise ValueError('Read-only PostgreSQL sessions cannot run startup maintenance.')
         self.dsn = dsn
+        self.maintenance = bool(maintenance)
+        self.read_only = bool(read_only)
         if data_mode is not None:
             self.data_mode = data_mode
         self.default_tenant_id = _clean_tenant_id(default_tenant_id) or _env_tenant_id()
-        self.control = PostgresIdentityStore(dsn)
+        self.control = PostgresIdentityStore(dsn, migrate=self.maintenance, read_only=self.read_only)
         self.infer, self.api_infer = infer, api_infer
         self.api_daily_limit, self.capacity = api_daily_limit, capacity
         self.inference_gate = InferenceGate()
         self.lock = threading.RLock()
         self.tool_caches = {}
         self.apps = OrderedDict()
-        self.purge()
+        if self.maintenance:
+            self.purge()
 
     def provision_tenant(self, tenant_id, name, *, seed_demo=False):
         tenant = self.control.ensure_tenant(tenant_id, name)
@@ -32,7 +37,12 @@ class PostgresSessions(PersistentSessions):
         return store
 
     def business_store(self, tenant_id):
-        return PostgresBusinessStore(self.dsn, self.control.tenant(tenant_id)['storage_key'])
+        return PostgresBusinessStore(
+            self.dsn,
+            self.control.tenant(tenant_id)['storage_key'],
+            migrate=self.maintenance,
+            read_only=self.read_only,
+        )
 
     def check_storage(self, member):
         try:
