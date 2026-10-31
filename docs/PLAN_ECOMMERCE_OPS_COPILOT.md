@@ -1,5 +1,7 @@
 # KẾ HOẠCH CHIẾN LƯỢC TOÀN DIỆN: MODULE 1 — HỆ THỐNG AI ĐA TÁC TỬ CSKH, BẢO HÀNH & XỬ LÝ KHỦNG HOẢNG THƯƠNG MẠI ĐIỆN TỬ (E-COMMERCE OPS COPILOT 2026)
 
+> **Runtime/owner-policy boundary (2026-10-28):** this is a historical architecture spec; queue/SOP/approval descriptions include intended or simulated behavior and are not proof of live capability. Current target is three business roles (`customer`, `staff`, `manager`) on one shared workflow; `opsadmin` is a separate read-only Ops Admin Console login; `platform_admin` is legacy technical debt to retire gradually. Current R1 policy and implementation status (`BLOCKED`; W0 only) are in [Phase R1](phase_role_aware_ops/README.md), [owner decision delta](phase_role_aware_ops/W0_OWNER_DECISION_DELTA_2026-10-29.md), and [blocked readiness](phase_role_aware_ops/IMPLEMENTATION_READINESS_BLOCKED_2026-10-27.md).
+
 > **Trạng thái:** HISTORICAL ARCHITECTURE SPEC (Ghi nhận thiết kế và hiện trạng tại snapshot 2026-09-21; các tồn đọng Single Source of Truth cho Catalog và Inventory sau đó đã được hoàn tất trong FIX 02 tại commit `a6ec080`/`d7ce461`; xem chi tiết tại [PLAN_ROADMAP_INDEX.md](PLAN_ROADMAP_INDEX.md))
 > **Mức độ minh chứng (Evidence):** L1 Automated Tests (`tests/test_ecommerce_ops.py`) · L3 Live Deployed
 > **Audit basis / Documentation baseline reviewed:** `b93eb5a` · **Application verified:** `d3ca3a6`

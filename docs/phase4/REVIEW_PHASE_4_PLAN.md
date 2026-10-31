@@ -13,7 +13,7 @@ Owner yêu cầu thêm lượt sửa nhỏ này trước khi giao Gemini. Lượ
 
 ~~~text
 Bạn là Astra, reasoning effort xhigh. Sửa nhỏ tài liệu Phase 4 trong repo:
-D:\year_2026\Work_2026\agentic_AI\CSKH_ban_le
+primary checkout (machine path omitted)
 
 Đọc docs/phase4/REVIEW_PHASE_4_PLAN.md, các findings R10–R13 và code liên quan.
 Thực hiện sửa trực tiếp tài liệu hiện có, không chỉ viết thêm đề xuất. Không viết lại
@@ -162,7 +162,7 @@ Working tree lúc review chỉ có nhóm tài liệu untracked: Phase 4, strateg
 
 ~~~text
 BUILD HARNESS Phase 4 tại:
-D:\year_2026\Work_2026\agentic_AI\CSKH_ban_le
+primary checkout (machine path omitted)
 
 Đọc REVIEW_PHASE_4_PLAN.md (2026-10-07), PLAN_PHASE_4_EVALUATION.md,
 PHASE_4_EXECUTION_HANDOFF.md và các contracts results/metrics/test matrix/taxonomy/

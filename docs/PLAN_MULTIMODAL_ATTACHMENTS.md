@@ -8,6 +8,8 @@
 > - *Image Vision*: Đã hoàn thành upload UI, thumbnail preview, băm sha256 chống trùng lặp, bypass cache và chuyển đổi format native cho OpenAI (`image_url`), Anthropic (`type: image`), Ollama (`images: [...]`). Tuy nhiên chưa có dedicated automated E2E test trong test suite.
 > - *Document / PDF*: Giao diện web hỗ trợ chọn file PDF, nhưng backend hiện chỉ chèn chuỗi text placeholder `[Tệp đính kèm: filename.pdf]` vào prompt, chưa có engine bóc tách nội dung PDF / OCR thực sự.
 
+> **Phase R1 / OD-08 boundary (2026-10-30):** this is a historical capability snapshot, not the current R1 attachment contract or evidence of Colab/L4 readiness. In R1, raw attachments are excluded from model payloads by default; the application currently suppresses image pixels for the named Gemma model, and PDF/OCR extraction is absent. The supplied public ngrok/vLLM endpoint is not approved for real customer data. Follow the [current R1 OD-08 decision and security boundary](phase_role_aware_ops/W0_OWNER_DECISION_DELTA_2026-10-29.md#8-od-08--re-evaluation-of-imagefile-support); any production real-data path requires separate authorization and security/privacy/release gates.
+
 ---
 
 ## 1. Mục tiêu & Các Kịch bản Nghiệp vụ (Use Cases)

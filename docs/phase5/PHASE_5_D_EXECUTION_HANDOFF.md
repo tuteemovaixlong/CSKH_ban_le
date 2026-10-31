@@ -5,7 +5,7 @@
 > **Chỉ dán trigger ngắn dưới đây vào cửa sổ chat Gemini. Hướng dẫn chi tiết và các nguồn context nằm trong file này.**
 
 ```text
-Làm việc tại D:\year_2026\Work_2026\agentic_AI\CSKH_ban_le.
+Làm việc tại primary checkout (machine path omitted).
 Đọc docs/phase5/PHASE_5_D_EXECUTION_HANDOFF.md, docs/phase5/REVIEW_GEMINI_P5_D_2026-10-13.md (Section 9 là review mới nhất), docs/phase5/PHASE_5_ACCEPTANCE_CRITERIA.md và docs/03_EVALUATION/ACCEPTANCE_MATRIX.md.
 
 Owner đã ủy quyền cho bạn tạo immutable candidate commit và push branch để chạy CI cho P5-D. Không sửa lại implementation đã được Codex review. Trước khi commit, kiểm tra git status, branch, HEAD và đối chiếu source hashes trong docs/phase5/evidence/P5_D_REVIEW_20261013_CURRENT/review_manifest.json; giữ nguyên mọi thay đổi ngoài P5-D/docs hiện có và dừng nếu phát hiện file ngoài scope cần sửa.

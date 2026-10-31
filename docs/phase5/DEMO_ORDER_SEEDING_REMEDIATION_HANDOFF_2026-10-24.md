@@ -14,7 +14,7 @@ Ngăn việc đăng nhập Google tự sinh đơn mẫu cho customer zero-order 
 - Không xóa catalog seed (`seed_catalog`), product `P-602`, hay các fixture cần cho test/offline benchmark (`BusinessStore.seed()`, `BusinessStore.seed_demo_sample_orders()` chỉ phục vụ setup/test tường minh).
 - Không đổi `data_mode` sang `production/live` như workaround; không suy đoán rằng real-customer mode đã sẵn sàng.
 - Không chạy SQL ghi/xóa, không chạy lại purge, không chỉnh tay database EC2.
-- Bảo toàn nguyên trạng mọi thay đổi người dùng có sẵn tại working tree gốc (`d:/year_2026/Work_2026/agentic_AI/CSKH_ban_le` trên `feat/phase5-sales-simulator-import` tại `dd544800bb087d54a7faf564e723736905620045`).
+- Preserve the pre-existing primary working tree without operating on it; recorded provenance is branch `feat/phase5-sales-simulator-import` at `dd544800bb087d54a7faf564e723736905620045` (machine path omitted).
 
 ## Kết quả rà soát toàn bộ đường tạo seed trên `origin/main` (`ae0a2e4`)
 

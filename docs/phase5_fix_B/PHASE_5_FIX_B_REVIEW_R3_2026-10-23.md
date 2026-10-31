@@ -5,9 +5,9 @@
 
 ## Scope and review basis
 
-This post-remediation review record covers the uncommitted Fix B candidate layered directly on top of the existing Fix B worktree `C:\Users\HP\.codex\worktrees\fixb-readonly-dry-run\CSKH_ban_le` at baseline merge SHA `83bee6c5c42d9996a3230208d30ec6e6f0c5de2e`. Historical reviews [R1](PHASE_5_FIX_B_REVIEW_2026-10-23.md) and [R2](PHASE_5_FIX_B_REVIEW_R2_2026-10-23.md) are preserved intact without rewriting their historical verdicts.
+This post-remediation review record covers the uncommitted Fix B candidate layered directly on top of the existing Fix B worktree `isolated Fix B worktree (machine path omitted)` at baseline merge SHA `83bee6c5c42d9996a3230208d30ec6e6f0c5de2e`. Historical reviews [R1](PHASE_5_FIX_B_REVIEW_2026-10-23.md) and [R2](PHASE_5_FIX_B_REVIEW_R2_2026-10-23.md) are preserved intact without rewriting their historical verdicts.
 
-No AWS/SSM/EC2 access, production secret/database access, deployment, backup, CI workflow dispatch, commit, merge, live dry-run, or live purge was performed. Primary workspace `d:\year_2026\Work_2026\agentic_AI\CSKH_ban_le` (`stash@{0}`) and all other worktrees were left untouched.
+No AWS/SSM/EC2 access, production secret/database access, deployment, backup, CI workflow dispatch, commit, merge, live dry-run, or live purge was performed. Primary workspace `primary checkout (machine path omitted)` (`stash@{0}`) and all other worktrees were left untouched.
 
 ## Resolution of R2 findings (`FIXB-1` through `FIXB-4`)
 

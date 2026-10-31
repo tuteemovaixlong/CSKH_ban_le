@@ -34,7 +34,7 @@ Overall independent review verdict remains **CHANGES REQUIRED** pending Codex re
   - `postgres` job `117901231247`: `SUCCESS` (`TEST_PGVECTOR_READY=0.8.6`, `Ran 19 tests in 1.056s` -> `OK`, `0 skipped`, `OPS_CONSOLE_TESTS_OK`, `ACCOUNT_USAGE_QUOTA_OK`).
   - `portable (ubuntu-24.04)` job `117901231530`: `SUCCESS` (`Ran 19 tests in 0.009s` -> `OK (skipped=2)` for the 2 PostgreSQL-specific tests in portable SQLite mode, `OPS_CONSOLE_TESTS_OK`, `ACCOUNT_USAGE_QUOTA_OK`, `OPS_CONSOLE_UI_CONTRACT_OK`).
   - `portable (windows-latest)` job `117901231463`: `SUCCESS` (`Ran 19 tests in 0.102s` -> `OK (skipped=2)` for the 2 PostgreSQL-specific tests in portable SQLite mode, `OPS_CONSOLE_TESTS_OK`, `ACCOUNT_USAGE_QUOTA_OK`, `OPS_CONSOLE_UI_CONTRACT_OK`).
-- **Local targeted verification in clean worktree `C:/Users/HP/AppData/Local/Temp/retailops_p5e_wt`:**
+- **Local targeted verification in clean worktree `isolated P5-E worktree (machine path omitted)`:**
   - `py -3.12 -m unittest -v tests/test_phase5_e_ai_trust_and_governance.py`: `Ran 14 tests in 10.285s` -> `OK` (`0 skipped`).
   - `node tests/test_public_session.js` (default + `RETAILOPS_TEST_PERSISTENT=1`): `PUBLIC_COOKIE_UI_FLOW_OK` & `PERSISTENT_ACCOUNT_UI_FLOW_OK` (`PASS`).
   - `py -3.12 scripts/build_agent_notebook.py --check` (`AGENT_NOTEBOOK_SOURCE_SYNC_OK`), `py -3.12 scripts/check_docs_contract.py` (`SUCCESS`), `py -3.12 scripts/check_deployment_contract.py` (`DEPLOYMENT_CONTRACT_OK`), `git diff --check` (`PASS`).

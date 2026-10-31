@@ -1,5 +1,7 @@
 # Read-only Admin Console v1
 
+> **Role boundary (updated 2026-10-28):** `opsadmin` is the separate credential/authentication path for this read-only admin interface, not one of the three RetailOps business-chat roles (`customer`, `staff`, `manager`). Source-ref `platform_admin` is a legacy business RBAC role targeted for gradual retirement; it is not the Ops Console identity and its cross-tenant privileges must not transfer to Manager. See [Phase R1](phase_role_aware_ops/README.md) and the [owner decision delta](phase_role_aware_ops/W0_OWNER_DECISION_DELTA_2026-10-29.md).
+
 The customer website is unchanged. This optional service runs on the same EC2 instance, behind Caddy, on a separate admin hostname and Docker network. There is no new EC2 instance and no public port 8100. Linux root is not a web user.
 
 ## What is implemented

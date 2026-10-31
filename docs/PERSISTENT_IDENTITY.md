@@ -1,10 +1,11 @@
 # RetailOps 0.7 — Tài khoản và dữ liệu độc lập với phiên
 
 > [!NOTE]
-> **Cập nhật Kiến trúc RetailOps 2026 (SSO & Mở rộng RBAC):**  
-> Tài liệu này mô tả mô hình danh tính nền tảng ban đầu (v0.7). Trong phiên bản 2026:
+> **Cập nhật Kiến trúc RetailOps 2026 (SSO & RBAC):**
+> Tài liệu này mô tả mô hình danh tính nền tảng ban đầu (v0.7) cùng một số role behaviors theo source snapshot cũ. Target business role taxonomy hiện chỉ gồm `customer`, `staff`, `manager`; chủ cửa hàng dùng `manager`. `viewer` là legacy, cần safe migration và không được tự map thành Customer. `opsadmin` là login riêng cho Ops Admin Console, không phải business role; `platform_admin` là technical debt cần deprecate/remove dần, không phải alias của Manager hay Ops Admin. Thiết kế role/workspace mới và migration requirements ở [Phase R1](phase_role_aware_ops/README.md) và [owner decision delta](phase_role_aware_ops/W0_OWNER_DECISION_DELTA_2026-10-29.md).
+> Tóm tắt historical model:
 > 1. **Google OAuth 2.0 SSO**: Đã được tích hợp song song với mã credential cá nhân (xem chi tiết tại [PLAN_RBAC_GOOGLE_AUTH.md](PLAN_RBAC_GOOGLE_AUTH.md)).
-> 2. **Mở rộng Hệ thống 4 Vai trò Ứng dụng (RBAC)**:
+> 2. **RBAC role values trong tài liệu/source snapshot cũ (không phải taxonomy target)**:
 >    - `customer`: Khách hàng xem đơn và gửi tin nhắn trong phạm vi tài khoản được cấp.
 >    - `viewer`: Chỉ đọc dữ liệu tài khoản, không có quyền hủy đơn hay tạo yêu cầu giao dịch.
 >    - `staff`: Truy cập Hàng đợi Nhân viên ([Staff Desk Dialog trong `web/index.html`](../web/index.html) & [`web/app.js`](../web/app.js)) để tiếp quản các ca khiếu nại (SOP 6) qua các endpoint [`retailops/http/routes.py`](../retailops/http/routes.py).
@@ -44,7 +45,7 @@ flowchart TB
 | `customer` | Dữ liệu của customer được gắn | Có, vẫn kiểm tra owner/status/version/TTL/idempotency |
 | `viewer` | Dữ liệu của customer được gắn | Bị từ chối tại HTTP và tool |
 
-`viewer` vẫn tạo được conversation, focus và nhật ký truy cập. Đây là quyền đọc nghiệp vụ,
+**Source snapshot behavior (not the target contract):** `viewer` vẫn tạo được conversation, focus và nhật ký truy cập. Đây là quyền đọc nghiệp vụ,
 không phải quyền SQL chỉ đọc. Chưa có vai trò nhân viên xem toàn cửa hàng hoặc admin qua web.
 Catalog sản phẩm hiện là catalog mẫu chung trong image, chưa tách catalog riêng từng tenant.
 Audit nghiệp vụ vẫn ghi theo customer; audit cấp/đổi/thu hồi danh tính ghi theo membership.
@@ -106,6 +107,8 @@ Health trả `version=0.7`. Nếu chưa đổi `RETAILOPS_DATA_MODE`, web vẫn 
 
 Cấp tenant và dữ liệu mẫu một cách tường minh:
 
+> **Legacy Viewer warning:** examples using `--role viewer` are for historical fixtures or approved migration rehearsal only. Disable all Viewer app access first. Remove memberships only after aggregate inventory and integrity checks prove that history, links and related records remain intact; otherwise freeze/lock memberships and affected sessions, then retire gradually under an approved migration/rollback plan. Never auto-promote Viewer to Customer.
+
 ```bash
 retailops_web exec -T web python -m retailops identity init-tenant --tenant retailops-demo --name "RetailOps Demo" --seed-demo
 retailops_web exec -T web python -m retailops identity create-member --tenant retailops-demo --principal mai-anh --name "Mai Anh" --customer C-001 --role customer
@@ -141,7 +144,7 @@ retailops_web up -d --no-build --pull never --force-recreate --wait --wait-timeo
 
 Mở lại URL HTTPS, nhập mã cá nhân vừa lưu. Hủy O-101 rồi đăng xuất/đăng nhập lại: đơn phải
 vẫn đã hủy. Cấp thêm principal khác với `--customer C-002 --role viewer` để thử tài khoản
-chỉ thấy O-202 và không có quyền yêu cầu hủy. `create-member` không được gắn customer chưa có;
+chỉ thấy O-202 và không có quyền yêu cầu hủy **chỉ trong migration test cô lập, không phải provisioning mới**. `create-member` không được gắn customer chưa có;
 CLI `add-customer --tenant ... --customer ... --name ...` tạo customer trống, không tạo đơn.
 
 Đổi quyền hoặc thu hồi:
@@ -150,6 +153,8 @@ CLI `add-customer --tenant ... --customer ... --name ...` tạo customer trống
 retailops_web exec -T web python -m retailops identity set-role --membership MEMBERSHIP_ID --role viewer
 retailops_web exec -T web python -m retailops identity revoke --membership MEMBERSHIP_ID
 ```
+
+`set-role --role viewer` cũng chỉ dành cho fixture/migration rehearsal có phê duyệt; vận hành mới phải dùng một trong ba business roles mục tiêu hoặc giữ membership bị vô hiệu hóa cho tới khi safe-removal/mapping được duyệt.
 
 Hai lệnh là hai thao tác riêng: đổi quyền vẫn cho phép đăng nhập lại; revoke chặn cả mã lẫn
 session. Cấp lại bằng `issue-credential` chỉ áp dụng cho membership đang hoạt động; dùng tên

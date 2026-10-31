@@ -1,10 +1,12 @@
 # Kế Hoạch Triển Khai: Chuyển Đổi Sang Google Account & Phân Quyền Động (RBAC Production)
 
 > **Mã tài liệu**: `PLAN_GOOGLE_ACCOUNT_RBAC_PRODUCTION`
-> **Trạng thái**: Kế hoạch phân kỳ triển khai (Phasing Roadmap — Dự kiến sau Module 2.5)
+> **Trạng thái**: HISTORICAL PHASING ROADMAP — superseded in part by Phase R1 for role taxonomy, approval boundaries, selected-case AI and Admin Console separation; do not use as current authorization policy
 > **Phiên bản kiến trúc**: Module 2.5+ / Production Hardening Roadmap
 > **Nguồn đặc tả kỹ thuật chuẩn (SSOT)**: Toàn bộ hợp đồng dữ liệu, chuỗi định danh, UUIDv4 opaque IDs, DB-backed RBAC SSOT và quy trình import đơn hàng được định nghĩa chuẩn tại [PLAN_ACCOUNT_IDENTITY_IMPORT_SPECIFICATION.md](PLAN_ACCOUNT_IDENTITY_IMPORT_SPECIFICATION.md). Tài liệu này đóng vai trò lộ trình phân kỳ 4 giai đoạn triển khai (Phasing Overview), không duy trì bảng yêu cầu kỹ thuật độc lập.
 > **Mục tiêu**: Loại bỏ phụ thuộc vào dữ liệu gắn sẵn trong demo, phân định rõ ràng giữa guest per-session DB và persistent account, khắc phục triệt để lỗ hổng va chạm mã khách hàng N08, chuyển đổi sang định danh người dùng thực qua Google OAuth 2.0 (SSO) gắn với 3 vai trò (Roles: Khách hàng, Nhân viên CSKH, Chủ cửa hàng) mà không làm ảnh hưởng đến bộ Master Benchmark 250 ca đóng băng.
+>
+> **Owner-direction correction (2026-10-28):** the target business roles are `customer`, `staff`, and `manager`; the store owner is a Manager. `opsadmin` is a separate Ops Admin Console login. Viewer is legacy and must not be silently promoted; `platform_admin` is legacy technical debt to retire gradually, not an alias to Manager or Ops Admin. Current target policy is in [Phase R1](phase_role_aware_ops/README.md) and [owner decision delta](phase_role_aware_ops/W0_OWNER_DECISION_DELTA_2026-10-29.md).
 
 ---
 
