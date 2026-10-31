@@ -48,7 +48,7 @@ class PersistentTests(unittest.TestCase):
         self.alice = self.member('alice', 'shop-a', 'C-001')
         self.bob = self.member('bob', 'shop-a', 'C-002')
         self.other = self.member('other', 'shop-b', 'C-001')
-        self.viewer = self.member('viewer', 'shop-a', 'C-001', 'viewer')
+        self.staff = self.member('staff', 'shop-a', 'C-001', 'staff')
 
     def restart(self):
         self.sessions = PersistentSessions(self.directory, api_infer=ModelFixture(), api_daily_limit=1)
@@ -133,32 +133,37 @@ class PersistentTests(unittest.TestCase):
         self.assertFalse(any(e['kind'] == 'order_cancelled' for e in self.request('/api/events', cookie=other)[1]['events']))
 
     def test_viewer_cannot_propose_confirm_dismiss_or_prepare_via_model(self):
-        alice, viewer = self.login(self.alice), self.login(self.viewer)
-        proposal = self.request('/api/cancellation-proposals', PROPOSAL, alice)[1]
-        self.assertEqual(self.request('/api/cancellation-proposals', PROPOSAL, viewer)[0], 403)
-        for action, data in (('confirm', {'confirmed': True}), ('dismiss', {})):
-            self.assertEqual(self.request('/api/cancellation-proposals/'+proposal['proposal_id']+'/'+action,
-                                          data, viewer, HTTP_IDEMPOTENCY_KEY='viewer'*4)[0], 403)
-        def model_run(gateway, text, history, execute, identity, **options):
-            self.assertEqual(execute('prepare_cancellation', {'order_id': 'O-101'})['error'], 'permission_denied')
-            self.assertEqual(execute('get_order', {'order_id': 'O-101'})['order']['id'], 'O-101')
-            return {'message': 'Read only.', 'trace': {}, 'messages': []}
-        conversation = self.request('/api/conversations', {}, viewer)[1]['conversation_id']
-        with patch('retailops.business.application.run_agent', side_effect=model_run):
-            status, result, _ = self.request('/api/chat', {'text': 'cancel', 'conversation_id': conversation,
-                                                         'request_id': 'viewer-chat'*3}, viewer)
-        self.assertEqual(status, 200, result)
-        self.assertEqual(result['action'], 'reply')
-        self.assertNotIn('order', result)
-        self.assertEqual(self.request('/api/orders/O-101', cookie=viewer)[1]['order']['status'], 'pending')
+        for retired_role in ('viewer', 'platform_admin'):
+            with self.assertRaises(ApiError) as ctx:
+                self.sessions.create_member('shop-a', f'retired_{retired_role}', 'Retired', 'C-001', retired_role)
+            self.assertEqual((ctx.exception.status, ctx.exception.code), (400, 'invalid_membership'))
+        viewer_token = secrets.token_urlsafe(32)
+        with self.sessions.control.connection(write=True) as db:
+            db.execute("INSERT INTO principals(id, name) VALUES ('leg_viewer', 'Legacy Viewer')")
+            db.execute(
+                "INSERT INTO memberships(id, tenant_id, principal_id, customer_id, role, active, auth_version, disabled_reason) "
+                "VALUES ('m_leg_viewer', 'shop-a', 'leg_viewer', 'C-001', 'viewer', 0, 2, 'retired_legacy_role_r1_w1')"
+            )
+            db.execute(
+                "INSERT INTO credentials(hash, membership_id, created_at) VALUES (?, 'm_leg_viewer', ?)",
+                (hashlib.sha256(viewer_token.encode()).hexdigest(), time.time()),
+            )
+        self.assertEqual(self.request('/api/login', {'token': viewer_token})[0], 401)
+        self.assertEqual(self.request('/api/orders/O-101', cookie=self.login(self.alice))[1]['order']['status'], 'pending')
 
     def test_role_change_credential_rotation_and_revocation_invalidate_cached_sessions(self):
         alice = self.login(self.alice)
         self.assertEqual(self.request('/api/session', cookie=alice)[1]['role'], 'customer')
-        self.sessions.control.set_role(self.alice[0], 'viewer')
+        with self.assertRaises(ApiError) as bad_role:
+            self.sessions.control.set_role(self.alice[0], 'viewer')
+        self.assertEqual((bad_role.exception.status, bad_role.exception.code), (400, 'invalid_role'))
+        self.sessions.control.set_role(self.alice[0], 'staff')
         self.assertEqual(self.request('/api/orders', cookie=alice)[0], 401)
         current = self.login(self.alice)
-        self.assertEqual(self.request('/api/session', cookie=current)[1]['permissions'], ['orders:read'])
+        self.assertEqual(
+            self.request('/api/session', cookie=current)[1]['permissions'],
+            ['orders:cancel', 'orders:read', 'staff:desk'],
+        )
         replacement = secrets.token_urlsafe(32)
         self.sessions.control.register_credential(self.alice[0], replacement)
         self.assertEqual(self.request('/api/orders', cookie=current)[0], 401)
@@ -275,7 +280,8 @@ class PersistentTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn(path.read_text().strip(), result.stdout+result.stderr)
         self.assertEqual(cli('issue-credential', '--membership', mid, '--credential-file', str(path)).returncode, 2)
-        self.assertEqual(cli('set-role', '--membership', mid, '--role', 'viewer').returncode, 0)
+        self.assertNotEqual(cli('set-role', '--membership', mid, '--role', 'viewer').returncode, 0)
+        self.assertEqual(cli('set-role', '--membership', mid, '--role', 'staff').returncode, 0)
         self.assertEqual(cli('revoke', '--membership', mid).returncode, 0)
 
     def test_persistent_mode_requires_https_and_no_shared_invite(self):

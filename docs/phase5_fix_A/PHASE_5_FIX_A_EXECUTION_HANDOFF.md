@@ -1,5 +1,7 @@
 # Phase 5 Fix A — Execution Handoff
 
+> **Historical boundary (added 2026-10-30, docs-only):** this consumed handoff preserves the pre-merge `FIXA-DEPLOY2` routing recorded before 2026-10-24. The later dated project record reports PR #45 (Fix B) merged at `ae0a2e417baf0bc8011bdb62fc9cf3f7741aac36` and the targeted legacy-row removal recorded from owner-pasted SSM/psql output ([cleanup record](../04_OPERATIONS/ORDER_DATA_CLEANUP_2026-10-24.md)); PR #46 later merged and deployed via run `40089312937` ([remediation/deploy record](../phase5/DEMO_ORDER_SEEDING_REMEDIATION_HANDOFF_2026-10-24.md)). Do not replay the prompt or operational instructions below. No fresh runtime check is claimed.
+
 ## Historical trigger prompt — consumed; retained for audit only (DO NOT REPLAY)
 
 ```text
@@ -9,7 +11,7 @@
 - docs/phase5_fix_A/PHASE_5_FIX_A_ACCEPTANCE_CRITERIA.md
 - docs/phase5_fix_A/PHASE_5_FIX_A_EVIDENCE.md
 - docs/phase5_fix_A/PHASE_5_FIX_A_EXECUTION_HANDOFF.md
-và các tài liệu liên quan được link ở đó. Lưu ý hiện checkout này chưa có bộ tài liệu P5-DM chi tiết; tham chiếu đúng là [P5-DM gap/status trong Phase 5 index](../phase5/README.md#p5-dm-store-data-management) và [acceptance matrix](../03_EVALUATION/ACCEPTANCE_MATRIX.md#3d-p5-dm-store-data-management-gap). Với backup/live cleanup, chỉ dùng điều kiện/gates hiện hành trong [Phase 5 Fix B packet](../phase5_fix_B/README.md), không giả định có runbook P5-DM riêng.
+và các tài liệu liên quan được link ở đó. Lưu ý hiện checkout này chưa có bộ tài liệu P5-DM chi tiết; tham chiếu đúng là [P5-DM gap/status trong Phase 5 index](../phase5/README.md#p5-dm-store-data-management) và [acceptance matrix](../03_EVALUATION/ACCEPTANCE_MATRIX.md#3d-p5-dm-store-data-management-gap). Prompt này đã được tiêu thụ; các nội dung về backup/live cleanup phía dưới là lịch sử và không được thực thi.
 
 Thực hiện một lượt đầy đủ đúng phạm vi Phase 5 Fix A, không mở rộng bug hunt:
 
@@ -23,15 +25,15 @@ Không thêm generic manager hard-delete API. Nếu cần command one-shot, yêu
 
 4) TEST + CI. Làm trên clean isolated worktree/candidate dựa trên latest main đã có PR #43 merge SHA ef40d131ef9244fa51844ae8990a05888990cdc8; KHÔNG sửa, reset, stash, hoặc đưa các thay đổi bẩn chưa commit từ workspace feat/phase5-sales-simulator-import vào candidate. Thêm regression UI, seed/reseed/replay, exact purge guard, no-collateral changes, retention/tombstone, SQLite và PostgreSQL/pgvector. Chạy targeted tests, toàn CI bắt buộc, docs contract, browser/UI checks nếu có; ghi test counts và skips đúng log. Sửa đồng bộ docs phase packet, acceptance matrix, current status, phase5 README và roadmap.
 
-5) PR / MERGE / DEPLOY / EC2 CLEANUP. Tạo candidate PR, không bypass branch protection. Chờ toàn bộ required CI/review PASS; sau đó merge theo quy trình repo (owner đã yêu cầu merge/deploy). Xác nhận official deploy workflow chạy trên merged SHA, ghi image digest/source-match/rollout và kiểm UI runtime. **Không chạy các command/runbook production đã lưu trong Fix A evidence; chúng đã bị thu hồi.** Mọi bước kiểm tra hoặc xóa đơn trên live EC2 chỉ được xem xét theo [Phase 5 Fix B packet](../phase5_fix_B/README.md) sau khi review hiện hành, PostgreSQL/pgvector CI, source/image, tenant mapping, backup/restore, rehearsal và read-only dry-run đều đạt, rồi owner duyệt riêng bước execute. Nếu thiếu bất kỳ gate nào thì dừng; không đọc/in secret, không dùng lệnh DELETE toàn cục, không purge ngoài tenant/tuple đã xác nhận; tuyệt đối không giả nhận đã xóa.
+5) PR / MERGE / DEPLOY / EC2 CLEANUP. Tạo candidate PR, không bypass branch protection. Chờ toàn bộ required CI/review PASS; sau đó merge theo quy trình repo (owner đã yêu cầu merge/deploy). Xác nhận official deploy workflow chạy trên merged SHA, ghi image digest/source-match/rollout và kiểm UI runtime. **Không chạy các command/runbook production đã lưu trong Fix A evidence; chúng đã bị thu hồi.** Mọi bước kiểm tra hoặc xóa đơn trên live EC2 chỉ được xem xét theo Phase 5 Fix B packet đã được liên kết ở phần đầu của prompt lịch sử, sau khi các điều kiện cần thiết đạt và có phê duyệt riêng của owner. Nếu thiếu bất kỳ gate nào thì dừng; không đọc/in secret, không dùng lệnh DELETE toàn cục, không purge ngoài tenant/tuple đã xác nhận; tuyệt đối không giả nhận đã xóa.
 
 6) DỪNG. Không chạy OAuth live, benchmark/performance, paid tests; không sửa 14 criteria P5-E. Tham chiếu “P5-DM 17 criteria” trong prompt lịch sử này không phải bằng chứng rằng bộ criteria canonical đang tồn tại: packet chi tiết P5-DM hiện vắng trong checkout; xem `docs/phase5/README.md#p5-dm-store-data-management`. Không báo PASS cho Phase 5/P5-E/G4/G5 nhờ FIX-A. Cập nhật evidence file và báo: review/finding disposition; base/candidate/merge SHA; PR và CI workflow/job IDs; test counts/skips; files changed; deploy run/digest; backup/dry-run/DB result và exact affected row counts; criteria từng mục; phần nào còn pending/blocker. Không mở Round mới ngoài scope này.
 ```
 
 ## Điều phối và trạng thái
 
-- Trạng thái hiện tại: **CONSUMED FOR CODE/TEST/CI/DEPLOY — LIVE EC2 DATA CLEANUP (`FIXA-DEPLOY2`) BLOCKED UNDER FIX B**.
-- [Review](PHASE_5_FIX_A_REVIEW_2026-10-20.md) và [criteria](PHASE_5_FIX_A_ACCEPTANCE_CRITERIA.md) giữ kết quả lịch sử; các lệnh SSM trong [evidence](PHASE_5_FIX_A_EVIDENCE.md) đã bị thu hồi/đánh dấu `DO NOT RUN`. Không còn runbook Fix A được phê duyệt. Chỉ xem xét live operation theo Fix B sau khi toàn bộ review, PostgreSQL CI, backup/restore, tenant và dry-run gates đạt, cùng phê duyệt riêng của owner.
+- Trạng thái của snapshot pre-merge: **CONSUMED FOR CODE/TEST/CI/DEPLOY — LIVE EC2 DATA CLEANUP (`FIXA-DEPLOY2`) HISTORICALLY ROUTED UNDER FIX B**. Dated project record sau đó đã ghi nhận PR #45 merge, targeted cleanup và PR #46 merge/deploy; handoff này không claim fresh runtime check.
+- [Review](PHASE_5_FIX_A_REVIEW_2026-10-20.md), [criteria](PHASE_5_FIX_A_ACCEPTANCE_CRITERIA.md), và [evidence](PHASE_5_FIX_A_EVIDENCE.md) are retained as historical records. All SSM commands in the evidence file are withdrawn and marked `DO NOT RUN`; this consumed handoff is not current operational guidance. The later dated cleanup/deploy records are linked in the historical boundary above and do not authorize a repeat operation.
 - Phase này tách biệt khỏi P5-DM. Bộ tài liệu P5-DM chi tiết/canonical hiện không có trong checkout; xem [gap/status](../phase5/README.md#p5-dm-store-data-management). Fix A không cấp quyền hoặc thay thế handoff cho P5-DM.
 - Workspace bẩn gốc (`feat/phase5-sales-simulator-import`) được giữ nguyên hoàn toàn không chạm tới; candidate sạch được thực hiện trên worktree cô lập từ merged `main` (`ef40d131ef9244fa51844ae8990a05888990cdc8`).
-- Xem thêm [acceptance matrix](../03_EVALUATION/ACCEPTANCE_MATRIX.md), [current status](../CURRENT_PROJECT_STATUS.md), [roadmap](../PLAN_ROADMAP_INDEX.md), [phase5 index](../phase5/README.md) và [root docs index](../README.md).
+- Xem thêm [acceptance matrix](../03_EVALUATION/ACCEPTANCE_MATRIX.md), [current status](../CURRENT_PROJECT_STATUS.md), [roadmap](../PLAN_ROADMAP_INDEX.md) và [root docs index](../README.md).

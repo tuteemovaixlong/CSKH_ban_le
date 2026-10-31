@@ -3,7 +3,9 @@
 **Review date:** 2026-10-24 (+07).  
 **Verdict:** **STATIC REVIEW PASS / READY FOR PR AND CI; POSTGRESQL CI PENDING; LIVE CLEANUP BLOCKED.**
 
-Candidate is the uncommitted diff, including untracked Fix B files, in `C:\Users\HP\.codex\worktrees\fixb-readonly-dry-run\CSKH_ban_le`, on baseline `83bee6c5c42d9996a3230208d30ec6e6f0c5de2e`. The baseline SHA is not a commit containing these fixes. Record the actual candidate/PR head and tested merge SHA when the PR/CI gate runs.
+> **Historical boundary (added 2026-10-30, docs-only):** this R5 verdict is preserved as issued and was superseded by [review R6](PHASE_5_FIX_B_REVIEW_R6_2026-10-24.md). Its "PENDING" and "LIVE CLEANUP BLOCKED" clauses are not the current project state: the later dated record reports PR #45 merged at `ae0a2e417baf0bc8011bdb62fc9cf3f7741aac36` and the targeted cleanup recorded ([cleanup record](../04_OPERATIONS/ORDER_DATA_CLEANUP_2026-10-24.md)). No fresh runtime check is claimed.
+
+Candidate is the uncommitted diff, including untracked Fix B files, in `isolated Fix B worktree (machine path omitted)`, on baseline `83bee6c5c42d9996a3230208d30ec6e6f0c5de2e`. The baseline SHA is not a commit containing these fixes. Record the actual candidate/PR head and tested merge SHA when the PR/CI gate runs.
 
 ## Scope and independence
 

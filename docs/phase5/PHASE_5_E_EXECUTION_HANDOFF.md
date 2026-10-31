@@ -33,7 +33,7 @@ Không thêm acceptance criteria, không mở bug hunt mới, không sửa các 
 
 ## Ràng buộc cứng
 
-- Giữ nguyên workspace chính `D:/year_2026/Work_2026/agentic_AI/CSKH_ban_le` vì đang có thay đổi; tuyệt đối không reset, checkout hay ghi đè.
-- Làm việc trên candidate/worktree P5-E sạch (`C:/Users/HP/AppData/Local/Temp/retailops_p5e_wt`) và branch PR #43.
+- Preserve the pre-existing primary checkout without operating on it; its recorded provenance is branch `feat/phase5-sales-simulator-import` at `dd544800bb087d54a7faf564e723736905620045` (machine path omitted). Never reset, checkout, or overwrite it.
+- Làm việc trên candidate/worktree P5-E sạch (`isolated P5-E worktree (machine path omitted)`) và branch PR #43.
 - Giữ quyết định sản phẩm của owner: CoT thông thường được phép hiển thị; chỉ chặn canary/secret exfiltration.
 - Mọi tiêu chí bắt buộc phải chạy thật trên SQLite và PostgreSQL/pgvector qua CI; không ghi skip là PASS, không sửa dữ liệu khách/EC2.

@@ -153,7 +153,8 @@ class PersistentSessions:
                     mems = db.execute(
                         '''SELECT m.tenant_id FROM memberships m
                            JOIN tenants t ON t.id = m.tenant_id
-                           WHERE m.principal_id=? AND m.active=1 AND t.active=1''',
+                           WHERE m.principal_id=? AND m.active=1 AND t.active=1
+                             AND m.role IN ('customer', 'staff', 'manager')''',
                         (principal_id,)
                     ).fetchall()
                     non_smoke_mems = [m['tenant_id'] for m in mems if not _is_smoke_tenant_id(m['tenant_id'])]

@@ -12,7 +12,7 @@ import uuid
 logger = logging.getLogger("retailops.application")
 from retailops.core import ApiError, REASONS, STATUSES, fields, require
 from retailops.identity.bearer import authenticate_bearer
-from retailops.business.permissions import CANCEL, ROLE_PERMISSIONS
+from retailops.business.permissions import CANCEL, READ, ROLE_PERMISSIONS
 from retailops_agent import AgentError, run_agent
 from retailops_tools import BoundTools
 from retailops.knowledge.citations import CitationError, cited_sources
@@ -99,6 +99,7 @@ class Application:
              'daily_turn_limit': self.api_daily_limit}]}
 
     def new_conversation(self, customer, body):
+        self.require_permission(READ)
         require(isinstance(body, dict) and set(body) in (set(), {'provider_id'}),
                 400, 'invalid_fields', 'Chỉ chọn nguồn model đã được cấu hình.')
         provider_id = body.get('provider_id', self.default_provider)
@@ -116,6 +117,7 @@ class Application:
         require(permission in self.permissions, 403, 'permission_denied', 'Tài khoản này không có quyền thực hiện thao tác.')
 
     def chat(self, customer, body):
+        self.require_permission(READ)
         started = time.monotonic()
         require(isinstance(body, dict) and {'text', 'conversation_id', 'request_id'}.issubset(set(body))
                 and set(body).issubset({'text', 'conversation_id', 'request_id', 'attachment'}),
@@ -534,6 +536,7 @@ class Application:
             stack.close()
 
     def focus(self, customer, cid, body):
+        self.require_permission(READ)
         fields(body, {'order_id'})
         require(isinstance(body['order_id'], str), 400, 'invalid_order', 'Mã đơn không hợp lệ.')
         snapshot = self.store.conversation(customer, cid)

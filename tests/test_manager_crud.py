@@ -239,21 +239,62 @@ class TestManagerCRUD(unittest.TestCase):
                 self.assertEqual(ctx.exception.code, 'permission_denied')
 
     def test_tools_execute_rbac(self):
+        from retailops.identity.contracts import SessionBinding
         customer_app = Application(self.store, {}, role='customer')
         with self.assertRaises(ApiError) as ctx:
-            api_result(customer_app, 'C-001', 'POST', '/api/tools/execute', {'tool_name': 'list_orders', 'arguments': {}})
+            api_result(customer_app, 'C-001', 'POST', '/api/tools/execute', {'tool_name': 'get_order', 'arguments': {'order_id': 'O-101'}})
         self.assertEqual(ctx.exception.status, 403)
         self.assertEqual(ctx.exception.code, 'permission_denied')
 
         staff_app = Application(self.store, {}, role='staff')
-        status, res = api_result(staff_app, 'C-001', 'POST', '/api/tools/execute', {'tool_name': 'list_orders', 'arguments': {}})
+        # Unbound direct call must fail closed
+        with self.assertRaises(ApiError) as unbound_ctx:
+            api_result(staff_app, 'C-001', 'POST', '/api/tools/execute', {'tool_name': 'get_order', 'arguments': {'order_id': 'O-101'}})
+        self.assertEqual(unbound_ctx.exception.status, 403)
+        self.assertEqual(unbound_ctx.exception.code, 'missing_session_binding')
+
+        conv_id = self.store.new_conversation('C-001', 'custom')['conversation_id']
+        self.store.record_feedback(
+            'C-001',
+            {'conversation_id': conv_id, 'feedback_type': 'human_handoff', 'reason_code': 'customer_requested_human'},
+        )
+        staff_binding = SessionBinding(
+            staff_app,
+            'C-002',
+            'ws-staff',
+            tenant_id='tenant-demo',
+            principal_id='usr_staff_01',
+            display_name='Staff Test',
+            membership_id='mem_staff_01',
+        )
+        status, res = api_result(
+            staff_app,
+            'C-002',
+            'POST',
+            '/api/tools/execute',
+            {'conversation_id': conv_id, 'tool_name': 'get_order', 'arguments': {'order_id': 'O-101'}},
+            binding=staff_binding,
+        )
         self.assertEqual(status, 200)
-        self.assertIn('result', res)
+        self.assertEqual(res['result']['order']['id'], 'O-101')
+
+        # Disallowed or mutating direct tools are rejected
+        for bad_tool in ('list_orders', 'prepare_cancellation', 'request_human_support'):
+            with self.assertRaises(ApiError) as bad_ctx:
+                api_result(
+                    staff_app,
+                    'C-002',
+                    'POST',
+                    '/api/tools/execute',
+                    {'conversation_id': conv_id, 'tool_name': bad_tool, 'arguments': {'order_id': 'O-101'}},
+                    binding=staff_binding,
+                )
+            self.assertEqual(bad_ctx.exception.status, 403)
+            self.assertEqual(bad_ctx.exception.code, 'tool_not_allowed')
 
     def test_manager_events_and_actor_audit(self):
         from retailops.identity.contracts import SessionBinding
         binding = SessionBinding(self.app, 'C-001', 'ws1', tenant_id='tenant-demo', principal_id='usr_manager_01', display_name='Manager Test')
-        self.app.current_binding = binding
 
         # 1. Create a product
         pid = 'P-777'

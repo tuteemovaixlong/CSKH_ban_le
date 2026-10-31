@@ -190,8 +190,32 @@ def exchange_code_for_user_info(code: str, origin: str) -> Dict[str, str]:
     }
 
 
-def resolve_role_from_email(email: str) -> str:
-    """Smart Role Mapping: Map email to 'manager', 'staff', or 'customer'."""
+def resolve_role_from_email(email: str, *, email_verified: bool = True) -> str:
+    """Smart Role Mapping for initial Google provisioning (active business roles only).
+
+    Existing memberships never have their role overwritten on Google login.
+    Unverified emails never match privileged email allowlists.
+    DEFAULT_ROLE fails closed unless it is empty or 'customer'.
+    """
+    from retailops.core import ApiError
+
+    default_role = (_clean_env("DEFAULT_ROLE") or "customer").strip().lower()
+    if default_role != "customer":
+        if default_role in ("viewer", "platform_admin"):
+            raise ApiError(
+                403,
+                "legacy_role_disabled",
+                "Cấu hình DEFAULT_ROLE không hợp lệ hoặc thuộc vai trò đã ngừng hỗ trợ.",
+            )
+        raise ApiError(
+            403,
+            "invalid_default_role",
+            "Cấu hình DEFAULT_ROLE không được phép cấp quyền đặc quyền mặc định; chỉ chấp nhận 'customer'.",
+        )
+
+    if not email_verified:
+        return "customer"
+
     clean = email.strip().lower()
     staff_str = _clean_env("STAFF_EMAILS")
     manager_str = _clean_env("MANAGER_EMAILS")
@@ -202,5 +226,5 @@ def resolve_role_from_email(email: str) -> str:
         return "manager"
     if clean in staff_emails:
         return "staff"
-    return _clean_env("DEFAULT_ROLE") or "customer"
+    return default_role
 

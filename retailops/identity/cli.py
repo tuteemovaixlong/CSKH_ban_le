@@ -3,7 +3,7 @@ import os
 import secrets
 from pathlib import Path
 
-from retailops.business.permissions import ROLE_PERMISSIONS
+from retailops.business.permissions import ACTIVE_BUSINESS_ROLES
 from retailops.identity.persistent import PersistentSessions
 
 
@@ -41,13 +41,13 @@ def add_parser(commands):
     member = actions.add_parser('create-member')
     for name in ('tenant', 'principal', 'name', 'customer'):
         member.add_argument('--'+name, required=True)
-    member.add_argument('--role', choices=tuple(ROLE_PERMISSIONS), default='customer')
+    member.add_argument('--role', choices=ACTIVE_BUSINESS_ROLES, default='customer')
     issue = actions.add_parser('issue-credential', help='Rotate personal code into a new mode-0600 file.')
     issue.add_argument('--membership', required=True)
     issue.add_argument('--credential-file', type=Path, required=True)
     role = actions.add_parser('set-role', help='Change role and invalidate existing sessions.')
     role.add_argument('--membership', required=True)
-    role.add_argument('--role', choices=tuple(ROLE_PERMISSIONS), required=True)
+    role.add_argument('--role', choices=ACTIVE_BUSINESS_ROLES, required=True)
     revoke = actions.add_parser('revoke', help='Revoke login and sessions; retain business data.')
     revoke.add_argument('--membership', required=True)
     reconcile = actions.add_parser('reconcile-collision', help='Operator execution for account collision reconciliation.')
@@ -57,18 +57,47 @@ def add_parser(commands):
     reconcile.add_argument('--idempotency-key', default=None)
     status = actions.add_parser('reconciliation-status', help='Query reconciliation status by idempotency key.')
     status.add_argument('--idempotency-key', required=True)
+    migrate_v5 = actions.add_parser(
+        'migrate-v5',
+        help='Explicit operator upgrade of an existing identity store to R1 W1 schema v5.',
+    )
+    migrate_v5.add_argument(
+        '--confirm-preflight',
+        action='store_true',
+        help='Confirm unified preflight inventory (§11.5) has completed.',
+    )
+    migrate_v5.add_argument(
+        '--confirm-backup',
+        action='store_true',
+        help='Confirm backup/snapshot and restore rehearsal (§11.5) have completed.',
+    )
 
 
 def run(args):
     import json
     from retailops.config import database_settings
     backend, dsn = database_settings(os.environ)
+    action = args.identity_action
+    if action == 'migrate-v5':
+        if backend == 'postgresql':
+            from retailops.storage.pg_repositories import migrate_postgres_identity_v5
+            return migrate_postgres_identity_v5(
+                dsn,
+                preflight_confirmed=bool(args.confirm_preflight),
+                backup_confirmed=bool(args.confirm_backup),
+            )
+        from retailops.identity.store import migrate_sqlite_identity_v5
+        id_path = args.output / 'persistent' / 'identity.sqlite3'
+        return migrate_sqlite_identity_v5(
+            id_path,
+            preflight_confirmed=bool(args.confirm_preflight),
+            backup_confirmed=bool(args.confirm_backup),
+        )
     if backend == 'postgresql':
         from retailops.identity.postgres import PostgresSessions
         sessions = PostgresSessions(dsn)
     else:
         sessions = PersistentSessions(args.output/'persistent')
-    action = args.identity_action
     if action == 'init-tenant':
         sessions.provision_tenant(args.tenant, args.name, seed_demo=args.seed_demo)
         return {'result': 'TENANT_READY', 'tenant_id': args.tenant, 'demo_seed_requested': args.seed_demo}

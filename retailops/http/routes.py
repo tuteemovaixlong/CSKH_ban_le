@@ -7,7 +7,31 @@ import time
 import urllib.parse
 from retailops.core import ApiError, fields, require
 from retailops.workflow import approval
-from retailops.business.permissions import CANCEL, STAFF, MANAGER, PLATFORM_ADMIN
+from retailops.business.permissions import ACTIVE_BUSINESS_ROLES, READ, CANCEL, STAFF, MANAGER
+from retailops.identity.contracts import RequestContext
+
+CUSTOMER_SAFE_EVENT_KINDS = frozenset({
+    'order_viewed',
+    'cancellation_proposed',
+    'order_cancelled',
+    'proposal_dismissed',
+    'order_status_updated_by_manager',
+    'customer_messaged_staff',
+    'staff_replied',
+    'escalation_resolved',
+    'feedback_received',
+    'agent_replied',
+})
+
+ALLOWED_DIRECT_TOOLS = frozenset({
+    'get_context',
+    'get_order',
+    'track_shipment',
+    'get_product',
+    'check_variant_stock',
+    'search_products',
+    'search_knowledge',
+})
 
 
 def _admin_control(app):
@@ -125,61 +149,135 @@ def _parse_non_negative_int(val):
     return False, None
 
 
-def _extract_actor(app, customer, binding=None):
-    binding = binding or getattr(app, 'current_binding', None)
-    principal_id = None
-    tenant_id = None
-    display_name = None
-    membership_id = None
-    role = None
-    if binding:
-        principal_id = getattr(binding, 'principal_id', None)
-        tenant_id = getattr(binding, 'tenant_id', None)
-        display_name = getattr(binding, 'display_name', None)
-        membership_id = getattr(binding, 'membership_id', None)
-        role = getattr(binding, 'role', None)
-    if not membership_id:
-        membership_id = getattr(getattr(app, 'quota_store', None), 'membership_id', None)
-    if not principal_id:
-        principal_id = getattr(app, 'principal_id', None) or ('manager' if getattr(app, 'role', '') == 'manager' else customer)
+def _resolve_request_context(app, customer, binding=None, context=None) -> RequestContext:
+    if isinstance(context, RequestContext):
+        return context
+    if binding is not None:
+        return RequestContext.from_binding(
+            binding,
+            data_mode=getattr(app, 'data_mode', 'synthetic-demo'),
+        )
+    return RequestContext.from_app(
+        app,
+        customer,
+        data_mode=getattr(app, 'data_mode', 'synthetic-demo'),
+        authenticated_session=False,
+    )
+
+
+def _require_ctx_permission(ctx: RequestContext, permission: str) -> None:
+    require(
+        ctx.role in ACTIVE_BUSINESS_ROLES and permission in ctx.permissions,
+        403,
+        'permission_denied',
+        'Tài khoản này không có quyền thực hiện thao tác.',
+    )
+
+
+def _actor_display_name(ctx: RequestContext) -> str:
+    clean = (ctx.display_name or '').strip()
+    if clean:
+        return clean
+    return 'Quản lý cửa hàng' if ctx.role == 'manager' else 'Nhân viên hỗ trợ'
+
+
+def _require_open_handoff_conversation(app, ctx: RequestContext, conversation_id: str, *, denied_status: int = 403):
+    app_tid = getattr(app, 'tenant_id', None)
+    if app_tid and app_tid != 'default' and ctx.tenant_id and ctx.tenant_id != 'default':
+        require(
+            ctx.tenant_id == app_tid,
+            403,
+            'tenant_scope_denied',
+            'Ngữ cảnh cửa hàng không khớp với phiên làm việc.',
+        )
+    with app.store.connection() as db:
+        conv = db.execute(
+            'SELECT id, customer_id, order_id, product_id, expires_at FROM conversations WHERE id=?',
+            (conversation_id,),
+        ).fetchone()
+        require(conv is not None, 404, 'conversation_not_found', 'Không tìm thấy cuộc trò chuyện.')
+        handoff = db.execute(
+            "SELECT 1 FROM conversation_feedback WHERE conversation_id=? "
+            "AND feedback_type='human_handoff' AND COALESCE(reason_code, '')!='resolved' LIMIT 1",
+            (conversation_id,),
+        ).fetchone()
+    require(
+        handoff is not None,
+        denied_status,
+        'case_not_escalated',
+        'Cuộc trò chuyện này hiện không có yêu cầu chuyển tiếp nhân viên đang mở.',
+    )
+    return conv
+
+
+def _sanitize_customer_events(events):
+    stripped_keys = {'actor', 'actor_principal_id', 'actor_membership_id', 'actor_role', 'tenant_id', 'trace'}
+    safe = []
+    for ev in events:
+        if not isinstance(ev, dict) or ev.get('kind') not in CUSTOMER_SAFE_EVENT_KINDS:
+            continue
+        item = dict(ev)
+        payload = item.get('payload')
+        if isinstance(payload, dict):
+            item['payload'] = {k: v for k, v in payload.items() if k not in stripped_keys}
+        safe.append(item)
+    return safe
+
+
+def _extract_actor(app, customer, binding=None, context=None):
+    ctx = _resolve_request_context(app, customer, binding=binding, context=context)
+    principal_id = ctx.principal_id
+    membership_id = ctx.membership_id
+    tenant_id = ctx.tenant_id
+    if not ctx.authenticated_session:
+        if not membership_id:
+            membership_id = getattr(getattr(app, 'quota_store', None), 'membership_id', None)
+        if not principal_id:
+            principal_id = getattr(app, 'principal_id', None) or (
+                'manager' if ctx.role == 'manager' else ctx.customer_id
+            )
     return {
         "principal_id": principal_id,
-        "role": role or getattr(app, 'role', 'customer'),
-        "tenant_id": tenant_id or getattr(app, 'tenant_id', None),
-        "customer_id": customer,
+        "role": ctx.role,
+        "tenant_id": tenant_id,
+        "customer_id": ctx.customer_id,
         "membership_id": membership_id,
-        "display_name": display_name,
-        "actor_type": "principal"
+        "display_name": ctx.display_name,
+        "actor_type": "principal",
     }
 
 
-def api_result(app, customer, method, path, body=None, idempotency_key=None, binding=None, query=None):
+def api_result(app, customer, method, path, body=None, idempotency_key=None, binding=None, query=None, context=None):
     if isinstance(path, str) and '?' in path and not query:
         path, query = path.split('?', 1)
+    ctx = _resolve_request_context(app, customer, binding=binding, context=context)
+    customer = ctx.customer_id
+    if not (isinstance(path, str) and path.startswith('/api/admin/')):
+        _require_ctx_permission(ctx, READ)
     if method == "GET":
         if path in ("/api/session", "/api/profile"):
-            actor = _extract_actor(app, customer, binding=binding)
-            display_name = actor.get("display_name")
-            if not display_name:
-                display_name = "Mai Anh" if customer == "C-001" else "Khách mẫu"
+            if ctx.principal_id is not None:
+                display_name = (ctx.display_name or "").strip()
+            else:
+                display_name = ctx.display_name or ("Mai Anh" if customer == "C-001" else "Khách mẫu")
             res = {
                 "customer_id": customer,
                 "name": display_name,
                 "model_configured": app.infer is not None or app.api_infer is not None,
-                "permissions": sorted(app.permissions),
-                "role": actor.get("role") or app.role,
+                "permissions": sorted(ctx.permissions),
+                "role": ctx.role,
                 "scope": "synthetic-demo",
             }
-            if actor.get("tenant_id") is not None:
-                res["tenant_id"] = actor["tenant_id"]
-            if actor.get("principal_id") is not None:
-                res["principal_id"] = actor["principal_id"]
+            if ctx.tenant_id is not None:
+                res["tenant_id"] = ctx.tenant_id
+            if ctx.principal_id is not None:
+                res["principal_id"] = ctx.principal_id
             return (200, res)
         if path == '/api/account/usage':
             return (200, _account_usage(app))
         if path == '/api/admin/accounts':
             control = _admin_control(app)
-            actor = _extract_actor(app, customer, binding=binding)
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
             qparams = _parse_query_dict(query, {'tenant_id', 'q', 'limit'})
             lim = 50
             if 'limit' in qparams and qparams['limit'] != '':
@@ -197,7 +295,7 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
         m_admin_acct = re.fullmatch(r'/api/admin/accounts/([A-Za-z0-9_-]{1,64})', path)
         if m_admin_acct:
             control = _admin_control(app)
-            actor = _extract_actor(app, customer, binding=binding)
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
             qparams = _parse_query_dict(query, {'tenant_id'})
             return (200, control.admin_get_account(
                 actor,
@@ -208,7 +306,7 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             ))
         if path == '/api/admin/audit-log':
             control = _admin_control(app)
-            actor = _extract_actor(app, customer, binding=binding)
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
             qparams = _parse_query_dict(query, {'tenant_id', 'membership_id', 'limit'})
             lim = 100
             if 'limit' in qparams and qparams['limit'] != '':
@@ -225,17 +323,17 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
         if path == "/api/providers":
             return (200, app.providers())
         if path == "/api/orders":
-            if getattr(app, 'role', '') in ('manager', 'platform_admin'):
+            if ctx.role == 'manager':
                 with app.store.connection() as db:
                     all_orders = [_format_order_for_api(dict(r), app) for r in db.execute("SELECT * FROM orders ORDER BY id DESC LIMIT 50")]
                 return (200, {"orders": all_orders, "scope": "store_all"})
             return (200, {"orders": [_format_order_for_api(o, app) for o in app.store.orders(customer)], "scope": "customer"})
         if path == "/api/manager/products":
-            app.require_permission(MANAGER)
+            _require_ctx_permission(ctx, MANAGER)
             prods = app.catalog.all_products()
             return (200, {"products": prods, "count": len(prods)})
         if path == "/api/manager/kpis":
-            app.require_permission(MANAGER)
+            _require_ctx_permission(ctx, MANAGER)
             with app.store.connection() as db:
                 rows = [dict(r) for r in db.execute("SELECT status, amount FROM orders").fetchall()]
                 try:
@@ -285,7 +383,7 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 "active_products": len(app.catalog.products)
             })
         if path == "/api/manager/benchmark":
-            app.require_permission(MANAGER)
+            _require_ctx_permission(ctx, MANAGER)
             report_data = None
             for candidate in [
                 Path("evals/reports/live_benchmark_report_latest.json"),
@@ -303,30 +401,35 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 return (404, {"error": "benchmark_report_not_found"})
             return (200, report_data)
         if path == '/api/cancellation-proposals':
-            app.require_permission(CANCEL)
+            _require_ctx_permission(ctx, CANCEL)
             with app.store.connection() as db:
                 rows = db.execute("SELECT id FROM proposals WHERE customer_id=? AND state='pending' AND expires_at>? ORDER BY expires_at DESC LIMIT 10", (customer, time.time())).fetchall()
             return (200, {'proposals': [approval.proposal(app.store, customer, r['id']) for r in rows]})
         if path == "/api/events":
-            return (200, {"events": app.store.events(customer)})
+            raw_events = app.store.events(customer)
+            if STAFF not in ctx.permissions:
+                raw_events = _sanitize_customer_events(raw_events)
+            return (200, {"events": raw_events})
         if path == "/api/manager/events":
-            app.require_permission(MANAGER)
+            _require_ctx_permission(ctx, MANAGER)
             return (200, {"events": app.store.manager_events(limit=100)})
         m = re.fullmatch(r"/api/orders/([A-Z]{1,6}-[0-9]{1,8})", path)
         if m:
             return (200, {"order": _format_order_for_api(app.store.lookup(customer, m[1]), app)})
         if path == "/api/staff/escalations":
-            app.require_permission(STAFF)
+            _require_ctx_permission(ctx, STAFF)
             return (200, {"escalations": app.store.escalations()})
         if path == "/api/conversations":
             return (200, {"conversations": app.store.list_conversations(customer)})
         m_trans = re.fullmatch(r"/api/(?:staff/)?conversations/([a-f0-9-]{36})/messages", path)
         if m_trans:
             cid = m_trans[1]
-            if STAFF not in app.permissions:
+            if STAFF not in ctx.permissions:
                 with app.store.connection() as db:
                     row = db.execute("SELECT customer_id FROM conversations WHERE id=?", (cid,)).fetchone()
                 require(row is not None and row["customer_id"] == customer, 403, "permission_denied", "Tài khoản này không có quyền thực hiện thao tác.")
+            else:
+                _require_open_handoff_conversation(app, ctx, cid, denied_status=403)
             return (200, app.store.conversation_transcript(cid))
     if method == "POST":
         if path == '/api/conversations':
@@ -342,7 +445,7 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
         m_admin_act = re.fullmatch(r'/api/admin/accounts/([A-Za-z0-9_-]{1,64})/(suspend|reactivate|revoke-sessions|quota)', path)
         if m_admin_act:
             control = _admin_control(app)
-            actor = _extract_actor(app, customer, binding=binding)
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
             mid, act_kind = m_admin_act[1], m_admin_act[2]
             corr_id = (body.get('correlation_id') if isinstance(body, dict) else None) or idempotency_key
             raw_reason = (body.get('reason') if isinstance(body, dict) else None) or act_kind
@@ -412,40 +515,126 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             res = app.store.customer_message(customer, cid, msg)
             return (200, res)
         if path == "/api/staff/reply":
-            app.require_permission(STAFF)
+            _require_ctx_permission(ctx, STAFF)
             require(isinstance(body, dict) and {"conversation_id", "message"}.issubset(set(body)) and set(body).issubset({"conversation_id", "message", "staff_name"}), 400, "invalid_fields", "Các trường của yêu cầu không hợp lệ.")
             cid, msg = body["conversation_id"], body["message"]
-            staff_name = body.get("staff_name", "Mai Anh (Chuyên viên CSKH)")
-            with app.store.connection() as db:
-                row = db.execute("SELECT customer_id FROM conversations WHERE id=?", (cid,)).fetchone()
-            require(row is not None, 404, "conversation_not_found", "Không tìm thấy cuộc trò chuyện.")
-            res = app.store.staff_reply(row["customer_id"], cid, staff_name, msg)
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
+            staff_label = _actor_display_name(ctx)
+            row = _require_open_handoff_conversation(app, ctx, cid, denied_status=403)
+            res = app.store.staff_reply(row["customer_id"], cid, staff_label, msg, actor=actor)
             return (200, res)
         if path == "/api/staff/resolve":
-            app.require_permission(STAFF)
+            _require_ctx_permission(ctx, STAFF)
             require(isinstance(body, dict) and {"conversation_id"}.issubset(set(body)) and set(body).issubset({"conversation_id", "staff_name"}), 400, "invalid_fields", "Các trường của yêu cầu không hợp lệ.")
             cid = body["conversation_id"]
-            staff_name = body.get("staff_name", "Mai Anh (Chuyên viên CSKH)")
-            res = app.store.resolve_escalation(cid, staff_name)
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
+            staff_label = _actor_display_name(ctx)
+            _require_open_handoff_conversation(app, ctx, cid, denied_status=409)
+            res = app.store.resolve_escalation(cid, staff_label, actor=actor)
             return (200, res)
         if path == "/api/cancellation-proposals":
-            app.require_permission(CANCEL)
+            _require_ctx_permission(ctx, CANCEL)
             result = app.store.propose(customer, body)
             approval.drive(app, customer, result['proposal_id'])
             return (201, {**result, 'workflow_status': 'awaiting_confirmation'})
         if path == "/api/tools/execute":
-            app.require_permission(STAFF)
-            fields(body, {'tool_name', 'arguments'})
+            _require_ctx_permission(ctx, STAFF)
+            has_session_binding = (
+                (context is not None or binding is not None)
+                and bool(ctx.principal_id)
+                and bool(ctx.tenant_id)
+                and ctx.tenant_id != 'default'
+            )
+            require(
+                has_session_binding,
+                403,
+                'missing_session_binding',
+                'Đường gọi công cụ trực tiếp yêu cầu phiên xác thực gắn với người thực hiện và cửa hàng.',
+            )
+            app_tid = getattr(app, 'tenant_id', None)
+            if app_tid and app_tid != 'default':
+                require(
+                    ctx.tenant_id == app_tid,
+                    403,
+                    'tenant_scope_denied',
+                    'Ngữ cảnh cửa hàng không khớp với phiên làm việc.',
+                )
+            require(
+                isinstance(body, dict)
+                and {'tool_name', 'arguments', 'conversation_id'}.issubset(set(body))
+                and set(body).issubset({'tool_name', 'arguments', 'conversation_id'}),
+                403,
+                'missing_object_binding',
+                'Đường gọi công cụ trực tiếp yêu cầu gắn với cuộc trò chuyện/ca hỗ trợ cụ thể.',
+            )
+            cid = body['conversation_id']
+            require(
+                isinstance(cid, str) and bool(re.fullmatch(r'[a-f0-9-]{36}', cid)),
+                400,
+                'invalid_conversation',
+                'Mã cuộc trò chuyện không hợp lệ.',
+            )
             from agent_protocol import validate_tool
             from retailops_tools import BoundTools
             tool_name, arguments = body['tool_name'], body['arguments']
+            require(
+                isinstance(tool_name, str) and tool_name in ALLOWED_DIRECT_TOOLS,
+                403,
+                'tool_not_allowed',
+                'Công cụ này không được phép gọi trực tiếp qua đường vận hành.',
+            )
             validate_tool(tool_name, arguments)
-            snapshot = {'order_id': None, 'product_id': None}
-            bound = BoundTools(app.store, app.catalog, customer, snapshot, {'name': 'inspector', 'provider': 'inspector'})
+            with app.store.connection() as db:
+                conv = db.execute(
+                    'SELECT id, customer_id, order_id, product_id, expires_at FROM conversations WHERE id=?',
+                    (cid,),
+                ).fetchone()
+                require(conv is not None, 404, 'conversation_not_found', 'Không tìm thấy cuộc trò chuyện trong cửa hàng hiện tại.')
+                handoff = db.execute(
+                    "SELECT 1 FROM conversation_feedback WHERE conversation_id=? "
+                    "AND feedback_type='human_handoff' AND COALESCE(reason_code, '')!='resolved' LIMIT 1",
+                    (cid,),
+                ).fetchone()
+                require(
+                    handoff is not None,
+                    403,
+                    'case_not_escalated',
+                    'Chỉ được tra cứu công cụ trực tiếp trên ca hỗ trợ đang có yêu cầu chuyển tiếp chưa đóng.',
+                )
+                if isinstance(arguments, dict) and arguments.get('order_id'):
+                    ord_row = db.execute(
+                        'SELECT customer_id FROM orders WHERE id=?',
+                        (arguments['order_id'],),
+                    ).fetchone()
+                    require(
+                        ord_row is not None and ord_row['customer_id'] == conv['customer_id'],
+                        403,
+                        'object_scope_denied',
+                        'Đơn hàng không thuộc khách hàng của ca hỗ trợ đang gắn kết.',
+                    )
+            snapshot = {'order_id': conv['order_id'], 'product_id': conv['product_id']}
+            bound = BoundTools(
+                app.store,
+                app.catalog,
+                conv['customer_id'],
+                snapshot,
+                {'name': 'inspector', 'provider': 'inspector'},
+                can_cancel=False,
+                read_only=True,
+            )
             res = bound(tool_name, arguments)
-            return (200, {'tool_name': tool_name, 'arguments': arguments, 'result': res})
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
+            app.store.event(
+                conv['customer_id'],
+                'staff_tool_executed',
+                conv['order_id'],
+                tool_name=tool_name,
+                conversation_id=cid,
+                actor=actor,
+            )
+            return (200, {'tool_name': tool_name, 'arguments': arguments, 'conversation_id': cid, 'result': res})
         if path in ("/api/manager/products", "/api/manager/products/create"):
-            app.require_permission(MANAGER)
+            _require_ctx_permission(ctx, MANAGER)
             require(isinstance(body, dict), 400, "invalid_body", "Dữ liệu sản phẩm không hợp lệ.")
             pid = str(body.get("id", "")).strip().upper()
             name = str(body.get("name", "")).strip()
@@ -480,17 +669,17 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 "stock": stock, "warranty_days": warranty_days, "material": body.get("material"),
                 "care": body.get("care"), "is_system_immutable": False
             }
-            actor = _extract_actor(app, customer, binding)
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
             app.catalog.add_product(product, actor=actor)
             with app.store.connection(write=True) as db:
-                app.store.log(db, customer, "product_created_by_manager", pid, name=name, price=price)
+                app.store.log(db, customer, "product_created_by_manager", pid, name=name, price=price, actor=actor)
             if hasattr(app, 'tool_cache'):
                 app.tool_cache.invalidate_product(pid)
             if hasattr(app, 'semantic_cache') and app.semantic_cache:
                 app.semantic_cache.clear()
             return (201, {"status": "ok", "product": product, "message": f"Đã thêm sản phẩm {name} ({pid}) vào catalog."})
         if path == "/api/manager/products/update":
-            app.require_permission(MANAGER)
+            _require_ctx_permission(ctx, MANAGER)
             require(isinstance(body, dict) and "id" in body, 400, "invalid_body", "Thiếu mã sản phẩm.")
             pid = str(body["id"]).strip().upper()
             if pid not in app.catalog.products:
@@ -535,20 +724,20 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             for k in ("material", "care"):
                 if k in body:
                     updates[k] = body[k]
-            actor = _extract_actor(app, customer, binding)
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
             product = app.catalog.update_product(pid, updates, actor=actor)
             with app.store.connection(write=True) as db:
-                app.store.log(db, customer, "product_updated_by_manager", pid, updates=updates)
+                app.store.log(db, customer, "product_updated_by_manager", pid, updates=updates, actor=actor)
             if hasattr(app, 'tool_cache'):
                 app.tool_cache.invalidate_product(pid)
             if hasattr(app, 'semantic_cache') and app.semantic_cache:
                 app.semantic_cache.clear()
             return (200, {"status": "ok", "product": product, "message": f"Đã cập nhật sản phẩm {pid}."})
         if path == "/api/manager/products/delete":
-            app.require_permission(MANAGER)
+            _require_ctx_permission(ctx, MANAGER)
             require(isinstance(body, dict) and "id" in body, 400, "invalid_body", "Thiếu mã sản phẩm.")
             pid = str(body["id"]).strip().upper()
-            actor = _extract_actor(app, customer, binding)
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
             try:
                 removed = app.catalog.delete_product(pid, actor=actor)
             except ValueError as exc:
@@ -559,17 +748,18 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             except KeyError as exc:
                 raise ApiError(404, "product_not_found", str(exc))
             with app.store.connection(write=True) as db:
-                app.store.log(db, customer, "product_deleted_by_manager", pid)
+                app.store.log(db, customer, "product_deleted_by_manager", pid, actor=actor)
             if hasattr(app, 'tool_cache'):
                 app.tool_cache.invalidate_product(pid)
             if hasattr(app, 'semantic_cache') and app.semantic_cache:
                 app.semantic_cache.clear()
             return (200, {"status": "ok", "removed": removed, "message": f"Đã xóa sản phẩm {pid}."})
         if path == "/api/manager/orders/update-status":
-            app.require_permission(MANAGER)
+            _require_ctx_permission(ctx, MANAGER)
             require(isinstance(body, dict) and {"order_id", "status"}.issubset(set(body)), 400, "invalid_body", "Thiếu order_id hoặc status.")
             oid, new_status = body["order_id"], body["status"]
             require(new_status in ('pending', 'delivered', 'cancelled'), 400, "invalid_status", "Trạng thái phải là pending, delivered hoặc cancelled.")
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
             with app.store.connection(write=True) as db:
                 row = db.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone()
                 require(row is not None, 404, "order_not_found", f"Không tìm thấy đơn hàng {oid}.")
@@ -578,18 +768,18 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                     return (200, {"status": "ok", "order_id": oid, "new_status": new_status, "message": f"Đơn hàng {oid} đã ở trạng thái {new_status}."})
                 require(cur_status == 'pending', 400, "invalid_transition", f"Không thể chuyển trạng thái từ '{cur_status}' sang '{new_status}'. Đơn đã vào trạng thái kết thúc.")
                 db.execute("UPDATE orders SET status=?, version=version+1 WHERE id=?", (new_status, oid))
-                app.store.log(db, row["customer_id"], "order_status_updated_by_manager", oid, new_status=new_status, previous_status=cur_status)
+                app.store.log(db, row["customer_id"], "order_status_updated_by_manager", oid, new_status=new_status, previous_status=cur_status, actor=actor)
             if hasattr(app, 'tool_cache'):
-                tenant_id = getattr(binding, 'tenant_id', None) or getattr(app, 'tenant_id', 'default')
+                tenant_id = ctx.tenant_id or getattr(app, 'tenant_id', 'default')
                 app.tool_cache.invalidate(tenant_id=tenant_id, customer=row["customer_id"])
             return (200, {"status": "ok", "order_id": oid, "new_status": new_status, "message": f"Đã cập nhật trạng thái đơn {oid} sang {new_status}."})
         m = re.fullmatch(r"/api/cancellation-proposals/([a-f0-9-]{36})/(confirm|dismiss)", path)
         if m:
-            app.require_permission(CANCEL)
+            _require_ctx_permission(ctx, CANCEL)
             if m[2] == "confirm":
                 res = approval.confirm(app, customer, m[1], body, idempotency_key)
                 if hasattr(app, 'tool_cache'):
-                    tenant_id = getattr(binding, 'tenant_id', None) or getattr(app, 'tenant_id', 'default')
+                    tenant_id = ctx.tenant_id or getattr(app, 'tenant_id', 'default')
                     app.tool_cache.invalidate(tenant_id=tenant_id, customer=customer)
                 return (200, res)
             fields(body, set())

@@ -29,7 +29,7 @@ from retailops.identity.persistent import PersistentSessions
 from retailops.identity.postgres import PostgresSessions
 from retailops.identity.reconcile import get_reconciliation_status, reconcile_collision
 from retailops.storage.import_sqlite import import_snapshot
-from retailops.storage.pg_repositories import PostgresBusinessStore, PostgresIdentityStore
+from retailops.storage.pg_repositories import PostgresBusinessStore, PostgresIdentityStore, migrate_postgres_identity_v5
 from retailops.storage.postgres import BUSINESS_SCHEMA_CURRENT, IDENTITY_SCHEMA, tenant_schema, transaction
 from scripts.postgres_test_guard import require_disposable_postgres_test_target
 
@@ -66,7 +66,7 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         self.alice = self.member('alice', 'shop-a', 'C-001')
         self.bob = self.member('bob', 'shop-a', 'C-002')
         self.other = self.member('other', 'shop-b', 'C-001')
-        self.viewer = self.member('viewer', 'shop-a', 'C-001', 'viewer')
+        self.staff = self.member('staff', 'shop-a', 'C-001', 'staff')
 
     def restart(self):
         self.sessions = PostgresSessions(DSN, api_infer=fixtures.ModelFixture(), api_daily_limit=1)
@@ -358,12 +358,13 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
                 "ON CONFLICT DO NOTHING"
             )
 
-        # 3. Initialize / Upgrade PostgresIdentityStore to v3
+        # 3. Explicitly run operator v5 migration, then open PostgresIdentityStore
+        migrate_postgres_identity_v5(DSN, preflight_confirmed=True, backup_confirmed=True)
         pg_istore = PostgresIdentityStore(DSN, create=False)
 
-        # 4. Verify v4 upgrade state
+        # 4. Verify v5 upgrade state
         with transaction(DSN) as db:
-            self.assertEqual(db.execute("SELECT version FROM retailops_schema WHERE component='identity'").fetchone()['version'], 4)
+            self.assertEqual(db.execute("SELECT version FROM retailops_schema WHERE component='identity'").fetchone()['version'], 5)
 
             # Check unresolved_collisions table
             unres = db.execute("SELECT * FROM unresolved_collisions WHERE tenant_id='shop-a' AND customer_id='CG-pg-shared'").fetchone()
@@ -477,13 +478,14 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
                 (staff_session_hash, time.time() + 3600)
             )
 
-        # Trigger PostgresIdentityStore startup with create=False on the existing v2 schema -> executes v2->v3 migration
+        # Explicitly run operator v5 migration on existing v2 schema, then open PostgresIdentityStore
+        migrate_postgres_identity_v5(DSN, preflight_confirmed=True, backup_confirmed=True)
         pg_istore = PostgresIdentityStore(DSN, create=False)
 
         # Verify post-migration state:
         with transaction(DSN) as db:
-            # 1. Version upgraded to 4
-            self.assertEqual(db.execute("SELECT version FROM retailops_schema WHERE component='identity'").fetchone()['version'], 4)
+            # 1. Version upgraded to 5
+            self.assertEqual(db.execute("SELECT version FROM retailops_schema WHERE component='identity'").fetchone()['version'], 5)
 
             # 2. Collision recorded in newly created unresolved_collisions table
             unres = db.execute(
@@ -530,22 +532,23 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         self.assertEqual(ctx_goog.exception.status, 503)
         self.assertEqual(ctx_goog.exception.code, "collision_unresolved")
 
-        # 9. Verify subsequent startup does NOT fail and leaves version at 4
+        # 9. Verify subsequent startup does NOT fail and leaves version at 5
         pg_istore_reopened = PostgresIdentityStore(DSN, create=False)
         with transaction(DSN) as db:
-            self.assertEqual(db.execute("SELECT version FROM retailops_schema WHERE component='identity'").fetchone()['version'], 4)
+            self.assertEqual(db.execute("SELECT version FROM retailops_schema WHERE component='identity'").fetchone()['version'], 5)
 
     def test_identity_v3_to_v4_migration_creates_journal_on_postgres(self):
         """P1 Integration: Existing v3 PostgreSQL schema lacking reconciliation_journal table
-        auto-upgrades to v4 upon startup and provides working reconciliation."""
+        auto-upgrades to v5 upon startup and provides working reconciliation."""
         with transaction(DSN, write=True) as db:
             db.execute("DROP TABLE IF EXISTS reconciliation_journal CASCADE")
             db.execute("UPDATE retailops_schema SET version = 3 WHERE component = 'identity'")
 
-        # Startup auto-upgrades to v4 and creates reconciliation_journal
+        # Explicit operator v5 migration creates reconciliation_journal, then startup opens cleanly
+        migrate_postgres_identity_v5(DSN, preflight_confirmed=True, backup_confirmed=True)
         pg_istore = PostgresIdentityStore(DSN, create=False)
         with transaction(DSN) as db:
-            self.assertEqual(db.execute("SELECT version FROM retailops_schema WHERE component='identity'").fetchone()['version'], 4)
+            self.assertEqual(db.execute("SELECT version FROM retailops_schema WHERE component='identity'").fetchone()['version'], 5)
             has_journal = db.execute(
                 "SELECT 1 FROM information_schema.tables WHERE table_schema='retailops_identity' AND table_name='reconciliation_journal'"
             ).fetchone()
@@ -591,7 +594,8 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
                 (now + 3600,)
             )
 
-        # Startup auto-upgrades from v1 to v4:
+        # Explicit operator v5 migration upgrades from v1 to v5:
+        migrate_postgres_identity_v5(DSN, preflight_confirmed=True, backup_confirmed=True)
         pg_istore = PostgresIdentityStore(DSN, create=False)
 
         # 1. Collision must be detected and stored in unresolved_collisions
@@ -1804,11 +1808,11 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
 
         # 3. ADM1..ADM6 on PostgresSessions + PublicWeb
         mgr_a = self.member('mgr_a_p5e', 'shop-a', 'C-002', 'manager')
-        padmin = self.member('padmin_p5e', 'shop-a', 'C-003', 'platform_admin')
+        with self.assertRaises(ApiError):
+            self.member('padmin_p5e', 'shop-a', 'C-003', 'platform_admin')
         cookie_alice = self.login(self.alice)
         cookie_other = self.login(self.other)
         cookie_mgr_a = self.login(mgr_a)
-        cookie_padmin = self.login(padmin)
 
         # Unauthenticated -> 401
         code_unauth, _, _ = self.request('/api/admin/accounts')
@@ -1836,20 +1840,11 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         code_cross, _, _ = self.request('/api/admin/accounts', cookie=cookie_mgr_a, QUERY_STRING='tenant_id=shop-b')
         self.assertEqual(code_cross, 403)
 
-        # Platform admin requires explicit tenant_id
-        code_pa_missing, body_pa_missing, _ = self.request('/api/admin/accounts', cookie=cookie_padmin)
-        self.assertEqual(code_pa_missing, 400)
-        self.assertEqual(body_pa_missing['error'], 'missing_tenant_id')
-
-        code_pa_b, body_pa_b, _ = self.request('/api/admin/accounts', cookie=cookie_padmin, QUERY_STRING='tenant_id=shop-b')
-        self.assertEqual(code_pa_b, 200)
-        self.assertEqual(body_pa_b['tenant_id'], 'shop-b')
-
-        # ADM3/R4: Platform admin cross-tenant mutation with mismatched tenant_id is rejected with 409 tenant_scope_mismatch
+        # ADM3/R4: Manager mutation with mismatched tenant_id body is rejected with 409 tenant_scope_mismatch
         code_mismatch, body_mismatch, _ = self.request(
             f'/api/admin/accounts/{self.alice[0]}/suspend',
             {'reason': 'Mismatched tenant scope on PG', 'tenant_id': 'shop-b', 'correlation_id': 'pg-corr-mismatch-1'},
-            cookie_padmin,
+            cookie_mgr_a,
         )
         self.assertEqual(code_mismatch, 409)
         self.assertEqual(body_mismatch['error'], 'tenant_scope_mismatch')

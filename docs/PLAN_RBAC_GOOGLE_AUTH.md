@@ -1,5 +1,7 @@
 # Kế hoạch Tích hợp Google OAuth 2.0 (SSO) & Phân quyền Giao diện Đa Vai trò (Role-Based UI Isolation)
 
+> **Runtime correction:** this document is a historical planning/source-snapshot record, not the current authorization contract. The target roles are `customer`, `staff`, and `manager`; Viewer is legacy and fail-closed; `opsadmin` is a separate Ops Admin Console login; `platform_admin` is legacy technical debt to retire gradually. For current policy and blocked readiness, see [Phase R1](phase_role_aware_ops/README.md), [owner decision delta](phase_role_aware_ops/W0_OWNER_DECISION_DELTA_2026-10-29.md), and [W0 register](phase_role_aware_ops/W0_BASELINE_AND_DECISION_REGISTER_2026-10-27.md). Do not treat historical role matrices, `DEFAULT_ROLE`, or login mapping examples below as current runtime behavior.
+
 > **Trạng thái:** IMPLEMENTED & ACTIVE (Core Code & UI Hoàn Tất; Cấu hình Redirect URI phụ thuộc Runtime EC2)
 > **Mức độ minh chứng (Evidence):** L1 Automated Tests (`test_public_session.js`, OAuth E2E) · L3 Live Deployed (Commit `281e5b6`)
 > **Audit basis / Documentation baseline reviewed:** `b93eb5a` · **Application verified:** `d3ca3a6`
@@ -23,7 +25,7 @@
 
 ---
 
-## 2. Mô hình Ma trận Phân quyền 4 Vai trò (RBAC Matrix)
+## 2. Historical RBAC matrix (snapshot 2026-09-21; not the target role taxonomy)
 
 ```mermaid
 flowchart TD
@@ -40,7 +42,9 @@ flowchart TD
 
 ### Bảng Ma trận Quyền hạn Chi tiết (RBAC Matrix)
 
-Hệ thống phân biệt rõ 3 tầng thông tin: **(1) Trạng thái hiển thị giao diện UI**, **(2) Quyền API được cấp (`ROLE_PERMISSIONS`)**, và **(3) Phạm vi sở hữu dữ liệu (`store.owned()`)**:
+> **Historical snapshot:** this matrix preserves the earlier source/planning view for traceability. It is superseded for target roles, approval boundaries and Admin Console separation by [Phase R1](phase_role_aware_ops/README.md). Do not treat its rows as current endpoint authorization without source-ref verification.
+
+Bảng dưới giữ nguyên role behavior trong snapshot cũ để tránh xóa evidence lịch sử. Nó không phải permission spec cho R1; target role matrix hiện hành được liên kết ngay phía trên.
 
 | Chức năng / Thao tác | Khách hàng (`customer`) | Khách chỉ xem (`viewer`) | Nhân viên CSKH (`staff`) | Quản lý Shop (`manager`) | Quản trị Kỹ thuật (`opsadmin`)* |
 | :--- | :---: | :---: | :---: | :---: | :---: |
@@ -60,6 +64,8 @@ Hệ thống phân biệt rõ 3 tầng thông tin: **(1) Trạng thái hiển th
 ---
 
 ## 3. Thiết kế Kỹ thuật: Google OAuth 2.0 (SSO)
+
+> **Historical roadmap draft:** the OAuth/role-mapping design below is retained for historical planning. Reconcile `DEFAULT_ROLE`, allowlists, DB membership and role-update behavior with the R1 contract before implementation; do not provision/auto-map Viewer or equate `platform_admin` with `opsadmin`.
 
 ### 3.1. Luồng Xác thực (Authentication Sequence)
 

@@ -1,4 +1,5 @@
 """Explicit PostgreSQL DDL and staged business migrations."""
+from retailops.core import ApiError
 from retailops.storage.postgres import (BUSINESS_SCHEMA_CURRENT, IDENTITY_SCHEMA,
                                         IDENTITY_SCHEMA_CURRENT, assert_schema, valid_schema)
 
@@ -79,8 +80,10 @@ IDENTITY_DDL = [
     'CREATE TABLE principals (id TEXT PRIMARY KEY, name TEXT NOT NULL)',
     '''CREATE TABLE memberships (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
         principal_id TEXT NOT NULL REFERENCES principals(id), customer_id TEXT NOT NULL,
-        role TEXT NOT NULL CHECK(role IN ('customer','viewer','staff','manager','platform_admin')), active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
-        auth_version INTEGER NOT NULL DEFAULT 1, UNIQUE(tenant_id,principal_id))''',
+        role TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+        auth_version INTEGER NOT NULL DEFAULT 1, disabled_reason TEXT,
+        CONSTRAINT memberships_role_check CHECK(role IN ('customer','staff','manager') OR (role IN ('viewer','platform_admin') AND active = 0)),
+        UNIQUE(tenant_id,principal_id))''',
     '''CREATE TABLE credentials (hash TEXT PRIMARY KEY, membership_id TEXT NOT NULL REFERENCES memberships(id),
         created_at DOUBLE PRECISION NOT NULL)''',
     '''CREATE TABLE sessions (id TEXT PRIMARY KEY, membership_id TEXT NOT NULL REFERENCES memberships(id),
@@ -220,7 +223,7 @@ def initialize_cache(db):
         db.raw.execute(statement)
 
 
-def initialize(db, schema, component):
+def initialize(db, schema, component, *, allow_identity_v5_upgrade=False):
     from psycopg import sql
     valid_schema(schema)
     if (schema == IDENTITY_SCHEMA) != (component == 'identity'):
@@ -231,6 +234,15 @@ def initialize(db, schema, component):
         if not row or row['component'] != component:
             raise ValueError('Unsupported PostgreSQL schema version or component.')
         if component == 'identity':
+            if row['version'] not in (1, 2, 3, 4, 5):
+                raise ValueError('Unsupported PostgreSQL schema version or component.')
+            if row['version'] < IDENTITY_SCHEMA_CURRENT and not allow_identity_v5_upgrade:
+                raise ApiError(
+                    503,
+                    'identity_migration_required',
+                    f"Kho dữ liệu identity PostgreSQL đang ở schema v{row['version']}; khởi động bị chặn fail-closed. "
+                    "Hãy chạy lệnh operator identity migrate-v5 với --confirm-preflight --confirm-backup.",
+                )
             db.raw.execute(sql.SQL('SET LOCAL search_path TO {}, pg_catalog').format(sql.Identifier(schema)))
             if row['version'] == 1:
                 for statement in (
@@ -283,8 +295,8 @@ def initialize(db, schema, component):
                     'ALTER TABLE reconciliation_journal ADD COLUMN IF NOT EXISTS plan_hash TEXT',
                 ):
                     db.raw.execute(statement)
-                db.execute("UPDATE retailops_schema SET version=? WHERE component='identity'", (IDENTITY_SCHEMA_CURRENT,))
-                row = {'component': 'identity', 'version': IDENTITY_SCHEMA_CURRENT}
+                db.execute("UPDATE retailops_schema SET version=4 WHERE component='identity'")
+                row = {'component': 'identity', 'version': 4}
             if row['version'] == 2:
                 for statement in (
                     '''CREATE TABLE IF NOT EXISTS unresolved_collisions (
@@ -328,8 +340,8 @@ def initialize(db, schema, component):
                     'ALTER TABLE reconciliation_journal ADD COLUMN IF NOT EXISTS plan_hash TEXT',
                 ):
                     db.raw.execute(statement)
-                db.execute("UPDATE retailops_schema SET version=? WHERE component='identity'", (IDENTITY_SCHEMA_CURRENT,))
-                row = {'component': 'identity', 'version': IDENTITY_SCHEMA_CURRENT}
+                db.execute("UPDATE retailops_schema SET version=4 WHERE component='identity'")
+                row = {'component': 'identity', 'version': 4}
             if row['version'] == 3:
                 for statement in (
                     '''CREATE TABLE IF NOT EXISTS reconciliation_journal (
@@ -344,6 +356,30 @@ def initialize(db, schema, component):
                         updated_at DOUBLE PRECISION NOT NULL)''',
                     'CREATE INDEX IF NOT EXISTS idx_reconciliation_journal_tenant ON reconciliation_journal(tenant_id, colliding_customer_id)',
                     'ALTER TABLE reconciliation_journal ADD COLUMN IF NOT EXISTS plan_hash TEXT',
+                ):
+                    db.raw.execute(statement)
+                db.execute("UPDATE retailops_schema SET version=4 WHERE component='identity'")
+                row = {'component': 'identity', 'version': 4}
+            if row['version'] == 4:
+                for statement in (
+                    'ALTER TABLE memberships ADD COLUMN IF NOT EXISTS disabled_reason TEXT',
+                    '''DELETE FROM sessions WHERE membership_id IN (
+                           SELECT id FROM memberships WHERE role IN ('viewer', 'platform_admin')
+                       )''',
+                    '''INSERT INTO identity_events (created_at, kind, tenant_id, membership_id)
+                       SELECT extract(epoch from now()), 'legacy_role_disabled', tenant_id, id
+                       FROM memberships
+                       WHERE role IN ('viewer', 'platform_admin')
+                         AND (active <> 0 OR disabled_reason IS NULL)''',
+                    '''UPDATE memberships
+                       SET active = 0,
+                           disabled_reason = COALESCE(disabled_reason, 'retired_legacy_role_r1_w1'),
+                           auth_version = auth_version + 1
+                       WHERE role IN ('viewer', 'platform_admin')
+                         AND (active <> 0 OR disabled_reason IS NULL)''',
+                    'ALTER TABLE memberships DROP CONSTRAINT IF EXISTS memberships_role_check',
+                    '''ALTER TABLE memberships ADD CONSTRAINT memberships_role_check
+                       CHECK (role IN ('customer', 'staff', 'manager') OR (role IN ('viewer', 'platform_admin') AND active = 0))''',
                 ):
                     db.raw.execute(statement)
                 db.execute("UPDATE retailops_schema SET version=? WHERE component='identity'", (IDENTITY_SCHEMA_CURRENT,))

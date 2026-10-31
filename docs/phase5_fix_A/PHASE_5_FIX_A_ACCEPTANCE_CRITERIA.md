@@ -1,6 +1,8 @@
 # Phase 5 Fix A — Acceptance Criteria
 
-**Status:** CODE & REGRESSION DELIVERED (`FIXA-UI1..UI3`, `FIXA-DATA1..DATA4`, `FIXA-DOC1` PASS offline; `FIXA-CI1..CI2`, `FIXA-UI4`, `FIXA-DEPLOY1` tracked through PR CI & merge deploy; `FIXA-DATA5` / `FIXA-DEPLOY2` live EC2 execution **BLOCKED under [Phase 5 Fix B](../phase5_fix_B/README.md)** — retired Fix A runbook commands are `DO NOT RUN / SUPERSEDED`). Đây là phase riêng cho hai vấn đề manager UI và order demo; không sửa 14 tiêu chí P5-E hoặc 17 tiêu chí P5-DM. Review: [PHASE_5_FIX_A_REVIEW_2026-10-20.md](PHASE_5_FIX_A_REVIEW_2026-10-20.md). Evidence: [PHASE_5_FIX_A_EVIDENCE.md](PHASE_5_FIX_A_EVIDENCE.md).
+> **Historical pre-merge boundary (added 2026-10-30, docs-only):** the status below records the pre-merge Fix A routing from 2026-10-24. `FIXA-DATA5` / `FIXA-DEPLOY2` were then routed to the Fix B operational packet; the later dated [PR #45 / cleanup record](../04_OPERATIONS/ORDER_DATA_CLEANUP_2026-10-24.md) records the merge and targeted cleanup, and the [PR #46 remediation/deploy record](../phase5/DEMO_ORDER_SEEDING_REMEDIATION_HANDOFF_2026-10-24.md) records merge/deploy via run `40089312937`. No fresh runtime check is claimed here, and retired Fix A runbook commands remain `DO NOT RUN / SUPERSEDED`.
+
+**Historical pre-merge status:** CODE & REGRESSION DELIVERED (`FIXA-UI1..UI3`, `FIXA-DATA1..DATA4`, `FIXA-DOC1` PASS offline; `FIXA-CI1..CI2`, `FIXA-UI4`, `FIXA-DEPLOY1` tracked through PR CI & merge deploy; `FIXA-DATA5` / `FIXA-DEPLOY2` live EC2 execution was historically routed under [Phase 5 Fix B](../phase5_fix_B/README.md)). Đây là phase riêng cho hai vấn đề manager UI và order demo; không sửa 14 tiêu chí P5-E hoặc 17 tiêu chí P5-DM. Review: [PHASE_5_FIX_A_REVIEW_2026-10-20.md](PHASE_5_FIX_A_REVIEW_2026-10-20.md). Evidence: [PHASE_5_FIX_A_EVIDENCE.md](PHASE_5_FIX_A_EVIDENCE.md).
 
 ## A. Manager home navigation
 

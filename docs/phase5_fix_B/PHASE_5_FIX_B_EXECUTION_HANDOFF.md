@@ -1,12 +1,14 @@
 # Phase 5 Fix B — Controlled handoff
 
+> **Historical pre-merge boundary:** this handoff records the 2026-10-24 pre-merge Fix B PR/CI gate on draft PR #45 (R6 candidate `1d09e7d330752d19bb8b4f9dab32e68ddffe53bb`). Its "chưa merge, chưa deploy" and BLOCKED/PENDING gate wording describes that snapshot only, not the current project state. The later dated project record reports PR #45 merged to `main` at `ae0a2e417baf0bc8011bdb62fc9cf3f7741aac36`, the targeted legacy-row removal recorded from owner-pasted SSM/psql output ([cleanup record](../04_OPERATIONS/ORDER_DATA_CLEANUP_2026-10-24.md)), and PR #46 merged at `146401f1831b81d5af4a110f6ddc06e50465b9a8` and deployed via run `40089312937` ([remediation/deploy record](../phase5/DEMO_ORDER_SEEDING_REMEDIATION_HANDOFF_2026-10-24.md)). Do not replay this handoff as a live-operation authorization; no fresh runtime, database or GitHub check is claimed by this note.
+
 ## Historical PR/CI prompt — consumed on PR #45 (DO NOT REPLAY)
 
 ```text
 Thực hiện gate PR/CI cho Phase 5 Fix B theo handoff này và các tài liệu được liên kết. Independent review R5 ngày 2026-10-24 đã PASS trong phạm vi review tĩnh; đây là bước kiểm chứng CI, chưa phải merge/deploy hoặc cleanup live.
 
 1. Đọc README → PHASE_5_FIX_B_REVIEW_R5_2026-10-24.md → acceptance criteria → evidence → handoff trong docs/phase5_fix_B/.
-2. Dùng worktree hiện có C:\Users\HP\.codex\worktrees\fixb-readonly-dry-run\CSKH_ban_le trên baseline 83bee6c5c42d9996a3230208d30ec6e6f0c5de2e. Candidate hiện chưa commit; giữ toàn bộ thay đổi đã review, gồm các file untracked trong docs/phase5_fix_B/, scripts/postgres_test_guard.py và tests/test_postgres_test_guard.py. Giữ nguyên workspace chính D:\year_2026\Work_2026\agentic_AI\CSKH_ban_le, stash và các worktree khác. Không reset/clean/checkout đè hay áp dụng stash.
+2. Dùng worktree hiện có isolated Fix B worktree (machine path omitted) trên baseline 83bee6c5c42d9996a3230208d30ec6e6f0c5de2e. Candidate hiện chưa commit; giữ toàn bộ thay đổi đã review, gồm các file untracked trong docs/phase5_fix_B/, scripts/postgres_test_guard.py và tests/test_postgres_test_guard.py. Giữ nguyên workspace chính primary checkout (machine path omitted), stash và các worktree khác. Không reset/clean/checkout đè hay áp dụng stash.
 3. Kiểm tra diff khớp review R5; không mở rộng bug hunt. Tạo branch codex/phase5-fix-b-readonly-purge nếu chưa có, commit candidate đã review, push và tạo draft PR vào main để CI và Ops Console tự chạy. Nếu branch/PR đã tồn tại thì dùng đúng candidate và không tạo bản trùng. Ghi candidate head SHA, PR URL và tested merge SHA riêng biệt.
 4. Kiểm tra các required jobs: CI offline với PostgreSQL/pgvector thực, colab-python313, Ops Console postgres và các portable jobs. Offline/PostgreSQL jobs phải chạy các integration cases mới với 0 skipped liên quan. Portable skips do không có DB/khả năng OS phải ghi rõ; không gọi chúng là PostgreSQL PASS.
 5. Không chạy destructive PostgreSQL suites vào DSN bất kỳ: chỉ dùng disposable service của CI, qua shared guard và explicit opt-in đã scope đúng step. Không dùng production credentials, model API/paid tests hoặc benchmark.

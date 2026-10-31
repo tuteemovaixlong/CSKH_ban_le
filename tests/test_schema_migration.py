@@ -1,4 +1,5 @@
 """Migrate actual unversioned business records without resetting orders or replay."""
+from contextlib import closing
 import json
 import sqlite3
 import tempfile
@@ -19,7 +20,7 @@ class MigrationTests(unittest.TestCase):
 
     def test_unversioned_schema_preserves_orders_audit_conversation_and_confirm_replay(self):
         # Layout used before the versioned schema, including conversations without provider_id.
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db, db:
             db.executescript('''
                 CREATE TABLE orders(id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,name TEXT NOT NULL,
                     variant TEXT NOT NULL,amount INTEGER NOT NULL,status TEXT NOT NULL,
@@ -70,7 +71,7 @@ class MigrationTests(unittest.TestCase):
         from retailops.storage.import_sqlite import read_database, IDENTITY_TABLES
         path = self.path.with_name('identity.sqlite3')
         IdentityStore(path)
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             db.execute('DELETE FROM retailops_schema')
         with self.assertRaisesRegex(ValueError, 'identity v1'):
             read_database(path, 'identity', IDENTITY_TABLES)
@@ -81,7 +82,7 @@ class MigrationTests(unittest.TestCase):
             raise ValueError('Fixture migration failure')
         with patch('retailops.business.store.initialize_schema', side_effect=fail), self.assertRaises(ValueError):
             BusinessStore(self.path)
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db:
             self.assertEqual(db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall(), [])
         store = BusinessStore(self.path)
         self.assertEqual(store.orders('C-001'), [])

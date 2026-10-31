@@ -182,12 +182,12 @@ class RagChatPostgresTests(unittest.TestCase):
 
     def test_viewer_can_read_policy_but_cannot_mutate(self):
         self.replies()
-        self.app = Application(self.store, {}, self.model, role='viewer')
-        self.assertTrue(self.app.chat('C-001', self.body())['sources'])
-        self.model.replies = [response('', ('prepare_cancellation', {'order_id':'O-101'})), response('No write permission.')]
-        result = self.app.chat('C-001', self.body('Cancel O-101'))
-        self.assertEqual(result['action'], 'reply')
-        self.assertEqual(self.store.lookup('C-001','O-101')['status'], 'pending')
+        viewer_app = Application(self.store, {}, self.model, role='viewer')
+        with self.assertRaises(ApiError) as ctx:
+            viewer_app.chat('C-001', self.body())
+        self.assertEqual((ctx.exception.status, ctx.exception.code), (403, 'permission_denied'))
+        self.assertEqual(self.model.inputs, [])
+        self.assertEqual(self.store.lookup('C-001', 'O-101')['status'], 'pending')
 
     def test_model_cannot_supply_tenant_or_call_unlisted_mutation(self):
         def final(messages):
