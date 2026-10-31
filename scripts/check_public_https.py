@@ -160,8 +160,8 @@ def main():
             # Provision through the packaged operator CLI, then switch the same HTTPS stack.
             admin = base+['exec','-T','web','python','-m','retailops','identity']
             run(admin+['init-tenant','--tenant','ci-shop','--name','CI shop','--seed-demo'])
-            member = json.loads(run(admin+['create-member','--tenant','ci-shop','--principal','ci-viewer',
-                '--name','CI viewer','--customer','C-002','--role','viewer']))['membership_id']
+            member = json.loads(run(admin+['create-member','--tenant','ci-shop','--principal','ci-staff',
+                '--name','CI staff','--customer','C-002','--role','staff']))['membership_id']
             run(admin+['issue-credential','--membership',member,'--credential-file','/tmp/ci-account-code'])
             code = run(base+['exec','-T','web','cat','/tmp/ci-account-code']).strip()
             with (temp/'public.env').open('a') as config:
@@ -170,11 +170,11 @@ def main():
             assert request('/healthz')[1]['data_mode'] == 'persistent-demo'
             assert request('/api/login',{'token':INVITE})[0] == 401
             assert request('/api/login',{'token':code},jar='account')[0] == 200
-            assert request('/api/session',jar='account')[1]['role'] == 'viewer'
+            assert request('/api/session',jar='account')[1]['role'] == 'staff'
             assert request('/api/orders',jar='account')[1]['orders'][0]['id'] == 'O-202'
             assert request('/api/orders/O-101',jar='account')[0] == 404
-            assert request('/api/cancellation-proposals',{'order_id':'O-202','order_version':1,
-                'cancel_reason':'ordered_by_mistake'},jar='account')[0] == 403
+            # R1 W1 retired 'viewer'; role isolation is now proven by a manager-only endpoint denying staff.
+            assert request('/api/manager/events',jar='account')[0] == 403
             assert request('/api/logout',{},jar='account')[0] == 200
             run(base+['restart','web'])
             # Compose --wait handles readiness after the restart, without contacting a model.
