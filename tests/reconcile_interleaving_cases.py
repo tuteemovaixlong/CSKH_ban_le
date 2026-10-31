@@ -444,7 +444,8 @@ def run(case, sessions, tenant):
     case.assertEqual(status, 200)
     case.assertEqual([o['id'] for o in link_resp['orders']], ['O-ILV-LINK'])
 
-    # 4. P1.1d: Role non-customer (staff, manager, viewer) must not be blocked by customer unresolved collisions
+    # 4. P1.1d: Active non-customer roles (staff, manager) must not be blocked by customer unresolved collisions;
+    #    retired legacy viewer role remains disabled and cannot open sessions.
     staff_pid = 'p-ilv-staff-guard'
     staff_mid = 'm-ilv-staff-guard'
     staff_cid = 'CG-ilv-staff-collision'
@@ -467,10 +468,11 @@ def run(case, sessions, tenant):
             "VALUES (?, ?, ?, ?, 'manager', 1, 1)", (mgr_mid, tenant, mgr_pid, 'mgr-clean-cid')
         )
         db.execute(
-            'INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) '
-            "VALUES (?, ?, ?, ?, 'viewer', 1, 1)", (viewer_mid, tenant, viewer_pid, viewer_cid)
+            'INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version, disabled_reason) '
+            "VALUES (?, ?, ?, ?, 'viewer', 0, 2, 'retired_legacy_role_r1_w1')",
+            (viewer_mid, tenant, viewer_pid, viewer_cid)
         )
-        # Even if staff_cid or viewer_cid is in unresolved_collisions, staff and viewer are not role='customer'
+        # Even if staff_cid or viewer_cid is in unresolved_collisions, staff is not role='customer'
         db.execute(
             'INSERT INTO unresolved_collisions (tenant_id, customer_id, created_at) VALUES (?, ?, ?)',
             (tenant, staff_cid, time.time())
@@ -492,11 +494,9 @@ def run(case, sessions, tenant):
         case.assertEqual(binding.principal_id, mgr_pid)
         case.assertEqual(binding.application.role, 'manager')
 
-    viewer_token = sessions.control.create_session_for_membership(viewer_mid, 3600, 10)
-    viewer_cookie = f'{sessions.cookie_name}={viewer_token}'
-    with sessions.resolve(viewer_cookie) as binding:
-        case.assertEqual(binding.principal_id, viewer_pid)
-        case.assertEqual(binding.application.role, 'viewer')
+    with case.assertRaises(ApiError) as retired_err:
+        sessions.control.create_session_for_membership(viewer_mid, 3600, 10)
+    case.assertEqual((retired_err.exception.status, retired_err.exception.code), (401, 'unauthorized'))
 
     # 5. P1.1c: Any query failure during safety checks must fail-closed 503 for customer,
     #    while non-customer roles remain unaffected because they do not run the customer guard.
@@ -515,13 +515,11 @@ def run(case, sessions, tenant):
         case.assertEqual(query_resp.get('error'), 'collision_unresolved')
         case.assertNotIn('orders', query_resp)
 
-        # Staff, manager, and viewer sessions are unaffected by customer safety check query failures
+        # Staff and manager sessions are unaffected by customer safety check query failures
         with sessions.resolve(staff_cookie) as binding:
             case.assertEqual(binding.principal_id, staff_pid)
         with sessions.resolve(mgr_cookie) as binding:
             case.assertEqual(binding.principal_id, mgr_pid)
-        with sessions.resolve(viewer_cookie) as binding:
-            case.assertEqual(binding.principal_id, viewer_pid)
 
     def fail_link_lookup(statement, parameters=()):
         if 'FROM customer_links' in statement:

@@ -8,6 +8,7 @@ from agent_protocol import PROTOCOL
 from retailops.core import ApiError, ROOT, VERSION, require
 from retailops.http.routes import api_result
 from retailops.http.assets import ASSETS
+from retailops.identity.contracts import RequestContext
 
 class Server(ThreadingHTTPServer):
     daemon_threads = True
@@ -99,5 +100,20 @@ class Handler(BaseHTTPRequestHandler):
             size = int(lengths[0])
             require(0 < size <= 16384, 413, "body_too_large", "Yêu cầu quá lớn hoặc rỗng.")
             body = json.loads(self.rfile.read(size))
-        status, result = api_result(app, customer, self.command, path, body, self.headers.get("Idempotency-Key"))
+        request_context = RequestContext.from_app(
+            app,
+            customer,
+            session_scope="synthetic-demo",
+            data_mode=getattr(app, "data_mode", "synthetic-demo"),
+            authenticated_session=False,
+        )
+        status, result = api_result(
+            app,
+            customer,
+            self.command,
+            path,
+            body,
+            self.headers.get("Idempotency-Key"),
+            context=request_context,
+        )
         return self.reply(status, result)

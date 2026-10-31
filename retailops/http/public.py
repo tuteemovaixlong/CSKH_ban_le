@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 from agent_protocol import PROTOCOL
 from retailops.core import ApiError, ROOT, VERSION, fields, require
 from retailops.config import public_origin
-from retailops.identity.contracts import SessionBackend
+from retailops.identity.contracts import RequestContext, SessionBackend
 from retailops.http.routes import api_result
 from retailops.http.assets import ASSETS
 
@@ -160,11 +160,16 @@ class PublicWeb:
             except ValueError as e:
                 require(False, 502, 'oauth_exchange_failed', str(e), headers=err_headers)
 
-            role = resolve_role_from_email(user_info['email'])
             is_live = getattr(self.sessions, 'data_mode', None) in ('production', 'live')
             email_verified = bool(user_info.get('email_verified', False))
             if is_live and not email_verified:
                 require(False, 400, 'unverified_email', 'Tài khoản Google chưa được xác minh email.', headers=err_headers)
+            try:
+                role = resolve_role_from_email(user_info['email'], email_verified=email_verified)
+            except ApiError as role_err:
+                if err_headers and not role_err.headers:
+                    role_err.headers = list(err_headers)
+                raise
 
             secret = self.sessions.login_google(
                 user_info['email'],
@@ -200,29 +205,37 @@ class PublicWeb:
                 self.sessions.logout(cookie)
                 headers.append(('Set-Cookie', f'{self.sessions.cookie_name}=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0'))
                 return 200, {'logged_out': True}, mime, headers
-            app.current_binding = binding
+            meta = self.sessions.metadata()
+            request_context = RequestContext.from_binding(
+                binding,
+                session_scope=str(meta.get('session_scope', 'synthetic-demo')),
+                data_mode=getattr(self.sessions, 'data_mode', 'synthetic-demo'),
+            )
             status, result = api_result(
                 app,
-                binding.customer_id,
+                request_context.customer_id,
                 method,
                 path,
                 body,
                 env.get('HTTP_IDEMPOTENCY_KEY'),
                 binding=binding,
                 query=env.get('QUERY_STRING', ''),
+                context=request_context,
             )
             if path in ('/api/session', '/api/profile'):
-                result.update(self.sessions.metadata())
-                if binding.principal_id is not None:
+                result.update(meta)
+                if request_context.principal_id is not None:
                     result.update(
-                        tenant_id=binding.tenant_id,
-                        principal_id=binding.principal_id,
-                        name=binding.display_name or result.get('name'),
+                        tenant_id=request_context.tenant_id,
+                        principal_id=request_context.principal_id,
+                        name=(request_context.display_name or '').strip(),
                     )
-                elif binding.tenant_id is not None:
-                    result['tenant_id'] = binding.tenant_id
-                if getattr(binding, 'display_name', None):
-                    result['name'] = binding.display_name
-                result['customer_id'] = binding.customer_id
-                result['role'] = getattr(app, 'role', result.get('role', 'customer'))
+                else:
+                    if request_context.tenant_id is not None:
+                        result['tenant_id'] = request_context.tenant_id
+                    if request_context.display_name:
+                        result['name'] = request_context.display_name
+                result['customer_id'] = request_context.customer_id
+                result['role'] = request_context.role
+                result['permissions'] = sorted(request_context.permissions)
             return status, result, mime, headers

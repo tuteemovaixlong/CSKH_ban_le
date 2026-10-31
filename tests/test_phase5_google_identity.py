@@ -428,7 +428,8 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
         with self.sessions.control.connection(write=True) as id_db:
             id_db.execute("INSERT INTO principals VALUES (?,?)", (legacy_pid, "Target Legacy"))
             id_db.execute(
-                "INSERT INTO memberships VALUES ('m-leg-target', ?, ?, ?, 'customer', 1, 1)",
+                "INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) "
+                "VALUES ('m-leg-target', ?, ?, ?, 'customer', 1, 1)",
                 (tenant_id, legacy_pid, legacy_cid),
             )
         with bstore.connection(write=True) as bdb:

@@ -25,7 +25,11 @@ from retailops.guardrails.topic_filter import (
 from retailops.http.public import PublicWeb
 from retailops.http.routes import api_result
 from retailops.identity.persistent import AccountQuotaStore, PersistentSessions
-from retailops.identity.store import IdentityStore, upgrade_sqlite_memberships_role_constraint
+from retailops.identity.store import (
+    IdentityStore,
+    migrate_sqlite_identity_v5,
+    upgrade_sqlite_memberships_role_constraint,
+)
 from retailops_agent import AgentError
 from retailops_conversation import Catalog
 from retailops_tools import BoundTools
@@ -897,7 +901,9 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
         tok_mgr_a = _make_member("store-a", "prin_mgr_a", "Quản lý A", "C-002", "manager")
         tok_cust_b = _make_member("store-b", "prin_cust_b", "Khách B", "C-001", "customer")
         tok_mgr_b = _make_member("store-b", "prin_mgr_b", "Quản lý B", "C-002", "manager")
-        tok_padmin = _make_member("store-a", "prin_padmin", "Platform Admin", "C-003", "platform_admin")
+        with self.assertRaises(ApiError) as retired_err:
+            sessions.create_member("store-a", "prin_padmin", "Platform Admin", "C-003", role="platform_admin")
+        self.assertEqual((retired_err.exception.status, retired_err.exception.code), (400, "invalid_membership"))
 
         web = PublicWeb("https://shop.example.com", sessions)
         return sessions, web, {
@@ -905,7 +911,6 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
             "mgr_a": tok_mgr_a,
             "cust_b": tok_cust_b,
             "mgr_b": tok_mgr_b,
-            "padmin": tok_padmin,
         }
 
     def _login_cookie(self, sessions: PersistentSessions, token: str) -> str:
@@ -916,7 +921,7 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
         sessions, web, tokens = self._setup_multi_tenant_sessions()
         cookie_cust_a = self._login_cookie(sessions, tokens["cust_a"])
         cookie_mgr_a = self._login_cookie(sessions, tokens["mgr_a"])
-        cookie_padmin = self._login_cookie(sessions, tokens["padmin"])
+        cookie_mgr_b = self._login_cookie(sessions, tokens["mgr_b"])
 
         # 1. Unauthenticated request denied with 401
         code, data, _ = _wsgi_call(web, "GET", "/api/admin/accounts")
@@ -945,17 +950,11 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
         self.assertEqual(code_cross, 403)
         self.assertEqual(data_cross["error"], "permission_denied")
 
-        # Find Customer B's membership_id using Platform Admin with explicit tenant_id=store-b
-        code_pb, data_pb, _ = _wsgi_call(
-            web, "GET", "/api/admin/accounts", cookie=cookie_padmin, query_string="tenant_id=store-b"
-        )
+        # Find Customer B's membership_id using Store B's own Manager (same-tenant scope)
+        code_pb, data_pb, _ = _wsgi_call(web, "GET", "/api/admin/accounts", cookie=cookie_mgr_b)
         self.assertEqual(code_pb, 200)
+        self.assertEqual(data_pb["tenant_id"], "store-b")
         cust_b_mid = next(a["membership_id"] for a in data_pb["accounts"] if a["principal_id"] == "prin_cust_b")
-
-        # Platform Admin without explicit tenant_id fails with 400 missing_tenant_id
-        code_no_tid, data_no_tid, _ = _wsgi_call(web, "GET", "/api/admin/accounts", cookie=cookie_padmin)
-        self.assertEqual(code_no_tid, 400)
-        self.assertEqual(data_no_tid["error"], "missing_tenant_id")
 
         # Manager A cannot view or suspend Customer B's membership_id
         code_get_b, _, _ = _wsgi_call(web, "GET", f"/api/admin/accounts/{cust_b_mid}", cookie=cookie_mgr_a)
@@ -996,7 +995,6 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
         sessions, web, tokens = self._setup_multi_tenant_sessions()
         cookie_cust_a = self._login_cookie(sessions, tokens["cust_a"])
         cookie_mgr_a = self._login_cookie(sessions, tokens["mgr_a"])
-        cookie_padmin = self._login_cookie(sessions, tokens["padmin"])
 
         # Customer A can use session before suspension
         code_s, sess_data, _ = _wsgi_call(web, "GET", "/api/session", cookie=cookie_cust_a)
@@ -1024,7 +1022,7 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
             "POST",
             f"/api/admin/accounts/{cust_a_mid}/suspend",
             body={"reason": "Stale tenant selector", "tenant_id": "store-b", "correlation_id": "corr-mismatch-01"},
-            cookie=cookie_padmin,
+            cookie=cookie_mgr_a,
         )
         self.assertEqual(code_mismatch, 409)
         self.assertEqual(data_mismatch["error"], "tenant_scope_mismatch")
@@ -1350,9 +1348,12 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
             );
             INSERT INTO tenants VALUES ('store-legacy', 'Legacy Store', 'store_legacy', 1);
             INSERT INTO principals VALUES ('p_leg_1', 'Legacy Customer');
+            INSERT INTO principals VALUES ('p_leg_viewer', 'Legacy Viewer');
             INSERT INTO memberships VALUES ('m_leg_1', 'store-legacy', 'p_leg_1', 'C-001', 'customer', 1, 1);
+            INSERT INTO memberships VALUES ('m_leg_viewer', 'store-legacy', 'p_leg_viewer', 'C-002', 'viewer', 1, 1);
             INSERT INTO credentials VALUES ('hash_leg_1', 'm_leg_1', 1700000000.0);
             INSERT INTO sessions VALUES ('sess_leg_1', 'm_leg_1', 1, 1900000000.0);
+            INSERT INTO sessions VALUES ('sess_leg_viewer', 'm_leg_viewer', 1, 1900000000.0);
             INSERT INTO provider_daily_usage VALUES ('2026-10-18', 'api', 2);
             """
         )
@@ -1376,7 +1377,7 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
             upgrade_sqlite_memberships_role_constraint(legacy_db, fail_hook=_boom)
 
         # 1b. Post-DROP TABLE memberships rollback proof: inject an orphan session row so PRAGMA foreign_key_check
-        # fails AFTER DROP TABLE memberships + ALTER TABLE memberships_p5e_new RENAME TO memberships,
+        # fails AFTER DROP TABLE memberships + ALTER TABLE memberships_r1_v5_new RENAME TO memberships,
         # proving the entire destructive rebuild rolls back atomically!
         orphan_conn = sqlite3.connect(legacy_db)
         orphan_conn.execute("PRAGMA foreign_keys=OFF")
@@ -1395,34 +1396,53 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
         chk_conn = sqlite3.connect(legacy_db)
         chk_conn.execute("PRAGMA foreign_keys=ON")
         temp_tbl = chk_conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='memberships_p5e_new'"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='memberships_r1_v5_new'"
         ).fetchone()
         self.assertIsNone(temp_tbl)
         ddl_before = chk_conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='memberships'").fetchone()[0]
-        self.assertNotIn("platform_admin", ddl_before)
+        self.assertNotIn("disabled_reason", ddl_before)
         self.assertEqual(chk_conn.execute("PRAGMA foreign_key_check").fetchall(), [])
-        self.assertEqual(chk_conn.execute("SELECT COUNT(*) FROM memberships").fetchone()[0], 1)
+        self.assertEqual(chk_conn.execute("SELECT COUNT(*) FROM memberships").fetchone()[0], 2)
         self.assertEqual(chk_conn.execute("SELECT COUNT(*) FROM credentials").fetchone()[0], 1)
-        self.assertEqual(chk_conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0], 1)
+        self.assertEqual(chk_conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0], 2)
         chk_conn.close()
 
-        # 2. Opening IdentityStore on the legacy DB upgrades memberships cleanly to allow platform_admin
+        # 2. Explicit operator v5 migration followed by opening IdentityStore upgrades memberships cleanly to v5:
+        #    preserves historical viewer row as disabled (active=0, disabled_reason set, session revoked),
+        #    keeps customer active, and forbids creating active viewer/platform_admin rows.
+        with self.assertRaises(ApiError) as startup_blocked:
+            IdentityStore(legacy_db)
+        self.assertEqual((startup_blocked.exception.status, startup_blocked.exception.code), (503, "identity_migration_required"))
+        migrate_sqlite_identity_v5(legacy_db, preflight_confirmed=True, backup_confirmed=True)
         upgraded = IdentityStore(legacy_db)
-        padmin_mid = upgraded.create_membership("store-legacy", "p_leg_admin", "Platform Admin", "C-900", "platform_admin")
-        self.assertTrue(padmin_mid)
+        mgr_mid = upgraded.create_membership("store-legacy", "p_leg_mgr", "Store Manager", "C-900", "manager")
+        self.assertTrue(mgr_mid)
+        for retired_role in ("viewer", "platform_admin"):
+            with self.assertRaises(ApiError) as retired_ctx:
+                upgraded.create_membership("store-legacy", f"p_bad_{retired_role}", "Retired", "C-901", retired_role)
+            self.assertEqual(retired_ctx.exception.status, 400)
 
         verify_conn = sqlite3.connect(legacy_db)
         verify_conn.execute("PRAGMA foreign_keys=ON")
         self.assertEqual(verify_conn.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(verify_conn.execute("PRAGMA foreign_key_check").fetchall(), [])
         self.assertIsNone(
-            verify_conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='memberships_p5e_new'").fetchone()
+            verify_conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='memberships_r1_v5_new'").fetchone()
+        )
+        self.assertEqual(
+            verify_conn.execute("SELECT version FROM retailops_schema WHERE component='identity'").fetchone()[0],
+            5,
         )
         ddl_after = verify_conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='memberships'").fetchone()[0]
-        self.assertIn("platform_admin", ddl_after)
-        self.assertEqual(verify_conn.execute("SELECT COUNT(*) FROM memberships").fetchone()[0], 2)
+        self.assertIn("disabled_reason", ddl_after)
+        viewer_row = verify_conn.execute(
+            "SELECT role, active, auth_version, disabled_reason FROM memberships WHERE id='m_leg_viewer'"
+        ).fetchone()
+        self.assertEqual(tuple(viewer_row), ("viewer", 0, 2, "retired_legacy_role_r1_w1"))
+        self.assertEqual(verify_conn.execute("SELECT COUNT(*) FROM memberships").fetchone()[0], 3)
         self.assertEqual(verify_conn.execute("SELECT COUNT(*) FROM credentials WHERE membership_id='m_leg_1'").fetchone()[0], 1)
         self.assertEqual(verify_conn.execute("SELECT COUNT(*) FROM sessions WHERE membership_id='m_leg_1'").fetchone()[0], 1)
+        self.assertEqual(verify_conn.execute("SELECT COUNT(*) FROM sessions WHERE membership_id='m_leg_viewer'").fetchone()[0], 0)
         self.assertEqual(verify_conn.execute("SELECT attempts FROM provider_daily_usage WHERE day='2026-10-18'").fetchone()[0], 2)
         verify_conn.close()
 

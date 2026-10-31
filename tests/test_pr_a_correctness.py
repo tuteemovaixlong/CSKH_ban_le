@@ -925,7 +925,14 @@ class TestPrACorrectness(unittest.TestCase):
                     "VALUES ('O-COLLIDE-01', 'CG-7b9b7957', 'Áo khoác len', 'Nâu / M', 650000, 'pending', 1, 'P-101')"
                 )
 
-            # 3. Run migration with tenant_stores resolver
+            # 3. Run explicit operator v5 migration with tenant_stores resolver, then open store
+            from retailops.identity.store import migrate_sqlite_identity_v5
+            migrate_sqlite_identity_v5(
+                id_path,
+                preflight_confirmed=True,
+                backup_confirmed=True,
+                tenant_stores=lambda tid: bstore if tid == 'shop-t1' else None,
+            )
             istore = IdentityStore(id_path, tenant_stores=lambda tid: bstore if tid == 'shop-t1' else None)
 
             # Verify both memberships received distinct new cust_<uuid> IDs
@@ -966,8 +973,8 @@ class TestPrACorrectness(unittest.TestCase):
                 # Add another collision
                 id_db.execute("INSERT INTO principals VALUES ('p3', 'Charlie')")
                 id_db.execute("INSERT INTO principals VALUES ('p4', 'David')")
-                id_db.execute("INSERT INTO memberships VALUES ('m3', 'shop-t1', 'p3', 'CG-failtest', 'customer', 1, 1)")
-                id_db.execute("INSERT INTO memberships VALUES ('m4', 'shop-t1', 'p4', 'CG-failtest', 'customer', 1, 1)")
+                id_db.execute("INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) VALUES ('m3', 'shop-t1', 'p3', 'CG-failtest', 'customer', 1, 1)")
+                id_db.execute("INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) VALUES ('m4', 'shop-t1', 'p4', 'CG-failtest', 'customer', 1, 1)")
 
             # Faulty store that raises during migration
             class FaultyStore:
@@ -1009,8 +1016,11 @@ class TestPrACorrectness(unittest.TestCase):
             # Seed legacy principal, membership and order
             with sessions.control.connection(write=True) as id_db:
                 id_db.execute("INSERT INTO principals VALUES (?,?)", (legacy_pid, "Legacy User"))
-                id_db.execute("INSERT INTO memberships VALUES ('m-leg-01', 'shop-leg', ?, ?, 'customer', 1, 1)",
-                              (legacy_pid, legacy_cid))
+                id_db.execute(
+                    "INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) "
+                    "VALUES ('m-leg-01', 'shop-leg', ?, ?, 'customer', 1, 1)",
+                    (legacy_pid, legacy_cid),
+                )
 
             with bstore.connection(write=True) as bdb:
                 bstore.seed_catalog(bdb)
@@ -1072,7 +1082,7 @@ class TestPrACorrectness(unittest.TestCase):
         ddl_str = " ".join(IDENTITY_DDL)
         self.assertIn("CREATE TABLE external_identities", ddl_str)
         self.assertIn("CREATE TABLE customer_links", ddl_str)
-        self.assertEqual(IDENTITY_SCHEMA_CURRENT, 4)
+        self.assertEqual(IDENTITY_SCHEMA_CURRENT, 5)
 
         # Check import_sqlite includes both tables
         self.assertIn("external_identities", IDENTITY_TABLES)
@@ -1256,7 +1266,14 @@ class TestPrACorrectness(unittest.TestCase):
             finally:
                 id_db_raw.close()
 
-            # 5. Retry saga migration: clean restart must detect quarantine_CG-shared and finish migration idempotently
+            # 5. Retry saga migration: explicit operator v5 migration + clean restart must detect quarantine_CG-shared and finish migration idempotently
+            from retailops.identity.store import migrate_sqlite_identity_v5
+            migrate_sqlite_identity_v5(
+                id_path,
+                preflight_confirmed=True,
+                backup_confirmed=True,
+                tenant_stores=lambda tid: bstore if tid == 't1' else None,
+            )
             istore_clean = IdentityStore(id_path, tenant_stores=lambda tid: bstore if tid == 't1' else None)
 
             with istore_clean.connection() as id_db:
@@ -1480,6 +1497,13 @@ class TestPrACorrectness(unittest.TestCase):
                 db.close()
 
             # Business DB resolver returns None (simulating unmounted / unavailable DB)
+            from retailops.identity.store import migrate_sqlite_identity_v5
+            migrate_sqlite_identity_v5(
+                id_path,
+                preflight_confirmed=True,
+                backup_confirmed=True,
+                tenant_stores=lambda tid: None,
+            )
             istore = IdentityStore(id_path, tenant_stores=lambda tid: None)
 
             with istore.connection() as id_db:
@@ -1824,8 +1848,8 @@ class TestPrACorrectness(unittest.TestCase):
                 id_db.execute("INSERT INTO principals (id, name) VALUES ('p-g1', 'Guard 1')")
                 id_db.execute("INSERT INTO principals (id, name) VALUES ('p-g2', 'Guard 2')")
                 id_db.execute("INSERT INTO principals (id, name) VALUES ('p-victim', 'Other Person')")
-                id_db.execute("INSERT INTO memberships VALUES ('m-g1', 'shop-guards', 'p-g1', 'CG-guard-shared', 'customer', 1, 1)")
-                id_db.execute("INSERT INTO memberships VALUES ('m-g2', 'shop-guards', 'p-g2', 'CG-guard-shared', 'customer', 1, 1)")
+                id_db.execute("INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) VALUES ('m-g1', 'shop-guards', 'p-g1', 'CG-guard-shared', 'customer', 1, 1)")
+                id_db.execute("INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) VALUES ('m-g2', 'shop-guards', 'p-g2', 'CG-guard-shared', 'customer', 1, 1)")
                 id_db.execute("INSERT INTO unresolved_collisions VALUES ('shop-guards', 'CG-guard-shared', ?)", (now,))
                 # p-victim already owns sub-google-victim-123
                 id_db.execute(
@@ -1927,8 +1951,8 @@ class TestPrACorrectness(unittest.TestCase):
             with sessions.control.connection(write=True) as id_db:
                 id_db.execute("INSERT INTO principals (id, name) VALUES ('p-c1', 'CLI 1')")
                 id_db.execute("INSERT INTO principals (id, name) VALUES ('p-c2', 'CLI 2')")
-                id_db.execute("INSERT INTO memberships VALUES ('m-c1', 'shop-cli', 'p-c1', 'CG-cli-shared', 'customer', 1, 1)")
-                id_db.execute("INSERT INTO memberships VALUES ('m-c2', 'shop-cli', 'p-c2', 'CG-cli-shared', 'customer', 1, 1)")
+                id_db.execute("INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) VALUES ('m-c1', 'shop-cli', 'p-c1', 'CG-cli-shared', 'customer', 1, 1)")
+                id_db.execute("INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) VALUES ('m-c2', 'shop-cli', 'p-c2', 'CG-cli-shared', 'customer', 1, 1)")
                 id_db.execute("INSERT INTO unresolved_collisions VALUES ('shop-cli', 'CG-cli-shared', ?)", (now,))
 
             bstore = sessions.business_store("shop-cli")
@@ -2032,8 +2056,11 @@ class TestPrACorrectness(unittest.TestCase):
 
             with sessions.control.connection(write=True) as id_db:
                 id_db.execute("INSERT INTO principals VALUES (?,?)", (legacy_pid, "Victim"))
-                id_db.execute("INSERT INTO memberships VALUES ('m-vic', 'shop-b1', ?, ?, 'customer', 1, 1)",
-                              (legacy_pid, legacy_cid))
+                id_db.execute(
+                    "INSERT INTO memberships (id, tenant_id, principal_id, customer_id, role, active, auth_version) "
+                    "VALUES ('m-vic', 'shop-b1', ?, ?, 'customer', 1, 1)",
+                    (legacy_pid, legacy_cid),
+                )
 
             # 1. Store level: login with email_verified=False and sub='sub-attacker'
             # Must NOT claim legacy_pid; must create a new distinct principal!
@@ -2097,8 +2124,8 @@ class TestPrACorrectness(unittest.TestCase):
         from retailops.storage.pg_repositories import PostgresIdentityStore
 
         # 1. Compatibility constants & DDL check
-        self.assertEqual(IDENTITY_SCHEMA_CURRENT, 4)
-        self.assertEqual(IDENTITY_SCHEMA_COMPATIBLE, (1, 2, 3, 4))
+        self.assertEqual(IDENTITY_SCHEMA_CURRENT, 5)
+        self.assertEqual(IDENTITY_SCHEMA_COMPATIBLE, (1, 2, 3, 4, 5))
         ddl_str = " ".join(IDENTITY_DDL)
         self.assertIn("CREATE TABLE unresolved_collisions", ddl_str)
         self.assertIn("CREATE TABLE external_identities", ddl_str)
@@ -2129,24 +2156,25 @@ class TestPrACorrectness(unittest.TestCase):
         mock_psycopg.sql = mock_sql
 
         with patch.dict("sys.modules", {"psycopg": mock_psycopg, "psycopg.sql": mock_sql}):
-            # Test valid versions 1, 2, 3, and 4
+            # Test valid versions 1, 2, 3, 4, and 5
             assert_schema(MockPgDb(1), "retailops_identity", "identity")
             assert_schema(MockPgDb(2), "retailops_identity", "identity")
             assert_schema(MockPgDb(3), "retailops_identity", "identity")
             assert_schema(MockPgDb(4), "retailops_identity", "identity")
+            assert_schema(MockPgDb(5), "retailops_identity", "identity")
 
-            # Test invalid versions 0 and 5
+            # Test invalid versions 0 and 6
             with self.assertRaises(ValueError):
                 assert_schema(MockPgDb(0), "retailops_identity", "identity")
             with self.assertRaises(ValueError):
-                assert_schema(MockPgDb(5), "retailops_identity", "identity")
+                assert_schema(MockPgDb(6), "retailops_identity", "identity")
 
-        # 3. PostgresIdentityStore auto-upgrade on v1, v2, v3, and no-op on v4
+        # 3. PostgresIdentityStore fails closed on v1..v4 (no auto-upgrade on startup), and succeeds on v5
         with patch("retailops.storage.pg_repositories.check_schema") as mock_check, \
              patch("retailops.storage.pg_repositories.initialize") as mock_init, \
              patch.object(PostgresIdentityStore, "connection") as mock_conn:
 
-            for test_ver, should_init in [(1, True), (2, True), (3, True), (4, False)]:
+            for test_ver, should_block in [(1, True), (2, True), (3, True), (4, True), (5, False)]:
                 mock_init.reset_mock()
                 mock_check.reset_mock()
 
@@ -2161,12 +2189,14 @@ class TestPrACorrectness(unittest.TestCase):
                         pass
 
                 mock_conn.return_value = MockTx(test_ver)
-                store = PostgresIdentityStore("postgresql://test:test@localhost/test", create=False)
-                mock_check.assert_called_once_with("postgresql://test:test@localhost/test", "retailops_identity", "identity")
-                if should_init:
-                    mock_init.assert_called_once()
+                if should_block:
+                    with self.assertRaises(ApiError) as pg_err:
+                        PostgresIdentityStore("postgresql://test:test@localhost/test", create=False)
+                    self.assertEqual((pg_err.exception.status, pg_err.exception.code), (503, "identity_migration_required"))
                 else:
-                    mock_init.assert_not_called()
+                    PostgresIdentityStore("postgresql://test:test@localhost/test", create=False)
+                mock_check.assert_called_once_with("postgresql://test:test@localhost/test", "retailops_identity", "identity")
+                mock_init.assert_not_called()
 
     def test_n08_identity_v3_to_v4_migration_creates_journal_and_reconciles(self):
         """P1 Regression: Legacy v3 identity database lacking reconciliation_journal

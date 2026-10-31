@@ -11,33 +11,37 @@ from datetime import datetime, timedelta, timezone
 from contextlib import contextmanager
 from pathlib import Path
 
-from retailops.business.permissions import ROLE_PERMISSIONS
+from retailops.business.permissions import ACTIVE_BUSINESS_ROLES, LEGACY_DISABLED_ROLES, ROLE_PERMISSIONS
 from retailops.core import ApiError, require
 from retailops.schema import migrate
 
 logger = logging.getLogger("retailops_identity")
 
+IDENTITY_V5_DISABLE_REASON = 'retired_legacy_role_r1_w1'
+MEMBERSHIPS_ROLE_CHECK_SQL = (
+    "CHECK(role IN ('customer','staff','manager') OR (role IN ('viewer','platform_admin') AND active = 0))"
+)
 
 
 def initialize(db):
     statements = [
-        '''CREATE TABLE tenants (id TEXT PRIMARY KEY, name TEXT NOT NULL,
+        '''CREATE TABLE IF NOT EXISTS tenants (id TEXT PRIMARY KEY, name TEXT NOT NULL,
             storage_key TEXT UNIQUE NOT NULL, active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)))''',
-        'CREATE TABLE principals (id TEXT PRIMARY KEY, name TEXT NOT NULL)',
-        '''CREATE TABLE memberships (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
+        'CREATE TABLE IF NOT EXISTS principals (id TEXT PRIMARY KEY, name TEXT NOT NULL)',
+        f'''CREATE TABLE IF NOT EXISTS memberships (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
             principal_id TEXT NOT NULL REFERENCES principals(id), customer_id TEXT NOT NULL,
-            role TEXT NOT NULL CHECK(role IN ('customer','viewer','staff','manager','platform_admin')), active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
-            auth_version INTEGER NOT NULL DEFAULT 1, UNIQUE(tenant_id,principal_id))''',
-        '''CREATE TABLE credentials (hash TEXT PRIMARY KEY, membership_id TEXT NOT NULL REFERENCES memberships(id),
+            role TEXT NOT NULL {MEMBERSHIPS_ROLE_CHECK_SQL}, active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+            auth_version INTEGER NOT NULL DEFAULT 1, disabled_reason TEXT, UNIQUE(tenant_id,principal_id))''',
+        '''CREATE TABLE IF NOT EXISTS credentials (hash TEXT PRIMARY KEY, membership_id TEXT NOT NULL REFERENCES memberships(id),
             created_at REAL NOT NULL)''',
-        '''CREATE TABLE sessions (id TEXT PRIMARY KEY, membership_id TEXT NOT NULL REFERENCES memberships(id),
+        '''CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, membership_id TEXT NOT NULL REFERENCES memberships(id),
             auth_version INTEGER NOT NULL, expires_at REAL NOT NULL)''',
-        'CREATE INDEX idx_sessions_membership ON sessions(membership_id)',
-        'CREATE INDEX idx_sessions_expiry ON sessions(expires_at)',
-        'CREATE TABLE identity_rate (bucket TEXT PRIMARY KEY, window INTEGER NOT NULL, count INTEGER NOT NULL)',
-        '''CREATE TABLE provider_daily_usage (day TEXT NOT NULL, provider_id TEXT NOT NULL,
+        'CREATE INDEX IF NOT EXISTS idx_sessions_membership ON sessions(membership_id)',
+        'CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at)',
+        'CREATE TABLE IF NOT EXISTS identity_rate (bucket TEXT PRIMARY KEY, window INTEGER NOT NULL, count INTEGER NOT NULL)',
+        '''CREATE TABLE IF NOT EXISTS provider_daily_usage (day TEXT NOT NULL, provider_id TEXT NOT NULL,
             attempts INTEGER NOT NULL, PRIMARY KEY(day,provider_id))''',
-        '''CREATE TABLE identity_events (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at REAL NOT NULL,
+        '''CREATE TABLE IF NOT EXISTS identity_events (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at REAL NOT NULL,
             kind TEXT NOT NULL, tenant_id TEXT, membership_id TEXT)''',
         '''CREATE TABLE IF NOT EXISTS external_identities (id TEXT PRIMARY KEY, issuer TEXT NOT NULL,
             sub TEXT NOT NULL, principal_id TEXT NOT NULL REFERENCES principals(id), email TEXT,
@@ -406,8 +410,13 @@ def valid_name(value):
 
 
 def upgrade_sqlite_memberships_role_constraint(path, *, fail_hook=None):
-    """Safely rebuild legacy SQLite memberships table to allow 'platform_admin' role
-    when credentials, sessions, or quota overrides reference memberships(id).
+    """Safely upgrade legacy SQLite identity schemas to R1 W1 identity v5.
+
+    - Disables legacy 'viewer' and 'platform_admin' memberships (never deletes rows),
+      records disabled_reason, bumps auth_version, and revokes their active sessions.
+    - Enforces the v5 role CHECK constraint so only ('customer', 'staff', 'manager')
+      can ever be active while disabled legacy rows preserve full FK integrity.
+    - Bumps retailops_schema ('identity') version to 5 inside the same atomic transaction.
 
     SQLite requires PRAGMA foreign_keys=OFF to be executed outside any active transaction
     before rebuilding a referenced parent table, then verified via PRAGMA foreign_key_check
@@ -417,10 +426,46 @@ def upgrade_sqlite_memberships_role_constraint(path, *, fail_hook=None):
     db.row_factory = sqlite3.Row
     try:
         mem_ddl = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='memberships'").fetchone()
-        has_temp = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='memberships_p5e_new'").fetchone()
-        needs_rebuild = bool(mem_ddl and mem_ddl[0] and 'platform_admin' not in mem_ddl[0])
-        if not needs_rebuild and not has_temp:
+        has_temp = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name IN ('memberships_p5e_new', 'memberships_r1_v5_new')"
+        ).fetchone()
+        if not mem_ddl or not mem_ddl[0]:
             return False
+
+        existing_cols = {r[1] for r in db.execute('PRAGMA table_info(memberships)').fetchall()}
+        norm_ddl = ' '.join(mem_ddl[0].split()).replace(', ', ',')
+        has_v5_check = (
+            "role IN ('viewer','platform_admin') AND active = 0" in norm_ddl
+            and 'disabled_reason' in existing_cols
+        )
+        if 'disabled_reason' in existing_cols:
+            has_active_legacy = bool(
+                db.execute(
+                    "SELECT 1 FROM memberships WHERE role IN ('viewer', 'platform_admin') "
+                    "AND (active <> 0 OR disabled_reason IS NULL) LIMIT 1"
+                ).fetchone()
+            )
+        else:
+            has_active_legacy = bool(
+                db.execute(
+                    "SELECT 1 FROM memberships WHERE role IN ('viewer', 'platform_admin') LIMIT 1"
+                ).fetchone()
+            )
+
+        has_schema_tbl = bool(
+            db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='retailops_schema'").fetchone()
+        )
+        schema_row = (
+            db.execute("SELECT version FROM retailops_schema WHERE component='identity'").fetchone()
+            if has_schema_tbl
+            else None
+        )
+        needs_version_bump = bool(schema_row is not None and int(schema_row[0]) < 5)
+        needs_rebuild = bool(not has_v5_check or has_active_legacy)
+
+        if not needs_rebuild and not has_temp and not needs_version_bump:
+            return False
+
         db.execute('PRAGMA foreign_keys=OFF')
         fk_state = db.execute('PRAGMA foreign_keys').fetchone()
         if fk_state and fk_state[0] != 0:
@@ -428,30 +473,76 @@ def upgrade_sqlite_memberships_role_constraint(path, *, fail_hook=None):
         db.execute('BEGIN IMMEDIATE')
         try:
             db.execute('DROP TABLE IF EXISTS memberships_p5e_new')
+            db.execute('DROP TABLE IF EXISTS memberships_r1_v5_new')
             if needs_rebuild:
-                existing_cols = {r[1] for r in db.execute('PRAGMA table_info(memberships)').fetchall()}
                 auth_ver_expr = 'COALESCE(auth_version, 1)' if 'auth_version' in existing_cols else '1'
-                db.execute('''CREATE TABLE memberships_p5e_new (
+                dis_reason_expr = 'disabled_reason' if 'disabled_reason' in existing_cols else 'NULL'
+                has_sessions = bool(
+                    db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sessions'").fetchone()
+                )
+                has_events = bool(
+                    db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='identity_events'").fetchone()
+                )
+                legacy_to_disable = db.execute(
+                    f"SELECT id, tenant_id FROM memberships "
+                    f"WHERE role IN ('viewer', 'platform_admin') "
+                    f"AND (active <> 0 OR {dis_reason_expr} IS NULL)"
+                ).fetchall()
+                if has_sessions:
+                    db.execute(
+                        "DELETE FROM sessions WHERE membership_id IN ("
+                        "SELECT id FROM memberships WHERE role IN ('viewer', 'platform_admin'))"
+                    )
+                if has_events and legacy_to_disable:
+                    now_ts = time.time()
+                    for lr in legacy_to_disable:
+                        db.execute(
+                            'INSERT INTO identity_events(created_at, kind, tenant_id, membership_id) VALUES (?,?,?,?)',
+                            (now_ts, 'legacy_role_disabled', lr['tenant_id'], lr['id']),
+                        )
+                db.execute(f'''CREATE TABLE memberships_r1_v5_new (
                     id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
                     principal_id TEXT NOT NULL REFERENCES principals(id), customer_id TEXT NOT NULL,
-                    role TEXT NOT NULL CHECK(role IN ('customer','viewer','staff','manager','platform_admin')),
+                    role TEXT NOT NULL {MEMBERSHIPS_ROLE_CHECK_SQL},
                     active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
-                    auth_version INTEGER NOT NULL DEFAULT 1, UNIQUE(tenant_id,principal_id))''')
+                    auth_version INTEGER NOT NULL DEFAULT 1,
+                    disabled_reason TEXT,
+                    UNIQUE(tenant_id,principal_id))''')
                 db.execute(
-                    f'INSERT INTO memberships_p5e_new (id, tenant_id, principal_id, customer_id, role, active, auth_version) '
-                    f'SELECT id, tenant_id, principal_id, customer_id, role, active, {auth_ver_expr} FROM memberships'
+                    f'''INSERT INTO memberships_r1_v5_new
+                        (id, tenant_id, principal_id, customer_id, role, active, auth_version, disabled_reason)
+                        SELECT
+                            id,
+                            tenant_id,
+                            principal_id,
+                            customer_id,
+                            role,
+                            CASE WHEN role IN ('viewer', 'platform_admin') THEN 0 ELSE active END,
+                            CASE
+                                WHEN role IN ('viewer', 'platform_admin') AND (active <> 0 OR {dis_reason_expr} IS NULL)
+                                THEN ({auth_ver_expr}) + 1
+                                ELSE {auth_ver_expr}
+                            END,
+                            CASE
+                                WHEN role IN ('viewer', 'platform_admin')
+                                THEN COALESCE({dis_reason_expr}, '{IDENTITY_V5_DISABLE_REASON}')
+                                ELSE {dis_reason_expr}
+                            END
+                        FROM memberships''',
                 )
                 if callable(fail_hook):
                     fail_hook(db)
                 db.execute('DROP TABLE memberships')
-                db.execute('ALTER TABLE memberships_p5e_new RENAME TO memberships')
+                db.execute('ALTER TABLE memberships_r1_v5_new RENAME TO memberships')
+            if has_schema_tbl:
+                db.execute("UPDATE retailops_schema SET version=5 WHERE component='identity' AND version < 5")
             fk_violations = db.execute('PRAGMA foreign_key_check').fetchall()
             if fk_violations:
                 raise sqlite3.IntegrityError(
                     f"Foreign key integrity check failed after memberships migration: {[tuple(r) for r in fk_violations]}"
                 )
             db.execute('COMMIT')
-            return needs_rebuild
+            return bool(needs_rebuild or needs_version_bump)
         except Exception:
             if db.in_transaction:
                 db.execute('ROLLBACK')
@@ -463,6 +554,187 @@ def upgrade_sqlite_memberships_role_constraint(path, *, fail_hook=None):
             db.close()
 
 
+def _inspect_sqlite_identity_ready(path):
+    """Read-only inspection of an identity SQLite file without modifying a single byte.
+
+    Returns 'empty' for a missing, zero-byte, or zero-table file; 'v5_ready' when already at
+    identity schema v5 with the retired-role CHECK constraint and disabled_reason column;
+    raises ValueError for wrong component / unsupported future version; and raises
+    ApiError(503, 'identity_migration_required', ...) when an existing pre-v5 identity DB is found.
+    """
+    db_path = Path(path)
+    if not db_path.exists() or db_path.stat().st_size == 0:
+        return 'empty'
+    uri = db_path.resolve().as_uri() + '?mode=ro'
+    ro_db = None
+    try:
+        ro_db = sqlite3.connect(uri, uri=True, timeout=5)
+        ro_db.row_factory = sqlite3.Row
+        tables = {
+            r[0]
+            for r in ro_db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            ).fetchall()
+        }
+        if not tables:
+            return 'empty'
+        if 'retailops_schema' in tables:
+            rows = ro_db.execute('SELECT component, version FROM retailops_schema').fetchall()
+            if rows and (len(rows) != 1 or rows[0]['component'] != 'identity'):
+                raise ValueError('Database belongs to another RetailOps component.')
+            if not rows:
+                raise ApiError(
+                    503,
+                    'identity_migration_required',
+                    'Kho dữ liệu identity thiếu dấu vết schema v5; khởi động bị chặn fail-closed. '
+                    'Hãy chạy lệnh operator identity migrate-v5 với --confirm-preflight --confirm-backup.',
+                )
+            ver = rows[0]['version']
+            if ver not in range(1, 6):
+                raise ValueError('Unsupported database schema version; use the matching application version.')
+            if ver < 5:
+                raise ApiError(
+                    503,
+                    'identity_migration_required',
+                    f'Kho dữ liệu identity đang ở schema v{ver}; khởi động bị chặn fail-closed. '
+                    'Hãy chạy lệnh operator identity migrate-v5 với --confirm-preflight --confirm-backup.',
+                )
+            if 'memberships' not in tables:
+                raise ApiError(
+                    503,
+                    'identity_migration_required',
+                    'Kho dữ liệu identity chưa đầy đủ bảng memberships v5; khởi động bị chặn fail-closed.',
+                )
+            mem_ddl = ro_db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='memberships'").fetchone()
+            cols = {r[1] for r in ro_db.execute('PRAGMA table_info(memberships)').fetchall()}
+            norm_ddl = ' '.join((mem_ddl[0] if mem_ddl and mem_ddl[0] else '').split()).replace(', ', ',')
+            has_v5_check = (
+                "role IN ('viewer','platform_admin') AND active = 0" in norm_ddl
+                and 'disabled_reason' in cols
+            )
+            if not has_v5_check:
+                raise ApiError(
+                    503,
+                    'identity_migration_required',
+                    'Bảng memberships chưa có ràng buộc schema v5; khởi động bị chặn fail-closed. '
+                    'Hãy chạy lệnh operator identity migrate-v5 với --confirm-preflight --confirm-backup.',
+                )
+            has_active_legacy = bool(
+                ro_db.execute(
+                    "SELECT 1 FROM memberships WHERE role IN ('viewer', 'platform_admin') "
+                    "AND (active <> 0 OR disabled_reason IS NULL) LIMIT 1"
+                ).fetchone()
+            )
+            if has_active_legacy:
+                raise ApiError(
+                    503,
+                    'identity_migration_required',
+                    'Kho dữ liệu identity còn tài khoản legacy chưa retire sang v5; khởi động bị chặn fail-closed.',
+                )
+            return 'v5_ready'
+        if 'memberships' in tables:
+            raise ApiError(
+                503,
+                'identity_migration_required',
+                'Kho dữ liệu identity legacy chưa nâng cấp lên schema v5; khởi động bị chặn fail-closed. '
+                'Hãy chạy lệnh operator identity migrate-v5 với --confirm-preflight --confirm-backup.',
+            )
+        raise ValueError('Database belongs to another RetailOps component.')
+    except sqlite3.Error as exc:
+        raise ApiError(
+            503,
+            'database_unavailable',
+            'Cơ sở dữ liệu tạm thời gián đoạn. Vui lòng thử lại sau ít phút.',
+        ) from exc
+    finally:
+        if ro_db is not None:
+            ro_db.close()
+
+
+def migrate_sqlite_identity_v5(
+    path,
+    *,
+    preflight_confirmed=False,
+    backup_confirmed=False,
+    tenant_stores=None,
+    fail_hook=None,
+):
+    """Explicit operator migration command for SQLite identity v5 (§11.5).
+
+    Never invoked automatically at web startup, store construction, or ordinary CLI commands.
+    """
+    require(
+        preflight_confirmed is True and backup_confirmed is True,
+        400,
+        'migration_confirmation_required',
+        'Lệnh nâng cấp identity v5 yêu cầu xác nhận tường minh --confirm-preflight và --confirm-backup theo runbook §11.5.',
+    )
+    db_path = Path(path)
+    require(
+        db_path.is_file() and db_path.stat().st_size > 0,
+        404,
+        'database_not_found',
+        'Không tìm thấy kho dữ liệu identity hiện hữu để nâng cấp.',
+    )
+    uri = db_path.resolve().as_uri() + '?mode=ro'
+    ro_db = sqlite3.connect(uri, uri=True, timeout=5)
+    ro_db.row_factory = sqlite3.Row
+    try:
+        tables = {
+            r[0]
+            for r in ro_db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            ).fetchall()
+        }
+        if 'retailops_schema' in tables:
+            rows = ro_db.execute('SELECT component, version FROM retailops_schema').fetchall()
+            if rows and (len(rows) != 1 or rows[0]['component'] != 'identity'):
+                raise ValueError('Database belongs to another RetailOps component.')
+            if rows and rows[0]['version'] not in range(1, 6):
+                raise ValueError('Unsupported database schema version; use the matching application version.')
+        elif 'memberships' not in tables:
+            raise ValueError('Database belongs to another RetailOps component.')
+    finally:
+        ro_db.close()
+
+    conn = sqlite3.connect(db_path, timeout=5)
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute('PRAGMA journal_mode=WAL')
+        conn.execute('PRAGMA foreign_keys=ON')
+        conn.execute('BEGIN IMMEDIATE')
+        migrate(conn, 'identity', initialize)
+        initialize(conn)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    upgraded = upgrade_sqlite_memberships_role_constraint(db_path, fail_hook=fail_hook)
+
+    conn2 = sqlite3.connect(db_path, timeout=5)
+    conn2.row_factory = sqlite3.Row
+    try:
+        conn2.execute('PRAGMA foreign_keys=ON')
+        conn2.execute('BEGIN IMMEDIATE')
+        migrate_legacy_collisions(conn2, tenant_stores=tenant_stores)
+        conn2.commit()
+    except Exception:
+        conn2.rollback()
+        raise
+    finally:
+        conn2.close()
+
+    return {
+        'result': 'IDENTITY_V5_MIGRATED',
+        'backend': 'sqlite',
+        'schema_version': 5,
+        'upgraded': bool(upgraded),
+    }
+
+
 class IdentityStore:
     def __init__(self, path, tenant_stores=None, data_mode=None, *, initialize_db=True, read_only=False):
         if initialize_db and read_only:
@@ -470,28 +742,41 @@ class IdentityStore:
         self.path = Path(path)
         self.initialize = bool(initialize_db)
         self.read_only = bool(read_only)
-        if self.initialize:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-        elif not self.path.is_file():
-            raise ApiError(503, 'database_unavailable', 'Kho dữ liệu identity chưa tồn tại; không tự khởi tạo khi chạy purge.')
         self.tenant_stores = tenant_stores
         self.data_mode = data_mode
         if self.initialize:
+            state = _inspect_sqlite_identity_ready(self.path)
+            self.path.parent.mkdir(parents=True, exist_ok=True)
             with self.connection() as db:
                 db.execute('PRAGMA journal_mode=WAL')
-            with self.connection(write=True) as db:
-                migrate(db, 'identity', initialize)
-            self.upgrade_memberships_role_constraint()
-            with self.connection(write=True) as db:
-                migrate_legacy_collisions(db, tenant_stores=tenant_stores)
+            if state == 'empty':
+                with self.connection(write=True) as db:
+                    migrate(db, 'identity', initialize)
+            else:
+                with self.connection(write=True) as db:
+                    migrate_legacy_collisions(db, tenant_stores=tenant_stores)
+        else:
+            if not self.path.is_file():
+                raise ApiError(503, 'database_unavailable', 'Kho dữ liệu identity chưa tồn tại; không tự khởi tạo khi chạy purge.')
+            if not self.read_only:
+                state = _inspect_sqlite_identity_ready(self.path)
+                if state == 'empty':
+                    raise ApiError(503, 'database_unavailable', 'Kho dữ liệu identity đang rỗng; chưa được khởi tạo schema v5.')
+            else:
+                try:
+                    header = self.path.read_bytes()[:16]
+                except OSError:
+                    header = b''
+                if header == b'SQLite format 3\x00':
+                    state = _inspect_sqlite_identity_ready(self.path)
+                    if state == 'empty':
+                        raise ApiError(503, 'database_unavailable', 'Kho dữ liệu identity đang rỗng; chưa được khởi tạo schema v5.')
 
     def upgrade_memberships_role_constraint(self, *, fail_hook=None):
         hook = fail_hook if fail_hook is not None else getattr(self, '_migration_fail_hook', None)
         return upgrade_sqlite_memberships_role_constraint(self.path, fail_hook=hook)
 
     def migrate_legacy_collisions(self, tenant_stores=None):
-        if hasattr(self, 'path'):
-            self.upgrade_memberships_role_constraint()
         stores = tenant_stores if tenant_stores is not None else self.tenant_stores
         with self.connection(write=True) as db:
             migrate_legacy_collisions(db, tenant_stores=stores)
@@ -563,7 +848,7 @@ class IdentityStore:
         return dict(row)
 
     def create_membership(self, tenant_id, principal_id, name, customer_id, role):
-        require(valid_id(principal_id) and valid_name(name) and valid_id(customer_id) and role in ROLE_PERMISSIONS,
+        require(valid_id(principal_id) and valid_name(name) and valid_id(customer_id) and role in ACTIVE_BUSINESS_ROLES,
                 400, 'invalid_membership', 'Thông tin tài khoản hoặc quyền không hợp lệ.')
         self.tenant(tenant_id)
         with self.connection(write=True) as db:
@@ -616,19 +901,57 @@ class IdentityStore:
             self.event(db, 'credential_rotated', row['tenant_id'], membership_id)
 
     def set_role(self, membership_id, role):
-        require(role in ROLE_PERMISSIONS, 400, 'invalid_role', 'Quyền không hợp lệ.')
+        require(role in ACTIVE_BUSINESS_ROLES, 400, 'invalid_role', 'Quyền không hợp lệ.')
         with self.connection(write=True) as db:
-            row = db.execute('SELECT tenant_id FROM memberships WHERE id=?', (membership_id,)).fetchone()
+            row = db.execute('SELECT * FROM memberships WHERE id=?', (membership_id,)).fetchone()
             require(row is not None, 404, 'membership_not_found', 'Không tìm thấy tài khoản.')
-            db.execute('UPDATE memberships SET role=?,auth_version=auth_version+1 WHERE id=?', (role, membership_id))
+            prev_role = row['role']
+            prev_disabled = row['disabled_reason'] if 'disabled_reason' in row.keys() else None
+            require(
+                prev_role in ACTIVE_BUSINESS_ROLES and prev_disabled != IDENTITY_V5_DISABLE_REASON,
+                409,
+                'legacy_role_retired',
+                'Tài khoản thuộc vai trò cũ đã ngưng hỗ trợ; không được đổi vai trò hoặc khôi phục từ tài khoản đã retire.',
+            )
+            prev_auth_ver = int(row['auth_version'])
+            new_auth_ver = prev_auth_ver + 1
+            db.execute(
+                'UPDATE memberships SET role=?, auth_version=? WHERE id=?',
+                (role, new_auth_ver, membership_id),
+            )
             db.execute('DELETE FROM sessions WHERE membership_id=?', (membership_id,))
             self.event(db, 'role_changed', row['tenant_id'], membership_id)
+            self.record_admin_audit(
+                db,
+                actor_principal_id='operator_cli',
+                actor_role='operator',
+                tenant_id=row['tenant_id'],
+                target_membership_id=membership_id,
+                action='set_role',
+                outcome='allowed',
+                before_state={
+                    'role': prev_role,
+                    'active': bool(row['active']),
+                    'auth_version': prev_auth_ver,
+                    'disabled_reason': prev_disabled,
+                },
+                after_state={
+                    'role': role,
+                    'active': bool(row['active']),
+                    'auth_version': new_auth_ver,
+                    'disabled_reason': prev_disabled,
+                },
+                reason='operator_set_role',
+            )
 
     def revoke(self, membership_id):
         with self.connection(write=True) as db:
             row = db.execute('SELECT tenant_id FROM memberships WHERE id=?', (membership_id,)).fetchone()
             require(row is not None, 404, 'membership_not_found', 'Không tìm thấy tài khoản.')
-            db.execute('UPDATE memberships SET active=0,auth_version=auth_version+1 WHERE id=?', (membership_id,))
+            db.execute(
+                "UPDATE memberships SET active=0, auth_version=auth_version+1, disabled_reason='operator_revoked' WHERE id=?",
+                (membership_id,),
+            )
             db.execute('DELETE FROM credentials WHERE membership_id=?', (membership_id,))
             db.execute('DELETE FROM sessions WHERE membership_id=?', (membership_id,))
             self.event(db, 'membership_revoked', row['tenant_id'], membership_id)
@@ -649,7 +972,8 @@ class IdentityStore:
                 401, 'unauthorized', 'Mã truy cập cá nhân chưa đúng hoặc đã bị thu hồi.')
         with self.connection(write=True) as db:
             row = db.execute('''SELECT m.* FROM credentials c JOIN memberships m ON c.membership_id=m.id
-                JOIN tenants t ON t.id=m.tenant_id WHERE c.hash=? AND m.active=1 AND t.active=1''',
+                JOIN tenants t ON t.id=m.tenant_id
+                WHERE c.hash=? AND m.active=1 AND t.active=1 AND m.role IN ('customer', 'staff', 'manager')''',
                 (hashlib.sha256(token.encode()).hexdigest(),)).fetchone()
             require(row is not None, 401, 'unauthorized', 'Mã truy cập cá nhân chưa đúng hoặc đã bị thu hồi.')
             if row['role'] == 'customer':
@@ -678,7 +1002,8 @@ class IdentityStore:
     def create_session_for_membership(self, membership_id, lifetime, capacity):
         with self.connection(write=True) as db:
             row = db.execute('''SELECT m.* FROM memberships m
-                JOIN tenants t ON t.id=m.tenant_id WHERE m.id=? AND m.active=1 AND t.active=1''',
+                JOIN tenants t ON t.id=m.tenant_id
+                WHERE m.id=? AND m.active=1 AND t.active=1 AND m.role IN ('customer', 'staff', 'manager')''',
                 (membership_id,)).fetchone()
             require(row is not None, 401, 'unauthorized', 'Tài khoản chưa được kích hoạt hoặc không tồn tại.')
             if row['role'] == 'customer':
@@ -706,7 +1031,7 @@ class IdentityStore:
 
     def get_or_create_google_member(self, tenant_id, email, name, role='customer', customer_id=None, sub=None, issuer='https://accounts.google.com', email_verified=False, live=False):
         email_clean = email.strip().lower()
-        require(role in ROLE_PERMISSIONS, 400, 'invalid_role', 'Quyền không hợp lệ.')
+        require(role in ACTIVE_BUSINESS_ROLES, 400, 'invalid_role', 'Quyền không hợp lệ.')
         name_clean = name.strip() if (name and isinstance(name, str) and name.strip()) else email_clean.split('@')[0]
         sub_clean = str(sub).strip() if (sub and str(sub).strip()) else None
         issuer_clean = str(issuer).strip() if (issuer and str(issuer).strip()) else 'https://accounts.google.com'
@@ -724,6 +1049,23 @@ class IdentityStore:
                                  (issuer_clean, sub_clean)).fetchone()
                 if ext:
                     principal_id = ext['principal_id']
+                    existing_check = db.execute(
+                        'SELECT role, active FROM memberships WHERE tenant_id=? AND principal_id=?',
+                        (tenant_id, principal_id),
+                    ).fetchone()
+                    if existing_check is not None:
+                        require(
+                            existing_check['role'] in ACTIVE_BUSINESS_ROLES,
+                            403,
+                            'legacy_role_disabled',
+                            'Vai trò tài khoản cũ đã ngưng hỗ trợ; vui lòng liên hệ quản trị viên.',
+                        )
+                        require(
+                            bool(existing_check['active']),
+                            403,
+                            'account_disabled',
+                            'Tài khoản đang bị tạm ngưng hoạt động.',
+                        )
                     db.execute('UPDATE principals SET name=? WHERE id=?', (name_clean, principal_id))
                     if email_verified and ext['email'] != email_clean:
                         db.execute('UPDATE external_identities SET email=? WHERE issuer=? AND sub=?',
@@ -752,7 +1094,8 @@ class IdentityStore:
                             active_mem = db.execute(
                                 '''SELECT m.id FROM memberships m
                                    JOIN tenants t ON t.id = m.tenant_id
-                                   WHERE m.principal_id=? AND m.tenant_id=? AND m.active=1 AND t.active=1''',
+                                   WHERE m.principal_id=? AND m.tenant_id=? AND m.active=1 AND t.active=1
+                                     AND m.role IN ('customer', 'staff', 'manager')''',
                                 (legacy_p['id'], tenant_id)
                             ).fetchone()
                             require(active_mem is not None, 503, 'ambiguous_tenant',
@@ -766,6 +1109,13 @@ class IdentityStore:
                             self.event(db, 'external_identity_linked', tenant_id, None)
 
                 if not principal_id:
+                    if role != 'customer':
+                        require(
+                            bool(email_verified),
+                            403,
+                            'unverified_privileged_role',
+                            'Email chưa xác minh không được cấp quyền đặc quyền.',
+                        )
                     principal_id = f"prin_{uuid.uuid4().hex}"
                     db.execute('INSERT INTO principals (id, name) VALUES (?,?)', (principal_id, name_clean))
                     effective_sub = sub_clean or f"demo_{uuid.uuid4().hex}"
@@ -779,6 +1129,18 @@ class IdentityStore:
             existing = db.execute('SELECT * FROM memberships WHERE tenant_id=? AND principal_id=?',
                                   (tenant_id, principal_id)).fetchone()
             if existing:
+                require(
+                    existing['role'] in ACTIVE_BUSINESS_ROLES,
+                    403,
+                    'legacy_role_disabled',
+                    'Vai trò tài khoản cũ đã ngưng hỗ trợ; vui lòng liên hệ quản trị viên.',
+                )
+                require(
+                    bool(existing['active']),
+                    403,
+                    'account_disabled',
+                    'Tài khoản đang bị tạm ngưng hoạt động.',
+                )
                 mid = existing['id']
                 cid = existing['customer_id']
                 if existing['role'] == 'customer':
@@ -796,15 +1158,23 @@ class IdentityStore:
                     if col_cnt > 1 or unres:
                         require(False, 503, 'collision_unresolved', 'Tài khoản đang chờ xử lý va chạm dữ liệu.')
 
+                # Phase R1 W1: Google login never silently overwrites an existing membership's role.
                 if existing['role'] != role:
-                    db.execute('UPDATE memberships SET role=?, auth_version=auth_version+1 WHERE id=?', (role, mid))
-                    self.event(db, 'role_changed', tenant_id, mid)
+                    self.event(db, 'google_role_sync_ignored', tenant_id, mid)
                 db.execute(
                     'INSERT INTO customer_links (id, tenant_id, principal_id, customer_id, created_at) '
                     'VALUES (?,?,?,?,?) ON CONFLICT(tenant_id, principal_id) DO UPDATE SET customer_id=excluded.customer_id',
                     (str(uuid.uuid4()), tenant_id, principal_id, cid, time.time())
                 )
                 return mid, cid
+
+            if role != 'customer':
+                require(
+                    bool(email_verified),
+                    403,
+                    'unverified_privileged_role',
+                    'Email chưa xác minh không được cấp quyền đặc quyền.',
+                )
 
             # 3. Customer linkage: UNIQUE(tenant_id, customer_id) and UNIQUE(tenant_id, principal_id)
             cust_link = db.execute('SELECT * FROM customer_links WHERE tenant_id=? AND principal_id=?',
@@ -851,7 +1221,8 @@ class IdentityStore:
             row = db.execute('''SELECT m.*,t.storage_key,p.name FROM sessions s
                 JOIN memberships m ON m.id=s.membership_id JOIN tenants t ON t.id=m.tenant_id
                 JOIN principals p ON p.id=m.principal_id
-                WHERE s.id=? AND s.expires_at>? AND s.auth_version=m.auth_version AND m.active=1 AND t.active=1''',
+                WHERE s.id=? AND s.expires_at>? AND s.auth_version=m.auth_version
+                  AND m.active=1 AND t.active=1 AND m.role IN ('customer', 'staff', 'manager')''',
                 (sid, time.time())).fetchone()
             require(row is not None, 401, 'session_expired', 'Phiên đã kết thúc hoặc quyền đã thay đổi. Vui lòng đăng nhập lại.')
             # P1.1 session safety: existing customer sessions fail-closed when customer_id is unresolved
@@ -1071,13 +1442,13 @@ class IdentityStore:
         actor_tid = str(actor_dict.get('tenant_id') or '').strip()
         target_tid = str(target_tenant_id or '').strip()
 
-        if actor_role not in ('manager', 'platform_admin'):
+        if actor_role != 'manager':
             with self.connection(write=True) as db:
                 self.record_admin_audit(
                     db,
                     actor_principal_id=actor_pid,
                     actor_role=actor_role or 'customer',
-                    tenant_id=target_tid or actor_tid or 'unknown',
+                    tenant_id=actor_tid or target_tid or 'unknown',
                     target_membership_id=target_membership_id,
                     action=action,
                     outcome='denied',
@@ -1088,27 +1459,23 @@ class IdentityStore:
                 )
             raise ApiError(403, 'permission_denied', 'Tài khoản này không có quyền quản trị tài khoản.')
 
-        if actor_role == 'manager':
-            if not actor_tid or (target_tid and target_tid != actor_tid):
-                with self.connection(write=True) as db:
-                    self.record_admin_audit(
-                        db,
-                        actor_principal_id=actor_pid,
-                        actor_role=actor_role,
-                        tenant_id=target_tid or actor_tid or 'unknown',
-                        target_membership_id=target_membership_id,
-                        action=action,
-                        outcome='denied',
-                        before_state={},
-                        after_state={'error': 'cross_tenant_denied', 'actor_tenant_id': actor_tid, 'target_tenant_id': target_tid},
-                        reason=reason or 'cross_tenant_access',
-                        correlation_id=correlation_id,
-                    )
-                raise ApiError(403, 'permission_denied', 'Quản lý cửa hàng không có quyền truy cập hoặc thao tác trên cửa hàng khác.')
-            return actor_tid
-
-        require(bool(target_tid), 400, 'missing_tenant_id', 'Quản trị viên nền tảng phải chỉ định rõ tenant_id.')
-        return target_tid
+        if not actor_tid or (target_tid and target_tid != actor_tid):
+            with self.connection(write=True) as db:
+                self.record_admin_audit(
+                    db,
+                    actor_principal_id=actor_pid,
+                    actor_role=actor_role,
+                    tenant_id=actor_tid or target_tid or 'unknown',
+                    target_membership_id=target_membership_id,
+                    action=action,
+                    outcome='denied',
+                    before_state={},
+                    after_state={'error': 'cross_tenant_denied', 'actor_tenant_id': actor_tid, 'target_tenant_id': target_tid},
+                    reason=reason or 'cross_tenant_access',
+                    correlation_id=correlation_id,
+                )
+            raise ApiError(403, 'permission_denied', 'Quản lý cửa hàng không có quyền truy cập hoặc thao tác trên cửa hàng khác.')
+        return actor_tid
 
     @staticmethod
     def _validate_admin_reason(reason):
@@ -1151,6 +1518,7 @@ class IdentityStore:
             'display_name': row['principal_name'],
             'role': row['role'],
             'active': bool(row['active']),
+            'disabled_reason': row['disabled_reason'] if 'disabled_reason' in row.keys() else None,
             'auth_version': int(row['auth_version']),
             'active_session_count': active_sessions,
             'last_audit_at': last_audit_at,
@@ -1294,7 +1662,7 @@ class IdentityStore:
                     db,
                     actor_principal_id=(actor or {}).get('principal_id'),
                     actor_role=(actor or {}).get('role'),
-                    tenant_id=exp_tid,
+                    tenant_id=row['tenant_id'],
                     target_membership_id=mid,
                     action=action,
                     outcome='denied',
@@ -1308,23 +1676,26 @@ class IdentityStore:
                     correlation_id=correlation_id,
                 )
             raise ApiError(409, 'tenant_scope_mismatch', 'Tài khoản mục tiêu không thuộc cửa hàng (tenant_id) đang chọn.')
-        actor_role = str((actor or {}).get('role') or '')
-        if actor_role == 'manager' and row['role'] == 'platform_admin':
+        if action == 'reactivate_account' and row['role'] not in ACTIVE_BUSINESS_ROLES:
             with self.connection(write=True) as db:
                 self.record_admin_audit(
                     db,
                     actor_principal_id=(actor or {}).get('principal_id'),
-                    actor_role=actor_role,
+                    actor_role=(actor or {}).get('role'),
                     tenant_id=row['tenant_id'],
                     target_membership_id=mid,
                     action=action,
                     outcome='denied',
-                    before_state={'role': row['role']},
-                    after_state={'error': 'privilege_escalation_denied'},
+                    before_state={'role': row['role'], 'active': bool(row['active'])},
+                    after_state={'error': 'legacy_role_retired'},
                     reason=reason or action,
                     correlation_id=correlation_id,
                 )
-            raise ApiError(403, 'permission_denied', 'Quản lý cửa hàng không thể thao tác trên tài khoản quản trị nền tảng.')
+            raise ApiError(
+                409,
+                'legacy_role_retired',
+                'Vai trò tài khoản cũ đã ngưng hỗ trợ; cần cập nhật sang vai trò hợp lệ trước khi kích hoạt lại.',
+            )
         return row
 
     def admin_suspend_account(self, actor, membership_id, *, reason, correlation_id=None, default_limit=20, expected_tenant_id=None):
@@ -1346,6 +1717,7 @@ class IdentityStore:
             raise ApiError(400, 'self_lockout_forbidden', 'Không thể tự khóa tài khoản đang đăng nhập của chính mình.')
 
         now_ts = time.time()
+        last_manager_denied = False
         with self.connection(write=True) as db:
             cur = db.execute(
                 '''SELECT m.*, p.name AS principal_name
@@ -1355,53 +1727,85 @@ class IdentityStore:
                 (mid,),
             ).fetchone()
             require(cur is not None, 404, 'account_not_found', 'Không tìm thấy tài khoản.')
-            sess_cnt = db.execute(
-                'SELECT count(*) AS cnt FROM sessions WHERE membership_id=?',
-                (mid,),
-            ).fetchone()['cnt']
-            before_state = {
-                'active': bool(cur['active']),
-                'auth_version': int(cur['auth_version']),
-                'role': cur['role'],
-                'customer_id': cur['customer_id'],
-                'active_sessions': int(sess_cnt),
-            }
-            new_auth_ver = int(cur['auth_version']) + 1
-            db.execute(
-                'UPDATE memberships SET active=0, auth_version=? WHERE id=?',
-                (new_auth_ver, mid),
+            if cur['role'] == 'manager' and bool(cur['active']):
+                other_mgr_cnt = db.execute(
+                    "SELECT count(*) AS cnt FROM memberships WHERE tenant_id=? AND role='manager' AND active=1 AND id<>?",
+                    (cur['tenant_id'], mid),
+                ).fetchone()['cnt']
+                if int(other_mgr_cnt) < 1:
+                    self.record_admin_audit(
+                        db,
+                        actor_principal_id=actor_dict.get('principal_id'),
+                        actor_role=actor_dict.get('role'),
+                        tenant_id=cur['tenant_id'],
+                        target_membership_id=mid,
+                        action='suspend_account',
+                        outcome='denied',
+                        before_state={
+                            'active': bool(cur['active']),
+                            'role': cur['role'],
+                        },
+                        after_state={'error': 'last_active_manager_forbidden'},
+                        reason=reason_clean,
+                        correlation_id=correlation_id,
+                        now=now_ts,
+                    )
+                    last_manager_denied = True
+            if not last_manager_denied:
+                sess_cnt = db.execute(
+                    'SELECT count(*) AS cnt FROM sessions WHERE membership_id=?',
+                    (mid,),
+                ).fetchone()['cnt']
+                before_state = {
+                    'active': bool(cur['active']),
+                    'auth_version': int(cur['auth_version']),
+                    'role': cur['role'],
+                    'customer_id': cur['customer_id'],
+                    'active_sessions': int(sess_cnt),
+                }
+                new_auth_ver = int(cur['auth_version']) + 1
+                db.execute(
+                    "UPDATE memberships SET active=0, disabled_reason='admin_suspended', auth_version=? WHERE id=?",
+                    (new_auth_ver, mid),
+                )
+                db.execute('DELETE FROM sessions WHERE membership_id=?', (mid,))
+                self.event(db, 'account_suspended', cur['tenant_id'], mid)
+                after_state = {
+                    'active': False,
+                    'disabled_reason': 'admin_suspended',
+                    'auth_version': new_auth_ver,
+                    'role': cur['role'],
+                    'customer_id': cur['customer_id'],
+                    'active_sessions': 0,
+                }
+                audit = self.record_admin_audit(
+                    db,
+                    actor_principal_id=actor_dict.get('principal_id'),
+                    actor_role=actor_dict.get('role'),
+                    tenant_id=cur['tenant_id'],
+                    target_membership_id=mid,
+                    action='suspend_account',
+                    outcome='allowed',
+                    before_state=before_state,
+                    after_state=after_state,
+                    reason=reason_clean,
+                    correlation_id=correlation_id,
+                    now=now_ts,
+                )
+                updated = db.execute(
+                    '''SELECT m.*, p.name AS principal_name
+                       FROM memberships m
+                       JOIN principals p ON p.id = m.principal_id
+                       WHERE m.id = ?''',
+                    (mid,),
+                ).fetchone()
+                view = self._build_account_view(db, updated, default_limit=default_limit, now_ts=now_ts)
+        if last_manager_denied:
+            raise ApiError(
+                409,
+                'last_active_manager_forbidden',
+                'Không thể tạm ngưng quản lý đang hoạt động cuối cùng của cửa hàng.',
             )
-            db.execute('DELETE FROM sessions WHERE membership_id=?', (mid,))
-            self.event(db, 'account_suspended', cur['tenant_id'], mid)
-            after_state = {
-                'active': False,
-                'auth_version': new_auth_ver,
-                'role': cur['role'],
-                'customer_id': cur['customer_id'],
-                'active_sessions': 0,
-            }
-            audit = self.record_admin_audit(
-                db,
-                actor_principal_id=actor_dict.get('principal_id'),
-                actor_role=actor_dict.get('role'),
-                tenant_id=cur['tenant_id'],
-                target_membership_id=mid,
-                action='suspend_account',
-                outcome='allowed',
-                before_state=before_state,
-                after_state=after_state,
-                reason=reason_clean,
-                correlation_id=correlation_id,
-                now=now_ts,
-            )
-            updated = db.execute(
-                '''SELECT m.*, p.name AS principal_name
-                   FROM memberships m
-                   JOIN principals p ON p.id = m.principal_id
-                   WHERE m.id = ?''',
-                (mid,),
-            ).fetchone()
-            view = self._build_account_view(db, updated, default_limit=default_limit, now_ts=now_ts)
         return {'status': 'ok', 'account': view, 'audit_correlation_id': audit['correlation_id']}
 
     def admin_reactivate_account(self, actor, membership_id, *, reason, correlation_id=None, default_limit=20, expected_tenant_id=None):
@@ -1426,6 +1830,13 @@ class IdentityStore:
                 (mid,),
             ).fetchone()
             require(cur is not None, 404, 'account_not_found', 'Không tìm thấy tài khoản.')
+            cur_disabled = cur['disabled_reason'] if 'disabled_reason' in cur.keys() else None
+            require(
+                cur['role'] in ACTIVE_BUSINESS_ROLES and cur_disabled != IDENTITY_V5_DISABLE_REASON,
+                409,
+                'legacy_role_retired',
+                'Vai trò tài khoản cũ đã ngưng hỗ trợ và không được phép kích hoạt lại.',
+            )
             before_state = {
                 'active': bool(cur['active']),
                 'auth_version': int(cur['auth_version']),
@@ -1434,7 +1845,7 @@ class IdentityStore:
             }
             new_auth_ver = int(cur['auth_version']) + 1
             db.execute(
-                'UPDATE memberships SET active=1, auth_version=? WHERE id=?',
+                'UPDATE memberships SET active=1, disabled_reason=NULL, auth_version=? WHERE id=?',
                 (new_auth_ver, mid),
             )
             self.event(db, 'account_reactivated', cur['tenant_id'], mid)

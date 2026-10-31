@@ -5,11 +5,14 @@ STAFF = 'staff:desk'
 MANAGER = 'store:manage'
 PLATFORM_ADMIN = 'platform:admin'
 
+ACTIVE_BUSINESS_ROLES = ('customer', 'staff', 'manager')
+LEGACY_DISABLED_ROLES = ('viewer', 'platform_admin')
+
 ROLE_PERMISSIONS = {
     'customer': frozenset((READ, CANCEL)),
-    'viewer': frozenset((READ,)),
+    'viewer': frozenset(),
     'staff': frozenset((READ, CANCEL, STAFF)),
     'manager': frozenset((READ, CANCEL, STAFF, MANAGER)),
-    'platform_admin': frozenset((READ, CANCEL, STAFF, MANAGER, PLATFORM_ADMIN)),
+    'platform_admin': frozenset(),
 }
 

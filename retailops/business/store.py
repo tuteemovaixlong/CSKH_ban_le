@@ -1640,25 +1640,55 @@ class BusinessStore:
             'feedbacks': clean_feedbacks
         }
 
-    def staff_reply(self, customer_id, cid, staff_name, message):
+    def staff_reply(self, customer_id, cid, staff_name, message, *, actor=None):
         require(isinstance(message, str) and message.strip(), 400, 'invalid_message', 'Tin nhắn không được để trống.')
-        staff_name = staff_name.strip() if (staff_name and isinstance(staff_name, str)) else "Mai Anh (Chuyên viên CSKH)"
+        staff_name = staff_name.strip() if (staff_name and isinstance(staff_name, str) and staff_name.strip()) else "Nhân viên hỗ trợ"
+        actor_meta = None
+        if isinstance(actor, dict):
+            actor_meta = {
+                "principal_id": actor.get("principal_id"),
+                "role": actor.get("role"),
+                "tenant_id": actor.get("tenant_id"),
+                "membership_id": actor.get("membership_id"),
+                "display_name": actor.get("display_name"),
+                "actor_type": actor.get("actor_type", "principal"),
+            }
         now = time.time()
         req_id = f"staff-{uuid.uuid4().hex[:12]}"
         with self.connection(write=True) as db:
             conv = db.execute('SELECT * FROM conversations WHERE id=?', (cid,)).fetchone()
             require(conv is not None, 404, 'conversation_not_found', 'Cuộc trò chuyện không tồn tại hoặc đã bị xóa.')
+            open_handoff = db.execute(
+                "SELECT id FROM conversation_feedback WHERE conversation_id=? AND feedback_type='human_handoff' AND COALESCE(reason_code, '')!='resolved' LIMIT 1",
+                (cid,),
+            ).fetchone()
+            require(
+                open_handoff is not None,
+                403,
+                'case_not_escalated',
+                'Cuộc trò chuyện hiện không có phiên hỗ trợ chuyển tiếp đang mở.',
+            )
             
             turn_messages = [
                 {"role": "assistant", "content": message}
             ]
+            trace_payload = {"staff": True, "staff_name": staff_name}
+            if actor_meta is not None:
+                trace_payload.update({
+                    "actor_principal_id": actor_meta["principal_id"],
+                    "actor_role": actor_meta["role"],
+                    "actor_membership_id": actor_meta["membership_id"],
+                    "tenant_id": actor_meta["tenant_id"],
+                })
             turn_result = {
                 "message": message,
                 "author": "staff",
                 "staff_name": staff_name,
                 "context": {"order_id": conv["order_id"], "product_id": conv["product_id"]},
-                "trace": {"staff": True, "staff_name": staff_name}
+                "trace": trace_payload
             }
+            if actor_meta is not None:
+                turn_result["actor_role"] = actor_meta["role"]
             
             cursor = db.execute('''
                 INSERT INTO agent_turns(conversation_id, customer_id, request_id, input_hash, messages, result, created_at)
@@ -1673,12 +1703,15 @@ class BusinessStore:
             db.execute('''
                 UPDATE conversation_feedback
                 SET comment=?
-                WHERE conversation_id=? AND feedback_type='human_handoff' AND reason_code!='resolved'
+                WHERE conversation_id=? AND feedback_type='human_handoff' AND COALESCE(reason_code, '')!='resolved'
             ''', (f"Đang xử lý bởi {staff_name}: {message[:120]}", cid))
             
-            self.log(db, customer_id, 'staff_replied', conv['order_id'], staff_name=staff_name, message=message)
+            log_kwargs = {"staff_name": staff_name, "message": message}
+            if actor_meta is not None:
+                log_kwargs["actor"] = actor_meta
+            self.log(db, customer_id, 'staff_replied', conv['order_id'], **log_kwargs)
             
-        return {
+        out = {
             'status': 'ok',
             'turn_id': turn_id,
             'request_id': req_id,
@@ -1686,6 +1719,10 @@ class BusinessStore:
             'message': message,
             'created_at': now
         }
+        if actor_meta is not None:
+            out['actor_role'] = actor_meta['role']
+            out['actor_principal_id'] = actor_meta['principal_id']
+        return out
 
     def customer_message(self, customer_id, cid, message):
         require(isinstance(message, str) and message.strip(), 400, 'invalid_message', 'Tin nhắn không được để trống.')
@@ -1741,18 +1778,45 @@ class BusinessStore:
             'created_at': now
         }
 
-    def resolve_escalation(self, cid, staff_name=None):
-        staff_name = staff_name or "Mai Anh (Chuyên viên CSKH)"
+    def resolve_escalation(self, cid, staff_name=None, *, actor=None):
+        staff_name = staff_name.strip() if (staff_name and isinstance(staff_name, str) and staff_name.strip()) else "Nhân viên hỗ trợ"
+        actor_meta = None
+        if isinstance(actor, dict):
+            actor_meta = {
+                "principal_id": actor.get("principal_id"),
+                "role": actor.get("role"),
+                "tenant_id": actor.get("tenant_id"),
+                "membership_id": actor.get("membership_id"),
+                "display_name": actor.get("display_name"),
+                "actor_type": actor.get("actor_type", "principal"),
+            }
         with self.connection(write=True) as db:
             conv = db.execute('SELECT customer_id, order_id FROM conversations WHERE id=?', (cid,)).fetchone()
-            if conv:
-                db.execute('''
-                    UPDATE conversation_feedback
-                    SET reason_code='resolved'
-                    WHERE conversation_id=? AND feedback_type='human_handoff'
-                ''', (cid,))
-                self.log(db, conv['customer_id'], 'escalation_resolved', conv['order_id'], staff_name=staff_name)
-        return {'status': 'ok', 'resolved': True}
+            require(conv is not None, 404, 'conversation_not_found', 'Cuộc trò chuyện không tồn tại hoặc đã bị xóa.')
+            open_handoff = db.execute(
+                "SELECT id FROM conversation_feedback WHERE conversation_id=? AND feedback_type='human_handoff' AND COALESCE(reason_code, '')!='resolved' LIMIT 1",
+                (cid,),
+            ).fetchone()
+            require(
+                open_handoff is not None,
+                409,
+                'case_not_escalated',
+                'Cuộc trò chuyện không có phiên hỗ trợ đang mở để hoàn tất.',
+            )
+            db.execute('''
+                UPDATE conversation_feedback
+                SET reason_code='resolved'
+                WHERE conversation_id=? AND feedback_type='human_handoff' AND COALESCE(reason_code, '')!='resolved'
+            ''', (cid,))
+            log_kwargs = {"staff_name": staff_name}
+            if actor_meta is not None:
+                log_kwargs["actor"] = actor_meta
+            self.log(db, conv['customer_id'], 'escalation_resolved', conv['order_id'], **log_kwargs)
+        out = {'status': 'ok', 'resolved': True, 'staff_name': staff_name}
+        if actor_meta is not None:
+            out['actor_role'] = actor_meta['role']
+            out['actor_principal_id'] = actor_meta['principal_id']
+        return out
 
 
     def propose(self, customer, body):
