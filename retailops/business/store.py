@@ -1821,14 +1821,14 @@ class BusinessStore:
             if active_case is not None and active_case['previous_case_id'] is not None:
                 row = db.execute(
                     'SELECT 1 FROM agent_turns WHERE conversation_id=? AND customer_id=? '
-                    "AND created_at >= ? AND request_id NOT LIKE 'sys-reminder-%' LIMIT 1",
-                    (cid, customer, float(active_case['created_at']) - 1e-6),
+                    'AND created_at >= ? AND request_id NOT LIKE ? LIMIT 1',
+                    (cid, customer, float(active_case['created_at']) - 1e-6, 'sys-reminder-%'),
                 ).fetchone()
             else:
                 row = db.execute(
                     'SELECT 1 FROM agent_turns WHERE conversation_id=? AND customer_id=? '
-                    "AND request_id NOT LIKE 'sys-reminder-%' LIMIT 1",
-                    (cid, customer),
+                    'AND request_id NOT LIKE ? LIMIT 1',
+                    (cid, customer, 'sys-reminder-%'),
                 ).fetchone()
             return row is not None
 
@@ -1874,17 +1874,17 @@ class BusinessStore:
                 rows = db.execute(
                     '''SELECT messages FROM agent_turns
                        WHERE conversation_id=? AND customer_id=?
-                         AND created_at >= ? AND request_id NOT LIKE 'sys-reminder-%'
+                         AND created_at >= ? AND request_id NOT LIKE ?
                        ORDER BY id DESC LIMIT ?''',
-                    (cid, customer, float(active_case['created_at']) - 1e-6, limit),
+                    (cid, customer, float(active_case['created_at']) - 1e-6, 'sys-reminder-%', limit),
                 ).fetchall()
             else:
                 rows = db.execute(
                     '''SELECT messages FROM agent_turns
                        WHERE conversation_id=? AND customer_id=?
-                         AND request_id NOT LIKE 'sys-reminder-%'
+                         AND request_id NOT LIKE ?
                        ORDER BY id DESC LIMIT ?''',
-                    (cid, customer, limit),
+                    (cid, customer, 'sys-reminder-%', limit),
                 ).fetchall()
         turns, characters, count = [], 0, 0
         preserved_recent_image = False

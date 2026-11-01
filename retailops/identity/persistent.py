@@ -110,14 +110,15 @@ class PersistentSessions:
             store.seed()
         return store
 
-    def business_store(self, tenant_id):
+    def business_store(self, tenant_id, *, migrate=None):
         path = self.tenant_path(self.control.tenant(tenant_id))
         require(path.is_file(), 503, 'tenant_storage_unavailable', 'Kho dữ liệu chưa sẵn sàng; cần quản trị viên kiểm tra.')
+        init_db = self.maintenance if migrate is None else bool(migrate)
         return self._configure_business_store(
             BusinessStore(
                 path,
                 create=False,
-                initialize_db=self.maintenance,
+                initialize_db=init_db,
                 read_only=self.read_only,
             )
         )
@@ -296,7 +297,7 @@ class PersistentSessions:
         for row in rows:
             tid = row['id'] if isinstance(row, dict) else row['id']
             try:
-                store = self.business_store(tid)
+                store = self.business_store(tid, migrate=False)
             except ApiError:
                 continue
             res = store.process_due_case_timers(now=now)

@@ -63,12 +63,13 @@ class PostgresSessions(PersistentSessions):
             store.seed()
         return store
 
-    def business_store(self, tenant_id):
+    def business_store(self, tenant_id, *, migrate=None):
+        do_migrate = self.maintenance if migrate is None else bool(migrate)
         return self._configure_business_store(
             PostgresBusinessStore(
                 self.dsn,
                 self.control.tenant(tenant_id)['storage_key'],
-                migrate=self.maintenance,
+                migrate=do_migrate,
                 read_only=self.read_only,
             )
         )
