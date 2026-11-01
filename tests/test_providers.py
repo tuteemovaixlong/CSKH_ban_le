@@ -314,10 +314,16 @@ class SelectionTests(unittest.TestCase):
         self.assertIn(API_MODEL, metadata)
 
     def test_v04_conversations_migrate_to_custom_without_reset(self):
+        from contextlib import closing
+        from retailops.business.store import migrate_sqlite_business_v5
         path = Path(self.temp.name)/'v04.sqlite3'
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             db.execute('CREATE TABLE conversations (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, order_id TEXT, product_id TEXT, revision INTEGER NOT NULL DEFAULT 0, expires_at REAL NOT NULL)')
             db.execute("INSERT INTO conversations VALUES ('old','C-001','O-101','P-101',4,99999999999)")
+        with self.assertRaises(ApiError) as err:
+            BusinessStore(path)
+        self.assertEqual(err.exception.code, 'business_migration_required')
+        migrate_sqlite_business_v5(path, preflight_confirmed=True, backup_confirmed=True)
         migrated = BusinessStore(path)
         with migrated.connection() as db:
             row = dict(db.execute("SELECT * FROM conversations WHERE id='old'").fetchone())

@@ -4,7 +4,7 @@ from collections import OrderedDict
 
 from retailops.identity.persistent import PersistentSessions, _clean_tenant_id, _env_tenant_id
 from retailops.storage.pg_repositories import PostgresBusinessStore, PostgresIdentityStore
-from retailops.storage.postgres import check_schema, tenant_schema
+from retailops.storage.postgres import BUSINESS_SCHEMA_CURRENT, IDENTITY_SCHEMA, check_schema, tenant_schema, transaction
 from retailops.core import ApiError
 from retailops.inference_gate import InferenceGate
 
@@ -26,8 +26,35 @@ class PostgresSessions(PersistentSessions):
         self.lock = threading.RLock()
         self.tool_caches = {}
         self.apps = OrderedDict()
+        self._verify_existing_tenant_schemas()
         if self.maintenance:
             self.purge()
+
+    def _verify_existing_tenant_schemas(self):
+        with self.control.connection() as db:
+            rows = db.execute('SELECT storage_key FROM tenants WHERE active=1').fetchall() or []
+        for row in rows:
+            key = row.get('storage_key') if isinstance(row, dict) else row['storage_key']
+            t_schema = tenant_schema(key)
+            with transaction(self.dsn, IDENTITY_SCHEMA, read_only=self.read_only) as db:
+                from psycopg import sql
+                exists = db.raw.execute('SELECT 1 FROM pg_namespace WHERE nspname=%s', (t_schema,)).fetchone()
+                if exists:
+                    ver_row = db.raw.execute(
+                        sql.SQL('SELECT component,version FROM {}.retailops_schema').format(sql.Identifier(t_schema))
+                    ).fetchone()
+                    if not ver_row or ver_row.get('component') != 'business':
+                        raise ValueError('Unsupported PostgreSQL schema version or component.')
+                    if ver_row.get('version') not in (2, 3, 4, 5):
+                        raise ValueError('Unsupported PostgreSQL schema version or component.')
+                    if ver_row.get('version') < BUSINESS_SCHEMA_CURRENT:
+                        raise ApiError(
+                            503,
+                            'business_migration_required',
+                            f"Kho dữ liệu business PostgreSQL ({t_schema}) đang ở schema v{ver_row.get('version')}; "
+                            "khởi động bị chặn fail-closed. Hãy chạy lệnh operator database migrate-v5 với "
+                            "--confirm-preflight --confirm-backup.",
+                        )
 
     def provision_tenant(self, tenant_id, name, *, seed_demo=False):
         tenant = self.control.ensure_tenant(tenant_id, name)
@@ -45,10 +72,20 @@ class PostgresSessions(PersistentSessions):
         )
 
     def check_storage(self, member):
+        t_schema = tenant_schema(member['storage_key'])
         try:
-            check_schema(self.dsn, tenant_schema(member['storage_key']), 'business')
+            check_schema(self.dsn, t_schema, 'business')
         except ValueError:
             raise ApiError(503, 'tenant_storage_unavailable', 'Kho dữ liệu cửa hàng cần quản trị viên kiểm tra.') from None
+        with transaction(self.dsn, t_schema, read_only=self.read_only) as db:
+            ver_row = db.raw.execute("SELECT version FROM retailops_schema WHERE component='business'").fetchone()
+        if not ver_row or ver_row.get('version') != BUSINESS_SCHEMA_CURRENT:
+            raise ApiError(
+                503,
+                'business_migration_required',
+                f"Kho dữ liệu business PostgreSQL ({t_schema}) chưa nâng cấp lên schema v{BUSINESS_SCHEMA_CURRENT}; "
+                "truy cập bị chặn fail-closed.",
+            )
 
     def metadata(self):
         return {**super().metadata(), 'storage_backend': 'postgresql'}

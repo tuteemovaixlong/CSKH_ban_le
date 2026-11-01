@@ -20,7 +20,14 @@ from retailops.guardrails.topic_filter import (
     sanitize_structured_payload,
 )
 from retailops.schema import migrate
-from retailops.business.schema import initialize as initialize_schema, ensure_import_tables
+from retailops.business.schema import (
+    BUSINESS_V5_VERSION_MAPPING,
+    SQLITE_BUSINESS_SCHEMA_CURRENT,
+    backfill_business_v5_cases,
+    ensure_case_tables,
+    ensure_import_tables,
+    initialize as initialize_schema,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -58,6 +65,221 @@ class VariantStockResult(int):
         yield self.status
 
 
+def _inspect_sqlite_business_ready(path):
+    """Read-only inspection of a business SQLite file without modifying a single byte.
+
+    Returns 'empty' for a missing, zero-byte, or zero-table file; 'v5_ready' when already at
+    SQLite business schema v4 (logical Business v5) with cases, handoff_episodes, and
+    case_feedback_events tables; raises ValueError for wrong component / unsupported future
+    version; and raises ApiError(503, 'business_migration_required', ...) when an existing
+    pre-v5 business DB is found.
+    """
+    db_path = Path(path)
+    if not db_path.exists() or db_path.stat().st_size == 0:
+        return 'empty'
+    uri = db_path.resolve().as_uri() + '?mode=ro'
+    ro_db = None
+    try:
+        ro_db = sqlite3.connect(uri, uri=True, timeout=5)
+        ro_db.row_factory = sqlite3.Row
+        tables = {
+            r[0]
+            for r in ro_db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            ).fetchall()
+        }
+        if not tables:
+            return 'empty'
+        if 'retailops_schema' in tables:
+            rows = ro_db.execute('SELECT component, version FROM retailops_schema').fetchall()
+            if rows and (len(rows) != 1 or rows[0]['component'] != 'business'):
+                raise ValueError('Database belongs to another RetailOps component.')
+            if not rows:
+                raise ApiError(
+                    503,
+                    'business_migration_required',
+                    'Kho dữ liệu cửa hàng thiếu dấu vết schema Business v5; khởi động bị chặn fail-closed. '
+                    'Hãy chạy lệnh operator database migrate-v5 với --confirm-preflight --confirm-backup.',
+                )
+            ver = rows[0]['version']
+            if ver not in range(1, SQLITE_BUSINESS_SCHEMA_CURRENT + 1):
+                raise ValueError('Unsupported database schema version; use the matching application version.')
+            if ver < SQLITE_BUSINESS_SCHEMA_CURRENT:
+                raise ApiError(
+                    503,
+                    'business_migration_required',
+                    f'Kho dữ liệu cửa hàng đang ở SQLite schema v{ver} (trước Business v5); khởi động bị chặn fail-closed. '
+                    'Hãy chạy lệnh operator database migrate-v5 với --confirm-preflight --confirm-backup.',
+                )
+            required_v5_tables = {'cases', 'handoff_episodes', 'case_feedback_events'}
+            if not required_v5_tables.issubset(tables):
+                raise ApiError(
+                    503,
+                    'business_migration_required',
+                    'Kho dữ liệu cửa hàng chưa đầy đủ các bảng Business v5; khởi động bị chặn fail-closed. '
+                    'Hãy chạy lệnh operator database migrate-v5 với --confirm-preflight --confirm-backup.',
+                )
+            return 'v5_ready'
+        if 'memberships' in tables or 'tenants' in tables:
+            raise ValueError('Database belongs to another RetailOps component.')
+        if tables & {'orders', 'conversations', 'proposals', 'business_events', 'products'}:
+            raise ApiError(
+                503,
+                'business_migration_required',
+                'Kho dữ liệu cửa hàng legacy chưa nâng cấp lên Business v5; khởi động bị chặn fail-closed. '
+                'Hãy chạy lệnh operator database migrate-v5 với --confirm-preflight --confirm-backup.',
+            )
+        raise ValueError('Database belongs to another RetailOps component.')
+    except sqlite3.Error as exc:
+        raise ApiError(
+            503,
+            'database_unavailable',
+            'Cơ sở dữ liệu tạm thời gián đoạn. Vui lòng thử lại sau ít phút.',
+        ) from exc
+    finally:
+        if ro_db is not None:
+            ro_db.close()
+
+
+def _migrate_single_sqlite_business_file(db_path: Path):
+    if not db_path.is_file():
+        raise ApiError(404, 'database_not_found', f'Không tìm thấy kho dữ liệu cửa hàng SQLite: {db_path.name}')
+    try:
+        state = _inspect_sqlite_business_ready(db_path)
+    except ApiError as exc:
+        if exc.code != 'business_migration_required':
+            raise
+        state = 'needs_migration'
+    if state == 'empty':
+        raise ApiError(404, 'database_not_found', f'Kho dữ liệu cửa hàng SQLite đang rỗng: {db_path.name}')
+
+    uri = db_path.resolve().as_uri() + '?mode=rw'
+    db = sqlite3.connect(uri, uri=True, timeout=5)
+    db.row_factory = sqlite3.Row
+    try:
+        db.execute('PRAGMA journal_mode=WAL')
+        db.execute('PRAGMA foreign_keys=ON')
+        db.execute('BEGIN IMMEDIATE')
+        cases_before = (
+            db.execute('SELECT COUNT(*) FROM cases').fetchone()[0]
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cases'").fetchone()
+            else 0
+        )
+        episodes_before = (
+            db.execute('SELECT COUNT(*) FROM handoff_episodes').fetchone()[0]
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='handoff_episodes'").fetchone()
+            else 0
+        )
+        migrate(db, 'business', initialize_schema)
+        ensure_import_tables(db)
+        ensure_case_tables(db)
+        backfill_res = backfill_business_v5_cases(db)
+        cases_after = db.execute('SELECT COUNT(*) FROM cases').fetchone()[0]
+        episodes_after = db.execute('SELECT COUNT(*) FROM handoff_episodes').fetchone()[0]
+        fk_errors = db.execute('PRAGMA foreign_key_check').fetchall()
+        if fk_errors:
+            raise sqlite3.IntegrityError(f'Foreign key check failed during Business v5 migration: {[tuple(r) for r in fk_errors]}')
+        db.commit()
+        return {
+            'upgraded': bool(state == 'needs_migration' or backfill_res['cases_created'] > 0),
+            'cases_created': int(cases_after - cases_before),
+            'episodes_created': int(episodes_after - episodes_before),
+        }
+    except Exception:
+        if db.in_transaction:
+            db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def migrate_sqlite_business_v5(path, *, preflight_confirmed=False, backup_confirmed=False):
+    """Explicit operator migration command for SQLite Business v5 (W2-D3, §11.5).
+
+    Accepts either a single SQLite business database file OR a workspace/persistent
+    directory (upgrading every tenant business database under persistent/tenants/).
+    Never invoked automatically at web startup, store construction, or ordinary CLI commands.
+    """
+    require(
+        preflight_confirmed is True and backup_confirmed is True,
+        400,
+        'migration_confirmation_required',
+        'Lệnh nâng cấp Business v5 yêu cầu xác nhận tường minh --confirm-preflight và --confirm-backup theo runbook §11.5.',
+    )
+    target = Path(path)
+    if target.is_file():
+        single = _migrate_single_sqlite_business_file(target)
+        return {
+            'result': 'BUSINESS_V5_MIGRATED',
+            'backend': 'sqlite',
+            'schema_version': SQLITE_BUSINESS_SCHEMA_CURRENT,
+            'logical_version': BUSINESS_V5_VERSION_MAPPING['postgresql'],
+            'tenants': 1,
+            'upgraded': single['upgraded'],
+            'cases_created': single['cases_created'],
+            'episodes_created': single['episodes_created'],
+        }
+
+    pers_dir = target / 'persistent' if (target / 'persistent').is_dir() else target
+    id_file = pers_dir / 'identity.sqlite3'
+    tenants_dir = pers_dir / 'tenants'
+    require(
+        id_file.is_file() or tenants_dir.is_dir(),
+        404,
+        'database_not_found',
+        'Không tìm thấy thư mục dữ liệu persistent SQLite hiện hữu để nâng cấp Business v5.',
+    )
+    if id_file.is_file():
+        from retailops.identity.store import _inspect_sqlite_identity_ready
+        id_state = _inspect_sqlite_identity_ready(id_file)
+        require(
+            id_state == 'v5_ready',
+            503,
+            'identity_migration_required',
+            'Kho identity SQLite chưa ở schema v5; hãy chạy identity migrate-v5 trước khi nâng cấp Business v5.',
+        )
+
+    tenant_files = []
+    seen = set()
+    if id_file.is_file():
+        ro_uri = id_file.resolve().as_uri() + '?mode=ro'
+        ro_id = sqlite3.connect(ro_uri, uri=True, timeout=5)
+        ro_id.row_factory = sqlite3.Row
+        try:
+            for row in ro_id.execute('SELECT storage_key FROM tenants ORDER BY id').fetchall():
+                cand = tenants_dir / f"{row['storage_key']}.sqlite3"
+                if cand.is_file() and cand.resolve() not in seen:
+                    seen.add(cand.resolve())
+                    tenant_files.append(cand)
+        finally:
+            ro_id.close()
+    if tenants_dir.is_dir():
+        for cand in sorted(tenants_dir.glob('*.sqlite3')):
+            if cand.is_file() and cand.resolve() not in seen:
+                seen.add(cand.resolve())
+                tenant_files.append(cand)
+
+    any_upgraded = False
+    total_cases = 0
+    total_episodes = 0
+    for tf in tenant_files:
+        res = _migrate_single_sqlite_business_file(tf)
+        any_upgraded = any_upgraded or res['upgraded']
+        total_cases += res['cases_created']
+        total_episodes += res['episodes_created']
+
+    return {
+        'result': 'BUSINESS_V5_MIGRATED',
+        'backend': 'sqlite',
+        'schema_version': SQLITE_BUSINESS_SCHEMA_CURRENT,
+        'logical_version': BUSINESS_V5_VERSION_MAPPING['postgresql'],
+        'tenants': len(tenant_files),
+        'upgraded': any_upgraded,
+        'cases_created': total_cases,
+        'episodes_created': total_episodes,
+    }
+
+
 class BusinessStore:
     CONVERSATION_TTL = 7 * 86400  # 7 days persistent chat history
 
@@ -68,14 +290,23 @@ class BusinessStore:
         self.initialize = bool(initialize_db)
         self.read_only = bool(read_only)
         if self.initialize:
+            state = _inspect_sqlite_business_ready(self.path)
+            if state == 'empty' and not create and not self.path.is_file():
+                raise ApiError(503, 'database_unavailable', 'Kho dữ liệu cửa hàng chưa tồn tại.')
             self.path.parent.mkdir(parents=True, exist_ok=True)
             with self.connection(create=create) as db:
                 db.execute('PRAGMA journal_mode=WAL')
             with self.connection(write=True) as db:
-                migrate(db, 'business', initialize_schema)
+                if state == 'empty':
+                    migrate(db, 'business', initialize_schema)
                 ensure_import_tables(db)
-        elif not self.path.is_file():
-            raise ApiError(503, 'database_unavailable', 'Kho dữ liệu cửa hàng chưa tồn tại; không tự khởi tạo khi chạy purge.')
+        else:
+            if not self.path.is_file():
+                raise ApiError(503, 'database_unavailable', 'Kho dữ liệu cửa hàng chưa tồn tại; không tự khởi tạo khi chạy purge.')
+            if not self.read_only:
+                state = _inspect_sqlite_business_ready(self.path)
+                if state == 'empty':
+                    raise ApiError(503, 'database_unavailable', 'Kho dữ liệu cửa hàng đang rỗng.')
 
     @contextmanager
     def connection(self, write=False, *, create=False):

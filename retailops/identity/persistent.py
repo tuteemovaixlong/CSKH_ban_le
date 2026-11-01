@@ -11,7 +11,7 @@ from pathlib import Path
 from retailops.account_usage import AccountQuotaStore
 from retailops.business.application import Application
 from retailops.business.cache import ToolCache
-from retailops.business.store import BusinessStore
+from retailops.business.store import BusinessStore, _inspect_sqlite_business_ready
 from retailops.core import require
 from retailops.identity.contracts import SessionBinding
 from retailops.identity.store import IdentityStore
@@ -76,8 +76,19 @@ class PersistentSessions:
         self.lock = threading.RLock()
         self.tool_caches = {}
         self.apps = OrderedDict()
+        self._verify_existing_tenant_schemas()
         if self.maintenance:
             self.purge()
+
+    def _verify_existing_tenant_schemas(self):
+        with self.control.connection() as db:
+            rows = db.execute('SELECT storage_key FROM tenants WHERE active=1').fetchall()
+        for row in rows:
+            key = row['storage_key']
+            if re.fullmatch(r'[a-f0-9]{32}', str(key or '')):
+                t_path = self.directory / 'tenants' / f'{key}.sqlite3'
+                if t_path.is_file():
+                    _inspect_sqlite_business_ready(t_path)
 
     def tenant_path(self, tenant):
         require(re.fullmatch(r'[a-f0-9]{32}', tenant['storage_key']),

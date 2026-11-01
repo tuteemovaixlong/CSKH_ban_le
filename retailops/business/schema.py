@@ -1,3 +1,20 @@
+import time
+import uuid
+
+# Phase R1 W2 Business v5 backend schema version mapping (W2-D3):
+#   - PostgreSQL business schema: 4 -> 5  (POSTGRES_BUSINESS_SCHEMA_CURRENT = 5)
+#   - SQLite business schema:     3 -> 4  (SQLITE_BUSINESS_SCHEMA_CURRENT = 4)
+# Both represent the exact same logical R1 W2 "Business v5" milestone
+# (tables: cases, handoff_episodes, case_feedback_events; order-action/outbox deferred to W3 v6).
+SQLITE_BUSINESS_SCHEMA_CURRENT = 4
+POSTGRES_BUSINESS_SCHEMA_CURRENT = 5
+BUSINESS_V5_VERSION_MAPPING = {
+    'logical_milestone': 'business_v5',
+    'sqlite': SQLITE_BUSINESS_SCHEMA_CURRENT,
+    'postgresql': POSTGRES_BUSINESS_SCHEMA_CURRENT,
+}
+
+
 def migrate_v3(db):
     db.execute("""CREATE TABLE IF NOT EXISTS products (
                   id TEXT PRIMARY KEY,
@@ -159,3 +176,144 @@ def initialize(db):
     db.execute("""CREATE TRIGGER IF NOT EXISTS customer_id_update BEFORE UPDATE OF id ON customers
         WHEN NEW.id<>OLD.id AND EXISTS (SELECT 1 FROM orders WHERE customer_id=OLD.id)
         BEGIN SELECT RAISE(ABORT,'Customer owns orders'); END""")
+    ensure_case_tables(db)
+
+
+def ensure_case_tables(db):
+    """Create Business v5 case lifecycle tables on SQLite without FK cascade from conversations."""
+    db.execute("""CREATE TABLE IF NOT EXISTS cases (
+                  case_id TEXT PRIMARY KEY,
+                  conversation_id TEXT NOT NULL,
+                  customer_id TEXT NOT NULL,
+                  status TEXT NOT NULL CHECK(status IN ('waiting', 'in_progress', 'resolved')),
+                  holder TEXT,
+                  holder_name TEXT,
+                  version INTEGER NOT NULL DEFAULT 1,
+                  awaiting_customer_since REAL,
+                  reminder_deadline REAL,
+                  reminded_at REAL,
+                  inactivity_deadline REAL,
+                  feedback_prompted_at REAL,
+                  completion_deadline REAL,
+                  resolved_reason TEXT,
+                  resolved_at REAL,
+                  resumed_at REAL,
+                  resume_count INTEGER NOT NULL DEFAULT 0,
+                  previous_case_id TEXT REFERENCES cases(case_id),
+                  created_at REAL NOT NULL,
+                  updated_at REAL NOT NULL
+                )""")
+    db.execute('CREATE INDEX IF NOT EXISTS idx_cases_conversation ON cases(conversation_id, created_at DESC)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_cases_status_updated ON cases(status, updated_at DESC)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_cases_customer ON cases(customer_id, created_at DESC)')
+    db.execute("""CREATE TABLE IF NOT EXISTS handoff_episodes (
+                  handoff_id TEXT PRIMARY KEY,
+                  case_id TEXT NOT NULL REFERENCES cases(case_id),
+                  conversation_id TEXT NOT NULL,
+                  customer_id TEXT NOT NULL,
+                  status TEXT NOT NULL CHECK(status IN ('pending', 'resolved', 'customer_closed')),
+                  reason_code TEXT,
+                  comment TEXT,
+                  created_at REAL NOT NULL,
+                  closed_at REAL,
+                  closed_by TEXT
+                )""")
+    db.execute('CREATE INDEX IF NOT EXISTS idx_handoff_episodes_case ON handoff_episodes(case_id, created_at DESC)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_handoff_episodes_conversation ON handoff_episodes(conversation_id)')
+    db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_handoff_episodes_one_open "
+        "ON handoff_episodes(case_id) WHERE status = 'pending'"
+    )
+    db.execute("""CREATE TABLE IF NOT EXISTS case_feedback_events (
+                  feedback_event_id TEXT PRIMARY KEY,
+                  case_id TEXT NOT NULL REFERENCES cases(case_id),
+                  conversation_id TEXT NOT NULL,
+                  turn_id INTEGER,
+                  customer_id TEXT NOT NULL,
+                  feedback_type TEXT NOT NULL CHECK(feedback_type IN ('turn_rating', 'session_csat')),
+                  raw_value TEXT NOT NULL,
+                  rating INTEGER CHECK(rating IS NULL OR (rating BETWEEN 1 AND 5)),
+                  sentiment_flag TEXT CHECK(sentiment_flag IS NULL OR sentiment_flag IN ('positive', 'negative', 'neutral')),
+                  preference_label TEXT NOT NULL CHECK(preference_label IN ('chosen', 'rejected')),
+                  reason_code TEXT,
+                  comment TEXT,
+                  created_at REAL NOT NULL
+                )""")
+    db.execute('CREATE INDEX IF NOT EXISTS idx_case_feedback_case ON case_feedback_events(case_id, created_at DESC)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_case_feedback_conv ON case_feedback_events(conversation_id)')
+
+
+def backfill_business_v5_cases(db, *, now=None):
+    """Idempotently backfill Business v5 cases and open handoff_episodes from existing conversations.
+
+    Never deletes or mutates legacy rows in conversation_feedback.
+    Works identically on SQLite connections and PostgreSQL Queries wrappers.
+    """
+    now_ts = float(time.time() if now is None else now)
+    db.execute(
+        "INSERT INTO customers(id, name) "
+        "SELECT DISTINCT customer_id, 'Khách hàng' FROM conversations "
+        "WHERE customer_id IS NOT NULL "
+        "ON CONFLICT(id) DO NOTHING"
+    )
+    unmapped = db.execute(
+        """SELECT c.id AS conversation_id, c.customer_id
+           FROM conversations c
+           WHERE NOT EXISTS (SELECT 1 FROM cases k WHERE k.conversation_id = c.id)
+           ORDER BY c.id"""
+    ).fetchall()
+    cases_created = 0
+    episodes_created = 0
+    for conv in unmapped:
+        cid = conv['conversation_id']
+        cust_id = conv['customer_id']
+        turn_row = db.execute(
+            'SELECT MIN(created_at) AS first_ts FROM agent_turns WHERE conversation_id = ?',
+            (cid,),
+        ).fetchone()
+        first_ts = turn_row['first_ts'] if turn_row and turn_row['first_ts'] is not None else None
+        open_handoff = db.execute(
+            """SELECT id, reason_code, comment, created_at
+               FROM conversation_feedback
+               WHERE conversation_id = ?
+                 AND feedback_type = 'human_handoff'
+                 AND COALESCE(reason_code, '') <> 'resolved'
+               ORDER BY created_at DESC, id DESC
+               LIMIT 1""",
+            (cid,),
+        ).fetchone()
+        case_id = f'case_{uuid.uuid4().hex}'
+        created_ts = float(
+            first_ts
+            if first_ts is not None
+            else (open_handoff['created_at'] if open_handoff and open_handoff['created_at'] is not None else now_ts)
+        )
+        if open_handoff is not None:
+            db.execute(
+                """INSERT INTO cases(
+                       case_id, conversation_id, customer_id, status, holder, holder_name,
+                       version, resolved_reason, resolved_at, resume_count, created_at, updated_at
+                   ) VALUES (?, ?, ?, 'waiting', NULL, NULL, 1, NULL, NULL, 0, ?, ?)""",
+                (case_id, cid, cust_id, created_ts, now_ts),
+            )
+            handoff_id = f'hoff_{uuid.uuid4().hex}'
+            ep_ts = float(open_handoff['created_at'] if open_handoff['created_at'] is not None else now_ts)
+            db.execute(
+                """INSERT INTO handoff_episodes(
+                       handoff_id, case_id, conversation_id, customer_id,
+                       status, reason_code, comment, created_at
+                   ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)""",
+                (handoff_id, case_id, cid, cust_id, open_handoff['reason_code'], open_handoff['comment'], ep_ts),
+            )
+            cases_created += 1
+            episodes_created += 1
+        else:
+            db.execute(
+                """INSERT INTO cases(
+                       case_id, conversation_id, customer_id, status, holder, holder_name,
+                       version, resolved_reason, resolved_at, resume_count, created_at, updated_at
+                   ) VALUES (?, ?, ?, 'resolved', NULL, NULL, 1, 'migrated_v5', ?, 0, ?, ?)""",
+                (case_id, cid, cust_id, now_ts, created_ts, now_ts),
+            )
+            cases_created += 1
+    return {'cases_created': cases_created, 'episodes_created': episodes_created}
