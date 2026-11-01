@@ -177,7 +177,10 @@ Cấu hình mới:
 
 Không có yêu cầu tạo lại máy hoặc restore dữ liệu: EBS, Docker volumes, PostgreSQL data, IAM role và Security Group được giữ nguyên qua Stop/Start.
 
-### 3.3. Public IP thay đổi sau Stop/Start
+> [!WARNING]
+> **Cập nhật vận hành (Phase R1 W2 — W2-D7):** `scripts/update_ec2.py` đã bị **ngừng sử dụng (retired)** và từ chối chạy. Các mục lịch sử bên dưới giữ nguyên biên bản sự kiện ngày 2026-09-21; khi vận hành hiện tại **không chạy `scripts/update_ec2.py`** (xem mục 11 đã cập nhật).
+
+### 3.3. Public IP thay đổi sau Stop/Start (lịch sử ngày 2026-09-21)
 
 Không dùng Elastic IP theo quyết định vận hành/chi phí.
 
@@ -217,7 +220,7 @@ https://retailops.98-84-139-124.sslip.io
 https://admin-retailops.98-84-139-124.sslip.io
 ```
 
-Vì không có Elastic IP, mỗi lần Stop/Start cần kiểm tra Public IPv4 và chạy lại `update_ec2.py --auto-ip` nếu IP đổi.
+Vì không có Elastic IP, mỗi lần Stop/Start cần kiểm tra Public IPv4 và cập nhật `/opt/retailops/public.env`, `/opt/retailops/admin.env`, Caddyfile rồi chạy rollout chuẩn (xem mục 11; không dùng `update_ec2.py` nữa).
 
 ---
 
@@ -519,15 +522,22 @@ sudo snap services amazon-ssm-agent
 
 Reboot thông thường không nhất thiết đổi public IP, nhưng vẫn nên kiểm tra.
 
-### Khi EC2 Stop/Start hoặc đổi instance type
+### Khi EC2 Stop/Start, đổi instance type hoặc cập nhật endpoint suy luận
 
-Public IPv4 có thể đổi. Sau khi máy lên:
+> **Lưu ý (W2-D7):** `scripts/update_ec2.py` đã ngừng sử dụng. Tuyệt đối không mount `/opt/retailops/patches` hay chạy DDL trực tiếp ngoài lệnh migrate có kiểm soát.
+
+- **Nếu chỉ đổi endpoint suy luận (`RETAILOPS_API_ENDPOINT` / `RETAILOPS_API_MODEL`):** sửa `/opt/retailops/api.env` rồi tạo lại riêng container `web`:
 
 ```bash
-cd /home/ssm-user/CSKH_ban_le
-git pull origin main
-sudo python3 scripts/update_ec2.py --auto-ip
+sudo docker compose --project-name retailops-web \
+  --env-file /opt/retailops/deployed.env \
+  --env-file /opt/retailops/public.env \
+  -f /opt/retailops/compose.public.yaml \
+  -f /opt/retailops/compose.postgres.yaml \
+  up -d --no-deps --no-build --pull never --force-recreate web
 ```
+
+- **Nếu Public IPv4 đổi sau Stop/Start:** cập nhật `RETAILOPS_PUBLIC_HOST` / `RETAILOPS_PUBLIC_ORIGIN` trong `/opt/retailops/public.env`, `/opt/retailops/admin.env` và host trong `/opt/retailops/Caddyfile`, sau đó áp lại stack từ release image đã phát hành (`deploy/rollout-public-web.sh` hoặc `docker compose ... up -d --no-build --pull never`).
 
 Sau đó:
 
@@ -570,7 +580,7 @@ vì có thể xóa persistent data.
 
 ## 12. Các quyết định vận hành được chốt
 
-1. **Không dùng Elastic IP** vì cân nhắc chi phí; chấp nhận cập nhật IP thủ công/tự động bằng `update_ec2.py --auto-ip` sau Stop/Start.
+1. **Không dùng Elastic IP** vì cân nhắc chi phí; chấp nhận cập nhật host/origin trong `/opt/retailops/public.env`, `/opt/retailops/admin.env` và `/opt/retailops/Caddyfile` sau Stop/Start (`scripts/update_ec2.py` đã ngừng sử dụng ở Phase R1 W2).
 2. **Giữ `sudo docker ...`** thay vì thêm SSM user vào `docker` group.
 3. **Không tạo swap ngay**: 8 GiB RAM hiện còn dư lớn; theo dõi thực tế trước.
 4. **Không xóa Docker volumes** trong cleanup tự động.
