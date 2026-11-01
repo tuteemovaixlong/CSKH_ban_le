@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 import urllib.parse
 
 from retailops.bootstrap import build_public_app
+from retailops.business.application import Application
 from retailops.business.schema import (
     BUSINESS_V5_VERSION_MAPPING,
     POSTGRES_BUSINESS_SCHEMA_CURRENT,
@@ -935,6 +936,254 @@ class PhaseR1W2CaseHandoffResumeFeedbackTests(unittest.TestCase):
         self.assertEqual(after_case["version"], before_case["version"])
         self.assertEqual(after_case["reminder_deadline"], rem_dl)
         self.assertEqual(after_case["completion_deadline"], comp_dl)
+
+
+class PhaseR1W2StaffDeskClaimResolveReadOnlyTests(unittest.TestCase):
+    """Items 5, 6, and 7: Concurrent claim/release/resolve, 3-bucket Staff Desk, and audited read-only resolved view."""
+
+    def setUp(self):
+        import secrets
+        from retailops.http.public import PublicWeb
+        from tests.test_r1_w1_identity_rbac import ORIGIN, _FixtureGateway, _wsgi
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.now = time.time()
+        self.sessions = PersistentSessions(
+            self.root / "persistent",
+            infer=_FixtureGateway(),
+            api_infer=_FixtureGateway(),
+            api_daily_limit=10,
+            default_tenant_id="store-alpha",
+        )
+        orig_bstore = self.sessions.business_store
+
+        def _clocked_bstore(tid):
+            st = orig_bstore(tid)
+            st.clock = lambda: self.now
+            return st
+
+        self.sessions.business_store = _clocked_bstore
+        self.store_a = self.sessions.provision_tenant("store-alpha", "Alpha", seed_demo=True)
+        self.store_b = self.sessions.provision_tenant("store-beta", "Beta", seed_demo=True)
+        self.store_a.clock = lambda: self.now
+        self.store_b.clock = lambda: self.now
+        self.web = PublicWeb(ORIGIN, self.sessions)
+        self._wsgi = _wsgi
+
+        def _mk(tid: str, pid: str, name: str, cid: str, role: str):
+            mid = self.sessions.create_member(tid, pid, name, cid, role=role)
+            tok = secrets.token_urlsafe(32)
+            self.sessions.control.register_credential(mid, tok)
+            st, _, hdrs = _wsgi(self.web, "POST", "/api/login", {"token": tok})
+            self.assertEqual(st, 200)
+            return {"principal_id": pid, "membership_id": mid}, hdrs["Set-Cookie"].split(";")[0]
+
+        self.cust_a, self.ck_cust_a = _mk("store-alpha", "prin_cust_a", "Khách Alpha", "C-001", "customer")
+        self.staff1_a, self.ck_staff1_a = _mk("store-alpha", "prin_staff_1", "Nhân viên 1", "C-001", "staff")
+        self.staff2_a, self.ck_staff2_a = _mk("store-alpha", "prin_staff_2", "Nhân viên 2", "C-002", "staff")
+        self.mgr_a, self.ck_mgr_a = _mk("store-alpha", "prin_mgr_a", "Quản lý Alpha", "C-001", "manager")
+        self.staff_b, self.ck_staff_b = _mk("store-beta", "prin_staff_b", "Nhân viên Beta", "C-001", "staff")
+
+    def test_item5_concurrent_claim_release_lease_release_and_stale_handoff_guard(self):
+        import threading
+
+        _, conv_res, _ = self._wsgi(self.web, "POST", "/api/conversations", {}, cookie=self.ck_cust_a)
+        cid, case_id = conv_res["conversation_id"], conv_res["case_id"]
+        _, fb_res, _ = self._wsgi(
+            self.web,
+            "POST",
+            "/api/feedback",
+            {"conversation_id": cid, "feedback_type": "human_handoff", "comment": "Cần hỗ trợ gấp"},
+            cookie=self.ck_cust_a,
+        )
+        handoff_1 = fb_res["handoff_id"]
+
+        # Seed an active workflow lease on this conversation to prove resolve releases it
+        with self.store_a.connection(write=True) as db:
+            db.execute(
+                "INSERT INTO graph_runs VALUES (?, ?, ?, ?, ?, ?, ?)",
+                ("run-lease-1", "C-001", "fp-1", json.dumps({"id": cid}), self.now + 1800, "owner-1", self.now + 180),
+            )
+
+        # 1. Two Staff concurrently claim the same case -> exactly 1 wins (200), 1 gets 409 case_claim_conflict
+        barrier = threading.Barrier(2)
+        claim_outcomes = []
+
+        def _claim(ck):
+            barrier.wait(timeout=5)
+            st, body, _ = self._wsgi(self.web, "POST", f"/api/staff/cases/{case_id}/claim", {}, cookie=ck)
+            claim_outcomes.append((st, body))
+
+        t1 = threading.Thread(target=_claim, args=(self.ck_staff1_a,))
+        t2 = threading.Thread(target=_claim, args=(self.ck_staff2_a,))
+        t1.start()
+        t2.start()
+        t1.join(timeout=5)
+        t2.join(timeout=5)
+        statuses = sorted(st for st, _ in claim_outcomes)
+        self.assertEqual(statuses, [200, 409])
+        loser_body = [b for st, b in claim_outcomes if st == 409][0]
+        self.assertEqual(loser_body["error"], "case_claim_conflict")
+
+        winner_body = [b for st, b in claim_outcomes if st == 200][0]
+        winner_holder = winner_body["case"]["holder"]
+        winner_ck = self.ck_staff1_a if winner_holder == self.staff1_a["principal_id"] else self.ck_staff2_a
+        other_ck = self.ck_staff2_a if winner_ck == self.ck_staff1_a else self.ck_staff1_a
+
+        # Non-holder staff cannot reply, release, or resolve while held
+        self.assertEqual(
+            self._wsgi(self.web, "POST", "/api/staff/reply", {"case_id": case_id, "message": "Chen ngang"}, cookie=other_ck)[0],
+            409,
+        )
+        self.assertEqual(
+            self._wsgi(self.web, "POST", f"/api/staff/cases/{case_id}/release", {}, cookie=other_ck)[0],
+            403,
+        )
+
+        # Winner releases -> back to waiting (holder = NULL), then re-claims and resolves
+        st_rel, b_rel, _ = self._wsgi(self.web, "POST", f"/api/staff/cases/{case_id}/release", {}, cookie=winner_ck)
+        self.assertEqual(st_rel, 200)
+        self.assertEqual((b_rel["case"]["status"], b_rel["case"]["holder"]), ("waiting", None))
+
+        self.assertEqual(self._wsgi(self.web, "POST", f"/api/staff/cases/{case_id}/claim", {}, cookie=winner_ck)[0], 200)
+        st_rep, _, _ = self._wsgi(
+            self.web, "POST", "/api/staff/reply", {"case_id": case_id, "message": "Em đã xử lý đơn cho mình ạ."}, cookie=winner_ck
+        )
+        self.assertEqual(st_rep, 200)
+
+        st_res, b_res, _ = self._wsgi(
+            self.web,
+            "POST",
+            "/api/staff/resolve",
+            {"case_id": case_id, "handoff_id": handoff_1},
+            cookie=winner_ck,
+        )
+        self.assertEqual(st_res, 200)
+        self.assertEqual(b_res["case"]["status"], "resolved")
+        self.assertEqual(b_res["case"]["resolved_reason"], "staff_resolved")
+        self.assertIsNone(b_res["case"]["holder"])
+        self.assertEqual(b_res["leases_released"], 1)
+
+        with self.store_a.connection() as db:
+            gr_row = db.execute("SELECT lease_owner, lease_until FROM graph_runs WHERE id = 'run-lease-1'").fetchone()
+        self.assertEqual((gr_row["lease_owner"], gr_row["lease_until"]), (None, 0))
+
+        # Replying to resolved case is denied (403)
+        st_rep_closed, b_rep_closed, _ = self._wsgi(
+            self.web, "POST", "/api/staff/reply", {"case_id": case_id, "message": "Trả lời sau khi đóng"}, cookie=winner_ck
+        )
+        self.assertEqual((st_rep_closed, b_rep_closed["error"]), (403, "case_not_escalated"))
+
+        # 2. Customer reopens case and creates a NEW handoff episode -> resolving with STALE handoff_1 is rejected!
+        _, fb_res2, _ = self._wsgi(
+            self.web,
+            "POST",
+            "/api/feedback",
+            {"conversation_id": cid, "feedback_type": "human_handoff", "comment": "Hỏi thêm câu nữa"},
+            cookie=self.ck_cust_a,
+        )
+        handoff_2 = fb_res2["handoff_id"]
+        self.assertNotEqual(handoff_2, handoff_1)
+
+        st_stale, b_stale, _ = self._wsgi(
+            self.web,
+            "POST",
+            "/api/staff/resolve",
+            {"case_id": case_id, "handoff_id": handoff_1},
+            cookie=winner_ck,
+        )
+        self.assertEqual((st_stale, b_stale["error"]), (409, "stale_handoff_episode"))
+        with self.store_a.connection() as db:
+            ep2 = db.execute("SELECT status FROM handoff_episodes WHERE handoff_id = ?", (handoff_2,)).fetchone()
+            k_row = db.execute("SELECT status FROM cases WHERE case_id = ?", (case_id,)).fetchone()
+        self.assertEqual(ep2["status"], "pending")
+        self.assertEqual(k_row["status"], "waiting")
+
+    def test_item6_and_item7_three_bucket_staff_desk_and_audited_readonly_resolved_view(self):
+        # 1. Pure bot-only open case + pure bot-only closed case -> NEVER appear on Staff Desk
+        _, bot_open, _ = self._wsgi(self.web, "POST", "/api/conversations", {}, cookie=self.ck_cust_a)
+        _, bot_closed, _ = self._wsgi(self.web, "POST", "/api/conversations", {}, cookie=self.ck_cust_a)
+        with self.store_a.connection(write=True) as db:
+            db.execute(
+                "UPDATE cases SET status = 'resolved', resolved_reason = 'inactivity', resolved_at = ? WHERE case_id = ?",
+                (self.now, bot_closed["case_id"]),
+            )
+
+        # 2. Case W (Waiting), Case P (In Progress), Case R (Resolved handoff)
+        _, cw, _ = self._wsgi(self.web, "POST", "/api/conversations", {}, cookie=self.ck_cust_a)
+        _, cp, _ = self._wsgi(self.web, "POST", "/api/conversations", {}, cookie=self.ck_cust_a)
+        _, cr, _ = self._wsgi(self.web, "POST", "/api/conversations", {}, cookie=self.ck_cust_a)
+        for cobj in (cw, cp, cr):
+            self._wsgi(
+                self.web,
+                "POST",
+                "/api/feedback",
+                {"conversation_id": cobj["conversation_id"], "feedback_type": "human_handoff", "comment": "Hỗ trợ"},
+                cookie=self.ck_cust_a,
+            )
+        self._wsgi(self.web, "POST", f"/api/staff/cases/{cp['case_id']}/claim", {}, cookie=self.ck_staff1_a)
+        self._wsgi(self.web, "POST", "/api/staff/resolve", {"case_id": cr["case_id"]}, cookie=self.ck_staff1_a)
+
+        st_desk, desk, _ = self._wsgi(self.web, "GET", "/api/staff/cases", cookie=self.ck_staff1_a)
+        self.assertEqual(st_desk, 200)
+        self.assertEqual([x["case_id"] for x in desk["waiting"]], [cw["case_id"]])
+        self.assertEqual([x["case_id"] for x in desk["in_progress"]], [cp["case_id"]])
+        self.assertEqual([x["case_id"] for x in desk["resolved"]], [cr["case_id"]])
+        # Open count ONLY counts open cases (waiting + in_progress = 2); resolved & bot-only excluded!
+        self.assertEqual(desk["open_count"], 2)
+        all_desk_ids = {
+            x["case_id"]
+            for bucket in ("waiting", "in_progress", "resolved")
+            for x in desk[bucket]
+        }
+        self.assertNotIn(bot_open["case_id"], all_desk_ids)
+        self.assertNotIn(bot_closed["case_id"], all_desk_ids)
+
+        # 3. Item 7: Read-only viewing of resolved case by Staff & Manager records an audit row EVERY time
+        with self.store_a.connection() as db:
+            views_before = db.execute(
+                "SELECT COUNT(*) FROM business_events WHERE kind = 'resolved_case_viewed'"
+            ).fetchone()[0]
+        self.assertEqual(views_before, 0)
+
+        st_v1, b_v1, _ = self._wsgi(
+            self.web, "GET", f"/api/staff/cases/{cr['case_id']}/messages", cookie=self.ck_staff1_a
+        )
+        st_v2, b_v2, _ = self._wsgi(
+            self.web, "GET", f"/api/staff/cases/{cr['case_id']}/messages", cookie=self.ck_mgr_a
+        )
+        self.assertEqual((st_v1, b_v1["read_only"]), (200, True))
+        self.assertEqual((st_v2, b_v2["read_only"]), (200, True))
+
+        with self.store_a.connection() as db:
+            view_events = [
+                json.loads(r["payload"])
+                for r in db.execute(
+                    "SELECT payload FROM business_events WHERE kind = 'resolved_case_viewed' ORDER BY id ASC"
+                ).fetchall()
+            ]
+        self.assertEqual(len(view_events), 2)
+        self.assertEqual(view_events[0]["actor"]["principal_id"], self.staff1_a["principal_id"])
+        self.assertEqual(view_events[1]["actor"]["principal_id"], self.mgr_a["principal_id"])
+
+        # Foreign tenant staff gets 404 on resolved case; bot-only open case gets 403 case_not_escalated
+        st_other, b_other, _ = self._wsgi(
+            self.web, "GET", f"/api/staff/cases/{cr['case_id']}/messages", cookie=self.ck_staff_b
+        )
+        self.assertEqual((st_other, b_other["error"]), (404, "case_not_found"))
+        st_bot, b_bot, _ = self._wsgi(
+            self.web, "GET", f"/api/staff/cases/{bot_open['case_id']}/messages", cookie=self.ck_staff1_a
+        )
+        self.assertEqual((st_bot, b_bot["error"]), (403, "case_not_escalated"))
+
+        # Advance clock past 7-day retention -> viewing resolved case is denied (403 case_retention_expired)
+        self.now += self.store_a.CONVERSATION_TTL + 60.0
+        st_exp, b_exp, _ = self._wsgi(
+            self.web, "GET", f"/api/staff/cases/{cr['case_id']}/messages", cookie=self.ck_staff1_a
+        )
+        self.assertEqual((st_exp, b_exp["error"]), (403, "case_retention_expired"))
 
 
 if __name__ == "__main__":

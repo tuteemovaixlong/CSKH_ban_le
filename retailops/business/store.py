@@ -2332,23 +2332,152 @@ class BusinessStore:
                 conversations.append(item)
             return conversations
 
-    def conversation_transcript(self, cid):
+    @staticmethod
+    def _release_conversation_leases_in_tx(db, customer_id: str, cid: str) -> int:
+        released = 0
+        for gr in db.execute(
+            'SELECT id, seed FROM graph_runs WHERE customer_id = ? AND lease_until > 0',
+            (customer_id,),
+        ).fetchall():
+            try:
+                seed_obj = json.loads(gr['seed']) if isinstance(gr['seed'], str) else gr['seed']
+            except Exception:
+                seed_obj = None
+            if isinstance(seed_obj, dict) and seed_obj.get('id') == cid:
+                released += db.execute(
+                    'UPDATE graph_runs SET lease_owner = NULL, lease_until = 0 WHERE id = ?',
+                    (gr['id'],),
+                ).rowcount
+        return released
+
+    def staff_desk_cases(self, limit=50):
+        now = self._now()
         with self.connection() as db:
+            waiting_rows = db.execute(
+                '''SELECT he.handoff_id, k.case_id, k.conversation_id, k.customer_id,
+                          k.status, k.holder, k.holder_name, k.version,
+                          k.resolved_reason, k.resolved_at, k.resume_count,
+                          he.reason_code, he.comment, he.created_at, k.updated_at,
+                          c.name AS customer_name, conv.order_id
+                   FROM cases k
+                   JOIN handoff_episodes he
+                     ON he.case_id = k.case_id AND he.status = 'pending'
+                   JOIN customers c ON k.customer_id = c.id
+                   LEFT JOIN conversations conv ON k.conversation_id = conv.id
+                   WHERE k.status = 'waiting' AND k.holder IS NULL
+                   ORDER BY k.updated_at DESC, he.created_at DESC
+                   LIMIT ?''',
+                (limit,),
+            ).fetchall()
+
+            in_progress_rows = db.execute(
+                '''SELECT he.handoff_id, k.case_id, k.conversation_id, k.customer_id,
+                          k.status, k.holder, k.holder_name, k.version,
+                          k.resolved_reason, k.resolved_at, k.resume_count,
+                          he.reason_code, he.comment,
+                          COALESCE(he.created_at, k.created_at) AS created_at, k.updated_at,
+                          c.name AS customer_name, conv.order_id
+                   FROM cases k
+                   LEFT JOIN handoff_episodes he
+                     ON he.case_id = k.case_id AND he.status = 'pending'
+                   JOIN customers c ON k.customer_id = c.id
+                   LEFT JOIN conversations conv ON k.conversation_id = conv.id
+                   WHERE k.status = 'in_progress' AND k.holder IS NOT NULL
+                   ORDER BY k.updated_at DESC
+                   LIMIT ?''',
+                (limit,),
+            ).fetchall()
+
+            resolved_rows = db.execute(
+                '''SELECT (
+                              SELECT he2.handoff_id FROM handoff_episodes he2
+                              WHERE he2.case_id = k.case_id
+                              ORDER BY he2.created_at DESC LIMIT 1
+                          ) AS handoff_id,
+                          k.case_id, k.conversation_id, k.customer_id,
+                          k.status, k.holder, k.holder_name, k.version,
+                          k.resolved_reason, k.resolved_at, k.resume_count,
+                          (
+                              SELECT he3.reason_code FROM handoff_episodes he3
+                              WHERE he3.case_id = k.case_id
+                              ORDER BY he3.created_at DESC LIMIT 1
+                          ) AS reason_code,
+                          (
+                              SELECT he4.comment FROM handoff_episodes he4
+                              WHERE he4.case_id = k.case_id
+                              ORDER BY he4.created_at DESC LIMIT 1
+                          ) AS comment,
+                          k.created_at, k.updated_at,
+                          c.name AS customer_name, conv.order_id
+                   FROM cases k
+                   JOIN customers c ON k.customer_id = c.id
+                   JOIN conversations conv ON k.conversation_id = conv.id
+                   WHERE k.status = 'resolved'
+                     AND conv.expires_at > ?
+                     AND (k.resolved_at IS NULL OR (? - k.resolved_at) <= ?)
+                     AND EXISTS (SELECT 1 FROM handoff_episodes hex WHERE hex.case_id = k.case_id)
+                   ORDER BY COALESCE(k.resolved_at, k.updated_at) DESC
+                   LIMIT ?''',
+                (now, now, self.CONVERSATION_TTL, limit),
+            ).fetchall()
+
+        def _clean(rows):
+            items = []
+            for r in rows:
+                d = dict(r)
+                d['id'] = d.get('handoff_id') or d['case_id']
+                d['sentiment_flag'] = None
+                if isinstance(d.get('comment'), str) and contains_canary_or_secret(d['comment']):
+                    _, d['comment'] = sanitize_structured_payload(d['comment'], preserve_reasoning=False)
+                items.append(d)
+            return items
+
+        waiting = _clean(waiting_rows)
+        in_progress = _clean(in_progress_rows)
+        resolved = _clean(resolved_rows)
+        open_count = len(waiting) + len(in_progress)
+        return {
+            'waiting': waiting,
+            'in_progress': in_progress,
+            'resolved': resolved,
+            'open_count': open_count,
+            'counts': {
+                'open': open_count,
+                'waiting': len(waiting),
+                'in_progress': len(in_progress),
+                'resolved': len(resolved),
+            },
+        }
+
+    def conversation_transcript(self, cid, *, case_id=None, read_only=False):
+        with self.connection() as db:
+            if case_id is not None:
+                case_row = db.execute('SELECT * FROM cases WHERE case_id = ?', (case_id,)).fetchone()
+                if case_row is not None and cid is None:
+                    cid = case_row['conversation_id']
+            else:
+                case_row = self._latest_case_in_tx(db, cid) if cid else None
+            open_ep = None
+            if case_row is not None:
+                open_ep = db.execute(
+                    "SELECT * FROM handoff_episodes WHERE case_id = ? AND status = 'pending' LIMIT 1",
+                    (case_row['case_id'],),
+                ).fetchone()
             conv = db.execute('''
                 SELECT conv.*, c.name as customer_name
                 FROM conversations conv
                 JOIN customers c ON conv.customer_id = c.id
                 WHERE conv.id=?
-            ''', (cid,)).fetchone()
+            ''', (cid,)).fetchone() if cid else None
             turns = db.execute('''
                 SELECT id, customer_id, request_id, messages, result, created_at
                 FROM agent_turns WHERE conversation_id=?
                 ORDER BY id ASC
-            ''', (cid,)).fetchall()
+            ''', (cid,)).fetchall() if cid else []
             feedbacks = db.execute('''
                 SELECT * FROM conversation_feedback WHERE conversation_id=?
                 ORDER BY id ASC
-            ''', (cid,)).fetchall()
+            ''', (cid,)).fetchall() if cid else []
         clean_turns = []
         for t in turns:
             td = dict(t)
@@ -2382,13 +2511,144 @@ class BusinessStore:
             if isinstance(fd.get('comment'), str) and contains_canary_or_secret(fd['comment']):
                 _, fd['comment'] = sanitize_structured_payload(fd['comment'], preserve_reasoning=False)
             clean_feedbacks.append(fd)
+        ep_dict = dict(open_ep) if open_ep is not None else None
+        if ep_dict and isinstance(ep_dict.get('comment'), str) and contains_canary_or_secret(ep_dict['comment']):
+            _, ep_dict['comment'] = sanitize_structured_payload(ep_dict['comment'], preserve_reasoning=False)
         return {
             'conversation': dict(conv) if conv else None,
+            'case': self._case_public_dict(case_row),
+            'active_handoff': ep_dict,
+            'read_only': bool(read_only or (case_row is not None and case_row['status'] == 'resolved')),
             'turns': clean_turns,
-            'feedbacks': clean_feedbacks
+            'feedbacks': clean_feedbacks,
         }
 
-    def staff_reply(self, customer_id, cid, staff_name, message, *, actor=None):
+    def claim_case(self, case_id: str, *, staff_name=None, actor=None, expected_version=None):
+        require(isinstance(case_id, str) and bool(case_id.strip()), 400, 'invalid_case_id', 'Mã ca hỗ trợ không hợp lệ.')
+        staff_label = staff_name.strip() if (staff_name and isinstance(staff_name, str) and staff_name.strip()) else 'Nhân viên hỗ trợ'
+        actor_meta = None
+        if isinstance(actor, dict):
+            actor_meta = {
+                'principal_id': actor.get('principal_id'),
+                'role': actor.get('role'),
+                'tenant_id': actor.get('tenant_id'),
+                'membership_id': actor.get('membership_id'),
+                'display_name': actor.get('display_name'),
+                'actor_type': actor.get('actor_type', 'principal'),
+            }
+        holder_id = (actor_meta.get('principal_id') if actor_meta else None) or staff_label
+        now = self._now()
+        with self.connection(write=True) as db:
+            case_row = db.execute('SELECT * FROM cases WHERE case_id = ?', (case_id,)).fetchone()
+            require(case_row is not None, 404, 'case_not_found', 'Không tìm thấy ca hỗ trợ.')
+            require(case_row['status'] != 'resolved', 409, 'case_already_resolved', 'Ca hỗ trợ đã đóng, không thể nhận ca.')
+            open_ep = db.execute(
+                "SELECT * FROM handoff_episodes WHERE case_id = ? AND status = 'pending' LIMIT 1",
+                (case_id,),
+            ).fetchone()
+            require(open_ep is not None, 409, 'case_not_escalated', 'Ca hỗ trợ chưa có yêu cầu chuyển tiếp nhân viên đang mở.')
+            require(
+                case_row['status'] == 'waiting' and case_row['holder'] is None,
+                409,
+                'case_claim_conflict',
+                'Ca hỗ trợ đã được nhân viên khác nhận xử lý.',
+            )
+            if expected_version is not None:
+                require(int(case_row['version']) == int(expected_version), 409, 'case_claim_conflict', 'Phiên bản ca hỗ trợ đã thay đổi.')
+            won = db.execute(
+                """UPDATE cases
+                   SET holder = ?,
+                       holder_name = ?,
+                       status = 'in_progress',
+                       awaiting_customer_since = NULL,
+                       reminder_deadline = NULL,
+                       reminded_at = NULL,
+                       inactivity_deadline = NULL,
+                       feedback_prompted_at = NULL,
+                       completion_deadline = NULL,
+                       version = version + 1,
+                       updated_at = ?
+                   WHERE case_id = ? AND version = ? AND status = 'waiting' AND holder IS NULL""",
+                (holder_id, staff_label, now, case_id, case_row['version']),
+            ).rowcount
+            require(won == 1, 409, 'case_claim_conflict', 'Ca hỗ trợ vừa được nhân viên khác nhận trước đó.')
+            conv = db.execute('SELECT order_id FROM conversations WHERE id = ?', (case_row['conversation_id'],)).fetchone()
+            log_kwargs = {
+                'case_id': case_id,
+                'handoff_id': open_ep['handoff_id'],
+                'holder': holder_id,
+                'staff_name': staff_label,
+            }
+            if actor_meta is not None:
+                log_kwargs['actor'] = actor_meta
+            self.log(db, case_row['customer_id'], 'case_claimed', conv['order_id'] if conv else None, **log_kwargs)
+            updated = db.execute('SELECT * FROM cases WHERE case_id = ?', (case_id,)).fetchone()
+        return {
+            'status': 'ok',
+            'claimed': True,
+            'case_id': case_id,
+            'handoff_id': open_ep['handoff_id'],
+            'case': self._case_public_dict(updated),
+        }
+
+    def release_case(self, case_id: str, *, staff_name=None, actor=None, expected_version=None):
+        require(isinstance(case_id, str) and bool(case_id.strip()), 400, 'invalid_case_id', 'Mã ca hỗ trợ không hợp lệ.')
+        staff_label = staff_name.strip() if (staff_name and isinstance(staff_name, str) and staff_name.strip()) else 'Nhân viên hỗ trợ'
+        actor_meta = None
+        if isinstance(actor, dict):
+            actor_meta = {
+                'principal_id': actor.get('principal_id'),
+                'role': actor.get('role'),
+                'tenant_id': actor.get('tenant_id'),
+                'membership_id': actor.get('membership_id'),
+                'display_name': actor.get('display_name'),
+                'actor_type': actor.get('actor_type', 'principal'),
+            }
+        caller_id = (actor_meta.get('principal_id') if actor_meta else None) or staff_label
+        caller_role = actor_meta.get('role') if actor_meta else 'staff'
+        now = self._now()
+        with self.connection(write=True) as db:
+            case_row = db.execute('SELECT * FROM cases WHERE case_id = ?', (case_id,)).fetchone()
+            require(case_row is not None, 404, 'case_not_found', 'Không tìm thấy ca hỗ trợ.')
+            require(
+                case_row['status'] == 'in_progress' and case_row['holder'] is not None,
+                409,
+                'case_not_claimed',
+                'Ca hỗ trợ hiện không ở trạng thái đang được giữ.',
+            )
+            require(
+                case_row['holder'] == caller_id or caller_role == 'manager',
+                403,
+                'case_held_by_other',
+                'Chỉ nhân viên đang giữ ca hoặc quản lý mới được trả ca về hàng chờ.',
+            )
+            if expected_version is not None:
+                require(int(case_row['version']) == int(expected_version), 409, 'case_version_conflict', 'Phiên bản ca hỗ trợ đã thay đổi.')
+            won = db.execute(
+                """UPDATE cases
+                   SET holder = NULL,
+                       holder_name = NULL,
+                       status = 'waiting',
+                       version = version + 1,
+                       updated_at = ?
+                   WHERE case_id = ? AND version = ? AND status = 'in_progress'""",
+                (now, case_id, case_row['version']),
+            ).rowcount
+            require(won == 1, 409, 'case_version_conflict', 'Trạng thái ca hỗ trợ vừa thay đổi; hãy tải lại.')
+            conv = db.execute('SELECT order_id FROM conversations WHERE id = ?', (case_row['conversation_id'],)).fetchone()
+            log_kwargs = {'case_id': case_id, 'previous_holder': case_row['holder'], 'staff_name': staff_label}
+            if actor_meta is not None:
+                log_kwargs['actor'] = actor_meta
+            self.log(db, case_row['customer_id'], 'case_released', conv['order_id'] if conv else None, **log_kwargs)
+            updated = db.execute('SELECT * FROM cases WHERE case_id = ?', (case_id,)).fetchone()
+        return {
+            'status': 'ok',
+            'released': True,
+            'case_id': case_id,
+            'case': self._case_public_dict(updated),
+        }
+
+    def staff_reply(self, customer_id, cid, staff_name, message, *, actor=None, case_id=None):
         require(isinstance(message, str) and message.strip(), 400, 'invalid_message', 'Tin nhắn không được để trống.')
         staff_name = staff_name.strip() if (staff_name and isinstance(staff_name, str) and staff_name.strip()) else "Nhân viên hỗ trợ"
         actor_meta = None
@@ -2401,26 +2661,49 @@ class BusinessStore:
                 "display_name": actor.get("display_name"),
                 "actor_type": actor.get("actor_type", "principal"),
             }
-        now = time.time()
+        now = self._now()
         req_id = f"staff-{uuid.uuid4().hex[:12]}"
         with self.connection(write=True) as db:
+            if case_id is not None:
+                case_row = db.execute('SELECT * FROM cases WHERE case_id = ?', (case_id,)).fetchone()
+                require(case_row is not None, 404, 'case_not_found', 'Không tìm thấy ca hỗ trợ.')
+                if cid is not None:
+                    require(case_row['conversation_id'] == cid, 409, 'case_conversation_mismatch', 'Mã ca không khớp với cuộc trò chuyện.')
+                cid = case_row['conversation_id']
+            else:
+                case_row = self._latest_case_in_tx(db, cid)
             conv = db.execute('SELECT * FROM conversations WHERE id=?', (cid,)).fetchone()
             require(conv is not None, 404, 'conversation_not_found', 'Cuộc trò chuyện không tồn tại hoặc đã bị xóa.')
-            open_handoff = db.execute(
-                "SELECT id FROM conversation_feedback WHERE conversation_id=? AND feedback_type='human_handoff' AND COALESCE(reason_code, '')!='resolved' LIMIT 1",
-                (cid,),
-            ).fetchone()
+            if customer_id is None:
+                customer_id = conv['customer_id']
             require(
-                open_handoff is not None,
+                case_row is not None and case_row['status'] in ('waiting', 'in_progress'),
                 403,
                 'case_not_escalated',
                 'Cuộc trò chuyện hiện không có phiên hỗ trợ chuyển tiếp đang mở.',
             )
-            
+            open_ep = db.execute(
+                "SELECT * FROM handoff_episodes WHERE case_id = ? AND status = 'pending' LIMIT 1",
+                (case_row['case_id'],),
+            ).fetchone()
+            require(
+                open_ep is not None,
+                403,
+                'case_not_escalated',
+                'Cuộc trò chuyện hiện không có phiên hỗ trợ chuyển tiếp đang mở.',
+            )
+            if case_row['holder'] is not None and actor_meta is not None and actor_meta.get('principal_id'):
+                require(
+                    actor_meta['principal_id'] == case_row['holder'] or actor_meta.get('role') == 'manager',
+                    409,
+                    'case_held_by_other',
+                    'Ca hỗ trợ đang do nhân viên khác phụ trách.',
+                )
+
             turn_messages = [
                 {"role": "assistant", "content": message}
             ]
-            trace_payload = {"staff": True, "staff_name": staff_name}
+            trace_payload = {"staff": True, "staff_name": staff_name, "case_id": case_row["case_id"], "handoff_id": open_ep["handoff_id"]}
             if actor_meta is not None:
                 trace_payload.update({
                     "actor_principal_id": actor_meta["principal_id"],
@@ -2432,12 +2715,14 @@ class BusinessStore:
                 "message": message,
                 "author": "staff",
                 "staff_name": staff_name,
+                "case_id": case_row["case_id"],
+                "handoff_id": open_ep["handoff_id"],
                 "context": {"order_id": conv["order_id"], "product_id": conv["product_id"]},
                 "trace": trace_payload
             }
             if actor_meta is not None:
                 turn_result["actor_role"] = actor_meta["role"]
-            
+
             cursor = db.execute('''
                 INSERT INTO agent_turns(conversation_id, customer_id, request_id, input_hash, messages, result, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id
@@ -2446,23 +2731,45 @@ class BusinessStore:
                   json.dumps(turn_result, ensure_ascii=False), now))
             row = cursor.fetchone()
             turn_id = row['id'] if row and 'id' in row else (row[0] if row else getattr(cursor, 'lastrowid', None))
-            
+
             db.execute('UPDATE conversations SET revision=revision+1, expires_at=? WHERE id=?', (now + self.CONVERSATION_TTL, cid))
+            db.execute(
+                """UPDATE cases
+                   SET awaiting_customer_since = NULL,
+                       reminder_deadline = NULL,
+                       reminded_at = NULL,
+                       inactivity_deadline = NULL,
+                       feedback_prompted_at = NULL,
+                       completion_deadline = NULL,
+                       version = version + 1,
+                       updated_at = ?
+                   WHERE case_id = ?""",
+                (now, case_row['case_id']),
+            )
             db.execute('''
                 UPDATE conversation_feedback
                 SET comment=?
                 WHERE conversation_id=? AND feedback_type='human_handoff' AND COALESCE(reason_code, '')!='resolved'
             ''', (f"Đang xử lý bởi {staff_name}: {message[:120]}", cid))
-            
-            log_kwargs = {"staff_name": staff_name, "message": message}
+
+            log_kwargs = {
+                "staff_name": staff_name,
+                "message": message,
+                "case_id": case_row["case_id"],
+                "handoff_id": open_ep["handoff_id"],
+            }
             if actor_meta is not None:
                 log_kwargs["actor"] = actor_meta
             self.log(db, customer_id, 'staff_replied', conv['order_id'], **log_kwargs)
-            
+            updated_case = db.execute('SELECT * FROM cases WHERE case_id = ?', (case_row['case_id'],)).fetchone()
+
         out = {
             'status': 'ok',
             'turn_id': turn_id,
             'request_id': req_id,
+            'case_id': case_row['case_id'],
+            'handoff_id': open_ep['handoff_id'],
+            'case': self._case_public_dict(updated_case),
             'staff_name': staff_name,
             'message': message,
             'created_at': now
@@ -2538,7 +2845,7 @@ class BusinessStore:
             'created_at': now
         }
 
-    def resolve_escalation(self, cid, staff_name=None, *, actor=None):
+    def resolve_escalation(self, cid=None, staff_name=None, *, actor=None, case_id=None, handoff_id=None):
         staff_name = staff_name.strip() if (staff_name and isinstance(staff_name, str) and staff_name.strip()) else "Nhân viên hỗ trợ"
         actor_meta = None
         if isinstance(actor, dict):
@@ -2550,29 +2857,137 @@ class BusinessStore:
                 "display_name": actor.get("display_name"),
                 "actor_type": actor.get("actor_type", "principal"),
             }
+        closed_by = (actor_meta.get("principal_id") if actor_meta else None) or staff_name
+        now = self._now()
         with self.connection(write=True) as db:
-            conv = db.execute('SELECT customer_id, order_id FROM conversations WHERE id=?', (cid,)).fetchone()
-            require(conv is not None, 404, 'conversation_not_found', 'Cuộc trò chuyện không tồn tại hoặc đã bị xóa.')
-            open_handoff = db.execute(
-                "SELECT id FROM conversation_feedback WHERE conversation_id=? AND feedback_type='human_handoff' AND COALESCE(reason_code, '')!='resolved' LIMIT 1",
-                (cid,),
-            ).fetchone()
+            if case_id is not None:
+                case_row = db.execute('SELECT * FROM cases WHERE case_id = ?', (case_id,)).fetchone()
+                require(case_row is not None, 404, 'case_not_found', 'Không tìm thấy ca hỗ trợ.')
+                if cid is not None:
+                    require(case_row['conversation_id'] == cid, 409, 'case_conversation_mismatch', 'Mã ca không khớp với cuộc trò chuyện.')
+                cid = case_row['conversation_id']
+            elif handoff_id is not None and cid is None:
+                ep_lookup = db.execute('SELECT * FROM handoff_episodes WHERE handoff_id = ?', (handoff_id,)).fetchone()
+                require(ep_lookup is not None, 409, 'stale_handoff_episode', 'Phiên chuyển tiếp không tồn tại hoặc đã cũ.')
+                case_row = db.execute('SELECT * FROM cases WHERE case_id = ?', (ep_lookup['case_id'],)).fetchone()
+                require(case_row is not None, 404, 'case_not_found', 'Không tìm thấy ca hỗ trợ.')
+                cid = case_row['conversation_id']
+            else:
+                case_row = self._latest_case_in_tx(db, cid) if cid else None
+
+            conv = db.execute('SELECT customer_id, order_id FROM conversations WHERE id=?', (cid,)).fetchone() if cid else None
             require(
-                open_handoff is not None,
+                conv is not None or case_row is not None,
+                404,
+                'conversation_not_found',
+                'Cuộc trò chuyện không tồn tại hoặc đã bị xóa.',
+            )
+            require(
+                case_row is not None,
                 409,
                 'case_not_escalated',
                 'Cuộc trò chuyện không có phiên hỗ trợ đang mở để hoàn tất.',
             )
+
+            if handoff_id is not None:
+                ep_target = db.execute('SELECT * FROM handoff_episodes WHERE handoff_id = ?', (handoff_id,)).fetchone()
+                require(
+                    ep_target is not None
+                    and ep_target['case_id'] == case_row['case_id']
+                    and ep_target['status'] == 'pending',
+                    409,
+                    'stale_handoff_episode',
+                    'Phiên chuyển tiếp đã cũ hoặc đã được đóng; không đóng phiên mới.',
+                )
+
+            require(
+                case_row['status'] in ('waiting', 'in_progress'),
+                409,
+                'case_not_escalated',
+                'Cuộc trò chuyện không có phiên hỗ trợ đang mở để hoàn tất.',
+            )
+            open_ep = db.execute(
+                "SELECT * FROM handoff_episodes WHERE case_id = ? AND status = 'pending' LIMIT 1",
+                (case_row['case_id'],),
+            ).fetchone()
+            require(
+                open_ep is not None,
+                409,
+                'case_not_escalated',
+                'Cuộc trò chuyện không có phiên hỗ trợ đang mở để hoàn tất.',
+            )
+            if handoff_id is not None:
+                require(
+                    open_ep['handoff_id'] == handoff_id,
+                    409,
+                    'stale_handoff_episode',
+                    'Mã phiên chuyển tiếp không khớp với phiên đang mở của ca này.',
+                )
+            if case_row['holder'] is not None and actor_meta is not None and actor_meta.get('principal_id'):
+                require(
+                    actor_meta['principal_id'] == case_row['holder'] or actor_meta.get('role') == 'manager',
+                    409,
+                    'case_held_by_other',
+                    'Ca hỗ trợ đang do nhân viên khác phụ trách.',
+                )
+
+            ep_updated = db.execute(
+                """UPDATE handoff_episodes
+                   SET status = 'resolved', closed_at = ?, closed_by = ?
+                   WHERE handoff_id = ? AND status = 'pending'""",
+                (now, closed_by, open_ep['handoff_id']),
+            ).rowcount
+            require(ep_updated == 1, 409, 'stale_handoff_episode', 'Phiên chuyển tiếp vừa thay đổi trạng thái.')
+
+            case_updated = db.execute(
+                """UPDATE cases
+                   SET status = 'resolved',
+                       resolved_reason = 'staff_resolved',
+                       resolved_at = ?,
+                       holder = NULL,
+                       holder_name = NULL,
+                       awaiting_customer_since = NULL,
+                       reminder_deadline = NULL,
+                       reminded_at = NULL,
+                       inactivity_deadline = NULL,
+                       feedback_prompted_at = NULL,
+                       completion_deadline = NULL,
+                       version = version + 1,
+                       updated_at = ?
+                   WHERE case_id = ? AND version = ? AND status <> 'resolved'""",
+                (now, now, case_row['case_id'], case_row['version']),
+            ).rowcount
+            require(case_updated == 1, 409, 'case_version_conflict', 'Trạng thái ca hỗ trợ vừa thay đổi; hãy tải lại.')
+
+            cust_id = conv['customer_id'] if conv is not None else case_row['customer_id']
+            ord_id = conv['order_id'] if conv is not None else None
+            leases_released = self._release_conversation_leases_in_tx(db, cust_id, cid)
+
             db.execute('''
                 UPDATE conversation_feedback
                 SET reason_code='resolved'
                 WHERE conversation_id=? AND feedback_type='human_handoff' AND COALESCE(reason_code, '')!='resolved'
             ''', (cid,))
-            log_kwargs = {"staff_name": staff_name}
+            log_kwargs = {
+                "staff_name": staff_name,
+                "case_id": case_row["case_id"],
+                "handoff_id": open_ep["handoff_id"],
+                "leases_released": leases_released,
+            }
             if actor_meta is not None:
                 log_kwargs["actor"] = actor_meta
-            self.log(db, conv['customer_id'], 'escalation_resolved', conv['order_id'], **log_kwargs)
-        out = {'status': 'ok', 'resolved': True, 'staff_name': staff_name}
+            self.log(db, cust_id, 'escalation_resolved', ord_id, **log_kwargs)
+            updated_case = db.execute('SELECT * FROM cases WHERE case_id = ?', (case_row['case_id'],)).fetchone()
+
+        out = {
+            'status': 'ok',
+            'resolved': True,
+            'case_id': case_row['case_id'],
+            'handoff_id': open_ep['handoff_id'],
+            'leases_released': leases_released,
+            'case': self._case_public_dict(updated_case),
+            'staff_name': staff_name,
+        }
         if actor_meta is not None:
             out['actor_role'] = actor_meta['role']
             out['actor_principal_id'] = actor_meta['principal_id']

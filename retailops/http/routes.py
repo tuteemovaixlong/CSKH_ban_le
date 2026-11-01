@@ -181,7 +181,7 @@ def _actor_display_name(ctx: RequestContext) -> str:
     return 'Quản lý cửa hàng' if ctx.role == 'manager' else 'Nhân viên hỗ trợ'
 
 
-def _require_open_handoff_conversation(app, ctx: RequestContext, conversation_id: str, *, denied_status: int = 403):
+def _check_staff_tenant_scope(app, ctx: RequestContext) -> None:
     app_tid = getattr(app, 'tenant_id', None)
     if app_tid and app_tid != 'default' and ctx.tenant_id and ctx.tenant_id != 'default':
         require(
@@ -190,24 +190,70 @@ def _require_open_handoff_conversation(app, ctx: RequestContext, conversation_id
             'tenant_scope_denied',
             'Ngữ cảnh cửa hàng không khớp với phiên làm việc.',
         )
+
+
+def _authorize_staff_transcript_view(app, ctx: RequestContext, actor: dict, *, cid: str | None = None, case_id: str | None = None):
+    _check_staff_tenant_scope(app, ctx)
+    now = app.store._now() if hasattr(app.store, '_now') else time.time()
     with app.store.connection() as db:
-        conv = db.execute(
-            'SELECT id, customer_id, order_id, product_id, expires_at FROM conversations WHERE id=?',
-            (conversation_id,),
-        ).fetchone()
-        require(conv is not None, 404, 'conversation_not_found', 'Không tìm thấy cuộc trò chuyện.')
-        handoff = db.execute(
-            "SELECT 1 FROM conversation_feedback WHERE conversation_id=? "
-            "AND feedback_type='human_handoff' AND COALESCE(reason_code, '')!='resolved' LIMIT 1",
-            (conversation_id,),
-        ).fetchone()
-    require(
-        handoff is not None,
-        denied_status,
+        if case_id is not None:
+            case_row = db.execute('SELECT * FROM cases WHERE case_id = ?', (case_id,)).fetchone()
+            require(case_row is not None, 404, 'case_not_found', 'Không tìm thấy ca hỗ trợ.')
+            cid = case_row['conversation_id']
+            conv = db.execute(
+                'SELECT id, customer_id, order_id, product_id, expires_at FROM conversations WHERE id=?',
+                (cid,),
+            ).fetchone()
+        else:
+            conv = db.execute(
+                'SELECT id, customer_id, order_id, product_id, expires_at FROM conversations WHERE id=?',
+                (cid,),
+            ).fetchone()
+            case_row = app.store._latest_case_in_tx(db, cid) if hasattr(app.store, '_latest_case_in_tx') else None
+            require(conv is not None or case_row is not None, 404, 'conversation_not_found', 'Không tìm thấy cuộc trò chuyện.')
+        open_ep = (
+            db.execute(
+                "SELECT handoff_id FROM handoff_episodes WHERE case_id = ? AND status = 'pending' LIMIT 1",
+                (case_row['case_id'],),
+            ).fetchone()
+            if case_row is not None
+            else None
+        )
+
+    if (
+        case_row is not None
+        and case_row['status'] in ('waiting', 'in_progress')
+        and (open_ep is not None or case_row['holder'] is not None)
+    ):
+        return cid, case_row['case_id'], False
+
+    if case_row is not None and case_row['status'] == 'resolved':
+        within_retention = (
+            conv is not None
+            and float(conv['expires_at']) > now
+            and (case_row['resolved_at'] is None or (now - float(case_row['resolved_at'])) <= app.store.CONVERSATION_TTL)
+        )
+        require(
+            within_retention,
+            403,
+            'case_retention_expired',
+            'Ca hỗ trợ đã đóng và quá thời hạn lưu trữ để xem lại.',
+        )
+        app.store.event(
+            case_row['customer_id'],
+            'resolved_case_viewed',
+            conv['order_id'] if conv is not None else None,
+            case_id=case_row['case_id'],
+            conversation_id=cid,
+            actor=actor,
+        )
+        return cid, case_row['case_id'], True
+
+    raise ApiError(
+        403,
         'case_not_escalated',
         'Cuộc trò chuyện này hiện không có yêu cầu chuyển tiếp nhân viên đang mở.',
     )
-    return conv
 
 
 def _sanitize_customer_events(events):
@@ -416,11 +462,25 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
         m = re.fullmatch(r"/api/orders/([A-Z]{1,6}-[0-9]{1,8})", path)
         if m:
             return (200, {"order": _format_order_for_api(app.store.lookup(customer, m[1]), app)})
+        if path == "/api/staff/cases":
+            _require_ctx_permission(ctx, STAFF)
+            _check_staff_tenant_scope(app, ctx)
+            return (200, app.store.staff_desk_cases())
         if path == "/api/staff/escalations":
             _require_ctx_permission(ctx, STAFF)
-            return (200, {"escalations": app.store.escalations()})
+            _check_staff_tenant_scope(app, ctx)
+            desk = app.store.staff_desk_cases()
+            return (200, {"escalations": app.store.escalations(), **desk})
         if path == "/api/conversations":
             return (200, {"conversations": app.store.list_conversations(customer)})
+        m_case_trans = re.fullmatch(r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/messages", path)
+        if m_case_trans:
+            _require_ctx_permission(ctx, STAFF)
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
+            cid, resolved_case_id, ro = _authorize_staff_transcript_view(
+                app, ctx, actor, case_id=m_case_trans[1]
+            )
+            return (200, app.store.conversation_transcript(cid, case_id=resolved_case_id, read_only=ro))
         m_trans = re.fullmatch(r"/api/(?:staff/)?conversations/([a-f0-9-]{36})/messages", path)
         if m_trans:
             cid = m_trans[1]
@@ -428,9 +488,10 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 with app.store.connection() as db:
                     row = db.execute("SELECT customer_id FROM conversations WHERE id=?", (cid,)).fetchone()
                 require(row is not None and row["customer_id"] == customer, 403, "permission_denied", "Tài khoản này không có quyền thực hiện thao tác.")
-            else:
-                _require_open_handoff_conversation(app, ctx, cid, denied_status=403)
-            return (200, app.store.conversation_transcript(cid))
+                return (200, app.store.conversation_transcript(cid))
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
+            cid, resolved_case_id, ro = _authorize_staff_transcript_view(app, ctx, actor, cid=cid)
+            return (200, app.store.conversation_transcript(cid, case_id=resolved_case_id, read_only=ro))
     if method == "POST":
         if path == '/api/conversations':
             return (201, app.new_conversation(customer, body))
@@ -518,23 +579,89 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             cid, msg = body["conversation_id"], body["message"]
             res = app.store.customer_message(customer, cid, msg)
             return (200, res)
-        if path == "/api/staff/reply":
+        m_case_act = re.fullmatch(r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/(claim|release)", path)
+        if m_case_act:
             _require_ctx_permission(ctx, STAFF)
-            require(isinstance(body, dict) and {"conversation_id", "message"}.issubset(set(body)) and set(body).issubset({"conversation_id", "message", "staff_name"}), 400, "invalid_fields", "Các trường của yêu cầu không hợp lệ.")
-            cid, msg = body["conversation_id"], body["message"]
+            _check_staff_tenant_scope(app, ctx)
+            require(
+                body is None or (isinstance(body, dict) and set(body).issubset({"version"})),
+                400,
+                "invalid_fields",
+                "Các trường của yêu cầu không hợp lệ.",
+            )
+            exp_ver = body.get("version") if isinstance(body, dict) else None
+            if exp_ver is not None:
+                require(type(exp_ver) is int and exp_ver >= 1, 400, "invalid_version", "Phiên bản ca không hợp lệ.")
             actor = _extract_actor(app, customer, binding=binding, context=ctx)
             staff_label = _actor_display_name(ctx)
-            row = _require_open_handoff_conversation(app, ctx, cid, denied_status=403)
-            res = app.store.staff_reply(row["customer_id"], cid, staff_label, msg, actor=actor)
+            if m_case_act[2] == "claim":
+                return (200, app.store.claim_case(m_case_act[1], staff_name=staff_label, actor=actor, expected_version=exp_ver))
+            return (200, app.store.release_case(m_case_act[1], staff_name=staff_label, actor=actor, expected_version=exp_ver))
+        if path in ("/api/staff/claim", "/api/staff/release"):
+            _require_ctx_permission(ctx, STAFF)
+            _check_staff_tenant_scope(app, ctx)
+            require(
+                isinstance(body, dict)
+                and {"case_id"}.issubset(set(body))
+                and set(body).issubset({"case_id", "version"}),
+                400,
+                "invalid_fields",
+                "Các trường của yêu cầu không hợp lệ.",
+            )
+            exp_ver = body.get("version")
+            if exp_ver is not None:
+                require(type(exp_ver) is int and exp_ver >= 1, 400, "invalid_version", "Phiên bản ca không hợp lệ.")
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
+            staff_label = _actor_display_name(ctx)
+            if path == "/api/staff/claim":
+                return (200, app.store.claim_case(body["case_id"], staff_name=staff_label, actor=actor, expected_version=exp_ver))
+            return (200, app.store.release_case(body["case_id"], staff_name=staff_label, actor=actor, expected_version=exp_ver))
+        if path == "/api/staff/reply":
+            _require_ctx_permission(ctx, STAFF)
+            _check_staff_tenant_scope(app, ctx)
+            require(
+                isinstance(body, dict)
+                and "message" in body
+                and ("conversation_id" in body or "case_id" in body)
+                and set(body).issubset({"conversation_id", "case_id", "message", "staff_name"}),
+                400,
+                "invalid_fields",
+                "Các trường của yêu cầu không hợp lệ.",
+            )
+            cid = body.get("conversation_id")
+            case_id = body.get("case_id")
+            msg = body["message"]
+            if cid is not None:
+                require(isinstance(cid, str) and bool(re.fullmatch(r"[a-f0-9-]{36}", cid)), 400, "invalid_conversation", "Mã cuộc trò chuyện không hợp lệ.")
+            if case_id is not None:
+                require(isinstance(case_id, str) and bool(re.fullmatch(r"[A-Za-z0-9_-]{1,80}", case_id)), 400, "invalid_case_id", "Mã ca hỗ trợ không hợp lệ.")
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
+            staff_label = _actor_display_name(ctx)
+            res = app.store.staff_reply(None, cid, staff_label, msg, actor=actor, case_id=case_id)
             return (200, res)
         if path == "/api/staff/resolve":
             _require_ctx_permission(ctx, STAFF)
-            require(isinstance(body, dict) and {"conversation_id"}.issubset(set(body)) and set(body).issubset({"conversation_id", "staff_name"}), 400, "invalid_fields", "Các trường của yêu cầu không hợp lệ.")
-            cid = body["conversation_id"]
+            _check_staff_tenant_scope(app, ctx)
+            require(
+                isinstance(body, dict)
+                and ("conversation_id" in body or "case_id" in body or "handoff_id" in body)
+                and set(body).issubset({"conversation_id", "case_id", "handoff_id", "staff_name"}),
+                400,
+                "invalid_fields",
+                "Các trường của yêu cầu không hợp lệ.",
+            )
+            cid = body.get("conversation_id")
+            case_id = body.get("case_id")
+            handoff_id = body.get("handoff_id")
+            if cid is not None:
+                require(isinstance(cid, str) and bool(re.fullmatch(r"[a-f0-9-]{36}", cid)), 400, "invalid_conversation", "Mã cuộc trò chuyện không hợp lệ.")
+            if case_id is not None:
+                require(isinstance(case_id, str) and bool(re.fullmatch(r"[A-Za-z0-9_-]{1,80}", case_id)), 400, "invalid_case_id", "Mã ca hỗ trợ không hợp lệ.")
+            if handoff_id is not None:
+                require(isinstance(handoff_id, str) and bool(re.fullmatch(r"[A-Za-z0-9_-]{1,80}", handoff_id)), 400, "invalid_handoff_id", "Mã phiên chuyển tiếp không hợp lệ.")
             actor = _extract_actor(app, customer, binding=binding, context=ctx)
             staff_label = _actor_display_name(ctx)
-            _require_open_handoff_conversation(app, ctx, cid, denied_status=409)
-            res = app.store.resolve_escalation(cid, staff_label, actor=actor)
+            res = app.store.resolve_escalation(cid, staff_label, actor=actor, case_id=case_id, handoff_id=handoff_id)
             return (200, res)
         if path == "/api/cancellation-proposals":
             _require_ctx_permission(ctx, CANCEL)
@@ -565,19 +692,29 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 )
             require(
                 isinstance(body, dict)
-                and {'tool_name', 'arguments', 'conversation_id'}.issubset(set(body))
-                and set(body).issubset({'tool_name', 'arguments', 'conversation_id'}),
+                and {'tool_name', 'arguments'}.issubset(set(body))
+                and ('conversation_id' in body or 'case_id' in body)
+                and set(body).issubset({'tool_name', 'arguments', 'conversation_id', 'case_id'}),
                 403,
                 'missing_object_binding',
                 'Đường gọi công cụ trực tiếp yêu cầu gắn với cuộc trò chuyện/ca hỗ trợ cụ thể.',
             )
-            cid = body['conversation_id']
-            require(
-                isinstance(cid, str) and bool(re.fullmatch(r'[a-f0-9-]{36}', cid)),
-                400,
-                'invalid_conversation',
-                'Mã cuộc trò chuyện không hợp lệ.',
-            )
+            cid = body.get('conversation_id')
+            tool_case_id = body.get('case_id')
+            if cid is not None:
+                require(
+                    isinstance(cid, str) and bool(re.fullmatch(r'[a-f0-9-]{36}', cid)),
+                    400,
+                    'invalid_conversation',
+                    'Mã cuộc trò chuyện không hợp lệ.',
+                )
+            if tool_case_id is not None:
+                require(
+                    isinstance(tool_case_id, str) and bool(re.fullmatch(r'[A-Za-z0-9_-]{1,80}', tool_case_id)),
+                    400,
+                    'invalid_case_id',
+                    'Mã ca hỗ trợ không hợp lệ.',
+                )
             from agent_protocol import validate_tool
             from retailops_tools import BoundTools
             tool_name, arguments = body['tool_name'], body['arguments']
@@ -589,18 +726,29 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             )
             validate_tool(tool_name, arguments)
             with app.store.connection() as db:
+                if tool_case_id is not None:
+                    case_row = db.execute('SELECT * FROM cases WHERE case_id = ?', (tool_case_id,)).fetchone()
+                    require(case_row is not None, 404, 'case_not_found', 'Không tìm thấy ca hỗ trợ trong cửa hàng hiện tại.')
+                    if cid is not None:
+                        require(case_row['conversation_id'] == cid, 409, 'case_conversation_mismatch', 'Mã ca không khớp với cuộc trò chuyện.')
+                    cid = case_row['conversation_id']
+                else:
+                    case_row = app.store._latest_case_in_tx(db, cid) if hasattr(app.store, '_latest_case_in_tx') else None
                 conv = db.execute(
                     'SELECT id, customer_id, order_id, product_id, expires_at FROM conversations WHERE id=?',
                     (cid,),
                 ).fetchone()
                 require(conv is not None, 404, 'conversation_not_found', 'Không tìm thấy cuộc trò chuyện trong cửa hàng hiện tại.')
-                handoff = db.execute(
-                    "SELECT 1 FROM conversation_feedback WHERE conversation_id=? "
-                    "AND feedback_type='human_handoff' AND COALESCE(reason_code, '')!='resolved' LIMIT 1",
-                    (cid,),
-                ).fetchone()
+                open_ep = (
+                    db.execute(
+                        "SELECT handoff_id FROM handoff_episodes WHERE case_id = ? AND status = 'pending' LIMIT 1",
+                        (case_row['case_id'],),
+                    ).fetchone()
+                    if case_row is not None and case_row['status'] in ('waiting', 'in_progress')
+                    else None
+                )
                 require(
-                    handoff is not None,
+                    open_ep is not None,
                     403,
                     'case_not_escalated',
                     'Chỉ được tra cứu công cụ trực tiếp trên ca hỗ trợ đang có yêu cầu chuyển tiếp chưa đóng.',
