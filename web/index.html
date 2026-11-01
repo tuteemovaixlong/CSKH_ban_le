@@ -186,6 +186,11 @@
         <div class="staff-queue-panel">
           <div class="queue-panel-header">
             <strong>Hàng đợi chờ hỗ trợ (<span id="staff-queue-count">0</span>)</strong>
+            <div class="staff-bucket-tabs" id="staff-bucket-tabs" style="display:flex; gap:4px; margin-top:8px; flex-wrap:wrap;">
+              <button type="button" class="secondary btn-sm active" id="staff-bucket-waiting" data-bucket="waiting">Hàng chờ (0)</button>
+              <button type="button" class="secondary btn-sm" id="staff-bucket-in-progress" data-bucket="in_progress">Đang xử lý (0)</button>
+              <button type="button" class="secondary btn-sm" id="staff-bucket-resolved" data-bucket="resolved">Đã xử lý (0)</button>
+            </div>
           </div>
           <div class="staff-queue-list" id="staff-queue-list">
             <p class="staff-empty-hint">Đang tải danh sách ca chờ...</p>
@@ -198,7 +203,8 @@
               <span id="staff-active-meta">Lịch sử chat và ngữ cảnh sẽ hiển thị tại đây</span>
             </div>
             <div class="chat-header-tools" id="staff-chat-actions" style="display:none;">
-              <button class="secondary btn-sm" id="btn-resolve-ticket">✓ Hoàn tất ca & Đóng</button>
+              <button type="button" class="secondary btn-sm" id="btn-claim-ticket">✋ Nhận ca</button>
+              <button type="button" class="secondary btn-sm" id="btn-resolve-ticket">✓ Hoàn tất ca & Đóng</button>
             </div>
           </div>
           <div class="staff-action-bar" id="staff-action-bar" style="display:none; padding:10px 20px; background:#eff6ff; border-bottom:1px solid #bfdbfe; justify-content:space-between; align-items:center;">
