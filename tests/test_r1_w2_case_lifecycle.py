@@ -2,6 +2,7 @@
 import argparse
 import ast
 from contextlib import closing, contextmanager
+import json
 import os
 from pathlib import Path
 import sqlite3
@@ -635,6 +636,305 @@ class PhaseR1W2BusinessV5MigrationTests(unittest.TestCase):
             self.assertIsNotNone(
                 state.schemas[schema_c].execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cases'").fetchone()
             )
+
+
+class _SimpleAgent:
+    def __init__(self, replies=None):
+        self.replies = list(replies or [])
+        self.seen_messages = []
+
+    def inspect(self):
+        return {"name": "fixture", "digest": "fix-1", "provider": "custom", "agent_protocol": "retailops-agent-v2"}
+
+    def chat(self, messages, allow_tools, timeout):
+        self.seen_messages.append(list(messages))
+        if self.replies:
+            nxt = self.replies.pop(0)
+        else:
+            nxt = {"message": {"role": "assistant", "content": "Phản hồi tự động từ bot."}}
+        return {
+            "prompt_eval_count": 20,
+            "eval_count": 10,
+            "reported_cost_usd": 0.0,
+            **nxt,
+        }
+
+
+class PhaseR1W2CaseHandoffResumeFeedbackTests(unittest.TestCase):
+    """Items 3, 4, 9, and 10: Case creation, durable handoff episodes, resume/retention, and feedback mapping."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.now = 1_762_100_000.0
+        self.store = BusinessStore(Path(self.tmp.name) / "biz.sqlite3")
+        self.store.clock = lambda: self.now
+        self.store.seed()
+        self.agent = _SimpleAgent()
+        from retailops.business.application import Application
+
+        self.app = Application(self.store, {}, self.agent)
+
+    def test_item3_new_conversation_creates_waiting_case_and_bot_only_stays_off_staff_desk(self):
+        from retailops.http.routes import api_result
+
+        status, created = api_result(self.app, "C-001", "POST", "/api/conversations", {"provider_id": "custom"})
+        self.assertEqual(status, 201)
+        cid = created["conversation_id"]
+        case_id = created["case_id"]
+        self.assertTrue(case_id.startswith("case_"))
+
+        with self.store.connection() as db:
+            row = dict(db.execute("SELECT * FROM cases WHERE case_id = ?", (case_id,)).fetchone())
+            ep_cnt = db.execute("SELECT COUNT(*) FROM handoff_episodes WHERE case_id = ?", (case_id,)).fetchone()[0]
+        self.assertEqual(row["conversation_id"], cid)
+        self.assertEqual(row["customer_id"], "C-001")
+        self.assertEqual(row["status"], "waiting")
+        self.assertIsNone(row["holder"])
+        self.assertEqual(row["version"], 1)
+        self.assertEqual(ep_cnt, 0)
+
+        # Pure bot chat turn never puts the case on Staff Desk
+        self.app.chat("C-001", {"conversation_id": cid, "text": "Xin chào shop", "request_id": "r" * 24})
+        self.assertEqual(self.store.escalations(), [])
+
+    def test_item4_all_three_handoff_paths_durable_fail_closed_and_single_open_episode(self):
+        from retailops.http.routes import api_result
+        from retailops_tools import BoundTools
+
+        # Path 1: POST /api/feedback (human_handoff) + idempotent second call
+        c1 = self.app.new_conversation("C-001", {})
+        cid1, case1 = c1["conversation_id"], c1["case_id"]
+        st1, fb1 = api_result(
+            self.app,
+            "C-001",
+            "POST",
+            "/api/feedback",
+            {"conversation_id": cid1, "feedback_type": "human_handoff", "comment": "Cần gặp nhân viên"},
+        )
+        self.assertEqual(st1, 200)
+        self.assertEqual(fb1["case_id"], case1)
+        self.assertTrue(fb1["handoff_id"].startswith("hoff_"))
+
+        _, fb1_dup = api_result(
+            self.app,
+            "C-001",
+            "POST",
+            "/api/feedback",
+            {"conversation_id": cid1, "feedback_type": "human_handoff", "comment": "Nhắc lại lần 2"},
+        )
+        self.assertEqual(fb1_dup["handoff_id"], fb1["handoff_id"])
+        with self.store.connection() as db:
+            open_eps = db.execute(
+                "SELECT * FROM handoff_episodes WHERE case_id = ? AND status = 'pending'", (case1,)
+            ).fetchall()
+        self.assertEqual(len(open_eps), 1)
+        self.assertEqual(open_eps[0]["comment"], "Nhắc lại lần 2")
+
+        # Path 2: POST /api/staff/customer-message writes customer turn + handoff atomically
+        c2 = self.app.new_conversation("C-001", {})
+        cid2, case2 = c2["conversation_id"], c2["case_id"]
+        st2, cm2 = api_result(
+            self.app,
+            "C-001",
+            "POST",
+            "/api/staff/customer-message",
+            {"conversation_id": cid2, "message": "Shop kiểm tra đơn gấp giúp em"},
+        )
+        self.assertEqual(st2, 200)
+        self.assertEqual(cm2["case_id"], case2)
+        self.assertTrue(cm2["handoff_id"].startswith("hoff_"))
+
+        # Verify atomic rollback on DB failure inside customer_message
+        c2_fail = self.app.new_conversation("C-001", {})
+        cid2_fail = c2_fail["conversation_id"]
+        with patch.object(self.store, "_request_human_handoff_in_tx", side_effect=sqlite3.OperationalError("disk full")):
+            with self.assertRaises(ApiError):
+                self.store.customer_message("C-001", cid2_fail, "Tin nhắn lỗi DB")
+        with self.store.connection() as db:
+            turns_fail = db.execute("SELECT COUNT(*) FROM agent_turns WHERE conversation_id = ?", (cid2_fail,)).fetchone()[0]
+            eps_fail = db.execute("SELECT COUNT(*) FROM handoff_episodes WHERE conversation_id = ?", (cid2_fail,)).fetchone()[0]
+        self.assertEqual((turns_fail, eps_fail), (0, 0))
+
+        # Path 3: request_human_support tool — no Mai Anh, fails closed on DB error
+        c3 = self.app.new_conversation("C-001", {})
+        cid3, case3 = c3["conversation_id"], c3["case_id"]
+        snap3 = self.store.conversation("C-001", cid3)
+        ro_store = BusinessStore(Path(self.tmp.name) / "biz.sqlite3", create=False, initialize_db=False, read_only=True)
+        bound_fail = BoundTools(ro_store, self.app.catalog, "C-001", snap3, self.agent.inspect())
+        with self.assertRaises(ApiError):
+            bound_fail("request_human_support", {"reason": "Cần hỗ trợ trên kho chỉ đọc"})
+        self.assertIsNone(bound_fail.human_support)
+        with self.store.connection() as db:
+            self.assertEqual(
+                db.execute("SELECT COUNT(*) FROM handoff_episodes WHERE case_id = ?", (case3,)).fetchone()[0], 0
+            )
+
+        bound_ok = BoundTools(self.store, self.app.catalog, "C-001", snap3, self.agent.inspect())
+        tool_res = bound_ok("request_human_support", {"reason": "Cần nhân viên tư vấn đổi mẫu"})
+        self.assertEqual(tool_res["status"], "escalated_to_human")
+        self.assertEqual(tool_res["case_id"], case3)
+        self.assertTrue(tool_res["handoff_id"].startswith("hoff_"))
+        self.assertNotIn("support_rep", tool_res)
+        self.assertNotIn("Mai Anh", json.dumps(tool_res, ensure_ascii=False))
+
+    def test_item9_resume_within_and_past_retention_and_concurrency_safety(self):
+        import threading
+        from retailops.http.routes import api_result
+
+        created = self.app.new_conversation("C-001", {})
+        cid, case_id_1 = created["conversation_id"], created["case_id"]
+        self.agent.replies = [{"message": {"role": "assistant", "content": "Đơn O-101 đang chờ xử lý."}}]
+        self.app.chat("C-001", {"conversation_id": cid, "text": "Kiểm tra đơn O-101", "request_id": "a" * 24})
+
+        # Close case at self.now
+        with self.store.connection(write=True) as db:
+            db.execute(
+                "UPDATE cases SET status = 'resolved', resolved_reason = 'inactivity', resolved_at = ?, version = version + 1 WHERE case_id = ?",
+                (self.now, case_id_1),
+            )
+
+        # 1. Concurrent resume WITHIN retention -> reopens SAME case_id, increments resume_count ONCE
+        self.now += 3600.0
+        barrier = threading.Barrier(4)
+        results_within = []
+        errors_within = []
+
+        def _worker_within():
+            try:
+                barrier.wait(timeout=5)
+                results_within.append(self.store.resume_case("C-001", cid))
+            except Exception as exc:  # pragma: no cover
+                errors_within.append(exc)
+
+        threads = [threading.Thread(target=_worker_within) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5)
+        self.assertEqual(errors_within, [])
+        self.assertEqual({r["case_id"] for r in results_within}, {case_id_1})
+
+        with self.store.connection() as db:
+            row_reopened = dict(db.execute("SELECT * FROM cases WHERE case_id = ?", (case_id_1,)).fetchone())
+            total_cases = db.execute("SELECT COUNT(*) FROM cases WHERE conversation_id = ?", (cid,)).fetchone()[0]
+        self.assertEqual(total_cases, 1)
+        self.assertEqual(row_reopened["status"], "waiting")
+        self.assertEqual(row_reopened["resume_count"], 1)
+        self.assertEqual(row_reopened["resumed_at"], self.now)
+
+        # Next chat turn within retention loads prior DB history cleanly
+        self.agent.seen_messages.clear()
+        self.agent.replies = [{"message": {"role": "assistant", "content": "Em tiếp tục hỗ trợ đơn O-101 ạ."}}]
+        self.app.chat("C-001", {"conversation_id": cid, "text": "Hỏi tiếp về đơn vừa rồi", "request_id": "b" * 24})
+        prompt_text = json.dumps(self.agent.seen_messages[-1], ensure_ascii=False)
+        self.assertIn("Kiểm tra đơn O-101", prompt_text)
+
+        # 2. Close case again, advance clock PAST 7-day retention AND trigger conversation TTL cleanup
+        with self.store.connection(write=True) as db:
+            db.execute(
+                "UPDATE cases SET status = 'resolved', resolved_reason = 'completed', resolved_at = ?, version = version + 1 WHERE case_id = ?",
+                (self.now, case_id_1),
+            )
+        self.now += self.store.CONVERSATION_TTL + 120.0
+        # Trigger expired conversations cleanup via another new_conversation
+        self.store.new_conversation("C-002")
+
+        # Concurrent resume PAST retention -> creates ONE new case_id with previous_case_id = case_id_1
+        barrier2 = threading.Barrier(4)
+        results_past = []
+        errors_past = []
+
+        def _worker_past():
+            try:
+                barrier2.wait(timeout=5)
+                _, resp = api_result(self.app, "C-001", "POST", f"/api/conversations/{cid}/resume", {})
+                results_past.append(resp)
+            except Exception as exc:  # pragma: no cover
+                errors_past.append(exc)
+
+        threads2 = [threading.Thread(target=_worker_past) for _ in range(4)]
+        for t in threads2:
+            t.start()
+        for t in threads2:
+            t.join(timeout=5)
+        self.assertEqual(errors_past, [])
+        new_case_ids = {r["case_id"] for r in results_past}
+        self.assertEqual(len(new_case_ids), 1)
+        case_id_2 = next(iter(new_case_ids))
+        self.assertNotEqual(case_id_2, case_id_1)
+
+        with self.store.connection() as db:
+            open_cases = db.execute(
+                "SELECT * FROM cases WHERE conversation_id = ? AND status <> 'resolved'", (cid,)
+            ).fetchall()
+        self.assertEqual(len(open_cases), 1)
+        self.assertEqual(open_cases[0]["case_id"], case_id_2)
+        self.assertEqual(open_cases[0]["previous_case_id"], case_id_1)
+        self.assertEqual(open_cases[0]["resume_count"], 0)
+
+        # Expired case turns must NOT leak into the new case's LLM prompt
+        self.agent.seen_messages.clear()
+        self.agent.replies = [{"message": {"role": "assistant", "content": "Chào mừng anh/chị quay lại ở ca mới!"}}]
+        self.app.chat("C-001", {"conversation_id": cid, "text": "Mở câu hỏi mới", "request_id": "c" * 24})
+        new_prompt_text = json.dumps(self.agent.seen_messages[-1], ensure_ascii=False)
+        self.assertNotIn("Kiểm tra đơn O-101", new_prompt_text)
+
+    def test_item10_case_feedback_events_mapping_and_never_mutates_case_or_timers(self):
+        created = self.app.new_conversation("C-001", {})
+        cid, case_id = created["conversation_id"], created["case_id"]
+        r = self.app.chat("C-001", {"conversation_id": cid, "text": "Tư vấn áo thun", "request_id": "d" * 24})
+        turn_id = r["turn_id"]
+
+        # Seed active timer deadlines on the case to verify feedback never touches them or closes the case
+        rem_dl = self.now + 300.0
+        comp_dl = self.now + 250.0
+        with self.store.connection(write=True) as db:
+            db.execute(
+                """UPDATE cases
+                   SET reminder_deadline = ?, completion_deadline = ?, feedback_prompted_at = ?
+                   WHERE case_id = ?""",
+                (rem_dl, comp_dl, self.now, case_id),
+            )
+            before_case = dict(db.execute("SELECT * FROM cases WHERE case_id = ?", (case_id,)).fetchone())
+
+        # Turn rating: like -> chosen, dislike -> rejected, neutral -> no case_feedback_events row
+        like_res = self.store.record_feedback(
+            "C-001", {"conversation_id": cid, "turn_id": turn_id, "feedback_type": "turn_rating", "vote": "like"}
+        )
+        dislike_res = self.store.record_feedback(
+            "C-001", {"conversation_id": cid, "turn_id": turn_id, "feedback_type": "turn_rating", "vote": "dislike"}
+        )
+        neutral_res = self.store.record_feedback(
+            "C-001", {"conversation_id": cid, "turn_id": turn_id, "feedback_type": "turn_rating", "sentiment_flag": "neutral"}
+        )
+        self.assertEqual((like_res["preference_label"], like_res["raw_value"]), ("chosen", "like"))
+        self.assertEqual((dislike_res["preference_label"], dislike_res["raw_value"]), ("rejected", "dislike"))
+        self.assertNotIn("feedback_event_id", neutral_res)
+
+        # Session CSAT: 1..3 -> rejected, 4..5 -> chosen
+        expected_csat = {1: "rejected", 2: "rejected", 3: "rejected", 4: "chosen", 5: "chosen"}
+        for stars, expected_lbl in expected_csat.items():
+            csat_res = self.store.record_feedback(
+                "C-001", {"conversation_id": cid, "feedback_type": "session_csat", "rating": stars}
+            )
+            self.assertEqual(csat_res["preference_label"], expected_lbl)
+            self.assertEqual(csat_res["raw_value"], str(stars))
+
+        with self.store.connection() as db:
+            ev_rows = [
+                dict(row)
+                for row in db.execute(
+                    "SELECT * FROM case_feedback_events WHERE case_id = ? ORDER BY created_at ASC", (case_id,)
+                ).fetchall()
+            ]
+            after_case = dict(db.execute("SELECT * FROM cases WHERE case_id = ?", (case_id,)).fetchone())
+
+        self.assertEqual(len(ev_rows), 7)  # 2 turn_rating + 5 session_csat (neutral skipped)
+        self.assertEqual(after_case["status"], "waiting")
+        self.assertEqual(after_case["version"], before_case["version"])
+        self.assertEqual(after_case["reminder_deadline"], rem_dl)
+        self.assertEqual(after_case["completion_deadline"], comp_dl)
 
 
 if __name__ == "__main__":

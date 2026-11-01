@@ -440,6 +440,10 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             if isinstance(res, dict) and 'order' in res:
                 res = {**res, 'order': _format_order_for_api(res['order'], app)}
             return (200, res)
+        m_resume = re.fullmatch(r'/api/conversations/([a-f0-9-]{36})/resume', path)
+        if m_resume:
+            require(body is None or (isinstance(body, dict) and set(body) == set()), 400, 'invalid_fields', 'Các trường của yêu cầu không hợp lệ.')
+            return (200, app.store.resume_case(customer, m_resume[1]))
         if path.startswith('/api/admin/audit-log'):
             raise ApiError(405, 'audit_log_append_only', 'Nhật ký audit quản trị là chỉ-ghi-thêm (append-only); không hỗ trợ sửa hoặc xóa.')
         m_admin_act = re.fullmatch(r'/api/admin/accounts/([A-Za-z0-9_-]{1,64})/(suspend|reactivate|revoke-sessions|quota)', path)

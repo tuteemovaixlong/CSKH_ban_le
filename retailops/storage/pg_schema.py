@@ -212,6 +212,8 @@ BUSINESS_V5_DDL = [
     'CREATE INDEX IF NOT EXISTS idx_cases_conversation ON cases(conversation_id, created_at DESC)',
     'CREATE INDEX IF NOT EXISTS idx_cases_status_updated ON cases(status, updated_at DESC)',
     'CREATE INDEX IF NOT EXISTS idx_cases_customer ON cases(customer_id, created_at DESC)',
+    '''CREATE UNIQUE INDEX IF NOT EXISTS idx_cases_one_open_per_conv
+        ON cases(conversation_id) WHERE status <> 'resolved' ''',
     '''CREATE TABLE IF NOT EXISTS handoff_episodes (
         handoff_id TEXT PRIMARY KEY,
         case_id TEXT NOT NULL REFERENCES cases(case_id),
