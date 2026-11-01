@@ -1513,6 +1513,35 @@ class PhaseR1W2CaseTimersTests(unittest.TestCase):
         live_web.stop_case_timer_worker()
         self.assertEqual(final_status, ("resolved", "inactivity"))
 
+    def test_item8_ec2_compose_postgres_enforces_production_env(self):
+        compose_path = ROOT / "deploy" / "compose.postgres.yaml"
+        raw_text = compose_path.read_text(encoding="utf-8")
+        try:
+            import yaml
+
+            doc = yaml.safe_load(raw_text)
+            web_env = doc["services"]["web"]["environment"]
+            if isinstance(web_env, list):
+                env_map = dict(str(item).split("=", 1) for item in web_env if "=" in str(item))
+            else:
+                env_map = {str(k): str(v) for k, v in dict(web_env).items()}
+        except ImportError:
+            env_map = {}
+            section_stack = []
+            for line in raw_text.splitlines():
+                stripped = line.split("#", 1)[0].rstrip()
+                if not stripped.strip():
+                    continue
+                indent = len(stripped) - len(stripped.lstrip(" "))
+                while section_stack and section_stack[-1][0] >= indent:
+                    section_stack.pop()
+                key, sep, val = stripped.strip().partition(":")
+                if sep and not val.strip():
+                    section_stack.append((indent, key.strip()))
+                elif [k for _, k in section_stack] == ["services", "web", "environment"] and sep:
+                    env_map[key.strip()] = val.strip().strip('"').strip("'")
+        self.assertEqual(env_map.get("RETAILOPS_ENV"), "production")
+
 
 if __name__ == "__main__":
     unittest.main()

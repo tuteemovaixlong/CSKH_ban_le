@@ -2,6 +2,7 @@
 services:
   web:
     environment:
+      RETAILOPS_ENV: production
       RETAILOPS_DATA_MODE: persistent-demo
       RETAILOPS_STORAGE_BACKEND: postgresql
       RETAILOPS_DATABASE_URL: ""
