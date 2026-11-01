@@ -383,11 +383,11 @@ def establish_live_conversation(http, cookie, providers_payload, report):
 def run_full(http: HttpClient, report: dict, secret_values: list[str]):
     tenant = "e2e-full-" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S") + "-" + uuid.uuid4().hex[:6]
     customer_principal = "e2e-customer-" + uuid.uuid4().hex[:8]
-    viewer_principal = "e2e-viewer-" + uuid.uuid4().hex[:8]
+    staff_principal = "e2e-staff-" + uuid.uuid4().hex[:8]
     customer_cred_path = "/tmp/" + customer_principal + ".credential"
-    viewer_cred_path = "/tmp/" + viewer_principal + ".credential"
+    staff_cred_path = "/tmp/" + staff_principal + ".credential"
     customer_membership = None
-    viewer_membership = None
+    staff_membership = None
     report["tenant"] = tenant
     try:
         cli(["identity", "init-tenant", "--tenant", tenant, "--name", "RetailOps full live E2E", "--seed-demo"])
@@ -502,27 +502,23 @@ def run_full(http: HttpClient, report: dict, secret_values: list[str]):
         require(after_cancelled == before_cancelled + 1, "duplicate confirmation produced wrong audit count")
         report["checks"]["confirm_idempotency_and_backend_state"] = True
 
-        viewer_membership, viewer_credential = issue_member(
-            tenant, viewer_principal, "C-002", "viewer", viewer_cred_path,
+        # R1 W1 retired the legacy 'viewer' role; role isolation is proven with an active
+        # Staff membership that must be denied a Manager-only endpoint.
+        staff_membership, staff_credential = issue_member(
+            tenant, staff_principal, "C-002", "staff", staff_cred_path,
         )
-        secret_values.append(viewer_credential)
-        viewer_cookie = http.temp_dir / "viewer.cookies"
-        status, _ = http.request("/api/login", {"token": viewer_credential}, cookie=viewer_cookie)
-        require(status == 200, "viewer login failed")
-        status, viewer_orders = http.request("/api/orders", cookie=viewer_cookie)
-        require(status == 200 and isinstance(viewer_orders.get("orders"), list), "viewer order read failed")
-        viewer_pending = next((o for o in viewer_orders["orders"] if o.get("status") == "pending"), None)
-        require(viewer_pending is not None, "viewer test has no pending order")
-        deny_status, deny = http.request("/api/cancellation-proposals", {
-            "order_id": viewer_pending["id"],
-            "order_version": viewer_pending["version"],
-            "cancel_reason": "ordered_by_mistake",
-        }, cookie=viewer_cookie)
-        require(deny_status == 403 and deny.get("error") == "permission_denied", "viewer was able to propose cancellation")
-        report["checks"]["viewer_denied_cancel"] = True
+        secret_values.append(staff_credential)
+        staff_cookie = http.temp_dir / "staff.cookies"
+        status, _ = http.request("/api/login", {"token": staff_credential}, cookie=staff_cookie)
+        require(status == 200, "staff login failed")
+        status, staff_orders = http.request("/api/orders", cookie=staff_cookie)
+        require(status == 200 and isinstance(staff_orders.get("orders"), list), "staff order read failed")
+        deny_status, deny = http.request("/api/manager/events", cookie=staff_cookie)
+        require(deny_status == 403 and deny.get("error") == "permission_denied", "staff was able to read manager-only events")
+        report["checks"]["staff_denied_manager_scope"] = True
     finally:
         revoke_member(customer_membership, customer_cred_path)
-        revoke_member(viewer_membership, viewer_cred_path)
+        revoke_member(staff_membership, staff_cred_path)
         report.setdefault("cleanup", {})["credentials_revoked"] = True
         report["cleanup"]["isolated_tenant_retained_for_audit"] = tenant
 

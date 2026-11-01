@@ -14,10 +14,10 @@ from opsconsole.metrics import MODES, TOOLS, classification, ratio, trace_metric
 SCHEMA = 'retailops-evaluation-v1'
 GRADER = 'observed-contracts-v1'
 IDENTIFIER = re.compile(r'[A-Za-z0-9_.:-]{1,100}')
-FULL_CHECKS = ('exact_live_image health public_login_surface knowledge_ingest login session_binding orders providers general_model order_model_tool chat_replay_before_restart product_model_tool rag_model_tool model_prepares_but_does_not_mutate proposal_created_and_reloadable restart_session_persistence restart_pending_persistence chat_replay_after_restart confirm_idempotency_and_backend_state viewer_denied_cancel').split()
+FULL_CHECKS = ('exact_live_image health public_login_surface knowledge_ingest login session_binding orders providers general_model order_model_tool chat_replay_before_restart product_model_tool rag_model_tool model_prepares_but_does_not_mutate proposal_created_and_reloadable restart_session_persistence restart_pending_persistence chat_replay_after_restart confirm_idempotency_and_backend_state staff_denied_manager_scope').split()
 SMOKE_CHECKS = ('exact_live_image health public_login_surface login session_binding orders providers owned_order logout_revokes_session').split()
 CRITICAL = frozenset(('model_prepares_but_does_not_mutate', 'confirm_idempotency_and_backend_state',
-                      'viewer_denied_cancel', 'session_binding', 'logout_revokes_session'))
+                      'staff_denied_manager_scope', 'session_binding', 'logout_revokes_session'))
 
 
 def stamp():
