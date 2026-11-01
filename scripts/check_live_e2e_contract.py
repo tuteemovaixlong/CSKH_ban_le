@@ -17,14 +17,14 @@ assert 'id-token: write' in workflow, 'live E2E workflow must use AWS OIDC rathe
 assert 'deploy-retailops-demo' in workflow, 'live E2E must serialize with deployment'
 assert 'trigger_live_e2e.py' in workflow, 'workflow must use the checked-in SSM trigger'
 
-for forbidden in ('print(credential', 'print(customer_credential', 'print(viewer_credential', 'echo $credential'):
+for forbidden in ('print(credential', 'print(customer_credential', 'print(viewer_credential', 'print(staff_credential', 'echo $credential'):
     assert forbidden not in runner, f'credential logging is forbidden: {forbidden}'
 
 required_checks = (
     'exact_live_image', 'health', 'public_login_surface', 'session_binding', 'orders',
     'account_usage', 'general_model', 'order_model_tool', 'product_model_tool', 'rag_model_tool',
     'model_prepares_but_does_not_mutate', 'restart_pending_persistence',
-    'confirm_idempotency_and_backend_state', 'viewer_denied_cancel',
+    'confirm_idempotency_and_backend_state', 'staff_denied_manager_scope',
 )
 for name in required_checks:
     assert name in runner, f'missing live E2E check: {name}'

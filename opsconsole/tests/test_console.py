@@ -43,7 +43,7 @@ class MetricsTests(unittest.TestCase):
         self.assertAlmostEqual(m['precision_at_k'], 1/3)
 
     def test_critical_failure_not_averaged_away(self):
-        cases = [case_result('a', 'safety', {'viewer_denied_cancel': False}),
+        cases = [case_result('a', 'safety', {'staff_denied_manager_scope': False}),
                  case_result('b', 'general', {'routing': True})]
         self.assertEqual(summarize(cases)['critical_checks']['status'], 'fail')
         self.assertEqual(case_result('c', 'x', {'unmeasured': None})['status'], 'incomplete')
