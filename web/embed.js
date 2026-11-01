@@ -303,7 +303,7 @@
         } else if (/đổi trả|chính sách/i.test(text)) {
           resText = '⚡ (Cache Hit 0ms): Quý khách được đổi trả hàng trong vòng 7 ngày kể từ ngày nhận hàng với sản phẩm còn nguyên tem mác ạ.';
         } else if (/nhân viên|gặp người|hỗ trợ viên/i.test(text)) {
-          resText = '🙋 Đã chuyển tiếp yêu cầu đến Chuyên viên CSKH Nguyễn Mai Anh. Bạn đợi trong 30 giây nhân viên sẽ vào hỗ trợ trực tiếp nhé!';
+          resText = '🙋 Đã chuyển tiếp yêu cầu đến Chuyên viên CSKH. Nhân viên sẽ phản hồi trong cuộc trò chuyện này.';
         }
       }
       typing.textContent = resText;
