@@ -187,7 +187,68 @@ P5C_IDENTITY_DDL = [
     'CREATE INDEX IF NOT EXISTS idx_admin_audit_target ON admin_audit_log(target_membership_id, id DESC)',
 ]
 
+BUSINESS_V5_DDL = [
+    '''CREATE TABLE IF NOT EXISTS cases (
+        case_id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        customer_id TEXT NOT NULL REFERENCES customers(id),
+        status TEXT NOT NULL CHECK(status IN ('waiting', 'in_progress', 'resolved')),
+        holder TEXT,
+        holder_name TEXT,
+        version INTEGER NOT NULL DEFAULT 1,
+        awaiting_customer_since DOUBLE PRECISION,
+        reminder_deadline DOUBLE PRECISION,
+        reminded_at DOUBLE PRECISION,
+        inactivity_deadline DOUBLE PRECISION,
+        feedback_prompted_at DOUBLE PRECISION,
+        completion_deadline DOUBLE PRECISION,
+        resolved_reason TEXT,
+        resolved_at DOUBLE PRECISION,
+        resumed_at DOUBLE PRECISION,
+        resume_count INTEGER NOT NULL DEFAULT 0,
+        previous_case_id TEXT REFERENCES cases(case_id),
+        created_at DOUBLE PRECISION NOT NULL,
+        updated_at DOUBLE PRECISION NOT NULL)''',
+    'CREATE INDEX IF NOT EXISTS idx_cases_conversation ON cases(conversation_id, created_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_cases_status_updated ON cases(status, updated_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_cases_customer ON cases(customer_id, created_at DESC)',
+    '''CREATE UNIQUE INDEX IF NOT EXISTS idx_cases_one_open_per_conv
+        ON cases(conversation_id) WHERE status <> 'resolved' ''',
+    '''CREATE TABLE IF NOT EXISTS handoff_episodes (
+        handoff_id TEXT PRIMARY KEY,
+        case_id TEXT NOT NULL REFERENCES cases(case_id),
+        conversation_id TEXT NOT NULL,
+        customer_id TEXT NOT NULL REFERENCES customers(id),
+        status TEXT NOT NULL CHECK(status IN ('pending', 'resolved', 'customer_closed')),
+        reason_code TEXT,
+        comment TEXT,
+        created_at DOUBLE PRECISION NOT NULL,
+        closed_at DOUBLE PRECISION,
+        closed_by TEXT)''',
+    'CREATE INDEX IF NOT EXISTS idx_handoff_episodes_case ON handoff_episodes(case_id, created_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_handoff_episodes_conversation ON handoff_episodes(conversation_id)',
+    '''CREATE UNIQUE INDEX IF NOT EXISTS idx_handoff_episodes_one_open
+        ON handoff_episodes(case_id) WHERE status = 'pending' ''',
+    '''CREATE TABLE IF NOT EXISTS case_feedback_events (
+        feedback_event_id TEXT PRIMARY KEY,
+        case_id TEXT NOT NULL REFERENCES cases(case_id),
+        conversation_id TEXT NOT NULL,
+        turn_id BIGINT,
+        customer_id TEXT NOT NULL REFERENCES customers(id),
+        feedback_type TEXT NOT NULL CHECK(feedback_type IN ('turn_rating', 'session_csat')),
+        raw_value TEXT NOT NULL,
+        rating INTEGER CHECK(rating IS NULL OR (rating BETWEEN 1 AND 5)),
+        sentiment_flag TEXT CHECK(sentiment_flag IS NULL OR sentiment_flag IN ('positive', 'negative', 'neutral')),
+        preference_label TEXT NOT NULL CHECK(preference_label IN ('chosen', 'rejected')),
+        reason_code TEXT,
+        comment TEXT,
+        created_at DOUBLE PRECISION NOT NULL)''',
+    'CREATE INDEX IF NOT EXISTS idx_case_feedback_case ON case_feedback_events(case_id, created_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_case_feedback_conv ON case_feedback_events(conversation_id)',
+]
+
 BUSINESS_DDL.extend(P5C_BUSINESS_DDL)
+BUSINESS_DDL.extend(BUSINESS_V5_DDL)
 IDENTITY_DDL.extend(P5C_IDENTITY_DDL)
 
 
@@ -223,7 +284,7 @@ def initialize_cache(db):
         db.raw.execute(statement)
 
 
-def initialize(db, schema, component, *, allow_identity_v5_upgrade=False):
+def initialize(db, schema, component, *, allow_identity_v5_upgrade=False, allow_business_v5_upgrade=False):
     from psycopg import sql
     valid_schema(schema)
     if (schema == IDENTITY_SCHEMA) != (component == 'identity'):
@@ -389,6 +450,15 @@ def initialize(db, schema, component, *, allow_identity_v5_upgrade=False):
             for statement in P5C_IDENTITY_DDL:
                 db.raw.execute(statement)
         if component == 'business':
+            if row['version'] not in (1, 2, 3, 4, 5):
+                raise ValueError('Unsupported PostgreSQL schema version or component.')
+            if row['version'] < BUSINESS_SCHEMA_CURRENT and not allow_business_v5_upgrade:
+                raise ApiError(
+                    503,
+                    'business_migration_required',
+                    f"Kho dữ liệu business PostgreSQL ({schema}) đang ở schema v{row['version']}; khởi động bị chặn fail-closed. "
+                    "Hãy chạy lệnh operator database migrate-v5 với --confirm-preflight --confirm-backup.",
+                )
             db.raw.execute(sql.SQL('SET LOCAL search_path TO {}, pg_catalog').format(sql.Identifier(schema)))
             if row['version'] == 1:
                 from retailops.workflow.schema import initialize as graph_schema
@@ -418,10 +488,8 @@ def initialize(db, schema, component, *, allow_identity_v5_upgrade=False):
                     'CREATE INDEX IF NOT EXISTS idx_orders_product_id ON orders(product_id)',
                 ):
                     db.raw.execute(statement)
-                db.execute("UPDATE retailops_schema SET version=? WHERE component='business'", (BUSINESS_SCHEMA_CURRENT,))
-                row = {'component': 'business', 'version': BUSINESS_SCHEMA_CURRENT}
-            if row['version'] != BUSINESS_SCHEMA_CURRENT:
-                raise ValueError('Unsupported PostgreSQL schema version or component.')
+                db.execute("UPDATE retailops_schema SET version=4 WHERE component='business'")
+                row = {'component': 'business', 'version': 4}
             for statement in (
                 '''CREATE TABLE IF NOT EXISTS conversation_feedback (
                     id BIGSERIAL PRIMARY KEY,
@@ -438,7 +506,18 @@ def initialize(db, schema, component, *, allow_identity_v5_upgrade=False):
                 'CREATE INDEX IF NOT EXISTS idx_feedback_type ON conversation_feedback(feedback_type)',
             ):
                 db.raw.execute(statement)
+            if row['version'] == 4:
+                from retailops.business.schema import backfill_business_v5_cases
+                for statement in BUSINESS_V5_DDL:
+                    db.raw.execute(statement)
+                backfill_business_v5_cases(db)
+                db.execute("UPDATE retailops_schema SET version=? WHERE component='business'", (BUSINESS_SCHEMA_CURRENT,))
+                row = {'component': 'business', 'version': BUSINESS_SCHEMA_CURRENT}
+            if row['version'] != BUSINESS_SCHEMA_CURRENT:
+                raise ValueError('Unsupported PostgreSQL schema version or component.')
             for statement in P5C_BUSINESS_DDL:
+                db.raw.execute(statement)
+            for statement in BUSINESS_V5_DDL:
                 db.raw.execute(statement)
         assert_schema(db, schema, component)
         return False

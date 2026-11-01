@@ -487,7 +487,6 @@ class PhaseR1W1IdentityRbacTests(unittest.TestCase):
 
         denied_cases = [
             ("no_handoff", conv_no_handoff, 403, 409, "case_not_escalated"),
-            ("resolved_handoff", conv_resolved, 403, 409, "case_not_escalated"),
             ("handoff_on_A_call_on_B", conv_unescalated_b, 403, 409, "case_not_escalated"),
             ("missing_conv", conv_missing, 404, 404, "conversation_not_found"),
             ("other_tenant_conv", conv_other_tenant, 404, 404, "conversation_not_found"),
@@ -520,6 +519,24 @@ class PhaseR1W1IdentityRbacTests(unittest.TestCase):
                     self.assertEqual((s4, b4["error"]), (exp_resolve_status, exp_code))
                     self.assertNotEqual(b4.get("resolved"), True)
 
+            # W2-D2: Resolved cases in the same tenant Remain strictly blocked on reply (403) and resolve (409)
+            s_rep_res, b_rep_res, _ = _wsgi(
+                self.web,
+                "POST",
+                "/api/staff/reply",
+                {"conversation_id": conv_resolved, "message": "Không được phép ghi vào ca đã đóng"},
+                cookie=actor_cookie,
+            )
+            self.assertEqual((s_rep_res, b_rep_res["error"]), (403, "case_not_escalated"))
+            s_res_res, b_res_res, _ = _wsgi(
+                self.web,
+                "POST",
+                "/api/staff/resolve",
+                {"conversation_id": conv_resolved},
+                cookie=actor_cookie,
+            )
+            self.assertEqual((s_res_res, b_res_res["error"]), (409, "case_not_escalated"))
+
         # Direct store calls also fail closed without writing turns or events
         for bad_cid in (conv_no_handoff, conv_resolved, conv_unescalated_b):
             with self.assertRaises(ApiError) as rep_err:
@@ -531,6 +548,12 @@ class PhaseR1W1IdentityRbacTests(unittest.TestCase):
 
         self.assertEqual(_counts(self.store_a), baseline_a)
         self.assertEqual(_counts(self.store_b), baseline_b)
+
+        # W2-D2: Same-tenant Staff and Manager can view resolved transcript read-only within retention, logging audit on every view
+        for actor_cookie in (cookie_staff_a, cookie_mgr_a):
+            sr, br, _ = _wsgi(self.web, "GET", f"/api/staff/conversations/{conv_resolved}/messages", cookie=actor_cookie)
+            self.assertEqual(sr, 200)
+            self.assertTrue(br.get("read_only"))
 
         # Valid open handoff works for both Staff and Manager (including NULL reason_code)
         self.assertEqual(_wsgi(self.web, "GET", f"/api/staff/conversations/{conv_open_a}/messages", cookie=cookie_staff_a)[0], 200)

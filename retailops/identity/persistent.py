@@ -11,7 +11,7 @@ from pathlib import Path
 from retailops.account_usage import AccountQuotaStore
 from retailops.business.application import Application
 from retailops.business.cache import ToolCache
-from retailops.business.store import BusinessStore
+from retailops.business.store import BusinessStore, _inspect_sqlite_business_ready
 from retailops.core import require
 from retailops.identity.contracts import SessionBinding
 from retailops.identity.store import IdentityStore
@@ -76,29 +76,51 @@ class PersistentSessions:
         self.lock = threading.RLock()
         self.tool_caches = {}
         self.apps = OrderedDict()
+        self._verify_existing_tenant_schemas()
         if self.maintenance:
             self.purge()
+
+    def _verify_existing_tenant_schemas(self):
+        with self.control.connection() as db:
+            rows = db.execute('SELECT storage_key FROM tenants WHERE active=1').fetchall()
+        for row in rows:
+            key = row['storage_key']
+            if re.fullmatch(r'[a-f0-9]{32}', str(key or '')):
+                t_path = self.directory / 'tenants' / f'{key}.sqlite3'
+                if t_path.is_file():
+                    _inspect_sqlite_business_ready(t_path)
 
     def tenant_path(self, tenant):
         require(re.fullmatch(r'[a-f0-9]{32}', tenant['storage_key']),
                 503, 'invalid_storage', 'Không mở được kho dữ liệu cửa hàng.')
         return self.directory/'tenants'/(tenant['storage_key']+'.sqlite3')
 
+    def _configure_business_store(self, store):
+        store.data_mode = getattr(self, 'data_mode', 'persistent-demo')
+        if callable(getattr(self, 'store_clock', None)):
+            store.clock = self.store_clock
+        if getattr(self, 'case_timer_config', None) is not None:
+            store.case_timer_config = self.case_timer_config
+        return store
+
     def provision_tenant(self, tenant_id, name, *, seed_demo=False):
         tenant = self.control.ensure_tenant(tenant_id, name)
-        store = BusinessStore(self.tenant_path(tenant))
+        store = self._configure_business_store(BusinessStore(self.tenant_path(tenant)))
         if seed_demo:
             store.seed()
         return store
 
-    def business_store(self, tenant_id):
+    def business_store(self, tenant_id, *, migrate=None):
         path = self.tenant_path(self.control.tenant(tenant_id))
         require(path.is_file(), 503, 'tenant_storage_unavailable', 'Kho dữ liệu chưa sẵn sàng; cần quản trị viên kiểm tra.')
-        return BusinessStore(
-            path,
-            create=False,
-            initialize_db=self.maintenance,
-            read_only=self.read_only,
+        init_db = self.maintenance if migrate is None else bool(migrate)
+        return self._configure_business_store(
+            BusinessStore(
+                path,
+                create=False,
+                initialize_db=init_db,
+                read_only=self.read_only,
+            )
         )
 
     def create_member(self, tenant_id, principal_id, name, customer_id, role='customer'):
@@ -265,6 +287,24 @@ class PersistentSessions:
 
     def metadata(self):
         return {'session_scope': 'persistent-account', 'data_mode': self.data_mode, 'session_seconds': self.session_seconds}
+
+    def run_case_timers_once(self, now: float | None = None) -> dict:
+        totals = {'reminded': 0, 'resolved_inactivity': 0, 'resolved_completed': 0, 'tenants': 0}
+        if getattr(self, 'read_only', False):
+            return totals
+        with self.control.connection() as db:
+            rows = db.execute('SELECT id FROM tenants WHERE active=1 ORDER BY id ASC').fetchall() or []
+        for row in rows:
+            tid = row['id'] if isinstance(row, dict) else row['id']
+            try:
+                store = self.business_store(tid, migrate=False)
+            except ApiError:
+                continue
+            res = store.process_due_case_timers(now=now)
+            totals['tenants'] += 1
+            for k in ('reminded', 'resolved_inactivity', 'resolved_completed'):
+                totals[k] += int(res.get(k, 0))
+        return totals
 
     @property
     def sales_adapter(self):

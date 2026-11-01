@@ -11,10 +11,12 @@ let providerId = 'custom', providerOptions = [];
 let canCancel = true;
 let isHumanMode = false, currentRating = 5;
 let humanPollingTimer = null;
+let botTimerPollingTimer = null;
+let currentCaseId = null, currentHandoffId = null, caseClosedNotifiedForId = null;
 const renderedStaffTurnIds = new Set();
 let currentAttachment = null;
 let orderScope = 'customer', managerFilter = 'all', orderSearchQuery = '';
-let currentSessionRole = 'customer', currentSessionTenantId = null;
+let currentSessionRole = 'customer', currentSessionTenantId = null, currentSessionPrincipalId = null;
 let currentSessionName = '';
 const staffLabel = () => currentSessionName || 'Chuyên viên CSKH';
 let adminAccounts = [], selectedAdminMembershipId = null, selectedAdminAccount = null;
@@ -134,7 +136,7 @@ const ratingLabels = {
 };
 const cookieAuth = document.body?.dataset.auth === 'cookie';
 const persistentAccount = ['persistent-demo', 'production', 'live'].includes(document.body?.dataset.dataMode);
-const sourceLabels = {tool_result: 'Kết quả công cụ đã xác minh', interface: 'Hướng dẫn giao diện', store_data: 'Dữ liệu đơn hàng', llm_agent: 'Hội thoại model', ui_simulation: 'Mô phỏng giao diện'};
+const sourceLabels = {tool_result: 'Kết quả công cụ đã xác minh', interface: 'Hướng dẫn giao diện', store_data: 'Dữ liệu đơn hàng', llm_agent: 'Hội thoại model', ui_simulation: 'Mô phỏng giao diện', case_timer: 'Nhắc tự động'};
 function showContext(context) {
   selected = context?.order_id || null;
   byId('conversation-context').textContent = context?.order_id ? 'Đang trao đổi: ' + context.order_id
@@ -173,6 +175,10 @@ async function newConversation(nextProvider = providerId) {
   selected = null;
   const result = await api('/api/conversations', {provider_id: nextProvider});
   conversationId = result.conversation_id; providerId = result.provider_id;
+  currentCaseId = result.case_id || result.case?.case_id || null;
+  currentHandoffId = null;
+  caseClosedNotifiedForId = null;
+  stopBotTimerPolling();
   renderedStaffTurnIds.clear();
   setHumanMode(false);
   renderProvider(); showContext(result.context); byId('messages').replaceChildren();
@@ -331,28 +337,81 @@ function humanMessage(text, repName = 'Chuyên viên CSKH') {
 }
 
 function startHumanModePolling() {
-  if (humanPollingTimer) return;
+  if (humanPollingTimer || typeof setInterval !== 'function') return;
   humanPollingTimer = setInterval(pollHumanChat, 2000);
 }
 
 function stopHumanModePolling() {
   if (humanPollingTimer) {
-    clearInterval(humanPollingTimer);
+    if (typeof clearInterval === 'function') clearInterval(humanPollingTimer);
     humanPollingTimer = null;
+  }
+}
+
+function startBotTimerPolling() {
+  if (botTimerPollingTimer || isHumanMode || !conversationId || currentSessionRole !== 'customer') return;
+  if (typeof setInterval !== 'function') return;
+  botTimerPollingTimer = setInterval(pollBotCaseTimer, 5000);
+}
+
+function stopBotTimerPolling() {
+  if (botTimerPollingTimer) {
+    if (typeof clearInterval === 'function') clearInterval(botTimerPollingTimer);
+    botTimerPollingTimer = null;
+  }
+}
+
+async function pollBotCaseTimer() {
+  if (!conversationId || isHumanMode) {
+    stopBotTimerPolling();
+    return;
+  }
+  try {
+    const data = await api('/api/conversations/' + conversationId + '/messages');
+    const turns = data.turns || [];
+    for (const t of turns) {
+      if (renderedStaffTurnIds.has(t.id)) continue;
+      let resObj = {};
+      try { resObj = typeof t.result === 'string' ? JSON.parse(t.result) : (t.result || {}); } catch (e) {}
+      if (resObj.author === 'system_reminder' && resObj.message) {
+        renderedStaffTurnIds.add(t.id);
+        message(resObj.message, 'assistant', 'case_timer');
+      }
+    }
+    const c = data.case || null;
+    if (c) {
+      currentCaseId = c.case_id || currentCaseId;
+      if (c.status === 'resolved') {
+        stopBotTimerPolling();
+        const notifyKey = (c.case_id || conversationId) + ':' + (c.version || 0);
+        if (caseClosedNotifiedForId !== notifyKey) {
+          caseClosedNotifiedForId = notifyKey;
+          const closedNotice = c.resolved_reason === 'completed'
+            ? 'Ca hỗ trợ đã hoàn tất và đóng tự động. Bạn vẫn có thể gửi tin nhắn mới bất kỳ lúc nào để tiếp tục.'
+            : 'Ca hỗ trợ đã tạm đóng do chưa nhận thêm phản hồi. Bạn có thể gửi tin nhắn bất kỳ lúc nào để mở lại ca này.';
+          message(closedNotice, 'assistant', 'interface');
+          setModelStatus('Ca hỗ trợ đã đóng', 'Nhắn tin bất kỳ lúc nào để tiếp tục');
+        }
+      } else if (!c.has_active_timer) {
+        stopBotTimerPolling();
+      }
+    }
+  } catch (e) {
+    stopBotTimerPolling();
   }
 }
 
 async function pollHumanChat() {
   if (!isHumanMode || !conversationId) return;
   try {
-    const data = await api('/api/staff/conversations/' + conversationId + '/messages');
+    const data = await api('/api/conversations/' + conversationId + '/messages');
     const turns = data.turns || [];
     for (const t of turns) {
       if (renderedStaffTurnIds.has(t.id)) continue;
       renderedStaffTurnIds.add(t.id);
 
       let resObj = {};
-      try { resObj = JSON.parse(t.result); } catch (e) {}
+      try { resObj = typeof t.result === 'string' ? JSON.parse(t.result) : (t.result || {}); } catch (e) {}
       if (resObj.author === 'staff' && resObj.message) {
         humanMessage(resObj.message, resObj.staff_name || 'Chuyên viên CSKH');
         setModelStatus('Đã nhận phản hồi', resObj.staff_name || 'Chuyên viên CSKH');
@@ -360,10 +419,12 @@ async function pollHumanChat() {
     }
 
     const feedbacks = data.feedbacks || [];
-    const isResolved = feedbacks.some(f => f.feedback_type === 'human_handoff' && f.reason_code === 'resolved');
+    const isResolved = (data.case && data.case.status === 'resolved')
+      || feedbacks.some(f => f.feedback_type === 'human_handoff' && f.reason_code === 'resolved');
     if (isResolved && isHumanMode) {
       if (!pollHumanChat.resolvedNotified) {
         pollHumanChat.resolvedNotified = true;
+        currentHandoffId = null;
         message('Chuyên viên CSKH đã xử lý xong yêu cầu và đóng ca hỗ trợ trực tiếp. Hệ thống chuyển lại Trợ lý AI.', 'assistant', 'interface');
         setHumanMode(false);
       }
@@ -384,6 +445,7 @@ function setHumanMode(active, repName = 'Chuyên viên CSKH') {
   const badge = byId('session-badge');
 
   if (active) {
+    stopBotTimerPolling();
     startHumanModePolling();
     if (avatar) { avatar.textContent = 'NV'; avatar.classList?.toggle?.('human', true); }
     if (title) title.textContent = repName;
@@ -408,17 +470,27 @@ function setHumanMode(active, repName = 'Chuyên viên CSKH') {
   }
 }
 
-function toggleHumanMode() {
+async function toggleHumanMode() {
   if (!isHumanMode) {
-    setHumanMode(true);
-    message('Đã gửi yêu cầu gặp nhân viên. Nhân viên CSKH sẽ phản hồi trong cuộc trò chuyện này.', 'assistant', 'interface');
-    if (conversationId) {
-      api('/api/feedback', {
+    if (!conversationId) {
+      message('Chưa có phiên hội thoại đang mở để kết nối nhân viên. Hãy tạo cuộc trò chuyện mới.', 'assistant', 'interface');
+      return;
+    }
+    try {
+      const res = await api('/api/feedback', {
         conversation_id: conversationId,
         feedback_type: 'human_handoff',
         reason_code: 'customer_requested_human',
         comment: 'Khách hàng yêu cầu kết nối chuyên viên tư vấn trực tiếp'
-      }).catch(() => {});
+      });
+      currentCaseId = res?.case_id || currentCaseId;
+      currentHandoffId = res?.handoff_id || null;
+      setHumanMode(true);
+      message('Đã gửi yêu cầu gặp nhân viên. Nhân viên CSKH sẽ phản hồi trong cuộc trò chuyện này.', 'assistant', 'interface');
+    } catch (err) {
+      setHumanMode(false);
+      message('Không thể gửi yêu cầu gặp nhân viên: ' + (err.message || 'Lỗi máy chủ'), 'assistant', 'interface');
+      setModelStatus('Chưa chuyển được nhân viên', 'Vui lòng thử lại');
     }
   } else {
     setHumanMode(false);
@@ -441,6 +513,11 @@ function renderCsatStars(rating) {
 
 function openEndSessionDialog() {
   renderCsatStars(5);
+  if (conversationId && !isHumanMode) {
+    api('/api/conversations/' + conversationId + '/feedback-prompt', {})
+      .then(r => { if (r?.case?.has_active_timer) startBotTimerPolling(); })
+      .catch(() => {});
+  }
   const dlg = byId('end-session-dialog');
   if (dlg) dlg.showModal();
 }
@@ -948,9 +1025,12 @@ async function send(text, requestId = crypto.randomUUID(), retry = false, attach
   const meetKeywords = ['gặp nhân viên', 'nói chuyện với nhân viên', 'cần gặp người thật', 'gặp tư vấn viên', 'chuyển nhân viên'];
   if (meetKeywords.some(kw => text.toLowerCase().includes(kw)) && !isHumanMode) {
     byId('message').value = '';
-    toggleHumanMode();
+    await toggleHumanMode();
     return;
   }
+
+  stopBotTimerPolling();
+  caseClosedNotifiedForId = null;
 
   if (isHumanMode) {
     message(text, 'user', null, null, attachment);
@@ -1009,10 +1089,14 @@ async function send(text, requestId = crypto.randomUUID(), retry = false, attach
     return;
   } finally { byId('messages').removeAttribute('aria-busy'); }
   const row = message(result.message, 'assistant', result.source, result.trace?.model);
+  if (result.case?.case_id) currentCaseId = result.case.case_id;
   if (result.shipment) showShipment(row, result.shipment);
   if (result.human_support) {
+    currentHandoffId = result.human_support.handoff_id || null;
     showHumanSupport(row, result.human_support);
     setHumanMode(true, 'Chuyên viên CSKH');
+  } else if (result.case?.has_active_timer && !isHumanMode) {
+    startBotTimerPolling();
   }
   showSources(row, result.sources);
   showTrace(row, result.trace, result.replayed);
@@ -1044,6 +1128,10 @@ async function loadConversation(cid) {
     if (data.conversation.provider_id) {
       providerId = data.conversation.provider_id;
     }
+    currentCaseId = data.case?.case_id || null;
+    currentHandoffId = data.active_handoff?.handoff_id || null;
+    caseClosedNotifiedForId = null;
+    stopBotTimerPolling();
     renderedStaffTurnIds.clear();
     setHumanMode(false);
     renderProvider();
@@ -1077,6 +1165,8 @@ async function loadConversation(cid) {
         const userText = msgs[0]?.content || '';
         message(userText, 'user');
         hasHumanSupport = true;
+      } else if (res.author === 'system_reminder') {
+        message(res.message || '', 'assistant', 'case_timer');
       } else {
         // Standard AI turn
         let userMsg = null;
@@ -1108,12 +1198,12 @@ async function loadConversation(cid) {
     }
 
     const feedbacks = data.feedbacks || [];
-    const activeHandoff = feedbacks.find(f => f.feedback_type === 'human_handoff' && f.reason_code !== 'resolved');
-    if (activeHandoff || hasHumanSupport) {
-      if (activeHandoff) {
-        setHumanMode(true, 'Chuyên viên CSKH');
-        startHumanModePolling();
-      }
+    const activeHandoff = data.active_handoff || feedbacks.find(f => f.feedback_type === 'human_handoff' && f.reason_code !== 'resolved');
+    if (activeHandoff && data.case?.status !== 'resolved') {
+      setHumanMode(true, 'Chuyên viên CSKH');
+      startHumanModePolling();
+    } else if (data.case?.has_active_timer && !isHumanMode) {
+      startBotTimerPolling();
     }
 
     setModelStatus('Đã khôi phục hội thoại', `${turns.length} lượt tin nhắn · Sẵn sàng`);
@@ -1233,6 +1323,7 @@ async function openSession() {
   const session = await api('/api/session');
   currentSessionRole = session.role || 'customer';
   currentSessionTenantId = session.tenant_id || null;
+  currentSessionPrincipalId = session.principal_id || null;
   currentSessionName = (session.name || '').trim();
   const staffRepName = byId('staff-rep-name');
   if (staffRepName) staffRepName.textContent = staffLabel();
@@ -1471,7 +1562,7 @@ if (btnToggleTopbar) {
 }
 
 const btnMeetHuman = byId('btn-meet-human');
-if (btnMeetHuman) btnMeetHuman.onclick = () => act(async () => { toggleHumanMode(); });
+if (btnMeetHuman) btnMeetHuman.onclick = () => act(() => toggleHumanMode());
 
 const btnEndSession = byId('btn-end-session');
 if (btnEndSession) btnEndSession.onclick = () => openEndSessionDialog();
@@ -1501,6 +1592,13 @@ document.querySelectorAll('#csat-stars .star').forEach(star => {
 // Staff Live Chat Console (Human-in-the-loop Desk)
 let activeStaffTicket = null;
 let staffDeskTimer = null;
+let staffQueueBucket = 'waiting';
+let staffDeskData = { waiting: [], in_progress: [], resolved: [], open_count: 0 };
+
+function notifyStaffAlert(msg) {
+  if (typeof alert === 'function') alert(msg);
+  else console.warn(msg);
+}
 
 function openStaffDesk() {
   const dlg = byId('staff-desk-dialog');
@@ -1518,13 +1616,13 @@ function closeStaffDeskDialog() {
 }
 
 function startStaffDeskPolling() {
-  if (staffDeskTimer) return;
+  if (staffDeskTimer || typeof setInterval !== 'function') return;
   staffDeskTimer = setInterval(pollStaffDesk, 2500);
 }
 
 function stopStaffDeskPolling() {
   if (staffDeskTimer) {
-    clearInterval(staffDeskTimer);
+    if (typeof clearInterval === 'function') clearInterval(staffDeskTimer);
     staffDeskTimer = null;
   }
 }
@@ -1535,44 +1633,94 @@ async function pollStaffDesk() {
     stopStaffDeskPolling();
     return;
   }
-  if (activeStaffTicket) {
-    await refreshStaffTranscript(activeStaffTicket.conversation_id, false);
+  if (activeStaffTicket && activeStaffTicket.status !== 'resolved') {
+    await refreshStaffTranscript(activeStaffTicket.conversation_id, false, activeStaffTicket.case_id);
   }
   await loadStaffQueue(true);
 }
 
-async function loadStaffQueue(silent = false) {
+function setStaffQueueBucket(bucket) {
+  if (!['waiting', 'in_progress', 'resolved'].includes(bucket)) return;
+  staffQueueBucket = bucket;
+  renderStaffBucketList();
+}
+
+function renderStaffBucketList() {
   const listEl = byId('staff-queue-list');
   const countEl = byId('staff-queue-count');
+  if (countEl) countEl.textContent = String(staffDeskData.open_count ?? 0);
+
+  const btnW = byId('staff-bucket-waiting');
+  const btnP = byId('staff-bucket-in-progress');
+  const btnR = byId('staff-bucket-resolved');
+  if (btnW) {
+    btnW.textContent = `Hàng chờ (${(staffDeskData.waiting || []).length})`;
+    btnW.classList?.toggle?.('active', staffQueueBucket === 'waiting');
+  }
+  if (btnP) {
+    btnP.textContent = `Đang xử lý (${(staffDeskData.in_progress || []).length})`;
+    btnP.classList?.toggle?.('active', staffQueueBucket === 'in_progress');
+  }
+  if (btnR) {
+    btnR.textContent = `Đã xử lý (${(staffDeskData.resolved || []).length})`;
+    btnR.classList?.toggle?.('active', staffQueueBucket === 'resolved');
+  }
+
+  if (!listEl) return;
+  const items = staffDeskData[staffQueueBucket] || [];
+  if (!items.length) {
+    const emptyMsg = staffQueueBucket === 'waiting'
+      ? 'Không có ca nào trong hàng chờ.'
+      : (staffQueueBucket === 'in_progress'
+        ? 'Không có ca nào đang được giữ xử lý.'
+        : 'Chưa có ca đã xử lý trong thời hạn lưu.');
+    listEl.innerHTML = `<p class="staff-empty-hint" style="padding:20px 10px;text-align:center;color:#94a3b8;">${emptyMsg}</p>`;
+    return;
+  }
+
+  listEl.innerHTML = '';
+  items.forEach(item => {
+    const itemKey = item.case_id || item.id;
+    const activeKey = activeStaffTicket ? (activeStaffTicket.case_id || activeStaffTicket.id) : null;
+    const isResolved = item.status === 'resolved' || item.reason_code === 'resolved';
+    const isInProgress = item.status === 'in_progress' || Boolean(item.holder);
+    const badgeLabel = isResolved
+      ? '✓ Đã xử lý'
+      : (isInProgress ? ('🟡 Đang giữ' + (item.holder_name ? ': ' + item.holder_name : '')) : '🔴 Hàng chờ');
+    const card = el('div', 'ticket-card' + (activeKey && activeKey === itemKey ? ' active' : ''));
+    const header = el('div', 'ticket-header');
+    header.append(
+      el('span', 'ticket-user', (item.customer_name || item.customer_id) + (item.order_id ? ' (' + item.order_id + ')' : '')),
+      el('span', 'ticket-badge ' + (isResolved ? 'resolved' : 'pending'), badgeLabel)
+    );
+    const reason = el('p', 'ticket-reason', item.comment || item.reason_code || (isResolved ? ('Lý do đóng: ' + (item.resolved_reason || 'resolved')) : 'Yêu cầu hỗ trợ từ khách hàng'));
+    const ts = item.updated_at || item.created_at || (Date.now() / 1000);
+    const timeStr = new Date(ts * 1000).toLocaleTimeString('vi-VN', {hour: '2-digit', minute:'2-digit'});
+    const meta = el('div', 'ticket-meta');
+    meta.append(el('span', '', 'Mã ca: ' + (item.case_id || ('#' + item.id))), el('span', '', timeStr));
+    card.append(header, reason, meta);
+    card.onclick = () => selectStaffTicket(item);
+    listEl.append(card);
+  });
+}
+
+async function loadStaffQueue(silent = false) {
+  const listEl = byId('staff-queue-list');
   if (!listEl) return;
   if (!silent) {
     listEl.innerHTML = '<p class="staff-empty-hint" style="padding:15px 10px;text-align:center;color:#94a3b8;">Đang tải danh sách ca chờ...</p>';
   }
   try {
-    const res = await api('/api/staff/escalations');
-    const items = res.escalations || [];
-    if (countEl) countEl.textContent = items.length;
-    if (!items.length) {
-      listEl.innerHTML = '<p class="staff-empty-hint" style="padding:20px 10px;text-align:center;color:#94a3b8;">Không có ca khiếu nại hoặc chuyển giao nào đang chờ.</p>';
-      return;
-    }
-    listEl.innerHTML = '';
-    items.forEach(item => {
-      const isResolved = item.reason_code === 'resolved';
-      const card = el('div', 'ticket-card' + (activeStaffTicket && activeStaffTicket.id === item.id ? ' active' : ''));
-      const header = el('div', 'ticket-header');
-      header.append(
-        el('span', 'ticket-user', (item.customer_name || item.customer_id) + (item.order_id ? ' (' + item.order_id + ')' : '')),
-        el('span', 'ticket-badge ' + (isResolved ? 'resolved' : 'pending'), isResolved ? '✓ Đã xử lý' : '🔴 Chờ hỗ trợ')
-      );
-      const reason = el('p', 'ticket-reason', item.comment || item.reason_code || 'Yêu cầu hỗ trợ từ khách hàng');
-      const timeStr = new Date((item.created_at || Date.now() / 1000) * 1000).toLocaleTimeString('vi-VN', {hour: '2-digit', minute:'2-digit'});
-      const meta = el('div', 'ticket-meta');
-      meta.append(el('span', '', 'Mã ca: #' + item.id), el('span', '', timeStr));
-      card.append(header, reason, meta);
-      card.onclick = () => selectStaffTicket(item);
-      listEl.append(card);
-    });
+    const res = await api('/api/staff/cases');
+    staffDeskData = {
+      waiting: res.waiting || [],
+      in_progress: res.in_progress || [],
+      resolved: res.resolved || [],
+      open_count: typeof res.open_count === 'number'
+        ? res.open_count
+        : ((res.waiting || []).length + (res.in_progress || []).length)
+    };
+    renderStaffBucketList();
   } catch (err) {
     if (!silent) {
       listEl.innerHTML = '<p class="staff-empty-hint" style="color:#ef4444;padding:15px;">Lỗi tải hàng đợi: ' + err.message + '</p>';
@@ -1580,11 +1728,75 @@ async function loadStaffQueue(silent = false) {
   }
 }
 
-async function refreshStaffTranscript(cid, forceScroll = false) {
+function syncStaffTicketActions(caseObj, readOnly = false) {
+  const chatActions = byId('staff-chat-actions');
+  const chatComposer = byId('staff-chat-composer');
+  const actionBar = byId('staff-action-bar');
+  const btnClaim = byId('btn-claim-ticket');
+  const btnResolve = byId('btn-resolve-ticket');
+  const btnSend = byId('btn-send-staff-reply');
+  const replyInput = byId('staff-reply-input');
+
+  const isClosed = Boolean(readOnly || (caseObj && caseObj.status === 'resolved'));
+  if (isClosed) {
+    if (chatActions && chatActions.style) chatActions.style.display = 'none';
+    if (chatComposer && chatComposer.style) chatComposer.style.display = 'none';
+    if (actionBar && actionBar.style) actionBar.style.display = 'none';
+    return;
+  }
+
+  if (chatActions && chatActions.style) chatActions.style.display = 'block';
+  const holder = caseObj ? caseObj.holder : (activeStaffTicket ? activeStaffTicket.holder : null);
+  const heldByOther = Boolean(
+    holder
+    && currentSessionPrincipalId
+    && holder !== currentSessionPrincipalId
+    && currentSessionRole !== 'manager'
+  );
+
+  if (btnClaim) {
+    if (!holder) {
+      btnClaim.textContent = '✋ Nhận ca';
+      btnClaim.disabled = false;
+    } else if (heldByOther) {
+      btnClaim.textContent = '🔒 Đang giữ: ' + (caseObj?.holder_name || holder);
+      btnClaim.disabled = true;
+    } else {
+      btnClaim.textContent = '↩ Trả ca';
+      btnClaim.disabled = false;
+    }
+  }
+  if (btnResolve) btnResolve.disabled = heldByOther;
+  if (chatComposer && chatComposer.style) chatComposer.style.display = 'flex';
+  if (actionBar && actionBar.style) actionBar.style.display = heldByOther ? 'none' : 'flex';
+  if (btnSend) btnSend.disabled = heldByOther;
+  if (replyInput) replyInput.disabled = heldByOther;
+}
+
+async function refreshStaffTranscript(cid, forceScroll = false, caseId = null) {
   const transcriptEl = byId('staff-chat-transcript');
   if (!transcriptEl) return;
   try {
-    const data = await api('/api/staff/conversations/' + cid + '/messages');
+    const endpoint = caseId
+      ? ('/api/staff/cases/' + caseId + '/messages')
+      : ('/api/staff/conversations/' + cid + '/messages');
+    const data = await api(endpoint);
+    if (activeStaffTicket && data.case) {
+      activeStaffTicket = {
+        ...activeStaffTicket,
+        case_id: data.case.case_id,
+        status: data.case.status,
+        holder: data.case.holder,
+        holder_name: data.case.holder_name,
+        version: data.case.version,
+        handoff_id: data.active_handoff?.handoff_id || activeStaffTicket.handoff_id || null
+      };
+      syncStaffTicketActions(data.case, Boolean(data.read_only));
+      const metaEl = byId('staff-active-meta');
+      if (metaEl && (data.read_only || data.case.status === 'resolved') && !metaEl.textContent.includes('[Chỉ đọc')) {
+        metaEl.textContent = metaEl.textContent + ' · [Chỉ đọc · Ca đã đóng]';
+      }
+    }
     const turns = data.turns || [];
     const currentCount = parseInt(transcriptEl.dataset.turnsCount || '-1', 10);
     if (currentCount === turns.length && !forceScroll) return;
@@ -1597,9 +1809,9 @@ async function refreshStaffTranscript(cid, forceScroll = false) {
     }
     turns.forEach(t => {
       let raw = [];
-      try { raw = JSON.parse(t.messages); } catch(e) {}
+      try { raw = typeof t.messages === 'string' ? JSON.parse(t.messages) : (t.messages || []); } catch(e) {}
       let res = {};
-      try { res = JSON.parse(t.result); } catch(e) {}
+      try { res = typeof t.result === 'string' ? JSON.parse(t.result) : (t.result || {}); } catch(e) {}
 
       raw.forEach(m => {
         if (m.role === 'user') {
@@ -1629,10 +1841,14 @@ async function refreshStaffTranscript(cid, forceScroll = false) {
           transcriptEl.append(row);
         } else if (m.role === 'assistant') {
           const isStaff = m.author === 'staff' || res.author === 'staff';
+          const isReminder = res.author === 'system_reminder';
           const row = el('div', 'message assistant' + (isStaff ? ' human-message' : ''));
           const label = el('div', 'message-label');
           label.append(el('span', isStaff ? 'human-badge-mini' : 'mini-r', isStaff ? 'NV' : 'R'));
-          label.append(document.createTextNode(' ' + (isStaff ? (m.staff_name || res.staff_name || 'Chuyên viên CSKH') : 'Trợ lý AI')));
+          const senderName = isStaff
+            ? (m.staff_name || res.staff_name || 'Chuyên viên CSKH')
+            : (isReminder ? 'Trợ lý AI · Nhắc tự động' : 'Trợ lý AI');
+          label.append(document.createTextNode(' ' + senderName));
           row.append(label, el('div', 'bubble' + (isStaff ? ' bubble-staff' : ''), m.content));
           transcriptEl.append(row);
         }
@@ -1651,25 +1867,47 @@ async function selectStaffTicket(ticket) {
   activeStaffTicket = ticket;
   document.querySelectorAll('.ticket-card').forEach(c => c.classList.remove('active'));
 
+  const isClosed = ticket.status === 'resolved' || ticket.reason_code === 'resolved';
   byId('staff-active-customer').textContent = (ticket.customer_name || ticket.customer_id) + (ticket.order_id ? ' · Đơn hàng: ' + ticket.order_id : '');
-  byId('staff-active-meta').textContent = 'Mã phiên: ' + ticket.conversation_id + ' · Lý do: ' + (ticket.comment || ticket.reason_code || 'Yêu cầu gặp nhân viên');
-  const chatActions = byId('staff-chat-actions');
-  if (chatActions && chatActions.style) chatActions.style.display = 'block';
-  const chatComposer = byId('staff-chat-composer');
-  if (chatComposer && chatComposer.style) chatComposer.style.display = 'flex';
-  const actionBar = byId('staff-action-bar');
-  if (actionBar && actionBar.style) actionBar.style.display = 'flex';
+  byId('staff-active-meta').textContent = 'Mã ca: ' + (ticket.case_id || ticket.conversation_id)
+    + ' · Lý do: ' + (ticket.comment || ticket.reason_code || (isClosed ? (ticket.resolved_reason || 'Đã đóng') : 'Yêu cầu gặp nhân viên'))
+    + (isClosed ? ' · [Chỉ đọc · Ca đã đóng]' : '');
+  syncStaffTicketActions(ticket, isClosed);
 
   const transcriptEl = byId('staff-chat-transcript');
   transcriptEl.dataset.turnsCount = '-1';
   transcriptEl.dataset.hasScrolled = '';
   transcriptEl.innerHTML = '<p class="transcript-placeholder">Đang tải lịch sử hội thoại...</p>';
 
-  await refreshStaffTranscript(ticket.conversation_id, true);
+  await refreshStaffTranscript(ticket.conversation_id, true, ticket.case_id || null);
+}
+
+async function claimOrReleaseStaffTicket() {
+  if (!activeStaffTicket || !activeStaffTicket.case_id) return;
+  const caseId = activeStaffTicket.case_id;
+  const action = activeStaffTicket.holder ? 'release' : 'claim';
+  try {
+    const res = await api(`/api/staff/cases/${caseId}/${action}`, {});
+    if (res && res.case) {
+      activeStaffTicket = {
+        ...activeStaffTicket,
+        status: res.case.status,
+        holder: res.case.holder,
+        holder_name: res.case.holder_name,
+        version: res.case.version,
+        handoff_id: res.handoff_id || activeStaffTicket.handoff_id || null
+      };
+      syncStaffTicketActions(res.case, false);
+    }
+    await loadStaffQueue(true);
+  } catch (err) {
+    notifyStaffAlert('Không thể cập nhật trạng thái nhận ca: ' + err.message);
+    await loadStaffQueue(true);
+  }
 }
 
 async function sendStaffReply() {
-  if (!activeStaffTicket) return;
+  if (!activeStaffTicket || activeStaffTicket.status === 'resolved') return;
   const input = byId('staff-reply-input');
   const text = (input?.value || '').trim();
   if (!text) return;
@@ -1678,10 +1916,12 @@ async function sendStaffReply() {
   if (btn) btn.disabled = true;
 
   try {
-    const replyRes = await api('/api/staff/reply', {
+    const payload = {
       conversation_id: activeStaffTicket.conversation_id,
       message: text
-    });
+    };
+    if (activeStaffTicket.case_id) payload.case_id = activeStaffTicket.case_id;
+    const replyRes = await api('/api/staff/reply', payload);
     if (replyRes && replyRes.turn_id) {
       renderedStaffTurnIds.add(replyRes.turn_id);
     }
@@ -1707,63 +1947,84 @@ async function sendStaffReply() {
 
     loadStaffQueue(true);
   } catch (err) {
-    alert('Lỗi gửi phản hồi: ' + err.message);
+    notifyStaffAlert('Lỗi gửi phản hồi: ' + err.message);
   } finally {
     if (btn) btn.disabled = false;
   }
 }
 
 async function resolveStaffTicket() {
-  if (!activeStaffTicket) return;
+  if (!activeStaffTicket || activeStaffTicket.status === 'resolved') return;
   try {
-    await api('/api/staff/resolve', {
+    const payload = {
       conversation_id: activeStaffTicket.conversation_id
-    });
+    };
+    if (activeStaffTicket.case_id) payload.case_id = activeStaffTicket.case_id;
+    if (activeStaffTicket.handoff_id) payload.handoff_id = activeStaffTicket.handoff_id;
+    const res = await api('/api/staff/resolve', payload);
+    if (res && res.case) {
+      activeStaffTicket = { ...activeStaffTicket, status: 'resolved', holder: null, holder_name: null };
+      syncStaffTicketActions(res.case, true);
+    }
     if (conversationId && activeStaffTicket.conversation_id === conversationId) {
       message('Chuyên viên CSKH đã hỗ trợ xong và hoàn tất phiên này. Hệ thống chuyển lại Trợ lý AI.', 'assistant', 'interface');
       setHumanMode(false);
     }
     loadStaffQueue(true);
   } catch (err) {
-    alert('Lỗi hoàn tất: ' + err.message);
+    notifyStaffAlert('Lỗi hoàn tất: ' + err.message);
   }
 }
 
 async function approveExchange1to1() {
-  if (!activeStaffTicket) return;
+  if (!activeStaffTicket || activeStaffTicket.status === 'resolved') return;
   const replyMsg = "Dạ chuyên viên CSKH đã tiếp nhận thông tin yêu cầu đổi hàng. Shop sẽ liên hệ xác nhận chi tiết hỗ trợ mình sớm nhất ạ.";
   try {
-    await api('/api/staff/reply', {
+    const payload = {
       conversation_id: activeStaffTicket.conversation_id,
       message: replyMsg
-    });
-    alert('Đã gửi phản hồi tiếp nhận cho khách hàng qua chat.');
-    refreshStaffTranscript(activeStaffTicket.conversation_id, true);
+    };
+    if (activeStaffTicket.case_id) payload.case_id = activeStaffTicket.case_id;
+    await api('/api/staff/reply', payload);
+    notifyStaffAlert('Đã gửi phản hồi tiếp nhận cho khách hàng qua chat.');
+    refreshStaffTranscript(activeStaffTicket.conversation_id, true, activeStaffTicket.case_id || null);
     if (conversationId && activeStaffTicket.conversation_id === conversationId) {
       humanMessage(replyMsg, staffLabel());
     }
   } catch (err) {
-    alert('Lỗi tiếp nhận: ' + err.message);
+    notifyStaffAlert('Lỗi tiếp nhận: ' + err.message);
   }
 }
 
 async function approveExchangeSize() {
-  if (!activeStaffTicket) return;
+  if (!activeStaffTicket || activeStaffTicket.status === 'resolved') return;
   const replyMsg = "Dạ chuyên viên CSKH đã tiếp nhận thông tin yêu cầu đổi hàng. Shop sẽ liên hệ xác nhận chi tiết hỗ trợ mình sớm nhất ạ.";
   try {
-    await api('/api/staff/reply', {
+    const payload = {
       conversation_id: activeStaffTicket.conversation_id,
       message: replyMsg
-    });
-    alert('Đã gửi phản hồi tiếp nhận cho khách hàng qua chat.');
-    refreshStaffTranscript(activeStaffTicket.conversation_id, true);
+    };
+    if (activeStaffTicket.case_id) payload.case_id = activeStaffTicket.case_id;
+    await api('/api/staff/reply', payload);
+    notifyStaffAlert('Đã gửi phản hồi tiếp nhận cho khách hàng qua chat.');
+    refreshStaffTranscript(activeStaffTicket.conversation_id, true, activeStaffTicket.case_id || null);
     if (conversationId && activeStaffTicket.conversation_id === conversationId) {
       humanMessage(replyMsg, staffLabel());
     }
   } catch (err) {
-    alert('Lỗi tiếp nhận: ' + err.message);
+    notifyStaffAlert('Lỗi tiếp nhận: ' + err.message);
   }
 }
+
+const btnBucketWaiting = byId('staff-bucket-waiting');
+if (btnBucketWaiting) btnBucketWaiting.onclick = () => setStaffQueueBucket('waiting');
+const btnBucketInProgress = byId('staff-bucket-in-progress');
+if (btnBucketInProgress) btnBucketInProgress.onclick = () => setStaffQueueBucket('in_progress');
+const btnBucketResolved = byId('staff-bucket-resolved');
+if (btnBucketResolved) btnBucketResolved.onclick = () => setStaffQueueBucket('resolved');
+
+const btnClaimTicket = byId('btn-claim-ticket');
+if (btnClaimTicket) btnClaimTicket.onclick = () => claimOrReleaseStaffTicket();
 
 const toggleStaffDesk = byId('toggle-staff-desk');
 if (toggleStaffDesk) toggleStaffDesk.onclick = () => openStaffDesk();

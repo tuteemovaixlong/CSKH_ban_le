@@ -40,7 +40,8 @@ class RetailProductionToolsTests(unittest.TestCase):
         self.store.seed()
         self.catalog = Catalog()
         self.identity = {'name': 'qwen3.5:4b', 'digest': 'abc', 'provider': 'custom'}
-        self.snapshot = {'order_id': 'O-101', 'product_id': 'P-001'}
+        conv = self.store.new_conversation('C-001')
+        self.snapshot = {'id': conv['conversation_id'], 'order_id': 'O-101', 'product_id': 'P-001'}
         self.tools = BoundTools(self.store, self.catalog, 'C-001', self.snapshot, self.identity)
 
     def test_protocol_validates_new_tools(self):
@@ -93,7 +94,10 @@ class RetailProductionToolsTests(unittest.TestCase):
     def test_request_human_support_tool_execution(self):
         res = self.tools('request_human_support', {'reason': 'Khach muon tra hang gap vi loi'})
         self.assertEqual(res['status'], 'escalated_to_human')
-        self.assertIn('Mai Anh', res['support_rep'])
+        self.assertNotIn('support_rep', res)
+        self.assertNotIn('Mai Anh', str(res))
+        self.assertTrue(res.get('case_id'))
+        self.assertTrue(res.get('handoff_id'))
         self.assertEqual(self.tools.human_support, res)
 
     def test_application_integration_with_new_tools(self):

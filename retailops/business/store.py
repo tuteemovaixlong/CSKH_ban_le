@@ -6,6 +6,7 @@ seeds demo data implicitly; its owner explicitly chooses those lifecycle actions
 from __future__ import annotations
 import hmac
 import json
+import os
 import re
 import sqlite3
 import time
@@ -20,7 +21,14 @@ from retailops.guardrails.topic_filter import (
     sanitize_structured_payload,
 )
 from retailops.schema import migrate
-from retailops.business.schema import initialize as initialize_schema, ensure_import_tables
+from retailops.business.schema import (
+    BUSINESS_V5_VERSION_MAPPING,
+    SQLITE_BUSINESS_SCHEMA_CURRENT,
+    backfill_business_v5_cases,
+    ensure_case_tables,
+    ensure_import_tables,
+    initialize as initialize_schema,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -58,8 +66,315 @@ class VariantStockResult(int):
         yield self.status
 
 
+def _inspect_sqlite_business_ready(path):
+    """Read-only inspection of a business SQLite file without modifying a single byte.
+
+    Returns 'empty' for a missing, zero-byte, or zero-table file; 'v5_ready' when already at
+    SQLite business schema v4 (logical Business v5) with cases, handoff_episodes, and
+    case_feedback_events tables; raises ValueError for wrong component / unsupported future
+    version; and raises ApiError(503, 'business_migration_required', ...) when an existing
+    pre-v5 business DB is found.
+    """
+    db_path = Path(path)
+    if not db_path.exists() or db_path.stat().st_size == 0:
+        return 'empty'
+    uri = db_path.resolve().as_uri() + '?mode=ro'
+    ro_db = None
+    try:
+        ro_db = sqlite3.connect(uri, uri=True, timeout=5)
+        ro_db.row_factory = sqlite3.Row
+        tables = {
+            r[0]
+            for r in ro_db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            ).fetchall()
+        }
+        if not tables:
+            return 'empty'
+        if 'retailops_schema' in tables:
+            rows = ro_db.execute('SELECT component, version FROM retailops_schema').fetchall()
+            if rows and (len(rows) != 1 or rows[0]['component'] != 'business'):
+                raise ValueError('Database belongs to another RetailOps component.')
+            if not rows:
+                raise ApiError(
+                    503,
+                    'business_migration_required',
+                    'Kho dữ liệu cửa hàng thiếu dấu vết schema Business v5; khởi động bị chặn fail-closed. '
+                    'Hãy chạy lệnh operator database migrate-v5 với --confirm-preflight --confirm-backup.',
+                )
+            ver = rows[0]['version']
+            if ver not in range(1, SQLITE_BUSINESS_SCHEMA_CURRENT + 1):
+                raise ValueError('Unsupported database schema version; use the matching application version.')
+            if ver < SQLITE_BUSINESS_SCHEMA_CURRENT:
+                raise ApiError(
+                    503,
+                    'business_migration_required',
+                    f'Kho dữ liệu cửa hàng đang ở SQLite schema v{ver} (trước Business v5); khởi động bị chặn fail-closed. '
+                    'Hãy chạy lệnh operator database migrate-v5 với --confirm-preflight --confirm-backup.',
+                )
+            required_v5_tables = {'cases', 'handoff_episodes', 'case_feedback_events'}
+            if not required_v5_tables.issubset(tables):
+                raise ApiError(
+                    503,
+                    'business_migration_required',
+                    'Kho dữ liệu cửa hàng chưa đầy đủ các bảng Business v5; khởi động bị chặn fail-closed. '
+                    'Hãy chạy lệnh operator database migrate-v5 với --confirm-preflight --confirm-backup.',
+                )
+            return 'v5_ready'
+        if 'memberships' in tables or 'tenants' in tables:
+            raise ValueError('Database belongs to another RetailOps component.')
+        if tables & {'orders', 'conversations', 'proposals', 'business_events', 'products'}:
+            raise ApiError(
+                503,
+                'business_migration_required',
+                'Kho dữ liệu cửa hàng legacy chưa nâng cấp lên Business v5; khởi động bị chặn fail-closed. '
+                'Hãy chạy lệnh operator database migrate-v5 với --confirm-preflight --confirm-backup.',
+            )
+        raise ValueError('Database belongs to another RetailOps component.')
+    except sqlite3.Error as exc:
+        raise ApiError(
+            503,
+            'database_unavailable',
+            'Cơ sở dữ liệu tạm thời gián đoạn. Vui lòng thử lại sau ít phút.',
+        ) from exc
+    finally:
+        if ro_db is not None:
+            ro_db.close()
+
+
+def _migrate_single_sqlite_business_file(db_path: Path):
+    if not db_path.is_file():
+        raise ApiError(404, 'database_not_found', f'Không tìm thấy kho dữ liệu cửa hàng SQLite: {db_path.name}')
+    try:
+        state = _inspect_sqlite_business_ready(db_path)
+    except ApiError as exc:
+        if exc.code != 'business_migration_required':
+            raise
+        state = 'needs_migration'
+    if state == 'empty':
+        raise ApiError(404, 'database_not_found', f'Kho dữ liệu cửa hàng SQLite đang rỗng: {db_path.name}')
+
+    uri = db_path.resolve().as_uri() + '?mode=rw'
+    db = sqlite3.connect(uri, uri=True, timeout=5)
+    db.row_factory = sqlite3.Row
+    try:
+        db.execute('PRAGMA journal_mode=WAL')
+        db.execute('PRAGMA foreign_keys=ON')
+        db.execute('BEGIN IMMEDIATE')
+        cases_before = (
+            db.execute('SELECT COUNT(*) FROM cases').fetchone()[0]
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cases'").fetchone()
+            else 0
+        )
+        episodes_before = (
+            db.execute('SELECT COUNT(*) FROM handoff_episodes').fetchone()[0]
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='handoff_episodes'").fetchone()
+            else 0
+        )
+        migrate(db, 'business', initialize_schema)
+        ensure_import_tables(db)
+        ensure_case_tables(db)
+        backfill_res = backfill_business_v5_cases(db)
+        cases_after = db.execute('SELECT COUNT(*) FROM cases').fetchone()[0]
+        episodes_after = db.execute('SELECT COUNT(*) FROM handoff_episodes').fetchone()[0]
+        fk_errors = db.execute('PRAGMA foreign_key_check').fetchall()
+        if fk_errors:
+            raise sqlite3.IntegrityError(f'Foreign key check failed during Business v5 migration: {[tuple(r) for r in fk_errors]}')
+        db.commit()
+        return {
+            'upgraded': bool(state == 'needs_migration' or backfill_res['cases_created'] > 0),
+            'cases_created': int(cases_after - cases_before),
+            'episodes_created': int(episodes_after - episodes_before),
+        }
+    except Exception:
+        if db.in_transaction:
+            db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def migrate_sqlite_business_v5(path, *, preflight_confirmed=False, backup_confirmed=False):
+    """Explicit operator migration command for SQLite Business v5 (W2-D3, §11.5).
+
+    Accepts either a single SQLite business database file OR a workspace/persistent
+    directory (upgrading every tenant business database under persistent/tenants/).
+    Never invoked automatically at web startup, store construction, or ordinary CLI commands.
+    """
+    require(
+        preflight_confirmed is True and backup_confirmed is True,
+        400,
+        'migration_confirmation_required',
+        'Lệnh nâng cấp Business v5 yêu cầu xác nhận tường minh --confirm-preflight và --confirm-backup theo runbook §11.5.',
+    )
+    target = Path(path)
+    if target.is_file():
+        single = _migrate_single_sqlite_business_file(target)
+        return {
+            'result': 'BUSINESS_V5_MIGRATED',
+            'backend': 'sqlite',
+            'schema_version': SQLITE_BUSINESS_SCHEMA_CURRENT,
+            'logical_version': BUSINESS_V5_VERSION_MAPPING['postgresql'],
+            'tenants': 1,
+            'upgraded': single['upgraded'],
+            'cases_created': single['cases_created'],
+            'episodes_created': single['episodes_created'],
+        }
+
+    pers_dir = target / 'persistent' if (target / 'persistent').is_dir() else target
+    id_file = pers_dir / 'identity.sqlite3'
+    tenants_dir = pers_dir / 'tenants'
+    require(
+        id_file.is_file() or tenants_dir.is_dir(),
+        404,
+        'database_not_found',
+        'Không tìm thấy thư mục dữ liệu persistent SQLite hiện hữu để nâng cấp Business v5.',
+    )
+    if id_file.is_file():
+        from retailops.identity.store import _inspect_sqlite_identity_ready
+        id_state = _inspect_sqlite_identity_ready(id_file)
+        require(
+            id_state == 'v5_ready',
+            503,
+            'identity_migration_required',
+            'Kho identity SQLite chưa ở schema v5; hãy chạy identity migrate-v5 trước khi nâng cấp Business v5.',
+        )
+
+    tenant_files = []
+    seen = set()
+    if id_file.is_file():
+        ro_uri = id_file.resolve().as_uri() + '?mode=ro'
+        ro_id = sqlite3.connect(ro_uri, uri=True, timeout=5)
+        ro_id.row_factory = sqlite3.Row
+        try:
+            for row in ro_id.execute('SELECT storage_key FROM tenants ORDER BY id').fetchall():
+                cand = tenants_dir / f"{row['storage_key']}.sqlite3"
+                if cand.is_file() and cand.resolve() not in seen:
+                    seen.add(cand.resolve())
+                    tenant_files.append(cand)
+        finally:
+            ro_id.close()
+    if tenants_dir.is_dir():
+        for cand in sorted(tenants_dir.glob('*.sqlite3')):
+            if cand.is_file() and cand.resolve() not in seen:
+                seen.add(cand.resolve())
+                tenant_files.append(cand)
+
+    any_upgraded = False
+    total_cases = 0
+    total_episodes = 0
+    for tf in tenant_files:
+        res = _migrate_single_sqlite_business_file(tf)
+        any_upgraded = any_upgraded or res['upgraded']
+        total_cases += res['cases_created']
+        total_episodes += res['episodes_created']
+
+    return {
+        'result': 'BUSINESS_V5_MIGRATED',
+        'backend': 'sqlite',
+        'schema_version': SQLITE_BUSINESS_SCHEMA_CURRENT,
+        'logical_version': BUSINESS_V5_VERSION_MAPPING['postgresql'],
+        'tenants': len(tenant_files),
+        'upgraded': any_upgraded,
+        'cases_created': total_cases,
+        'episodes_created': total_episodes,
+    }
+
+
+CASE_INACTIVITY_REMINDER_MESSAGE = (
+    'Bạn còn cần mình hỗ trợ thêm thông tin gì không ạ? '
+    'Nếu chưa nhận được phản hồi sau ít phút nữa, hệ thống sẽ tạm đóng ca hỗ trợ này '
+    '(bạn vẫn có thể nhắn lại bất kỳ lúc nào để tiếp tục).'
+)
+
+
 class BusinessStore:
     CONVERSATION_TTL = 7 * 86400  # 7 days persistent chat history
+
+    def _now(self) -> float:
+        clk = getattr(self, 'clock', None)
+        return float(clk() if callable(clk) else time.time())
+
+    def _timer_config(self):
+        from retailops.config import CaseTimerConfig
+        cfg = getattr(self, 'case_timer_config', None)
+        data_mode = str(getattr(self, 'data_mode', '') or os.environ.get('RETAILOPS_DATA_MODE', '')).strip()
+        is_prod_env = str(os.environ.get('RETAILOPS_ENV', '')).strip().lower() in ('production', 'prod', 'live')
+        if isinstance(cfg, CaseTimerConfig):
+            if data_mode in ('production', 'live') or is_prod_env:
+                return CaseTimerConfig(
+                    reminder_seconds=cfg.reminder_seconds,
+                    post_reminder_close_seconds=cfg.post_reminder_close_seconds,
+                    completion_seconds=cfg.completion_seconds,
+                    scan_seconds=cfg.scan_seconds,
+                    data_mode=data_mode or cfg.data_mode,
+                    production_env=is_prod_env or cfg.production_env,
+                )
+            return cfg
+        return CaseTimerConfig(
+            data_mode=data_mode or 'synthetic-demo',
+            production_env=is_prod_env,
+        )
+
+    @staticmethod
+    def _ensure_customer_in_tx(db, customer_id: str) -> None:
+        if not customer_id:
+            return
+        db.execute(
+            "INSERT INTO customers(id, name) VALUES (?, 'Khách hàng') "
+            "ON CONFLICT(id) DO NOTHING",
+            (customer_id,),
+        )
+
+    @staticmethod
+    def _case_public_dict(row) -> dict | None:
+        if row is None:
+            return None
+        d = dict(row)
+        has_timer = any(
+            d.get(col) is not None
+            for col in ('reminder_deadline', 'inactivity_deadline', 'completion_deadline')
+        )
+        return {
+            'case_id': d['case_id'],
+            'conversation_id': d['conversation_id'],
+            'customer_id': d['customer_id'],
+            'status': d['status'],
+            'holder': d.get('holder'),
+            'holder_name': d.get('holder_name'),
+            'version': int(d['version']),
+            'resolved_reason': d.get('resolved_reason'),
+            'resolved_at': d.get('resolved_at'),
+            'resumed_at': d.get('resumed_at'),
+            'resume_count': int(d.get('resume_count') or 0),
+            'previous_case_id': d.get('previous_case_id'),
+            'has_active_timer': bool(has_timer and d['status'] != 'resolved' and d.get('holder') is None),
+            'created_at': d['created_at'],
+            'updated_at': d['updated_at'],
+        }
+
+    @staticmethod
+    def _latest_case_in_tx(db, cid: str):
+        return db.execute(
+            'SELECT * FROM cases WHERE conversation_id = ? '
+            'ORDER BY created_at DESC, updated_at DESC, case_id DESC LIMIT 1',
+            (cid,),
+        ).fetchone()
+
+    def _ensure_active_case_in_tx(self, db, cid: str, customer_id: str, now: float) -> dict:
+        row = self._latest_case_in_tx(db, cid)
+        if row is not None:
+            return dict(row)
+        self._ensure_customer_in_tx(db, customer_id)
+        case_id = f'case_{uuid.uuid4().hex}'
+        db.execute(
+            """INSERT INTO cases(
+                   case_id, conversation_id, customer_id, status, holder, holder_name,
+                   version, resume_count, created_at, updated_at
+               ) VALUES (?, ?, ?, 'waiting', NULL, NULL, 1, 0, ?, ?)""",
+            (case_id, cid, customer_id, now, now),
+        )
+        return dict(self._latest_case_in_tx(db, cid))
 
     def __init__(self, path, *, create=True, initialize_db=True, read_only=False):
         if initialize_db and read_only:
@@ -68,14 +383,23 @@ class BusinessStore:
         self.initialize = bool(initialize_db)
         self.read_only = bool(read_only)
         if self.initialize:
+            state = _inspect_sqlite_business_ready(self.path)
+            if state == 'empty' and not create and not self.path.is_file():
+                raise ApiError(503, 'database_unavailable', 'Kho dữ liệu cửa hàng chưa tồn tại.')
             self.path.parent.mkdir(parents=True, exist_ok=True)
             with self.connection(create=create) as db:
                 db.execute('PRAGMA journal_mode=WAL')
             with self.connection(write=True) as db:
-                migrate(db, 'business', initialize_schema)
+                if state == 'empty':
+                    migrate(db, 'business', initialize_schema)
                 ensure_import_tables(db)
-        elif not self.path.is_file():
-            raise ApiError(503, 'database_unavailable', 'Kho dữ liệu cửa hàng chưa tồn tại; không tự khởi tạo khi chạy purge.')
+        else:
+            if not self.path.is_file():
+                raise ApiError(503, 'database_unavailable', 'Kho dữ liệu cửa hàng chưa tồn tại; không tự khởi tạo khi chạy purge.')
+            if not self.read_only:
+                state = _inspect_sqlite_business_ready(self.path)
+                if state == 'empty':
+                    raise ApiError(503, 'database_unavailable', 'Kho dữ liệu cửa hàng đang rỗng.')
 
     @contextmanager
     def connection(self, write=False, *, create=False):
@@ -1281,11 +1605,28 @@ class BusinessStore:
 
     def new_conversation(self, customer, provider_id='custom'):
         cid = str(uuid.uuid4())
+        case_id = f'case_{uuid.uuid4().hex}'
+        now = self._now()
         with self.connection(write=True) as db:
-            db.execute('DELETE FROM conversations WHERE expires_at < ?', (time.time(),))
+            db.execute('DELETE FROM conversations WHERE expires_at < ?', (now,))
+            self._ensure_customer_in_tx(db, customer)
             db.execute('INSERT INTO conversations(id,customer_id,expires_at,provider_id) VALUES (?,?,?,?)',
-                       (cid, customer, time.time() + self.CONVERSATION_TTL, provider_id))
-        return {'conversation_id': cid, 'provider_id': provider_id, 'context': {'order_id': None, 'product_id': None}}
+                       (cid, customer, now + self.CONVERSATION_TTL, provider_id))
+            db.execute(
+                """INSERT INTO cases(
+                       case_id, conversation_id, customer_id, status, holder, holder_name,
+                       version, resume_count, created_at, updated_at
+                   ) VALUES (?, ?, ?, 'waiting', NULL, NULL, 1, 0, ?, ?)""",
+                (case_id, cid, customer, now, now),
+            )
+            case_row = self._latest_case_in_tx(db, cid)
+        return {
+            'conversation_id': cid,
+            'case_id': case_id,
+            'provider_id': provider_id,
+            'context': {'order_id': None, 'product_id': None},
+            'case': self._case_public_dict(case_row),
+        }
 
     def reserve_api_attempt(self, limit):
         # Reserve before network I/O; even failed/timed-out calls can be billable.
@@ -1302,29 +1643,205 @@ class BusinessStore:
     def conversation(self, customer, cid):
         require(isinstance(cid, str) and re.fullmatch(r'[a-f0-9-]{36}', cid),
                 400, 'invalid_conversation', 'Mã cuộc trò chuyện không hợp lệ.')
+        now = self._now()
         with self.connection() as db:
             row = db.execute('SELECT * FROM conversations WHERE id=? AND customer_id=?', (cid, customer)).fetchone()
         require(row is not None, 404, 'conversation_not_found', 'Không tìm thấy cuộc trò chuyện của bạn. Hãy mở cuộc trò chuyện mới.')
-        require(row['expires_at'] > time.time(), 409, 'conversation_expired', 'Cuộc trò chuyện đã hết hạn. Hãy bấm Cuộc trò chuyện mới.')
+        require(row['expires_at'] > now, 409, 'conversation_expired', 'Cuộc trò chuyện đã hết hạn. Hãy bấm Cuộc trò chuyện mới.')
         return dict(row)
+
+    def peek_conversation_for_chat(self, customer, cid):
+        require(isinstance(cid, str) and re.fullmatch(r'[a-f0-9-]{36}', cid),
+                400, 'invalid_conversation', 'Mã cuộc trò chuyện không hợp lệ.')
+        now = self._now()
+        with self.connection() as db:
+            conv = db.execute('SELECT * FROM conversations WHERE id=?', (cid,)).fetchone()
+            latest_case = self._latest_case_in_tx(db, cid)
+        if conv is not None and conv['customer_id'] != customer:
+            raise ApiError(404, 'conversation_not_found', 'Không tìm thấy cuộc trò chuyện của bạn. Hãy mở cuộc trò chuyện mới.')
+        if conv is None and (latest_case is None or latest_case['customer_id'] != customer):
+            raise ApiError(404, 'conversation_not_found', 'Không tìm thấy cuộc trò chuyện của bạn. Hãy mở cuộc trò chuyện mới.')
+        if latest_case is not None and latest_case['status'] == 'resolved':
+            if conv is not None:
+                return dict(conv)
+            return {
+                'id': cid,
+                'customer_id': customer,
+                'order_id': None,
+                'product_id': None,
+                'revision': 0,
+                'provider_id': 'custom',
+                'expires_at': now + self.CONVERSATION_TTL,
+            }
+        require(conv is not None, 404, 'conversation_not_found', 'Không tìm thấy cuộc trò chuyện của bạn. Hãy mở cuộc trò chuyện mới.')
+        require(conv['expires_at'] > now, 409, 'conversation_expired', 'Cuộc trò chuyện đã hết hạn. Hãy bấm Cuộc trò chuyện mới.')
+        return dict(conv)
+
+    def _prepare_customer_activity_in_tx(self, db, customer, cid, now, *, forbidden_on_mismatch=False):
+        conv = db.execute('SELECT * FROM conversations WHERE id=?', (cid,)).fetchone()
+        latest_case = self._latest_case_in_tx(db, cid)
+        if conv is None and latest_case is None:
+            raise ApiError(404, 'conversation_not_found', 'Cuộc trò chuyện không tồn tại hoặc đã bị xóa.')
+        owner_id = conv['customer_id'] if conv is not None else latest_case['customer_id']
+        if owner_id != customer:
+            if forbidden_on_mismatch:
+                raise ApiError(403, 'forbidden', 'Không có quyền gửi tin nhắn trong cuộc trò chuyện này.')
+            raise ApiError(404, 'conversation_not_found', 'Không tìm thấy cuộc trò chuyện của bạn. Hãy mở cuộc trò chuyện mới.')
+
+        if latest_case is None:
+            latest_case = self._ensure_active_case_in_tx(db, cid, customer, now)
+        else:
+            latest_case = dict(latest_case)
+
+        if latest_case['status'] == 'resolved':
+            resolved_at = latest_case.get('resolved_at')
+            within_retention = (
+                conv is not None
+                and float(conv['expires_at']) > now
+                and (resolved_at is None or (now - float(resolved_at)) <= self.CONVERSATION_TTL)
+            )
+            if within_retention:
+                won = db.execute(
+                    """UPDATE cases
+                       SET status = 'waiting',
+                           holder = NULL,
+                           holder_name = NULL,
+                           resolved_reason = NULL,
+                           resolved_at = NULL,
+                           resumed_at = ?,
+                           resume_count = resume_count + 1,
+                           awaiting_customer_since = NULL,
+                           reminder_deadline = NULL,
+                           reminded_at = NULL,
+                           inactivity_deadline = NULL,
+                           feedback_prompted_at = NULL,
+                           completion_deadline = NULL,
+                           version = version + 1,
+                           updated_at = ?
+                       WHERE case_id = ? AND version = ? AND status = 'resolved'""",
+                    (now, now, latest_case['case_id'], latest_case['version']),
+                ).rowcount
+                if won == 1:
+                    db.execute(
+                        'UPDATE conversations SET expires_at = ? WHERE id = ?',
+                        (now + self.CONVERSATION_TTL, cid),
+                    )
+                    self.log(
+                        db,
+                        customer,
+                        'customer_resumed',
+                        conv['order_id'] if conv is not None else None,
+                        case_id=latest_case['case_id'],
+                        conversation_id=cid,
+                        resume_count=int(latest_case.get('resume_count') or 0) + 1,
+                    )
+            else:
+                self._ensure_customer_in_tx(db, customer)
+                if conv is None:
+                    db.execute(
+                        """INSERT INTO conversations(id, customer_id, order_id, product_id, revision, expires_at, provider_id)
+                           VALUES (?, ?, NULL, NULL, 0, ?, 'custom')""",
+                        (cid, customer, now + self.CONVERSATION_TTL),
+                    )
+                else:
+                    db.execute(
+                        'UPDATE conversations SET order_id = NULL, product_id = NULL, revision = revision + 1, expires_at = ? WHERE id = ?',
+                        (now + self.CONVERSATION_TTL, cid),
+                    )
+                new_case_id = f'case_{uuid.uuid4().hex}'
+                inserted = db.execute(
+                    """INSERT INTO cases(
+                           case_id, conversation_id, customer_id, status, holder, holder_name,
+                           version, resume_count, previous_case_id, created_at, updated_at
+                       ) VALUES (?, ?, ?, 'waiting', NULL, NULL, 1, 0, ?, ?, ?)
+                       ON CONFLICT (conversation_id) WHERE status <> 'resolved' DO NOTHING""",
+                    (new_case_id, cid, customer, latest_case['case_id'], now, now),
+                ).rowcount
+                if inserted == 1:
+                    self.log(
+                        db,
+                        customer,
+                        'case_opened_from_expired_case',
+                        None,
+                        case_id=new_case_id,
+                        previous_case_id=latest_case['case_id'],
+                        conversation_id=cid,
+                    )
+            conv_after = db.execute('SELECT * FROM conversations WHERE id=?', (cid,)).fetchone()
+            case_after = self._latest_case_in_tx(db, cid)
+            return dict(conv_after), dict(case_after)
+
+        require(conv is not None, 404, 'conversation_not_found', 'Không tìm thấy cuộc trò chuyện của bạn. Hãy mở cuộc trò chuyện mới.')
+        require(float(conv['expires_at']) > now, 409, 'conversation_expired', 'Cuộc trò chuyện đã hết hạn. Hãy bấm Cuộc trò chuyện mới.')
+        db.execute(
+            """UPDATE cases
+               SET awaiting_customer_since = NULL,
+                   reminder_deadline = NULL,
+                   reminded_at = NULL,
+                   inactivity_deadline = NULL,
+                   feedback_prompted_at = NULL,
+                   completion_deadline = NULL,
+                   version = version + 1,
+                   updated_at = ?
+               WHERE case_id = ? AND status <> 'resolved'""",
+            (now, latest_case['case_id']),
+        )
+        case_after = self._latest_case_in_tx(db, cid)
+        return dict(conv), dict(case_after)
+
+    def prepare_customer_chat(self, customer, cid):
+        require(isinstance(cid, str) and re.fullmatch(r'[a-f0-9-]{36}', cid),
+                400, 'invalid_conversation', 'Mã cuộc trò chuyện không hợp lệ.')
+        now = self._now()
+        with self.connection(write=True) as db:
+            conv, active_case = self._prepare_customer_activity_in_tx(db, customer, cid, now)
+        return conv, self._case_public_dict(active_case)
+
+    def resume_case(self, customer, cid):
+        require(isinstance(cid, str) and re.fullmatch(r'[a-f0-9-]{36}', cid),
+                400, 'invalid_conversation', 'Mã cuộc trò chuyện không hợp lệ.')
+        now = self._now()
+        with self.connection(write=True) as db:
+            conv, active_case = self._prepare_customer_activity_in_tx(db, customer, cid, now)
+        pub = self._case_public_dict(active_case)
+        return {
+            'status': 'ok',
+            'conversation_id': conv['id'],
+            'case_id': pub['case_id'],
+            'previous_case_id': pub['previous_case_id'],
+            'reopened_same_case': pub['previous_case_id'] is None or pub['resume_count'] > 0,
+            'case': pub,
+        }
 
     def has_turns(self, customer, cid) -> bool:
         require(isinstance(cid, str) and re.fullmatch(r'[a-f0-9-]{36}', cid),
                 400, 'invalid_conversation', 'Mã cuộc trò chuyện không hợp lệ.')
         with self.connection() as db:
-            row = db.execute('SELECT 1 FROM agent_turns WHERE conversation_id=? AND customer_id=? LIMIT 1',
-                             (cid, customer)).fetchone()
+            active_case = self._latest_case_in_tx(db, cid)
+            if active_case is not None and active_case['previous_case_id'] is not None:
+                row = db.execute(
+                    'SELECT 1 FROM agent_turns WHERE conversation_id=? AND customer_id=? '
+                    'AND created_at >= ? AND request_id NOT LIKE ? LIMIT 1',
+                    (cid, customer, float(active_case['created_at']) - 1e-6, 'sys-reminder-%'),
+                ).fetchone()
+            else:
+                row = db.execute(
+                    'SELECT 1 FROM agent_turns WHERE conversation_id=? AND customer_id=? '
+                    'AND request_id NOT LIKE ? LIMIT 1',
+                    (cid, customer, 'sys-reminder-%'),
+                ).fetchone()
             return row is not None
 
     def remember(self, customer, snapshot, oid, pid):
         if snapshot is None:
             return
+        now = self._now()
         with self.connection(write=True) as db:
             if oid is not None:
                 self.owned(db, customer, oid)
             updated = db.execute('''UPDATE conversations SET order_id=?,product_id=?,revision=revision+1,expires_at=?
                 WHERE id=? AND customer_id=? AND revision=? AND expires_at>?''',
-                (oid, pid, time.time() + self.CONVERSATION_TTL, snapshot['id'], customer, snapshot['revision'], time.time())).rowcount
+                (oid, pid, now + self.CONVERSATION_TTL, snapshot['id'], customer, snapshot['revision'], now)).rowcount
             require(updated == 1, 409, 'conversation_changed', 'Ngữ cảnh đã thay đổi hoặc hết hạn. Hãy gửi lại yêu cầu trong cuộc trò chuyện hiện tại.')
 
     def replay(self, customer, cid, request_id, digest):
@@ -1352,8 +1869,23 @@ class BusinessStore:
 
     def history(self, customer, cid, limit=6):
         with self.connection() as db:
-            rows = db.execute('''SELECT messages FROM agent_turns WHERE conversation_id=? AND customer_id=?
-                ORDER BY id DESC LIMIT ?''', (cid, customer, limit)).fetchall()
+            active_case = self._latest_case_in_tx(db, cid)
+            if active_case is not None and active_case['previous_case_id'] is not None:
+                rows = db.execute(
+                    '''SELECT messages FROM agent_turns
+                       WHERE conversation_id=? AND customer_id=?
+                         AND created_at >= ? AND request_id NOT LIKE ?
+                       ORDER BY id DESC LIMIT ?''',
+                    (cid, customer, float(active_case['created_at']) - 1e-6, 'sys-reminder-%', limit),
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    '''SELECT messages FROM agent_turns
+                       WHERE conversation_id=? AND customer_id=?
+                         AND request_id NOT LIKE ?
+                       ORDER BY id DESC LIMIT ?''',
+                    (cid, customer, 'sys-reminder-%', limit),
+                ).fetchall()
         turns, characters, count = [], 0, 0
         preserved_recent_image = False
         for row in rows:
@@ -1419,6 +1951,8 @@ class BusinessStore:
         return normalized
 
     def finish_turn(self, customer, snapshot, request_id, digest, messages, result, versions):
+        now = self._now()
+        tcfg = self._timer_config()
         with self.connection(write=True) as db:
             for oid, version in versions.items():
                 require(self.owned(db, customer, oid)['version'] == version, 409, 'order_changed_during_chat',
@@ -1426,17 +1960,458 @@ class BusinessStore:
             context = result['context']
             updated = db.execute('''UPDATE conversations SET order_id=?,product_id=?,revision=revision+1,expires_at=?
                 WHERE id=? AND customer_id=? AND revision=? AND expires_at>?''',
-                (context['order_id'], context['product_id'], time.time() + self.CONVERSATION_TTL, snapshot['id'], customer,
-                 snapshot['revision'], time.time())).rowcount
+                (context['order_id'], context['product_id'], now + self.CONVERSATION_TTL, snapshot['id'], customer,
+                 snapshot['revision'], now)).rowcount
             require(updated == 1, 409, 'conversation_changed', 'Ngữ cảnh đã thay đổi hoặc hết hạn. Hãy gửi lại trong cuộc trò chuyện hiện tại.')
+            case_row = self._ensure_active_case_in_tx(db, snapshot['id'], customer, now)
+            open_ep = db.execute(
+                "SELECT 1 FROM handoff_episodes WHERE case_id = ? AND status = 'pending' LIMIT 1",
+                (case_row['case_id'],),
+            ).fetchone()
+            if (
+                not result.get('human_support')
+                and open_ep is None
+                and case_row['status'] == 'waiting'
+                and case_row.get('holder') is None
+                and case_row.get('feedback_prompted_at') is None
+            ):
+                db.execute(
+                    """UPDATE cases
+                       SET awaiting_customer_since = ?,
+                           reminder_deadline = ?,
+                           reminded_at = NULL,
+                           inactivity_deadline = NULL,
+                           version = version + 1,
+                           updated_at = ?
+                       WHERE case_id = ? AND status = 'waiting' AND holder IS NULL AND feedback_prompted_at IS NULL""",
+                    (now, now + tcfg.reminder_seconds, now, case_row['case_id']),
+                )
+            else:
+                db.execute(
+                    'UPDATE cases SET updated_at = ? WHERE case_id = ?',
+                    (now, case_row['case_id']),
+                )
+            case_after = self._latest_case_in_tx(db, snapshot['id'])
+            result['case'] = self._case_public_dict(case_after)
             cursor = db.execute('''INSERT INTO agent_turns(conversation_id,customer_id,request_id,input_hash,messages,result,created_at)
                 VALUES (?,?,?,?,?,?,?) RETURNING id''', (snapshot['id'], customer, request_id, digest,
-                json.dumps(messages, ensure_ascii=False), json.dumps(result, ensure_ascii=False), time.time()))
+                json.dumps(messages, ensure_ascii=False), json.dumps(result, ensure_ascii=False), now))
             row = cursor.fetchone()
             turn_id = row['id'] if row and 'id' in row else (row[0] if row else getattr(cursor, 'lastrowid', None))
             result['turn_id'] = turn_id
             self.log(db, customer, 'agent_replied', context['order_id'], trace=result['trace'])
             return turn_id
+
+    def prompt_case_feedback(self, customer: str, cid: str) -> dict:
+        require(isinstance(cid, str) and re.fullmatch(r'[a-f0-9-]{36}', cid),
+                400, 'invalid_conversation', 'Mã cuộc trò chuyện không hợp lệ.')
+        now = self._now()
+        tcfg = self._timer_config()
+        with self.connection(write=True) as db:
+            conv = db.execute(
+                'SELECT id, customer_id, order_id, expires_at FROM conversations WHERE id = ? AND customer_id = ?',
+                (cid, customer),
+            ).fetchone()
+            require(conv is not None, 404, 'conversation_not_found', 'Không tìm thấy cuộc trò chuyện của bạn.')
+            require(float(conv['expires_at']) > now, 409, 'conversation_expired', 'Cuộc trò chuyện đã hết hạn.')
+            case_row = self._latest_case_in_tx(db, cid)
+            if case_row is None:
+                case_row = self._ensure_active_case_in_tx(db, cid, customer, now)
+            else:
+                case_row = dict(case_row)
+            require(case_row['status'] != 'resolved', 409, 'case_already_resolved', 'Ca hỗ trợ đã đóng.')
+            open_ep = db.execute(
+                "SELECT 1 FROM handoff_episodes WHERE case_id = ? AND status = 'pending' LIMIT 1",
+                (case_row['case_id'],),
+            ).fetchone()
+            require(
+                case_row.get('holder') is None and open_ep is None,
+                409,
+                'case_in_human_handoff',
+                'Ca hỗ trợ đang chờ hoặc do nhân viên phụ trách; không đặt timer kết thúc tự động.',
+            )
+            won = db.execute(
+                """UPDATE cases
+                   SET feedback_prompted_at = ?,
+                       completion_deadline = ?,
+                       awaiting_customer_since = NULL,
+                       reminder_deadline = NULL,
+                       reminded_at = NULL,
+                       inactivity_deadline = NULL,
+                       version = version + 1,
+                       updated_at = ?
+                   WHERE case_id = ? AND version = ? AND status <> 'resolved' AND holder IS NULL""",
+                (now, now + tcfg.completion_seconds, now, case_row['case_id'], case_row['version']),
+            ).rowcount
+            require(won == 1, 409, 'case_version_conflict', 'Trạng thái ca hỗ trợ vừa thay đổi; hãy thử lại.')
+            self.log(
+                db,
+                customer,
+                'case_feedback_prompted',
+                conv['order_id'],
+                case_id=case_row['case_id'],
+                conversation_id=cid,
+                completion_deadline=now + tcfg.completion_seconds,
+            )
+            updated_case = self._latest_case_in_tx(db, cid)
+        return {
+            'status': 'ok',
+            'conversation_id': cid,
+            'case_id': case_row['case_id'],
+            'case': self._case_public_dict(updated_case),
+        }
+
+    def process_due_case_timers(self, now: float | None = None) -> dict:
+        now_ts = float(self._now() if now is None else now)
+        tcfg = self._timer_config()
+        reminded = 0
+        resolved_inactivity = 0
+        resolved_completed = 0
+
+        with self.connection() as db:
+            due_reminders = [
+                dict(r)
+                for r in db.execute(
+                    """SELECT case_id, conversation_id, customer_id, version
+                       FROM cases
+                       WHERE status = 'waiting'
+                         AND holder IS NULL
+                         AND reminded_at IS NULL
+                         AND feedback_prompted_at IS NULL
+                         AND reminder_deadline IS NOT NULL
+                         AND reminder_deadline <= ?
+                         AND NOT EXISTS (
+                             SELECT 1 FROM handoff_episodes he
+                             WHERE he.case_id = cases.case_id AND he.status = 'pending'
+                         )
+                       ORDER BY reminder_deadline ASC, case_id ASC""",
+                    (now_ts,),
+                ).fetchall()
+            ]
+
+        for cand in due_reminders:
+            with self.connection(write=True) as db:
+                won = db.execute(
+                    """UPDATE cases
+                       SET reminded_at = ?,
+                           reminder_deadline = NULL,
+                           inactivity_deadline = ?,
+                           version = version + 1,
+                           updated_at = ?
+                       WHERE case_id = ? AND version = ?
+                         AND status = 'waiting' AND holder IS NULL
+                         AND reminded_at IS NULL AND feedback_prompted_at IS NULL
+                         AND reminder_deadline IS NOT NULL AND reminder_deadline <= ?
+                         AND NOT EXISTS (
+                             SELECT 1 FROM handoff_episodes he
+                             WHERE he.case_id = cases.case_id AND he.status = 'pending'
+                         )""",
+                    (
+                        now_ts,
+                        now_ts + tcfg.post_reminder_close_seconds,
+                        now_ts,
+                        cand['case_id'],
+                        cand['version'],
+                        now_ts,
+                    ),
+                ).rowcount
+                if won == 1:
+                    reminded += 1
+                    conv = db.execute(
+                        'SELECT id, order_id, product_id FROM conversations WHERE id = ?',
+                        (cand['conversation_id'],),
+                    ).fetchone()
+                    if conv is not None:
+                        turn_messages = [{'role': 'assistant', 'content': CASE_INACTIVITY_REMINDER_MESSAGE}]
+                        turn_result = {
+                            'message': CASE_INACTIVITY_REMINDER_MESSAGE,
+                            'author': 'system_reminder',
+                            'source': 'case_timer',
+                            'case_id': cand['case_id'],
+                            'context': {'order_id': conv['order_id'], 'product_id': conv['product_id']},
+                            'trace': {'case_timer': 'inactivity_reminder', 'case_version': int(cand['version']) + 1},
+                        }
+                        db.execute(
+                            """INSERT INTO agent_turns(conversation_id, customer_id, request_id, input_hash, messages, result, created_at)
+                               VALUES (?, ?, ?, 'system-reminder', ?, ?, ?)
+                               ON CONFLICT(conversation_id, request_id) DO NOTHING""",
+                            (
+                                cand['conversation_id'],
+                                cand['customer_id'],
+                                f"sys-reminder-{cand['case_id']}-v{cand['version']}",
+                                json.dumps(turn_messages, ensure_ascii=False),
+                                json.dumps(turn_result, ensure_ascii=False),
+                                now_ts,
+                            ),
+                        )
+                    self.log(
+                        db,
+                        cand['customer_id'],
+                        'case_inactivity_reminded',
+                        conv['order_id'] if conv else None,
+                        case_id=cand['case_id'],
+                        conversation_id=cand['conversation_id'],
+                    )
+
+        with self.connection() as db:
+            due_inactivity = [
+                dict(r)
+                for r in db.execute(
+                    """SELECT case_id, conversation_id, customer_id, version
+                       FROM cases
+                       WHERE status = 'waiting'
+                         AND holder IS NULL
+                         AND reminded_at IS NOT NULL
+                         AND feedback_prompted_at IS NULL
+                         AND inactivity_deadline IS NOT NULL
+                         AND inactivity_deadline <= ?
+                         AND NOT EXISTS (
+                             SELECT 1 FROM handoff_episodes he
+                             WHERE he.case_id = cases.case_id AND he.status = 'pending'
+                         )
+                       ORDER BY inactivity_deadline ASC, case_id ASC""",
+                    (now_ts,),
+                ).fetchall()
+            ]
+
+        for cand in due_inactivity:
+            with self.connection(write=True) as db:
+                won = db.execute(
+                    """UPDATE cases
+                       SET status = 'resolved',
+                           resolved_reason = 'inactivity',
+                           resolved_at = ?,
+                           awaiting_customer_since = NULL,
+                           reminder_deadline = NULL,
+                           inactivity_deadline = NULL,
+                           completion_deadline = NULL,
+                           version = version + 1,
+                           updated_at = ?
+                       WHERE case_id = ? AND version = ?
+                         AND status = 'waiting' AND holder IS NULL
+                         AND reminded_at IS NOT NULL AND feedback_prompted_at IS NULL
+                         AND inactivity_deadline IS NOT NULL AND inactivity_deadline <= ?
+                         AND NOT EXISTS (
+                             SELECT 1 FROM handoff_episodes he
+                             WHERE he.case_id = cases.case_id AND he.status = 'pending'
+                         )""",
+                    (now_ts, now_ts, cand['case_id'], cand['version'], now_ts),
+                ).rowcount
+                if won == 1:
+                    resolved_inactivity += 1
+                    conv = db.execute(
+                        'SELECT order_id FROM conversations WHERE id = ?',
+                        (cand['conversation_id'],),
+                    ).fetchone()
+                    leases = self._release_conversation_leases_in_tx(
+                        db, cand['customer_id'], cand['conversation_id']
+                    )
+                    self.log(
+                        db,
+                        cand['customer_id'],
+                        'case_resolved_inactivity',
+                        conv['order_id'] if conv else None,
+                        case_id=cand['case_id'],
+                        conversation_id=cand['conversation_id'],
+                        leases_released=leases,
+                    )
+
+        with self.connection() as db:
+            due_completion = [
+                dict(r)
+                for r in db.execute(
+                    """SELECT case_id, conversation_id, customer_id, version
+                       FROM cases
+                       WHERE status <> 'resolved'
+                         AND holder IS NULL
+                         AND feedback_prompted_at IS NOT NULL
+                         AND completion_deadline IS NOT NULL
+                         AND completion_deadline <= ?
+                         AND NOT EXISTS (
+                             SELECT 1 FROM handoff_episodes he
+                             WHERE he.case_id = cases.case_id AND he.status = 'pending'
+                         )
+                       ORDER BY completion_deadline ASC, case_id ASC""",
+                    (now_ts,),
+                ).fetchall()
+            ]
+
+        for cand in due_completion:
+            with self.connection(write=True) as db:
+                won = db.execute(
+                    """UPDATE cases
+                       SET status = 'resolved',
+                           resolved_reason = 'completed',
+                           resolved_at = ?,
+                           awaiting_customer_since = NULL,
+                           reminder_deadline = NULL,
+                           inactivity_deadline = NULL,
+                           completion_deadline = NULL,
+                           version = version + 1,
+                           updated_at = ?
+                       WHERE case_id = ? AND version = ?
+                         AND status <> 'resolved' AND holder IS NULL
+                         AND feedback_prompted_at IS NOT NULL
+                         AND completion_deadline IS NOT NULL AND completion_deadline <= ?
+                         AND NOT EXISTS (
+                             SELECT 1 FROM handoff_episodes he
+                             WHERE he.case_id = cases.case_id AND he.status = 'pending'
+                         )""",
+                    (now_ts, now_ts, cand['case_id'], cand['version'], now_ts),
+                ).rowcount
+                if won == 1:
+                    resolved_completed += 1
+                    conv = db.execute(
+                        'SELECT order_id FROM conversations WHERE id = ?',
+                        (cand['conversation_id'],),
+                    ).fetchone()
+                    leases = self._release_conversation_leases_in_tx(
+                        db, cand['customer_id'], cand['conversation_id']
+                    )
+                    self.log(
+                        db,
+                        cand['customer_id'],
+                        'case_resolved_completed',
+                        conv['order_id'] if conv else None,
+                        case_id=cand['case_id'],
+                        conversation_id=cand['conversation_id'],
+                        leases_released=leases,
+                    )
+
+        return {
+            'reminded': reminded,
+            'resolved_inactivity': resolved_inactivity,
+            'resolved_completed': resolved_completed,
+        }
+
+    def _request_human_handoff_in_tx(
+        self,
+        db,
+        customer: str,
+        cid: str,
+        *,
+        reason_code: str | None,
+        comment: str | None,
+        turn_id: int | None = None,
+        sentiment: str | None = None,
+        update_existing_feedback_only: bool = False,
+        now: float | None = None,
+        forbidden_on_mismatch: bool = False,
+    ) -> dict:
+        now_ts = self._now() if now is None else float(now)
+        conv, active_case = self._prepare_customer_activity_in_tx(
+            db, customer, cid, now_ts, forbidden_on_mismatch=forbidden_on_mismatch
+        )
+        case_id = active_case['case_id']
+        open_ep = db.execute(
+            "SELECT * FROM handoff_episodes WHERE case_id = ? AND status = 'pending' LIMIT 1",
+            (case_id,),
+        ).fetchone()
+        if open_ep is not None:
+            handoff_id = open_ep['handoff_id']
+            if comment is not None:
+                db.execute(
+                    'UPDATE handoff_episodes SET comment = ? WHERE handoff_id = ?',
+                    (comment, handoff_id),
+                )
+        else:
+            handoff_id = f'hoff_{uuid.uuid4().hex}'
+            db.execute(
+                """INSERT INTO handoff_episodes(
+                       handoff_id, case_id, conversation_id, customer_id,
+                       status, reason_code, comment, created_at
+                   ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)""",
+                (handoff_id, case_id, cid, customer, reason_code, comment, now_ts),
+            )
+
+        next_status = 'in_progress' if active_case.get('holder') else 'waiting'
+        db.execute(
+            """UPDATE cases
+               SET status = ?,
+                   awaiting_customer_since = NULL,
+                   reminder_deadline = NULL,
+                   reminded_at = NULL,
+                   inactivity_deadline = NULL,
+                   feedback_prompted_at = NULL,
+                   completion_deadline = NULL,
+                   version = version + 1,
+                   updated_at = ?
+               WHERE case_id = ?""",
+            (next_status, now_ts, case_id),
+        )
+
+        existing_fb = db.execute(
+            """SELECT id FROM conversation_feedback
+               WHERE conversation_id = ? AND feedback_type = 'human_handoff' AND COALESCE(reason_code, '') <> 'resolved'
+               ORDER BY id DESC LIMIT 1""",
+            (cid,),
+        ).fetchone()
+        if update_existing_feedback_only and existing_fb is not None:
+            feedback_id = existing_fb['id']
+            if comment is not None:
+                db.execute('UPDATE conversation_feedback SET comment = ? WHERE id = ?', (comment, feedback_id))
+        else:
+            cursor = db.execute(
+                """INSERT INTO conversation_feedback
+                   (conversation_id, turn_id, customer_id, feedback_type, rating, sentiment_flag, reason_code, comment, created_at)
+                   VALUES (?, ?, ?, 'human_handoff', NULL, ?, ?, ?, ?) RETURNING id""",
+                (cid, turn_id, customer, sentiment, reason_code, comment, now_ts),
+            )
+            fb_row = cursor.fetchone()
+            feedback_id = fb_row['id'] if fb_row and 'id' in fb_row else (fb_row[0] if fb_row else getattr(cursor, 'lastrowid', None))
+
+        refreshed_case = self._latest_case_in_tx(db, cid)
+        return {
+            'case_id': case_id,
+            'handoff_id': handoff_id,
+            'feedback_id': feedback_id,
+            'conversation': conv,
+            'case': self._case_public_dict(refreshed_case),
+        }
+
+    def request_human_handoff(
+        self,
+        customer: str,
+        cid: str,
+        *,
+        reason_code: str = 'customer_requested_human',
+        comment: str | None = None,
+        turn_id: int | None = None,
+    ) -> dict:
+        require(isinstance(cid, str) and len(cid) <= 64 and bool(cid.strip()), 400, 'invalid_conversation', 'Thiếu hoặc sai conversation_id.')
+        if comment is not None:
+            require(isinstance(comment, str) and len(comment) <= 1000, 400, 'comment_too_long', 'Nhận xét tối đa 1000 ký tự.')
+            if contains_canary_or_secret(comment):
+                _, comment = sanitize_structured_payload(comment, preserve_reasoning=False)
+        now = self._now()
+        with self.connection(write=True) as db:
+            handoff = self._request_human_handoff_in_tx(
+                db,
+                customer,
+                cid,
+                reason_code=reason_code,
+                comment=comment,
+                turn_id=turn_id,
+                sentiment='neutral',
+                now=now,
+            )
+            self.log(
+                db,
+                customer,
+                'human_handoff_requested',
+                handoff['conversation'].get('order_id'),
+                case_id=handoff['case_id'],
+                handoff_id=handoff['handoff_id'],
+                reason_code=reason_code,
+            )
+        return {
+            'status': 'ok',
+            'case_id': handoff['case_id'],
+            'handoff_id': handoff['handoff_id'],
+            'feedback_id': handoff['feedback_id'],
+            'case': handoff['case'],
+            'created_at': now,
+        }
 
     def record_feedback(self, customer, body):
         require(isinstance(body, dict), 400, 'invalid_payload', 'Dữ liệu phản hồi không hợp lệ.')
@@ -1457,6 +2432,12 @@ class BusinessStore:
         if sentiment is not None:
             require(sentiment in ('positive', 'negative', 'neutral'), 400, 'invalid_sentiment', 'Cờ cảm xúc không hợp lệ.')
 
+        vote = body.get('vote')
+        if vote is not None:
+            require(vote in ('like', 'dislike'), 400, 'invalid_vote', 'Đánh giá lượt thoại phải là like hoặc dislike.')
+            if sentiment is None:
+                sentiment = 'positive' if vote == 'like' else 'negative'
+
         reason_code = body.get('reason_code')
         if reason_code is not None:
             require(isinstance(reason_code, str) and len(reason_code) <= 64, 400, 'invalid_reason_code', 'Mã lý do không hợp lệ.')
@@ -1467,10 +2448,62 @@ class BusinessStore:
             if contains_canary_or_secret(comment):
                 _, comment = sanitize_structured_payload(comment, preserve_reasoning=False)
 
-        now = time.time()
+        now = self._now()
+        if fb_type == 'human_handoff':
+            with self.connection(write=True) as db:
+                handoff = self._request_human_handoff_in_tx(
+                    db,
+                    customer,
+                    cid,
+                    reason_code=reason_code or 'customer_requested_human',
+                    comment=comment,
+                    turn_id=turn_id,
+                    sentiment=sentiment,
+                    now=now,
+                )
+                self.log(
+                    db,
+                    customer,
+                    'feedback_received',
+                    None,
+                    feedback_id=handoff['feedback_id'],
+                    feedback_type=fb_type,
+                    case_id=handoff['case_id'],
+                    handoff_id=handoff['handoff_id'],
+                    sentiment_flag=sentiment,
+                )
+            return {
+                'status': 'ok',
+                'feedback_id': handoff['feedback_id'],
+                'feedback_type': fb_type,
+                'case_id': handoff['case_id'],
+                'handoff_id': handoff['handoff_id'],
+                'case': handoff['case'],
+                'created_at': now,
+            }
+
+        raw_value = None
+        preference_label = None
+        if vote in ('like', 'dislike'):
+            raw_value = vote
+            preference_label = 'chosen' if vote == 'like' else 'rejected'
+        elif rating is not None:
+            raw_value = str(rating)
+            preference_label = 'chosen' if rating in (4, 5) else 'rejected'
+        elif sentiment in ('positive', 'negative'):
+            raw_value = 'like' if sentiment == 'positive' else 'dislike'
+            preference_label = 'chosen' if sentiment == 'positive' else 'rejected'
+
+        feedback_event_id = None
         with self.connection(write=True) as db:
             conv = db.execute('SELECT id FROM conversations WHERE id=? AND customer_id=?', (cid, customer)).fetchone()
-            require(conv is not None, 404, 'conversation_not_found', 'Không tìm thấy cuộc trò chuyện của khách hàng.')
+            latest_case = self._latest_case_in_tx(db, cid)
+            if conv is None and (latest_case is None or latest_case['customer_id'] != customer):
+                raise ApiError(404, 'conversation_not_found', 'Không tìm thấy cuộc trò chuyện của khách hàng.')
+            if latest_case is None:
+                latest_case = self._ensure_active_case_in_tx(db, cid, customer, now)
+            else:
+                latest_case = dict(latest_case)
 
             cursor = db.execute('''INSERT INTO conversation_feedback
                 (conversation_id, turn_id, customer_id, feedback_type, rating, sentiment_flag, reason_code, comment, created_at)
@@ -1478,14 +2511,48 @@ class BusinessStore:
                 (cid, turn_id, customer, fb_type, rating, sentiment, reason_code, comment, now))
             row = cursor.fetchone()
             feedback_id = row['id'] if row and 'id' in row else (row[0] if row else getattr(cursor, 'lastrowid', None))
+
+            if preference_label is not None and raw_value is not None:
+                self._ensure_customer_in_tx(db, customer)
+                feedback_event_id = f'fbev_{uuid.uuid4().hex}'
+                db.execute(
+                    """INSERT INTO case_feedback_events(
+                           feedback_event_id, case_id, conversation_id, turn_id, customer_id,
+                           feedback_type, raw_value, rating, sentiment_flag, preference_label,
+                           reason_code, comment, created_at
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        feedback_event_id,
+                        latest_case['case_id'],
+                        cid,
+                        turn_id,
+                        customer,
+                        fb_type,
+                        raw_value,
+                        rating,
+                        sentiment,
+                        preference_label,
+                        reason_code,
+                        comment,
+                        now,
+                    ),
+                )
             self.log(db, customer, 'feedback_received', None,
-                     feedback_id=feedback_id, feedback_type=fb_type, rating=rating, sentiment_flag=sentiment)
-        return {
+                     feedback_id=feedback_id, feedback_event_id=feedback_event_id,
+                     case_id=latest_case['case_id'], feedback_type=fb_type,
+                     rating=rating, sentiment_flag=sentiment, preference_label=preference_label)
+        out = {
             'status': 'ok',
             'feedback_id': feedback_id,
             'feedback_type': fb_type,
-            'created_at': now
+            'case_id': latest_case['case_id'],
+            'created_at': now,
         }
+        if feedback_event_id is not None:
+            out['feedback_event_id'] = feedback_event_id
+            out['preference_label'] = preference_label
+            out['raw_value'] = raw_value
+        return out
 
     def feedbacks(self, customer=None, conversation_id=None):
         with self.connection() as db:
@@ -1512,23 +2579,30 @@ class BusinessStore:
     def escalations(self, limit=20):
         with self.connection() as db:
             rows = db.execute('''
-                SELECT f.id, f.conversation_id, f.customer_id, f.reason_code, f.comment,
-                       f.sentiment_flag, f.created_at, c.name as customer_name, conv.order_id
-                FROM conversation_feedback f
-                JOIN customers c ON f.customer_id = c.id
-                LEFT JOIN conversations conv ON f.conversation_id = conv.id
-                WHERE f.feedback_type = 'human_handoff'
-                ORDER BY f.id DESC LIMIT ?
+                SELECT he.handoff_id, he.case_id, k.conversation_id, k.customer_id,
+                       k.status AS case_status, k.holder, k.holder_name, k.version AS case_version,
+                       he.reason_code, he.comment, NULL AS sentiment_flag,
+                       he.created_at, k.updated_at, c.name AS customer_name, conv.order_id
+                FROM cases k
+                JOIN handoff_episodes he
+                  ON he.case_id = k.case_id AND he.status = 'pending'
+                JOIN customers c ON k.customer_id = c.id
+                LEFT JOIN conversations conv ON k.conversation_id = conv.id
+                WHERE k.status IN ('waiting', 'in_progress')
+                ORDER BY k.updated_at DESC, he.created_at DESC
+                LIMIT ?
             ''', (limit,)).fetchall()
         out = []
         for r in rows:
             d = dict(r)
+            d['id'] = d['handoff_id']
             if isinstance(d.get('comment'), str) and contains_canary_or_secret(d['comment']):
                 _, d['comment'] = sanitize_structured_payload(d['comment'], preserve_reasoning=False)
             out.append(d)
         return out
 
     def list_conversations(self, customer, limit=20):
+        now = self._now()
         with self.connection() as db:
             rows = db.execute('''
                 SELECT c.id, c.customer_id, c.order_id, c.product_id, c.provider_id, c.expires_at,
@@ -1541,7 +2615,7 @@ class BusinessStore:
                 GROUP BY c.id, c.customer_id, c.order_id, c.product_id, c.provider_id, c.expires_at
                 ORDER BY COALESCE(MAX(t.created_at), c.expires_at) DESC
                 LIMIT ?
-            ''', (customer, time.time(), limit)).fetchall()
+            ''', (customer, now, limit)).fetchall()
 
             conversations = []
             for r in rows:
@@ -1573,34 +2647,172 @@ class BusinessStore:
                 if snippet and contains_canary_or_secret(snippet):
                     snippet = SAFE_REFUSAL_MESSAGE[:80]
 
-                handoff = db.execute('''
-                    SELECT reason_code FROM conversation_feedback
-                    WHERE conversation_id=? AND feedback_type='human_handoff'
-                    ORDER BY id DESC LIMIT 1
-                ''', (cid,)).fetchone()
+                latest_case = self._latest_case_in_tx(db, cid)
+                open_ep = None
+                if latest_case is not None:
+                    open_ep = db.execute(
+                        "SELECT handoff_id FROM handoff_episodes WHERE case_id = ? AND status = 'pending' LIMIT 1",
+                        (latest_case['case_id'],),
+                    ).fetchone()
 
                 item['snippet'] = snippet or f"Cuộc trò chuyện {cid[:8]}"
-                item['has_human_handoff'] = bool(handoff and handoff['reason_code'] != 'resolved')
+                item['has_human_handoff'] = bool(
+                    latest_case is not None
+                    and latest_case['status'] in ('waiting', 'in_progress')
+                    and open_ep is not None
+                )
+                if latest_case is not None:
+                    item['case_id'] = latest_case['case_id']
+                    item['case_status'] = latest_case['status']
                 conversations.append(item)
             return conversations
 
-    def conversation_transcript(self, cid):
+    @staticmethod
+    def _release_conversation_leases_in_tx(db, customer_id: str, cid: str) -> int:
+        released = 0
+        for gr in db.execute(
+            'SELECT id, seed FROM graph_runs WHERE customer_id = ? AND lease_until > 0',
+            (customer_id,),
+        ).fetchall():
+            try:
+                seed_obj = json.loads(gr['seed']) if isinstance(gr['seed'], str) else gr['seed']
+            except Exception:
+                seed_obj = None
+            if isinstance(seed_obj, dict) and seed_obj.get('id') == cid:
+                released += db.execute(
+                    'UPDATE graph_runs SET lease_owner = NULL, lease_until = 0 WHERE id = ?',
+                    (gr['id'],),
+                ).rowcount
+        return released
+
+    def staff_desk_cases(self, limit=50):
+        now = self._now()
         with self.connection() as db:
+            waiting_rows = db.execute(
+                '''SELECT he.handoff_id, k.case_id, k.conversation_id, k.customer_id,
+                          k.status, k.holder, k.holder_name, k.version,
+                          k.resolved_reason, k.resolved_at, k.resume_count,
+                          he.reason_code, he.comment, he.created_at, k.updated_at,
+                          c.name AS customer_name, conv.order_id
+                   FROM cases k
+                   JOIN handoff_episodes he
+                     ON he.case_id = k.case_id AND he.status = 'pending'
+                   JOIN customers c ON k.customer_id = c.id
+                   LEFT JOIN conversations conv ON k.conversation_id = conv.id
+                   WHERE k.status = 'waiting' AND k.holder IS NULL
+                   ORDER BY k.updated_at DESC, he.created_at DESC
+                   LIMIT ?''',
+                (limit,),
+            ).fetchall()
+
+            in_progress_rows = db.execute(
+                '''SELECT he.handoff_id, k.case_id, k.conversation_id, k.customer_id,
+                          k.status, k.holder, k.holder_name, k.version,
+                          k.resolved_reason, k.resolved_at, k.resume_count,
+                          he.reason_code, he.comment,
+                          COALESCE(he.created_at, k.created_at) AS created_at, k.updated_at,
+                          c.name AS customer_name, conv.order_id
+                   FROM cases k
+                   LEFT JOIN handoff_episodes he
+                     ON he.case_id = k.case_id AND he.status = 'pending'
+                   JOIN customers c ON k.customer_id = c.id
+                   LEFT JOIN conversations conv ON k.conversation_id = conv.id
+                   WHERE k.status = 'in_progress' AND k.holder IS NOT NULL
+                   ORDER BY k.updated_at DESC
+                   LIMIT ?''',
+                (limit,),
+            ).fetchall()
+
+            resolved_rows = db.execute(
+                '''SELECT (
+                              SELECT he2.handoff_id FROM handoff_episodes he2
+                              WHERE he2.case_id = k.case_id
+                              ORDER BY he2.created_at DESC LIMIT 1
+                          ) AS handoff_id,
+                          k.case_id, k.conversation_id, k.customer_id,
+                          k.status, k.holder, k.holder_name, k.version,
+                          k.resolved_reason, k.resolved_at, k.resume_count,
+                          (
+                              SELECT he3.reason_code FROM handoff_episodes he3
+                              WHERE he3.case_id = k.case_id
+                              ORDER BY he3.created_at DESC LIMIT 1
+                          ) AS reason_code,
+                          (
+                              SELECT he4.comment FROM handoff_episodes he4
+                              WHERE he4.case_id = k.case_id
+                              ORDER BY he4.created_at DESC LIMIT 1
+                          ) AS comment,
+                          k.created_at, k.updated_at,
+                          c.name AS customer_name, conv.order_id
+                   FROM cases k
+                   JOIN customers c ON k.customer_id = c.id
+                   JOIN conversations conv ON k.conversation_id = conv.id
+                   WHERE k.status = 'resolved'
+                     AND conv.expires_at > ?
+                     AND (k.resolved_at IS NULL OR k.resolved_at >= ?)
+                     AND EXISTS (SELECT 1 FROM handoff_episodes hex WHERE hex.case_id = k.case_id)
+                   ORDER BY COALESCE(k.resolved_at, k.updated_at) DESC
+                   LIMIT ?''',
+                (now, now - self.CONVERSATION_TTL, limit),
+            ).fetchall()
+
+        def _clean(rows):
+            items = []
+            for r in rows:
+                d = dict(r)
+                d['id'] = d.get('handoff_id') or d['case_id']
+                d['sentiment_flag'] = None
+                if isinstance(d.get('comment'), str) and contains_canary_or_secret(d['comment']):
+                    _, d['comment'] = sanitize_structured_payload(d['comment'], preserve_reasoning=False)
+                items.append(d)
+            return items
+
+        waiting = _clean(waiting_rows)
+        in_progress = _clean(in_progress_rows)
+        resolved = _clean(resolved_rows)
+        open_count = len(waiting) + len(in_progress)
+        return {
+            'waiting': waiting,
+            'in_progress': in_progress,
+            'resolved': resolved,
+            'open_count': open_count,
+            'counts': {
+                'open': open_count,
+                'waiting': len(waiting),
+                'in_progress': len(in_progress),
+                'resolved': len(resolved),
+            },
+        }
+
+    def conversation_transcript(self, cid, *, case_id=None, read_only=False):
+        with self.connection() as db:
+            if case_id is not None:
+                case_row = db.execute('SELECT * FROM cases WHERE case_id = ?', (case_id,)).fetchone()
+                if case_row is not None and cid is None:
+                    cid = case_row['conversation_id']
+            else:
+                case_row = self._latest_case_in_tx(db, cid) if cid else None
+            open_ep = None
+            if case_row is not None:
+                open_ep = db.execute(
+                    "SELECT * FROM handoff_episodes WHERE case_id = ? AND status = 'pending' LIMIT 1",
+                    (case_row['case_id'],),
+                ).fetchone()
             conv = db.execute('''
                 SELECT conv.*, c.name as customer_name
                 FROM conversations conv
                 JOIN customers c ON conv.customer_id = c.id
                 WHERE conv.id=?
-            ''', (cid,)).fetchone()
+            ''', (cid,)).fetchone() if cid else None
             turns = db.execute('''
                 SELECT id, customer_id, request_id, messages, result, created_at
                 FROM agent_turns WHERE conversation_id=?
                 ORDER BY id ASC
-            ''', (cid,)).fetchall()
+            ''', (cid,)).fetchall() if cid else []
             feedbacks = db.execute('''
                 SELECT * FROM conversation_feedback WHERE conversation_id=?
                 ORDER BY id ASC
-            ''', (cid,)).fetchall()
+            ''', (cid,)).fetchall() if cid else []
         clean_turns = []
         for t in turns:
             td = dict(t)
@@ -1634,13 +2846,144 @@ class BusinessStore:
             if isinstance(fd.get('comment'), str) and contains_canary_or_secret(fd['comment']):
                 _, fd['comment'] = sanitize_structured_payload(fd['comment'], preserve_reasoning=False)
             clean_feedbacks.append(fd)
+        ep_dict = dict(open_ep) if open_ep is not None else None
+        if ep_dict and isinstance(ep_dict.get('comment'), str) and contains_canary_or_secret(ep_dict['comment']):
+            _, ep_dict['comment'] = sanitize_structured_payload(ep_dict['comment'], preserve_reasoning=False)
         return {
             'conversation': dict(conv) if conv else None,
+            'case': self._case_public_dict(case_row),
+            'active_handoff': ep_dict,
+            'read_only': bool(read_only or (case_row is not None and case_row['status'] == 'resolved')),
             'turns': clean_turns,
-            'feedbacks': clean_feedbacks
+            'feedbacks': clean_feedbacks,
         }
 
-    def staff_reply(self, customer_id, cid, staff_name, message, *, actor=None):
+    def claim_case(self, case_id: str, *, staff_name=None, actor=None, expected_version=None):
+        require(isinstance(case_id, str) and bool(case_id.strip()), 400, 'invalid_case_id', 'Mã ca hỗ trợ không hợp lệ.')
+        staff_label = staff_name.strip() if (staff_name and isinstance(staff_name, str) and staff_name.strip()) else 'Nhân viên hỗ trợ'
+        actor_meta = None
+        if isinstance(actor, dict):
+            actor_meta = {
+                'principal_id': actor.get('principal_id'),
+                'role': actor.get('role'),
+                'tenant_id': actor.get('tenant_id'),
+                'membership_id': actor.get('membership_id'),
+                'display_name': actor.get('display_name'),
+                'actor_type': actor.get('actor_type', 'principal'),
+            }
+        holder_id = (actor_meta.get('principal_id') if actor_meta else None) or staff_label
+        now = self._now()
+        with self.connection(write=True) as db:
+            case_row = db.execute('SELECT * FROM cases WHERE case_id = ?', (case_id,)).fetchone()
+            require(case_row is not None, 404, 'case_not_found', 'Không tìm thấy ca hỗ trợ.')
+            require(case_row['status'] != 'resolved', 409, 'case_already_resolved', 'Ca hỗ trợ đã đóng, không thể nhận ca.')
+            open_ep = db.execute(
+                "SELECT * FROM handoff_episodes WHERE case_id = ? AND status = 'pending' LIMIT 1",
+                (case_id,),
+            ).fetchone()
+            require(open_ep is not None, 409, 'case_not_escalated', 'Ca hỗ trợ chưa có yêu cầu chuyển tiếp nhân viên đang mở.')
+            require(
+                case_row['status'] == 'waiting' and case_row['holder'] is None,
+                409,
+                'case_claim_conflict',
+                'Ca hỗ trợ đã được nhân viên khác nhận xử lý.',
+            )
+            if expected_version is not None:
+                require(int(case_row['version']) == int(expected_version), 409, 'case_claim_conflict', 'Phiên bản ca hỗ trợ đã thay đổi.')
+            won = db.execute(
+                """UPDATE cases
+                   SET holder = ?,
+                       holder_name = ?,
+                       status = 'in_progress',
+                       awaiting_customer_since = NULL,
+                       reminder_deadline = NULL,
+                       reminded_at = NULL,
+                       inactivity_deadline = NULL,
+                       feedback_prompted_at = NULL,
+                       completion_deadline = NULL,
+                       version = version + 1,
+                       updated_at = ?
+                   WHERE case_id = ? AND version = ? AND status = 'waiting' AND holder IS NULL""",
+                (holder_id, staff_label, now, case_id, case_row['version']),
+            ).rowcount
+            require(won == 1, 409, 'case_claim_conflict', 'Ca hỗ trợ vừa được nhân viên khác nhận trước đó.')
+            conv = db.execute('SELECT order_id FROM conversations WHERE id = ?', (case_row['conversation_id'],)).fetchone()
+            log_kwargs = {
+                'case_id': case_id,
+                'handoff_id': open_ep['handoff_id'],
+                'holder': holder_id,
+                'staff_name': staff_label,
+            }
+            if actor_meta is not None:
+                log_kwargs['actor'] = actor_meta
+            self.log(db, case_row['customer_id'], 'case_claimed', conv['order_id'] if conv else None, **log_kwargs)
+            updated = db.execute('SELECT * FROM cases WHERE case_id = ?', (case_id,)).fetchone()
+        return {
+            'status': 'ok',
+            'claimed': True,
+            'case_id': case_id,
+            'handoff_id': open_ep['handoff_id'],
+            'case': self._case_public_dict(updated),
+        }
+
+    def release_case(self, case_id: str, *, staff_name=None, actor=None, expected_version=None):
+        require(isinstance(case_id, str) and bool(case_id.strip()), 400, 'invalid_case_id', 'Mã ca hỗ trợ không hợp lệ.')
+        staff_label = staff_name.strip() if (staff_name and isinstance(staff_name, str) and staff_name.strip()) else 'Nhân viên hỗ trợ'
+        actor_meta = None
+        if isinstance(actor, dict):
+            actor_meta = {
+                'principal_id': actor.get('principal_id'),
+                'role': actor.get('role'),
+                'tenant_id': actor.get('tenant_id'),
+                'membership_id': actor.get('membership_id'),
+                'display_name': actor.get('display_name'),
+                'actor_type': actor.get('actor_type', 'principal'),
+            }
+        caller_id = (actor_meta.get('principal_id') if actor_meta else None) or staff_label
+        caller_role = actor_meta.get('role') if actor_meta else 'staff'
+        now = self._now()
+        with self.connection(write=True) as db:
+            case_row = db.execute('SELECT * FROM cases WHERE case_id = ?', (case_id,)).fetchone()
+            require(case_row is not None, 404, 'case_not_found', 'Không tìm thấy ca hỗ trợ.')
+            require(
+                case_row['status'] == 'in_progress' and case_row['holder'] is not None,
+                409,
+                'case_not_claimed',
+                'Ca hỗ trợ hiện không ở trạng thái đang được giữ.',
+            )
+            require(
+                case_row['holder'] == caller_id or caller_role == 'manager',
+                403,
+                'case_held_by_other',
+                'Chỉ nhân viên đang giữ ca hoặc quản lý mới được trả ca về hàng chờ.',
+            )
+            if expected_version is not None:
+                require(int(case_row['version']) == int(expected_version), 409, 'case_version_conflict', 'Phiên bản ca hỗ trợ đã thay đổi.')
+            won = db.execute(
+                """UPDATE cases
+                   SET holder = NULL,
+                       holder_name = NULL,
+                       status = 'waiting',
+                       version = version + 1,
+                       updated_at = ?
+                   WHERE case_id = ? AND version = ? AND status = 'in_progress'""",
+                (now, case_id, case_row['version']),
+            ).rowcount
+            require(won == 1, 409, 'case_version_conflict', 'Trạng thái ca hỗ trợ vừa thay đổi; hãy tải lại.')
+            conv = db.execute('SELECT order_id FROM conversations WHERE id = ?', (case_row['conversation_id'],)).fetchone()
+            log_kwargs = {'case_id': case_id, 'previous_holder': case_row['holder'], 'staff_name': staff_label}
+            if actor_meta is not None:
+                log_kwargs['actor'] = actor_meta
+            self.log(db, case_row['customer_id'], 'case_released', conv['order_id'] if conv else None, **log_kwargs)
+            updated = db.execute('SELECT * FROM cases WHERE case_id = ?', (case_id,)).fetchone()
+        return {
+            'status': 'ok',
+            'released': True,
+            'case_id': case_id,
+            'case': self._case_public_dict(updated),
+        }
+
+    def staff_reply(self, customer_id, cid, staff_name, message, *, actor=None, case_id=None):
         require(isinstance(message, str) and message.strip(), 400, 'invalid_message', 'Tin nhắn không được để trống.')
         staff_name = staff_name.strip() if (staff_name and isinstance(staff_name, str) and staff_name.strip()) else "Nhân viên hỗ trợ"
         actor_meta = None
@@ -1653,26 +2996,49 @@ class BusinessStore:
                 "display_name": actor.get("display_name"),
                 "actor_type": actor.get("actor_type", "principal"),
             }
-        now = time.time()
+        now = self._now()
         req_id = f"staff-{uuid.uuid4().hex[:12]}"
         with self.connection(write=True) as db:
+            if case_id is not None:
+                case_row = db.execute('SELECT * FROM cases WHERE case_id = ?', (case_id,)).fetchone()
+                require(case_row is not None, 404, 'case_not_found', 'Không tìm thấy ca hỗ trợ.')
+                if cid is not None:
+                    require(case_row['conversation_id'] == cid, 409, 'case_conversation_mismatch', 'Mã ca không khớp với cuộc trò chuyện.')
+                cid = case_row['conversation_id']
+            else:
+                case_row = self._latest_case_in_tx(db, cid)
             conv = db.execute('SELECT * FROM conversations WHERE id=?', (cid,)).fetchone()
             require(conv is not None, 404, 'conversation_not_found', 'Cuộc trò chuyện không tồn tại hoặc đã bị xóa.')
-            open_handoff = db.execute(
-                "SELECT id FROM conversation_feedback WHERE conversation_id=? AND feedback_type='human_handoff' AND COALESCE(reason_code, '')!='resolved' LIMIT 1",
-                (cid,),
-            ).fetchone()
+            if customer_id is None:
+                customer_id = conv['customer_id']
             require(
-                open_handoff is not None,
+                case_row is not None and case_row['status'] in ('waiting', 'in_progress'),
                 403,
                 'case_not_escalated',
                 'Cuộc trò chuyện hiện không có phiên hỗ trợ chuyển tiếp đang mở.',
             )
-            
+            open_ep = db.execute(
+                "SELECT * FROM handoff_episodes WHERE case_id = ? AND status = 'pending' LIMIT 1",
+                (case_row['case_id'],),
+            ).fetchone()
+            require(
+                open_ep is not None,
+                403,
+                'case_not_escalated',
+                'Cuộc trò chuyện hiện không có phiên hỗ trợ chuyển tiếp đang mở.',
+            )
+            if case_row['holder'] is not None and actor_meta is not None and actor_meta.get('principal_id'):
+                require(
+                    actor_meta['principal_id'] == case_row['holder'] or actor_meta.get('role') == 'manager',
+                    409,
+                    'case_held_by_other',
+                    'Ca hỗ trợ đang do nhân viên khác phụ trách.',
+                )
+
             turn_messages = [
                 {"role": "assistant", "content": message}
             ]
-            trace_payload = {"staff": True, "staff_name": staff_name}
+            trace_payload = {"staff": True, "staff_name": staff_name, "case_id": case_row["case_id"], "handoff_id": open_ep["handoff_id"]}
             if actor_meta is not None:
                 trace_payload.update({
                     "actor_principal_id": actor_meta["principal_id"],
@@ -1684,12 +3050,14 @@ class BusinessStore:
                 "message": message,
                 "author": "staff",
                 "staff_name": staff_name,
+                "case_id": case_row["case_id"],
+                "handoff_id": open_ep["handoff_id"],
                 "context": {"order_id": conv["order_id"], "product_id": conv["product_id"]},
                 "trace": trace_payload
             }
             if actor_meta is not None:
                 turn_result["actor_role"] = actor_meta["role"]
-            
+
             cursor = db.execute('''
                 INSERT INTO agent_turns(conversation_id, customer_id, request_id, input_hash, messages, result, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id
@@ -1698,23 +3066,45 @@ class BusinessStore:
                   json.dumps(turn_result, ensure_ascii=False), now))
             row = cursor.fetchone()
             turn_id = row['id'] if row and 'id' in row else (row[0] if row else getattr(cursor, 'lastrowid', None))
-            
+
             db.execute('UPDATE conversations SET revision=revision+1, expires_at=? WHERE id=?', (now + self.CONVERSATION_TTL, cid))
+            db.execute(
+                """UPDATE cases
+                   SET awaiting_customer_since = NULL,
+                       reminder_deadline = NULL,
+                       reminded_at = NULL,
+                       inactivity_deadline = NULL,
+                       feedback_prompted_at = NULL,
+                       completion_deadline = NULL,
+                       version = version + 1,
+                       updated_at = ?
+                   WHERE case_id = ?""",
+                (now, case_row['case_id']),
+            )
             db.execute('''
                 UPDATE conversation_feedback
                 SET comment=?
                 WHERE conversation_id=? AND feedback_type='human_handoff' AND COALESCE(reason_code, '')!='resolved'
             ''', (f"Đang xử lý bởi {staff_name}: {message[:120]}", cid))
-            
-            log_kwargs = {"staff_name": staff_name, "message": message}
+
+            log_kwargs = {
+                "staff_name": staff_name,
+                "message": message,
+                "case_id": case_row["case_id"],
+                "handoff_id": open_ep["handoff_id"],
+            }
             if actor_meta is not None:
                 log_kwargs["actor"] = actor_meta
             self.log(db, customer_id, 'staff_replied', conv['order_id'], **log_kwargs)
-            
+            updated_case = db.execute('SELECT * FROM cases WHERE case_id = ?', (case_row['case_id'],)).fetchone()
+
         out = {
             'status': 'ok',
             'turn_id': turn_id,
             'request_id': req_id,
+            'case_id': case_row['case_id'],
+            'handoff_id': open_ep['handoff_id'],
+            'case': self._case_public_dict(updated_case),
             'staff_name': staff_name,
             'message': message,
             'created_at': now
@@ -1726,13 +3116,15 @@ class BusinessStore:
 
     def customer_message(self, customer_id, cid, message):
         require(isinstance(message, str) and message.strip(), 400, 'invalid_message', 'Tin nhắn không được để trống.')
-        now = time.time()
+        clean_comment = message[:200]
+        if contains_canary_or_secret(clean_comment):
+            _, clean_comment = sanitize_structured_payload(clean_comment, preserve_reasoning=False)
+        now = self._now()
         req_id = f"cust-{uuid.uuid4().hex[:12]}"
         with self.connection(write=True) as db:
-            conv = db.execute('SELECT * FROM conversations WHERE id=?', (cid,)).fetchone()
-            require(conv is not None, 404, 'conversation_not_found', 'Cuộc trò chuyện không tồn tại hoặc đã bị xóa.')
-            require(conv['customer_id'] == customer_id, 403, 'forbidden', 'Không có quyền gửi tin nhắn trong cuộc trò chuyện này.')
-            
+            conv, _ = self._prepare_customer_activity_in_tx(
+                db, customer_id, cid, now, forbidden_on_mismatch=True
+            )
             turn_messages = [
                 {"role": "user", "content": message}
             ]
@@ -1743,7 +3135,7 @@ class BusinessStore:
                 "context": {"order_id": conv["order_id"], "product_id": conv["product_id"]},
                 "trace": {"waiting_staff": True}
             }
-            
+
             cursor = db.execute('''
                 INSERT INTO agent_turns(conversation_id, customer_id, request_id, input_hash, messages, result, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id
@@ -1752,33 +3144,43 @@ class BusinessStore:
                   json.dumps(turn_result, ensure_ascii=False), now))
             row = cursor.fetchone()
             turn_id = row['id'] if row and 'id' in row else (row[0] if row else getattr(cursor, 'lastrowid', None))
-            
+
             db.execute('UPDATE conversations SET revision=revision+1, expires_at=? WHERE id=?', (now + self.CONVERSATION_TTL, cid))
-            
-            existing_fb = db.execute('''
-                SELECT id FROM conversation_feedback
-                WHERE conversation_id=? AND feedback_type='human_handoff' AND reason_code!='resolved'
-                ORDER BY id DESC LIMIT 1
-            ''', (cid,)).fetchone()
-            if existing_fb:
-                db.execute('UPDATE conversation_feedback SET comment=? WHERE id=?', (message[:200], existing_fb['id']))
-            else:
-                db.execute('''
-                    INSERT INTO conversation_feedback(conversation_id, turn_id, customer_id, feedback_type, reason_code, comment, created_at)
-                    VALUES (?, ?, ?, 'human_handoff', 'customer_message', ?, ?)
-                ''', (cid, turn_id, customer_id, message[:200], now))
-            
-            self.log(db, customer_id, 'customer_messaged_staff', conv['order_id'], message=message)
-            
+
+            handoff = self._request_human_handoff_in_tx(
+                db,
+                customer_id,
+                cid,
+                reason_code='customer_message',
+                comment=clean_comment,
+                turn_id=turn_id,
+                update_existing_feedback_only=True,
+                now=now,
+                forbidden_on_mismatch=True,
+            )
+
+            self.log(
+                db,
+                customer_id,
+                'customer_messaged_staff',
+                conv['order_id'],
+                message=message,
+                case_id=handoff['case_id'],
+                handoff_id=handoff['handoff_id'],
+            )
+
         return {
             'status': 'ok',
             'turn_id': turn_id,
             'request_id': req_id,
+            'case_id': handoff['case_id'],
+            'handoff_id': handoff['handoff_id'],
+            'case': handoff['case'],
             'message': message,
             'created_at': now
         }
 
-    def resolve_escalation(self, cid, staff_name=None, *, actor=None):
+    def resolve_escalation(self, cid=None, staff_name=None, *, actor=None, case_id=None, handoff_id=None):
         staff_name = staff_name.strip() if (staff_name and isinstance(staff_name, str) and staff_name.strip()) else "Nhân viên hỗ trợ"
         actor_meta = None
         if isinstance(actor, dict):
@@ -1790,29 +3192,137 @@ class BusinessStore:
                 "display_name": actor.get("display_name"),
                 "actor_type": actor.get("actor_type", "principal"),
             }
+        closed_by = (actor_meta.get("principal_id") if actor_meta else None) or staff_name
+        now = self._now()
         with self.connection(write=True) as db:
-            conv = db.execute('SELECT customer_id, order_id FROM conversations WHERE id=?', (cid,)).fetchone()
-            require(conv is not None, 404, 'conversation_not_found', 'Cuộc trò chuyện không tồn tại hoặc đã bị xóa.')
-            open_handoff = db.execute(
-                "SELECT id FROM conversation_feedback WHERE conversation_id=? AND feedback_type='human_handoff' AND COALESCE(reason_code, '')!='resolved' LIMIT 1",
-                (cid,),
-            ).fetchone()
+            if case_id is not None:
+                case_row = db.execute('SELECT * FROM cases WHERE case_id = ?', (case_id,)).fetchone()
+                require(case_row is not None, 404, 'case_not_found', 'Không tìm thấy ca hỗ trợ.')
+                if cid is not None:
+                    require(case_row['conversation_id'] == cid, 409, 'case_conversation_mismatch', 'Mã ca không khớp với cuộc trò chuyện.')
+                cid = case_row['conversation_id']
+            elif handoff_id is not None and cid is None:
+                ep_lookup = db.execute('SELECT * FROM handoff_episodes WHERE handoff_id = ?', (handoff_id,)).fetchone()
+                require(ep_lookup is not None, 409, 'stale_handoff_episode', 'Phiên chuyển tiếp không tồn tại hoặc đã cũ.')
+                case_row = db.execute('SELECT * FROM cases WHERE case_id = ?', (ep_lookup['case_id'],)).fetchone()
+                require(case_row is not None, 404, 'case_not_found', 'Không tìm thấy ca hỗ trợ.')
+                cid = case_row['conversation_id']
+            else:
+                case_row = self._latest_case_in_tx(db, cid) if cid else None
+
+            conv = db.execute('SELECT customer_id, order_id FROM conversations WHERE id=?', (cid,)).fetchone() if cid else None
             require(
-                open_handoff is not None,
+                conv is not None or case_row is not None,
+                404,
+                'conversation_not_found',
+                'Cuộc trò chuyện không tồn tại hoặc đã bị xóa.',
+            )
+            require(
+                case_row is not None,
                 409,
                 'case_not_escalated',
                 'Cuộc trò chuyện không có phiên hỗ trợ đang mở để hoàn tất.',
             )
+
+            if handoff_id is not None:
+                ep_target = db.execute('SELECT * FROM handoff_episodes WHERE handoff_id = ?', (handoff_id,)).fetchone()
+                require(
+                    ep_target is not None
+                    and ep_target['case_id'] == case_row['case_id']
+                    and ep_target['status'] == 'pending',
+                    409,
+                    'stale_handoff_episode',
+                    'Phiên chuyển tiếp đã cũ hoặc đã được đóng; không đóng phiên mới.',
+                )
+
+            require(
+                case_row['status'] in ('waiting', 'in_progress'),
+                409,
+                'case_not_escalated',
+                'Cuộc trò chuyện không có phiên hỗ trợ đang mở để hoàn tất.',
+            )
+            open_ep = db.execute(
+                "SELECT * FROM handoff_episodes WHERE case_id = ? AND status = 'pending' LIMIT 1",
+                (case_row['case_id'],),
+            ).fetchone()
+            require(
+                open_ep is not None,
+                409,
+                'case_not_escalated',
+                'Cuộc trò chuyện không có phiên hỗ trợ đang mở để hoàn tất.',
+            )
+            if handoff_id is not None:
+                require(
+                    open_ep['handoff_id'] == handoff_id,
+                    409,
+                    'stale_handoff_episode',
+                    'Mã phiên chuyển tiếp không khớp với phiên đang mở của ca này.',
+                )
+            if case_row['holder'] is not None and actor_meta is not None and actor_meta.get('principal_id'):
+                require(
+                    actor_meta['principal_id'] == case_row['holder'] or actor_meta.get('role') == 'manager',
+                    409,
+                    'case_held_by_other',
+                    'Ca hỗ trợ đang do nhân viên khác phụ trách.',
+                )
+
+            ep_updated = db.execute(
+                """UPDATE handoff_episodes
+                   SET status = 'resolved', closed_at = ?, closed_by = ?
+                   WHERE handoff_id = ? AND status = 'pending'""",
+                (now, closed_by, open_ep['handoff_id']),
+            ).rowcount
+            require(ep_updated == 1, 409, 'stale_handoff_episode', 'Phiên chuyển tiếp vừa thay đổi trạng thái.')
+
+            case_updated = db.execute(
+                """UPDATE cases
+                   SET status = 'resolved',
+                       resolved_reason = 'staff_resolved',
+                       resolved_at = ?,
+                       holder = NULL,
+                       holder_name = NULL,
+                       awaiting_customer_since = NULL,
+                       reminder_deadline = NULL,
+                       reminded_at = NULL,
+                       inactivity_deadline = NULL,
+                       feedback_prompted_at = NULL,
+                       completion_deadline = NULL,
+                       version = version + 1,
+                       updated_at = ?
+                   WHERE case_id = ? AND version = ? AND status <> 'resolved'""",
+                (now, now, case_row['case_id'], case_row['version']),
+            ).rowcount
+            require(case_updated == 1, 409, 'case_version_conflict', 'Trạng thái ca hỗ trợ vừa thay đổi; hãy tải lại.')
+
+            cust_id = conv['customer_id'] if conv is not None else case_row['customer_id']
+            ord_id = conv['order_id'] if conv is not None else None
+            leases_released = self._release_conversation_leases_in_tx(db, cust_id, cid)
+
             db.execute('''
                 UPDATE conversation_feedback
                 SET reason_code='resolved'
                 WHERE conversation_id=? AND feedback_type='human_handoff' AND COALESCE(reason_code, '')!='resolved'
             ''', (cid,))
-            log_kwargs = {"staff_name": staff_name}
+            log_kwargs = {
+                "staff_name": staff_name,
+                "case_id": case_row["case_id"],
+                "handoff_id": open_ep["handoff_id"],
+                "leases_released": leases_released,
+            }
             if actor_meta is not None:
                 log_kwargs["actor"] = actor_meta
-            self.log(db, conv['customer_id'], 'escalation_resolved', conv['order_id'], **log_kwargs)
-        out = {'status': 'ok', 'resolved': True, 'staff_name': staff_name}
+            self.log(db, cust_id, 'escalation_resolved', ord_id, **log_kwargs)
+            updated_case = db.execute('SELECT * FROM cases WHERE case_id = ?', (case_row['case_id'],)).fetchone()
+
+        out = {
+            'status': 'ok',
+            'resolved': True,
+            'case_id': case_row['case_id'],
+            'handoff_id': open_ep['handoff_id'],
+            'leases_released': leases_released,
+            'case': self._case_public_dict(updated_case),
+            'staff_name': staff_name,
+        }
         if actor_meta is not None:
             out['actor_role'] = actor_meta['role']
             out['actor_principal_id'] = actor_meta['principal_id']

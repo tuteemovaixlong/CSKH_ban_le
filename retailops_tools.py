@@ -271,35 +271,53 @@ class BoundTools:
                     'escalated': False,
                     'message': 'Truy vấn hiện tại ở chế độ chỉ đọc (read-only); không thực hiện chuyển tiếp hoặc thay đổi trạng thái.',
                 }
+            from retailops.core import ApiError
             from retailops.guardrails.topic_filter import contains_canary_or_secret
 
             reason = str(args.get('reason') or '').strip()
             if contains_canary_or_secret(reason, user_text=self.user_text):
                 reason = 'Khách hàng yêu cầu hỗ trợ trực tiếp từ nhân viên [REDACTED_BY_OUTPUT_GUARD]'
+
+            cid = self.snapshot.get('id') if hasattr(self, 'snapshot') and isinstance(self.snapshot, dict) else None
+            if not cid or not hasattr(self, 'store') or self.store is None:
+                self.human_support = None
+                raise ApiError(
+                    503,
+                    'handoff_unavailable',
+                    'Không thể lưu phiên chuyển tiếp nhân viên khi thiếu cuộc trò chuyện hoặc kho dữ liệu.',
+                )
+
+            if hasattr(self.store, 'request_human_handoff'):
+                handoff = self.store.request_human_handoff(
+                    self.customer,
+                    cid,
+                    reason_code='customer_requested_human',
+                    comment=reason,
+                )
+            else:
+                fn = getattr(self.store, 'record_feedback', getattr(self.store, 'save_feedback', None))
+                if not fn:
+                    self.human_support = None
+                    raise ApiError(503, 'handoff_unavailable', 'Kho dữ liệu không hỗ trợ lưu phiên chuyển tiếp nhân viên.')
+                handoff = fn(self.customer, {
+                    'conversation_id': cid,
+                    'feedback_type': 'human_handoff',
+                    'sentiment_flag': 'neutral',
+                    'reason_code': 'customer_requested_human',
+                    'comment': reason,
+                })
+
             res = {
                 'status': 'escalated_to_human',
+                'case_id': handoff.get('case_id') if isinstance(handoff, dict) else None,
+                'handoff_id': handoff.get('handoff_id') if isinstance(handoff, dict) else None,
                 'reason': reason,
-                'support_rep': 'Nguyễn Mai Anh (Chuyên viên CSKH)',
-                'queue': 'priority_vip',
-                'estimated_wait': '30 giây',
-                'message': f'Đã chuyển yêu cầu hỗ trợ trực tiếp cho nhân viên: "{reason}". Chuyên viên CSKH đang vào phòng chat để hỗ trợ bạn.'
+                'queue': 'staff_desk',
+                'message': (
+                    f'Đã chuyển yêu cầu hỗ trợ trực tiếp cho nhân viên: "{reason}". '
+                    'Bộ phận CSKH sẽ tiếp nhận ca của bạn.'
+                ),
             }
             self.human_support = res
-            if hasattr(self, 'store') and (hasattr(self.store, 'record_feedback') or hasattr(self.store, 'save_feedback')):
-                cid = self.snapshot.get('id') if hasattr(self, 'snapshot') and isinstance(self.snapshot, dict) else None
-                if cid:
-                    try:
-                        fn = getattr(self.store, 'record_feedback', getattr(self.store, 'save_feedback', None))
-                        if fn:
-                            fn(self.customer, {
-                                'conversation_id': cid,
-                                'feedback_type': 'human_handoff',
-                                'sentiment_flag': 'neutral',
-                                'reason_code': 'customer_requested_human',
-                                'comment': reason
-                            })
-                    except Exception as e:
-                        import logging
-                        logging.getLogger('retailops.tools').warning("Failed to record handoff feedback: %s", e)
             return res
         return {'error': 'tool_not_allowed', 'message': 'No action performed.'}

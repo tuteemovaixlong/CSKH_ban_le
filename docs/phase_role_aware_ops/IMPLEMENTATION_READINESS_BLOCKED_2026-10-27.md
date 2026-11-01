@@ -219,3 +219,28 @@ Cả hai quyết định dùng đúng hành vi code đã được kiểm chứng
 
 - Owner xác nhận đã bật log phiên SSM và CloudTrail, trước khi dùng các log đó làm bằng chứng audit cho việc đổi role hoặc sửa allowlist.
 - Diễn tập `identity migrate-v5` trên một bản restore PostgreSQL trước mọi migration trên DB thật. Migration và deploy trên DB thật vẫn cần owner phê duyệt riêng.
+
+### 2026-11-01 W1 production deploy record
+
+- **Merged:** PR #48 (W1, `d6ed95e`), PR #49 (live E2E dùng staff thay viewer, `f21b0c2`), PR #50 (UI bỏ danh tính "Mai Anh" viết cứng, `f6620aa`).
+- **Migration identity v5 trên DB production** theo runbook §11.5: preflight tổng hợp (identity v4; 4 `viewer` đều đã `active=0`; không có `platform_admin`; 0 session đang mở), backup `pre-w1-20261101T115705.dump` và `final-pre-w1-20261101T121356.dump`, diễn tập trên DB tạm (v4 → v5, chạy lại idempotent, W1 khởi động được), rồi `identity migrate-v5` trên DB thật (`upgraded: true`; 4 `viewer` được gắn `retired_legacy_role_r1_w1`; các role khác không đổi).
+- **Rollout:** image `sha256:0eba8bb7ddf7da7d9cf15b60193e9d9578afbca928bf3b57afc7c2b828a16f76`; `PUBLIC_WEB_ROLLOUT_OK`, `ADMIN_CONSOLE_SMOKE_OK`, `LIVE_E2E_SMOKE_OK`; gián đoạn khoảng 4 phút. Lần chạy workflow `41304375458` đỏ có chủ đích (đưa image lên EC2 trước khi migrate, tự rollback). Sau khi merge PR #50, deploy tự động lúc 12:48 UTC thành công.
+- **Vận hành:** không chạy `scripts/update_ec2.py` (ghép mã ngoài image và ghi đè constraint role v5); endpoint model chỉ sửa `RETAILOPS_API_ENDPOINT` trong `api.env` rồi tạo lại riêng `web`.
+
+### 2026-11-01 W2 readiness review
+
+> **Phạm vi:** một lượt readiness review duy nhất cho W2, chỉ BLOCKER/MAJOR. Đối chiếu §10/§11 và README W2 với code trên `main` (`f6620aa`).
+
+**Finding đã được owner đóng bằng [§13](W0_OWNER_DECISION_DELTA_2026-10-29.md#13-w2-owner-decisions-2026-11-01):**
+
+| ID | Mức | Vấn đề | Đóng bằng |
+|---|---|---|---|
+| `W2-RR-01` | BLOCKER | Chưa rõ case được tạo cho mọi hội thoại hay chỉ khi cần người; quyết định phạm vi timer, phản hồi và nội dung Staff Desk | W2-D1 |
+| `W2-RR-02` | MAJOR | Nhóm Đã xử lý có trong UI nhưng quyền xem transcript ca đã đóng chưa được duyệt | W2-D2 |
+| `W2-RR-03` | MAJOR | §11.5 gộp bảng W3 vào business v5, buộc đóng băng thiết kế W3 sớm | W2-D3 |
+| `W2-RR-04` | MAJOR | Chưa chọn nơi chạy timer | W2-D4 |
+| `W2-RR-05` | MAJOR | Owner muốn thêm tin nhắc trước khi đóng ca | W2-D5 |
+
+**Hiện trạng code W2 phải xử lý** (không cần thêm quyết định): handoff chỉ là một dòng `conversation_feedback` với `reason_code` tự do; danh sách escalation không lọc ca đã đóng; `new_conversation()` xóa hội thoại quá 7 ngày trên toàn tenant và cascade sang handoff đang chờ; UI báo "đã kết nối" trước khi handoff được lưu; ba đường tạo handoff (`/api/feedback`, `customer_message()`, tool `request_human_support` còn trả `support_rep` viết cứng); business store tự migrate khi khởi tạo (SQLite đích v3, PostgreSQL đích v4).
+
+**Kết luận:** W2 **READY** để thực thi theo [W2 execution handoff](W2_EXECUTION_HANDOFF_2026-11-01.md) do owner phát hành. Readiness tổng thể vẫn `BLOCKED` cho `W3–W6`. Migration business v5 và deploy W2 trên production cần owner phê duyệt riêng, theo runbook như W1.

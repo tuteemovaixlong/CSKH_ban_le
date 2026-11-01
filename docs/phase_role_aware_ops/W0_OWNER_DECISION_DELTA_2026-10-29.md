@@ -332,3 +332,17 @@ Mitigations: data minimization, no storage on Colab, the access layers above and
 - Lệnh CLI "mời theo email" chạy qua SSM, thay cho việc sửa biến môi trường.
 - Giao diện OpsConsole cho opsadmin: dán email, chọn role. Cần owner chính thức bỏ ràng buộc "OpsConsole chỉ đọc" ở một đợt sau. Lưu ý opsadmin dùng chung một tài khoản Basic Auth nên giao diện không định danh được người thực hiện.
 - Import/provisioning từ hệ thống ngoài.
+
+## 13. W2 owner decisions (2026-11-01)
+
+Owner chốt trước khi phát hành W2. Các quyết định dưới đây **thay thế** những chỗ §10/§11 nói khác; phần còn lại của §10/§11 giữ nguyên. Không cho phép `W3–W6`, deploy hay migration DB thật nếu chưa có phê duyệt riêng.
+
+| ID | Quyết định | Thay thế |
+|---|---|---|
+| W2-D1 | **Mọi hội thoại đều có một `case_id`.** Timer và phản hồi hài lòng áp dụng cả cho ca chỉ có bot. Staff Desk chỉ hiện case có handoff episode đang mở (Hàng chờ) hoặc có `holder` (Đang xử lý); nhóm Đã xử lý hiện ca đã đóng trong thời hạn lưu. Chat thuần với bot không vào hàng đợi. | Làm rõ §10 OD-03 |
+| W2-D2 | **Staff và Manager** được xem **chỉ đọc** transcript của ca đã đóng, cùng tenant, trong thời hạn lưu, có ghi audit. Không được trả lời hay đóng lại ca đã đóng. | Làm rõ README ("resolved read-only only if separately approved") |
+| W2-D3 | **Business v5 chỉ gồm bảng của W2**: `cases`, `handoff_episodes`, `case_feedback_events`. `order_action_requests`, `order_action_decisions`, `integration_outbox` chuyển sang **business v6 ở W3**. | §11.5 (gộp 6 bảng vào v5) |
+| W2-D4 | Timer chạy bằng **luồng nền trong process `web`** (quét định kỳ khoảng 15 giây), đóng ca bằng cập nhật có điều kiện theo `version`, an toàn khi chạy trùng. Không thêm container. | Làm rõ §11.2 |
+| W2-D5 | **Timer khách không trả lời:** đồng hồ chỉ bắt đầu khi bot đã gửi xong câu trả lời và đang chờ khách (thời gian bot xử lý không tính). Sau **5 phút** bot gửi **một** tin nhắc cố định; thêm **3 phút** sau tin nhắc vẫn không trả lời thì đóng ca (`resolved`, lý do `inactivity`). Khách gửi tin bất kỳ lúc nào thì hủy cả hai mốc. Không áp dụng khi ca có `holder` hoặc đang chờ nhân viên. Timer 5 phút sau khi mời đánh giá (§11.3) giữ nguyên và không chạy song song. Production không cho rút ngắn; giá trị ngắn chỉ dùng cho môi trường đánh giá. | §10 OD-03 và §11.2 bước 1–2 (3 phút rồi đóng ngay, không nhắc) |
+| W2-D6 | Nút gửi đổi thành **ô vuông đỏ, bấm để dừng** lượt bot đang trả lời: làm ở **W5** (cần backend hỗ trợ hủy). | Mới |
+| W2-D7 | Retire `scripts/update_ec2.py` và cập nhật notebook Colab trong repo (không hướng dẫn chạy script này, chỉ sửa `RETAILOPS_API_ENDPOINT` và tạo lại `web`; hỗ trợ domain ngrok tĩnh qua secret `NGROK_DOMAIN`): làm như **mục 0 của W2**. | Mới |

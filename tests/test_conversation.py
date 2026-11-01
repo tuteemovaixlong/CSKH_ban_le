@@ -225,6 +225,7 @@ class ConversationTests(unittest.TestCase):
         self.assertEqual(self.chat('hello')['message'], 'Recovered')
 
     def test_existing_database_migrates_without_resetting_cancelled_order(self):
+        from retailops.business.store import migrate_sqlite_business_v5
         path = Path(self.temp.name) / 'old.sqlite3'
         db = sqlite3.connect(path)
         try:
@@ -233,6 +234,8 @@ class ConversationTests(unittest.TestCase):
             db.commit()
         finally:
             db.close()
+        self.assert_error('business_migration_required', lambda: BusinessStore(path))
+        migrate_sqlite_business_v5(path, preflight_confirmed=True, backup_confirmed=True)
         migrated = BusinessStore(path); migrated.seed()
         order = migrated.lookup('C-001', 'O-101')
         self.assertEqual((order['status'], order['version']), ('cancelled', 2))

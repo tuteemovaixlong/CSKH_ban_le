@@ -76,6 +76,7 @@ class KnowledgePostgresTests(unittest.TestCase):
         self.assertNotIn("secret.md", {m["source_key"] for m in left.search("VIP hủy đơn", 3)})
 
     def test_v2_store_stays_readable_until_explicit_v3_migration(self):
+        from retailops.core import ApiError
         from retailops.knowledge.repository import KnowledgeRepository
         from retailops.storage.pg_schema import initialize
         from retailops.storage.postgres import BUSINESS_SCHEMA_CURRENT
@@ -85,11 +86,15 @@ class KnowledgePostgresTests(unittest.TestCase):
             db.execute("DROP TABLE knowledge_documents")
             db.execute("UPDATE retailops_schema SET version=2 WHERE component='business'")
         from retailops.storage.pg_repositories import PostgresBusinessStore
-        compatible = PostgresBusinessStore(DSN, self.keys[0])
+        with self.assertRaises(ApiError) as ctx:
+            PostgresBusinessStore(DSN, self.keys[0])
+        self.assertEqual((ctx.exception.status, ctx.exception.code), (503, "business_migration_required"))
+        ro_compatible = PostgresBusinessStore(DSN, self.keys[0], migrate=False, read_only=True)
         with self.assertRaises(ValueError):
-            KnowledgeRepository(compatible).search("hủy đơn")
-        with compatible.connection(write=True) as db:
-            initialize(db, compatible.schema, "business")
+            KnowledgeRepository(ro_compatible).search("hủy đơn")
+        with store.connection(write=True) as db:
+            initialize(db, store.schema, "business", allow_business_v5_upgrade=True)
+        compatible = PostgresBusinessStore(DSN, self.keys[0])
         with compatible.connection() as db:
             self.assertEqual(db.execute("SELECT version FROM retailops_schema").fetchone()["version"], BUSINESS_SCHEMA_CURRENT)
         self.assertEqual(KnowledgeRepository(compatible).search("hủy đơn"), [])

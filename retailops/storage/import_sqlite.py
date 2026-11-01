@@ -35,14 +35,17 @@ def read_database(path, component, tables):
             if db.execute('PRAGMA integrity_check').fetchone()[0] != 'ok' or db.execute('PRAGMA foreign_key_check').fetchall():
                 raise ValueError('SQLite snapshot failed integrity checks.')
             if component == 'business':
-                # Order tables to respect foreign keys: customers and products must precede orders
+                # Order tables to respect foreign keys: customers and products must precede orders,
+                # and cases must precede handoff_episodes and case_feedback_events.
                 ordered = ['customers']
                 if marker[0]['version'] >= 3:
                     ordered.extend(['products', 'product_variants'])
                 ordered.extend(['orders', 'proposals', 'business_events', 'conversations',
-                               'agent_turns', 'provider_daily_usage'])
+                               'agent_turns', 'conversation_feedback', 'provider_daily_usage'])
                 if marker[0]['version'] >= 2:
                     ordered.extend(['graph_runs', 'graph_checkpoints', 'graph_writes'])
+                if marker[0]['version'] >= 4:
+                    ordered.extend(['cases', 'handoff_episodes', 'case_feedback_events'])
                 tables = tuple(ordered)
             existing_tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             result = {table: [dict(row) for row in db.execute('SELECT * FROM "'+table+'"')] for table in tables if table in existing_tables}
@@ -114,5 +117,14 @@ def import_snapshot(dsn, source):
                 db.raw.execute(sql.SQL('''SELECT setval(pg_get_serial_sequence(%s,'id'),
                     COALESCE(MAX(id),1),COUNT(*)>0) FROM {}.{}''').format(sql.Identifier(schema), sql.Identifier(table)),
                     (schema+'.'+table,))
+            if component == 'business':
+                if 'conversation_feedback' in tables:
+                    db.raw.execute(sql.SQL('''SELECT setval(pg_get_serial_sequence(%s,'id'),
+                        COALESCE(MAX(id),1),COUNT(*)>0) FROM {}.conversation_feedback''').format(sql.Identifier(schema)),
+                        (schema+'.conversation_feedback',))
+                if 'cases' not in tables:
+                    from retailops.business.schema import backfill_business_v5_cases
+                    db.raw.execute(sql.SQL('SET LOCAL search_path TO {}, pg_catalog').format(sql.Identifier(schema)))
+                    backfill_business_v5_cases(db)
         # Login sessions are deliberately not copied. Existing personal codes still work.
     return {'result': 'POSTGRES_IMPORT_VERIFIED', 'sessions_imported': 0, 'tables': report}

@@ -135,7 +135,10 @@ class Application:
                     400, 'unsupported_attachment_type', 'Chỉ hỗ trợ tệp hình ảnh hoặc tài liệu.')
             require(isinstance(attachment.get('data'), str) and len(attachment['data']) <= 6_000_000,
                     400, 'attachment_too_large', 'Kích thước tệp đính kèm vượt quá 4MB.')
-        snapshot = self.store.conversation(customer, body['conversation_id'])
+        if hasattr(self.store, 'peek_conversation_for_chat'):
+            snapshot = self.store.peek_conversation_for_chat(customer, body['conversation_id'])
+        else:
+            snapshot = self.store.conversation(customer, body['conversation_id'])
         provider_id = snapshot['provider_id']
         att_data_hash = hashlib.sha256(attachment['data'].encode()).hexdigest()[:16] if (attachment and 'data' in attachment) else ''
         att_token = f"{attachment.get('name', '')}:{att_data_hash}" if attachment else ''
@@ -161,8 +164,12 @@ class Application:
             if replay:
                 return replay
 
-            # Reload & Revalidate conversation snapshot under lock
-            snapshot = self.store.conversation(customer, snapshot['id'])
+            # Reload & Revalidate conversation snapshot (and resume/reset case timers) under lock
+            if hasattr(self.store, 'prepare_customer_chat'):
+                snapshot, _ = self.store.prepare_customer_chat(customer, snapshot['id'])
+            else:
+                snapshot = self.store.conversation(customer, snapshot['id'])
+            provider_id = snapshot['provider_id']
 
             # G02: Check interrupted runs in graph_runs under conv_lock BEFORE cache lookup & workflow
             run_key = [snapshot['id'], request_id]

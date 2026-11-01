@@ -143,6 +143,11 @@ class GuestSessions:
             self.rate('session:' + sid, 60)
             if sid not in self.apps:
                 store = BusinessStore(self.directory / (sid + '.sqlite3'))
+                store.data_mode = getattr(self, 'data_mode', 'synthetic-demo')
+                if callable(getattr(self, 'store_clock', None)):
+                    store.clock = self.store_clock
+                if getattr(self, 'case_timer_config', None) is not None:
+                    store.case_timer_config = self.case_timer_config
                 store.seed()
                 app = Application(store, {}, self.infer, self.api_infer, self.api_daily_limit)
                 app.quota_store = self.control
@@ -176,3 +181,21 @@ class GuestSessions:
 
     def metadata(self):
         return {'session_scope': 'isolated-guest', 'session_seconds': self.session_seconds}
+
+    def run_case_timers_once(self, now: float | None = None) -> dict:
+        with self.lock:
+            apps = list(self.apps.values())
+        totals = {'reminded': 0, 'resolved_inactivity': 0, 'resolved_completed': 0, 'tenants': 0}
+        for app in apps:
+            store = getattr(app, 'store', None)
+            if store is None or not hasattr(store, 'process_due_case_timers'):
+                continue
+            if callable(getattr(self, 'store_clock', None)):
+                store.clock = self.store_clock
+            if getattr(self, 'case_timer_config', None) is not None:
+                store.case_timer_config = self.case_timer_config
+            res = store.process_due_case_timers(now=now)
+            totals['tenants'] += 1
+            for k in ('reminded', 'resolved_inactivity', 'resolved_completed'):
+                totals[k] += int(res.get(k, 0))
+        return totals

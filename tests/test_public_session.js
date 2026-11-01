@@ -7,6 +7,7 @@ const path = require('node:path');
 class Element {
   constructor() {
     this.children=[]; this.dataset={}; this.value=''; this.disabled=false; this.textContent='';
+    this.style={};
     this._classes=new Set();
     this.classList={
       toggle:(cls, force)=>{
@@ -59,6 +60,9 @@ let mockAdminAccounts = [
 ];
 let mockAdminAuditLogs = [];
 let forceAdminError = null;
+let forceFeedbackError = null;
+let mockTranscriptResponse = null;
+let mockStaffCases = null;
 const persistent = process.env.RETAILOPS_UI_TEST_MODE === 'persistent';
 if (persistent) document.body.dataset.dataMode = 'persistent-demo';
 const context=vm.createContext({document,console,Intl,Date,URLSearchParams,AbortSignal,crypto:{randomUUID:()=> 'fixture-id'},
@@ -72,11 +76,14 @@ const context=vm.createContext({document,console,Intl,Date,URLSearchParams,Abort
     else if(url==='/api/providers') body={default_provider:'api',providers:[{id:'api',model:'fixture-model',label:'API',configured:true}]};
     else if(url==='/api/session') body={
       name: 'Khách B',
+      principal_id: (mockSessionRole === 'staff') ? 'p_staff_1' : 'p_cust_1',
       role: mockSessionRole || 'customer',
       tenant_id: mockSessionTenant,
       permissions: (mockSessionRole === 'manager' || mockSessionRole === 'platform_admin')
         ? ['orders:read','orders:cancel','staff:access','manager:access']
-        : (persistent ? ['orders:read'] : ['orders:read','orders:cancel'])
+        : (mockSessionRole === 'staff'
+          ? ['orders:read','staff:access']
+          : (persistent ? ['orders:read'] : ['orders:read','orders:cancel']))
     };
     else if(url==='/api/orders') {
       if (mockOrders !== null) {
@@ -87,7 +94,42 @@ const context=vm.createContext({document,console,Intl,Date,URLSearchParams,Abort
     }
     else if(url==='/api/cancellation-proposals') body={proposals:[{proposal_id:'saved-proposal-id',reason:'ordered_by_mistake',expires_at:Date.now()/1000+600,order:{id:'O-101',name:'Áo thun',amount:299000}}]};
     else if(url==='/api/events') body={events:[]};
-    else if(url==='/api/conversations') body={conversation_id:'fixture-conversation',provider_id:'api',context:{}};
+    else if(url==='/api/conversations') body={conversation_id:'fixture-conversation',case_id:'case_ui_1',provider_id:'api',context:{}};
+    else if(url==='/api/feedback') {
+      if (forceFeedbackError) {
+        status = forceFeedbackError.status;
+        body = { error: 'handoff_persist_failed', message: forceFeedbackError.message };
+      } else {
+        body = { status: 'ok', case_id: 'case_ui_1', handoff_id: 'hof_ui_1' };
+      }
+    }
+    else if(/^\/api\/conversations\/[^/]+\/messages$/.test(url)) {
+      body = mockTranscriptResponse || { conversation: { id: 'fixture-conversation' }, case: { case_id: 'case_ui_1', status: 'waiting', version: 1, has_active_timer: false }, turns: [], feedbacks: [] };
+    }
+    else if(url==='/api/staff/cases') {
+      body = mockStaffCases || { waiting: [], in_progress: [], resolved: [], open_count: 0 };
+    }
+    else if(/^\/api\/staff\/cases\/[^/]+\/claim$/.test(url)) {
+      if (mockStaffCases && mockStaffCases.waiting.length) {
+        const claimed = { ...mockStaffCases.waiting.shift(), status: 'in_progress', holder: 'p_staff_1', holder_name: 'Khách B', version: 2 };
+        mockStaffCases.in_progress.unshift(claimed);
+        body = { status: 'ok', claimed: true, case_id: claimed.case_id, handoff_id: 'hof_ui_1', case: claimed };
+      } else {
+        status = 409;
+        body = { error: 'case_claim_conflict', message: 'Ca hỗ trợ đã được nhân viên khác nhận xử lý.' };
+      }
+    }
+    else if(/^\/api\/staff\/cases\/[^/]+\/messages$/.test(url)) {
+      const cidMatch = url.split('/')[4];
+      const isClosedCase = cidMatch === 'case_r1';
+      body = {
+        conversation: { id: 'fixture-conversation' },
+        case: { case_id: cidMatch, status: isClosedCase ? 'resolved' : 'waiting', holder: null, version: 1 },
+        read_only: isClosedCase,
+        turns: [],
+        feedbacks: []
+      };
+    }
     else if(url==='/api/manager/kpis') body={total_orders:2,pending_orders:1,delivered_orders:1,cancelled_orders:0,total_revenue:919000,active_products:3};
     else if(url==='/api/manager/products') body={products:[],count:0};
     else if(url==='/api/manager/events') body={events:[]};
@@ -333,6 +375,71 @@ function collectText(node) {
   get('admin-tenant-id-input').oninput();
   assert.equal(run('selectedAdminMembershipId'), null);
   assert.equal(get('admin-account-detail-panel').hidden, true);
+
+  // R1-W2 UI checks:
+  // 1) Meet Human button waits for durable API persistence before switching UI mode; fails closed on API error
+  mockSessionRole = 'customer';
+  await run('openSession()');
+  assert.equal(run('isHumanMode'), false);
+  forceFeedbackError = { status: 503, message: 'Không thể lưu yêu cầu gặp nhân viên.' };
+  await run('toggleHumanMode()');
+  assert.equal(run('isHumanMode'), false);
+  assert.ok(collectText(get('messages')).includes('Không thể gửi yêu cầu gặp nhân viên'));
+  forceFeedbackError = null;
+  await run('toggleHumanMode()');
+  assert.equal(run('isHumanMode'), true);
+  assert.equal(run('currentCaseId'), 'case_ui_1');
+  assert.equal(run('currentHandoffId'), 'hof_ui_1');
+  await run('toggleHumanMode()');
+  assert.equal(run('isHumanMode'), false);
+
+  // 2) Customer bot-timer polling renders fixed reminder turn once and surfaces resolved status
+  mockTranscriptResponse = {
+    conversation: { id: 'fixture-conversation' },
+    case: { case_id: 'case_ui_1', status: 'waiting', version: 2, has_active_timer: true },
+    turns: [{
+      id: 901,
+      messages: JSON.stringify([{ role: 'assistant', content: 'Tin nhắc tự động 5 phút' }]),
+      result: JSON.stringify({ author: 'system_reminder', message: 'Tin nhắc tự động 5 phút' })
+    }],
+    feedbacks: []
+  };
+  await run('pollBotCaseTimer()');
+  await run('pollBotCaseTimer()');
+  const reminderMatches = collectText(get('messages')).split('Tin nhắc tự động 5 phút').length - 1;
+  assert.equal(reminderMatches, 1);
+  mockTranscriptResponse = {
+    ...mockTranscriptResponse,
+    case: { case_id: 'case_ui_1', status: 'resolved', resolved_reason: 'inactivity', version: 3, has_active_timer: false }
+  };
+  await run('pollBotCaseTimer()');
+  assert.equal(get('model-status-title').textContent, 'Ca hỗ trợ đã đóng');
+  assert.ok(collectText(get('messages')).includes('Ca hỗ trợ đã tạm đóng'));
+  mockTranscriptResponse = null;
+
+  // 3) Staff Desk 3-bucket queue count (open_count only), claim button, and read-only resolved view
+  mockStaffCases = {
+    waiting: [{ case_id: 'case_w1', conversation_id: 'fixture-conversation', customer_id: 'C-701', customer_name: 'Khách A', status: 'waiting', holder: null, comment: 'Cần hỗ trợ' }],
+    in_progress: [{ case_id: 'case_p1', conversation_id: 'fixture-conversation', customer_id: 'C-702', status: 'in_progress', holder: 'p_staff_2', holder_name: 'NV 2' }],
+    resolved: [{ case_id: 'case_r1', conversation_id: 'fixture-conversation', customer_id: 'C-703', status: 'resolved', resolved_reason: 'staff_resolved' }],
+    open_count: 2
+  };
+  mockSessionRole = 'staff';
+  await run('openSession()');
+  await run('loadStaffQueue()');
+  assert.equal(get('staff-queue-count').textContent, '2');
+  assert.equal(get('staff-bucket-waiting').textContent, 'Hàng chờ (1)');
+  assert.equal(get('staff-bucket-in-progress').textContent, 'Đang xử lý (1)');
+  assert.equal(get('staff-bucket-resolved').textContent, 'Đã xử lý (1)');
+  await run('selectStaffTicket(staffDeskData.waiting[0])');
+  assert.equal(get('staff-chat-composer').style.display, 'flex');
+  assert.equal(get('btn-claim-ticket').textContent, '✋ Nhận ca');
+  await run('claimOrReleaseStaffTicket()');
+  assert.equal(get('btn-claim-ticket').textContent, '↩ Trả ca');
+  await run('setStaffQueueBucket("resolved")');
+  await run('selectStaffTicket(staffDeskData.resolved[0])');
+  assert.equal(get('staff-chat-composer').style.display, 'none');
+  assert.equal(get('staff-chat-actions').style.display, 'none');
 
   await get('logout').onclick();
   assert.equal(authenticated,false);assert.equal(reloaded,true);

@@ -10,6 +10,47 @@ from urllib.parse import urlsplit
 
 from retailops.core import DATA_MODE, ROOT, VERSION
 
+DEFAULT_CASE_REMINDER_SECONDS = 300.0
+DEFAULT_CASE_POST_REMINDER_CLOSE_SECONDS = 180.0
+DEFAULT_CASE_COMPLETION_SECONDS = 300.0
+DEFAULT_CASE_TIMER_SCAN_SECONDS = 15.0
+
+
+@dataclass(frozen=True)
+class CaseTimerConfig:
+    reminder_seconds: float = DEFAULT_CASE_REMINDER_SECONDS
+    post_reminder_close_seconds: float = DEFAULT_CASE_POST_REMINDER_CLOSE_SECONDS
+    completion_seconds: float = DEFAULT_CASE_COMPLETION_SECONDS
+    scan_seconds: float = DEFAULT_CASE_TIMER_SCAN_SECONDS
+    data_mode: str = DATA_MODE
+    production_env: bool = False
+
+    def __post_init__(self):
+        for field_name, val in (
+            ('reminder_seconds', self.reminder_seconds),
+            ('post_reminder_close_seconds', self.post_reminder_close_seconds),
+            ('completion_seconds', self.completion_seconds),
+            ('scan_seconds', self.scan_seconds),
+        ):
+            if isinstance(val, bool) or not isinstance(val, (int, float)) or float(val) <= 0:
+                raise ValueError(f'{field_name} must be a positive number.')
+            object.__setattr__(self, field_name, float(val))
+        is_prod = bool(self.production_env) or str(self.data_mode or '').strip().lower() in ('production', 'live')
+        if is_prod:
+            if self.reminder_seconds < DEFAULT_CASE_REMINDER_SECONDS:
+                raise ValueError(
+                    f'Production/live mode forbids shortening case_reminder_seconds below {int(DEFAULT_CASE_REMINDER_SECONDS)}s.'
+                )
+            if self.post_reminder_close_seconds < DEFAULT_CASE_POST_REMINDER_CLOSE_SECONDS:
+                raise ValueError(
+                    'Production/live mode forbids shortening case_post_reminder_close_seconds '
+                    f'below {int(DEFAULT_CASE_POST_REMINDER_CLOSE_SECONDS)}s.'
+                )
+            if self.completion_seconds < DEFAULT_CASE_COMPLETION_SECONDS:
+                raise ValueError(
+                    f'Production/live mode forbids shortening case_completion_seconds below {int(DEFAULT_CASE_COMPLETION_SECONDS)}s.'
+                )
+
 
 def public_origin(value):
     parsed = urlsplit(value)
@@ -33,6 +74,19 @@ def integer(env, name, default, minimum, maximum):
         value = int(env.get(name, str(default)))
     except (TypeError, ValueError):
         raise ValueError(name + ' must be an integer.') from None
+    if not minimum <= value <= maximum:
+        raise ValueError(name + f' must be between {minimum} and {maximum}.')
+    return value
+
+
+def positive_float(env, name, default, minimum=0.05, maximum=86400.0):
+    raw = env.get(name)
+    if raw is None or str(raw).strip() == '':
+        return float(default)
+    try:
+        value = float(str(raw).strip())
+    except (TypeError, ValueError):
+        raise ValueError(name + ' must be a number.') from None
     if not minimum <= value <= maximum:
         raise ValueError(name + f' must be between {minimum} and {maximum}.')
     return value
@@ -95,6 +149,11 @@ class Settings:
     storage_backend: str = 'sqlite'
     database_url: str = field(default='', repr=False)
     demo_tenant_id: str = ''
+    case_reminder_seconds: float = DEFAULT_CASE_REMINDER_SECONDS
+    case_post_reminder_close_seconds: float = DEFAULT_CASE_POST_REMINDER_CLOSE_SECONDS
+    case_completion_seconds: float = DEFAULT_CASE_COMPLETION_SECONDS
+    case_timer_scan_seconds: float = DEFAULT_CASE_TIMER_SCAN_SECONDS
+    production_env: bool = False
 
     def __post_init__(self):
         object.__setattr__(self, 'demo_tenant_id', normalize_tenant_id(self.demo_tenant_id))
@@ -120,6 +179,25 @@ class Settings:
             raise ValueError('RETAILOPS_API_DAILY_TURN_LIMIT must be between 1 and 10000.')
         if type(self.port) is not int or not 0 <= self.port <= 65535:
             raise ValueError('RETAILOPS_API_PORT must be between 0 and 65535.')
+        CaseTimerConfig(
+            reminder_seconds=self.case_reminder_seconds,
+            post_reminder_close_seconds=self.case_post_reminder_close_seconds,
+            completion_seconds=self.case_completion_seconds,
+            scan_seconds=self.case_timer_scan_seconds,
+            data_mode=self.data_mode,
+            production_env=self.production_env,
+        )
+
+    @property
+    def case_timer_config(self) -> CaseTimerConfig:
+        return CaseTimerConfig(
+            reminder_seconds=self.case_reminder_seconds,
+            post_reminder_close_seconds=self.case_post_reminder_close_seconds,
+            completion_seconds=self.case_completion_seconds,
+            scan_seconds=self.case_timer_scan_seconds,
+            data_mode=self.data_mode,
+            production_env=self.production_env,
+        )
 
     @classmethod
     def from_environment(cls, interface, environ: Mapping[str, str] | None = None):
@@ -128,6 +206,7 @@ class Settings:
         env = os.environ if environ is None else environ
         public = interface == 'public'
         backend, database_url = database_settings(env)
+        is_prod_env = str(env.get('RETAILOPS_ENV', '')).strip().lower() in ('production', 'prod', 'live')
         return cls(
             interface=interface,
             output=Path(env.get('RETAILOPS_OUTPUT', '/data' if public else str(ROOT/'artifacts'))),
@@ -156,6 +235,19 @@ class Settings:
             api_daily_turn_limit=integer(env, 'RETAILOPS_API_DAILY_TURN_LIMIT', 20, 1, 10000),
             storage_backend=backend, database_url=database_url,
             demo_tenant_id=tenant_selector(env),
+            case_reminder_seconds=positive_float(
+                env, 'RETAILOPS_CASE_REMINDER_SECONDS', DEFAULT_CASE_REMINDER_SECONDS
+            ),
+            case_post_reminder_close_seconds=positive_float(
+                env, 'RETAILOPS_CASE_POST_REMINDER_CLOSE_SECONDS', DEFAULT_CASE_POST_REMINDER_CLOSE_SECONDS
+            ),
+            case_completion_seconds=positive_float(
+                env, 'RETAILOPS_CASE_COMPLETION_SECONDS', DEFAULT_CASE_COMPLETION_SECONDS
+            ),
+            case_timer_scan_seconds=positive_float(
+                env, 'RETAILOPS_CASE_TIMER_SCAN_SECONDS', DEFAULT_CASE_TIMER_SCAN_SECONDS
+            ),
+            production_env=is_prod_env,
         )
 
     def summary(self):
