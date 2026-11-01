@@ -318,10 +318,12 @@ class BusinessStore:
 
     @staticmethod
     def _ensure_customer_in_tx(db, customer_id: str) -> None:
+        if not customer_id:
+            return
         db.execute(
-            "INSERT INTO customers(id, name) SELECT ?, 'Khách hàng' "
-            "WHERE ? IS NOT NULL ON CONFLICT(id) DO NOTHING",
-            (customer_id, customer_id),
+            "INSERT INTO customers(id, name) VALUES (?, 'Khách hàng') "
+            "ON CONFLICT(id) DO NOTHING",
+            (customer_id,),
         )
 
     @staticmethod
@@ -1751,12 +1753,9 @@ class BusinessStore:
                     """INSERT INTO cases(
                            case_id, conversation_id, customer_id, status, holder, holder_name,
                            version, resume_count, previous_case_id, created_at, updated_at
-                       )
-                       SELECT ?, ?, ?, 'waiting', NULL, NULL, 1, 0, ?, ?, ?
-                       WHERE NOT EXISTS (
-                           SELECT 1 FROM cases WHERE conversation_id = ? AND status <> 'resolved'
-                       )""",
-                    (new_case_id, cid, customer, latest_case['case_id'], now, now, cid),
+                       ) VALUES (?, ?, ?, 'waiting', NULL, NULL, 1, 0, ?, ?, ?)
+                       ON CONFLICT (conversation_id) WHERE status <> 'resolved' DO NOTHING""",
+                    (new_case_id, cid, customer, latest_case['case_id'], now, now),
                 ).rowcount
                 if inserted == 1:
                     self.log(
@@ -2750,11 +2749,11 @@ class BusinessStore:
                    JOIN conversations conv ON k.conversation_id = conv.id
                    WHERE k.status = 'resolved'
                      AND conv.expires_at > ?
-                     AND (k.resolved_at IS NULL OR (? - k.resolved_at) <= ?)
+                     AND (k.resolved_at IS NULL OR k.resolved_at >= ?)
                      AND EXISTS (SELECT 1 FROM handoff_episodes hex WHERE hex.case_id = k.case_id)
                    ORDER BY COALESCE(k.resolved_at, k.updated_at) DESC
                    LIMIT ?''',
-                (now, now, self.CONVERSATION_TTL, limit),
+                (now, now - self.CONVERSATION_TTL, limit),
             ).fetchall()
 
         def _clean(rows):
