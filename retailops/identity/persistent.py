@@ -95,9 +95,17 @@ class PersistentSessions:
                 503, 'invalid_storage', 'Không mở được kho dữ liệu cửa hàng.')
         return self.directory/'tenants'/(tenant['storage_key']+'.sqlite3')
 
+    def _configure_business_store(self, store):
+        store.data_mode = getattr(self, 'data_mode', 'persistent-demo')
+        if callable(getattr(self, 'store_clock', None)):
+            store.clock = self.store_clock
+        if getattr(self, 'case_timer_config', None) is not None:
+            store.case_timer_config = self.case_timer_config
+        return store
+
     def provision_tenant(self, tenant_id, name, *, seed_demo=False):
         tenant = self.control.ensure_tenant(tenant_id, name)
-        store = BusinessStore(self.tenant_path(tenant))
+        store = self._configure_business_store(BusinessStore(self.tenant_path(tenant)))
         if seed_demo:
             store.seed()
         return store
@@ -105,11 +113,13 @@ class PersistentSessions:
     def business_store(self, tenant_id):
         path = self.tenant_path(self.control.tenant(tenant_id))
         require(path.is_file(), 503, 'tenant_storage_unavailable', 'Kho dữ liệu chưa sẵn sàng; cần quản trị viên kiểm tra.')
-        return BusinessStore(
-            path,
-            create=False,
-            initialize_db=self.maintenance,
-            read_only=self.read_only,
+        return self._configure_business_store(
+            BusinessStore(
+                path,
+                create=False,
+                initialize_db=self.maintenance,
+                read_only=self.read_only,
+            )
         )
 
     def create_member(self, tenant_id, principal_id, name, customer_id, role='customer'):
@@ -276,6 +286,24 @@ class PersistentSessions:
 
     def metadata(self):
         return {'session_scope': 'persistent-account', 'data_mode': self.data_mode, 'session_seconds': self.session_seconds}
+
+    def run_case_timers_once(self, now: float | None = None) -> dict:
+        totals = {'reminded': 0, 'resolved_inactivity': 0, 'resolved_completed': 0, 'tenants': 0}
+        if getattr(self, 'read_only', False):
+            return totals
+        with self.control.connection() as db:
+            rows = db.execute('SELECT id FROM tenants WHERE active=1 ORDER BY id ASC').fetchall() or []
+        for row in rows:
+            tid = row['id'] if isinstance(row, dict) else row['id']
+            try:
+                store = self.business_store(tid)
+            except ApiError:
+                continue
+            res = store.process_due_case_timers(now=now)
+            totals['tenants'] += 1
+            for k in ('reminded', 'resolved_inactivity', 'resolved_completed'):
+                totals[k] += int(res.get(k, 0))
+        return totals
 
     @property
     def sales_adapter(self):

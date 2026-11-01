@@ -58,17 +58,19 @@ class PostgresSessions(PersistentSessions):
 
     def provision_tenant(self, tenant_id, name, *, seed_demo=False):
         tenant = self.control.ensure_tenant(tenant_id, name)
-        store = PostgresBusinessStore(self.dsn, tenant['storage_key'], create=True)
+        store = self._configure_business_store(PostgresBusinessStore(self.dsn, tenant['storage_key'], create=True))
         if seed_demo:
             store.seed()
         return store
 
     def business_store(self, tenant_id):
-        return PostgresBusinessStore(
-            self.dsn,
-            self.control.tenant(tenant_id)['storage_key'],
-            migrate=self.maintenance,
-            read_only=self.read_only,
+        return self._configure_business_store(
+            PostgresBusinessStore(
+                self.dsn,
+                self.control.tenant(tenant_id)['storage_key'],
+                migrate=self.maintenance,
+                read_only=self.read_only,
+            )
         )
 
     def check_storage(self, member):

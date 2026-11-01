@@ -33,7 +33,9 @@ def build_public_app(settings: Settings | None = None) -> PublicWeb:
     else:
         sessions = GuestSessions(settings.output/'public-guests', settings.access_token,
                                  gateways.custom, gateways.api, settings.api_daily_turn_limit)
-    return PublicWeb(settings.origin, sessions)
+    tcfg = settings.case_timer_config
+    sessions.case_timer_config = tcfg
+    return PublicWeb(settings.origin, sessions, start_timer_worker=True, timer_scan_seconds=tcfg.scan_seconds)
 
 
 def build_private_app(settings: Settings | None = None) -> Application:
@@ -42,6 +44,8 @@ def build_private_app(settings: Settings | None = None) -> Application:
         raise ValueError('Private startup requires private settings.')
     gateways = build_gateways(settings)
     store = BusinessStore(settings.output/'business.sqlite3')
+    store.data_mode = settings.data_mode
+    store.case_timer_config = settings.case_timer_config
     store.seed()
     token_hash = hashlib.sha256(settings.access_token.encode()).hexdigest()
     return Application(store, {token_hash: 'C-001'}, gateways.custom, gateways.api, settings.api_daily_turn_limit)

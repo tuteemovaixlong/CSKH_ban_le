@@ -969,7 +969,7 @@ class PhaseR1W2StaffDeskClaimResolveReadOnlyTests(unittest.TestCase):
         self.store_b = self.sessions.provision_tenant("store-beta", "Beta", seed_demo=True)
         self.store_a.clock = lambda: self.now
         self.store_b.clock = lambda: self.now
-        self.web = PublicWeb(ORIGIN, self.sessions)
+        self.web = PublicWeb(ORIGIN, self.sessions, start_timer_worker=False)
         self._wsgi = _wsgi
 
         def _mk(tid: str, pid: str, name: str, cid: str, role: str):
@@ -1184,6 +1184,334 @@ class PhaseR1W2StaffDeskClaimResolveReadOnlyTests(unittest.TestCase):
             self.web, "GET", f"/api/staff/cases/{cr['case_id']}/messages", cookie=self.ck_staff1_a
         )
         self.assertEqual((st_exp, b_exp["error"]), (403, "case_retention_expired"))
+
+
+class PhaseR1W2CaseTimersTests(unittest.TestCase):
+    """Item 8: 5m reminder + 3m inactivity close, 5m post-feedback completion close, concurrency, holder guard, and production config guard."""
+
+    def setUp(self):
+        import secrets
+        from retailops.http.public import PublicWeb
+        from tests.test_r1_w1_identity_rbac import ORIGIN, _FixtureGateway, _wsgi
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.now = time.time()
+        self.sessions = PersistentSessions(
+            self.root / "persistent",
+            infer=_FixtureGateway(),
+            api_infer=_FixtureGateway(),
+            api_daily_limit=20,
+            default_tenant_id="store-alpha",
+        )
+        self.sessions.store_clock = lambda: self.now
+        self.store = self.sessions.provision_tenant("store-alpha", "Alpha", seed_demo=True)
+        self.web = PublicWeb(ORIGIN, self.sessions, start_timer_worker=False)
+        self._wsgi = _wsgi
+
+        def _mk(pid: str, name: str, cid: str, role: str):
+            mid = self.sessions.create_member("store-alpha", pid, name, cid, role=role)
+            tok = secrets.token_urlsafe(32)
+            self.sessions.control.register_credential(mid, tok)
+            st, _, hdrs = _wsgi(self.web, "POST", "/api/login", {"token": tok})
+            self.assertEqual(st, 200)
+            return {"principal_id": pid, "membership_id": mid}, hdrs["Set-Cookie"].split(";")[0]
+
+        self.cust, self.ck_cust = _mk("prin_cust", "Khách Timer", "C-001", "customer")
+        self.staff, self.ck_staff = _mk("prin_staff", "Nhân viên Timer", "C-002", "staff")
+
+    def test_item8_remind_once_close_at_3m_duplicate_workers_and_holder_guard(self):
+        import threading
+        from retailops.business.store import CASE_INACTIVITY_REMINDER_MESSAGE
+
+        _, conv_res, _ = self._wsgi(self.web, "POST", "/api/conversations", {}, cookie=self.ck_cust)
+        cid, case_id = conv_res["conversation_id"], conv_res["case_id"]
+        self.assertFalse(conv_res["case"]["has_active_timer"])
+
+        # Bot replies -> starts 5-minute reminder timer (300s), NOT 3-minute direct close
+        st_chat, chat_res, _ = self._wsgi(
+            self.web,
+            "POST",
+            "/api/chat",
+            {"conversation_id": cid, "text": "Cho mình hỏi về sản phẩm ạ", "request_id": "timer-turn-00000000000001"},
+            cookie=self.ck_cust,
+        )
+        self.assertEqual(st_chat, 200)
+        self.assertTrue(chat_res["case"]["has_active_timer"])
+
+        # Seed a workflow lease to verify inactivity close releases leases too
+        with self.store.connection(write=True) as db:
+            db.execute(
+                "INSERT INTO graph_runs VALUES (?, ?, ?, ?, ?, ?, ?)",
+                ("run-timer-1", "C-001", "fp-t1", json.dumps({"id": cid}), self.now + 1800, "owner-t1", self.now + 180),
+            )
+
+        # At +299s: not yet due -> 0 reminders, 0 closes
+        self.now += 299.0
+        self.assertEqual(self.web.run_case_timers_once(), {"reminded": 0, "resolved_inactivity": 0, "resolved_completed": 0, "tenants": 1})
+
+        # At +300s (5m): run TWO concurrent workers simultaneously -> exact 1 reminder turn, no duplicate!
+        self.now += 1.0
+        barrier = threading.Barrier(2)
+        worker_results = []
+
+        def _worker():
+            barrier.wait(timeout=5)
+            worker_results.append(self.web.run_case_timers_once())
+
+        w1 = threading.Thread(target=_worker)
+        w2 = threading.Thread(target=_worker)
+        w1.start()
+        w2.start()
+        w1.join(timeout=5)
+        w2.join(timeout=5)
+        self.assertEqual(sum(r["reminded"] for r in worker_results), 1)
+        self.assertEqual(sum(r["resolved_inactivity"] for r in worker_results), 0)
+
+        # Running worker again right after is a safe no-op
+        self.assertEqual(self.web.run_case_timers_once()["reminded"], 0)
+
+        _, tr_mid, _ = self._wsgi(self.web, "GET", f"/api/conversations/{cid}/messages", cookie=self.ck_cust)
+        reminder_turns = []
+        for t in tr_mid["turns"]:
+            robj = json.loads(t["result"]) if isinstance(t.get("result"), str) else (t.get("result") or {})
+            if isinstance(robj, dict) and robj.get("author") == "system_reminder":
+                reminder_turns.append(robj)
+        self.assertEqual(len(reminder_turns), 1)
+        self.assertEqual(reminder_turns[0]["message"], CASE_INACTIVITY_REMINDER_MESSAGE)
+        self.assertEqual(tr_mid["case"]["status"], "waiting")
+
+        # At +179s after reminder: still open!
+        self.now += 179.0
+        self.assertEqual(self.web.run_case_timers_once()["resolved_inactivity"], 0)
+
+        # At +180s (+3m after reminder): two concurrent workers -> exact 1 inactivity close, lease released!
+        self.now += 1.0
+        barrier2 = threading.Barrier(2)
+        close_results = []
+
+        def _close_worker():
+            barrier2.wait(timeout=5)
+            close_results.append(self.web.run_case_timers_once())
+
+        c1 = threading.Thread(target=_close_worker)
+        c2 = threading.Thread(target=_close_worker)
+        c1.start()
+        c2.start()
+        c1.join(timeout=5)
+        c2.join(timeout=5)
+        self.assertEqual(sum(r["resolved_inactivity"] for r in close_results), 1)
+
+        with self.store.connection() as db:
+            k_closed = dict(db.execute("SELECT * FROM cases WHERE case_id = ?", (case_id,)).fetchone())
+            gr_after = db.execute("SELECT lease_owner, lease_until FROM graph_runs WHERE id = 'run-timer-1'").fetchone()
+        self.assertEqual((k_closed["status"], k_closed["resolved_reason"]), ("resolved", "inactivity"))
+        self.assertEqual((gr_after["lease_owner"], gr_after["lease_until"]), (None, 0))
+
+        # Holder guard: a case claimed by Staff (even if someone force-wrote expired deadlines) is NEVER closed by worker
+        _, conv2, _ = self._wsgi(self.web, "POST", "/api/conversations", {}, cookie=self.ck_cust)
+        cid2, case2 = conv2["conversation_id"], conv2["case_id"]
+        self._wsgi(
+            self.web,
+            "POST",
+            "/api/feedback",
+            {"conversation_id": cid2, "feedback_type": "human_handoff", "comment": "Gặp nhân viên"},
+            cookie=self.ck_cust,
+        )
+        self._wsgi(self.web, "POST", f"/api/staff/cases/{case2}/claim", {}, cookie=self.ck_staff)
+        with self.store.connection(write=True) as db:
+            db.execute(
+                "UPDATE cases SET reminder_deadline = ?, inactivity_deadline = ?, completion_deadline = ? WHERE case_id = ?",
+                (self.now - 10, self.now - 10, self.now - 10, case2),
+            )
+        res_held = self.web.run_case_timers_once()
+        self.assertEqual((res_held["reminded"], res_held["resolved_inactivity"], res_held["resolved_completed"]), (0, 0, 0))
+        with self.store.connection() as db:
+            k_held = dict(db.execute("SELECT status, holder FROM cases WHERE case_id = ?", (case2,)).fetchone())
+        self.assertEqual((k_held["status"], k_held["holder"]), ("in_progress", self.staff["principal_id"]))
+
+    def test_item8_customer_reply_before_deadline_and_racing_worker_keeps_case_open(self):
+        _, conv_res, _ = self._wsgi(self.web, "POST", "/api/conversations", {}, cookie=self.ck_cust)
+        cid, case_id = conv_res["conversation_id"], conv_res["case_id"]
+        self._wsgi(
+            self.web,
+            "POST",
+            "/api/chat",
+            {"conversation_id": cid, "text": "Câu 1", "request_id": "timer-race-00000000000001"},
+            cookie=self.ck_cust,
+        )
+        # Advance to 5m -> reminder fires, setting +3m inactivity_deadline
+        self.now += 300.0
+        self.assertEqual(self.web.run_case_timers_once()["reminded"], 1)
+
+        # 1. Customer replies at T-1s (179s after reminder) -> clears reminder/inactivity deadlines, restarts fresh 5m window
+        self.now += 179.0
+        st2, _, _ = self._wsgi(
+            self.web,
+            "POST",
+            "/api/chat",
+            {"conversation_id": cid, "text": "Mình vẫn đang xem ạ", "request_id": "timer-race-00000000000002"},
+            cookie=self.ck_cust,
+        )
+        self.assertEqual(st2, 200)
+        # 2 seconds later (would have been past old +3m deadline!), case MUST still be open with 0 closes!
+        self.now += 2.0
+        self.assertEqual(self.web.run_case_timers_once()["resolved_inactivity"], 0)
+        with self.store.connection() as db:
+            k_open = dict(db.execute("SELECT status, reminded_at, inactivity_deadline FROM cases WHERE case_id = ?", (case_id,)).fetchone())
+        self.assertEqual(k_open["status"], "waiting")
+        self.assertIsNone(k_open["reminded_at"])
+        self.assertIsNone(k_open["inactivity_deadline"])
+
+        # 2. Stale/racing worker conditional-version check: advance to reminder + close due,
+        # simulate customer activity bumping version right before worker's conditional UPDATE executes
+        self.now += 300.0
+        self.assertEqual(self.web.run_case_timers_once()["reminded"], 1)
+        self.now += 180.0
+        with self.store.connection() as db:
+            stale_ver = db.execute("SELECT version FROM cases WHERE case_id = ?", (case_id,)).fetchone()["version"]
+        # Customer message arrives first in DB transaction -> clears timers and bumps version
+        self.store.prepare_customer_chat("C-001", cid)
+        # A late worker attempting conditional close with stale_ver updates 0 rows -> case remains open!
+        with self.store.connection(write=True) as db:
+            late_won = db.execute(
+                """UPDATE cases
+                   SET status = 'resolved', resolved_reason = 'inactivity', version = version + 1
+                   WHERE case_id = ? AND version = ? AND status = 'waiting' AND holder IS NULL
+                     AND inactivity_deadline IS NOT NULL AND inactivity_deadline <= ?""",
+                (case_id, stale_ver, self.now),
+            ).rowcount
+            after_race = dict(db.execute("SELECT status, version FROM cases WHERE case_id = ?", (case_id,)).fetchone())
+        self.assertEqual(late_won, 0)
+        self.assertEqual(after_race["status"], "waiting")
+        self.assertGreater(after_race["version"], stale_ver)
+
+    def test_item8_feedback_prompt_replaces_inactivity_timer_and_closes_completed(self):
+        _, conv_res, _ = self._wsgi(self.web, "POST", "/api/conversations", {}, cookie=self.ck_cust)
+        cid, case_id = conv_res["conversation_id"], conv_res["case_id"]
+        self._wsgi(
+            self.web,
+            "POST",
+            "/api/chat",
+            {"conversation_id": cid, "text": "Cảm ơn shop", "request_id": "timer-comp-00000000000001"},
+            cookie=self.ck_cust,
+        )
+        # Trigger reminder first so inactivity_deadline (+180s) is active, then prompt feedback ->
+        # 5m completion timer (300s) MUST replace the 180s inactivity timer!
+        self.now += 300.0
+        self.assertEqual(self.web.run_case_timers_once()["reminded"], 1)
+
+        st_fp, fp_res, _ = self._wsgi(
+            self.web, "POST", f"/api/conversations/{cid}/feedback-prompt", {}, cookie=self.ck_cust
+        )
+        self.assertEqual(st_fp, 200)
+        self.assertTrue(fp_res["case"]["has_active_timer"])
+
+        # Submitting CSAT at +60s does NOT close early and does NOT extend completion_deadline beyond +300s
+        self.now += 60.0
+        st_csat, _, _ = self._wsgi(
+            self.web,
+            "POST",
+            "/api/feedback",
+            {"conversation_id": cid, "feedback_type": "session_csat", "rating": 5, "sentiment_flag": "positive"},
+            cookie=self.ck_cust,
+        )
+        self.assertEqual(st_csat, 200)
+
+        # At +190s after feedback_prompted_at (past old 180s inactivity timer, before 300s completion timer): still open!
+        self.now += 130.0
+        scan_mid = self.web.run_case_timers_once()
+        self.assertEqual((scan_mid["resolved_inactivity"], scan_mid["resolved_completed"]), (0, 0))
+
+        # At +300s after feedback_prompted_at: closes with resolved_reason='completed'!
+        self.now += 110.0
+        scan_end = self.web.run_case_timers_once()
+        self.assertEqual((scan_end["resolved_inactivity"], scan_end["resolved_completed"]), (0, 1))
+        with self.store.connection() as db:
+            k_comp = dict(db.execute("SELECT status, resolved_reason FROM cases WHERE case_id = ?", (case_id,)).fetchone())
+        self.assertEqual((k_comp["status"], k_comp["resolved_reason"]), ("resolved", "completed"))
+
+        # Also verify no-feedback completion: prompting feedback and waiting 300s with NO rating closes 'completed' and writes 0 feedback events
+        _, conv2, _ = self._wsgi(self.web, "POST", "/api/conversations", {}, cookie=self.ck_cust)
+        cid2, case2 = conv2["conversation_id"], conv2["case_id"]
+        self._wsgi(self.web, "POST", f"/api/conversations/{cid2}/feedback-prompt", {}, cookie=self.ck_cust)
+        self.now += 300.0
+        self.assertEqual(self.web.run_case_timers_once()["resolved_completed"], 1)
+        with self.store.connection() as db:
+            k_comp2 = dict(db.execute("SELECT status, resolved_reason FROM cases WHERE case_id = ?", (case2,)).fetchone())
+            fb_cnt2 = db.execute("SELECT COUNT(*) FROM case_feedback_events WHERE case_id = ?", (case2,)).fetchone()[0]
+        self.assertEqual((k_comp2["status"], k_comp2["resolved_reason"]), ("resolved", "completed"))
+        self.assertEqual(fb_cnt2, 0)
+
+    def test_item8_production_guard_and_live_background_web_worker(self):
+        from retailops.config import CaseTimerConfig, Settings
+        from retailops.http.public import PublicWeb
+        from tests.test_r1_w1_identity_rbac import ORIGIN
+
+        # 1. Production / live mode strictly rejects shortened timer values
+        for bad_kwargs in (
+            {"reminder_seconds": 60.0, "data_mode": "live"},
+            {"post_reminder_close_seconds": 30.0, "data_mode": "live"},
+            {"completion_seconds": 90.0, "data_mode": "live"},
+            {"reminder_seconds": 90.0, "production_env": True},
+        ):
+            with self.assertRaises(ValueError):
+                CaseTimerConfig(**bad_kwargs)
+
+        with self.assertRaises(ValueError):
+            Settings.from_environment(
+                "public",
+                {
+                    "RETAILOPS_DATA_MODE": "live",
+                    "RETAILOPS_PUBLIC_ORIGIN": "https://demo.example.com",
+                    "RETAILOPS_CASE_REMINDER_SECONDS": "90",
+                },
+            )
+        with self.assertRaises(ValueError):
+            Settings.from_environment(
+                "public",
+                {
+                    "RETAILOPS_DATA_MODE": "persistent-demo",
+                    "RETAILOPS_ENV": "production",
+                    "RETAILOPS_PUBLIC_ORIGIN": "https://demo.example.com",
+                    "RETAILOPS_CASE_POST_REMINDER_CLOSE_SECONDS": "60",
+                },
+            )
+
+        # 2. Evaluation / non-production allows shortened timers AND PublicWeb daemon thread runs automatically
+        eval_cfg = CaseTimerConfig(
+            reminder_seconds=0.05,
+            post_reminder_close_seconds=0.05,
+            completion_seconds=0.05,
+            scan_seconds=0.05,
+            data_mode="persistent-demo",
+        )
+        self.sessions.case_timer_config = eval_cfg
+        self.sessions.store_clock = None
+        live_web = PublicWeb(ORIGIN, self.sessions, start_timer_worker=True, timer_scan_seconds=0.05)
+        self.addCleanup(live_web.stop_case_timer_worker)
+
+        _, conv_res, _ = self._wsgi(live_web, "POST", "/api/conversations", {}, cookie=self.ck_cust)
+        cid, case_id = conv_res["conversation_id"], conv_res["case_id"]
+        self._wsgi(
+            live_web,
+            "POST",
+            "/api/chat",
+            {"conversation_id": cid, "text": "Kiểm tra worker nền", "request_id": "timer-bgwk-00000000000001"},
+            cookie=self.ck_cust,
+        )
+        deadline = time.monotonic() + 2.5
+        final_status = None
+        while time.monotonic() < deadline:
+            with self.store.connection() as db:
+                row = db.execute("SELECT status, resolved_reason FROM cases WHERE case_id = ?", (case_id,)).fetchone()
+            if row and row["status"] == "resolved":
+                final_status = (row["status"], row["resolved_reason"])
+                break
+            time.sleep(0.04)
+        live_web.stop_case_timer_worker()
+        self.assertEqual(final_status, ("resolved", "inactivity"))
 
 
 if __name__ == "__main__":

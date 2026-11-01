@@ -1,26 +1,89 @@
 """HTTPS WSGI adapter; session backend supplies authenticated business bindings."""
 import hmac
 import json
+import logging
 import os
 import secrets
 import threading
+import weakref
 from http import HTTPStatus
 from urllib.parse import urlsplit
 from agent_protocol import PROTOCOL
 from retailops.core import ApiError, ROOT, VERSION, fields, require
-from retailops.config import public_origin
+from retailops.config import DEFAULT_CASE_TIMER_SCAN_SECONDS, public_origin
 from retailops.identity.contracts import RequestContext, SessionBackend
 from retailops.http.routes import api_result
 from retailops.http.assets import ASSETS
 
 CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 
+
+def _case_timer_worker_loop(weak_web, stop_event: threading.Event, interval: float) -> None:
+    while not stop_event.wait(interval):
+        web = weak_web()
+        if web is None:
+            return
+        try:
+            web.run_case_timers_once()
+        except Exception:
+            logging.getLogger('retailops.case_timers').debug('Case timer scan failed', exc_info=True)
+        finally:
+            del web
+
+
 class PublicWeb:
-    def __init__(self, origin, sessions: SessionBackend):
+    def __init__(
+        self,
+        origin,
+        sessions: SessionBackend,
+        *,
+        start_timer_worker: bool = True,
+        timer_scan_seconds: float | None = None,
+    ):
         self.origin = public_origin(origin)
         self.host = urlsplit(origin).hostname
         self.sessions = sessions
         self.chat_admission = threading.BoundedSemaphore(6)
+        cfg = getattr(sessions, 'case_timer_config', None)
+        default_scan = float(getattr(cfg, 'scan_seconds', DEFAULT_CASE_TIMER_SCAN_SECONDS))
+        self.timer_scan_seconds = float(timer_scan_seconds) if timer_scan_seconds is not None else default_scan
+        self._timer_stop = threading.Event()
+        self._timer_thread: threading.Thread | None = None
+        if start_timer_worker:
+            self.start_case_timer_worker(self.timer_scan_seconds)
+
+    def start_case_timer_worker(self, scan_seconds: float | None = None) -> None:
+        if self._timer_thread is not None and self._timer_thread.is_alive():
+            return
+        interval = float(scan_seconds) if scan_seconds is not None else self.timer_scan_seconds
+        if interval <= 0:
+            raise ValueError('timer_scan_seconds must be positive.')
+        self.timer_scan_seconds = interval
+        self._timer_stop = threading.Event()
+        stop_event = self._timer_stop
+        weak_self = weakref.ref(self)
+        t = threading.Thread(
+            target=_case_timer_worker_loop,
+            args=(weak_self, stop_event, interval),
+            name='retailops-case-timers',
+            daemon=True,
+        )
+        weakref.finalize(self, stop_event.set)
+        self._timer_thread = t
+        t.start()
+
+    def stop_case_timer_worker(self, timeout: float = 2.0) -> None:
+        self._timer_stop.set()
+        t = self._timer_thread
+        if t is not None and t.is_alive() and t is not threading.current_thread():
+            t.join(timeout=timeout)
+        self._timer_thread = None
+
+    def run_case_timers_once(self, now: float | None = None) -> dict:
+        runner = getattr(self.sessions, 'run_case_timers_once', None)
+        if callable(runner):
+            return runner(now=now)
+        return {'reminded': 0, 'resolved_inactivity': 0, 'resolved_completed': 0, 'tenants': 0}
 
     def __call__(self, environ, start_response):
         extra, mime = [], 'application/json; charset=utf-8'
