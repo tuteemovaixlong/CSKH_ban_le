@@ -93,7 +93,13 @@ class KnowledgePostgresTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             KnowledgeRepository(ro_compatible).search("hủy đơn")
         with store.connection(write=True) as db:
-            initialize(db, store.schema, "business", allow_business_v5_upgrade=True)
+            initialize(
+                db,
+                store.schema,
+                "business",
+                allow_business_v5_upgrade=True,
+                allow_business_v6_upgrade=True,
+            )
         compatible = PostgresBusinessStore(DSN, self.keys[0])
         with compatible.connection() as db:
             self.assertEqual(db.execute("SELECT version FROM retailops_schema").fetchone()["version"], BUSINESS_SCHEMA_CURRENT)
