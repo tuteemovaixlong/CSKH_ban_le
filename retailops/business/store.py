@@ -20,11 +20,10 @@ from retailops.core import (
     ApiError,
     EVIDENCE_MAX_COUNT,
     EVIDENCE_RETENTION_SECONDS,
-    ORDER_ACTION_REASONS,
-    REASONS,
     fields,
     require,
 )
+from retailops.order_reasons import reason_catalog
 from retailops.business.evidence import (
     atomic_write_bytes,
     inspect_and_reencode_evidence,
@@ -3992,12 +3991,11 @@ class BusinessStore:
             ev_d["purged"] = ev_d.get("file_purged_at") is not None
             ev_d["download_url"] = f"/api/order-actions/{d['request_id']}/evidence/{ev_d['evidence_id']}"
             evidence.append(ev_d)
-        reason_label = ORDER_ACTION_REASONS.get(d["type"], {}).get(d["reason_code"])
         return {
             **d,
             "expected_order_version": int(d["expected_order_version"]),
             "version": int(d["version"]),
-            "reason_label": reason_label or d["reason_code"],
+            "reason_label": reason_catalog().label(d["reason_code"]),
             "order": order_dict,
             "delivered_at": delivered_at,
             "days_since_delivery": days_since_delivery,
@@ -4111,7 +4109,6 @@ class BusinessStore:
             "invalid_reason_code",
             "Mã lý do bắt buộc và phải đúng định dạng.",
         )
-        clean_reason_code = reason_code.strip()
         require(
             raised_by_role in ("customer", "staff", "manager"),
             400,
@@ -4120,11 +4117,20 @@ class BusinessStore:
         )
         if raised_by_role == "customer":
             require(
-                clean_reason_code != "delivery_failed" and delivery_failure_attempts is None,
+                delivery_failure_attempts is None,
                 403,
                 "permission_denied",
                 "Khách hàng không được tạo yêu cầu hủy do giao thất bại.",
             )
+        # One shared catalog decides: the code exists, applies to this request type, is allowed for
+        # this role (delivery_failed is staff-only) and carries a description when it requires one.
+        clean_reason_text = self._sanitize_reason_text(reason_text)
+        reason_entry = reason_catalog().validate(
+            reason_code.strip(), action_type, role=raised_by_role, text=clean_reason_text
+        )
+        clean_reason_code = reason_entry["code"]
+        if clean_reason_text is None:
+            clean_reason_text = reason_entry["label"]
         if action_type == "exchange":
             require(
                 exchange_kind in ("size", "one_to_one"),
@@ -4139,12 +4145,6 @@ class BusinessStore:
                 "invalid_exchange_kind",
                 "Chỉ yêu cầu đổi hàng mới có trường exchange_kind.",
             )
-
-        clean_reason_text = self._sanitize_reason_text(reason_text)
-        if clean_reason_text is None:
-            default_label = ORDER_ACTION_REASONS.get(action_type, {}).get(clean_reason_code)
-            if default_label:
-                clean_reason_text = default_label
 
         now_ts = self._now() if now is None else float(now)
         order = self.owned(db, customer_id, order_id)
@@ -4732,8 +4732,13 @@ class BusinessStore:
     def propose(self, customer, body):
         fields(body, {"order_id", "order_version", "cancel_reason"})
         oid, version, reason = body["order_id"], body["order_version"], body["cancel_reason"]
-        require(isinstance(oid, str) and type(version) is int and isinstance(reason, str) and reason in REASONS,
+        # The compatibility facade takes the same customer-selectable cancel reasons as the new route;
+        # a reason that needs a description cannot be sent through this text-less endpoint.
+        entry = reason_catalog().get(reason)
+        require(isinstance(oid, str) and type(version) is int and entry is not None
+                and "cancel" in entry["applies_to"] and not entry["staff_only"] and not entry["requires_text"],
                 400, "invalid_proposal", "Chọn mã đơn và một lý do được hỗ trợ.")
+        reason = entry["code"]
         now_ts = self._now()
         with self.connection(write=True) as db:
             order = self.owned(db, customer, oid)
@@ -4769,7 +4774,7 @@ class BusinessStore:
                 action_type="cancel",
                 expected_order_version=int(p["order_version"]),
                 reason_code=p["reason"],
-                reason_text=ORDER_ACTION_REASONS["cancel"].get(p["reason"], p["reason"]),
+                reason_text=reason_catalog().label(p["reason"]),
                 actor=actor,
                 raised_by_role="customer",
                 correlation_id=key,

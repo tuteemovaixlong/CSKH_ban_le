@@ -7,7 +7,8 @@ from pathlib import Path
 import re
 import time
 import urllib.parse
-from retailops.core import ApiError, BinaryPayload, EVIDENCE_MAX_BYTES, ORDER_ACTION_REASONS, fields, require
+from retailops.core import ApiError, BinaryPayload, EVIDENCE_MAX_BYTES, fields, require
+from retailops.order_reasons import ACTION_TYPES, reason_catalog
 from retailops.workflow import approval
 from retailops.business.permissions import ACTIVE_BUSINESS_ROLES, READ, CANCEL, STAFF, MANAGER
 from retailops.identity.contracts import RequestContext
@@ -434,6 +435,9 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             ))
         if path == "/api/providers":
             return (200, app.providers())
+        if path == "/api/order-action-reasons":
+            _require_ctx_permission(ctx, READ)
+            return (200, reason_catalog().public(ctx.role))
         if path == "/api/orders":
             if ctx.role == 'manager':
                 with app.store.connection() as db:
@@ -591,7 +595,10 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 "read_only": ro,
                 "orders": formatted_orders,
                 "consent_turns": info["consent_turns"],
-                "order_action_reasons": ORDER_ACTION_REASONS,
+                "order_action_reasons": {
+                    action: {e["code"]: e["label"] for e in reason_catalog().options(action, role=ctx.role)}
+                    for action in ACTION_TYPES
+                },
             })
         m_case_oa = re.fullmatch(r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/order-actions", path)
         if m_case_oa:

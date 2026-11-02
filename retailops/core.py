@@ -4,26 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = '0.9'
 DATA_MODE = 'synthetic-demo'
-REASONS = {"ordered_by_mistake": "Tôi đặt nhầm", "no_longer_needed": "Tôi không còn cần"}
-ORDER_ACTION_REASONS = {
-    "cancel": {
-        "ordered_by_mistake": "Tôi đặt nhầm",
-        "no_longer_needed": "Tôi không còn cần",
-        "changed_mind": "Tôi đổi ý",
-        "delivery_failed": "Giao hàng thất bại",
-    },
-    "return": {
-        "defective_item": "Sản phẩm lỗi / hư hỏng",
-        "wrong_item": "Giao sai sản phẩm / mẫu",
-        "not_as_described": "Không giống mô tả",
-        "no_longer_needed": "Tôi không còn nhu cầu",
-    },
-    "exchange": {
-        "wrong_size": "Không vừa size / muốn đổi size",
-        "defective_item": "Sản phẩm lỗi (đổi 1-1)",
-        "wrong_item": "Giao sai mẫu (đổi 1-1)",
-    },
-}
+# Order-action reasons are declared once, in data/order_action_reasons.json (see retailops/order_reasons.py).
 STATUSES = {"pending": "Chờ xử lý", "delivered": "Đã giao", "cancelled": "Đã hủy"}
 EVIDENCE_MAX_BYTES = 10_485_760
 EVIDENCE_MAX_COUNT = 5

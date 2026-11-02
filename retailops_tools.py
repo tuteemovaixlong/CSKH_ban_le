@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 
-from retailops.core import ORDER_ACTION_REASONS
+from retailops.order_reasons import reason_catalog
 from retailops_conversation import normalize
 from retailops.knowledge.tool import KnowledgeTool
 
@@ -127,11 +127,10 @@ class BoundTools:
                 eligible = (order['status'] == 'pending') and (not has_open_request)
             else:
                 eligible = (order['status'] == 'delivered') and (not has_open_request)
-            reason_options = {
-                code: label
-                for code, label in ORDER_ACTION_REASONS.get(action_type, {}).items()
-                if code != 'delivery_failed'
-            }
+            reason_options = [
+                {'code': e['code'], 'label': e['label'], 'requires_text': e['requires_text']}
+                for e in reason_catalog().options(action_type, role='customer')
+            ]
             if eligible:
                 self.prepared_order_action = {
                     'order': order,

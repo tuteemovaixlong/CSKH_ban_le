@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "description": "Danh mục lý do duy nhất cho yêu cầu hủy / trả / đổi hàng (W3.2-D2, W3.2-D4). UI khách, Staff Desk, trợ lý AI và kiểm tra phía server đều đọc file này. Thêm lý do mới chỉ cần sửa file này.",
+  "reasons": [
+    {
+      "code": "change_of_mind",
+      "label": "Khách đổi ý",
+      "applies_to": ["cancel", "return", "exchange"],
+      "requires_text": false,
+      "staff_only": false
+    },
+    {
+      "code": "fit_issue",
+      "label": "Không vừa",
+      "applies_to": ["return", "exchange"],
+      "requires_text": false,
+      "staff_only": false
+    },
+    {
+      "code": "defective_item",
+      "label": "Sản phẩm lỗi / hư hỏng",
+      "applies_to": ["return", "exchange"],
+      "requires_text": false,
+      "staff_only": false
+    },
+    {
+      "code": "wrong_item",
+      "label": "Giao sai sản phẩm / biến thể",
+      "applies_to": ["return", "exchange"],
+      "requires_text": false,
+      "staff_only": false
+    },
+    {
+      "code": "not_as_described",
+      "label": "Không giống mô tả",
+      "applies_to": ["return", "exchange"],
+      "requires_text": false,
+      "staff_only": false
+    },
+    {
+      "code": "ordered_by_mistake",
+      "label": "Đặt nhầm",
+      "applies_to": ["cancel", "return"],
+      "requires_text": false,
+      "staff_only": false
+    },
+    {
+      "code": "no_longer_needed",
+      "label": "Không còn cần",
+      "applies_to": ["cancel", "return"],
+      "requires_text": false,
+      "staff_only": false
+    },
+    {
+      "code": "delivery_failed",
+      "label": "Giao hàng thất bại",
+      "applies_to": ["cancel"],
+      "requires_text": false,
+      "staff_only": true
+    },
+    {
+      "code": "other",
+      "label": "Lý do khác",
+      "applies_to": ["cancel", "return", "exchange"],
+      "requires_text": true,
+      "staff_only": false
+    }
+  ],
+  "aliases": {
+    "changed_mind": "change_of_mind",
+    "wrong_size": "fit_issue"
+  }
+}

@@ -10,7 +10,8 @@ import time
 import uuid
 
 logger = logging.getLogger("retailops.application")
-from retailops.core import ApiError, REASONS, STATUSES, fields, require
+from retailops.core import ApiError, STATUSES, fields, require
+from retailops.order_reasons import reason_catalog
 from retailops.identity.bearer import authenticate_bearer
 from retailops.business.permissions import CANCEL, READ, ROLE_PERMISSIONS
 from retailops_agent import AgentError, run_agent
@@ -27,6 +28,7 @@ class Application:
                  tenant_id=None, tool_cache=None):
         if role not in ROLE_PERMISSIONS:
             raise ValueError('Unknown application role.')
+        reason_catalog()  # fail closed at startup when the shared reason catalog is missing or invalid
         self.role, self.permissions = role, ROLE_PERMISSIONS[role]
         self.store, self.tokens, self.infer = store, tokens, infer
         self.api_infer = api_infer
@@ -577,5 +579,5 @@ class Application:
         product = self.catalog.for_order(order)
         pid = product['id'] if product else None
         self.store.remember(customer, snapshot, order['id'], pid)
-        return {'order': order, 'message': describe_order(order, STATUSES, REASONS),
+        return {'order': order, 'message': describe_order(order, STATUSES, reason_catalog().labels()),
                 'context': {'order_id': order['id'], 'product_id': pid}, 'source': 'store_data', 'model_used': False}
