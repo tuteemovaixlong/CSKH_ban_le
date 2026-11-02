@@ -4434,4 +4434,47 @@ body [hidden] {
 .admin-audit-heading {
   margin: 8px 0;
 }
+
+/* Case lifecycle milestone system notices (W3.1-D3) */
+.case-milestone-notice {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin: 6px auto;
+  width: 100%;
+  max-width: 100%;
+}
+
+.system-milestone-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #475569;
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  text-align: center;
+  line-height: 1.4;
+}
+
+.case-milestone-notice[data-milestone="case_claimed"] .system-milestone-pill {
+  color: #1e40af;
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+
+.case-milestone-notice[data-milestone="case_released"] .system-milestone-pill {
+  color: #9a3412;
+  background: #fff7ed;
+  border-color: #fed7aa;
+}
+
+.case-milestone-notice[data-milestone="case_resolved"] .system-milestone-pill {
+  color: #166534;
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
 

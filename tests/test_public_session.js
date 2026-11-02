@@ -167,7 +167,18 @@ const context=vm.createContext({document,console,Intl,Date,URLSearchParams,Abort
         status = forceFeedbackError.status;
         body = { error: 'handoff_persist_failed', message: forceFeedbackError.message };
       } else {
-        body = { status: 'ok', case_id: 'case_ui_1', handoff_id: 'hof_ui_1' };
+        const fbBody = JSON.parse(options.body || '{}');
+        if (fbBody.feedback_type === 'human_handoff') {
+          body = {
+            status: 'ok',
+            case_id: 'case_ui_1',
+            handoff_id: 'hof_ui_1',
+            notice_turn_id: 951,
+            notice_message: 'Đã gửi yêu cầu gặp nhân viên. Nhân viên CSKH sẽ phản hồi trong cuộc trò chuyện này.'
+          };
+        } else {
+          body = { status: 'ok', case_id: 'case_ui_1', handoff_id: 'hof_ui_1' };
+        }
       }
     }
     else if(/^\/api\/conversations\/[^/]+\/messages$/.test(url)) {
@@ -180,7 +191,15 @@ const context=vm.createContext({document,console,Intl,Date,URLSearchParams,Abort
       if (mockStaffCases && mockStaffCases.waiting.length) {
         const claimed = { ...mockStaffCases.waiting.shift(), status: 'in_progress', holder: 'p_staff_1', holder_name: 'Khách B', version: 2 };
         mockStaffCases.in_progress.unshift(claimed);
-        body = { status: 'ok', claimed: true, case_id: claimed.case_id, handoff_id: 'hof_ui_1', case: claimed };
+        body = {
+          status: 'ok',
+          claimed: true,
+          case_id: claimed.case_id,
+          handoff_id: 'hof_ui_1',
+          case: claimed,
+          notice_turn_id: 952,
+          notice_message: 'Nhân viên Khách B đã nhận ca hỗ trợ.'
+        };
       } else {
         status = 409;
         body = { error: 'case_claim_conflict', message: 'Ca hỗ trợ đã được nhân viên khác nhận xử lý.' };
@@ -942,6 +961,61 @@ function collectText(node) {
   assert.equal(get('btn-clear-order-search').hidden, true);
   assert.equal(get('order-tabs').hidden, true);
 
+  // R1-W3.1 Item 1 (W3.1-D3): Case lifecycle milestones render as system lines in Customer UI & Staff Desk without browser duplicates
+  const hasCls = (node, cls) => String(node?.className || '').split(/\s+/).includes(cls);
+  get('messages').replaceChildren();
+  run('renderedStaffTurnIds.clear(); isHumanMode = false;');
+  await run('toggleHumanMode()');
+  let custMilestoneRows = get('messages').children.filter(r => hasCls(r, 'case-milestone-notice'));
+  assert.equal(custMilestoneRows.length, 1, 'toggleHumanMode must render exactly 1 system milestone line from DB notice');
+  assert.equal(custMilestoneRows[0].dataset.milestone, 'handoff_requested');
+  assert.equal(get('messages').children.filter(r => hasCls(r, 'assistant')).length, 0, 'Customer UI must not fabricate extra assistant bubble for handoff');
+
+  // Polling transcript containing handoff(951), claim(952), release(953), resolve(955) renders each once and does not duplicate on resolve
+  mockTranscriptResponse = {
+    conversation: { id: 'fixture-conversation', order_id: null, product_id: null },
+    case: { case_id: 'case_ui_1', status: 'resolved', version: 5, has_active_timer: false },
+    turns: [
+      { id: 951, request_id: 'sys-notice-handoff-hof_ui_1', messages: JSON.stringify([{ role: 'assistant', content: 'Đã gửi yêu cầu gặp nhân viên. Nhân viên CSKH sẽ phản hồi trong cuộc trò chuyện này.' }]), result: JSON.stringify({ author: 'system_case_notice', milestone: 'handoff_requested', message: 'Đã gửi yêu cầu gặp nhân viên. Nhân viên CSKH sẽ phản hồi trong cuộc trò chuyện này.' }) },
+      { id: 952, request_id: 'sys-notice-claim-case_ui_1-v2', messages: JSON.stringify([{ role: 'assistant', content: 'Nhân viên Khách B đã nhận ca hỗ trợ.' }]), result: JSON.stringify({ author: 'system_case_notice', milestone: 'case_claimed', message: 'Nhân viên Khách B đã nhận ca hỗ trợ.' }) },
+      { id: 953, request_id: 'sys-notice-release-case_ui_1-v3', messages: JSON.stringify([{ role: 'assistant', content: 'Nhân viên Khách B đã trả ca hỗ trợ về hàng chờ.' }]), result: JSON.stringify({ author: 'system_case_notice', milestone: 'case_released', message: 'Nhân viên Khách B đã trả ca hỗ trợ về hàng chờ.' }) },
+      { id: 955, request_id: 'sys-notice-resolve-case_ui_1-v4', messages: JSON.stringify([{ role: 'assistant', content: 'Nhân viên Khách B đã hoàn tất và đóng ca hỗ trợ. Hệ thống chuyển lại Trợ lý AI.' }]), result: JSON.stringify({ author: 'system_case_notice', milestone: 'case_resolved', message: 'Nhân viên Khách B đã hoàn tất và đóng ca hỗ trợ. Hệ thống chuyển lại Trợ lý AI.' }) }
+    ],
+    feedbacks: [{ feedback_type: 'human_handoff', reason_code: 'resolved' }]
+  };
+  await run('pollHumanChat()');
+  custMilestoneRows = get('messages').children.filter(r => hasCls(r, 'case-milestone-notice'));
+  assert.equal(custMilestoneRows.length, 4, 'Customer polling must render all 4 milestone notices without duplicating 951');
+  assert.equal(get('messages').children.filter(r => hasCls(r, 'assistant')).length, 0, 'Customer resolve polling must not draw duplicate browser assistant bubble');
+
+  // Reloading conversation via loadConversation renders all 4 system milestones cleanly
+  await run('loadConversation("fixture-conversation")');
+  custMilestoneRows = get('messages').children.filter(r => hasCls(r, 'case-milestone-notice'));
+  assert.equal(custMilestoneRows.length, 4, 'Customer reload must preserve all 4 persisted milestone notices');
+  assert.deepEqual(
+    custMilestoneRows.map(r => r.dataset.milestone),
+    ['handoff_requested', 'case_claimed', 'case_released', 'case_resolved']
+  );
+
+  // Staff Desk transcript reload also renders all 4 system milestones as .case-milestone-notice
+  mockSessionRole = 'staff';
+  await run('openSession()');
+  mockStaffCaseTranscriptMap = {
+    case_milestones_1: {
+      conversation: { id: 'fixture-conversation' },
+      case: { case_id: 'case_milestones_1', status: 'resolved', holder: null, version: 4 },
+      read_only: true,
+      turns: mockTranscriptResponse.turns,
+      feedbacks: []
+    }
+  };
+  await run('refreshStaffTranscript("fixture-conversation", false, "case_milestones_1")');
+  const staffMilestoneRows = get('staff-chat-transcript').children.filter(r => hasCls(r, 'case-milestone-notice'));
+  assert.equal(staffMilestoneRows.length, 4, 'Staff Desk transcript must render all 4 persisted milestone notices');
+  mockTranscriptResponse = null;
+
+  mockSessionRole = 'customer';
+  await run('openSession()');
   await get('logout').onclick();
   assert.equal(authenticated,false);assert.equal(reloaded,true);
   assert.equal(requests.at(-1).url,'/api/logout');

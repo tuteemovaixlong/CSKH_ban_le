@@ -1930,14 +1930,15 @@ class BusinessStore:
             if active_case is not None and active_case['previous_case_id'] is not None:
                 row = db.execute(
                     'SELECT 1 FROM agent_turns WHERE conversation_id=? AND customer_id=? '
-                    'AND created_at >= ? AND request_id NOT LIKE ? AND request_id NOT LIKE ? LIMIT 1',
-                    (cid, customer, float(active_case['created_at']) - 1e-6, 'sys-reminder-%', 'sys-oar-%'),
+                    'AND created_at >= ? AND request_id NOT LIKE ? AND request_id NOT LIKE ? '
+                    'AND request_id NOT LIKE ? LIMIT 1',
+                    (cid, customer, float(active_case['created_at']) - 1e-6, 'sys-reminder-%', 'sys-oar-%', 'sys-notice-%'),
                 ).fetchone()
             else:
                 row = db.execute(
                     'SELECT 1 FROM agent_turns WHERE conversation_id=? AND customer_id=? '
-                    'AND request_id NOT LIKE ? AND request_id NOT LIKE ? LIMIT 1',
-                    (cid, customer, 'sys-reminder-%', 'sys-oar-%'),
+                    'AND request_id NOT LIKE ? AND request_id NOT LIKE ? AND request_id NOT LIKE ? LIMIT 1',
+                    (cid, customer, 'sys-reminder-%', 'sys-oar-%', 'sys-notice-%'),
                 ).fetchone()
             return row is not None
 
@@ -1983,17 +1984,17 @@ class BusinessStore:
                 rows = db.execute(
                     '''SELECT messages FROM agent_turns
                        WHERE conversation_id=? AND customer_id=?
-                         AND created_at >= ? AND request_id NOT LIKE ? AND request_id NOT LIKE ?
+                         AND created_at >= ? AND request_id NOT LIKE ? AND request_id NOT LIKE ? AND request_id NOT LIKE ?
                        ORDER BY id DESC LIMIT ?''',
-                    (cid, customer, float(active_case['created_at']) - 1e-6, 'sys-reminder-%', 'sys-oar-%', limit),
+                    (cid, customer, float(active_case['created_at']) - 1e-6, 'sys-reminder-%', 'sys-oar-%', 'sys-notice-%', limit),
                 ).fetchall()
             else:
                 rows = db.execute(
                     '''SELECT messages FROM agent_turns
                        WHERE conversation_id=? AND customer_id=?
-                         AND request_id NOT LIKE ? AND request_id NOT LIKE ?
+                         AND request_id NOT LIKE ? AND request_id NOT LIKE ? AND request_id NOT LIKE ?
                        ORDER BY id DESC LIMIT ?''',
-                    (cid, customer, 'sys-reminder-%', 'sys-oar-%', limit),
+                    (cid, customer, 'sys-reminder-%', 'sys-oar-%', 'sys-notice-%', limit),
                 ).fetchall()
         turns, characters, count = [], 0, 0
         preserved_recent_image = False
@@ -2393,6 +2394,76 @@ class BusinessStore:
             'resolved_completed': resolved_completed,
         }
 
+    def _append_case_system_notice_in_tx(
+        self,
+        db,
+        *,
+        conversation_id: str | None,
+        customer_id: str,
+        case_id: str,
+        request_id: str,
+        milestone: str,
+        notice_text: str,
+        staff_name: str | None = None,
+        handoff_id: str | None = None,
+        now: float | None = None,
+    ) -> tuple[int | None, str]:
+        if not request_id.startswith('sys-notice-'):
+            raise ValueError(f'Case notice request_id must start with sys-notice-: {request_id!r}')
+        now_ts = self._now() if now is None else float(now)
+        if not conversation_id:
+            return None, notice_text
+        conv = db.execute(
+            'SELECT id, order_id, product_id, expires_at FROM conversations WHERE id = ?',
+            (conversation_id,),
+        ).fetchone()
+        if conv is None:
+            return None, notice_text
+        turn_messages = [{'role': 'assistant', 'content': notice_text}]
+        trace_info: dict[str, object] = {
+            'case_milestone': milestone,
+            'case_id': case_id,
+        }
+        turn_result: dict[str, object] = {
+            'message': notice_text,
+            'author': 'system_case_notice',
+            'source': 'interface',
+            'milestone': milestone,
+            'case_id': case_id,
+            'context': {
+                'order_id': conv['order_id'],
+                'product_id': conv['product_id'],
+            },
+            'trace': trace_info,
+        }
+        if handoff_id:
+            turn_result['handoff_id'] = handoff_id
+            trace_info['handoff_id'] = handoff_id
+        if staff_name:
+            turn_result['staff_name'] = staff_name
+            trace_info['staff_name'] = staff_name
+        db.execute(
+            """INSERT INTO agent_turns(conversation_id, customer_id, request_id, input_hash, messages, result, created_at)
+               VALUES (?, ?, ?, 'system-case-notice', ?, ?, ?)
+               ON CONFLICT(conversation_id, request_id) DO NOTHING""",
+            (
+                conversation_id,
+                customer_id,
+                request_id,
+                json.dumps(turn_messages, ensure_ascii=False),
+                json.dumps(turn_result, ensure_ascii=False),
+                now_ts,
+            ),
+        )
+        new_exp = max(float(conv['expires_at']), now_ts + self.CONVERSATION_TTL)
+        db.execute('UPDATE conversations SET expires_at = ? WHERE id = ?', (new_exp, conversation_id))
+        turn_row = db.execute(
+            'SELECT id FROM agent_turns WHERE conversation_id = ? AND request_id = ?',
+            (conversation_id, request_id),
+        ).fetchone()
+        turn_id = turn_row['id'] if turn_row and 'id' in turn_row else (turn_row[0] if turn_row else None)
+        return turn_id, notice_text
+
     def _request_human_handoff_in_tx(
         self,
         db,
@@ -2416,6 +2487,8 @@ class BusinessStore:
             "SELECT * FROM handoff_episodes WHERE case_id = ? AND status = 'pending' LIMIT 1",
             (case_id,),
         ).fetchone()
+        handoff_notice_msg = 'Đã gửi yêu cầu gặp nhân viên. Nhân viên CSKH sẽ phản hồi trong cuộc trò chuyện này.'
+        notice_turn_id = None
         if open_ep is not None:
             handoff_id = open_ep['handoff_id']
             if comment is not None:
@@ -2423,6 +2496,12 @@ class BusinessStore:
                     'UPDATE handoff_episodes SET comment = ? WHERE handoff_id = ?',
                     (comment, handoff_id),
                 )
+            existing_notice = db.execute(
+                'SELECT id FROM agent_turns WHERE conversation_id = ? AND request_id = ?',
+                (cid, f'sys-notice-handoff-{handoff_id}'),
+            ).fetchone()
+            if existing_notice is not None:
+                notice_turn_id = existing_notice['id'] if 'id' in existing_notice else existing_notice[0]
         else:
             handoff_id = f'hoff_{uuid.uuid4().hex}'
             db.execute(
@@ -2431,6 +2510,17 @@ class BusinessStore:
                        status, reason_code, comment, created_at
                    ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)""",
                 (handoff_id, case_id, cid, customer, reason_code, comment, now_ts),
+            )
+            notice_turn_id, handoff_notice_msg = self._append_case_system_notice_in_tx(
+                db,
+                conversation_id=cid,
+                customer_id=customer,
+                case_id=case_id,
+                request_id=f'sys-notice-handoff-{handoff_id}',
+                milestone='handoff_requested',
+                notice_text=handoff_notice_msg,
+                handoff_id=handoff_id,
+                now=now_ts,
             )
 
         next_status = 'in_progress' if active_case.get('holder') else 'waiting'
@@ -2476,6 +2566,8 @@ class BusinessStore:
             'feedback_id': feedback_id,
             'conversation': conv,
             'case': self._case_public_dict(refreshed_case),
+            'notice_turn_id': notice_turn_id,
+            'notice_message': handoff_notice_msg,
         }
 
     def request_human_handoff(
@@ -2519,6 +2611,8 @@ class BusinessStore:
             'handoff_id': handoff['handoff_id'],
             'feedback_id': handoff['feedback_id'],
             'case': handoff['case'],
+            'notice_turn_id': handoff.get('notice_turn_id'),
+            'notice_message': handoff.get('notice_message'),
             'created_at': now,
         }
 
@@ -2588,6 +2682,8 @@ class BusinessStore:
                 'case_id': handoff['case_id'],
                 'handoff_id': handoff['handoff_id'],
                 'case': handoff['case'],
+                'notice_turn_id': handoff.get('notice_turn_id'),
+                'notice_message': handoff.get('notice_message'),
                 'created_at': now,
             }
 
@@ -2739,7 +2835,12 @@ class BusinessStore:
         with self.connection() as db:
             rows = db.execute('''
                 SELECT c.id, c.customer_id, c.order_id, c.product_id, c.provider_id, c.expires_at,
-                       COUNT(t.id) as turns_count,
+                       SUM(CASE WHEN t.id IS NOT NULL
+                                 AND t.request_id NOT LIKE 'sys-reminder-%'
+                                 AND t.request_id NOT LIKE 'sys-oar-%'
+                                 AND t.request_id NOT LIKE 'sys-notice-%'
+                           THEN 1 ELSE 0 END) as turns_count,
+                       COUNT(t.id) as raw_turns_count,
                        MAX(t.created_at) as last_activity,
                        MIN(t.created_at) as first_activity
                 FROM conversations c
@@ -2753,12 +2854,24 @@ class BusinessStore:
             conversations = []
             for r in rows:
                 item = dict(r)
+                item['turns_count'] = int(item.get('turns_count') or 0)
+                raw_cnt = int(item.pop('raw_turns_count', 0) or 0)
+                item['has_case_notices'] = raw_cnt > item['turns_count']
                 cid = item['id']
                 first_turn = db.execute('''
                     SELECT messages, result FROM agent_turns
                     WHERE conversation_id=?
+                      AND request_id NOT LIKE 'sys-reminder-%'
+                      AND request_id NOT LIKE 'sys-oar-%'
+                      AND request_id NOT LIKE 'sys-notice-%'
                     ORDER BY id ASC LIMIT 1
                 ''', (cid,)).fetchone()
+                if first_turn is None and raw_cnt > 0:
+                    first_turn = db.execute('''
+                        SELECT messages, result FROM agent_turns
+                        WHERE conversation_id=?
+                        ORDER BY id ASC LIMIT 1
+                    ''', (cid,)).fetchone()
 
                 snippet = ""
                 if first_turn:
@@ -3057,6 +3170,19 @@ class BusinessStore:
             if actor_meta is not None:
                 log_kwargs['actor'] = actor_meta
             self.log(db, case_row['customer_id'], 'case_claimed', conv['order_id'] if conv else None, **log_kwargs)
+            claim_ver = int(case_row['version']) + 1
+            notice_turn_id, notice_message = self._append_case_system_notice_in_tx(
+                db,
+                conversation_id=case_row['conversation_id'],
+                customer_id=case_row['customer_id'],
+                case_id=case_id,
+                request_id=f'sys-notice-claim-{case_id}-v{claim_ver}',
+                milestone='case_claimed',
+                notice_text=f'Nhân viên {staff_label} đã nhận ca hỗ trợ.',
+                staff_name=staff_label,
+                handoff_id=open_ep['handoff_id'],
+                now=now,
+            )
             caller_role = (actor_meta.get('role') if actor_meta else None) or 'staff'
             norm_claim_actor = self._normalize_actor(actor, holder_id, caller_role)
             pending_oars = db.execute(
@@ -3145,6 +3271,8 @@ class BusinessStore:
             'case_id': case_id,
             'handoff_id': open_ep['handoff_id'],
             'case': self._case_public_dict(updated),
+            'notice_turn_id': notice_turn_id,
+            'notice_message': notice_message,
         }
 
     def release_case(self, case_id: str, *, staff_name=None, actor=None, expected_version=None):
@@ -3196,12 +3324,26 @@ class BusinessStore:
             if actor_meta is not None:
                 log_kwargs['actor'] = actor_meta
             self.log(db, case_row['customer_id'], 'case_released', conv['order_id'] if conv else None, **log_kwargs)
+            release_ver = int(case_row['version']) + 1
+            notice_turn_id, notice_message = self._append_case_system_notice_in_tx(
+                db,
+                conversation_id=case_row['conversation_id'],
+                customer_id=case_row['customer_id'],
+                case_id=case_id,
+                request_id=f'sys-notice-release-{case_id}-v{release_ver}',
+                milestone='case_released',
+                notice_text=f'Nhân viên {staff_label} đã trả ca hỗ trợ về hàng chờ.',
+                staff_name=staff_label,
+                now=now,
+            )
             updated = db.execute('SELECT * FROM cases WHERE case_id = ?', (case_id,)).fetchone()
         return {
             'status': 'ok',
             'released': True,
             'case_id': case_id,
             'case': self._case_public_dict(updated),
+            'notice_turn_id': notice_turn_id,
+            'notice_message': notice_message,
         }
 
     def staff_reply(self, customer_id, cid, staff_name, message, *, actor=None, case_id=None):
@@ -3533,6 +3675,19 @@ class BusinessStore:
             if actor_meta is not None:
                 log_kwargs["actor"] = actor_meta
             self.log(db, cust_id, 'escalation_resolved', ord_id, **log_kwargs)
+            resolve_ver = int(case_row['version']) + 1
+            notice_turn_id, notice_message = self._append_case_system_notice_in_tx(
+                db,
+                conversation_id=cid,
+                customer_id=cust_id,
+                case_id=case_row['case_id'],
+                request_id=f"sys-notice-resolve-{case_row['case_id']}-v{resolve_ver}",
+                milestone='case_resolved',
+                notice_text=f'Nhân viên {staff_name} đã hoàn tất và đóng ca hỗ trợ. Hệ thống chuyển lại Trợ lý AI.',
+                staff_name=staff_name,
+                handoff_id=open_ep['handoff_id'],
+                now=now,
+            )
             updated_case = db.execute('SELECT * FROM cases WHERE case_id = ?', (case_row['case_id'],)).fetchone()
 
         out = {
@@ -3543,6 +3698,8 @@ class BusinessStore:
             'leases_released': leases_released,
             'case': self._case_public_dict(updated_case),
             'staff_name': staff_name,
+            'notice_turn_id': notice_turn_id,
+            'notice_message': notice_message,
         }
         if actor_meta is not None:
             out['actor_role'] = actor_meta['role']

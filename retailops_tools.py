@@ -372,6 +372,8 @@ class BoundTools:
                 'status': 'escalated_to_human',
                 'case_id': handoff.get('case_id') if isinstance(handoff, dict) else None,
                 'handoff_id': handoff.get('handoff_id') if isinstance(handoff, dict) else None,
+                'notice_turn_id': handoff.get('notice_turn_id') if isinstance(handoff, dict) else None,
+                'notice_message': handoff.get('notice_message') if isinstance(handoff, dict) else None,
                 'reason': reason,
                 'queue': 'staff_desk',
                 'message': (

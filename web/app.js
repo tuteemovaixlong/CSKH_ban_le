@@ -341,6 +341,16 @@ function humanMessage(text, repName = 'Chuyên viên CSKH') {
   return row;
 }
 
+function caseSystemNoticeMessage(text, milestone = '') {
+  if (!text) return null;
+  const row = el('div', 'message system case-milestone-notice');
+  if (milestone) row.dataset.milestone = milestone;
+  row.append(el('div', 'system-milestone-pill', text));
+  byId('messages').append(row);
+  requestAnimationFrame(() => { byId('messages').scrollTop = byId('messages').scrollHeight; });
+  return row;
+}
+
 function startHumanModePolling() {
   if (humanPollingTimer || typeof setInterval !== 'function') return;
   humanPollingTimer = setInterval(pollHumanChat, 2000);
@@ -385,6 +395,9 @@ async function pollBotCaseTimer() {
         renderedStaffTurnIds.add(t.id);
         message(resObj.message, 'assistant', 'store_data');
         refresh().catch(() => {});
+      } else if (resObj.author === 'system_case_notice' && resObj.message) {
+        renderedStaffTurnIds.add(t.id);
+        caseSystemNoticeMessage(resObj.message, resObj.milestone || '');
       }
     }
     const c = data.case || null;
@@ -428,6 +441,8 @@ async function pollHumanChat() {
         message(resObj.message, 'assistant', 'store_data');
         setModelStatus('Cập nhật yêu cầu đơn hàng', resObj.order_id || 'Đã cập nhật trạng thái');
         refresh().catch(() => {});
+      } else if (resObj.author === 'system_case_notice' && resObj.message) {
+        caseSystemNoticeMessage(resObj.message, resObj.milestone || '');
       }
     }
 
@@ -438,8 +453,8 @@ async function pollHumanChat() {
       if (!pollHumanChat.resolvedNotified) {
         pollHumanChat.resolvedNotified = true;
         currentHandoffId = null;
-        message('Chuyên viên CSKH đã xử lý xong yêu cầu và đóng ca hỗ trợ trực tiếp. Hệ thống chuyển lại Trợ lý AI.', 'assistant', 'interface');
         setHumanMode(false);
+        setModelStatus('Ca hỗ trợ đã hoàn tất', 'Hệ thống đã chuyển lại Trợ lý AI');
       }
     } else {
       pollHumanChat.resolvedNotified = false;
@@ -499,7 +514,10 @@ async function toggleHumanMode() {
       currentCaseId = res?.case_id || currentCaseId;
       currentHandoffId = res?.handoff_id || null;
       setHumanMode(true);
-      message('Đã gửi yêu cầu gặp nhân viên. Nhân viên CSKH sẽ phản hồi trong cuộc trò chuyện này.', 'assistant', 'interface');
+      if (res?.notice_turn_id && res?.notice_message && !renderedStaffTurnIds.has(res.notice_turn_id)) {
+        renderedStaffTurnIds.add(res.notice_turn_id);
+        caseSystemNoticeMessage(res.notice_message, 'handoff_requested');
+      }
     } catch (err) {
       setHumanMode(false);
       message('Không thể gửi yêu cầu gặp nhân viên: ' + (err.message || 'Lỗi máy chủ'), 'assistant', 'interface');
@@ -1323,6 +1341,12 @@ async function send(text, requestId = crypto.randomUUID(), retry = false, attach
   if (result.human_support) {
     currentHandoffId = result.human_support.handoff_id || null;
     showHumanSupport(row, result.human_support);
+    if (result.human_support.notice_turn_id && !renderedStaffTurnIds.has(result.human_support.notice_turn_id)) {
+      renderedStaffTurnIds.add(result.human_support.notice_turn_id);
+      if (result.human_support.notice_message) {
+        caseSystemNoticeMessage(result.human_support.notice_message, 'handoff_requested');
+      }
+    }
     setHumanMode(true, 'Chuyên viên CSKH');
   } else if (result.case?.has_active_timer && !isHumanMode) {
     startBotTimerPolling();
@@ -1403,6 +1427,11 @@ async function loadConversation(cid) {
         message(res.message || '', 'assistant', 'case_timer');
       } else if (res.author === 'system_order_action') {
         message(res.message || '', 'assistant', 'store_data');
+      } else if (res.author === 'system_case_notice' || String(t.request_id || '').startsWith('sys-notice-')) {
+        caseSystemNoticeMessage(res.message || msgs[0]?.content || '', res.milestone || '');
+        if (res.milestone && res.milestone !== 'case_resolved') {
+          hasHumanSupport = true;
+        }
       } else {
         // Standard AI turn
         let userMsg = null;
@@ -1613,7 +1642,10 @@ async function openSession() {
   try {
     const listRes = await api('/api/conversations');
     cachedConvs = listRes?.conversations || [];
-    if (cachedConvs.length > 0 && cachedConvs[0].turns_count > 0) {
+    if (
+      cachedConvs.length > 0
+      && (cachedConvs[0].turns_count > 0 || cachedConvs[0].has_human_handoff || cachedConvs[0].has_case_notices)
+    ) {
       await loadConversation(cachedConvs[0].id);
       resumed = true;
     }
@@ -2654,6 +2686,17 @@ async function refreshStaffTranscript(cid, forceScroll = false, caseId = null) {
       let res = {};
       try { res = typeof t.result === 'string' ? JSON.parse(t.result) : (t.result || {}); } catch(e) {}
 
+      if (res.author === 'system_case_notice' || String(t.request_id || '').startsWith('sys-notice-')) {
+        const sysText = res.message || (raw[0] && raw[0].content) || '';
+        if (sysText) {
+          const row = el('div', 'message system case-milestone-notice');
+          if (res.milestone) row.dataset.milestone = res.milestone;
+          row.append(el('div', 'system-milestone-pill', sysText));
+          transcriptEl.append(row);
+        }
+        return;
+      }
+
       raw.forEach(m => {
         if (m.role === 'user') {
           const row = el('div', 'message user');
@@ -2753,8 +2796,12 @@ async function claimOrReleaseStaffTicket() {
       syncStaffTicketActions(res.case, false);
     }
     setStaffDeskNotice(action === 'claim' ? 'Đã nhận ca hỗ trợ.' : 'Đã trả ca hỗ trợ về hàng chờ.', 'success');
+    if (conversationId && activeStaffTicket?.conversation_id === conversationId && res?.notice_turn_id && res?.notice_message && !renderedStaffTurnIds.has(res.notice_turn_id)) {
+      renderedStaffTurnIds.add(res.notice_turn_id);
+      caseSystemNoticeMessage(res.notice_message, action === 'claim' ? 'case_claimed' : 'case_released');
+    }
     await loadStaffCaseOrderActions(caseId, false);
-    if (action === 'claim' && activeStaffTicket?.conversation_id) {
+    if (activeStaffTicket?.conversation_id) {
       await refreshStaffTranscript(activeStaffTicket.conversation_id, false, caseId);
     }
     await loadStaffQueue(true);
@@ -2841,8 +2888,14 @@ async function resolveStaffTicket() {
       syncStaffTicketActions(res.case, true);
     }
     setStaffDeskNotice('Đã hoàn tất và đóng ca hỗ trợ.', 'success');
+    if (activeStaffTicket?.conversation_id) {
+      await refreshStaffTranscript(activeStaffTicket.conversation_id, true, activeStaffTicket.case_id || null);
+    }
     if (conversationId && activeStaffTicket.conversation_id === conversationId) {
-      message('Chuyên viên CSKH đã hỗ trợ xong và hoàn tất phiên này. Hệ thống chuyển lại Trợ lý AI.', 'assistant', 'interface');
+      if (res?.notice_turn_id && res?.notice_message && !renderedStaffTurnIds.has(res.notice_turn_id)) {
+        renderedStaffTurnIds.add(res.notice_turn_id);
+        caseSystemNoticeMessage(res.notice_message, 'case_resolved');
+      }
       setHumanMode(false);
     }
     loadStaffQueue(true);
