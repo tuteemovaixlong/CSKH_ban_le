@@ -244,3 +244,34 @@ Cả hai quyết định dùng đúng hành vi code đã được kiểm chứng
 **Hiện trạng code W2 phải xử lý** (không cần thêm quyết định): handoff chỉ là một dòng `conversation_feedback` với `reason_code` tự do; danh sách escalation không lọc ca đã đóng; `new_conversation()` xóa hội thoại quá 7 ngày trên toàn tenant và cascade sang handoff đang chờ; UI báo "đã kết nối" trước khi handoff được lưu; ba đường tạo handoff (`/api/feedback`, `customer_message()`, tool `request_human_support` còn trả `support_rep` viết cứng); business store tự migrate khi khởi tạo (SQLite đích v3, PostgreSQL đích v4).
 
 **Kết luận:** W2 **READY** để thực thi theo [W2 execution handoff](W2_EXECUTION_HANDOFF_2026-11-01.md) do owner phát hành. Readiness tổng thể vẫn `BLOCKED` cho `W3–W6`. Migration business v5 và deploy W2 trên production cần owner phê duyệt riêng, theo runbook như W1.
+
+### 2026-11-02 W2 production deploy record
+
+- **Merged:** PR #51 (W2, merge `3ded146`; gồm cả bản sửa `5a8ee46` thêm `RETAILOPS_ENV: production` vào `deploy/compose.postgres.yaml` để chặn rút ngắn timer có hiệu lực trên EC2).
+- **Migration business v5 trên DB production**, cùng mô hình W1:
+  - Preflight chỉ đọc: identity v5; cả 37 tenant ở business v4, chưa có bảng `cases`; tổng 70 hội thoại, 4 hội thoại có handoff mở, 7 dòng `conversation_feedback`.
+  - Backup: `pre-w2-20261102T070102.dump` (đọc lại được 652 mục dữ liệu bảng) và `final-pre-w2-20261102T072142.dump` (sau khi dừng `web`).
+  - Diễn tập trên DB tạm restore từ backup: lần chạy đầu tạo 70 case và 4 episode; chạy lại không đổi gì (0/0); W2 khởi động được trên v5.
+  - `database migrate-v5 --confirm-preflight --confirm-backup` trên DB thật cho kết quả giống hệt diễn tập: 37 tenant lên v5; 70 case, gồm 4 `waiting` và 66 `resolved` với `migrated_v5`; 4 episode `pending`; 7 dòng phản hồi cũ giữ nguyên.
+- **Rollout:** image `sha256:285d4f8ddf48ff435ed7d0557cb4258a3634470c9d48aebcbb4d74d4abee31e6`; `PUBLIC_WEB_ROLLOUT_OK` (có `PUBLIC_WEB_SOURCE_MATCH`), `ADMIN_CONSOLE_SMOKE_OK`, `LIVE_E2E_SMOKE_OK`; gián đoạn khoảng 5 phút. Lần chạy workflow `41403725350` đỏ có chủ đích: đưa image lên EC2 trước khi migrate, rồi tự rollback về `88f139e6`. Owner đã kiểm thử trên trình duyệt và xác nhận đạt.
+- **Vận hành:** deploy thường (`rollout-public-web.sh`) không cập nhật `/opt/retailops/compose.postgres.yaml`; file này đã được thay bằng bản trong image (khác đúng một dòng `RETAILOPS_ENV: production`), và container `web` xác nhận `RETAILOPS_ENV=production`. `RETAILOPS_DEPLOY_ENABLED` để `false` sau deploy. Readiness tổng thể vẫn `BLOCKED` cho `W3–W6`.
+
+### 2026-11-02 W3 readiness review
+
+> **Phạm vi:** một lượt readiness review duy nhất cho W3, chỉ BLOCKER/MAJOR. Đối chiếu §10 (OD-04/05/06), §11.4, §11.6 và README W3 với code trên `main` (`3ded146`).
+
+**Finding đã được owner đóng bằng [§14](W0_OWNER_DECISION_DELTA_2026-10-29.md#14-w3-owner-decisions-2026-11-02):**
+
+| ID | Mức | Vấn đề | Đóng bằng |
+|---|---|---|---|
+| `W3-RR-01` | BLOCKER | Chưa rõ W3 làm tới bước nào của vòng đời trả hàng; ai ghi `received`/`inspected` và kết quả kiểm tra là gì | W3-D2 |
+| `W3-RR-02` | BLOCKER | §11.6 bắt buộc quét mã độc nhưng hệ thống chưa có máy quét; chưa chọn phạm vi bằng chứng | W3-D4 |
+| `W3-RR-03` | MAJOR | Đổi hàng (đổi size, đổi 1-1) chưa thuộc loại yêu cầu nào; UI đang dùng hai nút soạn sẵn gửi cùng một câu | W3-D1 |
+| `W3-RR-04` | MAJOR | Chưa có hệ thống nào là nguồn đúng cho `refunded` (không có cổng thanh toán) | W3-D3 |
+| `W3-RR-05` | MAJOR | Bảng `orders` không có ngày giao, nên server không kiểm được hạn đổi trả | W3-D6 |
+| `W3-RR-06` | MAJOR | Chưa rõ yêu cầu hiện ra cho nhân viên ở đâu và ai được duyệt | W3-D5 |
+| `W3-RR-07` | MAJOR | §11.5 bước 5 đổi đề xuất hủy chưa xác nhận thành yêu cầu, tức là gửi thay khách | W3-D9 |
+
+**Hiện trạng code W3 phải xử lý** (không cần thêm quyết định): `confirm` của `/api/cancellation-proposals*` đổi `orders.status` thành `cancelled` ngay; route đổi trạng thái của Manager không kiểm version, không ghi ngày giao; chưa có bảng yêu cầu, quyết định, bằng chứng hay outbox; dependency chưa có thư viện xử lý ảnh; live E2E đang kiểm hành vi hủy ngay. Owner cũng báo nút "Gửi phản hồi trực tiếp" trên production bấm không có tác dụng, và bố cục nút Staff Desk bị vỡ; cả hai đưa vào W3 theo W3-D10.
+
+**Kết luận:** W3 **READY** để thực thi theo [W3 execution handoff](W3_EXECUTION_HANDOFF_2026-11-02.md) do owner phát hành. Readiness tổng thể vẫn `BLOCKED` cho `W4–W6`. Migration business v6 và deploy W3 trên production cần owner phê duyệt riêng, theo runbook như W2.
