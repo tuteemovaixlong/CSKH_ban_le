@@ -16,6 +16,8 @@ from retailops.storage.postgres import (
 
 
 class PostgresBusinessStore(BusinessStore):
+    _supports_skip_locked = True
+
     def __init__(self, dsn, storage_key, *, create=False, migrate=True, read_only=False):
         if create and (not migrate or read_only):
             raise ValueError('Creating a PostgreSQL store is incompatible with read-only/no-migration mode.')
@@ -46,9 +48,11 @@ class PostgresBusinessStore(BusinessStore):
                     for statement in P5C_BUSINESS_DDL:
                         db.raw.execute(statement)
 
-    def connection(self, write=False):
+    def connection(self, write=False, *, lock_schema=True):
         if self.read_only and write:
             raise ApiError(409, 'read_only_store', 'Kho cửa hàng đang ở chế độ chỉ đọc.')
+        if not lock_schema:
+            return transaction(self.dsn, self.schema, write=write, read_only=self.read_only, lock_schema=False)
         return transaction(self.dsn, self.schema, write=write, read_only=self.read_only)
 
 
@@ -258,5 +262,37 @@ def migrate_postgres_business_v6(dsn, *, preflight_confirmed=False, backup_confi
         'logical_version': BUSINESS_SCHEMA_CURRENT,
         'tenants': migrated_tenants,
         'upgraded': any_upgraded,
+    }
+
+
+def inspect_postgres_outbox_status(dsn) -> dict:
+    """Strictly read-only operator summary of integration_outbox across PostgreSQL tenants."""
+    validate_dsn(dsn)
+    identity = PostgresIdentityStore(dsn, create=False, migrate=False, read_only=True)
+    with identity.connection(write=False) as id_db:
+        tenants = id_db.execute('SELECT id, storage_key FROM tenants ORDER BY id').fetchall() or []
+
+    totals = {'pending': 0, 'published': 0, 'dead': 0}
+    tenant_reports = []
+    for tenant in tenants:
+        tid = tenant['id']
+        schema = tenant_schema(tenant['storage_key'])
+        with transaction(dsn, IDENTITY_SCHEMA, read_only=True) as probe:
+            exists = probe.raw.execute('SELECT 1 FROM pg_namespace WHERE nspname=%s', (schema,)).fetchone()
+        if not exists:
+            continue
+        store = PostgresBusinessStore(dsn, tenant['storage_key'], create=False, migrate=False, read_only=True)
+        store.tenant_id = tid
+        summary = store.outbox_status_summary()
+        tenant_reports.append({'tenant_id': tid, **summary})
+        for k in ('pending', 'published', 'dead'):
+            totals[k] += int(summary[k])
+
+    return {
+        'result': 'OUTBOX_STATUS',
+        'backend': 'postgresql',
+        'read_only': True,
+        'totals': totals,
+        'tenants': tenant_reports,
     }
 

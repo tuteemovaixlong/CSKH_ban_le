@@ -182,7 +182,7 @@ class Queries:
 
 
 @contextmanager
-def transaction(dsn, schema=IDENTITY_SCHEMA, *, write=False, read_only=False):
+def transaction(dsn, schema=IDENTITY_SCHEMA, *, write=False, read_only=False, lock_schema=True):
     valid_schema(schema)
     if write and read_only:
         raise ValueError('A PostgreSQL transaction cannot be both read-only and writable.')
@@ -196,7 +196,7 @@ def transaction(dsn, schema=IDENTITY_SCHEMA, *, write=False, read_only=False):
             connection.execute("SET LOCAL statement_timeout='15s'")
             connection.execute("SET LOCAL lock_timeout='5s'")
             connection.execute(sql.SQL('SET LOCAL search_path TO {}, pg_catalog').format(sql.Identifier(schema)))
-            if write:
+            if write and lock_schema:
                 connection.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))', (schema,))
             yield Queries(connection)
     except pg.Error as exc:

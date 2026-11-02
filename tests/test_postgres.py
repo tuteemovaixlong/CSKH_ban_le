@@ -2417,6 +2417,55 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         self.assertTrue(idem_out['idempotent_replay'])
         self.assertFalse(idem_out['executed'])
 
+    def test_w3_postgres_outbox_skip_locked_worker_and_readonly_cli(self):
+        """Phase R1 W3: PostgreSQL FOR UPDATE SKIP LOCKED outbox worker + read-only outbox-status CLI."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        out_dir = Path(self.temp.name) / 'w3-outbox-data'
+        self.sessions.data_root = out_dir
+        store = self.sessions.business_store('shop-a')
+        store.data_root = out_dir
+        store.create_order_action_request(
+            'C-001',
+            {'order_id': 'O-101', 'type': 'cancel', 'expected_order_version': 1, 'reason_code': 'changed_mind'},
+            actor={'principal_id': 'p-cust-pg', 'role': 'customer', 'tenant_id': 'shop-a'},
+        )
+        store.create_order_action_request(
+            'C-001',
+            {'order_id': 'O-102', 'type': 'return', 'expected_order_version': 1, 'reason_code': 'defective_item'},
+            actor={'principal_id': 'p-cust-pg', 'role': 'customer', 'tenant_id': 'shop-a'},
+        )
+
+        def _pg_worker(_i):
+            w_store = self.sessions.business_store('shop-a', migrate=False)
+            w_store.data_root = out_dir
+            return w_store.process_outbox_batch(batch_size=10)
+
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            results = list(pool.map(_pg_worker, range(3)))
+        self.assertEqual(sum(r['published'] for r in results), 2)
+
+        jsonl_files = list((out_dir / 'integration' / 'shop-a').glob('*.jsonl'))
+        self.assertEqual(len(jsonl_files), 1)
+        lines = [ln for ln in jsonl_files[0].read_text(encoding='utf-8').splitlines() if ln.strip()]
+        self.assertEqual(len(lines), 2)
+
+        cli_env = {**os.environ, 'RETAILOPS_STORAGE_BACKEND': 'postgresql', 'RETAILOPS_DATABASE_URL': DSN}
+        proc = subprocess.run(
+            [sys.executable, '-m', 'retailops', 'database', 'outbox-status'],
+            env=cli_env,
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            timeout=15,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        report = json.loads(proc.stdout)
+        self.assertEqual(report['result'], 'OUTBOX_STATUS')
+        self.assertEqual(report['backend'], 'postgresql')
+        self.assertTrue(report['read_only'])
+        self.assertGreaterEqual(report['totals']['published'], 2)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -11,6 +11,8 @@ import os
 from pathlib import Path
 import secrets
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import time
 from types import SimpleNamespace
@@ -1668,6 +1670,171 @@ class PhaseR1W3EvidenceStorageExifStripAuthAndPurgeTests(unittest.TestCase):
             self.assertGreater(ev_meta["byte_size"], 0)
             self.assertEqual((ev_meta["width"], ev_meta["height"]), (48, 32))
             self.assertEqual(ev_meta["file_purged_at"], self.now)
+
+
+class PhaseR1W3OutboxWorkerJsonlEnvelopeManifestAndCliTests(unittest.TestCase):
+    """Item 10 isolated acceptance tests: rollback, concurrent workers, §11.4 PII-free JSONL, closed-day sha256, backoff/dead, CLI."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name) / "data"
+        # Fixed UTC timestamp: 2026-11-02T10:00:00Z
+        self.now = 1_793_613_600.0
+        self.sessions = PersistentSessions(self.root / "persistent")
+        self.sessions.store_clock = lambda: self.now
+        self.store = self.sessions.provision_tenant("tenant-ob-1", "Outbox Shop", seed_demo=True)
+        with self.store.connection(write=True) as db:
+            db.execute("UPDATE customers SET name = ? WHERE id = 'C-001'", ("Nguyễn Văn Bí Mật",))
+        self.web = PublicWeb("https://retailops.example.com", self.sessions, start_timer_worker=False)
+
+    def test_item10_rollback_concurrency_pii_free_envelope_manifest_backoff_dead_and_cli(self):
+        from retailops.business.outbox import utc_day_string, validate_outbox_envelope
+
+        # 1. Rolled-back transaction MUST leave zero outbox rows
+        with self.assertRaises(RuntimeError):
+            with self.store.connection(write=True) as db:
+                self.store._enqueue_outbox_in_tx(
+                    db,
+                    event_type="order_status_changed",
+                    actor={"principal_id": "mgr-1", "role": "manager"},
+                    customer_id="C-001",
+                    order_id="O-101",
+                    before={"status": "pending", "version": 1},
+                    after={"status": "delivered", "version": 2},
+                    now=self.now,
+                )
+                raise RuntimeError("abort_before_commit")
+        self.assertEqual(self.store.outbox_status_summary()["pending"], 0)
+
+        # 2. Produce committed events (cancel_requested, exchange_requested, order_status_changed, case_feedback_recorded)
+        self.store.create_order_action_request(
+            "C-001",
+            {"order_id": "O-101", "type": "cancel", "expected_order_version": 1, "reason_code": "ordered_by_mistake"},
+            actor={"principal_id": "p-cust-secret", "role": "customer", "tenant_id": "tenant-ob-1"},
+        )
+        self.store.create_order_action_request(
+            "C-001",
+            {
+                "order_id": "O-102",
+                "type": "exchange",
+                "exchange_kind": "one_to_one",
+                "expected_order_version": 1,
+                "reason_code": "defective_item",
+            },
+            actor={"principal_id": "p-cust-secret", "role": "customer", "tenant_id": "tenant-ob-1"},
+        )
+        conv = self.store.new_conversation("C-001")
+        self.store.record_feedback(
+            "C-001",
+            {
+                "conversation_id": conv["conversation_id"],
+                "feedback_type": "session_csat",
+                "rating": 5,
+                "reason_code": "fast_support",
+                "comment": "Nguyễn Văn Bí Mật SĐT 0909123456 địa chỉ 123 Lê Lợi chat nội dung nhạy cảm",
+            },
+        )
+        self.assertEqual(self.store.outbox_status_summary()["pending"], 3)
+
+        # 3. Run 4 concurrent workers -> each event published ONCE with ZERO duplicate JSONL lines!
+        def _worker(_idx):
+            s = self.sessions.business_store("tenant-ob-1", migrate=False)
+            return s.process_outbox_batch(now=self.now, batch_size=10)
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            worker_results = list(pool.map(_worker, range(4)))
+        self.assertEqual(sum(r["published"] for r in worker_results), 3)
+        self.assertEqual(self.store.outbox_status_summary(), {
+            "pending": 0,
+            "published": 3,
+            "dead": 0,
+            "oldest_pending_at": None,
+            "latest_dead": None,
+        })
+
+        day1 = utc_day_string(self.now)
+        day1_jsonl = self.root / "integration" / "tenant-ob-1" / f"{day1}.jsonl"
+        self.assertTrue(day1_jsonl.is_file())
+        raw_text = day1_jsonl.read_text(encoding="utf-8")
+        lines = [ln for ln in raw_text.splitlines() if ln.strip()]
+        self.assertEqual(len(lines), 3)
+
+        # Validate every envelope against §11.4 schema and assert ZERO PII anywhere in JSONL
+        for forbidden_pii in ("Nguyễn Văn Bí Mật", "0909123456", "123 Lê Lợi", "chat nội dung nhạy cảm", "C-001", "p-cust-secret"):
+            self.assertNotIn(forbidden_pii, raw_text)
+
+        event_ids = set()
+        event_types = set()
+        for ln in lines:
+            env = json.loads(ln)
+            validate_outbox_envelope(env)
+            event_ids.add(env["event_id"])
+            event_types.add(env["event_type"])
+            self.assertTrue(env["customer_ref"].startswith("custref_"))
+        self.assertEqual(len(event_ids), 3)
+        self.assertEqual(event_types, {"cancel_requested", "exchange_requested", "case_feedback_recorded"})
+
+        # Same UTC day -> manifest NOT sealed yet
+        self.assertFalse((self.root / "integration" / "tenant-ob-1" / f"{day1}.sha256").is_file())
+
+        # 4. Advance fake clock to next UTC day (+86400s) -> closed-day SHA-256 manifest is written & matches!
+        self.now += 86400
+        tick = self.web.run_case_timers_once(now=self.now)
+        self.assertEqual(tick["outbox_manifests_sealed"], 1)
+        manifest_file = self.root / "integration" / "tenant-ob-1" / f"{day1}.sha256"
+        self.assertTrue(manifest_file.is_file())
+        expected_sha = hashlib.sha256(day1_jsonl.read_bytes()).hexdigest()
+        self.assertEqual(manifest_file.read_text(encoding="utf-8"), f"{expected_sha}  {day1}.jsonl\n")
+
+        # 5. Fake-clock retry schedule: 60s, 300s, 1800s, 7200s, 43200s, 43200s, 43200s -> 8th failure marks 'dead'
+        with self.store.connection(write=True) as db:
+            db.execute(
+                "INSERT INTO orders(id, customer_id, product_id, name, variant, amount, status, version) "
+                "VALUES ('O-199', 'C-001', 'P-101', 'Áo thun', 'Đen / M', 250000, 'pending', 1)"
+            )
+        self.store.manager_update_order_status("O-199", "delivered", expected_version=1)
+
+        def _always_fail_sink(*_args, **_kwargs):
+            raise OSError("disk_sink_unavailable")
+
+        expected_delays = [60, 300, 1800, 7200, 43200, 43200, 43200]
+        for idx, exp_delay in enumerate(expected_delays, start=1):
+            res_fail = self.store.process_outbox_batch(now=self.now, sink_writer=_always_fail_sink)
+            self.assertEqual((res_fail["retried"], res_fail["dead"]), (1, 0), f"attempt {idx}")
+            with self.store.connection() as db:
+                ob_row = db.execute(
+                    "SELECT status, attempts, next_attempt_at FROM integration_outbox WHERE status='pending'"
+                ).fetchone()
+                self.assertEqual((ob_row["status"], ob_row["attempts"]), ("pending", idx))
+                self.assertEqual(ob_row["next_attempt_at"], self.now + exp_delay)
+            # 1 second before due -> skipped!
+            skip_res = self.store.process_outbox_batch(now=self.now + exp_delay - 1, sink_writer=_always_fail_sink)
+            self.assertEqual((skip_res["retried"], skip_res["published"], skip_res["dead"]), (0, 0, 0))
+            self.now += exp_delay
+
+        # 8th attempt fails -> transitions to 'dead'!
+        res_dead = self.store.process_outbox_batch(now=self.now, sink_writer=_always_fail_sink)
+        self.assertEqual((res_dead["retried"], res_dead["dead"]), (0, 1))
+        summary = self.store.outbox_status_summary()
+        self.assertEqual((summary["pending"], summary["published"], summary["dead"]), (0, 3, 1))
+        self.assertEqual(summary["latest_dead"]["attempts"], 8)
+
+        # 6. Read-only CLI: python -m retailops database outbox-status
+        cli_env = {**os.environ, "RETAILOPS_STORAGE_BACKEND": "sqlite", "RETAILOPS_OUTPUT": str(self.root)}
+        cli_proc = subprocess.run(
+            [sys.executable, "-m", "retailops", "database", "outbox-status"],
+            cwd=str(Path(__file__).resolve().parents[1]),
+            env=cli_env,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        self.assertEqual(cli_proc.returncode, 0, cli_proc.stderr)
+        cli_json = json.loads(cli_proc.stdout)
+        self.assertEqual(cli_json["result"], "OUTBOX_STATUS")
+        self.assertTrue(cli_json["read_only"])
+        self.assertEqual(cli_json["totals"], {"pending": 0, "published": 3, "dead": 1})
 
 
 if __name__ == "__main__":

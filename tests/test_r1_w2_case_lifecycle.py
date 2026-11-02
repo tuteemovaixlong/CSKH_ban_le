@@ -1277,7 +1277,11 @@ class PhaseR1W2CaseTimersTests(unittest.TestCase):
 
         # At +299s: not yet due -> 0 reminders, 0 closes
         self.now += 299.0
-        self.assertEqual(self.web.run_case_timers_once(), {"reminded": 0, "resolved_inactivity": 0, "resolved_completed": 0, "tenants": 1})
+        tick_early = self.web.run_case_timers_once()
+        self.assertEqual(
+            {k: tick_early[k] for k in ("reminded", "resolved_inactivity", "resolved_completed", "tenants")},
+            {"reminded": 0, "resolved_inactivity": 0, "resolved_completed": 0, "tenants": 1},
+        )
 
         # At +300s (5m): run TWO concurrent workers simultaneously -> exact 1 reminder turn, no duplicate!
         self.now += 1.0

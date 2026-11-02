@@ -30,6 +30,13 @@ from retailops.business.evidence import (
     inspect_and_reencode_evidence,
     resolve_protected_subdir,
 )
+from retailops.business.outbox import (
+    OUTBOX_MAX_ATTEMPTS,
+    append_outbox_jsonl_line,
+    compute_next_backoff_seconds,
+    seal_closed_integration_days,
+    validate_outbox_envelope,
+)
 from retailops.guardrails.topic_filter import (
     SAFE_REFUSAL_MESSAGE,
     contains_canary_or_secret,
@@ -391,6 +398,7 @@ CASE_INACTIVITY_REMINDER_MESSAGE = (
 
 class BusinessStore:
     CONVERSATION_TTL = 7 * 86400  # 7 days persistent chat history
+    _supports_skip_locked = False
 
     def _now(self) -> float:
         clk = getattr(self, 'clock', None)
@@ -2638,6 +2646,30 @@ class BusinessStore:
                         now,
                     ),
                 )
+                fb_extra = {
+                    'feedback_event_id': feedback_event_id,
+                    'feedback_type': fb_type,
+                    'preference_label': preference_label,
+                }
+                if rating is not None:
+                    fb_extra['rating'] = rating
+                if sentiment is not None:
+                    fb_extra['sentiment_flag'] = sentiment
+                if turn_id is not None:
+                    fb_extra['turn_id'] = turn_id
+                self._enqueue_outbox_in_tx(
+                    db,
+                    event_type='case_feedback_recorded',
+                    actor={'principal_id': customer, 'role': 'customer'},
+                    customer_id=customer,
+                    case_id=latest_case['case_id'],
+                    reason_code=reason_code,
+                    correlation_id=feedback_event_id,
+                    idempotency_key=feedback_event_id,
+                    source='app',
+                    now=now,
+                    extra_fields=fb_extra,
+                )
             self.log(db, customer, 'feedback_received', None,
                      feedback_id=feedback_id, feedback_event_id=feedback_event_id,
                      case_id=latest_case['case_id'], feedback_type=fb_type,
@@ -3605,6 +3637,9 @@ class BusinessStore:
         now_ts = self._now() if now is None else float(now)
         resolved_tid = str(tenant_id or self._effective_tenant_id(actor)).strip() or "default"
         norm_actor = self._normalize_actor(actor, "system", "system")
+        actor_principal = norm_actor["principal_id"]
+        if norm_actor["role"] == "customer":
+            actor_principal = self._opaque_customer_ref(resolved_tid, str(customer_id or actor_principal))
         event_id = str(uuid.uuid4())
         envelope: dict = {
             "schema": "retailops.order_action",
@@ -3614,7 +3649,7 @@ class BusinessStore:
             "occurred_at": self._iso_utc(now_ts),
             "tenant_id": resolved_tid,
             "actor": {
-                "principal_id": norm_actor["principal_id"],
+                "principal_id": actor_principal,
                 "role": norm_actor["role"],
             },
         }
@@ -3661,6 +3696,7 @@ class BusinessStore:
         envelope["correlation_id"] = str(correlation_id or event_id)
         envelope["idempotency_key"] = str(idempotency_key or event_id)
         envelope["source"] = source
+        validate_outbox_envelope(envelope)
 
         payload_json = json.dumps(envelope, ensure_ascii=False, separators=(",", ":"))
         db.execute(
@@ -5527,3 +5563,204 @@ class BusinessStore:
                         purged_at=now_ts,
                     )
         return {"purged": purged}
+
+    def _open_outbox_claim_tx(self):
+        if getattr(self, "_supports_skip_locked", False):
+            return self.connection(write=True, lock_schema=False)
+        return self.connection(write=True)
+
+    def process_outbox_batch(
+        self,
+        *,
+        now: float | None = None,
+        batch_size: int = 50,
+        sink_writer=None,
+    ) -> dict:
+        now_ts = self._now() if now is None else float(now)
+        max_items = max(1, min(int(batch_size), 500))
+        published = 0
+        retried = 0
+        dead = 0
+
+        select_sql = (
+            """SELECT event_id, tenant_id, event_type, payload_json, created_at, status, attempts, next_attempt_at
+               FROM integration_outbox
+               WHERE status = 'pending' AND next_attempt_at <= ?
+               ORDER BY created_at ASC, event_id ASC
+               LIMIT 1"""
+        )
+        if getattr(self, "_supports_skip_locked", False):
+            select_sql += " FOR UPDATE SKIP LOCKED"
+
+        data_root = self._effective_data_root()
+        seen_tenants = {self._effective_tenant_id(None)}
+
+        for _ in range(max_items):
+            claimed_none = False
+            with self._open_outbox_claim_tx() as db:
+                row = db.execute(select_sql, (now_ts,)).fetchone()
+                if row is None:
+                    claimed_none = True
+                else:
+                    ev_id = row["event_id"]
+                    row_tid = str(row["tenant_id"] or self._effective_tenant_id(None)).strip() or "default"
+                    seen_tenants.add(row_tid)
+                    prev_attempts = int(row["attempts"])
+                    try:
+                        envelope = json.loads(row["payload_json"])
+                        validate_outbox_envelope(envelope)
+                        if sink_writer is not None:
+                            sink_writer(data_root, row_tid, envelope, now_ts=now_ts)
+                        else:
+                            append_outbox_jsonl_line(data_root, row_tid, envelope, now_ts=now_ts)
+                    except Exception as exc:
+                        new_attempts = prev_attempts + 1
+                        err_text = f"{exc.__class__.__name__}: {str(exc)[:300]}"
+                        if contains_canary_or_secret(err_text):
+                            _, err_text = sanitize_structured_payload(err_text, preserve_reasoning=False)
+                        if new_attempts >= OUTBOX_MAX_ATTEMPTS:
+                            db.execute(
+                                """UPDATE integration_outbox
+                                   SET status = 'dead',
+                                       attempts = ?,
+                                       last_error = ?
+                                   WHERE event_id = ? AND status = 'pending'""",
+                                (new_attempts, err_text, ev_id),
+                            )
+                            dead += 1
+                        else:
+                            delay = compute_next_backoff_seconds(new_attempts)
+                            db.execute(
+                                """UPDATE integration_outbox
+                                   SET status = 'pending',
+                                       attempts = ?,
+                                       next_attempt_at = ?,
+                                       last_error = ?
+                                   WHERE event_id = ? AND status = 'pending'""",
+                                (new_attempts, now_ts + float(delay), err_text, ev_id),
+                            )
+                            retried += 1
+                    else:
+                        db.execute(
+                            """UPDATE integration_outbox
+                               SET status = 'published',
+                                   attempts = ?,
+                                   published_at = ?,
+                                   last_error = NULL
+                               WHERE event_id = ? AND status = 'pending'""",
+                            (prev_attempts + 1, now_ts, ev_id),
+                        )
+                        published += 1
+            if claimed_none:
+                break
+
+        manifests_sealed = 0
+        if sink_writer is None:
+            for tid in sorted(seen_tenants):
+                try:
+                    manifests_sealed += seal_closed_integration_days(data_root, tid, now_ts=now_ts)
+                except Exception:
+                    pass
+
+        return {
+            "published": published,
+            "retried": retried,
+            "dead": dead,
+            "manifests_sealed": manifests_sealed,
+        }
+
+    def outbox_status_summary(self) -> dict:
+        counts = {"pending": 0, "published": 0, "dead": 0}
+        oldest_pending_at = None
+        latest_dead_error = None
+        with self.connection(write=False) as db:
+            rows = db.execute(
+                "SELECT status, COUNT(*) AS cnt FROM integration_outbox GROUP BY status"
+            ).fetchall()
+            for r in rows:
+                st = r["status"]
+                if st in counts:
+                    counts[st] = int(r["cnt"] if "cnt" in r else r[1])
+            pend = db.execute(
+                "SELECT MIN(created_at) AS min_ts FROM integration_outbox WHERE status = 'pending'"
+            ).fetchone()
+            if pend is not None:
+                val = pend["min_ts"] if "min_ts" in pend else pend[0]
+                if val is not None:
+                    oldest_pending_at = float(val)
+            dead_row = db.execute(
+                """SELECT event_id, event_type, attempts, last_error, created_at
+                   FROM integration_outbox
+                   WHERE status = 'dead'
+                   ORDER BY created_at DESC, event_id DESC
+                   LIMIT 1"""
+            ).fetchone()
+            if dead_row is not None:
+                latest_dead_error = {
+                    "event_id": dead_row["event_id"],
+                    "event_type": dead_row["event_type"],
+                    "attempts": int(dead_row["attempts"]),
+                    "last_error": dead_row["last_error"],
+                    "created_at": float(dead_row["created_at"]),
+                }
+        return {
+            **counts,
+            "oldest_pending_at": oldest_pending_at,
+            "latest_dead": latest_dead_error,
+        }
+
+
+def inspect_sqlite_outbox_status(target_path: Path) -> dict:
+    """Strictly read-only operator summary of integration_outbox across SQLite tenant databases."""
+    target = Path(target_path)
+    totals = {"pending": 0, "published": 0, "dead": 0}
+    tenant_reports = []
+
+    if target.is_file():
+        store = BusinessStore(target, create=False, initialize_db=False, read_only=True)
+        store.tenant_id = target.stem
+        summary = store.outbox_status_summary()
+        tenant_reports.append({"tenant_id": target.stem, **summary})
+        for k in ("pending", "published", "dead"):
+            totals[k] += int(summary[k])
+        return {
+            "result": "OUTBOX_STATUS",
+            "backend": "sqlite",
+            "read_only": True,
+            "totals": totals,
+            "tenants": tenant_reports,
+        }
+
+    pers = target / "persistent" if (target / "persistent").is_dir() else target
+    id_file = pers / "identity.sqlite3"
+    if not id_file.is_file():
+        raise ApiError(404, "database_not_found", "Không tìm thấy kho identity SQLite để kiểm tra outbox.")
+
+    id_uri = id_file.resolve().as_uri() + "?mode=ro"
+    id_conn = sqlite3.connect(id_uri, uri=True, timeout=5)
+    id_conn.row_factory = sqlite3.Row
+    try:
+        t_rows = id_conn.execute("SELECT id, storage_key FROM tenants ORDER BY id ASC").fetchall()
+    finally:
+        id_conn.close()
+
+    for trow in t_rows:
+        tid = trow["id"]
+        skey = trow["storage_key"]
+        t_file = pers / "tenants" / f"{skey}.sqlite3"
+        if not t_file.is_file():
+            continue
+        store = BusinessStore(t_file, create=False, initialize_db=False, read_only=True)
+        store.tenant_id = tid
+        summary = store.outbox_status_summary()
+        tenant_reports.append({"tenant_id": tid, **summary})
+        for k in ("pending", "published", "dead"):
+            totals[k] += int(summary[k])
+
+    return {
+        "result": "OUTBOX_STATUS",
+        "backend": "sqlite",
+        "read_only": True,
+        "totals": totals,
+        "tenants": tenant_reports,
+    }

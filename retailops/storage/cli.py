@@ -5,8 +5,8 @@ from pathlib import Path
 
 def add_parser(commands):
     parser = commands.add_parser('database', help='Initialize PostgreSQL, run Business v5/v6 migration, or import an offline SQLite snapshot.')
-    parser.add_argument('--output', type=Path, default=Path('artifacts'),
-                        help='Workspace directory containing persistent/ when using SQLite.')
+    parser.add_argument('--output', type=Path, default=None,
+                        help='Workspace directory containing persistent/ when using SQLite (defaults to RETAILOPS_OUTPUT or artifacts).')
     sub = parser.add_subparsers(dest='database_action', required=True)
     sub.add_parser('init', help='Create/validate the identity schema; no demo accounts are seeded.')
     mig = sub.add_parser('migrate', help='Apply additive DDL to current-version PostgreSQL tenant schemas.')
@@ -35,6 +35,12 @@ def add_parser(commands):
     mig_v6.add_argument('--confirm-backup', action='store_true',
                         help='Confirm verified database backup was completed.')
     sub.add_parser('check', help='Connect and verify identity and tenant business schema versions read-only.')
+    outbox_st = sub.add_parser(
+        'outbox-status',
+        help='Read-only operator summary of pending, published, and dead integration_outbox events.',
+    )
+    outbox_st.add_argument('--db-path', type=Path, default=None,
+                           help='Optional standalone SQLite business file path (defaults to all tenants under --output/persistent).')
     importer = sub.add_parser('import-sqlite', help='Import an offline persistent snapshot into an empty target.')
     importer.add_argument('--offline-snapshot', type=Path, required=True,
                           help='Copied persistent/ directory; stop source web and all writers before making the copy.')
@@ -43,6 +49,7 @@ def add_parser(commands):
 def run(args):
     from retailops.business.store import (
         _inspect_sqlite_business_ready,
+        inspect_sqlite_outbox_status,
         migrate_sqlite_business_v5,
         migrate_sqlite_business_v6,
     )
@@ -50,6 +57,7 @@ def run(args):
     from retailops.core import ApiError
     from retailops.storage.pg_repositories import (
         PostgresIdentityStore,
+        inspect_postgres_outbox_status,
         migrate_postgres_business_v5,
         migrate_postgres_business_v6,
     )
@@ -59,10 +67,17 @@ def run(args):
     action = getattr(args, 'database_action', None)
     preflight_ok = bool(getattr(args, 'confirm_preflight', False))
     backup_ok = bool(getattr(args, 'confirm_backup', False))
+    resolved_output = getattr(args, 'output', None) or Path(os.environ.get('RETAILOPS_OUTPUT') or 'artifacts')
+
+    if action == 'outbox-status':
+        if backend == 'sqlite':
+            target = getattr(args, 'db_path', None) or resolved_output
+            return inspect_sqlite_outbox_status(target)
+        return inspect_postgres_outbox_status(dsn)
 
     if action == 'migrate-v5':
         if backend == 'sqlite':
-            target = getattr(args, 'db_path', None) or getattr(args, 'output', Path('artifacts'))
+            target = getattr(args, 'db_path', None) or resolved_output
             return migrate_sqlite_business_v5(
                 target,
                 preflight_confirmed=preflight_ok,
@@ -76,7 +91,7 @@ def run(args):
 
     if action == 'migrate-v6':
         if backend == 'sqlite':
-            target = getattr(args, 'db_path', None) or getattr(args, 'output', Path('artifacts'))
+            target = getattr(args, 'db_path', None) or resolved_output
             return migrate_sqlite_business_v6(
                 target,
                 preflight_confirmed=preflight_ok,
@@ -89,7 +104,7 @@ def run(args):
         )
 
     if backend == 'sqlite' and action == 'check':
-        out_root = Path(getattr(args, 'output', Path('artifacts')))
+        out_root = Path(resolved_output)
         pers = out_root / 'persistent' if (out_root / 'persistent').is_dir() else out_root
         from retailops.identity.store import _inspect_sqlite_identity_ready
         id_file = pers / 'identity.sqlite3'
