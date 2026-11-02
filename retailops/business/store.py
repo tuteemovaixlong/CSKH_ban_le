@@ -4086,6 +4086,8 @@ class BusinessStore:
         actor: dict | None = None,
         raised_by_role: str = "customer",
         delivery_failure_attempts: int | None = None,
+        consent_turn_id: int | None = None,
+        consent_excerpt: str | None = None,
         correlation_id: str | None = None,
         idempotency_key: str | None = None,
         proposal_id: str | None = None,
@@ -4239,6 +4241,15 @@ class BusinessStore:
             raise
 
         dec_id = f"oad_{uuid.uuid4().hex}"
+        if consent_turn_id is not None:
+            consent_tag = f'[consent_turn_id={consent_turn_id}] "{consent_excerpt or ""}"'
+            submit_note = (
+                f"{consent_tag} · {clean_reason_text}"[:500]
+                if clean_reason_text
+                else consent_tag[:500]
+            )
+        else:
+            submit_note = clean_reason_text
         db.execute(
             """INSERT INTO order_action_decisions(
                    decision_id, request_id, case_id, order_id, conversation_id,
@@ -4254,8 +4265,8 @@ class BusinessStore:
                 order_id,
                 resolved_cid,
                 norm_actor["principal_id"],
-                raised_by_role,
-                clean_reason_text,
+                norm_actor["role"],
+                submit_note,
                 now_ts,
             ),
         )
@@ -4274,6 +4285,9 @@ class BusinessStore:
         }
         if delivery_failure_attempts is not None:
             log_payload["delivery_failure_attempts"] = delivery_failure_attempts
+        if consent_turn_id is not None:
+            log_payload["consent_turn_id"] = consent_turn_id
+            log_payload["consent_excerpt"] = consent_excerpt
         if proposal_id is not None:
             log_payload["proposal_id"] = proposal_id
         if actor is not None:
@@ -4285,10 +4299,15 @@ class BusinessStore:
             "return": "return_requested",
             "exchange": "exchange_requested",
         }[action_type]
+        outbox_extra: dict[str, object] = {}
+        if exchange_kind:
+            outbox_extra["exchange_kind"] = exchange_kind
+        if consent_turn_id is not None:
+            outbox_extra["consent_turn_id"] = consent_turn_id
         self._enqueue_outbox_in_tx(
             db,
             event_type=outbox_event_type,
-            actor={"principal_id": norm_actor["principal_id"], "role": raised_by_role, "tenant_id": norm_actor.get("tenant_id")},
+            actor={"principal_id": norm_actor["principal_id"], "role": norm_actor["role"], "tenant_id": norm_actor.get("tenant_id")},
             customer_id=customer_id,
             case_id=resolved_case_id,
             order_action_request_id=req_id,
@@ -4301,7 +4320,7 @@ class BusinessStore:
             idempotency_key=idempotency_key or proposal_id or req_id,
             source="app",
             now=now_ts,
-            extra_fields={"exchange_kind": exchange_kind} if exchange_kind else None,
+            extra_fields=outbox_extra or None,
         )
 
         req_row = db.execute(
@@ -4397,6 +4416,299 @@ class BusinessStore:
                 (customer_id, limit),
             ).fetchall()
             return [self._serialize_order_action_in_tx(db, r, now=now_ts) for r in rows]
+
+    STAFF_CONSENT_WINDOW_SECONDS = 30 * 60
+
+    @staticmethod
+    def _case_opening_bounds_in_tx(db, case_row) -> tuple[float, int]:
+        d = dict(case_row)
+        open_since = float(d["resumed_at"] if d.get("resumed_at") is not None else d["created_at"])
+        cid = d.get("conversation_id")
+        if not cid:
+            return open_since, 0
+        last_resolve = db.execute(
+            "SELECT MAX(id) AS max_id FROM agent_turns WHERE conversation_id = ? AND request_id LIKE 'sys-notice-resolve-%'",
+            (cid,),
+        ).fetchone()
+        min_turn_id = int(last_resolve["max_id"] or 0) if last_resolve is not None else 0
+        return open_since, min_turn_id
+
+    @staticmethod
+    def _extract_customer_consent_excerpt(turn_row) -> str | None:
+        if turn_row is None:
+            return None
+        d = dict(turn_row)
+        req_id = str(d.get("request_id") or "")
+        if req_id.startswith(("sys-notice-", "sys-reminder-", "sys-oar-", "staff-")):
+            return None
+        inp_hash = str(d.get("input_hash") or "")
+        if inp_hash in ("staff-reply", "system-case-notice", "system-reminder", "system-order-action"):
+            return None
+        res_raw = d.get("result")
+        try:
+            res_obj = json.loads(res_raw) if isinstance(res_raw, str) else (res_raw or {})
+        except Exception:
+            return None
+        if not isinstance(res_obj, dict):
+            return None
+        author = res_obj.get("author")
+        if author in (
+            "staff",
+            "bot",
+            "assistant",
+            "system_case_notice",
+            "system_reminder",
+            "system_order_action",
+        ):
+            return None
+        if author != "customer" and bool(res_obj.get("message")):
+            return None
+        msgs_raw = d.get("messages")
+        try:
+            msgs = json.loads(msgs_raw) if isinstance(msgs_raw, str) else msgs_raw
+        except Exception:
+            return None
+        if not isinstance(msgs, list) or not msgs:
+            return None
+        if not all(isinstance(m, dict) and m.get("role") == "user" for m in msgs):
+            return None
+        raw_text = " ".join(
+            str(m.get("content") or "").strip()
+            for m in msgs
+            if str(m.get("content") or "").strip()
+        ).strip()
+        if not raw_text:
+            return None
+        excerpt = re.sub(r"\s+", " ", raw_text).strip()[:160]
+        if contains_canary_or_secret(excerpt):
+            _, cleaned = sanitize_structured_payload(excerpt, preserve_reasoning=False)
+            excerpt = str(cleaned)[:160]
+        return excerpt
+
+    def list_case_orders(self, case_id: str) -> dict:
+        require(
+            isinstance(case_id, str) and bool(re.fullmatch(r"[A-Za-z0-9_-]{1,80}", case_id)),
+            400,
+            "invalid_case_id",
+            "Mã ca hỗ trợ không hợp lệ.",
+        )
+        now_ts = self._now()
+        with self.connection() as db:
+            case_row = db.execute("SELECT * FROM cases WHERE case_id = ?", (case_id,)).fetchone()
+            require(case_row is not None, 404, "case_not_found", "Không tìm thấy ca hỗ trợ.")
+            cust_id = case_row["customer_id"]
+            ord_rows = db.execute(
+                "SELECT * FROM orders WHERE customer_id = ? ORDER BY id",
+                (cust_id,),
+            ).fetchall()
+            open_req_rows = db.execute(
+                """SELECT * FROM order_action_requests
+                   WHERE customer_id = ? AND closed_at IS NULL
+                   ORDER BY created_at DESC, request_id DESC""",
+                (cust_id,),
+            ).fetchall()
+            open_by_order: dict[str, dict] = {}
+            for r in open_req_rows:
+                oid = r["order_id"]
+                if oid not in open_by_order:
+                    open_by_order[oid] = self._serialize_order_action_in_tx(db, r, now=now_ts)
+
+            enriched_orders: list[dict] = []
+            for o in ord_rows:
+                od = dict(o)
+                st = od.get("status")
+                if st == "pending":
+                    allowed_types = ["cancel"]
+                elif st == "delivered":
+                    allowed_types = ["return", "exchange"]
+                else:
+                    allowed_types = []
+                delivered_at = od.get("delivered_at")
+                if delivered_at is None:
+                    days_since_delivery = None
+                    delivery_age_label = "chưa có ngày giao"
+                else:
+                    days_since_delivery = max(0, int((now_ts - float(delivered_at)) // 86400))
+                    delivery_age_label = f"{days_since_delivery} ngày kể từ khi giao"
+                od["allowed_action_types"] = allowed_types
+                od["open_order_action"] = open_by_order.get(od["id"])
+                od["days_since_delivery"] = days_since_delivery
+                od["delivery_age_label"] = delivery_age_label
+                enriched_orders.append(od)
+
+            consent_turns: list[dict] = []
+            if case_row["status"] != "resolved" and case_row["conversation_id"]:
+                open_since, min_turn_id = self._case_opening_bounds_in_tx(db, case_row)
+                earliest_allowed = max(open_since - 1e-6, now_ts - self.STAFF_CONSENT_WINDOW_SECONDS)
+                cand_turns = db.execute(
+                    """SELECT id, conversation_id, customer_id, request_id, input_hash, messages, result, created_at
+                       FROM agent_turns
+                       WHERE conversation_id = ?
+                         AND customer_id = ?
+                         AND id > ?
+                         AND created_at >= ?
+                         AND created_at <= ?
+                       ORDER BY id DESC""",
+                    (
+                        case_row["conversation_id"],
+                        cust_id,
+                        min_turn_id,
+                        earliest_allowed,
+                        now_ts + 5.0,
+                    ),
+                ).fetchall()
+                for trow in cand_turns:
+                    excerpt = self._extract_customer_consent_excerpt(trow)
+                    if excerpt is not None:
+                        consent_turns.append(
+                            {
+                                "turn_id": int(trow["id"]),
+                                "excerpt": excerpt,
+                                "created_at": float(trow["created_at"]),
+                            }
+                        )
+
+        return {
+            "case_id": case_id,
+            "customer_id": cust_id,
+            "orders": enriched_orders,
+            "consent_turns": consent_turns,
+        }
+
+    def create_staff_consented_order_action_request(
+        self,
+        case_id: str,
+        body: dict | None,
+        *,
+        actor: dict,
+        idempotency_key: str | None = None,
+    ) -> dict:
+        require(
+            isinstance(case_id, str) and bool(re.fullmatch(r"[A-Za-z0-9_-]{1,80}", case_id)),
+            400,
+            "invalid_case_id",
+            "Mã ca hỗ trợ không hợp lệ.",
+        )
+        require(isinstance(body, dict), 400, "invalid_body", "Yêu cầu phải là đối tượng JSON.")
+        allowed = {
+            "order_id",
+            "expected_order_version",
+            "order_version",
+            "type",
+            "action_type",
+            "exchange_kind",
+            "reason_code",
+            "reason_text",
+            "consent_turn_id",
+        }
+        require(set(body).issubset(allowed), 400, "invalid_fields", "Các trường của yêu cầu không hợp lệ.")
+        if "type" in body and "action_type" in body:
+            require(
+                body["type"] == body["action_type"],
+                400,
+                "invalid_action_type",
+                "Trường type và action_type xung đột.",
+            )
+        action_type = body.get("type") if "type" in body else body.get("action_type")
+        if "expected_order_version" in body and "order_version" in body:
+            require(
+                body["expected_order_version"] == body["order_version"],
+                400,
+                "invalid_order_version",
+                "Trường expected_order_version và order_version xung đột.",
+            )
+        expected_ver = (
+            body.get("expected_order_version")
+            if "expected_order_version" in body
+            else body.get("order_version")
+        )
+        consent_turn_id = body.get("consent_turn_id")
+        require(
+            type(consent_turn_id) is int and consent_turn_id >= 1,
+            400,
+            "invalid_consent_turn",
+            "Cần chọn tin nhắn đồng ý hợp lệ của khách hàng (consent_turn_id).",
+        )
+        oid = body.get("order_id")
+        require(isinstance(oid, str) and bool(oid.strip()), 400, "invalid_order_id", "Thiếu mã đơn hàng.")
+
+        norm_actor = self._normalize_actor(actor, "", "")
+        now_ts = self._now()
+
+        with self.connection(write=True) as db:
+            case_row = self._check_case_reviewer_authority_in_tx(
+                db, case_id, norm_actor, require_holding=False
+            )
+            turn_row = db.execute(
+                """SELECT id, conversation_id, customer_id, request_id, input_hash, messages, result, created_at
+                   FROM agent_turns WHERE id = ?""",
+                (consent_turn_id,),
+            ).fetchone()
+            require(
+                turn_row is not None
+                and turn_row["conversation_id"] == case_row["conversation_id"]
+                and turn_row["customer_id"] == case_row["customer_id"],
+                400,
+                "invalid_consent_turn",
+                "Tin nhắn đồng ý không thuộc hội thoại của ca hỗ trợ này.",
+            )
+            open_since, min_turn_id = self._case_opening_bounds_in_tx(db, case_row)
+            require(
+                float(turn_row["created_at"]) >= open_since - 1e-6 and int(turn_row["id"]) > min_turn_id,
+                400,
+                "invalid_consent_turn",
+                "Tin nhắn đồng ý không thuộc lần mở ca hiện tại.",
+            )
+            turn_age = now_ts - float(turn_row["created_at"])
+            require(
+                -5.0 <= turn_age <= self.STAFF_CONSENT_WINDOW_SECONDS,
+                400,
+                "consent_turn_expired",
+                "Tin nhắn đồng ý của khách phải nằm trong vòng 30 phút gần nhất.",
+            )
+            excerpt = self._extract_customer_consent_excerpt(turn_row)
+            require(
+                excerpt is not None,
+                400,
+                "consent_turn_not_customer",
+                "Chỉ chấp nhận tin nhắn do chính khách hàng gửi làm bằng chứng đồng ý.",
+            )
+
+            req = self._create_order_action_request_in_tx(
+                db,
+                customer_id=case_row["customer_id"],
+                order_id=oid.strip(),
+                action_type=action_type,
+                expected_order_version=expected_ver,
+                reason_code=body.get("reason_code"),
+                reason_text=body.get("reason_text"),
+                exchange_kind=body.get("exchange_kind"),
+                case_id=case_id,
+                actor=norm_actor,
+                raised_by_role="customer",
+                consent_turn_id=consent_turn_id,
+                consent_excerpt=excerpt,
+                correlation_id=idempotency_key,
+                idempotency_key=idempotency_key,
+                now=now_ts,
+            )
+
+        type_msg = {
+            "cancel": "Đã tạo yêu cầu hủy theo đồng ý của khách hàng",
+            "return": "Đã tạo yêu cầu trả hàng theo đồng ý của khách hàng",
+            "exchange": "Đã tạo yêu cầu đổi hàng theo đồng ý của khách hàng",
+        }[req["type"]]
+        return {
+            "status": req["status"],
+            "order_action_request_id": req["request_id"],
+            "order_action": req,
+            "order": req["order"],
+            "case_id": req["case_id"],
+            "conversation_id": req["conversation_id"],
+            "consent_turn_id": consent_turn_id,
+            "consent_excerpt": excerpt,
+            "message": type_msg,
+        }
 
     def list_case_order_actions(self, case_id: str) -> list[dict]:
         require(

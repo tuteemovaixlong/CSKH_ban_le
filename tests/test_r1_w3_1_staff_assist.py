@@ -479,5 +479,426 @@ class PhaseR1W31Item2HeldSilenceBadgeTests(PhaseR1W31BaseTestCase):
         self.assertEqual(ok_prod.case_timer_config.held_silence_seconds, 300.0)
 
 
+class PhaseR1W31Item3StaffConsentedOrderActionsTests(PhaseR1W31BaseTestCase):
+    """Item 3 (W3.1-D1): Staff creates customer-consented order action requests; consent & authority enforced."""
+
+    def test_item3_case_orders_endpoint_and_consent_turn_validations_and_staff_holder_rules(self):
+        fake_now = [1_760_100_000.0]
+        self.sessions.store_clock = lambda: fake_now[0]
+        self.store_a.clock = lambda: fake_now[0]
+
+        with self.store_a.connection(write=True) as db:
+            db.execute(
+                "INSERT INTO orders(id, customer_id, product_id, name, variant, amount, status, version) "
+                "VALUES ('O-105', 'C-001', 'P-101', 'Áo thun Essential', 'Đen / M', 299000, 'cancelled', 1)"
+            )
+            db.execute(
+                "INSERT INTO orders(id, customer_id, product_id, name, variant, amount, status, version, delivered_at) "
+                "VALUES ('O-106', 'C-001', 'P-102', 'Áo khoác Everyday', 'Đen / XL', 599000, 'delivered', 1, 1760050000.0)"
+            )
+
+        # Open conversation 1 for cust1 and seed a bot turn
+        st, conv1 = self._req("POST", "/api/conversations", {}, cookie=self.cust1)
+        self.assertEqual(st, 201)
+        cid1 = conv1["conversation_id"]
+        case1 = conv1["case_id"]
+        snap1 = self.store_a.conversation("C-001", cid1)
+        bot_turn_id = self.store_a.finish_turn(
+            "C-001",
+            snap1,
+            "req-bot-item3",
+            "hash-bot-item3",
+            [
+                {"role": "user", "content": "Mình muốn hủy đơn O-104 luôn nha"},
+                {"role": "assistant", "content": "Bạn có thể gặp nhân viên hỗ trợ để được xử lý."},
+            ],
+            {
+                "message": "Bạn có thể gặp nhân viên hỗ trợ để được xử lý.",
+                "source": "store_data",
+                "context": {"order_id": "O-104", "product_id": "P-101"},
+                "trace": {"turn_id": "t-bot-item3"},
+            },
+            {"O-104": 1},
+        )
+
+        # Open a second conversation (different case) with a customer message
+        st, conv_other = self._req("POST", "/api/conversations", {}, cookie=self.cust1)
+        self.assertEqual(st, 201)
+        cid_other = conv_other["conversation_id"]
+        self._req(
+            "POST",
+            "/api/feedback",
+            {"conversation_id": cid_other, "feedback_type": "human_handoff", "comment": "Ca khác"},
+            cookie=self.cust1,
+        )
+        st, other_msg = self._req(
+            "POST",
+            "/api/staff/customer-message",
+            {"conversation_id": cid_other, "message": "Ok đồng ý hủy bên ca khác"},
+            cookie=self.cust1,
+        )
+        self.assertEqual(st, 200)
+        other_case_turn_id = other_msg["turn_id"]
+
+        # Handoff & customer consent in opening #1 of case1, then resolve & reopen to test previous-opening rejection
+        st, handoff1 = self._req(
+            "POST",
+            "/api/feedback",
+            {"conversation_id": cid1, "feedback_type": "human_handoff", "comment": "Hỗ trợ đơn"},
+            cookie=self.cust1,
+        )
+        self.assertEqual(st, 200)
+        sys_notice_turn_id = handoff1["notice_turn_id"]
+
+        st, prev_open_msg = self._req(
+            "POST",
+            "/api/staff/customer-message",
+            {"conversation_id": cid1, "message": "Ok đồng ý ở lần mở ca cũ"},
+            cookie=self.cust1,
+        )
+        self.assertEqual(st, 200)
+        prev_opening_turn_id = prev_open_msg["turn_id"]
+
+        st, claim_open1 = self._req("POST", f"/api/staff/cases/{case1}/claim", {}, cookie=self.staff_a1)
+        self.assertEqual(st, 200)
+        st, _ = self._req(
+            "POST",
+            "/api/staff/resolve",
+            {"case_id": case1, "handoff_id": claim_open1["handoff_id"]},
+            cookie=self.staff_a1,
+        )
+        self.assertEqual(st, 200)
+
+        # Reopen case1 (opening #2)
+        fake_now[0] += 60.0
+        st, _ = self._req("POST", f"/api/conversations/{cid1}/resume", {}, cookie=self.cust1)
+        self.assertEqual(st, 200)
+
+        # Customer sends an old message in opening #2 that will expire (> 30 min)
+        st, handoff2_early = self._req(
+            "POST",
+            "/api/feedback",
+            {"conversation_id": cid1, "feedback_type": "human_handoff", "comment": "Mở lại ca"},
+            cookie=self.cust1,
+        )
+        self.assertEqual(st, 200)
+        st, expired_msg = self._req(
+            "POST",
+            "/api/staff/customer-message",
+            {"conversation_id": cid1, "message": "Ok đồng ý lúc trước (sẽ quá 30 phút)"},
+            cookie=self.cust1,
+        )
+        self.assertEqual(st, 200)
+        expired_turn_id = expired_msg["turn_id"]
+
+        # Advance 30 min + 5s so expired_turn_id is > 1800s old
+        fake_now[0] += 1805.0
+
+        # Seed a recent bot turn in opening #2 within the 30m window to verify bot turn rejection
+        snap2 = self.store_a.conversation("C-001", cid1)
+        bot_turn_id = self.store_a.finish_turn(
+            "C-001",
+            snap2,
+            "req-bot-item3-open2",
+            "hash-bot-item3-open2",
+            [
+                {"role": "user", "content": "Hủy đơn O-104 giúp mình"},
+                {"role": "assistant", "content": "Đang chờ nhân viên hỗ trợ xử lý."},
+            ],
+            {
+                "message": "Đang chờ nhân viên hỗ trợ xử lý.",
+                "source": "store_data",
+                "context": {"order_id": "O-104", "product_id": "P-101"},
+                "trace": {"turn_id": "t-bot-item3-open2"},
+            },
+            {"O-104": 1},
+        )
+
+        # Customer sends a fresh consent message in opening #2
+        st, fresh_msg = self._req(
+            "POST",
+            "/api/staff/customer-message",
+            {"conversation_id": cid1, "message": "Ok shop hủy đơn O-104 và đổi size O-103 giúp mình nhé"},
+            cookie=self.cust1,
+        )
+        self.assertEqual(st, 200)
+        valid_consent_turn_id = fresh_msg["turn_id"]
+
+        # Unclaimed case: Staff 1 cannot create consented request before claiming (409 case_not_claimed)
+        st_unclaimed, err_unclaimed = self._req(
+            "POST",
+            f"/api/staff/cases/{case1}/order-actions",
+            {
+                "order_id": "O-104",
+                "expected_order_version": 1,
+                "type": "cancel",
+                "reason_code": "changed_mind",
+                "consent_turn_id": valid_consent_turn_id,
+            },
+            cookie=self.staff_a1,
+        )
+        self.assertEqual(st_unclaimed, 409)
+        self.assertEqual(err_unclaimed["error"], "case_not_claimed")
+
+        # Customer cannot call staff endpoints (403); cross-tenant staff blocked (403/404)
+        st_cust_forbid, _ = self._req("GET", f"/api/staff/cases/{case1}/orders", cookie=self.cust1)
+        self.assertEqual(st_cust_forbid, 403)
+        st_cust_post, _ = self._req(
+            "POST",
+            f"/api/staff/cases/{case1}/order-actions",
+            {
+                "order_id": "O-104",
+                "expected_order_version": 1,
+                "type": "cancel",
+                "reason_code": "changed_mind",
+                "consent_turn_id": valid_consent_turn_id,
+            },
+            cookie=self.cust1,
+        )
+        self.assertEqual(st_cust_post, 403)
+        st_cross, _ = self._req("GET", f"/api/staff/cases/{case1}/orders", cookie=self.staff_b)
+        self.assertIn(st_cross, (403, 404))
+
+        # Staff 1 claims case1 and sends a staff reply
+        st, claim_open2 = self._req("POST", f"/api/staff/cases/{case1}/claim", {}, cookie=self.staff_a1)
+        self.assertEqual(st, 200)
+        sys_notice_turn_id = claim_open2["notice_turn_id"]
+        fake_now[0] += 5.0
+        st, staff_rep = self._req(
+            "POST",
+            "/api/staff/reply",
+            {"conversation_id": cid1, "case_id": case1, "message": "Dạ shop tạo yêu cầu ngay cho mình ạ"},
+            cookie=self.staff_a1,
+        )
+        self.assertEqual(st, 200)
+        with self.store_a.connection() as db:
+            staff_turn_id = db.execute(
+                "SELECT id FROM agent_turns WHERE conversation_id = ? AND request_id = ?",
+                (cid1, staff_rep["request_id"]),
+            ).fetchone()["id"]
+
+        # Verify GET /api/staff/cases/<case_id>/orders returns customer orders with allowed_action_types & valid consent_turns
+        st_ords, ords_payload = self._req("GET", f"/api/staff/cases/{case1}/orders", cookie=self.staff_a1)
+        self.assertEqual(st_ords, 200)
+        by_oid = {o["id"]: o for o in ords_payload["orders"]}
+        self.assertEqual(by_oid["O-104"]["allowed_action_types"], ["cancel"])
+        self.assertEqual(by_oid["O-103"]["allowed_action_types"], ["return", "exchange"])
+        self.assertEqual(by_oid["O-105"]["allowed_action_types"], [])
+        self.assertIsNone(by_oid["O-104"]["open_order_action"])
+        # Only the fresh customer consent turn from current opening within 30m appears in consent_turns!
+        self.assertEqual([t["turn_id"] for t in ords_payload["consent_turns"]], [valid_consent_turn_id])
+        self.assertIn("Ok shop hủy đơn O-104", ords_payload["consent_turns"][0]["excerpt"])
+
+        # Non-holding Staff 2 is blocked (409 case_held_by_other)
+        st_other_staff, err_other_staff = self._req(
+            "POST",
+            f"/api/staff/cases/{case1}/order-actions",
+            {
+                "order_id": "O-104",
+                "expected_order_version": 1,
+                "type": "cancel",
+                "reason_code": "changed_mind",
+                "consent_turn_id": valid_consent_turn_id,
+            },
+            cookie=self.staff_a2,
+        )
+        self.assertEqual(st_other_staff, 409)
+        self.assertEqual(err_other_staff["error"], "case_held_by_other")
+
+        # Reject missing or invalid consent_turn_id (missing, bot turn, staff turn, system turn, other case, previous opening, >30m)
+        bad_turn_cases = [
+            ("missing", None, "invalid_consent_turn"),
+            ("bot_turn", bot_turn_id, "consent_turn_not_customer"),
+            ("staff_turn", staff_turn_id, "consent_turn_not_customer"),
+            ("sys_notice_turn", sys_notice_turn_id, "consent_turn_not_customer"),
+            ("other_case_turn", other_case_turn_id, "invalid_consent_turn"),
+            ("previous_opening_turn", prev_opening_turn_id, "invalid_consent_turn"),
+            ("expired_30m_turn", expired_turn_id, "consent_turn_expired"),
+        ]
+        for label, bad_tid, expected_code in bad_turn_cases:
+            payload = {
+                "order_id": "O-104",
+                "expected_order_version": 1,
+                "type": "cancel",
+                "reason_code": "changed_mind",
+            }
+            if bad_tid is not None:
+                payload["consent_turn_id"] = bad_tid
+            st_bad, err_bad = self._req(
+                "POST", f"/api/staff/cases/{case1}/order-actions", payload, cookie=self.staff_a1
+            )
+            self.assertEqual(st_bad, 400, msg=f"{label} should return 400, got {st_bad}: {err_bad}")
+            self.assertEqual(err_bad["error"], expected_code, msg=f"{label} wrong error code: {err_bad}")
+
+    def test_item3_successful_creation_audit_submit_decision_outbox_409_conflict_and_staff_approval(self):
+        fake_now = [1_760_200_000.0]
+        self.sessions.store_clock = lambda: fake_now[0]
+        self.store_a.clock = lambda: fake_now[0]
+
+        with self.store_a.connection(write=True) as db:
+            db.execute(
+                "INSERT INTO orders(id, customer_id, product_id, name, variant, amount, status, version, delivered_at) "
+                "VALUES ('O-106', 'C-001', 'P-102', 'Áo khoác Everyday', 'Đen / XL', 599000, 'delivered', 1, 1760150000.0)"
+            )
+
+        st, conv = self._req("POST", "/api/conversations", {}, cookie=self.cust1)
+        self.assertEqual(st, 201)
+        cid = conv["conversation_id"]
+        case_id = conv["case_id"]
+
+        self._req(
+            "POST",
+            "/api/feedback",
+            {"conversation_id": cid, "feedback_type": "human_handoff", "comment": "Hỗ trợ đổi/hủy"},
+            cookie=self.cust1,
+        )
+        self._req("POST", f"/api/staff/cases/{case_id}/claim", {}, cookie=self.staff_a1)
+        self._req(
+            "POST",
+            "/api/staff/reply",
+            {"conversation_id": cid, "case_id": case_id, "message": "Shop hỗ trợ hủy O-104 và đổi size O-103 cho mình nhé?"},
+            cookie=self.staff_a1,
+        )
+        fake_now[0] += 15.0
+        st, cust_consent = self._req(
+            "POST",
+            "/api/staff/customer-message",
+            {"conversation_id": cid, "message": "Được nha shop, làm giúp mình luôn"},
+            cookie=self.cust1,
+        )
+        self.assertEqual(st, 200)
+        consent_tid = cust_consent["turn_id"]
+
+        # 1) Holding Staff creates cancel request on O-104 with customer consent
+        st_create, created = self._req(
+            "POST",
+            f"/api/staff/cases/{case_id}/order-actions",
+            {
+                "order_id": "O-104",
+                "expected_order_version": 1,
+                "type": "cancel",
+                "reason_code": "changed_mind",
+                "reason_text": "Khách đồng ý hủy qua chat",
+                "consent_turn_id": consent_tid,
+            },
+            cookie=self.staff_a1,
+        )
+        self.assertEqual(st_create, 201)
+        req_cancel_id = created["order_action_request_id"]
+        self.assertEqual(created["order_action"]["raised_by_role"], "customer")
+        self.assertEqual(created["consent_turn_id"], consent_tid)
+        self.assertIn("Được nha shop", created["consent_excerpt"])
+
+        # Verify submit row in order_action_decisions, business_events audit, and integration_outbox actor
+        with self.store_a.connection() as db:
+            dec_row = db.execute(
+                "SELECT * FROM order_action_decisions WHERE request_id = ? AND action = 'submit'",
+                (req_cancel_id,),
+            ).fetchone()
+            ev_row = db.execute(
+                "SELECT payload FROM business_events WHERE kind = 'order_action_requested' AND order_id = 'O-104' ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            outbox_row = db.execute(
+                "SELECT payload_json FROM integration_outbox WHERE event_type = 'cancel_requested' ORDER BY created_at DESC LIMIT 1"
+            ).fetchone()
+
+        self.assertEqual(dec_row["actor_principal_id"], "p-staff-a1")
+        self.assertEqual(dec_row["actor_role"], "staff")
+        self.assertIn(f"[consent_turn_id={consent_tid}]", dec_row["note"])
+        self.assertIn("Được nha shop", dec_row["note"])
+
+        ev_payload = json.loads(ev_row["payload"])
+        self.assertEqual(ev_payload["raised_by_role"], "customer")
+        self.assertEqual(ev_payload["consent_turn_id"], consent_tid)
+        self.assertIn("Được nha shop", ev_payload["consent_excerpt"])
+        self.assertEqual(ev_payload["actor"]["principal_id"], "p-staff-a1")
+        self.assertEqual(ev_payload["actor"]["role"], "staff")
+
+        outbox_payload = json.loads(outbox_row["payload_json"])
+        outbox_actor = outbox_payload["actor"]
+        self.assertEqual(outbox_payload["order_action_request_id"], req_cancel_id)
+        self.assertEqual(outbox_actor["principal_id"], "p-staff-a1")
+        self.assertEqual(outbox_actor["role"], "staff")
+        self.assertEqual(outbox_payload["consent_turn_id"], consent_tid)
+        self.assertNotIn("Được nha shop", outbox_row["payload_json"])  # Zero raw chat PII in outbox
+
+        # 2) Creating a second request on O-104 while open -> 409 order_action_conflict
+        st_dup, err_dup = self._req(
+            "POST",
+            f"/api/staff/cases/{case_id}/order-actions",
+            {
+                "order_id": "O-104",
+                "expected_order_version": 1,
+                "type": "cancel",
+                "reason_code": "ordered_by_mistake",
+                "consent_turn_id": consent_tid,
+            },
+            cookie=self.staff_a1,
+        )
+        self.assertEqual(st_dup, 409)
+        self.assertEqual(err_dup["error"], "order_action_conflict")
+
+        # GET /api/staff/cases/<case_id>/orders reflects open_order_action on O-104
+        st_ords, ords_after = self._req("GET", f"/api/staff/cases/{case_id}/orders", cookie=self.staff_a1)
+        self.assertEqual(st_ords, 200)
+        o104 = next(o for o in ords_after["orders"] if o["id"] == "O-104")
+        self.assertEqual(o104["open_order_action"]["request_id"], req_cancel_id)
+
+        # 3) Holding Staff CAN approve the customer-consented cancel request (unlike delivery-failure cancel!)
+        st_app, approved = self._req(
+            "POST",
+            f"/api/order-actions/{req_cancel_id}/approve",
+            {"version": created["order_action"]["version"], "note": "Nhân viên duyệt hủy theo đồng ý khách"},
+            cookie=self.staff_a1,
+        )
+        self.assertEqual(st_app, 200)
+        self.assertEqual(approved["order_action"]["status"], "approved")
+        self.assertEqual(approved["order"]["status"], "cancelled")
+
+        # 4) Holding Staff creates exchange (size) on O-103 AND Manager creates return on O-106; Staff approves & completes exchange
+        st_ex, ex_created = self._req(
+            "POST",
+            f"/api/staff/cases/{case_id}/order-actions",
+            {
+                "order_id": "O-103",
+                "expected_order_version": 1,
+                "type": "exchange",
+                "exchange_kind": "size",
+                "reason_code": "wrong_size",
+                "consent_turn_id": consent_tid,
+            },
+            cookie=self.staff_a1,
+        )
+        self.assertEqual(st_ex, 201)
+        ex_id = ex_created["order_action_request_id"]
+        self.assertEqual(ex_created["order_action"]["raised_by_role"], "customer")
+        self.assertEqual(ex_created["order_action"]["exchange_kind"], "size")
+
+        st_ex_app, ex_app = self._req(
+            "POST",
+            f"/api/order-actions/{ex_id}/approve",
+            {"version": ex_created["order_action"]["version"], "note": "Duyệt đổi size"},
+            cookie=self.staff_a1,
+        )
+        self.assertEqual(st_ex_app, 200)
+        self.assertEqual(ex_app["order_action"]["status"], "approved")
+
+        # Manager can also create consented return on O-106 even while staff_a1 holds the case
+        st_mgr, mgr_created = self._req(
+            "POST",
+            f"/api/staff/cases/{case_id}/order-actions",
+            {
+                "order_id": "O-106",
+                "expected_order_version": 1,
+                "type": "return",
+                "reason_code": "defective_item",
+                "consent_turn_id": consent_tid,
+            },
+            cookie=self.mgr_a,
+        )
+        self.assertEqual(st_mgr, 201)
+        self.assertEqual(mgr_created["order_action"]["raised_by_role"], "customer")
+
+
 if __name__ == "__main__":
     unittest.main()
