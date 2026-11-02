@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import time
 import urllib.parse
-from retailops.core import ApiError, BinaryPayload, EVIDENCE_MAX_BYTES, fields, require
+from retailops.core import ApiError, BinaryPayload, EVIDENCE_MAX_BYTES, ORDER_ACTION_REASONS, fields, require
 from retailops.workflow import approval
 from retailops.business.permissions import ACTIVE_BUSINESS_ROLES, READ, CANCEL, STAFF, MANAGER
 from retailops.identity.contracts import RequestContext
@@ -567,6 +567,32 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             return (200, {"escalations": app.store.escalations(), **desk})
         if path == "/api/conversations":
             return (200, {"conversations": app.store.list_conversations(customer)})
+        m_case_orders = re.fullmatch(r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/orders", path)
+        if m_case_orders:
+            _require_ctx_permission(ctx, STAFF)
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
+            _, resolved_case_id, ro = _authorize_staff_transcript_view(
+                app, ctx, actor, case_id=m_case_orders[1], audit_resolved=False
+            )
+            info = app.store.list_case_orders(resolved_case_id)
+            formatted_orders = []
+            for o in info["orders"]:
+                open_oa = o.get("open_order_action")
+                if isinstance(open_oa, dict) and isinstance(open_oa.get("order"), dict):
+                    open_oa = {**open_oa, "order": _format_order_for_api(open_oa["order"], app)}
+                base_ord = _format_order_for_api(o, app)
+                base_ord["allowed_action_types"] = list(o.get("allowed_action_types") or [])
+                base_ord["open_order_action"] = open_oa
+                base_ord["days_since_delivery"] = o.get("days_since_delivery")
+                base_ord["delivery_age_label"] = o.get("delivery_age_label")
+                formatted_orders.append(base_ord)
+            return (200, {
+                "case_id": resolved_case_id,
+                "read_only": ro,
+                "orders": formatted_orders,
+                "consent_turns": info["consent_turns"],
+                "order_action_reasons": ORDER_ACTION_REASONS,
+            })
         m_case_oa = re.fullmatch(r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/order-actions", path)
         if m_case_oa:
             _require_ctx_permission(ctx, STAFF)
@@ -789,12 +815,24 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             _require_ctx_permission(ctx, STAFF)
             _check_staff_tenant_scope(app, ctx)
             actor = _extract_actor(app, customer, binding=binding, context=ctx)
-            res = app.store.create_delivery_failure_cancel_request(
-                m_staff_case_oa[1],
-                body,
-                actor=actor,
-                idempotency_key=idempotency_key,
+            is_delivery_failure = isinstance(body, dict) and (
+                "delivery_failure_attempts" in body
+                or ("note" in body and "consent_turn_id" not in body and "reason_code" not in body)
             )
+            if is_delivery_failure:
+                res = app.store.create_delivery_failure_cancel_request(
+                    m_staff_case_oa[1],
+                    body,
+                    actor=actor,
+                    idempotency_key=idempotency_key,
+                )
+            else:
+                res = app.store.create_staff_consented_order_action_request(
+                    m_staff_case_oa[1],
+                    body,
+                    actor=actor,
+                    idempotency_key=idempotency_key,
+                )
             if isinstance(res.get('order'), dict):
                 res['order'] = _format_order_for_api(res['order'], app)
             if isinstance(res.get('order_action'), dict) and isinstance(res['order_action'].get('order'), dict):

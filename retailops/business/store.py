@@ -405,7 +405,11 @@ class BusinessStore:
         return float(clk() if callable(clk) else time.time())
 
     def _timer_config(self):
-        from retailops.config import CaseTimerConfig
+        from retailops.config import (
+            CaseTimerConfig,
+            DEFAULT_CASE_HELD_SILENCE_SECONDS,
+            positive_float,
+        )
         cfg = getattr(self, 'case_timer_config', None)
         data_mode = str(getattr(self, 'data_mode', '') or os.environ.get('RETAILOPS_DATA_MODE', '')).strip()
         is_prod_env = str(os.environ.get('RETAILOPS_ENV', '')).strip().lower() in ('production', 'prod', 'live')
@@ -415,12 +419,18 @@ class BusinessStore:
                     reminder_seconds=cfg.reminder_seconds,
                     post_reminder_close_seconds=cfg.post_reminder_close_seconds,
                     completion_seconds=cfg.completion_seconds,
+                    held_silence_seconds=cfg.held_silence_seconds,
                     scan_seconds=cfg.scan_seconds,
                     data_mode=data_mode or cfg.data_mode,
                     production_env=is_prod_env or cfg.production_env,
                 )
             return cfg
         return CaseTimerConfig(
+            held_silence_seconds=positive_float(
+                os.environ,
+                'RETAILOPS_CASE_HELD_SILENCE_SECONDS',
+                DEFAULT_CASE_HELD_SILENCE_SECONDS,
+            ),
             data_mode=data_mode or 'synthetic-demo',
             production_env=is_prod_env,
         )
@@ -436,7 +446,7 @@ class BusinessStore:
         )
 
     @staticmethod
-    def _case_public_dict(row) -> dict | None:
+    def _case_public_dict(row, *, customer_silent_seconds: int | None = None) -> dict | None:
         if row is None:
             return None
         d = dict(row)
@@ -458,9 +468,66 @@ class BusinessStore:
             'resume_count': int(d.get('resume_count') or 0),
             'previous_case_id': d.get('previous_case_id'),
             'has_active_timer': bool(has_timer and d['status'] != 'resolved' and d.get('holder') is None),
+            'customer_silent_seconds': customer_silent_seconds,
             'created_at': d['created_at'],
             'updated_at': d['updated_at'],
         }
+
+    def _compute_customer_silent_seconds_in_tx(
+        self,
+        db,
+        case_row,
+        *,
+        now: float | None = None,
+        threshold_seconds: float | None = None,
+    ) -> int | None:
+        if case_row is None:
+            return None
+        d = dict(case_row)
+        status = d.get('status') or d.get('case_status')
+        holder = d.get('holder')
+        cid = d.get('conversation_id')
+        if status != 'in_progress' or not holder or not cid:
+            return None
+        now_ts = self._now() if now is None else float(now)
+        threshold = (
+            float(self._timer_config().held_silence_seconds)
+            if threshold_seconds is None
+            else float(threshold_seconds)
+        )
+        resumed_at = d.get('resumed_at')
+        base_created = d.get('case_created_at') if 'case_created_at' in d else d.get('created_at')
+        open_since = float(resumed_at if resumed_at is not None else (base_created or 0.0))
+        last_resolve = db.execute(
+            "SELECT MAX(id) AS max_id FROM agent_turns WHERE conversation_id = ? AND request_id LIKE ?",
+            (cid, 'sys-notice-resolve-%'),
+        ).fetchone()
+        min_turn_id = int(last_resolve['max_id'] or 0) if last_resolve is not None else 0
+        last_turn = db.execute(
+            """SELECT id, request_id, result, created_at
+               FROM agent_turns
+               WHERE conversation_id = ?
+                 AND created_at >= ?
+                 AND id > ?
+                 AND request_id NOT LIKE ?
+                 AND request_id NOT LIKE ?
+                 AND request_id NOT LIKE ?
+               ORDER BY id DESC LIMIT 1""",
+            (cid, open_since - 1e-6, min_turn_id, 'sys-notice-%', 'sys-reminder-%', 'sys-oar-%'),
+        ).fetchone()
+        if last_turn is None:
+            return None
+        res_raw = last_turn['result']
+        try:
+            res_obj = json.loads(res_raw) if isinstance(res_raw, str) else (res_raw or {})
+        except Exception:
+            res_obj = {}
+        if not isinstance(res_obj, dict) or res_obj.get('author') != 'staff':
+            return None
+        elapsed = now_ts - float(last_turn['created_at'])
+        if elapsed < threshold:
+            return None
+        return int(elapsed)
 
     @staticmethod
     def _latest_case_in_tx(db, cid: str):
@@ -1930,14 +1997,15 @@ class BusinessStore:
             if active_case is not None and active_case['previous_case_id'] is not None:
                 row = db.execute(
                     'SELECT 1 FROM agent_turns WHERE conversation_id=? AND customer_id=? '
-                    'AND created_at >= ? AND request_id NOT LIKE ? AND request_id NOT LIKE ? LIMIT 1',
-                    (cid, customer, float(active_case['created_at']) - 1e-6, 'sys-reminder-%', 'sys-oar-%'),
+                    'AND created_at >= ? AND request_id NOT LIKE ? AND request_id NOT LIKE ? '
+                    'AND request_id NOT LIKE ? LIMIT 1',
+                    (cid, customer, float(active_case['created_at']) - 1e-6, 'sys-reminder-%', 'sys-oar-%', 'sys-notice-%'),
                 ).fetchone()
             else:
                 row = db.execute(
                     'SELECT 1 FROM agent_turns WHERE conversation_id=? AND customer_id=? '
-                    'AND request_id NOT LIKE ? AND request_id NOT LIKE ? LIMIT 1',
-                    (cid, customer, 'sys-reminder-%', 'sys-oar-%'),
+                    'AND request_id NOT LIKE ? AND request_id NOT LIKE ? AND request_id NOT LIKE ? LIMIT 1',
+                    (cid, customer, 'sys-reminder-%', 'sys-oar-%', 'sys-notice-%'),
                 ).fetchone()
             return row is not None
 
@@ -1983,17 +2051,17 @@ class BusinessStore:
                 rows = db.execute(
                     '''SELECT messages FROM agent_turns
                        WHERE conversation_id=? AND customer_id=?
-                         AND created_at >= ? AND request_id NOT LIKE ? AND request_id NOT LIKE ?
+                         AND created_at >= ? AND request_id NOT LIKE ? AND request_id NOT LIKE ? AND request_id NOT LIKE ?
                        ORDER BY id DESC LIMIT ?''',
-                    (cid, customer, float(active_case['created_at']) - 1e-6, 'sys-reminder-%', 'sys-oar-%', limit),
+                    (cid, customer, float(active_case['created_at']) - 1e-6, 'sys-reminder-%', 'sys-oar-%', 'sys-notice-%', limit),
                 ).fetchall()
             else:
                 rows = db.execute(
                     '''SELECT messages FROM agent_turns
                        WHERE conversation_id=? AND customer_id=?
-                         AND request_id NOT LIKE ? AND request_id NOT LIKE ?
+                         AND request_id NOT LIKE ? AND request_id NOT LIKE ? AND request_id NOT LIKE ?
                        ORDER BY id DESC LIMIT ?''',
-                    (cid, customer, 'sys-reminder-%', 'sys-oar-%', limit),
+                    (cid, customer, 'sys-reminder-%', 'sys-oar-%', 'sys-notice-%', limit),
                 ).fetchall()
         turns, characters, count = [], 0, 0
         preserved_recent_image = False
@@ -2393,6 +2461,76 @@ class BusinessStore:
             'resolved_completed': resolved_completed,
         }
 
+    def _append_case_system_notice_in_tx(
+        self,
+        db,
+        *,
+        conversation_id: str | None,
+        customer_id: str,
+        case_id: str,
+        request_id: str,
+        milestone: str,
+        notice_text: str,
+        staff_name: str | None = None,
+        handoff_id: str | None = None,
+        now: float | None = None,
+    ) -> tuple[int | None, str]:
+        if not request_id.startswith('sys-notice-'):
+            raise ValueError(f'Case notice request_id must start with sys-notice-: {request_id!r}')
+        now_ts = self._now() if now is None else float(now)
+        if not conversation_id:
+            return None, notice_text
+        conv = db.execute(
+            'SELECT id, order_id, product_id, expires_at FROM conversations WHERE id = ?',
+            (conversation_id,),
+        ).fetchone()
+        if conv is None:
+            return None, notice_text
+        turn_messages = [{'role': 'assistant', 'content': notice_text}]
+        trace_info: dict[str, object] = {
+            'case_milestone': milestone,
+            'case_id': case_id,
+        }
+        turn_result: dict[str, object] = {
+            'message': notice_text,
+            'author': 'system_case_notice',
+            'source': 'interface',
+            'milestone': milestone,
+            'case_id': case_id,
+            'context': {
+                'order_id': conv['order_id'],
+                'product_id': conv['product_id'],
+            },
+            'trace': trace_info,
+        }
+        if handoff_id:
+            turn_result['handoff_id'] = handoff_id
+            trace_info['handoff_id'] = handoff_id
+        if staff_name:
+            turn_result['staff_name'] = staff_name
+            trace_info['staff_name'] = staff_name
+        db.execute(
+            """INSERT INTO agent_turns(conversation_id, customer_id, request_id, input_hash, messages, result, created_at)
+               VALUES (?, ?, ?, 'system-case-notice', ?, ?, ?)
+               ON CONFLICT(conversation_id, request_id) DO NOTHING""",
+            (
+                conversation_id,
+                customer_id,
+                request_id,
+                json.dumps(turn_messages, ensure_ascii=False),
+                json.dumps(turn_result, ensure_ascii=False),
+                now_ts,
+            ),
+        )
+        new_exp = max(float(conv['expires_at']), now_ts + self.CONVERSATION_TTL)
+        db.execute('UPDATE conversations SET expires_at = ? WHERE id = ?', (new_exp, conversation_id))
+        turn_row = db.execute(
+            'SELECT id FROM agent_turns WHERE conversation_id = ? AND request_id = ?',
+            (conversation_id, request_id),
+        ).fetchone()
+        turn_id = turn_row['id'] if turn_row and 'id' in turn_row else (turn_row[0] if turn_row else None)
+        return turn_id, notice_text
+
     def _request_human_handoff_in_tx(
         self,
         db,
@@ -2416,6 +2554,8 @@ class BusinessStore:
             "SELECT * FROM handoff_episodes WHERE case_id = ? AND status = 'pending' LIMIT 1",
             (case_id,),
         ).fetchone()
+        handoff_notice_msg = 'Đã gửi yêu cầu gặp nhân viên. Nhân viên CSKH sẽ phản hồi trong cuộc trò chuyện này.'
+        notice_turn_id = None
         if open_ep is not None:
             handoff_id = open_ep['handoff_id']
             if comment is not None:
@@ -2423,6 +2563,12 @@ class BusinessStore:
                     'UPDATE handoff_episodes SET comment = ? WHERE handoff_id = ?',
                     (comment, handoff_id),
                 )
+            existing_notice = db.execute(
+                'SELECT id FROM agent_turns WHERE conversation_id = ? AND request_id = ?',
+                (cid, f'sys-notice-handoff-{handoff_id}'),
+            ).fetchone()
+            if existing_notice is not None:
+                notice_turn_id = existing_notice['id'] if 'id' in existing_notice else existing_notice[0]
         else:
             handoff_id = f'hoff_{uuid.uuid4().hex}'
             db.execute(
@@ -2431,6 +2577,17 @@ class BusinessStore:
                        status, reason_code, comment, created_at
                    ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)""",
                 (handoff_id, case_id, cid, customer, reason_code, comment, now_ts),
+            )
+            notice_turn_id, handoff_notice_msg = self._append_case_system_notice_in_tx(
+                db,
+                conversation_id=cid,
+                customer_id=customer,
+                case_id=case_id,
+                request_id=f'sys-notice-handoff-{handoff_id}',
+                milestone='handoff_requested',
+                notice_text=handoff_notice_msg,
+                handoff_id=handoff_id,
+                now=now_ts,
             )
 
         next_status = 'in_progress' if active_case.get('holder') else 'waiting'
@@ -2476,6 +2633,8 @@ class BusinessStore:
             'feedback_id': feedback_id,
             'conversation': conv,
             'case': self._case_public_dict(refreshed_case),
+            'notice_turn_id': notice_turn_id,
+            'notice_message': handoff_notice_msg,
         }
 
     def request_human_handoff(
@@ -2519,6 +2678,8 @@ class BusinessStore:
             'handoff_id': handoff['handoff_id'],
             'feedback_id': handoff['feedback_id'],
             'case': handoff['case'],
+            'notice_turn_id': handoff.get('notice_turn_id'),
+            'notice_message': handoff.get('notice_message'),
             'created_at': now,
         }
 
@@ -2588,6 +2749,8 @@ class BusinessStore:
                 'case_id': handoff['case_id'],
                 'handoff_id': handoff['handoff_id'],
                 'case': handoff['case'],
+                'notice_turn_id': handoff.get('notice_turn_id'),
+                'notice_message': handoff.get('notice_message'),
                 'created_at': now,
             }
 
@@ -2710,10 +2873,13 @@ class BusinessStore:
             return out
 
     def escalations(self, limit=20):
+        now = self._now()
+        held_threshold = float(self._timer_config().held_silence_seconds)
         with self.connection() as db:
             rows = db.execute('''
                 SELECT he.handoff_id, he.case_id, k.conversation_id, k.customer_id,
                        k.status AS case_status, k.holder, k.holder_name, k.version AS case_version,
+                       k.resumed_at, k.created_at AS case_created_at,
                        he.reason_code, he.comment, NULL AS sentiment_flag,
                        he.created_at, k.updated_at, c.name AS customer_name, conv.order_id
                 FROM cases k
@@ -2725,13 +2891,17 @@ class BusinessStore:
                 ORDER BY k.updated_at DESC, he.created_at DESC
                 LIMIT ?
             ''', (limit,)).fetchall()
-        out = []
-        for r in rows:
-            d = dict(r)
-            d['id'] = d['handoff_id']
-            if isinstance(d.get('comment'), str) and contains_canary_or_secret(d['comment']):
-                _, d['comment'] = sanitize_structured_payload(d['comment'], preserve_reasoning=False)
-            out.append(d)
+            out = []
+            for r in rows:
+                d = dict(r)
+                d['customer_silent_seconds'] = self._compute_customer_silent_seconds_in_tx(
+                    db, d, now=now, threshold_seconds=held_threshold
+                )
+                d.pop('case_created_at', None)
+                d['id'] = d['handoff_id']
+                if isinstance(d.get('comment'), str) and contains_canary_or_secret(d['comment']):
+                    _, d['comment'] = sanitize_structured_payload(d['comment'], preserve_reasoning=False)
+                out.append(d)
         return out
 
     def list_conversations(self, customer, limit=20):
@@ -2739,7 +2909,12 @@ class BusinessStore:
         with self.connection() as db:
             rows = db.execute('''
                 SELECT c.id, c.customer_id, c.order_id, c.product_id, c.provider_id, c.expires_at,
-                       COUNT(t.id) as turns_count,
+                       SUM(CASE WHEN t.id IS NOT NULL
+                                 AND t.request_id NOT LIKE ?
+                                 AND t.request_id NOT LIKE ?
+                                 AND t.request_id NOT LIKE ?
+                           THEN 1 ELSE 0 END) as turns_count,
+                       COUNT(t.id) as raw_turns_count,
                        MAX(t.created_at) as last_activity,
                        MIN(t.created_at) as first_activity
                 FROM conversations c
@@ -2748,17 +2923,29 @@ class BusinessStore:
                 GROUP BY c.id, c.customer_id, c.order_id, c.product_id, c.provider_id, c.expires_at
                 ORDER BY COALESCE(MAX(t.created_at), c.expires_at) DESC
                 LIMIT ?
-            ''', (customer, now, limit)).fetchall()
+            ''', ('sys-reminder-%', 'sys-oar-%', 'sys-notice-%', customer, now, limit)).fetchall()
 
             conversations = []
             for r in rows:
                 item = dict(r)
+                item['turns_count'] = int(item.get('turns_count') or 0)
+                raw_cnt = int(item.pop('raw_turns_count', 0) or 0)
+                item['has_case_notices'] = raw_cnt > item['turns_count']
                 cid = item['id']
                 first_turn = db.execute('''
                     SELECT messages, result FROM agent_turns
                     WHERE conversation_id=?
+                      AND request_id NOT LIKE ?
+                      AND request_id NOT LIKE ?
+                      AND request_id NOT LIKE ?
                     ORDER BY id ASC LIMIT 1
-                ''', (cid,)).fetchone()
+                ''', (cid, 'sys-reminder-%', 'sys-oar-%', 'sys-notice-%')).fetchone()
+                if first_turn is None and raw_cnt > 0:
+                    first_turn = db.execute('''
+                        SELECT messages, result FROM agent_turns
+                        WHERE conversation_id=?
+                        ORDER BY id ASC LIMIT 1
+                    ''', (cid,)).fetchone()
 
                 snippet = ""
                 if first_turn:
@@ -2820,6 +3007,7 @@ class BusinessStore:
 
     def staff_desk_cases(self, limit=50):
         now = self._now()
+        held_threshold = float(self._timer_config().held_silence_seconds)
         with self.connection() as db:
             waiting_rows = db.execute(
                 '''SELECT he.handoff_id, k.case_id, k.conversation_id, k.customer_id,
@@ -2842,6 +3030,7 @@ class BusinessStore:
                 '''SELECT he.handoff_id, k.case_id, k.conversation_id, k.customer_id,
                           k.status, k.holder, k.holder_name, k.version,
                           k.resolved_reason, k.resolved_at, k.resume_count,
+                          k.resumed_at, k.created_at AS case_created_at,
                           he.reason_code, he.comment,
                           COALESCE(he.created_at, k.created_at) AS created_at, k.updated_at,
                           c.name AS customer_name, conv.order_id
@@ -2895,21 +3084,29 @@ class BusinessStore:
                 ).fetchall()
             }
 
-        def _clean(rows):
-            items = []
-            for r in rows:
-                d = dict(r)
-                d['id'] = d.get('handoff_id') or d['case_id']
-                d['sentiment_flag'] = None
-                d['has_open_order_action'] = d['case_id'] in open_action_cases
-                if isinstance(d.get('comment'), str) and contains_canary_or_secret(d['comment']):
-                    _, d['comment'] = sanitize_structured_payload(d['comment'], preserve_reasoning=False)
-                items.append(d)
-            return items
+            def _clean(rows, *, compute_silence: bool = False):
+                items = []
+                for r in rows:
+                    d = dict(r)
+                    d['customer_silent_seconds'] = (
+                        self._compute_customer_silent_seconds_in_tx(
+                            db, d, now=now, threshold_seconds=held_threshold
+                        )
+                        if compute_silence
+                        else None
+                    )
+                    d.pop('case_created_at', None)
+                    d['id'] = d.get('handoff_id') or d['case_id']
+                    d['sentiment_flag'] = None
+                    d['has_open_order_action'] = d['case_id'] in open_action_cases
+                    if isinstance(d.get('comment'), str) and contains_canary_or_secret(d['comment']):
+                        _, d['comment'] = sanitize_structured_payload(d['comment'], preserve_reasoning=False)
+                    items.append(d)
+                return items
 
-        waiting = _clean(waiting_rows)
-        in_progress = _clean(in_progress_rows)
-        resolved = _clean(resolved_rows)
+            waiting = _clean(waiting_rows, compute_silence=False)
+            in_progress = _clean(in_progress_rows, compute_silence=True)
+            resolved = _clean(resolved_rows, compute_silence=False)
         open_count = len(waiting) + len(in_progress)
         return {
             'waiting': waiting,
@@ -2925,6 +3122,7 @@ class BusinessStore:
         }
 
     def conversation_transcript(self, cid, *, case_id=None, read_only=False):
+        now = self._now()
         with self.connection() as db:
             if case_id is not None:
                 case_row = db.execute('SELECT * FROM cases WHERE case_id = ?', (case_id,)).fetchone()
@@ -2933,11 +3131,13 @@ class BusinessStore:
             else:
                 case_row = self._latest_case_in_tx(db, cid) if cid else None
             open_ep = None
+            silent_secs = None
             if case_row is not None:
                 open_ep = db.execute(
                     "SELECT * FROM handoff_episodes WHERE case_id = ? AND status = 'pending' LIMIT 1",
                     (case_row['case_id'],),
                 ).fetchone()
+                silent_secs = self._compute_customer_silent_seconds_in_tx(db, case_row, now=now)
             conv = db.execute('''
                 SELECT conv.*, c.name as customer_name
                 FROM conversations conv
@@ -2991,7 +3191,7 @@ class BusinessStore:
             _, ep_dict['comment'] = sanitize_structured_payload(ep_dict['comment'], preserve_reasoning=False)
         return {
             'conversation': dict(conv) if conv else None,
-            'case': self._case_public_dict(case_row),
+            'case': self._case_public_dict(case_row, customer_silent_seconds=silent_secs),
             'active_handoff': ep_dict,
             'read_only': bool(read_only or (case_row is not None and case_row['status'] == 'resolved')),
             'turns': clean_turns,
@@ -3057,6 +3257,19 @@ class BusinessStore:
             if actor_meta is not None:
                 log_kwargs['actor'] = actor_meta
             self.log(db, case_row['customer_id'], 'case_claimed', conv['order_id'] if conv else None, **log_kwargs)
+            claim_ver = int(case_row['version']) + 1
+            notice_turn_id, notice_message = self._append_case_system_notice_in_tx(
+                db,
+                conversation_id=case_row['conversation_id'],
+                customer_id=case_row['customer_id'],
+                case_id=case_id,
+                request_id=f'sys-notice-claim-{case_id}-v{claim_ver}',
+                milestone='case_claimed',
+                notice_text=f'Nhân viên {staff_label} đã nhận ca hỗ trợ.',
+                staff_name=staff_label,
+                handoff_id=open_ep['handoff_id'],
+                now=now,
+            )
             caller_role = (actor_meta.get('role') if actor_meta else None) or 'staff'
             norm_claim_actor = self._normalize_actor(actor, holder_id, caller_role)
             pending_oars = db.execute(
@@ -3139,12 +3352,15 @@ class BusinessStore:
                         now=now,
                     )
             updated = db.execute('SELECT * FROM cases WHERE case_id = ?', (case_id,)).fetchone()
+            silent_secs = self._compute_customer_silent_seconds_in_tx(db, updated, now=now)
         return {
             'status': 'ok',
             'claimed': True,
             'case_id': case_id,
             'handoff_id': open_ep['handoff_id'],
-            'case': self._case_public_dict(updated),
+            'case': self._case_public_dict(updated, customer_silent_seconds=silent_secs),
+            'notice_turn_id': notice_turn_id,
+            'notice_message': notice_message,
         }
 
     def release_case(self, case_id: str, *, staff_name=None, actor=None, expected_version=None):
@@ -3196,12 +3412,26 @@ class BusinessStore:
             if actor_meta is not None:
                 log_kwargs['actor'] = actor_meta
             self.log(db, case_row['customer_id'], 'case_released', conv['order_id'] if conv else None, **log_kwargs)
+            release_ver = int(case_row['version']) + 1
+            notice_turn_id, notice_message = self._append_case_system_notice_in_tx(
+                db,
+                conversation_id=case_row['conversation_id'],
+                customer_id=case_row['customer_id'],
+                case_id=case_id,
+                request_id=f'sys-notice-release-{case_id}-v{release_ver}',
+                milestone='case_released',
+                notice_text=f'Nhân viên {staff_label} đã trả ca hỗ trợ về hàng chờ.',
+                staff_name=staff_label,
+                now=now,
+            )
             updated = db.execute('SELECT * FROM cases WHERE case_id = ?', (case_id,)).fetchone()
         return {
             'status': 'ok',
             'released': True,
             'case_id': case_id,
             'case': self._case_public_dict(updated),
+            'notice_turn_id': notice_turn_id,
+            'notice_message': notice_message,
         }
 
     def staff_reply(self, customer_id, cid, staff_name, message, *, actor=None, case_id=None):
@@ -3533,6 +3763,19 @@ class BusinessStore:
             if actor_meta is not None:
                 log_kwargs["actor"] = actor_meta
             self.log(db, cust_id, 'escalation_resolved', ord_id, **log_kwargs)
+            resolve_ver = int(case_row['version']) + 1
+            notice_turn_id, notice_message = self._append_case_system_notice_in_tx(
+                db,
+                conversation_id=cid,
+                customer_id=cust_id,
+                case_id=case_row['case_id'],
+                request_id=f"sys-notice-resolve-{case_row['case_id']}-v{resolve_ver}",
+                milestone='case_resolved',
+                notice_text=f'Nhân viên {staff_name} đã hoàn tất và đóng ca hỗ trợ. Hệ thống chuyển lại Trợ lý AI.',
+                staff_name=staff_name,
+                handoff_id=open_ep['handoff_id'],
+                now=now,
+            )
             updated_case = db.execute('SELECT * FROM cases WHERE case_id = ?', (case_row['case_id'],)).fetchone()
 
         out = {
@@ -3543,6 +3786,8 @@ class BusinessStore:
             'leases_released': leases_released,
             'case': self._case_public_dict(updated_case),
             'staff_name': staff_name,
+            'notice_turn_id': notice_turn_id,
+            'notice_message': notice_message,
         }
         if actor_meta is not None:
             out['actor_role'] = actor_meta['role']
@@ -3841,6 +4086,8 @@ class BusinessStore:
         actor: dict | None = None,
         raised_by_role: str = "customer",
         delivery_failure_attempts: int | None = None,
+        consent_turn_id: int | None = None,
+        consent_excerpt: str | None = None,
         correlation_id: str | None = None,
         idempotency_key: str | None = None,
         proposal_id: str | None = None,
@@ -3994,6 +4241,15 @@ class BusinessStore:
             raise
 
         dec_id = f"oad_{uuid.uuid4().hex}"
+        if consent_turn_id is not None:
+            consent_tag = f'[consent_turn_id={consent_turn_id}] "{consent_excerpt or ""}"'
+            submit_note = (
+                f"{consent_tag} · {clean_reason_text}"[:500]
+                if clean_reason_text
+                else consent_tag[:500]
+            )
+        else:
+            submit_note = clean_reason_text
         db.execute(
             """INSERT INTO order_action_decisions(
                    decision_id, request_id, case_id, order_id, conversation_id,
@@ -4009,8 +4265,8 @@ class BusinessStore:
                 order_id,
                 resolved_cid,
                 norm_actor["principal_id"],
-                raised_by_role,
-                clean_reason_text,
+                norm_actor["role"],
+                submit_note,
                 now_ts,
             ),
         )
@@ -4029,6 +4285,9 @@ class BusinessStore:
         }
         if delivery_failure_attempts is not None:
             log_payload["delivery_failure_attempts"] = delivery_failure_attempts
+        if consent_turn_id is not None:
+            log_payload["consent_turn_id"] = consent_turn_id
+            log_payload["consent_excerpt"] = consent_excerpt
         if proposal_id is not None:
             log_payload["proposal_id"] = proposal_id
         if actor is not None:
@@ -4040,10 +4299,15 @@ class BusinessStore:
             "return": "return_requested",
             "exchange": "exchange_requested",
         }[action_type]
+        outbox_extra: dict[str, object] = {}
+        if exchange_kind:
+            outbox_extra["exchange_kind"] = exchange_kind
+        if consent_turn_id is not None:
+            outbox_extra["consent_turn_id"] = consent_turn_id
         self._enqueue_outbox_in_tx(
             db,
             event_type=outbox_event_type,
-            actor={"principal_id": norm_actor["principal_id"], "role": raised_by_role, "tenant_id": norm_actor.get("tenant_id")},
+            actor={"principal_id": norm_actor["principal_id"], "role": norm_actor["role"], "tenant_id": norm_actor.get("tenant_id")},
             customer_id=customer_id,
             case_id=resolved_case_id,
             order_action_request_id=req_id,
@@ -4056,7 +4320,7 @@ class BusinessStore:
             idempotency_key=idempotency_key or proposal_id or req_id,
             source="app",
             now=now_ts,
-            extra_fields={"exchange_kind": exchange_kind} if exchange_kind else None,
+            extra_fields=outbox_extra or None,
         )
 
         req_row = db.execute(
@@ -4152,6 +4416,299 @@ class BusinessStore:
                 (customer_id, limit),
             ).fetchall()
             return [self._serialize_order_action_in_tx(db, r, now=now_ts) for r in rows]
+
+    STAFF_CONSENT_WINDOW_SECONDS = 30 * 60
+
+    @staticmethod
+    def _case_opening_bounds_in_tx(db, case_row) -> tuple[float, int]:
+        d = dict(case_row)
+        open_since = float(d["resumed_at"] if d.get("resumed_at") is not None else d["created_at"])
+        cid = d.get("conversation_id")
+        if not cid:
+            return open_since, 0
+        last_resolve = db.execute(
+            "SELECT MAX(id) AS max_id FROM agent_turns WHERE conversation_id = ? AND request_id LIKE ?",
+            (cid, "sys-notice-resolve-%"),
+        ).fetchone()
+        min_turn_id = int(last_resolve["max_id"] or 0) if last_resolve is not None else 0
+        return open_since, min_turn_id
+
+    @staticmethod
+    def _extract_customer_consent_excerpt(turn_row) -> str | None:
+        if turn_row is None:
+            return None
+        d = dict(turn_row)
+        req_id = str(d.get("request_id") or "")
+        if req_id.startswith(("sys-notice-", "sys-reminder-", "sys-oar-", "staff-")):
+            return None
+        inp_hash = str(d.get("input_hash") or "")
+        if inp_hash in ("staff-reply", "system-case-notice", "system-reminder", "system-order-action"):
+            return None
+        res_raw = d.get("result")
+        try:
+            res_obj = json.loads(res_raw) if isinstance(res_raw, str) else (res_raw or {})
+        except Exception:
+            return None
+        if not isinstance(res_obj, dict):
+            return None
+        author = res_obj.get("author")
+        if author in (
+            "staff",
+            "bot",
+            "assistant",
+            "system_case_notice",
+            "system_reminder",
+            "system_order_action",
+        ):
+            return None
+        if author != "customer" and bool(res_obj.get("message")):
+            return None
+        msgs_raw = d.get("messages")
+        try:
+            msgs = json.loads(msgs_raw) if isinstance(msgs_raw, str) else msgs_raw
+        except Exception:
+            return None
+        if not isinstance(msgs, list) or not msgs:
+            return None
+        if not all(isinstance(m, dict) and m.get("role") == "user" for m in msgs):
+            return None
+        raw_text = " ".join(
+            str(m.get("content") or "").strip()
+            for m in msgs
+            if str(m.get("content") or "").strip()
+        ).strip()
+        if not raw_text:
+            return None
+        excerpt = re.sub(r"\s+", " ", raw_text).strip()[:160]
+        if contains_canary_or_secret(excerpt):
+            _, cleaned = sanitize_structured_payload(excerpt, preserve_reasoning=False)
+            excerpt = str(cleaned)[:160]
+        return excerpt
+
+    def list_case_orders(self, case_id: str) -> dict:
+        require(
+            isinstance(case_id, str) and bool(re.fullmatch(r"[A-Za-z0-9_-]{1,80}", case_id)),
+            400,
+            "invalid_case_id",
+            "Mã ca hỗ trợ không hợp lệ.",
+        )
+        now_ts = self._now()
+        with self.connection() as db:
+            case_row = db.execute("SELECT * FROM cases WHERE case_id = ?", (case_id,)).fetchone()
+            require(case_row is not None, 404, "case_not_found", "Không tìm thấy ca hỗ trợ.")
+            cust_id = case_row["customer_id"]
+            ord_rows = db.execute(
+                "SELECT * FROM orders WHERE customer_id = ? ORDER BY id",
+                (cust_id,),
+            ).fetchall()
+            open_req_rows = db.execute(
+                """SELECT * FROM order_action_requests
+                   WHERE customer_id = ? AND closed_at IS NULL
+                   ORDER BY created_at DESC, request_id DESC""",
+                (cust_id,),
+            ).fetchall()
+            open_by_order: dict[str, dict] = {}
+            for r in open_req_rows:
+                oid = r["order_id"]
+                if oid not in open_by_order:
+                    open_by_order[oid] = self._serialize_order_action_in_tx(db, r, now=now_ts)
+
+            enriched_orders: list[dict] = []
+            for o in ord_rows:
+                od = dict(o)
+                st = od.get("status")
+                if st == "pending":
+                    allowed_types = ["cancel"]
+                elif st == "delivered":
+                    allowed_types = ["return", "exchange"]
+                else:
+                    allowed_types = []
+                delivered_at = od.get("delivered_at")
+                if delivered_at is None:
+                    days_since_delivery = None
+                    delivery_age_label = "chưa có ngày giao"
+                else:
+                    days_since_delivery = max(0, int((now_ts - float(delivered_at)) // 86400))
+                    delivery_age_label = f"{days_since_delivery} ngày kể từ khi giao"
+                od["allowed_action_types"] = allowed_types
+                od["open_order_action"] = open_by_order.get(od["id"])
+                od["days_since_delivery"] = days_since_delivery
+                od["delivery_age_label"] = delivery_age_label
+                enriched_orders.append(od)
+
+            consent_turns: list[dict] = []
+            if case_row["status"] != "resolved" and case_row["conversation_id"]:
+                open_since, min_turn_id = self._case_opening_bounds_in_tx(db, case_row)
+                earliest_allowed = max(open_since - 1e-6, now_ts - self.STAFF_CONSENT_WINDOW_SECONDS)
+                cand_turns = db.execute(
+                    """SELECT id, conversation_id, customer_id, request_id, input_hash, messages, result, created_at
+                       FROM agent_turns
+                       WHERE conversation_id = ?
+                         AND customer_id = ?
+                         AND id > ?
+                         AND created_at >= ?
+                         AND created_at <= ?
+                       ORDER BY id DESC""",
+                    (
+                        case_row["conversation_id"],
+                        cust_id,
+                        min_turn_id,
+                        earliest_allowed,
+                        now_ts + 5.0,
+                    ),
+                ).fetchall()
+                for trow in cand_turns:
+                    excerpt = self._extract_customer_consent_excerpt(trow)
+                    if excerpt is not None:
+                        consent_turns.append(
+                            {
+                                "turn_id": int(trow["id"]),
+                                "excerpt": excerpt,
+                                "created_at": float(trow["created_at"]),
+                            }
+                        )
+
+        return {
+            "case_id": case_id,
+            "customer_id": cust_id,
+            "orders": enriched_orders,
+            "consent_turns": consent_turns,
+        }
+
+    def create_staff_consented_order_action_request(
+        self,
+        case_id: str,
+        body: dict | None,
+        *,
+        actor: dict,
+        idempotency_key: str | None = None,
+    ) -> dict:
+        require(
+            isinstance(case_id, str) and bool(re.fullmatch(r"[A-Za-z0-9_-]{1,80}", case_id)),
+            400,
+            "invalid_case_id",
+            "Mã ca hỗ trợ không hợp lệ.",
+        )
+        require(isinstance(body, dict), 400, "invalid_body", "Yêu cầu phải là đối tượng JSON.")
+        allowed = {
+            "order_id",
+            "expected_order_version",
+            "order_version",
+            "type",
+            "action_type",
+            "exchange_kind",
+            "reason_code",
+            "reason_text",
+            "consent_turn_id",
+        }
+        require(set(body).issubset(allowed), 400, "invalid_fields", "Các trường của yêu cầu không hợp lệ.")
+        if "type" in body and "action_type" in body:
+            require(
+                body["type"] == body["action_type"],
+                400,
+                "invalid_action_type",
+                "Trường type và action_type xung đột.",
+            )
+        action_type = body.get("type") if "type" in body else body.get("action_type")
+        if "expected_order_version" in body and "order_version" in body:
+            require(
+                body["expected_order_version"] == body["order_version"],
+                400,
+                "invalid_order_version",
+                "Trường expected_order_version và order_version xung đột.",
+            )
+        expected_ver = (
+            body.get("expected_order_version")
+            if "expected_order_version" in body
+            else body.get("order_version")
+        )
+        consent_turn_id = body.get("consent_turn_id")
+        require(
+            type(consent_turn_id) is int and consent_turn_id >= 1,
+            400,
+            "invalid_consent_turn",
+            "Cần chọn tin nhắn đồng ý hợp lệ của khách hàng (consent_turn_id).",
+        )
+        oid = body.get("order_id")
+        require(isinstance(oid, str) and bool(oid.strip()), 400, "invalid_order_id", "Thiếu mã đơn hàng.")
+
+        norm_actor = self._normalize_actor(actor, "", "")
+        now_ts = self._now()
+
+        with self.connection(write=True) as db:
+            case_row = self._check_case_reviewer_authority_in_tx(
+                db, case_id, norm_actor, require_holding=False
+            )
+            turn_row = db.execute(
+                """SELECT id, conversation_id, customer_id, request_id, input_hash, messages, result, created_at
+                   FROM agent_turns WHERE id = ?""",
+                (consent_turn_id,),
+            ).fetchone()
+            require(
+                turn_row is not None
+                and turn_row["conversation_id"] == case_row["conversation_id"]
+                and turn_row["customer_id"] == case_row["customer_id"],
+                400,
+                "invalid_consent_turn",
+                "Tin nhắn đồng ý không thuộc hội thoại của ca hỗ trợ này.",
+            )
+            open_since, min_turn_id = self._case_opening_bounds_in_tx(db, case_row)
+            require(
+                float(turn_row["created_at"]) >= open_since - 1e-6 and int(turn_row["id"]) > min_turn_id,
+                400,
+                "invalid_consent_turn",
+                "Tin nhắn đồng ý không thuộc lần mở ca hiện tại.",
+            )
+            turn_age = now_ts - float(turn_row["created_at"])
+            require(
+                -5.0 <= turn_age <= self.STAFF_CONSENT_WINDOW_SECONDS,
+                400,
+                "consent_turn_expired",
+                "Tin nhắn đồng ý của khách phải nằm trong vòng 30 phút gần nhất.",
+            )
+            excerpt = self._extract_customer_consent_excerpt(turn_row)
+            require(
+                excerpt is not None,
+                400,
+                "consent_turn_not_customer",
+                "Chỉ chấp nhận tin nhắn do chính khách hàng gửi làm bằng chứng đồng ý.",
+            )
+
+            req = self._create_order_action_request_in_tx(
+                db,
+                customer_id=case_row["customer_id"],
+                order_id=oid.strip(),
+                action_type=action_type,
+                expected_order_version=expected_ver,
+                reason_code=body.get("reason_code"),
+                reason_text=body.get("reason_text"),
+                exchange_kind=body.get("exchange_kind"),
+                case_id=case_id,
+                actor=norm_actor,
+                raised_by_role="customer",
+                consent_turn_id=consent_turn_id,
+                consent_excerpt=excerpt,
+                correlation_id=idempotency_key,
+                idempotency_key=idempotency_key,
+                now=now_ts,
+            )
+
+        type_msg = {
+            "cancel": "Đã tạo yêu cầu hủy theo đồng ý của khách hàng",
+            "return": "Đã tạo yêu cầu trả hàng theo đồng ý của khách hàng",
+            "exchange": "Đã tạo yêu cầu đổi hàng theo đồng ý của khách hàng",
+        }[req["type"]]
+        return {
+            "status": req["status"],
+            "order_action_request_id": req["request_id"],
+            "order_action": req,
+            "order": req["order"],
+            "case_id": req["case_id"],
+            "conversation_id": req["conversation_id"],
+            "consent_turn_id": consent_turn_id,
+            "consent_excerpt": excerpt,
+            "message": type_msg,
+        }
 
     def list_case_order_actions(self, case_id: str) -> list[dict]:
         require(

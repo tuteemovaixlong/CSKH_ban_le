@@ -19,7 +19,7 @@
       <p id="login-description">Đăng nhập bằng tài khoản Google hoặc sử dụng mã truy cập cá nhân.</p>
       <div id="google-login-container">
         <a href="/auth/google/login" class="google-login-btn" id="btn-google-login">
-          <svg class="google-icon" width="20" height="20" style="width:20px;height:20px;min-width:20px;" viewBox="0 0 24 24" aria-hidden="true">
+          <svg class="google-icon" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
             <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
             <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
             <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
@@ -70,7 +70,7 @@
           <span>KHÔNG GIAN HỖ TRỢ</span>
         </div>
         <div class="nav-current"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8z"/></svg><span>Hỗ trợ đơn hàng</span></div>
-        <button class="nav-button" id="btn-sidebar-manager-nav" style="display:none;"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg><span>🏪 Bảng Quản Trị</span></button>
+        <button class="nav-button" id="btn-sidebar-manager-nav" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg><span>🏪 Bảng Quản Trị</span></button>
         <button class="nav-button" id="toggle-staff-desk"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg><span>🎧 Bàn làm việc CSKH</span></button>
         <button class="nav-button" id="toggle-inspector"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg><span>🛠️ Tool Inspector</span></button>
         <button class="nav-button" id="reset"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10a9 9 0 1 1 2 8M3 4v6h6"/></svg><span>Tải lại dữ liệu</span></button>
@@ -111,8 +111,8 @@
         <div class="panel-heading">
           <div class="agent-avatar" id="chat-agent-avatar" aria-hidden="true">R</div>
           <div><h2 id="chat-title">Trợ lý RetailOps</h2><span id="chat-subtitle">Tra đơn · Thông tin sản phẩm · Yêu cầu hủy</span></div>
-          <div class="chat-header-actions" style="margin-left:auto; display:flex; gap:8px; align-items:center;">
-            <button class="header-action-btn manager-highlight-btn" id="btn-open-manager-console" style="display:none;" title="Mở Bảng Quản Trị Cửa Hàng">🏪 Bảng Quản Trị</button>
+          <div class="chat-header-actions">
+            <button class="header-action-btn manager-highlight-btn" id="btn-open-manager-console" hidden title="Mở Bảng Quản Trị Cửa Hàng">🏪 Bảng Quản Trị</button>
             <button class="header-action-btn" id="btn-chat-history" title="Xem danh sách lịch sử hội thoại cũ">🕒 Lịch sử</button>
             <button class="header-action-btn" id="btn-header-new-conv" title="Mở cuộc trò chuyện mới">➕ Chat mới</button>
             <button class="header-action-btn" id="btn-toggle-topbar" title="Ẩn/hiện thanh menu trên cùng để mở rộng khung chat">⤢ Mở rộng</button>
@@ -133,7 +133,7 @@
         </div>
         <p class="conversation-context" id="conversation-context" aria-live="polite">Chưa chọn đơn hoặc sản phẩm</p>
         <div class="messages" id="messages" role="log" aria-live="polite" aria-relevant="additions text" tabindex="0"></div>
-        <div class="composer-area"><div class="suggestions" aria-label="Yêu cầu mẫu"><button data-prompt="Kiểm tra đơn O-101">📦 Đơn O-101 <span>↗</span></button><button data-prompt="Đơn O-101 đi đến đâu rồi, tra cứu hành trình bưu cục giúp tôi">🚚 Vận đơn GHTK <span>↗</span></button><button data-prompt="Áo thun Essential size M màu trắng còn hàng không?">👕 Tồn kho size M <span>↗</span></button><button data-prompt="Chính sách đổi trả hàng của shop như thế nào?">🔄 Đổi trả 7 ngày <span>↗</span></button><button data-prompt="Tôi muốn gặp trực tiếp nhân viên tư vấn">🙋 Gặp nhân viên <span>↗</span></button></div><div id="attachment-preview" class="attachment-preview" style="display:none;" aria-live="polite"></div><form id="chat-form"><input type="file" id="chat-file-input" accept="image/jpeg,image/png,image/webp,image/gif,application/pdf" style="display:none;"><button type="button" class="btn-attach" id="btn-attach" title="Đính kèm ảnh tem vận đơn / hoá đơn / sản phẩm (hoặc dán ảnh Ctrl+V)" aria-label="Đính kèm ảnh hoặc tài liệu"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button><label class="sr-only" for="message">Yêu cầu của bạn</label><textarea id="message" rows="1" maxlength="1000" placeholder="Ví dụ: Tra cứu đơn O-101 hoặc đính kèm ảnh hoá đơn/tem vận đơn…" required></textarea><button class="send" type="submit" aria-label="Gửi yêu cầu"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 7-7 7 7M12 5v14"/></svg></button></form><div class="composer-note">Dữ liệu giả lập · Hỗ trợ đính kèm ảnh (Ctrl+V, kéo thả) · Hủy đơn luôn cần bạn xác nhận</div></div>
+        <div class="composer-area"><div class="suggestions" aria-label="Yêu cầu mẫu"><button data-prompt="Kiểm tra đơn O-101">📦 Đơn O-101 <span>↗</span></button><button data-prompt="Đơn O-101 đi đến đâu rồi, tra cứu hành trình bưu cục giúp tôi">🚚 Vận đơn GHTK <span>↗</span></button><button data-prompt="Áo thun Essential size M màu trắng còn hàng không?">👕 Tồn kho size M <span>↗</span></button><button data-prompt="Chính sách đổi trả hàng của shop như thế nào?">🔄 Đổi trả 7 ngày <span>↗</span></button><button data-prompt="Tôi muốn gặp trực tiếp nhân viên tư vấn">🙋 Gặp nhân viên <span>↗</span></button></div><div id="attachment-preview" class="attachment-preview" hidden aria-live="polite"></div><form id="chat-form"><input type="file" id="chat-file-input" class="chat-file-input-hidden" accept="image/jpeg,image/png,image/webp,image/gif,application/pdf" hidden><button type="button" class="btn-attach" id="btn-attach" title="Đính kèm ảnh tem vận đơn / hoá đơn / sản phẩm (hoặc dán ảnh Ctrl+V)" aria-label="Đính kèm ảnh hoặc tài liệu"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button><label class="sr-only" for="message">Yêu cầu của bạn</label><textarea id="message" rows="1" maxlength="1000" placeholder="Ví dụ: Tra cứu đơn O-101 hoặc đính kèm ảnh hoá đơn/tem vận đơn…" required></textarea><button class="send" type="submit" aria-label="Gửi yêu cầu"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 7-7 7 7M12 5v14"/></svg></button></form><div class="composer-note">Dữ liệu giả lập · Hỗ trợ đính kèm ảnh (Ctrl+V, kéo thả) · Hủy đơn luôn cần bạn xác nhận</div></div>
       </section>
 
       <aside class="context-panel" id="right-context-panel" aria-label="Thông tin và lịch sử đơn hàng">
@@ -142,14 +142,14 @@
             <h2 id="order-panel-title">Đơn hàng</h2>
             <span id="order-count">0 đơn</span>
           </div>
-          <button class="manager-banner-btn" id="btn-panel-manager-banner" style="display:none;" title="Mở Bảng Quản Trị Toàn Shop">
+          <button class="manager-banner-btn" id="btn-panel-manager-banner" hidden title="Mở Bảng Quản Trị Toàn Shop">
             <span>🏪 Bảng Quản Trị Cửa Hàng</span>
             <span class="banner-badge">5 Mục Vận Hành ⛶</span>
           </button>
           <div class="order-search-filter-box" id="order-search-filter-box">
             <div class="order-search-wrapper">
               <input type="text" id="order-search-input" placeholder="🔍 Tìm mã đơn, tên hàng..." aria-label="Tìm kiếm đơn hàng">
-              <button type="button" id="btn-clear-order-search" class="search-clear-btn" style="display:none;" title="Xóa tìm kiếm">✕</button>
+              <button type="button" id="btn-clear-order-search" class="search-clear-btn" hidden title="Xóa tìm kiếm">✕</button>
             </div>
             <div class="order-filter-chips" id="order-filter-chips">
               <button type="button" class="filter-chip active" data-filter="all">Tất cả</button>
@@ -159,7 +159,7 @@
             </div>
           </div>
           <div class="order-card-list" id="order-card-list" role="listbox" aria-label="Danh sách đơn hàng"></div>
-          <div class="order-tabs" id="order-tabs" style="display:none;"></div>
+          <div class="order-tabs" id="order-tabs" hidden></div>
           <div id="order-details" aria-live="polite"></div>
         </section>
         <section class="activity-panel"><div class="section-header"><h2>Nhật ký xử lý</h2><span id="event-count">0 sự kiện</span></div><div id="activity" aria-live="polite"><p class="activity-empty">Các thao tác của bạn sẽ xuất hiện ở đây.</p></div></section>
@@ -179,6 +179,7 @@
         </div>
         <div class="staff-header-actions">
           <button type="button" class="secondary" id="refresh-staff-queue">🔄 Làm mới hàng đợi</button>
+          <button type="button" class="secondary" id="btn-maximize-staff-desk" aria-pressed="false">⛶ Phóng to</button>
           <button type="button" class="secondary" id="close-staff-desk">Đóng bàn làm việc</button>
         </div>
       </div>
@@ -203,6 +204,7 @@
               <span id="staff-active-meta">Lịch sử chat và ngữ cảnh sẽ hiển thị tại đây</span>
             </div>
             <div class="chat-header-bar-controls" id="staff-chat-header-controls">
+              <span class="staff-silent-badge" id="staff-active-silent-badge" hidden></span>
               <span class="staff-case-status-pill" id="staff-active-status-pill" hidden></span>
             </div>
           </div>
@@ -341,7 +343,7 @@
               </tr>
             </thead>
             <tbody id="manager-products-tbody">
-              <tr><td colspan="8" style="text-align:center; padding:24px;">Đang tải danh mục hàng hóa...</td></tr>
+              <tr><td colspan="8" class="manager-table-placeholder">Đang tải danh mục hàng hóa...</td></tr>
             </tbody>
           </table>
         </div>
@@ -452,7 +454,7 @@
               </tr>
             </thead>
             <tbody id="manager-orders-tbody">
-              <tr><td colspan="8" style="text-align:center; padding:24px;">Đang tải danh sách đơn hàng...</td></tr>
+              <tr><td colspan="8" class="manager-table-placeholder">Đang tải danh sách đơn hàng...</td></tr>
             </tbody>
           </table>
         </div>
@@ -474,7 +476,7 @@
               </tr>
             </thead>
             <tbody id="manager-audit-tbody">
-              <tr><td colspan="5" style="text-align:center; padding:24px;">Đang tải nhật ký kiểm toán...</td></tr>
+              <tr><td colspan="5" class="manager-table-placeholder">Đang tải nhật ký kiểm toán...</td></tr>
             </tbody>
           </table>
         </div>
@@ -482,11 +484,11 @@
 
       <div class="manager-tab-content" role="tabpanel" aria-labelledby="tab-btn-accounts" id="tab-content-accounts" hidden>
         <div class="manager-products-toolbar" id="admin-governance-toolbar">
-          <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; flex:1;">
+          <div class="admin-toolbar-filters">
             <button type="button" class="secondary manager-back-kpis-btn" id="btn-accounts-back-to-kpis" data-return-tab="kpis">📊 Về Tổng quan &amp; KPIs</button>
-            <label for="admin-tenant-id-input" style="font-size:13px; font-weight:600;">Cửa hàng (Tenant):</label>
-            <input type="text" id="admin-tenant-id-input" class="manager-search-input" style="max-width:160px;" placeholder="Mặc định theo phiên">
-            <input type="text" id="admin-account-search-input" class="manager-search-input" style="max-width:240px;" placeholder="Tìm kiếm membership / email / mã KH...">
+            <label for="admin-tenant-id-input" class="admin-inline-label">Cửa hàng (Tenant):</label>
+            <input type="text" id="admin-tenant-id-input" class="manager-search-input admin-tenant-input" placeholder="Mặc định theo phiên">
+            <input type="text" id="admin-account-search-input" class="manager-search-input admin-account-search-input" placeholder="Tìm kiếm membership / email / mã KH...">
             <button type="button" class="secondary" id="btn-load-admin-accounts">🔍 Tải danh sách tài khoản</button>
             <button type="button" class="secondary" id="btn-load-admin-audit-log">📜 Tải nhật ký quản trị</button>
           </div>
@@ -496,7 +498,7 @@
         <p id="admin-governance-error" class="error" role="alert" hidden></p>
         <p id="admin-governance-status" class="muted" hidden></p>
 
-        <div class="manager-table-responsive" style="margin-bottom:16px;">
+        <div class="manager-table-responsive admin-table-spaced">
           <table class="manager-data-table" id="admin-accounts-table">
             <thead>
               <tr>
@@ -511,38 +513,38 @@
               </tr>
             </thead>
             <tbody id="admin-accounts-tbody">
-              <tr><td colspan="8" style="text-align:center; padding:20px;">Mở tab hoặc bấm Tải danh sách tài khoản để xem.</td></tr>
+              <tr><td colspan="8" class="manager-table-placeholder compact">Mở tab hoặc bấm Tải danh sách tài khoản để xem.</td></tr>
             </tbody>
           </table>
         </div>
 
-        <section id="admin-account-detail-panel" class="card" style="padding:14px; margin-bottom:16px;" hidden>
-          <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px;">
+        <section id="admin-account-detail-panel" class="card admin-detail-panel" hidden>
+          <div class="admin-detail-header">
             <div>
               <span class="small-tag">ACCOUNT &amp; QUOTA GOVERNANCE</span>
-              <h3 id="admin-selected-account-title" style="margin:4px 0 0;">Chi tiết tài khoản</h3>
+              <h3 id="admin-selected-account-title" class="admin-detail-title">Chi tiết tài khoản</h3>
             </div>
             <span class="badge" id="admin-selected-account-status">—</span>
           </div>
-          <div id="admin-selected-account-meta" class="muted" style="font-size:13px; margin-bottom:12px;"></div>
+          <div id="admin-selected-account-meta" class="muted admin-detail-meta"></div>
 
-          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:10px; margin-bottom:12px;">
+          <div class="admin-detail-grid">
             <div>
-              <label for="admin-action-reason" style="display:block; font-size:12px; font-weight:600; margin-bottom:4px;">Lý do thao tác quản trị (bắt buộc):</label>
-              <input type="text" id="admin-action-reason" placeholder="Nhập lý do kiểm toán (audit reason)..." style="width:100%;">
+              <label for="admin-action-reason" class="admin-field-label">Lý do thao tác quản trị (bắt buộc):</label>
+              <input type="text" id="admin-action-reason" class="admin-full-input" placeholder="Nhập lý do kiểm toán (audit reason)...">
             </div>
             <div>
-              <label for="admin-quota-limit" style="display:block; font-size:12px; font-weight:600; margin-bottom:4px;">Giới hạn lượt API/ngày (1..10000, để trống = xóa override):</label>
+              <label for="admin-quota-limit" class="admin-field-label">Giới hạn lượt API/ngày (1..10000, để trống = xóa override):</label>
               <input type="number" id="admin-quota-limit" min="1" max="10000" placeholder="Ví dụ: 50">
             </div>
             <div>
-              <label for="admin-quota-expires" style="display:block; font-size:12px; font-weight:600; margin-bottom:4px;">Hết hạn override (epoch giây, tùy chọn):</label>
+              <label for="admin-quota-expires" class="admin-field-label">Hết hạn override (epoch giây, tùy chọn):</label>
               <input type="number" id="admin-quota-expires" placeholder="Để trống nếu không hết hạn">
             </div>
           </div>
 
-          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-            <label style="display:inline-flex; align-items:center; gap:6px; font-size:13px; margin-right:8px;">
+          <div class="admin-detail-actions">
+            <label class="admin-confirm-check">
               <input type="checkbox" id="admin-action-confirm"> Xác nhận thực thi thao tác quản trị
             </label>
             <button type="button" class="danger" id="btn-admin-suspend">⛔ Đình chỉ (Suspend)</button>
@@ -553,7 +555,7 @@
         </section>
 
         <div class="manager-table-responsive">
-          <h4 style="margin:8px 0;">Nhật ký Audit Quản Trị Tài Khoản &amp; Quota (Append-Only)</h4>
+          <h4 class="admin-audit-heading">Nhật ký Audit Quản Trị Tài Khoản &amp; Quota (Append-Only)</h4>
           <table class="manager-data-table" id="admin-audit-log-table">
             <thead>
               <tr>
@@ -566,7 +568,7 @@
               </tr>
             </thead>
             <tbody id="admin-audit-log-tbody">
-              <tr><td colspan="6" style="text-align:center; padding:18px;">Chưa tải nhật ký audit quản trị.</td></tr>
+              <tr><td colspan="6" class="manager-table-placeholder compact">Chưa tải nhật ký audit quản trị.</td></tr>
             </tbody>
           </table>
         </div>

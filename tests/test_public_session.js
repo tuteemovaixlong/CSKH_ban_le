@@ -84,6 +84,7 @@ let forceStaffReplyError = null;
 let mockTranscriptResponse = null;
 let mockStaffCases = null;
 let mockStaffCaseOrderActions = null;
+let mockStaffCaseOrders = null;
 let mockStaffCaseTranscriptMap = null;
 let alertCalls = [];
 const storageMap = new Map();
@@ -167,7 +168,18 @@ const context=vm.createContext({document,console,Intl,Date,URLSearchParams,Abort
         status = forceFeedbackError.status;
         body = { error: 'handoff_persist_failed', message: forceFeedbackError.message };
       } else {
-        body = { status: 'ok', case_id: 'case_ui_1', handoff_id: 'hof_ui_1' };
+        const fbBody = JSON.parse(options.body || '{}');
+        if (fbBody.feedback_type === 'human_handoff') {
+          body = {
+            status: 'ok',
+            case_id: 'case_ui_1',
+            handoff_id: 'hof_ui_1',
+            notice_turn_id: 951,
+            notice_message: 'Đã gửi yêu cầu gặp nhân viên. Nhân viên CSKH sẽ phản hồi trong cuộc trò chuyện này.'
+          };
+        } else {
+          body = { status: 'ok', case_id: 'case_ui_1', handoff_id: 'hof_ui_1' };
+        }
       }
     }
     else if(/^\/api\/conversations\/[^/]+\/messages$/.test(url)) {
@@ -180,7 +192,15 @@ const context=vm.createContext({document,console,Intl,Date,URLSearchParams,Abort
       if (mockStaffCases && mockStaffCases.waiting.length) {
         const claimed = { ...mockStaffCases.waiting.shift(), status: 'in_progress', holder: 'p_staff_1', holder_name: 'Khách B', version: 2 };
         mockStaffCases.in_progress.unshift(claimed);
-        body = { status: 'ok', claimed: true, case_id: claimed.case_id, handoff_id: 'hof_ui_1', case: claimed };
+        body = {
+          status: 'ok',
+          claimed: true,
+          case_id: claimed.case_id,
+          handoff_id: 'hof_ui_1',
+          case: claimed,
+          notice_turn_id: 952,
+          notice_message: 'Nhân viên Khách B đã nhận ca hỗ trợ.'
+        };
       } else {
         status = 409;
         body = { error: 'case_claim_conflict', message: 'Ca hỗ trợ đã được nhân viên khác nhận xử lý.' };
@@ -205,39 +225,91 @@ const context=vm.createContext({document,console,Intl,Date,URLSearchParams,Abort
         };
       }
     }
+    else if(/^\/api\/staff\/cases\/[^/]+\/orders$/.test(url)) {
+      const cidMatch = url.split('/')[4];
+      if (mockStaffCaseOrders && mockStaffCaseOrders[cidMatch]) {
+        body = mockStaffCaseOrders[cidMatch];
+      } else {
+        const oaEntry = (mockStaffCaseOrderActions && mockStaffCaseOrderActions[cidMatch]) || null;
+        const custOrders = (oaEntry && oaEntry.customer_orders) || [];
+        const openOas = ((oaEntry && oaEntry.order_actions) || []).filter(r => r && r.closed_at == null && !['rejected', 'completed'].includes(r.status) && !(r.type === 'cancel' && r.status === 'approved'));
+        body = {
+          case_id: cidMatch,
+          read_only: Boolean(oaEntry && oaEntry.read_only),
+          orders: custOrders.map(o => ({
+            ...o,
+            allowed_action_types: o.status === 'pending' ? ['cancel'] : (o.status === 'delivered' ? ['return', 'exchange'] : []),
+            open_order_action: openOas.find(r => r.order_id === o.id) || null
+          })),
+          consent_turns: []
+        };
+      }
+    }
     else if(/^\/api\/staff\/cases\/[^/]+\/order-actions$/.test(url)) {
       const cidMatch = url.split('/')[4];
       if (options.method === 'POST') {
         const payload = JSON.parse(options.body || '{}');
-        const created = {
-          request_id: 'oar_df_1',
-          order_id: payload.order_id,
-          case_id: cidMatch,
-          conversation_id: 'fixture-conversation',
-          type: 'cancel',
-          exchange_kind: null,
-          status: 'under_review',
-          inspection_outcome: null,
-          refund_status: 'not_applicable',
-          refund_decision: null,
-          reason_code: 'delivery_failed',
-          reason_label: 'Giao hàng thất bại',
-          reason_text: payload.note,
-          raised_by_role: mockSessionRole || 'staff',
-          delivery_failure_attempts: payload.delivery_failure_attempts,
-          expected_order_version: payload.expected_order_version || 1,
-          version: 1,
-          closed_at: null,
-          order: { id: payload.order_id, name: 'Áo thun Essential', amount: 299000, status: 'pending', version: 1 },
-          delivery_age_label: 'chưa có ngày giao',
-          evidence: [],
-          decisions: [{ decision_id: 'oad_df_1', action: 'submit', from_status: null, to_status: 'under_review', actor_role: mockSessionRole || 'staff', note: payload.note }]
-        };
-        if (mockStaffCaseOrderActions && mockStaffCaseOrderActions[cidMatch]) {
-          mockStaffCaseOrderActions[cidMatch].order_actions.unshift(created);
+        if (payload.delivery_failure_attempts != null) {
+          const created = {
+            request_id: 'oar_df_1',
+            order_id: payload.order_id,
+            case_id: cidMatch,
+            conversation_id: 'fixture-conversation',
+            type: 'cancel',
+            exchange_kind: null,
+            status: 'under_review',
+            inspection_outcome: null,
+            refund_status: 'not_applicable',
+            refund_decision: null,
+            reason_code: 'delivery_failed',
+            reason_label: 'Giao hàng thất bại',
+            reason_text: payload.note,
+            raised_by_role: mockSessionRole || 'staff',
+            delivery_failure_attempts: payload.delivery_failure_attempts,
+            expected_order_version: payload.expected_order_version || 1,
+            version: 1,
+            closed_at: null,
+            order: { id: payload.order_id, name: 'Áo thun Essential', amount: 299000, status: 'pending', version: 1 },
+            delivery_age_label: 'chưa có ngày giao',
+            evidence: [],
+            decisions: [{ decision_id: 'oad_df_1', action: 'submit', from_status: null, to_status: 'under_review', actor_role: mockSessionRole || 'staff', note: payload.note }]
+          };
+          if (mockStaffCaseOrderActions && mockStaffCaseOrderActions[cidMatch]) {
+            mockStaffCaseOrderActions[cidMatch].order_actions.unshift(created);
+          }
+          status = 201;
+          body = { status: 'under_review', order_action_request_id: created.request_id, order_action: created, message: 'Đã tạo yêu cầu hủy do giao thất bại, chờ Quản lý duyệt' };
+        } else {
+          const created = {
+            request_id: 'oar_coa_1',
+            order_id: payload.order_id,
+            case_id: cidMatch,
+            conversation_id: 'fixture-conversation',
+            type: payload.type,
+            exchange_kind: payload.exchange_kind || null,
+            status: 'requested',
+            inspection_outcome: null,
+            refund_status: 'not_applicable',
+            refund_decision: null,
+            reason_code: payload.reason_code,
+            reason_label: payload.reason_code,
+            reason_text: payload.reason_text || null,
+            raised_by_role: 'customer',
+            delivery_failure_attempts: null,
+            expected_order_version: payload.expected_order_version || 1,
+            version: 1,
+            closed_at: null,
+            order: { id: payload.order_id, name: 'Áo khoác Everyday', amount: 520000, status: payload.type === 'cancel' ? 'pending' : 'delivered', version: payload.expected_order_version || 1 },
+            delivery_age_label: '2 ngày kể từ khi giao',
+            evidence: [],
+            decisions: [{ decision_id: 'oad_coa_1', action: 'submit', from_status: null, to_status: 'requested', actor_role: mockSessionRole || 'staff', note: `[consent_turn_id=${payload.consent_turn_id}]` }]
+          };
+          if (mockStaffCaseOrderActions && mockStaffCaseOrderActions[cidMatch]) {
+            mockStaffCaseOrderActions[cidMatch].order_actions.unshift(created);
+          }
+          status = 201;
+          body = { status: 'requested', order_action_request_id: created.request_id, order_action: created, consent_turn_id: payload.consent_turn_id, message: 'Đã tạo yêu cầu theo đồng ý của khách hàng' };
         }
-        status = 201;
-        body = { status: 'under_review', order_action_request_id: created.request_id, order_action: created, message: 'Đã tạo yêu cầu hủy do giao thất bại, chờ Quản lý duyệt' };
       } else {
         body = (mockStaffCaseOrderActions && mockStaffCaseOrderActions[cidMatch]) || {
           case_id: cidMatch,
@@ -907,6 +979,315 @@ function collectText(node) {
   assert.equal(mockStaffCaseOrderActions.case_open_oa.order_actions[1].refund_status, 'refunded');
   await run('closeStaffDeskDialog()');
 
+  // R1-W3.1 Item 0 (W3.1-D4): Zero inline style="..." in HTML/JS templates, [hidden] rule, attachment & Manager button isolation
+  assert.ok(!/\bstyle\s*=/i.test(indexHtml), 'web/index.html must not contain any style= attributes');
+  assert.ok(!/\bstyle\s*=/i.test(source), 'web/app.js HTML strings must not contain any style= attributes');
+  for (const extraJs of ['chat-focus.js', 'embed.js']) {
+    const extraSrc = fs.readFileSync(path.join(__dirname, '../web', extraJs), 'utf8');
+    assert.ok(!/\bstyle\s*=\s*["']/i.test(extraSrc), `${extraJs} must not contain any style="..." attributes`);
+  }
+  assert.ok(/\[hidden\]\s*\{\s*display\s*:\s*none\s*!important/i.test(stylesCss), 'styles.css must define [hidden] { display: none !important; }');
+
+  // Manager session: Manager-only buttons visible, unused attachment controls hidden
+  assert.equal(get('btn-open-manager-console').hidden, false);
+  assert.equal(get('btn-sidebar-manager-nav').hidden, false);
+  assert.equal(get('btn-panel-manager-banner').hidden, false);
+  assert.equal(get('chat-file-input').hidden, true);
+  assert.equal(get('attachment-preview').hidden, true);
+
+  // Staff session: Manager-only buttons hidden
+  mockSessionRole = 'staff';
+  await run('openSession()');
+  await run('closeStaffDeskDialog()');
+  assert.equal(get('btn-open-manager-console').hidden, true);
+  assert.equal(get('btn-sidebar-manager-nav').hidden, true);
+  assert.equal(get('btn-panel-manager-banner').hidden, true);
+
+  // Customer session: Manager-only buttons AND unused attachment controls hidden
+  mockSessionRole = 'customer';
+  await run('openSession()');
+  assert.equal(get('btn-open-manager-console').hidden, true);
+  assert.equal(get('btn-sidebar-manager-nav').hidden, true);
+  assert.equal(get('btn-panel-manager-banner').hidden, true);
+  assert.equal(get('chat-file-input').hidden, true);
+  assert.equal(get('attachment-preview').hidden, true);
+  assert.equal(get('btn-clear-order-search').hidden, true);
+  assert.equal(get('order-tabs').hidden, true);
+
+  // R1-W3.1 Item 1 (W3.1-D3): Case lifecycle milestones render as system lines in Customer UI & Staff Desk without browser duplicates
+  const hasCls = (node, cls) => String(node?.className || '').split(/\s+/).includes(cls);
+  get('messages').replaceChildren();
+  run('renderedStaffTurnIds.clear(); isHumanMode = false;');
+  await run('toggleHumanMode()');
+  let custMilestoneRows = get('messages').children.filter(r => hasCls(r, 'case-milestone-notice'));
+  assert.equal(custMilestoneRows.length, 1, 'toggleHumanMode must render exactly 1 system milestone line from DB notice');
+  assert.equal(custMilestoneRows[0].dataset.milestone, 'handoff_requested');
+  assert.equal(get('messages').children.filter(r => hasCls(r, 'assistant')).length, 0, 'Customer UI must not fabricate extra assistant bubble for handoff');
+
+  // Polling transcript containing handoff(951), claim(952), release(953), resolve(955) renders each once and does not duplicate on resolve
+  mockTranscriptResponse = {
+    conversation: { id: 'fixture-conversation', order_id: null, product_id: null },
+    case: { case_id: 'case_ui_1', status: 'resolved', version: 5, has_active_timer: false },
+    turns: [
+      { id: 951, request_id: 'sys-notice-handoff-hof_ui_1', messages: JSON.stringify([{ role: 'assistant', content: 'Đã gửi yêu cầu gặp nhân viên. Nhân viên CSKH sẽ phản hồi trong cuộc trò chuyện này.' }]), result: JSON.stringify({ author: 'system_case_notice', milestone: 'handoff_requested', message: 'Đã gửi yêu cầu gặp nhân viên. Nhân viên CSKH sẽ phản hồi trong cuộc trò chuyện này.' }) },
+      { id: 952, request_id: 'sys-notice-claim-case_ui_1-v2', messages: JSON.stringify([{ role: 'assistant', content: 'Nhân viên Khách B đã nhận ca hỗ trợ.' }]), result: JSON.stringify({ author: 'system_case_notice', milestone: 'case_claimed', message: 'Nhân viên Khách B đã nhận ca hỗ trợ.' }) },
+      { id: 953, request_id: 'sys-notice-release-case_ui_1-v3', messages: JSON.stringify([{ role: 'assistant', content: 'Nhân viên Khách B đã trả ca hỗ trợ về hàng chờ.' }]), result: JSON.stringify({ author: 'system_case_notice', milestone: 'case_released', message: 'Nhân viên Khách B đã trả ca hỗ trợ về hàng chờ.' }) },
+      { id: 955, request_id: 'sys-notice-resolve-case_ui_1-v4', messages: JSON.stringify([{ role: 'assistant', content: 'Nhân viên Khách B đã hoàn tất và đóng ca hỗ trợ. Hệ thống chuyển lại Trợ lý AI.' }]), result: JSON.stringify({ author: 'system_case_notice', milestone: 'case_resolved', message: 'Nhân viên Khách B đã hoàn tất và đóng ca hỗ trợ. Hệ thống chuyển lại Trợ lý AI.' }) }
+    ],
+    feedbacks: [{ feedback_type: 'human_handoff', reason_code: 'resolved' }]
+  };
+  await run('pollHumanChat()');
+  custMilestoneRows = get('messages').children.filter(r => hasCls(r, 'case-milestone-notice'));
+  assert.equal(custMilestoneRows.length, 4, 'Customer polling must render all 4 milestone notices without duplicating 951');
+  assert.equal(get('messages').children.filter(r => hasCls(r, 'assistant')).length, 0, 'Customer resolve polling must not draw duplicate browser assistant bubble');
+
+  // Reloading conversation via loadConversation renders all 4 system milestones cleanly
+  await run('loadConversation("fixture-conversation")');
+  custMilestoneRows = get('messages').children.filter(r => hasCls(r, 'case-milestone-notice'));
+  assert.equal(custMilestoneRows.length, 4, 'Customer reload must preserve all 4 persisted milestone notices');
+  assert.deepEqual(
+    custMilestoneRows.map(r => r.dataset.milestone),
+    ['handoff_requested', 'case_claimed', 'case_released', 'case_resolved']
+  );
+
+  // Staff Desk transcript reload also renders all 4 system milestones as .case-milestone-notice
+  mockSessionRole = 'staff';
+  await run('openSession()');
+  mockStaffCaseTranscriptMap = {
+    case_milestones_1: {
+      conversation: { id: 'fixture-conversation' },
+      case: { case_id: 'case_milestones_1', status: 'resolved', holder: null, version: 4 },
+      read_only: true,
+      turns: mockTranscriptResponse.turns,
+      feedbacks: []
+    }
+  };
+  await run('refreshStaffTranscript("fixture-conversation", false, "case_milestones_1")');
+  const staffMilestoneRows = get('staff-chat-transcript').children.filter(r => hasCls(r, 'case-milestone-notice'));
+  assert.equal(staffMilestoneRows.length, 4, 'Staff Desk transcript must render all 4 persisted milestone notices');
+  mockTranscriptResponse = null;
+
+  // R1-W3.1 Item 2 (W3.1-D2): "Khách không phản hồi · N phút" badge in Đang xử lý list and case header
+  mockStaffCases = {
+    waiting: [
+      { case_id: 'case_unheld_silent', conversation_id: 'fixture-conversation', customer_id: 'C-001', customer_name: 'Khách A', status: 'waiting', holder: null, customer_silent_seconds: null, version: 1 }
+    ],
+    in_progress: [
+      { case_id: 'case_held_silent', conversation_id: 'fixture-conversation', customer_id: 'C-001', customer_name: 'Khách A', status: 'in_progress', holder: 'p_staff_1', holder_name: 'Khách B', customer_silent_seconds: 435, version: 2 },
+      { case_id: 'case_held_active', conversation_id: 'fixture-conversation', customer_id: 'C-002', customer_name: 'Khách C', status: 'in_progress', holder: 'p_staff_1', holder_name: 'Khách B', customer_silent_seconds: null, version: 2 }
+    ],
+    resolved: [],
+    open_count: 3
+  };
+  mockStaffCaseTranscriptMap = {
+    case_held_silent: {
+      conversation: { id: 'fixture-conversation' },
+      case: { case_id: 'case_held_silent', status: 'in_progress', holder: 'p_staff_1', holder_name: 'Khách B', customer_silent_seconds: 435, version: 2 },
+      read_only: false,
+      turns: [],
+      feedbacks: []
+    },
+    case_held_active: {
+      conversation: { id: 'fixture-conversation' },
+      case: { case_id: 'case_held_active', status: 'in_progress', holder: 'p_staff_1', holder_name: 'Khách B', customer_silent_seconds: null, version: 2 },
+      read_only: false,
+      turns: [],
+      feedbacks: []
+    }
+  };
+  await run('openStaffDesk()');
+  await run('setStaffQueueBucket("in_progress")');
+  const inProgCards = get('staff-queue-list').children;
+  assert.equal(inProgCards.length, 2);
+  assert.ok(collectText(inProgCards[0]).includes('Khách không phản hồi · 7 phút'), 'Held silent case card must display "Khách không phản hồi · 7 phút"');
+  assert.ok(!collectText(inProgCards[1]).includes('Khách không phản hồi'), 'Non-silent held case card must not display silence badge');
+
+  await run('setStaffQueueBucket("waiting")');
+  assert.ok(!collectText(get('staff-queue-list')).includes('Khách không phản hồi'), 'Unclaimed waiting case without holder must not display silence badge');
+
+  await run('selectStaffTicket(staffDeskData.in_progress[0])');
+  assert.equal(get('staff-active-silent-badge').hidden, false);
+  assert.equal(get('staff-active-silent-badge').textContent, 'Khách không phản hồi · 7 phút');
+
+  // Customer replies -> customer_silent_seconds becomes null -> top badge disappears
+  mockStaffCaseTranscriptMap.case_held_silent.case.customer_silent_seconds = null;
+  await run('refreshStaffTranscript("fixture-conversation", true, "case_held_silent")');
+  assert.equal(get('staff-active-silent-badge').hidden, true);
+  assert.equal(get('staff-active-silent-badge').textContent, '');
+  await run('closeStaffDeskDialog()');
+
+  // R1-W3.1 Item 4 (W3.1-D1, W3.1-D5): "Tạo yêu cầu theo đồng ý của khách" & collapsible "Thao tác khác"
+  mockStaffCases = {
+    waiting: [],
+    in_progress: [
+      { case_id: 'case_no_pending_1', conversation_id: 'fixture-conversation', customer_id: 'C-001', customer_name: 'Khách A', status: 'in_progress', holder: 'p_staff_1', holder_name: 'Khách B', version: 2 },
+      { case_id: 'case_consent_1', conversation_id: 'fixture-conversation', customer_id: 'C-001', customer_name: 'Khách A', status: 'in_progress', holder: 'p_staff_1', holder_name: 'Khách B', version: 2 }
+    ],
+    resolved: [],
+    open_count: 2
+  };
+  mockStaffCaseTranscriptMap = {
+    case_no_pending_1: {
+      conversation: { id: 'fixture-conversation' },
+      case: { case_id: 'case_no_pending_1', status: 'in_progress', holder: 'p_staff_1', holder_name: 'Khách B', version: 2 },
+      read_only: false,
+      turns: [],
+      feedbacks: []
+    },
+    case_consent_1: {
+      conversation: { id: 'fixture-conversation' },
+      case: { case_id: 'case_consent_1', status: 'in_progress', holder: 'p_staff_1', holder_name: 'Khách B', version: 2 },
+      read_only: false,
+      turns: [],
+      feedbacks: []
+    }
+  };
+  mockStaffCaseOrderActions = {
+    case_no_pending_1: {
+      case_id: 'case_no_pending_1',
+      read_only: false,
+      order_actions: [],
+      customer_orders: [
+        { id: 'O-302', name: 'Áo khoác Everyday', variant: 'Đen / L', amount: 520000, status: 'delivered', version: 3 }
+      ]
+    },
+    case_consent_1: {
+      case_id: 'case_consent_1',
+      read_only: false,
+      order_actions: [],
+      customer_orders: [
+        { id: 'O-301', name: 'Áo thun Essential', variant: 'Trắng / M', amount: 299000, status: 'pending', version: 1 },
+        { id: 'O-302', name: 'Áo khoác Everyday', variant: 'Đen / L', amount: 520000, status: 'delivered', version: 3 }
+      ]
+    }
+  };
+  mockStaffCaseOrders = {
+    case_no_pending_1: {
+      case_id: 'case_no_pending_1',
+      read_only: false,
+      orders: [
+        { id: 'O-302', name: 'Áo khoác Everyday', variant: 'Đen / L', amount: 520000, status: 'delivered', version: 3, allowed_action_types: ['return', 'exchange'], open_order_action: null }
+      ],
+      consent_turns: []
+    },
+    case_consent_1: {
+      case_id: 'case_consent_1',
+      read_only: false,
+      orders: [
+        { id: 'O-301', name: 'Áo thun Essential', variant: 'Trắng / M', amount: 299000, status: 'pending', version: 1, allowed_action_types: ['cancel'], open_order_action: null },
+        { id: 'O-302', name: 'Áo khoác Everyday', variant: 'Đen / L', amount: 520000, status: 'delivered', version: 3, allowed_action_types: ['return', 'exchange'], open_order_action: null }
+      ],
+      consent_turns: [
+        { turn_id: 992, excerpt: 'Ok shop đổi size lên XL cho mình nhé', created_at: 1760300120 },
+        { turn_id: 990, excerpt: 'Được nha shop ơi', created_at: 1760300060 }
+      ]
+    }
+  };
+
+  await run('openStaffDesk()');
+  // Case without pending orders and without consent turns: submit button is locked & "Thao tác khác" is absent
+  await run('selectStaffTicket(staffDeskData.in_progress[0])');
+  assert.equal(get('staff-consent-turn-select').value, '');
+  assert.equal(get('btn-create-consented-order-action').disabled, true, 'Submit button must be locked when no consent message is selected');
+  assert.equal(get('staff-order-actions-panel').querySelectorAll('details').length, 0, '"Thao tác khác" must be hidden when customer has no pending order');
+
+  // Case with pending + delivered orders and 2 recent customer turns
+  await run('selectStaffTicket(staffDeskData.in_progress[1])');
+  const otherOpsDetails = get('staff-order-actions-panel').querySelectorAll('details');
+  assert.equal(otherOpsDetails.length, 1, '"Thao tác khác" details block must appear when customer has a pending order');
+  assert.equal(otherOpsDetails[0].id, 'staff-other-ops');
+  assert.equal(otherOpsDetails[0].open, false, '"Thao tác khác" must be collapsed by default');
+  assert.ok(collectText(otherOpsDetails[0]).includes('Thao tác khác'));
+
+  // Newest customer consent turn (992) is listed first and pre-selected by default
+  const turnOptions = get('staff-consent-turn-select').children;
+  assert.equal(turnOptions[1].value, '992', 'Newest customer consent turn must be listed first');
+  assert.equal(turnOptions[2].value, '990');
+  assert.ok(turnOptions[1].textContent.includes('Ok shop đổi size lên XL cho mình nhé'), 'Consent turn option must show message excerpt');
+  assert.equal(get('staff-consent-turn-select').value, '992', 'Newest customer consent turn must be pre-selected');
+  assert.equal(get('btn-create-consented-order-action').disabled, false);
+
+  // Clearing consent turn selection locks the submit button
+  get('staff-consent-turn-select').value = '';
+  get('staff-consent-turn-select').onchange();
+  assert.equal(get('btn-create-consented-order-action').disabled, true, 'Clearing consent turn must lock submit button');
+
+  // Selecting delivered order O-302, exchange:size, reason wrong_size, note, and consent turn 990 unlocks & sends exact payload
+  get('staff-consent-order-select').value = 'O-302';
+  get('staff-consent-order-select').onchange();
+  get('staff-consent-type-select').value = 'exchange:size';
+  get('staff-consent-type-select').onchange();
+  assert.equal(get('staff-consent-reason-select').value, 'wrong_size');
+  get('staff-consent-note-input').value = 'Khách đồng ý đổi sang size XL';
+  get('staff-consent-note-input').oninput();
+  get('staff-consent-turn-select').value = '990';
+  get('staff-consent-turn-select').onchange();
+  assert.equal(get('btn-create-consented-order-action').disabled, false);
+
+  const staffOaReqsBefore = requests.filter(r => r.url === '/api/staff/cases/case_consent_1/order-actions' && r.options && r.options.method === 'POST').length;
+  await get('btn-create-consented-order-action').onclick();
+  const staffOaReqsAfter = requests.filter(r => r.url === '/api/staff/cases/case_consent_1/order-actions' && r.options && r.options.method === 'POST');
+  assert.equal(staffOaReqsAfter.length, staffOaReqsBefore + 1);
+  const sentConsentPayload = JSON.parse(staffOaReqsAfter.at(-1).options.body);
+  assert.deepEqual(sentConsentPayload, {
+    order_id: 'O-302',
+    expected_order_version: 3,
+    type: 'exchange',
+    exchange_kind: 'size',
+    reason_code: 'wrong_size',
+    reason_text: 'Khách đồng ý đổi sang size XL',
+    consent_turn_id: 990
+  });
+  await run('closeStaffDeskDialog()');
+
+  // R1-W3.1 Item 5 (W3.1-D6): Enlarged default Staff Desk, fullscreen toggle persisted in localStorage, and wide 3-column CSS layout
+  assert.ok(indexHtml.includes('id="btn-maximize-staff-desk"'), 'web/index.html must include #btn-maximize-staff-desk in Staff Desk header');
+  const staffDialogCss = (stylesCss.match(/#staff-desk-dialog\s*\{[^}]*\}/) || [''])[0];
+  assert.ok(/width\s*:\s*96vw/i.test(staffDialogCss) && /height\s*:\s*92vh/i.test(staffDialogCss), '#staff-desk-dialog must default to 96vw x 92vh');
+  assert.ok(!/1120px|850px/.test(staffDialogCss), '#staff-desk-dialog must drop old 1120px/850px caps');
+  const staffMaxCss = (stylesCss.match(/#staff-desk-dialog\.is-maximized\s*\{[^}]*\}/) || [''])[0];
+  assert.ok(
+    /width\s*:\s*100vw/i.test(staffMaxCss)
+      && /height\s*:\s*100vh/i.test(staffMaxCss)
+      && /border-radius\s*:\s*0/i.test(staffMaxCss)
+      && /border\s*:\s*none/i.test(staffMaxCss),
+    '#staff-desk-dialog.is-maximized must occupy fullscreen with no radius and no border'
+  );
+  const queuePanelCss = (stylesCss.match(/\.staff-queue-panel\s*\{[^}]*\}/) || [''])[0];
+  assert.ok(/flex\s*:\s*0\s+0\s+320px/i.test(queuePanelCss), '.staff-queue-panel must have fixed width');
+  assert.ok(
+    /@media\s*\(\s*min-width\s*:\s*1400px\s*\)[\s\S]*\.staff-active-chat-panel[\s\S]*display\s*:\s*grid[\s\S]*#staff-case-ops-module[\s\S]*grid-column\s*:\s*2/i.test(stylesCss),
+    'CSS must define 3-column wide layout (queue | transcript | right-hand #staff-case-ops-module) at >=1400px'
+  );
+
+  await run('openStaffDesk()');
+  assert.equal(get('staff-desk-dialog').classList.contains('is-maximized'), false, 'Staff Desk starts in default non-maximized size');
+  assert.equal(get('btn-maximize-staff-desk')['aria-pressed'], 'false');
+
+  // Click maximize -> fullscreen class applied and saved in localStorage
+  get('btn-maximize-staff-desk').onclick();
+  assert.equal(get('staff-desk-dialog').classList.contains('is-maximized'), true, 'Clicking maximize must add .is-maximized to #staff-desk-dialog');
+  assert.equal(get('btn-maximize-staff-desk')['aria-pressed'], 'true');
+  assert.equal(localStorage.getItem('retailops.staff.deskMaximized'), '1');
+
+  // Close (including Esc native dialog close) and reopen -> fullscreen preference is retained
+  get('staff-desk-dialog').close();
+  if (typeof get('staff-desk-dialog').onclose === 'function') get('staff-desk-dialog').onclose();
+  get('staff-desk-dialog').classList.remove('is-maximized');
+  await run('openStaffDesk()');
+  assert.equal(get('staff-desk-dialog').open, true);
+  assert.equal(get('staff-desk-dialog').classList.contains('is-maximized'), true, 'Reopening Staff Desk must restore .is-maximized from localStorage');
+  assert.equal(get('btn-maximize-staff-desk')['aria-pressed'], 'true');
+
+  // Click restore -> returns to default size and updates localStorage
+  get('btn-maximize-staff-desk').onclick();
+  assert.equal(get('staff-desk-dialog').classList.contains('is-maximized'), false, 'Clicking restore must remove .is-maximized');
+  assert.equal(get('btn-maximize-staff-desk')['aria-pressed'], 'false');
+  assert.equal(localStorage.getItem('retailops.staff.deskMaximized'), '0');
+  await run('closeStaffDeskDialog()');
+
+  mockSessionRole = 'customer';
+  await run('openSession()');
   await get('logout').onclick();
   assert.equal(authenticated,false);assert.equal(reloaded,true);
   assert.equal(requests.at(-1).url,'/api/logout');

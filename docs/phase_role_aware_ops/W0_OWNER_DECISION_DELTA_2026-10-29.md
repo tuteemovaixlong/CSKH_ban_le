@@ -364,3 +364,16 @@ Owner chốt trước khi phát hành W3. Các quyết định dưới đây **t
 | W3-D9 | **Không backfill đề xuất hủy cũ:** dòng `proposals` đang `pending` là bản nháp khách chưa xác nhận; lớp tương thích `/api/cancellation-proposals*` xử lý tiếp khi khách xác nhận. | §11.5 bước 5 ("map open cancellation proposals to `pending_review`") |
 | W3-D10 | **Đưa một phần UI Staff Desk lên W3:** gom thao tác ca (nhận/trả ca, hoàn tất, panel yêu cầu đơn hàng) vào **một module "Thao tác ca" thu gọn/mở rộng được**, sửa bố cục header và kiểu nút bị vỡ, sửa nút "Gửi phản hồi trực tiếp" không phản hồi. Phần thiết kế lại còn lại vẫn ở W5. | Kéo một phần W5 lên W3 |
 | W3-D11 | **Báo khách khi có quyết định:** mỗi lần yêu cầu đổi trạng thái do người duyệt, hệ thống thêm một tin cố định vào hội thoại của ca. | Mới |
+
+## 15. W3.1 owner decisions (2026-11-02)
+
+Owner chốt sau khi thử W3 trên production. Các quyết định dưới đây **bổ sung** §10/§14; phần còn lại giữ nguyên. W3.1 **không đổi schema DB**. Không cho phép `W4–W6`.
+
+| ID | Quyết định | Thay thế |
+|---|---|---|
+| W3.1-D1 | **Nhân viên tạo yêu cầu thay khách khi khách đồng ý qua chat.** Nhân viên đề xuất trong chat (hủy, trả, đổi size, đổi 1-1); khách trả lời đồng ý bằng tin nhắn bất kỳ (ví dụ "ok", "được"); **khách chỉ xác nhận bằng tin nhắn, không có nút hay form xác nhận phía khách**; nhân viên trỏ tới tin nhắn đồng ý đó (mặc định chọn sẵn tin mới nhất của khách) rồi bấm tạo yêu cầu. Khách vẫn là người yêu cầu (`raised_by_role='customer'`); nhân viên là người thao tác; mã tin nhắn đồng ý được ghi vào audit và dòng quyết định `submit`. Sau đó nhân viên duyệt và xử lý như yêu cầu khách tự gửi. Hủy do giao thất bại và hoàn tiền giữ quy tắc chỉ Manager. | Bổ sung §10 OD-04 (chỉ khách tự gửi) |
+| W3.1-D2 | **Ca có người giữ mà khách im lặng:** sau **5 phút** kể từ tin cuối của nhân viên mà khách không trả lời, Staff Desk gắn nhãn "Khách không phản hồi · N phút" ở danh sách Đang xử lý và ở đầu ca để nhân viên chủ động đóng. Không gửi tin cho khách, **không tự đóng ca có người giữ**. Production không cho rút ngắn. | Bổ sung W2-D5 |
+| W3.1-D3 | **Lưu các mốc của ca vào hội thoại:** yêu cầu gặp nhân viên, nhân viên nhận ca, trả ca, đóng ca. Khách và nhân viên tải lại trang vẫn thấy. | Mới |
+| W3.1-D4 | **Bỏ toàn bộ `style="..."` trong HTML** (cả trong `web/index.html` lẫn chuỗi HTML do JS tạo), vì CSP production (`style-src 'self'`) chặn chúng. | Mới |
+| W3.1-D5 | **Module "Thao tác ca":** form hủy do giao thất bại chuyển vào mục "Thao tác khác", mặc định thu gọn, chỉ hiện khi khách có đơn `pending`; khung có chiều cao tối đa và tự cuộn để transcript luôn còn chỗ. | Bổ sung W3-D10 |
+| W3.1-D6 | **Staff Desk dễ nhìn hơn:** cửa sổ mặc định lớn hơn; có nút **Phóng to / Thu nhỏ** để dùng toàn màn hình, nhớ lựa chọn trên trình duyệt; trên màn hình rộng, module "Thao tác ca" thành cột bên phải cạnh transcript thay vì nằm chồng phía trên. | Kéo thêm một phần W5 lên W3.1 |
