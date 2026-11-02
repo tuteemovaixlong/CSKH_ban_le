@@ -13,6 +13,7 @@ from retailops.core import DATA_MODE, ROOT, VERSION
 DEFAULT_CASE_REMINDER_SECONDS = 300.0
 DEFAULT_CASE_POST_REMINDER_CLOSE_SECONDS = 180.0
 DEFAULT_CASE_COMPLETION_SECONDS = 300.0
+DEFAULT_CASE_HELD_SILENCE_SECONDS = 300.0
 DEFAULT_CASE_TIMER_SCAN_SECONDS = 15.0
 
 
@@ -21,6 +22,7 @@ class CaseTimerConfig:
     reminder_seconds: float = DEFAULT_CASE_REMINDER_SECONDS
     post_reminder_close_seconds: float = DEFAULT_CASE_POST_REMINDER_CLOSE_SECONDS
     completion_seconds: float = DEFAULT_CASE_COMPLETION_SECONDS
+    held_silence_seconds: float = DEFAULT_CASE_HELD_SILENCE_SECONDS
     scan_seconds: float = DEFAULT_CASE_TIMER_SCAN_SECONDS
     data_mode: str = DATA_MODE
     production_env: bool = False
@@ -30,6 +32,7 @@ class CaseTimerConfig:
             ('reminder_seconds', self.reminder_seconds),
             ('post_reminder_close_seconds', self.post_reminder_close_seconds),
             ('completion_seconds', self.completion_seconds),
+            ('held_silence_seconds', self.held_silence_seconds),
             ('scan_seconds', self.scan_seconds),
         ):
             if isinstance(val, bool) or not isinstance(val, (int, float)) or float(val) <= 0:
@@ -49,6 +52,11 @@ class CaseTimerConfig:
             if self.completion_seconds < DEFAULT_CASE_COMPLETION_SECONDS:
                 raise ValueError(
                     f'Production/live mode forbids shortening case_completion_seconds below {int(DEFAULT_CASE_COMPLETION_SECONDS)}s.'
+                )
+            if self.held_silence_seconds < DEFAULT_CASE_HELD_SILENCE_SECONDS:
+                raise ValueError(
+                    'Production/live mode forbids shortening case_held_silence_seconds '
+                    f'below {int(DEFAULT_CASE_HELD_SILENCE_SECONDS)}s.'
                 )
 
 
@@ -152,6 +160,7 @@ class Settings:
     case_reminder_seconds: float = DEFAULT_CASE_REMINDER_SECONDS
     case_post_reminder_close_seconds: float = DEFAULT_CASE_POST_REMINDER_CLOSE_SECONDS
     case_completion_seconds: float = DEFAULT_CASE_COMPLETION_SECONDS
+    case_held_silence_seconds: float = DEFAULT_CASE_HELD_SILENCE_SECONDS
     case_timer_scan_seconds: float = DEFAULT_CASE_TIMER_SCAN_SECONDS
     production_env: bool = False
 
@@ -183,6 +192,7 @@ class Settings:
             reminder_seconds=self.case_reminder_seconds,
             post_reminder_close_seconds=self.case_post_reminder_close_seconds,
             completion_seconds=self.case_completion_seconds,
+            held_silence_seconds=self.case_held_silence_seconds,
             scan_seconds=self.case_timer_scan_seconds,
             data_mode=self.data_mode,
             production_env=self.production_env,
@@ -194,6 +204,7 @@ class Settings:
             reminder_seconds=self.case_reminder_seconds,
             post_reminder_close_seconds=self.case_post_reminder_close_seconds,
             completion_seconds=self.case_completion_seconds,
+            held_silence_seconds=self.case_held_silence_seconds,
             scan_seconds=self.case_timer_scan_seconds,
             data_mode=self.data_mode,
             production_env=self.production_env,
@@ -243,6 +254,9 @@ class Settings:
             ),
             case_completion_seconds=positive_float(
                 env, 'RETAILOPS_CASE_COMPLETION_SECONDS', DEFAULT_CASE_COMPLETION_SECONDS
+            ),
+            case_held_silence_seconds=positive_float(
+                env, 'RETAILOPS_CASE_HELD_SILENCE_SECONDS', DEFAULT_CASE_HELD_SILENCE_SECONDS
             ),
             case_timer_scan_seconds=positive_float(
                 env, 'RETAILOPS_CASE_TIMER_SCAN_SECONDS', DEFAULT_CASE_TIMER_SCAN_SECONDS

@@ -1998,9 +1998,10 @@ function openStaffDesk() {
       syncStaffTicketActions(null, true);
     }
     dlg.showModal();
-    loadStaffQueue();
     startStaffDeskPolling();
+    return loadStaffQueue();
   }
+  return Promise.resolve();
 }
 
 function closeStaffDeskDialog() {
@@ -2042,6 +2043,22 @@ function setStaffQueueBucket(bucket) {
   renderStaffBucketList();
 }
 
+function formatCustomerSilentLabel(caseOrItem) {
+  if (!caseOrItem || caseOrItem.status !== 'in_progress' || !caseOrItem.holder) return '';
+  const secs = caseOrItem.customer_silent_seconds;
+  if (typeof secs !== 'number' || !Number.isFinite(secs) || secs <= 0) return '';
+  const mins = Math.max(1, Math.floor(secs / 60));
+  return `Khách không phản hồi · ${mins} phút`;
+}
+
+function syncStaffHeaderSilentBadge(caseObj, isClosed = false) {
+  const silentEl = byId('staff-active-silent-badge');
+  if (!silentEl) return;
+  const label = (!isClosed && caseObj) ? formatCustomerSilentLabel(caseObj) : '';
+  silentEl.hidden = !label;
+  silentEl.textContent = label;
+}
+
 function renderStaffBucketList() {
   const listEl = byId('staff-queue-list');
   const countEl = byId('staff-queue-count');
@@ -2071,11 +2088,11 @@ function renderStaffBucketList() {
       : (staffQueueBucket === 'in_progress'
         ? 'Không có ca nào đang được giữ xử lý.'
         : 'Chưa có ca đã xử lý trong thời hạn lưu.');
-    listEl.innerHTML = `<p class="staff-empty-hint">${emptyMsg}</p>`;
+    listEl.replaceChildren(el('p', 'staff-empty-hint', emptyMsg));
     return;
   }
 
-  listEl.innerHTML = '';
+  listEl.replaceChildren();
   items.forEach(item => {
     const itemKey = item.case_id || item.id;
     const activeKey = activeStaffTicket ? (activeStaffTicket.case_id || activeStaffTicket.id) : null;
@@ -2090,12 +2107,17 @@ function renderStaffBucketList() {
       el('span', 'ticket-user', (item.customer_name || item.customer_id) + (item.order_id ? ' (' + item.order_id + ')' : '')),
       el('span', 'ticket-badge ' + (isResolved ? 'resolved' : 'pending'), badgeLabel)
     );
+    const silentLabel = formatCustomerSilentLabel(item);
     const reason = el('p', 'ticket-reason', item.comment || item.reason_code || (isResolved ? ('Lý do đóng: ' + (item.resolved_reason || 'resolved')) : 'Yêu cầu hỗ trợ từ khách hàng'));
     const ts = item.updated_at || item.created_at || (Date.now() / 1000);
     const timeStr = new Date(ts * 1000).toLocaleTimeString('vi-VN', {hour: '2-digit', minute:'2-digit'});
     const meta = el('div', 'ticket-meta');
     meta.append(el('span', '', 'Mã ca: ' + (item.case_id || ('#' + item.id))), el('span', '', timeStr));
-    card.append(header, reason, meta);
+    card.append(header);
+    if (silentLabel) {
+      card.append(el('div', 'ticket-silent-badge', silentLabel));
+    }
+    card.append(reason, meta);
     card.onclick = () => selectStaffTicket(item);
     listEl.append(card);
   });
@@ -2117,6 +2139,18 @@ async function loadStaffQueue(silent = false) {
         ? res.open_count
         : ((res.waiting || []).length + (res.in_progress || []).length)
     };
+    if (activeStaffTicket?.case_id) {
+      const allItems = [
+        ...(staffDeskData.waiting || []),
+        ...(staffDeskData.in_progress || []),
+        ...(staffDeskData.resolved || [])
+      ];
+      const matched = allItems.find(it => it.case_id === activeStaffTicket.case_id);
+      if (matched) {
+        activeStaffTicket.customer_silent_seconds = matched.customer_silent_seconds ?? null;
+        syncStaffHeaderSilentBadge(activeStaffTicket, matched.status === 'resolved');
+      }
+    }
     renderStaffBucketList();
   } catch (err) {
     if (!silent) {
@@ -2565,6 +2599,7 @@ function syncStaffTicketActions(caseObj, readOnly = false) {
   const replyInput = byId('staff-reply-input');
 
   if (!caseObj) {
+    syncStaffHeaderSilentBadge(null, true);
     if (modEl) {
       modEl.hidden = true;
       if (modEl.style) modEl.style.display = 'none';
@@ -2590,6 +2625,7 @@ function syncStaffTicketActions(caseObj, readOnly = false) {
   }
 
   const isClosed = Boolean(readOnly || caseObj.status === 'resolved');
+  syncStaffHeaderSilentBadge(caseObj, isClosed);
   if (statusPill) {
     statusPill.hidden = false;
     statusPill.textContent = isClosed
@@ -2662,6 +2698,7 @@ async function refreshStaffTranscript(cid, forceScroll = false, caseId = null) {
         holder: data.case.holder,
         holder_name: data.case.holder_name,
         version: data.case.version,
+        customer_silent_seconds: data.case.customer_silent_seconds ?? null,
         handoff_id: data.active_handoff?.handoff_id || activeStaffTicket.handoff_id || null
       };
       syncStaffTicketActions(data.case, Boolean(data.read_only));
@@ -2791,6 +2828,7 @@ async function claimOrReleaseStaffTicket() {
         holder: res.case.holder,
         holder_name: res.case.holder_name,
         version: res.case.version,
+        customer_silent_seconds: res.case.customer_silent_seconds ?? null,
         handoff_id: res.handoff_id || activeStaffTicket.handoff_id || null
       };
       syncStaffTicketActions(res.case, false);
@@ -2844,6 +2882,8 @@ async function sendStaffReply() {
       renderedStaffTurnIds.add(replyRes.turn_id);
     }
     input.value = '';
+    activeStaffTicket.customer_silent_seconds = null;
+    syncStaffHeaderSilentBadge(activeStaffTicket, false);
     setStaffDeskNotice('Đã gửi phản hồi trực tiếp cho khách hàng.', 'success');
 
     // Append to staff transcript

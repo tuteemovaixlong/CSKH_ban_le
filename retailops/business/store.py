@@ -405,7 +405,11 @@ class BusinessStore:
         return float(clk() if callable(clk) else time.time())
 
     def _timer_config(self):
-        from retailops.config import CaseTimerConfig
+        from retailops.config import (
+            CaseTimerConfig,
+            DEFAULT_CASE_HELD_SILENCE_SECONDS,
+            positive_float,
+        )
         cfg = getattr(self, 'case_timer_config', None)
         data_mode = str(getattr(self, 'data_mode', '') or os.environ.get('RETAILOPS_DATA_MODE', '')).strip()
         is_prod_env = str(os.environ.get('RETAILOPS_ENV', '')).strip().lower() in ('production', 'prod', 'live')
@@ -415,12 +419,18 @@ class BusinessStore:
                     reminder_seconds=cfg.reminder_seconds,
                     post_reminder_close_seconds=cfg.post_reminder_close_seconds,
                     completion_seconds=cfg.completion_seconds,
+                    held_silence_seconds=cfg.held_silence_seconds,
                     scan_seconds=cfg.scan_seconds,
                     data_mode=data_mode or cfg.data_mode,
                     production_env=is_prod_env or cfg.production_env,
                 )
             return cfg
         return CaseTimerConfig(
+            held_silence_seconds=positive_float(
+                os.environ,
+                'RETAILOPS_CASE_HELD_SILENCE_SECONDS',
+                DEFAULT_CASE_HELD_SILENCE_SECONDS,
+            ),
             data_mode=data_mode or 'synthetic-demo',
             production_env=is_prod_env,
         )
@@ -436,7 +446,7 @@ class BusinessStore:
         )
 
     @staticmethod
-    def _case_public_dict(row) -> dict | None:
+    def _case_public_dict(row, *, customer_silent_seconds: int | None = None) -> dict | None:
         if row is None:
             return None
         d = dict(row)
@@ -458,9 +468,66 @@ class BusinessStore:
             'resume_count': int(d.get('resume_count') or 0),
             'previous_case_id': d.get('previous_case_id'),
             'has_active_timer': bool(has_timer and d['status'] != 'resolved' and d.get('holder') is None),
+            'customer_silent_seconds': customer_silent_seconds,
             'created_at': d['created_at'],
             'updated_at': d['updated_at'],
         }
+
+    def _compute_customer_silent_seconds_in_tx(
+        self,
+        db,
+        case_row,
+        *,
+        now: float | None = None,
+        threshold_seconds: float | None = None,
+    ) -> int | None:
+        if case_row is None:
+            return None
+        d = dict(case_row)
+        status = d.get('status') or d.get('case_status')
+        holder = d.get('holder')
+        cid = d.get('conversation_id')
+        if status != 'in_progress' or not holder or not cid:
+            return None
+        now_ts = self._now() if now is None else float(now)
+        threshold = (
+            float(self._timer_config().held_silence_seconds)
+            if threshold_seconds is None
+            else float(threshold_seconds)
+        )
+        resumed_at = d.get('resumed_at')
+        base_created = d.get('case_created_at') if 'case_created_at' in d else d.get('created_at')
+        open_since = float(resumed_at if resumed_at is not None else (base_created or 0.0))
+        last_resolve = db.execute(
+            "SELECT MAX(id) AS max_id FROM agent_turns WHERE conversation_id = ? AND request_id LIKE 'sys-notice-resolve-%'",
+            (cid,),
+        ).fetchone()
+        min_turn_id = int(last_resolve['max_id'] or 0) if last_resolve is not None else 0
+        last_turn = db.execute(
+            """SELECT id, request_id, result, created_at
+               FROM agent_turns
+               WHERE conversation_id = ?
+                 AND created_at >= ?
+                 AND id > ?
+                 AND request_id NOT LIKE 'sys-notice-%'
+                 AND request_id NOT LIKE 'sys-reminder-%'
+                 AND request_id NOT LIKE 'sys-oar-%'
+               ORDER BY id DESC LIMIT 1""",
+            (cid, open_since - 1e-6, min_turn_id),
+        ).fetchone()
+        if last_turn is None:
+            return None
+        res_raw = last_turn['result']
+        try:
+            res_obj = json.loads(res_raw) if isinstance(res_raw, str) else (res_raw or {})
+        except Exception:
+            res_obj = {}
+        if not isinstance(res_obj, dict) or res_obj.get('author') != 'staff':
+            return None
+        elapsed = now_ts - float(last_turn['created_at'])
+        if elapsed < threshold:
+            return None
+        return int(elapsed)
 
     @staticmethod
     def _latest_case_in_tx(db, cid: str):
@@ -2806,10 +2873,13 @@ class BusinessStore:
             return out
 
     def escalations(self, limit=20):
+        now = self._now()
+        held_threshold = float(self._timer_config().held_silence_seconds)
         with self.connection() as db:
             rows = db.execute('''
                 SELECT he.handoff_id, he.case_id, k.conversation_id, k.customer_id,
                        k.status AS case_status, k.holder, k.holder_name, k.version AS case_version,
+                       k.resumed_at, k.created_at AS case_created_at,
                        he.reason_code, he.comment, NULL AS sentiment_flag,
                        he.created_at, k.updated_at, c.name AS customer_name, conv.order_id
                 FROM cases k
@@ -2821,13 +2891,17 @@ class BusinessStore:
                 ORDER BY k.updated_at DESC, he.created_at DESC
                 LIMIT ?
             ''', (limit,)).fetchall()
-        out = []
-        for r in rows:
-            d = dict(r)
-            d['id'] = d['handoff_id']
-            if isinstance(d.get('comment'), str) and contains_canary_or_secret(d['comment']):
-                _, d['comment'] = sanitize_structured_payload(d['comment'], preserve_reasoning=False)
-            out.append(d)
+            out = []
+            for r in rows:
+                d = dict(r)
+                d['customer_silent_seconds'] = self._compute_customer_silent_seconds_in_tx(
+                    db, d, now=now, threshold_seconds=held_threshold
+                )
+                d.pop('case_created_at', None)
+                d['id'] = d['handoff_id']
+                if isinstance(d.get('comment'), str) and contains_canary_or_secret(d['comment']):
+                    _, d['comment'] = sanitize_structured_payload(d['comment'], preserve_reasoning=False)
+                out.append(d)
         return out
 
     def list_conversations(self, customer, limit=20):
@@ -2933,6 +3007,7 @@ class BusinessStore:
 
     def staff_desk_cases(self, limit=50):
         now = self._now()
+        held_threshold = float(self._timer_config().held_silence_seconds)
         with self.connection() as db:
             waiting_rows = db.execute(
                 '''SELECT he.handoff_id, k.case_id, k.conversation_id, k.customer_id,
@@ -2955,6 +3030,7 @@ class BusinessStore:
                 '''SELECT he.handoff_id, k.case_id, k.conversation_id, k.customer_id,
                           k.status, k.holder, k.holder_name, k.version,
                           k.resolved_reason, k.resolved_at, k.resume_count,
+                          k.resumed_at, k.created_at AS case_created_at,
                           he.reason_code, he.comment,
                           COALESCE(he.created_at, k.created_at) AS created_at, k.updated_at,
                           c.name AS customer_name, conv.order_id
@@ -3008,21 +3084,29 @@ class BusinessStore:
                 ).fetchall()
             }
 
-        def _clean(rows):
-            items = []
-            for r in rows:
-                d = dict(r)
-                d['id'] = d.get('handoff_id') or d['case_id']
-                d['sentiment_flag'] = None
-                d['has_open_order_action'] = d['case_id'] in open_action_cases
-                if isinstance(d.get('comment'), str) and contains_canary_or_secret(d['comment']):
-                    _, d['comment'] = sanitize_structured_payload(d['comment'], preserve_reasoning=False)
-                items.append(d)
-            return items
+            def _clean(rows, *, compute_silence: bool = False):
+                items = []
+                for r in rows:
+                    d = dict(r)
+                    d['customer_silent_seconds'] = (
+                        self._compute_customer_silent_seconds_in_tx(
+                            db, d, now=now, threshold_seconds=held_threshold
+                        )
+                        if compute_silence
+                        else None
+                    )
+                    d.pop('case_created_at', None)
+                    d['id'] = d.get('handoff_id') or d['case_id']
+                    d['sentiment_flag'] = None
+                    d['has_open_order_action'] = d['case_id'] in open_action_cases
+                    if isinstance(d.get('comment'), str) and contains_canary_or_secret(d['comment']):
+                        _, d['comment'] = sanitize_structured_payload(d['comment'], preserve_reasoning=False)
+                    items.append(d)
+                return items
 
-        waiting = _clean(waiting_rows)
-        in_progress = _clean(in_progress_rows)
-        resolved = _clean(resolved_rows)
+            waiting = _clean(waiting_rows, compute_silence=False)
+            in_progress = _clean(in_progress_rows, compute_silence=True)
+            resolved = _clean(resolved_rows, compute_silence=False)
         open_count = len(waiting) + len(in_progress)
         return {
             'waiting': waiting,
@@ -3038,6 +3122,7 @@ class BusinessStore:
         }
 
     def conversation_transcript(self, cid, *, case_id=None, read_only=False):
+        now = self._now()
         with self.connection() as db:
             if case_id is not None:
                 case_row = db.execute('SELECT * FROM cases WHERE case_id = ?', (case_id,)).fetchone()
@@ -3046,11 +3131,13 @@ class BusinessStore:
             else:
                 case_row = self._latest_case_in_tx(db, cid) if cid else None
             open_ep = None
+            silent_secs = None
             if case_row is not None:
                 open_ep = db.execute(
                     "SELECT * FROM handoff_episodes WHERE case_id = ? AND status = 'pending' LIMIT 1",
                     (case_row['case_id'],),
                 ).fetchone()
+                silent_secs = self._compute_customer_silent_seconds_in_tx(db, case_row, now=now)
             conv = db.execute('''
                 SELECT conv.*, c.name as customer_name
                 FROM conversations conv
@@ -3104,7 +3191,7 @@ class BusinessStore:
             _, ep_dict['comment'] = sanitize_structured_payload(ep_dict['comment'], preserve_reasoning=False)
         return {
             'conversation': dict(conv) if conv else None,
-            'case': self._case_public_dict(case_row),
+            'case': self._case_public_dict(case_row, customer_silent_seconds=silent_secs),
             'active_handoff': ep_dict,
             'read_only': bool(read_only or (case_row is not None and case_row['status'] == 'resolved')),
             'turns': clean_turns,
@@ -3265,12 +3352,13 @@ class BusinessStore:
                         now=now,
                     )
             updated = db.execute('SELECT * FROM cases WHERE case_id = ?', (case_id,)).fetchone()
+            silent_secs = self._compute_customer_silent_seconds_in_tx(db, updated, now=now)
         return {
             'status': 'ok',
             'claimed': True,
             'case_id': case_id,
             'handoff_id': open_ep['handoff_id'],
-            'case': self._case_public_dict(updated),
+            'case': self._case_public_dict(updated, customer_silent_seconds=silent_secs),
             'notice_turn_id': notice_turn_id,
             'notice_message': notice_message,
         }

@@ -341,5 +341,143 @@ class PhaseR1W31Item1CaseMilestoneNoticesTests(PhaseR1W31BaseTestCase):
         self.assertEqual((crow["status"], crow["holder"]), ("in_progress", "p-staff-a1"))
 
 
+class PhaseR1W31Item2HeldSilenceBadgeTests(PhaseR1W31BaseTestCase):
+    """Item 2 (W3.1-D2): Compute customer_silent_seconds on read for held cases; production rejects < 300s."""
+
+    def test_item2_fake_clock_held_silence_threshold_reply_clear_no_holder_and_never_auto_closes(self):
+        fake_now = [1_760_000_000.0]
+        self.sessions.store_clock = lambda: fake_now[0]
+        self.store_a.clock = lambda: fake_now[0]
+
+        st, conv = self._req("POST", "/api/conversations", {}, cookie=self.cust1)
+        self.assertEqual(st, 201)
+        cid = conv["conversation_id"]
+        case_id = conv["case_id"]
+
+        # Customer opens handoff at t=0
+        st, _ = self._req(
+            "POST",
+            "/api/feedback",
+            {"conversation_id": cid, "feedback_type": "human_handoff", "comment": "Cần hỗ trợ"},
+            cookie=self.cust1,
+        )
+        self.assertEqual(st, 200)
+
+        # Unclaimed case without holder -> never flagged even after 600s
+        fake_now[0] += 600.0
+        st, desk0 = self._req("GET", "/api/staff/cases", cookie=self.staff_a1)
+        self.assertEqual(st, 200)
+        self.assertIsNone(desk0["waiting"][0]["customer_silent_seconds"])
+
+        # Staff claims case at t=600, before sending any staff reply -> still None after another 400s
+        st, _ = self._req("POST", f"/api/staff/cases/{case_id}/claim", {}, cookie=self.staff_a1)
+        self.assertEqual(st, 200)
+        fake_now[0] += 400.0
+        st, desk_before_reply = self._req("GET", "/api/staff/cases", cookie=self.staff_a1)
+        self.assertEqual(st, 200)
+        self.assertIsNone(desk_before_reply["in_progress"][0]["customer_silent_seconds"])
+
+        # Staff sends reply at t=1000
+        st, _ = self._req(
+            "POST",
+            "/api/staff/reply",
+            {"conversation_id": cid, "case_id": case_id, "message": "Dạ anh/chị muốn đổi sang size nào ạ?"},
+            cookie=self.staff_a1,
+        )
+        self.assertEqual(st, 200)
+
+        # Below threshold (299s < 300s default): customer_silent_seconds is None
+        fake_now[0] += 299.0
+        st, desk_below = self._req("GET", "/api/staff/cases", cookie=self.staff_a1)
+        self.assertEqual(st, 200)
+        self.assertIsNone(desk_below["in_progress"][0]["customer_silent_seconds"])
+        st, tr_below = self._req("GET", f"/api/staff/cases/{case_id}/messages", cookie=self.staff_a1)
+        self.assertEqual(st, 200)
+        self.assertIsNone(tr_below["case"]["customer_silent_seconds"])
+
+        # At/above threshold (425s >= 300s): customer_silent_seconds == 425 in both Staff Desk endpoints
+        fake_now[0] += 126.0  # total 425s since staff reply
+        turns_before_timer = len(tr_below["turns"])
+        timer_res = self.store_a.process_due_case_timers(now=fake_now[0])
+        self.assertEqual(timer_res["reminded"], 0)
+        self.assertEqual(timer_res["resolved_inactivity"], 0)
+
+        st, desk_above = self._req("GET", "/api/staff/cases", cookie=self.staff_a1)
+        self.assertEqual(st, 200)
+        self.assertEqual(desk_above["in_progress"][0]["customer_silent_seconds"], 425)
+        self.assertEqual(desk_above["in_progress"][0]["status"], "in_progress")
+
+        st, tr_above = self._req("GET", f"/api/staff/cases/{case_id}/messages", cookie=self.staff_a1)
+        self.assertEqual(st, 200)
+        self.assertEqual(tr_above["case"]["customer_silent_seconds"], 425)
+        self.assertEqual(tr_above["case"]["status"], "in_progress")
+        # Never sends reminder message to customer or auto-closes held case
+        self.assertEqual(len(tr_above["turns"]), turns_before_timer)
+
+        # If staff releases the case (no holder), customer_silent_seconds is None even though last chat was staff
+        st, _ = self._req("POST", f"/api/staff/cases/{case_id}/release", {}, cookie=self.staff_a1)
+        self.assertEqual(st, 200)
+        st, desk_unheld = self._req("GET", "/api/staff/cases", cookie=self.staff_a1)
+        self.assertEqual(st, 200)
+        self.assertIsNone(desk_unheld["waiting"][0]["customer_silent_seconds"])
+        st, tr_unheld = self._req("GET", f"/api/staff/cases/{case_id}/messages", cookie=self.staff_a1)
+        self.assertEqual(st, 200)
+        self.assertIsNone(tr_unheld["case"]["customer_silent_seconds"])
+
+        # Re-claim -> silent seconds shows up again (since staff reply is still the latest chat turn!)
+        st, re_claimed = self._req("POST", f"/api/staff/cases/{case_id}/claim", {}, cookie=self.staff_a1)
+        self.assertEqual(st, 200)
+        self.assertEqual(re_claimed["case"]["customer_silent_seconds"], 425)
+
+        # Customer replies -> badge/silent seconds immediately clears to None!
+        fake_now[0] += 10.0
+        st, _ = self._req(
+            "POST",
+            "/api/staff/customer-message",
+            {"conversation_id": cid, "message": "Dạ cho mình đổi sang size XL nhé"},
+            cookie=self.cust1,
+        )
+        self.assertEqual(st, 200)
+        fake_now[0] += 600.0  # Even 10 minutes after customer reply, customer is NOT silent (waiting on staff!)
+        st, desk_after_cust = self._req("GET", "/api/staff/cases", cookie=self.staff_a1)
+        self.assertEqual(st, 200)
+        self.assertIsNone(desk_after_cust["in_progress"][0]["customer_silent_seconds"])
+        st, tr_after_cust = self._req("GET", f"/api/staff/cases/{case_id}/messages", cookie=self.staff_a1)
+        self.assertEqual(st, 200)
+        self.assertIsNone(tr_after_cust["case"]["customer_silent_seconds"])
+
+    def test_item2_env_config_and_production_rejects_shortened_held_silence_seconds(self):
+        from retailops.config import CaseTimerConfig, DEFAULT_CASE_HELD_SILENCE_SECONDS, Settings
+
+        self.assertEqual(DEFAULT_CASE_HELD_SILENCE_SECONDS, 300.0)
+        # Non-production evaluation mode permits shorter threshold
+        eval_cfg = CaseTimerConfig(held_silence_seconds=45, data_mode="persistent-demo", production_env=False)
+        self.assertEqual(eval_cfg.held_silence_seconds, 45.0)
+
+        # Production/live mode strictly rejects < 300s via CaseTimerConfig AND Settings.from_environment
+        with self.assertRaises(ValueError):
+            CaseTimerConfig(held_silence_seconds=299, data_mode="live", production_env=False)
+        with self.assertRaises(ValueError):
+            CaseTimerConfig(held_silence_seconds=120, data_mode="persistent-demo", production_env=True)
+        with self.assertRaises(ValueError):
+            Settings.from_environment(
+                "public",
+                {
+                    "RETAILOPS_DATA_MODE": "live",
+                    "RETAILOPS_PUBLIC_ORIGIN": "https://retailops.example.com",
+                    "RETAILOPS_CASE_HELD_SILENCE_SECONDS": "60",
+                },
+            )
+        ok_prod = Settings.from_environment(
+            "public",
+            {
+                "RETAILOPS_DATA_MODE": "live",
+                "RETAILOPS_PUBLIC_ORIGIN": "https://retailops.example.com",
+                "RETAILOPS_CASE_HELD_SILENCE_SECONDS": "300",
+            },
+        )
+        self.assertEqual(ok_prod.case_timer_config.held_silence_seconds, 300.0)
+
+
 if __name__ == "__main__":
     unittest.main()

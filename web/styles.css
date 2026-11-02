@@ -4477,4 +4477,30 @@ body [hidden] {
   background: #f0fdf4;
   border-color: #bbf7d0;
 }
+
+/* Held-case customer silence badges (W3.1-D2) */
+.staff-silent-badge,
+.ticket-silent-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #9a3412;
+  background: #ffedd5;
+  border: 1px solid #fdba74;
+  white-space: nowrap;
+}
+
+.ticket-silent-badge {
+  align-self: flex-start;
+  margin-top: 2px;
+}
+
+.staff-silent-badge[hidden],
+.ticket-silent-badge[hidden] {
+  display: none !important;
+}
 

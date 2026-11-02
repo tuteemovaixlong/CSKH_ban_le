@@ -1014,6 +1014,55 @@ function collectText(node) {
   assert.equal(staffMilestoneRows.length, 4, 'Staff Desk transcript must render all 4 persisted milestone notices');
   mockTranscriptResponse = null;
 
+  // R1-W3.1 Item 2 (W3.1-D2): "Khách không phản hồi · N phút" badge in Đang xử lý list and case header
+  mockStaffCases = {
+    waiting: [
+      { case_id: 'case_unheld_silent', conversation_id: 'fixture-conversation', customer_id: 'C-001', customer_name: 'Khách A', status: 'waiting', holder: null, customer_silent_seconds: null, version: 1 }
+    ],
+    in_progress: [
+      { case_id: 'case_held_silent', conversation_id: 'fixture-conversation', customer_id: 'C-001', customer_name: 'Khách A', status: 'in_progress', holder: 'p_staff_1', holder_name: 'Khách B', customer_silent_seconds: 435, version: 2 },
+      { case_id: 'case_held_active', conversation_id: 'fixture-conversation', customer_id: 'C-002', customer_name: 'Khách C', status: 'in_progress', holder: 'p_staff_1', holder_name: 'Khách B', customer_silent_seconds: null, version: 2 }
+    ],
+    resolved: [],
+    open_count: 3
+  };
+  mockStaffCaseTranscriptMap = {
+    case_held_silent: {
+      conversation: { id: 'fixture-conversation' },
+      case: { case_id: 'case_held_silent', status: 'in_progress', holder: 'p_staff_1', holder_name: 'Khách B', customer_silent_seconds: 435, version: 2 },
+      read_only: false,
+      turns: [],
+      feedbacks: []
+    },
+    case_held_active: {
+      conversation: { id: 'fixture-conversation' },
+      case: { case_id: 'case_held_active', status: 'in_progress', holder: 'p_staff_1', holder_name: 'Khách B', customer_silent_seconds: null, version: 2 },
+      read_only: false,
+      turns: [],
+      feedbacks: []
+    }
+  };
+  await run('openStaffDesk()');
+  await run('setStaffQueueBucket("in_progress")');
+  const inProgCards = get('staff-queue-list').children;
+  assert.equal(inProgCards.length, 2);
+  assert.ok(collectText(inProgCards[0]).includes('Khách không phản hồi · 7 phút'), 'Held silent case card must display "Khách không phản hồi · 7 phút"');
+  assert.ok(!collectText(inProgCards[1]).includes('Khách không phản hồi'), 'Non-silent held case card must not display silence badge');
+
+  await run('setStaffQueueBucket("waiting")');
+  assert.ok(!collectText(get('staff-queue-list')).includes('Khách không phản hồi'), 'Unclaimed waiting case without holder must not display silence badge');
+
+  await run('selectStaffTicket(staffDeskData.in_progress[0])');
+  assert.equal(get('staff-active-silent-badge').hidden, false);
+  assert.equal(get('staff-active-silent-badge').textContent, 'Khách không phản hồi · 7 phút');
+
+  // Customer replies -> customer_silent_seconds becomes null -> top badge disappears
+  mockStaffCaseTranscriptMap.case_held_silent.case.customer_silent_seconds = null;
+  await run('refreshStaffTranscript("fixture-conversation", true, "case_held_silent")');
+  assert.equal(get('staff-active-silent-badge').hidden, true);
+  assert.equal(get('staff-active-silent-badge').textContent, '');
+  await run('closeStaffDeskDialog()');
+
   mockSessionRole = 'customer';
   await run('openSession()');
   await get('logout').onclick();
