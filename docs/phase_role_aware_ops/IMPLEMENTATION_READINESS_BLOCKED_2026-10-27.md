@@ -275,3 +275,14 @@ Cả hai quyết định dùng đúng hành vi code đã được kiểm chứng
 **Hiện trạng code W3 phải xử lý** (không cần thêm quyết định): `confirm` của `/api/cancellation-proposals*` đổi `orders.status` thành `cancelled` ngay; route đổi trạng thái của Manager không kiểm version, không ghi ngày giao; chưa có bảng yêu cầu, quyết định, bằng chứng hay outbox; dependency chưa có thư viện xử lý ảnh; live E2E đang kiểm hành vi hủy ngay. Owner cũng báo nút "Gửi phản hồi trực tiếp" trên production bấm không có tác dụng, và bố cục nút Staff Desk bị vỡ; cả hai đưa vào W3 theo W3-D10.
 
 **Kết luận:** W3 **READY** để thực thi theo [W3 execution handoff](W3_EXECUTION_HANDOFF_2026-11-02.md) do owner phát hành. Readiness tổng thể vẫn `BLOCKED` cho `W4–W6`. Migration business v6 và deploy W3 trên production cần owner phê duyệt riêng, theo runbook như W2.
+
+### 2026-11-02 W3 production deploy record
+
+- **Merged:** PR #52 (W3, merge `2443416`) và PR #53 (`1075091`): workflow deploy cài thêm `requirements-web.txt` trước khi chạy test. Lần chạy `41434718647` đỏ ở bước test vì thiếu Pillow, trước khi build image; EC2 không bị đụng tới.
+- **Migration business v6 trên DB production**, cùng mô hình W2:
+  - Preflight chỉ đọc: identity v5; 38 tenant ở business v5; 464 đơn (273 `pending`); 6 đề xuất hủy, không có đề xuất `pending`; 74 case; `/data` ghi được.
+  - Backup: `pre-w3-20261102T110945.dump` (852 mục dữ liệu bảng) và `final-pre-w3-20261102T114445.dump` (sau khi dừng `web`).
+  - Diễn tập trên DB tạm: lần đầu `upgraded: True`, chạy lại `False`; W3 khởi động được trên v6.
+  - `database migrate-v6` trên DB thật cho kết quả giống diễn tập: 38 tenant lên v6; 152 bảng mới; 38 cột `orders.delivered_at`; số đơn, đề xuất và case không đổi.
+- **Rollout:** image `sha256:7975e9478f22418ea74488a6a531b9081e37cd616345e8d9470330bd9a1db3c1`; `PUBLIC_WEB_ROLLOUT_OK` (có `PUBLIC_WEB_SOURCE_MATCH`), `ADMIN_CONSOLE_SMOKE_OK`, `LIVE_E2E_SMOKE_OK`; outbox 0 `pending`, 0 `dead`; gián đoạn khoảng 6 phút. Lần chạy `41437516820` đỏ có chủ đích và tự rollback về W2.
+- **Kiểm thử của owner trên trình duyệt** phát hiện các khoảng trống nghiệp vụ và hiển thị, xử lý trong [W3.1](W3_1_EXECUTION_HANDOFF_2026-11-02.md) theo [§15](W0_OWNER_DECISION_DELTA_2026-10-29.md#15-w31-owner-decisions-2026-11-02): nhân viên không có cách tạo yêu cầu khi khách đang chat trực tiếp; ca có người giữ không có tín hiệu khi khách im lặng; các mốc của ca mất khi tải lại trang; CSP chặn `style="..."` nên một số phần tử lẽ ra ẩn vẫn hiện ở trang khách.
