@@ -23,10 +23,13 @@ from retailops.guardrails.topic_filter import (
 from retailops.schema import migrate
 from retailops.business.schema import (
     BUSINESS_V5_VERSION_MAPPING,
+    BUSINESS_V6_VERSION_MAPPING,
     SQLITE_BUSINESS_SCHEMA_CURRENT,
+    SQLITE_BUSINESS_V5_SCHEMA_VERSION,
     backfill_business_v5_cases,
     ensure_case_tables,
     ensure_import_tables,
+    ensure_order_action_tables,
     initialize as initialize_schema,
 )
 
@@ -66,14 +69,14 @@ class VariantStockResult(int):
         yield self.status
 
 
-def _inspect_sqlite_business_ready(path):
+def _inspect_sqlite_business_ready(path, *, target_version=SQLITE_BUSINESS_SCHEMA_CURRENT):
     """Read-only inspection of a business SQLite file without modifying a single byte.
 
-    Returns 'empty' for a missing, zero-byte, or zero-table file; 'v5_ready' when already at
-    SQLite business schema v4 (logical Business v5) with cases, handoff_episodes, and
-    case_feedback_events tables; raises ValueError for wrong component / unsupported future
-    version; and raises ApiError(503, 'business_migration_required', ...) when an existing
-    pre-v5 business DB is found.
+    Returns 'empty' for a missing, zero-byte, or zero-table file; 'v6_ready' when already at
+    SQLite business schema v5 (logical Business v6) with all Business v5 and v6 tables plus
+    orders.delivered_at; raises ValueError for wrong component / unsupported future version;
+    and raises ApiError(503, 'business_migration_required', ...) when an existing pre-v6
+    business DB is found.
     """
     db_path = Path(path)
     if not db_path.exists() or db_path.stat().st_size == 0:
@@ -99,18 +102,18 @@ def _inspect_sqlite_business_ready(path):
                 raise ApiError(
                     503,
                     'business_migration_required',
-                    'Kho dữ liệu cửa hàng thiếu dấu vết schema Business v5; khởi động bị chặn fail-closed. '
-                    'Hãy chạy lệnh operator database migrate-v5 với --confirm-preflight --confirm-backup.',
+                    'Kho dữ liệu cửa hàng thiếu dấu vết schema Business v6; khởi động bị chặn fail-closed. '
+                    'Hãy chạy lệnh operator database migrate-v6 với --confirm-preflight --confirm-backup.',
                 )
             ver = rows[0]['version']
             if ver not in range(1, SQLITE_BUSINESS_SCHEMA_CURRENT + 1):
                 raise ValueError('Unsupported database schema version; use the matching application version.')
-            if ver < SQLITE_BUSINESS_SCHEMA_CURRENT:
+            if ver < target_version:
                 raise ApiError(
                     503,
                     'business_migration_required',
-                    f'Kho dữ liệu cửa hàng đang ở SQLite schema v{ver} (trước Business v5); khởi động bị chặn fail-closed. '
-                    'Hãy chạy lệnh operator database migrate-v5 với --confirm-preflight --confirm-backup.',
+                    f'Kho dữ liệu cửa hàng đang ở SQLite schema v{ver} (trước Business v6); khởi động bị chặn fail-closed. '
+                    'Hãy chạy lệnh operator database migrate-v6 với --confirm-preflight --confirm-backup.',
                 )
             required_v5_tables = {'cases', 'handoff_episodes', 'case_feedback_events'}
             if not required_v5_tables.issubset(tables):
@@ -118,8 +121,26 @@ def _inspect_sqlite_business_ready(path):
                     503,
                     'business_migration_required',
                     'Kho dữ liệu cửa hàng chưa đầy đủ các bảng Business v5; khởi động bị chặn fail-closed. '
-                    'Hãy chạy lệnh operator database migrate-v5 với --confirm-preflight --confirm-backup.',
+                    'Hãy chạy lệnh operator database migrate-v6 với --confirm-preflight --confirm-backup.',
                 )
+            if target_version >= SQLITE_BUSINESS_SCHEMA_CURRENT:
+                required_v6_tables = {
+                    'order_action_requests',
+                    'order_action_decisions',
+                    'order_action_evidence',
+                    'integration_outbox',
+                }
+                order_cols = {
+                    row['name'] for row in ro_db.execute('PRAGMA table_info(orders)')
+                } if 'orders' in tables else set()
+                if not required_v6_tables.issubset(tables) or 'delivered_at' not in order_cols:
+                    raise ApiError(
+                        503,
+                        'business_migration_required',
+                        'Kho dữ liệu cửa hàng chưa đầy đủ các bảng/cột Business v6; khởi động bị chặn fail-closed. '
+                        'Hãy chạy lệnh operator database migrate-v6 với --confirm-preflight --confirm-backup.',
+                    )
+                return 'v6_ready'
             return 'v5_ready'
         if 'memberships' in tables or 'tenants' in tables:
             raise ValueError('Database belongs to another RetailOps component.')
@@ -127,8 +148,8 @@ def _inspect_sqlite_business_ready(path):
             raise ApiError(
                 503,
                 'business_migration_required',
-                'Kho dữ liệu cửa hàng legacy chưa nâng cấp lên Business v5; khởi động bị chặn fail-closed. '
-                'Hãy chạy lệnh operator database migrate-v5 với --confirm-preflight --confirm-backup.',
+                'Kho dữ liệu cửa hàng legacy chưa nâng cấp lên Business v6; khởi động bị chặn fail-closed. '
+                'Hãy chạy lệnh operator database migrate-v6 với --confirm-preflight --confirm-backup.',
             )
         raise ValueError('Database belongs to another RetailOps component.')
     except sqlite3.Error as exc:
@@ -142,11 +163,11 @@ def _inspect_sqlite_business_ready(path):
             ro_db.close()
 
 
-def _migrate_single_sqlite_business_file(db_path: Path):
+def _migrate_single_sqlite_business_file(db_path: Path, *, target_version: int = SQLITE_BUSINESS_SCHEMA_CURRENT):
     if not db_path.is_file():
         raise ApiError(404, 'database_not_found', f'Không tìm thấy kho dữ liệu cửa hàng SQLite: {db_path.name}')
     try:
-        state = _inspect_sqlite_business_ready(db_path)
+        state = _inspect_sqlite_business_ready(db_path, target_version=target_version)
     except ApiError as exc:
         if exc.code != 'business_migration_required':
             raise
@@ -161,6 +182,12 @@ def _migrate_single_sqlite_business_file(db_path: Path):
         db.execute('PRAGMA journal_mode=WAL')
         db.execute('PRAGMA foreign_keys=ON')
         db.execute('BEGIN IMMEDIATE')
+        ver_before_row = (
+            db.execute("SELECT version FROM retailops_schema WHERE component='business'").fetchone()
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='retailops_schema'").fetchone()
+            else None
+        )
+        ver_before = int(ver_before_row['version']) if ver_before_row else 0
         cases_before = (
             db.execute('SELECT COUNT(*) FROM cases').fetchone()[0]
             if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cases'").fetchone()
@@ -171,18 +198,31 @@ def _migrate_single_sqlite_business_file(db_path: Path):
             if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='handoff_episodes'").fetchone()
             else 0
         )
-        migrate(db, 'business', initialize_schema)
-        ensure_import_tables(db)
-        ensure_case_tables(db)
-        backfill_res = backfill_business_v5_cases(db)
-        cases_after = db.execute('SELECT COUNT(*) FROM cases').fetchone()[0]
-        episodes_after = db.execute('SELECT COUNT(*) FROM handoff_episodes').fetchone()[0]
+        if ver_before < target_version or state == 'needs_migration':
+            migrate(db, 'business', initialize_schema, target_version=target_version)
+            ensure_import_tables(db)
+            ensure_case_tables(db)
+            backfill_res = backfill_business_v5_cases(db)
+            if target_version >= SQLITE_BUSINESS_SCHEMA_CURRENT:
+                ensure_order_action_tables(db)
+        else:
+            backfill_res = {'cases_created': 0, 'episodes_created': 0}
+        cases_after = (
+            db.execute('SELECT COUNT(*) FROM cases').fetchone()[0]
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cases'").fetchone()
+            else 0
+        )
+        episodes_after = (
+            db.execute('SELECT COUNT(*) FROM handoff_episodes').fetchone()[0]
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='handoff_episodes'").fetchone()
+            else 0
+        )
         fk_errors = db.execute('PRAGMA foreign_key_check').fetchall()
         if fk_errors:
-            raise sqlite3.IntegrityError(f'Foreign key check failed during Business v5 migration: {[tuple(r) for r in fk_errors]}')
+            raise sqlite3.IntegrityError(f'Foreign key check failed during Business migration: {[tuple(r) for r in fk_errors]}')
         db.commit()
         return {
-            'upgraded': bool(state == 'needs_migration' or backfill_res['cases_created'] > 0),
+            'upgraded': bool(ver_before < target_version or state == 'needs_migration' or backfill_res['cases_created'] > 0),
             'cases_created': int(cases_after - cases_before),
             'episodes_created': int(episodes_after - episodes_before),
         }
@@ -194,33 +234,7 @@ def _migrate_single_sqlite_business_file(db_path: Path):
         db.close()
 
 
-def migrate_sqlite_business_v5(path, *, preflight_confirmed=False, backup_confirmed=False):
-    """Explicit operator migration command for SQLite Business v5 (W2-D3, §11.5).
-
-    Accepts either a single SQLite business database file OR a workspace/persistent
-    directory (upgrading every tenant business database under persistent/tenants/).
-    Never invoked automatically at web startup, store construction, or ordinary CLI commands.
-    """
-    require(
-        preflight_confirmed is True and backup_confirmed is True,
-        400,
-        'migration_confirmation_required',
-        'Lệnh nâng cấp Business v5 yêu cầu xác nhận tường minh --confirm-preflight và --confirm-backup theo runbook §11.5.',
-    )
-    target = Path(path)
-    if target.is_file():
-        single = _migrate_single_sqlite_business_file(target)
-        return {
-            'result': 'BUSINESS_V5_MIGRATED',
-            'backend': 'sqlite',
-            'schema_version': SQLITE_BUSINESS_SCHEMA_CURRENT,
-            'logical_version': BUSINESS_V5_VERSION_MAPPING['postgresql'],
-            'tenants': 1,
-            'upgraded': single['upgraded'],
-            'cases_created': single['cases_created'],
-            'episodes_created': single['episodes_created'],
-        }
-
+def _resolve_sqlite_tenant_files(target: Path, *, milestone_label: str) -> list[Path]:
     pers_dir = target / 'persistent' if (target / 'persistent').is_dir() else target
     id_file = pers_dir / 'identity.sqlite3'
     tenants_dir = pers_dir / 'tenants'
@@ -228,7 +242,7 @@ def migrate_sqlite_business_v5(path, *, preflight_confirmed=False, backup_confir
         id_file.is_file() or tenants_dir.is_dir(),
         404,
         'database_not_found',
-        'Không tìm thấy thư mục dữ liệu persistent SQLite hiện hữu để nâng cấp Business v5.',
+        f'Không tìm thấy thư mục dữ liệu persistent SQLite hiện hữu để nâng cấp {milestone_label}.',
     )
     if id_file.is_file():
         from retailops.identity.store import _inspect_sqlite_identity_ready
@@ -237,7 +251,7 @@ def migrate_sqlite_business_v5(path, *, preflight_confirmed=False, backup_confir
             id_state == 'v5_ready',
             503,
             'identity_migration_required',
-            'Kho identity SQLite chưa ở schema v5; hãy chạy identity migrate-v5 trước khi nâng cấp Business v5.',
+            f'Kho identity SQLite chưa ở schema v5; hãy chạy identity migrate-v5 trước khi nâng cấp {milestone_label}.',
         )
 
     tenant_files = []
@@ -259,12 +273,42 @@ def migrate_sqlite_business_v5(path, *, preflight_confirmed=False, backup_confir
             if cand.is_file() and cand.resolve() not in seen:
                 seen.add(cand.resolve())
                 tenant_files.append(cand)
+    return tenant_files
 
+
+def migrate_sqlite_business_v5(path, *, preflight_confirmed=False, backup_confirmed=False):
+    """Explicit operator migration command for SQLite Business v5 (W2-D3, §11.5).
+
+    Accepts either a single SQLite business database file OR a workspace/persistent
+    directory (upgrading every tenant business database under persistent/tenants/).
+    Never invoked automatically at web startup, store construction, or ordinary CLI commands.
+    """
+    require(
+        preflight_confirmed is True and backup_confirmed is True,
+        400,
+        'migration_confirmation_required',
+        'Lệnh nâng cấp Business v5 yêu cầu xác nhận tường minh --confirm-preflight và --confirm-backup theo runbook §11.5.',
+    )
+    target = Path(path)
+    if target.is_file():
+        single = _migrate_single_sqlite_business_file(target, target_version=SQLITE_BUSINESS_V5_SCHEMA_VERSION)
+        return {
+            'result': 'BUSINESS_V5_MIGRATED',
+            'backend': 'sqlite',
+            'schema_version': SQLITE_BUSINESS_V5_SCHEMA_VERSION,
+            'logical_version': BUSINESS_V5_VERSION_MAPPING['postgresql'],
+            'tenants': 1,
+            'upgraded': single['upgraded'],
+            'cases_created': single['cases_created'],
+            'episodes_created': single['episodes_created'],
+        }
+
+    tenant_files = _resolve_sqlite_tenant_files(target, milestone_label='Business v5')
     any_upgraded = False
     total_cases = 0
     total_episodes = 0
     for tf in tenant_files:
-        res = _migrate_single_sqlite_business_file(tf)
+        res = _migrate_single_sqlite_business_file(tf, target_version=SQLITE_BUSINESS_V5_SCHEMA_VERSION)
         any_upgraded = any_upgraded or res['upgraded']
         total_cases += res['cases_created']
         total_episodes += res['episodes_created']
@@ -272,12 +316,54 @@ def migrate_sqlite_business_v5(path, *, preflight_confirmed=False, backup_confir
     return {
         'result': 'BUSINESS_V5_MIGRATED',
         'backend': 'sqlite',
-        'schema_version': SQLITE_BUSINESS_SCHEMA_CURRENT,
+        'schema_version': SQLITE_BUSINESS_V5_SCHEMA_VERSION,
         'logical_version': BUSINESS_V5_VERSION_MAPPING['postgresql'],
         'tenants': len(tenant_files),
         'upgraded': any_upgraded,
         'cases_created': total_cases,
         'episodes_created': total_episodes,
+    }
+
+
+def migrate_sqlite_business_v6(path, *, preflight_confirmed=False, backup_confirmed=False):
+    """Explicit operator migration command for SQLite Business v6 (W3-D1..W3-D4, W3-D6, W3-D9).
+
+    Upgrades pre-v6 business databases to SQLite v5 (logical Business v6), adding nullable
+    orders.delivered_at (left NULL on existing orders), order_action_requests, append-only
+    order_action_decisions, order_action_evidence, and integration_outbox. Does not backfill
+    pending proposals (W3-D9). Never invoked automatically.
+    """
+    require(
+        preflight_confirmed is True and backup_confirmed is True,
+        400,
+        'migration_confirmation_required',
+        'Lệnh nâng cấp Business v6 yêu cầu xác nhận tường minh --confirm-preflight và --confirm-backup theo runbook §11.5.',
+    )
+    target = Path(path)
+    if target.is_file():
+        single = _migrate_single_sqlite_business_file(target, target_version=SQLITE_BUSINESS_SCHEMA_CURRENT)
+        return {
+            'result': 'BUSINESS_V6_MIGRATED',
+            'backend': 'sqlite',
+            'schema_version': SQLITE_BUSINESS_SCHEMA_CURRENT,
+            'logical_version': BUSINESS_V6_VERSION_MAPPING['postgresql'],
+            'tenants': 1,
+            'upgraded': single['upgraded'],
+        }
+
+    tenant_files = _resolve_sqlite_tenant_files(target, milestone_label='Business v6')
+    any_upgraded = False
+    for tf in tenant_files:
+        res = _migrate_single_sqlite_business_file(tf, target_version=SQLITE_BUSINESS_SCHEMA_CURRENT)
+        any_upgraded = any_upgraded or res['upgraded']
+
+    return {
+        'result': 'BUSINESS_V6_MIGRATED',
+        'backend': 'sqlite',
+        'schema_version': SQLITE_BUSINESS_SCHEMA_CURRENT,
+        'logical_version': BUSINESS_V6_VERSION_MAPPING['postgresql'],
+        'tenants': len(tenant_files),
+        'upgraded': any_upgraded,
     }
 
 

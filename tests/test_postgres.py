@@ -263,7 +263,13 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             self.fresh_store()
         for _ in range(2):
             with store.connection(write=True) as db:
-                initialize(db, store.schema, 'business', allow_business_v5_upgrade=True)
+                initialize(
+                    db,
+                    store.schema,
+                    'business',
+                    allow_business_v5_upgrade=True,
+                    allow_business_v6_upgrade=True,
+                )
         self.assertEqual(self.fresh_store().orders('C-001')[0]['status'], 'pending')
         with store.connection() as db:
             self.assertEqual(db.execute('SELECT version FROM retailops_schema').fetchone()['version'], BUSINESS_SCHEMA_CURRENT)

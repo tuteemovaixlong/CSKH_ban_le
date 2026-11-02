@@ -184,21 +184,21 @@ class PhaseR1W2BusinessV5MigrationTests(unittest.TestCase):
         self.root = Path(self.temp.name)
 
     def test_item1_fresh_db_v5_tables_version_mapping_and_no_cascade_on_conversation_cleanup(self):
-        self.assertEqual(SQLITE_BUSINESS_SCHEMA_CURRENT, 4)
-        self.assertEqual(POSTGRES_BUSINESS_SCHEMA_CURRENT, 5)
-        self.assertEqual(BUSINESS_SCHEMA_CURRENT, 5)
         self.assertEqual(
             BUSINESS_V5_VERSION_MAPPING,
             {"logical_milestone": "business_v5", "sqlite": 4, "postgresql": 5},
         )
+        self.assertEqual(SQLITE_BUSINESS_SCHEMA_CURRENT, 5)
+        self.assertEqual(POSTGRES_BUSINESS_SCHEMA_CURRENT, 6)
+        self.assertEqual(BUSINESS_SCHEMA_CURRENT, 6)
 
-        # 1. Fresh SQLite BusinessStore creates SQLite v4 (logical Business v5) directly; no W3 v6 tables
+        # 1. Fresh SQLite BusinessStore creates SQLite v5 (logical Business v6) directly with Business v5 + v6 tables
         fresh_sqlite = self.root / "fresh_business.sqlite3"
         store = BusinessStore(fresh_sqlite)
         store.seed()
         with store.connection() as db:
             ver_row = db.execute("SELECT component, version FROM retailops_schema").fetchone()
-            self.assertEqual((ver_row["component"], ver_row["version"]), ("business", 4))
+            self.assertEqual((ver_row["component"], ver_row["version"]), ("business", 5))
             tables = {
                 r[0]
                 for r in db.execute(
@@ -206,7 +206,7 @@ class PhaseR1W2BusinessV5MigrationTests(unittest.TestCase):
                 ).fetchall()
             }
         self.assertTrue({"cases", "handoff_episodes", "case_feedback_events"}.issubset(tables))
-        self.assertFalse(tables & {"order_action_requests", "order_action_decisions", "integration_outbox"})
+        self.assertTrue({"order_action_requests", "order_action_decisions", "order_action_evidence", "integration_outbox"}.issubset(tables))
 
         # Expired conversation cleanup MUST NOT cascade-delete cases, handoff_episodes, or case_feedback_events
         now = time.time()
@@ -376,7 +376,7 @@ class PhaseR1W2BusinessV5MigrationTests(unittest.TestCase):
                     "episodes_created": 1,
                 },
             )
-            # Re-running is 100% idempotent
+            # Re-running migrate-v5 is 100% idempotent; then migrate-v6 makes stores current (v6)
             res2 = database_cli.run(
                 parser.parse_args(
                     ["database", "--output", str(legacy_root), "migrate-v5", "--confirm-preflight", "--confirm-backup"]
@@ -385,6 +385,13 @@ class PhaseR1W2BusinessV5MigrationTests(unittest.TestCase):
             self.assertEqual(res2["upgraded"], False)
             self.assertEqual(res2["cases_created"], 0)
             self.assertEqual(res2["episodes_created"], 0)
+            res_v6 = database_cli.run(
+                parser.parse_args(
+                    ["database", "--output", str(legacy_root), "migrate-v6", "--confirm-preflight", "--confirm-backup"]
+                )
+            )
+            self.assertEqual(res_v6["result"], "BUSINESS_V6_MIGRATED")
+            self.assertEqual(res_v6["upgraded"], True)
             chk = database_cli.run(parser.parse_args(["database", "--output", str(legacy_root), "check"]))
             self.assertEqual(chk, {"result": "SQLITE_SCHEMA_READY", "tenants_checked": 2})
 
@@ -532,6 +539,27 @@ class PhaseR1W2BusinessV5MigrationTests(unittest.TestCase):
                     return _CursorAdapter([])
 
                 mem = state.schemas[self.active_schema]
+                if q.startswith("CREATE OR REPLACE FUNCTION ") or q.startswith("DROP TRIGGER IF EXISTS "):
+                    return _CursorAdapter([])
+                if "EXECUTE FUNCTION order_action_decisions_immutable()" in q:
+                    mem.execute(
+                        "CREATE TRIGGER IF NOT EXISTS order_action_decisions_no_update "
+                        "BEFORE UPDATE ON order_action_decisions "
+                        "BEGIN SELECT RAISE(ABORT, 'order_action_decisions is append-only'); END"
+                    )
+                    mem.execute(
+                        "CREATE TRIGGER IF NOT EXISTS order_action_decisions_no_delete "
+                        "BEFORE DELETE ON order_action_decisions "
+                        "BEGIN SELECT RAISE(ABORT, 'order_action_decisions is append-only'); END"
+                    )
+                    mem.commit()
+                    return _CursorAdapter([])
+                if q.startswith("ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivered_at"):
+                    cols = {r[1] for r in mem.execute("PRAGMA table_info(orders)").fetchall()}
+                    if "delivered_at" not in cols:
+                        mem.execute("ALTER TABLE orders ADD COLUMN delivered_at REAL")
+                        mem.commit()
+                    return _CursorAdapter([])
                 sql_sqlite = (
                     q_qmark.replace("BIGSERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT")
                     .replace("DOUBLE PRECISION", "REAL")
@@ -626,13 +654,13 @@ class PhaseR1W2BusinessV5MigrationTests(unittest.TestCase):
             self.assertEqual(cases_a["pg-conv-2"]["status"], "resolved")
             self.assertEqual(cases_a["pg-conv-2"]["resolved_reason"], "migrated_v5")
 
-            # 3. Fresh PostgreSQL tenant schema initializes directly to v5
+            # 3. Fresh PostgreSQL tenant schema initializes directly to v6 (logical Business v6)
             key_c = "c" * 32
             PostgresBusinessStore(pg_dsn, key_c, create=True)
             schema_c = tenant_schema(key_c)
             self.assertEqual(
                 state.schemas[schema_c].execute("SELECT version FROM retailops_schema").fetchone()[0],
-                5,
+                6,
             )
             self.assertIsNotNone(
                 state.schemas[schema_c].execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cases'").fetchone()

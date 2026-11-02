@@ -29,14 +29,14 @@ def read_database(path, component, tables):
             db.row_factory = sqlite3.Row
             db.execute('BEGIN')
             marker = [dict(row) for row in db.execute('SELECT component,version FROM retailops_schema')]
-            allowed_versions = (1, 2, 3, 4) if component == 'business' else (1, 2, 3, 4, 5)
+            allowed_versions = (1, 2, 3, 4, 5) if component == 'business' else (1, 2, 3, 4, 5)
             if len(marker) != 1 or marker[0]['component'] != component or marker[0]['version'] not in allowed_versions:
-                raise ValueError('Import requires identity v1/v2/v3/v4/v5 and business v1/v2/v3/v4 in a stopped persistent SQLite snapshot.')
+                raise ValueError('Import requires identity v1/v2/v3/v4/v5 and business v1/v2/v3/v4/v5 in a stopped persistent SQLite snapshot.')
             if db.execute('PRAGMA integrity_check').fetchone()[0] != 'ok' or db.execute('PRAGMA foreign_key_check').fetchall():
                 raise ValueError('SQLite snapshot failed integrity checks.')
             if component == 'business':
                 # Order tables to respect foreign keys: customers and products must precede orders,
-                # and cases must precede handoff_episodes and case_feedback_events.
+                # and cases must precede handoff_episodes, case_feedback_events, and order_action_*.
                 ordered = ['customers']
                 if marker[0]['version'] >= 3:
                     ordered.extend(['products', 'product_variants'])
@@ -46,9 +46,19 @@ def read_database(path, component, tables):
                     ordered.extend(['graph_runs', 'graph_checkpoints', 'graph_writes'])
                 if marker[0]['version'] >= 4:
                     ordered.extend(['cases', 'handoff_episodes', 'case_feedback_events'])
+                if marker[0]['version'] >= 5:
+                    ordered.extend([
+                        'order_action_requests',
+                        'order_action_decisions',
+                        'order_action_evidence',
+                        'integration_outbox',
+                    ])
                 tables = tuple(ordered)
             existing_tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             result = {table: [dict(row) for row in db.execute('SELECT * FROM "'+table+'"')] for table in tables if table in existing_tables}
+            if component == 'business':
+                for row in result.get('orders', ()):
+                    row.setdefault('delivered_at', None)
             if component == 'identity':
                 for row in result.get('memberships', ()):
                     row.setdefault('disabled_reason', None)

@@ -1,10 +1,10 @@
-"""Explicit database initialization, controlled Business v5 migration, and offline import."""
+"""Explicit database initialization, controlled Business v5/v6 migrations, and offline import."""
 import os
 from pathlib import Path
 
 
 def add_parser(commands):
-    parser = commands.add_parser('database', help='Initialize PostgreSQL, run Business v5 migration, or import an offline SQLite snapshot.')
+    parser = commands.add_parser('database', help='Initialize PostgreSQL, run Business v5/v6 migration, or import an offline SQLite snapshot.')
     parser.add_argument('--output', type=Path, default=Path('artifacts'),
                         help='Workspace directory containing persistent/ when using SQLite.')
     sub = parser.add_subparsers(dest='database_action', required=True)
@@ -24,6 +24,16 @@ def add_parser(commands):
                         help='Confirm read-only preflight checks were completed.')
     mig_v5.add_argument('--confirm-backup', action='store_true',
                         help='Confirm verified database backup was completed.')
+    mig_v6 = sub.add_parser(
+        'migrate-v6',
+        help='Explicitly upgrade all tenant business stores to Business v6 (order actions, evidence, outbox).',
+    )
+    mig_v6.add_argument('--db-path', type=Path, default=None,
+                        help='Optional standalone SQLite business file path (defaults to all tenants under --output/persistent).')
+    mig_v6.add_argument('--confirm-preflight', action='store_true',
+                        help='Confirm read-only preflight checks were completed.')
+    mig_v6.add_argument('--confirm-backup', action='store_true',
+                        help='Confirm verified database backup was completed.')
     sub.add_parser('check', help='Connect and verify identity and tenant business schema versions read-only.')
     importer = sub.add_parser('import-sqlite', help='Import an offline persistent snapshot into an empty target.')
     importer.add_argument('--offline-snapshot', type=Path, required=True,
@@ -31,10 +41,18 @@ def add_parser(commands):
 
 
 def run(args):
-    from retailops.business.store import _inspect_sqlite_business_ready, migrate_sqlite_business_v5
+    from retailops.business.store import (
+        _inspect_sqlite_business_ready,
+        migrate_sqlite_business_v5,
+        migrate_sqlite_business_v6,
+    )
     from retailops.config import database_settings
     from retailops.core import ApiError
-    from retailops.storage.pg_repositories import PostgresIdentityStore, migrate_postgres_business_v5
+    from retailops.storage.pg_repositories import (
+        PostgresIdentityStore,
+        migrate_postgres_business_v5,
+        migrate_postgres_business_v6,
+    )
     from retailops.storage.postgres import BUSINESS_SCHEMA_CURRENT, IDENTITY_SCHEMA, tenant_schema, transaction
 
     backend, dsn = database_settings(os.environ)
@@ -51,6 +69,20 @@ def run(args):
                 backup_confirmed=backup_ok,
             )
         return migrate_postgres_business_v5(
+            dsn,
+            preflight_confirmed=preflight_ok,
+            backup_confirmed=backup_ok,
+        )
+
+    if action == 'migrate-v6':
+        if backend == 'sqlite':
+            target = getattr(args, 'db_path', None) or getattr(args, 'output', Path('artifacts'))
+            return migrate_sqlite_business_v6(
+                target,
+                preflight_confirmed=preflight_ok,
+                backup_confirmed=backup_ok,
+            )
+        return migrate_postgres_business_v6(
             dsn,
             preflight_confirmed=preflight_ok,
             backup_confirmed=backup_ok,
@@ -97,18 +129,24 @@ def run(args):
                             503,
                             'business_migration_required',
                             f"Kho dữ liệu business PostgreSQL ({t_schema}) đang ở schema v{ver_row.get('version')}; "
-                            "cần chạy database migrate-v5 với --confirm-preflight --confirm-backup.",
+                            "cần chạy database migrate-v6 với --confirm-preflight --confirm-backup.",
                         )
         return {'result': 'POSTGRES_SCHEMA_READY', 'version': 1, 'accounts_seeded': False}
     if action == 'migrate':
         from retailops.storage.pg_schema import initialize
-        allow_v5 = bool(preflight_ok and backup_ok)
+        allow_upgrade = bool(preflight_ok and backup_ok)
         with identity.connection() as db:
             tenants = db.execute('SELECT storage_key FROM tenants').fetchall()
         for tenant in tenants:
             schema = tenant_schema(tenant['storage_key'])
             with transaction(dsn, schema, write=True) as db:
-                initialize(db, schema, 'business', allow_business_v5_upgrade=allow_v5)
+                initialize(
+                    db,
+                    schema,
+                    'business',
+                    allow_business_v5_upgrade=allow_upgrade,
+                    allow_business_v6_upgrade=allow_upgrade,
+                )
         return {'result': 'POSTGRES_MIGRATED', 'business_schema_version': BUSINESS_SCHEMA_CURRENT,
                 'tenants': len(tenants)}
     return {'result': 'POSTGRES_SCHEMA_READY', 'version': 1, 'accounts_seeded': False}
