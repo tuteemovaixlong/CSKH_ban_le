@@ -144,6 +144,8 @@ class GuestSessions:
             if sid not in self.apps:
                 store = BusinessStore(self.directory / (sid + '.sqlite3'))
                 store.data_mode = getattr(self, 'data_mode', 'synthetic-demo')
+                store.tenant_id = f'guest-{sid[:16]}'
+                store.data_root = self.directory.parent if self.directory.name == 'public-guests' else self.directory
                 if callable(getattr(self, 'store_clock', None)):
                     store.clock = self.store_clock
                 if getattr(self, 'case_timer_config', None) is not None:
@@ -185,7 +187,17 @@ class GuestSessions:
     def run_case_timers_once(self, now: float | None = None) -> dict:
         with self.lock:
             apps = list(self.apps.values())
-        totals = {'reminded': 0, 'resolved_inactivity': 0, 'resolved_completed': 0, 'tenants': 0}
+        totals = {
+            'reminded': 0,
+            'resolved_inactivity': 0,
+            'resolved_completed': 0,
+            'evidence_purged': 0,
+            'outbox_published': 0,
+            'outbox_retried': 0,
+            'outbox_dead': 0,
+            'outbox_manifests_sealed': 0,
+            'tenants': 0,
+        }
         for app in apps:
             store = getattr(app, 'store', None)
             if store is None or not hasattr(store, 'process_due_case_timers'):
@@ -195,7 +207,14 @@ class GuestSessions:
             if getattr(self, 'case_timer_config', None) is not None:
                 store.case_timer_config = self.case_timer_config
             res = store.process_due_case_timers(now=now)
+            ev_res = store.purge_expired_evidence(now=now) if hasattr(store, 'purge_expired_evidence') else {}
+            ob_res = store.process_outbox_batch(now=now) if hasattr(store, 'process_outbox_batch') else {}
             totals['tenants'] += 1
             for k in ('reminded', 'resolved_inactivity', 'resolved_completed'):
                 totals[k] += int(res.get(k, 0))
+            totals['evidence_purged'] += int(ev_res.get('purged', 0))
+            totals['outbox_published'] += int(ob_res.get('published', 0))
+            totals['outbox_retried'] += int(ob_res.get('retried', 0))
+            totals['outbox_dead'] += int(ob_res.get('dead', 0))
+            totals['outbox_manifests_sealed'] += int(ob_res.get('manifests_sealed', 0))
         return totals

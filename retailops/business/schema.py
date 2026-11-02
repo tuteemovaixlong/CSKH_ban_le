@@ -1,15 +1,22 @@
 import time
 import uuid
 
-# Phase R1 W2 Business v5 backend schema version mapping (W2-D3):
-#   - PostgreSQL business schema: 4 -> 5  (POSTGRES_BUSINESS_SCHEMA_CURRENT = 5)
-#   - SQLite business schema:     3 -> 4  (SQLITE_BUSINESS_SCHEMA_CURRENT = 4)
-# Both represent the exact same logical R1 W2 "Business v5" milestone
-# (tables: cases, handoff_episodes, case_feedback_events; order-action/outbox deferred to W3 v6).
-SQLITE_BUSINESS_SCHEMA_CURRENT = 4
-POSTGRES_BUSINESS_SCHEMA_CURRENT = 5
+# Phase R1 W2/W3 backend schema version mappings:
+#   - Business v5 (W2-D3): SQLite 4, PostgreSQL 5 (cases, handoff_episodes, case_feedback_events)
+#   - Business v6 (W3-D1..W3-D4, W3-D6): SQLite 5, PostgreSQL 6
+#     (orders.delivered_at, order_action_requests, order_action_decisions,
+#      order_action_evidence, integration_outbox).
+SQLITE_BUSINESS_V5_SCHEMA_VERSION = 4
+POSTGRES_BUSINESS_V5_SCHEMA_VERSION = 5
 BUSINESS_V5_VERSION_MAPPING = {
     'logical_milestone': 'business_v5',
+    'sqlite': SQLITE_BUSINESS_V5_SCHEMA_VERSION,
+    'postgresql': POSTGRES_BUSINESS_V5_SCHEMA_VERSION,
+}
+SQLITE_BUSINESS_SCHEMA_CURRENT = 5
+POSTGRES_BUSINESS_SCHEMA_CURRENT = 6
+BUSINESS_V6_VERSION_MAPPING = {
+    'logical_milestone': 'business_v6',
     'sqlite': SQLITE_BUSINESS_SCHEMA_CURRENT,
     'postgresql': POSTGRES_BUSINESS_SCHEMA_CURRENT,
 }
@@ -112,7 +119,8 @@ def initialize(db):
                   variant TEXT NOT NULL, amount INTEGER NOT NULL,
                   status TEXT NOT NULL CHECK(status IN ('pending','delivered','cancelled')),
                   version INTEGER NOT NULL DEFAULT 1, cancel_reason TEXT,
-                  product_id TEXT REFERENCES products(id)
+                  product_id TEXT REFERENCES products(id),
+                  delivered_at REAL
                 )""")
     db.execute('CREATE INDEX IF NOT EXISTS idx_orders_customer_id ON orders(customer_id)')
     db.execute('CREATE INDEX IF NOT EXISTS idx_orders_product_id ON orders(product_id)')
@@ -177,6 +185,7 @@ def initialize(db):
         WHEN NEW.id<>OLD.id AND EXISTS (SELECT 1 FROM orders WHERE customer_id=OLD.id)
         BEGIN SELECT RAISE(ABORT,'Customer owns orders'); END""")
     ensure_case_tables(db)
+    ensure_order_action_tables(db)
 
 
 def ensure_case_tables(db):
@@ -245,6 +254,138 @@ def ensure_case_tables(db):
                 )""")
     db.execute('CREATE INDEX IF NOT EXISTS idx_case_feedback_case ON case_feedback_events(case_id, created_at DESC)')
     db.execute('CREATE INDEX IF NOT EXISTS idx_case_feedback_conv ON case_feedback_events(conversation_id)')
+
+
+def ensure_order_action_tables(db):
+    """Create Business v6 order-action, append-only decision, evidence, and outbox tables on SQLite.
+
+    Also adds nullable orders.delivered_at (leaving existing orders NULL per W3-D6).
+    Never uses ON DELETE CASCADE from conversations so expired conversation cleanup preserves
+    every request, decision, evidence record, and outbox event.
+    """
+    orders_table = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='orders'").fetchone()
+    if orders_table:
+        order_cols = {row['name'] for row in db.execute('PRAGMA table_info(orders)')}
+        if 'delivered_at' not in order_cols:
+            db.execute('ALTER TABLE orders ADD COLUMN delivered_at REAL')
+
+    db.execute("""CREATE TABLE IF NOT EXISTS order_action_requests (
+                  request_id TEXT PRIMARY KEY,
+                  order_id TEXT NOT NULL REFERENCES orders(id),
+                  customer_id TEXT NOT NULL REFERENCES customers(id),
+                  case_id TEXT NOT NULL REFERENCES cases(case_id),
+                  conversation_id TEXT NOT NULL,
+                  type TEXT NOT NULL CHECK(type IN ('cancel', 'return', 'exchange')),
+                  exchange_kind TEXT CHECK(
+                      (type = 'exchange' AND exchange_kind IN ('size', 'one_to_one'))
+                      OR (type <> 'exchange' AND exchange_kind IS NULL)
+                  ),
+                  status TEXT NOT NULL CHECK(
+                      status IN ('requested', 'under_review', 'approved', 'rejected', 'received', 'inspected', 'completed')
+                  ),
+                  inspection_outcome TEXT CHECK(
+                      inspection_outcome IS NULL OR inspection_outcome IN ('refund', 'exchange', 'no_action')
+                  ),
+                  refund_status TEXT NOT NULL DEFAULT 'not_applicable' CHECK(
+                      refund_status IN ('not_applicable', 'pending', 'refunded', 'failed')
+                  ),
+                  refund_decision TEXT CHECK(
+                      refund_decision IS NULL OR refund_decision IN ('approved', 'rejected')
+                  ),
+                  reason_code TEXT NOT NULL CHECK(length(trim(reason_code)) > 0),
+                  reason_text TEXT CHECK(reason_text IS NULL OR length(reason_text) <= 500),
+                  raised_by_role TEXT NOT NULL CHECK(raised_by_role IN ('customer', 'staff', 'manager')),
+                  delivery_failure_attempts INTEGER CHECK(
+                      delivery_failure_attempts IS NULL OR delivery_failure_attempts >= 1
+                  ),
+                  expected_order_version INTEGER NOT NULL CHECK(expected_order_version >= 1),
+                  version INTEGER NOT NULL DEFAULT 1 CHECK(version >= 1),
+                  created_at REAL NOT NULL,
+                  updated_at REAL NOT NULL,
+                  reviewed_at REAL,
+                  received_at REAL,
+                  inspected_at REAL,
+                  completed_at REAL,
+                  closed_at REAL,
+                  CHECK(
+                      (type = 'cancel' AND (
+                          (status IN ('requested', 'under_review') AND closed_at IS NULL)
+                          OR (status IN ('approved', 'rejected') AND closed_at IS NOT NULL)
+                      ))
+                      OR (type IN ('return', 'exchange') AND (
+                          (status IN ('requested', 'under_review', 'approved', 'received', 'inspected') AND closed_at IS NULL)
+                          OR (status IN ('rejected', 'completed') AND closed_at IS NOT NULL)
+                      ))
+                  )
+                )""")
+    db.execute('CREATE INDEX IF NOT EXISTS idx_order_action_case ON order_action_requests(case_id, created_at DESC)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_order_action_customer ON order_action_requests(customer_id, created_at DESC)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_order_action_order ON order_action_requests(order_id, created_at DESC)')
+    db.execute(
+        'CREATE UNIQUE INDEX IF NOT EXISTS idx_order_action_one_open_per_order '
+        'ON order_action_requests(order_id) WHERE closed_at IS NULL'
+    )
+
+    db.execute("""CREATE TABLE IF NOT EXISTS order_action_decisions (
+                  decision_id TEXT PRIMARY KEY,
+                  request_id TEXT NOT NULL REFERENCES order_action_requests(request_id),
+                  case_id TEXT NOT NULL REFERENCES cases(case_id),
+                  order_id TEXT NOT NULL REFERENCES orders(id),
+                  conversation_id TEXT NOT NULL,
+                  action TEXT NOT NULL,
+                  from_status TEXT,
+                  to_status TEXT NOT NULL,
+                  from_refund_status TEXT,
+                  to_refund_status TEXT,
+                  refund_decision TEXT,
+                  inspection_outcome TEXT,
+                  actor_principal_id TEXT NOT NULL,
+                  actor_role TEXT NOT NULL,
+                  note TEXT CHECK(note IS NULL OR length(note) <= 500),
+                  created_at REAL NOT NULL
+                )""")
+    db.execute('CREATE INDEX IF NOT EXISTS idx_order_action_decisions_req ON order_action_decisions(request_id, created_at ASC)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_order_action_decisions_case ON order_action_decisions(case_id, created_at ASC)')
+    db.execute("""CREATE TRIGGER IF NOT EXISTS order_action_decisions_no_update
+                  BEFORE UPDATE ON order_action_decisions
+                  BEGIN SELECT RAISE(ABORT, 'order_action_decisions is append-only'); END""")
+    db.execute("""CREATE TRIGGER IF NOT EXISTS order_action_decisions_no_delete
+                  BEFORE DELETE ON order_action_decisions
+                  BEGIN SELECT RAISE(ABORT, 'order_action_decisions is append-only'); END""")
+
+    db.execute("""CREATE TABLE IF NOT EXISTS order_action_evidence (
+                  evidence_id TEXT PRIMARY KEY,
+                  request_id TEXT NOT NULL REFERENCES order_action_requests(request_id),
+                  case_id TEXT NOT NULL REFERENCES cases(case_id),
+                  customer_id TEXT NOT NULL REFERENCES customers(id),
+                  conversation_id TEXT NOT NULL,
+                  uploaded_by_principal_id TEXT NOT NULL,
+                  uploaded_by_role TEXT NOT NULL CHECK(uploaded_by_role IN ('customer', 'staff', 'manager')),
+                  mime_type TEXT NOT NULL CHECK(mime_type IN ('image/jpeg', 'image/png', 'image/webp')),
+                  byte_size INTEGER NOT NULL CHECK(byte_size > 0 AND byte_size <= 10485760),
+                  width INTEGER NOT NULL CHECK(width > 0),
+                  height INTEGER NOT NULL CHECK(height > 0),
+                  sha256 TEXT NOT NULL,
+                  storage_relpath TEXT NOT NULL,
+                  created_at REAL NOT NULL,
+                  file_purged_at REAL
+                )""")
+    db.execute('CREATE INDEX IF NOT EXISTS idx_order_action_evidence_req ON order_action_evidence(request_id, created_at ASC)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_order_action_evidence_purge ON order_action_evidence(file_purged_at, request_id)')
+
+    db.execute("""CREATE TABLE IF NOT EXISTS integration_outbox (
+                  event_id TEXT PRIMARY KEY,
+                  tenant_id TEXT NOT NULL,
+                  event_type TEXT NOT NULL,
+                  payload_json TEXT NOT NULL,
+                  created_at REAL NOT NULL,
+                  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'published', 'dead')),
+                  attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0),
+                  next_attempt_at REAL NOT NULL,
+                  last_error TEXT,
+                  published_at REAL
+                )""")
+    db.execute('CREATE INDEX IF NOT EXISTS idx_integration_outbox_due ON integration_outbox(status, next_attempt_at, created_at)')
 
 
 def backfill_business_v5_cases(db, *, now=None):

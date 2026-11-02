@@ -25,7 +25,8 @@ def build_public_app(settings: Settings | None = None) -> PublicWeb:
             from retailops.identity.postgres import PostgresSessions
             sessions = PostgresSessions(settings.database_url, gateways.custom, gateways.api,
                                          settings.api_daily_turn_limit, data_mode=settings.data_mode,
-                                         default_tenant_id=settings.demo_tenant_id or None)
+                                         default_tenant_id=settings.demo_tenant_id or None,
+                                         data_root=settings.output)
         else:
             sessions = PersistentSessions(settings.output/'persistent', gateways.custom, gateways.api,
                                           settings.api_daily_turn_limit, data_mode=settings.data_mode,
@@ -45,6 +46,8 @@ def build_private_app(settings: Settings | None = None) -> Application:
     gateways = build_gateways(settings)
     store = BusinessStore(settings.output/'business.sqlite3')
     store.data_mode = settings.data_mode
+    store.tenant_id = 'default'
+    store.data_root = settings.output
     store.case_timer_config = settings.case_timer_config
     store.seed()
     token_hash = hashlib.sha256(settings.access_token.encode()).hexdigest()

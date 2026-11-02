@@ -99,12 +99,14 @@ class PublicTests(unittest.TestCase):
         self.assertEqual(self.request(endpoint, {'confirmed': False}, alice, HTTP_IDEMPOTENCY_KEY='a'*32)[0], 400)
         self.assertEqual(self.request(endpoint, {'confirmed': True}, alice, HTTP_IDEMPOTENCY_KEY='a'*32)[0], 200)
         self.web = PublicWeb(ORIGIN, GuestSessions(self.directory, INVITE))
-        self.assertEqual(self.request('/api/orders/O-101', cookie=alice)[1]['order']['status'], 'cancelled')
+        self.assertEqual(self.request('/api/orders/O-101', cookie=alice)[1]['order']['status'], 'pending')
+        self.assertEqual(self.request('/api/order-actions', cookie=alice)[1]['order_actions'][0]['status'], 'requested')
         self.assertEqual(self.request('/api/orders/O-101', cookie=bob)[1]['order']['status'], 'pending')
+        self.assertEqual(self.request('/api/order-actions', cookie=bob)[1]['order_actions'], [])
         self.assertEqual(self.request('/api/orders/O-202', cookie=alice)[0], 404)
         bob_events = self.request('/api/events', cookie=bob)[1]['events']
-        self.assertFalse(any(e['kind'] == 'order_cancelled' for e in bob_events))
-        self.assertEqual(owner.lookup('C-001', 'O-101')['cancel_reason'], 'no_longer_needed')
+        self.assertFalse(any(e['kind'] == 'order_action_requested' for e in bob_events))
+        self.assertEqual(owner.list_customer_order_actions('C-001')[0]['reason_code'], 'no_longer_needed')
 
     def test_api_default_shared_quota_and_conversation_isolation(self):
         alice, bob = self.login(), self.login()

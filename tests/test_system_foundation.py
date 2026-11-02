@@ -67,7 +67,8 @@ with tempfile.TemporaryDirectory() as directory:
     store.seed()
     proposal = store.propose('C-001', {'order_id':'O-101', 'order_version':1, 'cancel_reason':'ordered_by_mistake'})
     assert store.lookup('C-001','O-101')['status'] == 'pending'
-    assert store.confirm('C-001',proposal['proposal_id'],{'confirmed':True},'x'*32)['order']['status'] == 'cancelled'
+    conf = store.confirm('C-001',proposal['proposal_id'],{'confirmed':True},'x'*32)
+    assert conf['status'] == 'requested' and conf['order']['status'] == 'pending'
 print('BUSINESS_BOUNDARY_OK')
 '''
         result = subprocess.run([sys.executable, '-c', script], cwd=ROOT, capture_output=True, text=True, timeout=15)
@@ -160,7 +161,8 @@ print('BUSINESS_BOUNDARY_OK')
         public.sessions.logout(cookie)
         self.assertTrue((self.output/'business.sqlite3').exists())
         reopened = build_private_app(private_settings)
-        self.assertEqual(reopened.store.lookup('C-001','O-101')['status'], 'cancelled')
+        self.assertEqual(reopened.store.lookup('C-001','O-101')['status'], 'pending')
+        self.assertEqual(reopened.store.list_customer_order_actions('C-001')[0]['status'], 'requested')
         self.assertTrue(reopened.store.confirm('C-001',proposal['proposal_id'],{'confirmed':True},'z'*32)['replayed'])
 
     def test_wrong_interface_cannot_reuse_other_interfaces_auth_configuration(self):

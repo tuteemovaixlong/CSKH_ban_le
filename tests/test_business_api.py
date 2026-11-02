@@ -52,13 +52,17 @@ class BusinessTests(unittest.TestCase):
     def test_atomic_confirmation_and_replay_after_restart(self):
         pid = self.proposal()['proposal_id']
         result = self.store.confirm('C-001', pid, {'confirmed': True}, 'a'*32)
-        self.assertEqual(result['order']['status'], 'cancelled')
+        self.assertEqual(result['status'], 'requested')
+        self.assertTrue(result['order_action_request_id'].startswith('oar_'))
+        self.assertEqual(result['order']['status'], 'pending')
+        self.assertEqual(result['order']['version'], 1)
         reopened = BusinessStore(self.store.path)
         reopened.seed()
         replay = reopened.confirm('C-001', pid, {'confirmed': True}, 'a'*32)
         self.assertTrue(replay['replayed'])
-        self.assertEqual(replay['order']['version'], 2)
-        self.assertEqual(len([e for e in reopened.events('C-001') if e['kind'] == 'order_cancelled']), 1)
+        self.assertEqual(replay['order_action_request_id'], result['order_action_request_id'])
+        self.assertEqual(replay['order']['version'], 1)
+        self.assertEqual(len([e for e in reopened.events('C-001') if e['kind'] == 'order_action_requested']), 1)
         self.assert_error('already_confirmed', lambda: reopened.confirm('C-001', pid, {'confirmed': True}, 'b'*32))
 
     def test_concurrent_double_click_executes_once(self):
@@ -66,7 +70,8 @@ class BusinessTests(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=2) as pool:
             results = list(pool.map(lambda _: self.store.confirm('C-001', pid, {'confirmed': True}, 'a'*32), range(2)))
         self.assertEqual(sorted(r['replayed'] for r in results), [False, True])
-        self.assertEqual(len([e for e in self.store.events('C-001') if e['kind'] == 'order_cancelled']), 1)
+        self.assertEqual(len([e for e in self.store.events('C-001') if e['kind'] == 'order_action_requested']), 1)
+        self.assertEqual(len(self.store.list_customer_order_actions('C-001')), 1)
 
     def test_rechecks_order_at_confirmation(self):
         pid = self.proposal()['proposal_id']
@@ -88,7 +93,7 @@ class BusinessTests(unittest.TestCase):
     def test_distinct_proposals_cannot_cancel_same_order_twice(self):
         first, second = self.proposal(), self.proposal()
         self.store.confirm('C-001', first['proposal_id'], {'confirmed': True}, 'a'*32)
-        self.assert_error('stale_order', lambda: self.store.confirm('C-001', second['proposal_id'], {'confirmed': True}, 'b'*32))
+        self.assert_error('order_action_conflict', lambda: self.store.confirm('C-001', second['proposal_id'], {'confirmed': True}, 'b'*32))
 
     def test_idempotency_key_cannot_be_reused_for_another_order(self):
         with self.store.connection(write=True) as db:
@@ -178,7 +183,8 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(self.request(path, {'confirmed': True})[0], 400)
         status, result = self.request(path, {'confirmed': True}, {'Idempotency-Key': 'a'*32})
         self.assertEqual(status, 200)
-        self.assertEqual(result['order']['status'], 'cancelled')
+        self.assertEqual(result['status'], 'requested')
+        self.assertEqual(result['order']['status'], 'pending')
         self.assertTrue(self.request(path, {'confirmed': True}, {'Idempotency-Key': 'a'*32})[1]['replayed'])
 
     def test_json_origin_and_offline_model(self):

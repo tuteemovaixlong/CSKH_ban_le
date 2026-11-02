@@ -97,10 +97,13 @@ class PersistentTests(unittest.TestCase):
         self.restart()
         alice = self.login(self.alice)
         result = self.request('/api/orders/O-101', cookie=alice)[1]['order']
-        self.assertEqual((result['status'], result['version']), ('cancelled', 2))
+        self.assertEqual((result['status'], result['version']), ('pending', 1))
+        actions = self.request('/api/order-actions', cookie=alice)[1]['order_actions']
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0]['status'], 'requested')
         self.assertTrue(self.request(endpoint, {'confirmed': True}, alice, HTTP_IDEMPOTENCY_KEY='confirm-a'*4)[1]['replayed'])
         events = self.request('/api/events', cookie=alice)[1]['events']
-        self.assertEqual(sum(e['kind'] == 'order_cancelled' for e in events), 1)
+        self.assertEqual(sum(e['kind'] == 'order_action_requested' for e in events), 1)
 
     def test_expiry_and_purge_never_delete_business_databases(self):
         alice = self.login(self.alice)
@@ -111,7 +114,9 @@ class PersistentTests(unittest.TestCase):
         self.sessions.purge()
         self.assertEqual(self.request('/api/orders', cookie=alice)[0], 401)
         self.assertTrue(all(p.is_file() for p in paths))
-        self.assertEqual(self.request('/api/orders/O-101', cookie=self.login(self.alice))[1]['order']['status'], 'cancelled')
+        relogged = self.login(self.alice)
+        self.assertEqual(self.request('/api/orders/O-101', cookie=relogged)[1]['order']['status'], 'pending')
+        self.assertEqual(self.request('/api/order-actions', cookie=relogged)[1]['order_actions'][0]['status'], 'requested')
 
     def test_tenant_customer_order_proposal_conversation_and_replay_isolation(self):
         alice, bob, other = [self.login(m) for m in (self.alice, self.bob, self.other)]
@@ -129,8 +134,8 @@ class PersistentTests(unittest.TestCase):
                 self.assertEqual(self.request('/api/cancellation-proposals/'+proposal['proposal_id']+'/'+action,
                                               data, stranger, HTTP_IDEMPOTENCY_KEY='isolation'*4)[0], 404)
         self.cancel(alice)
-        self.assertEqual(self.request('/api/orders/O-101', cookie=other)[1]['order']['status'], 'pending')
-        self.assertFalse(any(e['kind'] == 'order_cancelled' for e in self.request('/api/events', cookie=other)[1]['events']))
+        self.assertEqual(self.request('/api/order-actions', cookie=other)[1]['order_actions'], [])
+        self.assertFalse(any(e['kind'] == 'order_action_requested' for e in self.request('/api/events', cookie=other)[1]['events']))
 
     def test_viewer_cannot_propose_confirm_dismiss_or_prepare_via_model(self):
         for retired_role in ('viewer', 'platform_admin'):
@@ -238,7 +243,9 @@ class PersistentTests(unittest.TestCase):
         shutil.copytree(self.directory, restored)
         self.directory = restored
         self.restart()
-        self.assertEqual(self.request('/api/orders/O-101', cookie=self.login(self.alice))[1]['order']['status'], 'cancelled')
+        relogged = self.login(self.alice)
+        self.assertEqual(self.request('/api/orders/O-101', cookie=relogged)[1]['order']['status'], 'pending')
+        self.assertEqual(self.request('/api/order-actions', cookie=relogged)[1]['order_actions'][0]['status'], 'requested')
         with self.sessions.control.connection() as db:
             self.assertEqual(db.execute('PRAGMA integrity_check').fetchone()[0], 'ok')
         with self.sessions.business_store('shop-a').connection() as db:

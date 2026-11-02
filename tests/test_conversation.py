@@ -84,7 +84,11 @@ class ConversationTests(unittest.TestCase):
         self.model.replies = [response('', ('get_order', {'order_id': 'O-101'})), response('Previously pending')]
         self.chat('Xem O-101')
         proposal = self.store.propose('C-001', {'order_id': 'O-101', 'order_version': 1, 'cancel_reason': 'ordered_by_mistake'})
-        self.store.confirm('C-001', proposal['proposal_id'], {'confirmed': True}, 'a'*32)
+        conf = self.store.confirm('C-001', proposal['proposal_id'], {'confirmed': True}, 'a'*32)
+        self.assertEqual(conf['status'], 'requested')
+        self.assertEqual(self.store.lookup('C-001', 'O-101')['status'], 'pending')
+        with self.store.connection(write=True) as db:
+            db.execute("UPDATE orders SET status='cancelled', version=version+1 WHERE id='O-101'")
         reopened = BusinessStore(self.store.path)
         self.assertEqual(reopened.history('C-001', self.cid)[0]['content'], 'Xem O-101')
         def final(messages):
@@ -225,7 +229,7 @@ class ConversationTests(unittest.TestCase):
         self.assertEqual(self.chat('hello')['message'], 'Recovered')
 
     def test_existing_database_migrates_without_resetting_cancelled_order(self):
-        from retailops.business.store import migrate_sqlite_business_v5
+        from retailops.business.store import migrate_sqlite_business_v6
         path = Path(self.temp.name) / 'old.sqlite3'
         db = sqlite3.connect(path)
         try:
@@ -235,7 +239,7 @@ class ConversationTests(unittest.TestCase):
         finally:
             db.close()
         self.assert_error('business_migration_required', lambda: BusinessStore(path))
-        migrate_sqlite_business_v5(path, preflight_confirmed=True, backup_confirmed=True)
+        migrate_sqlite_business_v6(path, preflight_confirmed=True, backup_confirmed=True)
         migrated = BusinessStore(path); migrated.seed()
         order = migrated.lookup('C-001', 'O-101')
         self.assertEqual((order['status'], order['version']), ('cancelled', 2))

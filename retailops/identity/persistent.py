@@ -95,8 +95,26 @@ class PersistentSessions:
                 503, 'invalid_storage', 'Không mở được kho dữ liệu cửa hàng.')
         return self.directory/'tenants'/(tenant['storage_key']+'.sqlite3')
 
-    def _configure_business_store(self, store):
+    def _resolve_data_root(self) -> Path:
+        explicit = getattr(self, 'data_root', None)
+        if explicit is not None:
+            return Path(explicit)
+        directory = getattr(self, 'directory', None)
+        if directory is not None:
+            dpath = Path(directory)
+            if dpath.name in ('persistent', 'public-guests'):
+                return dpath.parent
+            return dpath
+        env_out = os.environ.get('RETAILOPS_OUTPUT', '').strip()
+        if env_out:
+            return Path(env_out)
+        import tempfile
+        return Path(tempfile.gettempdir()) / 'retailops_runtime_data'
+
+    def _configure_business_store(self, store, *, tenant_id=None):
         store.data_mode = getattr(self, 'data_mode', 'persistent-demo')
+        store.tenant_id = _clean_tenant_id(tenant_id) or getattr(store, 'tenant_id', None) or 'default'
+        store.data_root = self._resolve_data_root()
         if callable(getattr(self, 'store_clock', None)):
             store.clock = self.store_clock
         if getattr(self, 'case_timer_config', None) is not None:
@@ -105,7 +123,7 @@ class PersistentSessions:
 
     def provision_tenant(self, tenant_id, name, *, seed_demo=False):
         tenant = self.control.ensure_tenant(tenant_id, name)
-        store = self._configure_business_store(BusinessStore(self.tenant_path(tenant)))
+        store = self._configure_business_store(BusinessStore(self.tenant_path(tenant)), tenant_id=tenant_id)
         if seed_demo:
             store.seed()
         return store
@@ -120,7 +138,8 @@ class PersistentSessions:
                 create=False,
                 initialize_db=init_db,
                 read_only=self.read_only,
-            )
+            ),
+            tenant_id=tenant_id,
         )
 
     def create_member(self, tenant_id, principal_id, name, customer_id, role='customer'):
@@ -289,7 +308,17 @@ class PersistentSessions:
         return {'session_scope': 'persistent-account', 'data_mode': self.data_mode, 'session_seconds': self.session_seconds}
 
     def run_case_timers_once(self, now: float | None = None) -> dict:
-        totals = {'reminded': 0, 'resolved_inactivity': 0, 'resolved_completed': 0, 'tenants': 0}
+        totals = {
+            'reminded': 0,
+            'resolved_inactivity': 0,
+            'resolved_completed': 0,
+            'evidence_purged': 0,
+            'outbox_published': 0,
+            'outbox_retried': 0,
+            'outbox_dead': 0,
+            'outbox_manifests_sealed': 0,
+            'tenants': 0,
+        }
         if getattr(self, 'read_only', False):
             return totals
         with self.control.connection() as db:
@@ -301,9 +330,16 @@ class PersistentSessions:
             except ApiError:
                 continue
             res = store.process_due_case_timers(now=now)
+            ev_res = store.purge_expired_evidence(now=now) if hasattr(store, 'purge_expired_evidence') else {}
+            ob_res = store.process_outbox_batch(now=now) if hasattr(store, 'process_outbox_batch') else {}
             totals['tenants'] += 1
             for k in ('reminded', 'resolved_inactivity', 'resolved_completed'):
                 totals[k] += int(res.get(k, 0))
+            totals['evidence_purged'] += int(ev_res.get('purged', 0))
+            totals['outbox_published'] += int(ob_res.get('published', 0))
+            totals['outbox_retried'] += int(ob_res.get('retried', 0))
+            totals['outbox_dead'] += int(ob_res.get('dead', 0))
+            totals['outbox_manifests_sealed'] += int(ob_res.get('manifests_sealed', 0))
         return totals
 
     @property

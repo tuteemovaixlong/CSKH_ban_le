@@ -18,7 +18,7 @@ DISPUTE_SYSTEM_PROMPT = (
     "- Bạn KHÔNG tự ý hủy đơn hay cập nhật DB mà chỉ chuẩn bị Đề xuất (Proposal) để người dùng hoặc nhân viên xác nhận.\n"
     "- SOP 2 (Hàng lỗi / Bung chỉ / Kẹt khóa): Khi khách khiếu nại hàng bị lỗi do vận chuyển (hoặc gửi ảnh unboxing), gọi get_order và get_product để xác minh đơn hàng và kiểm tra thời hạn bảo hành thực tế của sản phẩm. Chuẩn bị đề xuất Đổi mới 1-1 tận nhà (shipper mang hàng mới đến đổi hàng lỗi về, freeship 2 chiều) chuyển cho chuyên viên CSKH duyệt nếu đơn hợp lệ.\n"
     "- SOP 3 (Đổi size nhanh): Khi khách mặc không vừa muốn đổi size, gọi `check_inventory` kiểm tra kho. Nếu kho còn hàng, xác nhận còn hàng và tạo đề xuất Đổi size 2 chiều tận nhà chuyển cho chuyên viên CSKH duyệt.\n"
-    "- Khi khách yêu cầu hủy đơn, gọi `prepare_cancellation` để tạo đề xuất hủy đơn.\n"
+    "- Khi khách yêu cầu hủy, trả hoặc đổi hàng, gọi `prepare_order_action` (hoặc alias `prepare_cancellation`) để kiểm tra điều kiện chỉ đọc và mở chọn lý do trên giao diện.\n"
     "- Luôn giữ thái độ ân cần, đồng cảm, chuyên nghiệp."
 )
 
@@ -246,8 +246,8 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
                         args = json.loads(args)
                     except Exception:
                         args = {}
-                if name in ("prepare_cancellation", "check_inventory", "get_order", "get_product", "track_shipment", "search_knowledge", "request_human_support"):
-                    if name == "prepare_cancellation" and read_only_lookup:
+                if name in ("prepare_order_action", "prepare_cancellation", "check_inventory", "get_order", "get_product", "track_shipment", "search_knowledge", "request_human_support"):
+                    if name in ("prepare_order_action", "prepare_cancellation") and read_only_lookup:
                         execute("clear_cancellation", {})
                         action_proposal = None
                         lookup_oid = args.get("order_id") or extracted_oid
@@ -256,7 +256,7 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
                             state["tool_count"] += 1
                             trace.setdefault("tools", []).append({"name": "get_order", "status": "error" if isinstance(result, dict) and result.get("error") else "ok"})
                         continue
-                    if name == "prepare_cancellation":
+                    if name in ("prepare_order_action", "prepare_cancellation"):
                         arg_oid = args.get("order_id")
                         if isinstance(arg_oid, str) and arg_oid.upper().startswith('O0'):
                             arg_oid = 'O-' + arg_oid[2:]
@@ -264,21 +264,23 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
                         bound_oid = bound_context.get("order_id") or bound_obj.get("order_id")
                         target_oid = extracted_oid or bound_oid
 
-                        # N01: Kiểm tra tính hợp lệ của target TRƯỚC KHI gọi tool có side effect!
+                        # N01: Kiểm tra tính hợp lệ của target TRƯỚC KHI gọi tool mở chọn lý do!
                         if not target_oid or (arg_oid and target_oid and arg_oid != target_oid):
                             action_proposal = None
                             refusal_set = True
                             if not target_oid:
-                                final_content = "Dạ anh/chị vui lòng cung cấp Mã đơn hàng cần hủy để em kiểm tra trạng thái hỗ trợ mình nhé ạ!"
+                                final_content = "Dạ anh/chị vui lòng cung cấp Mã đơn hàng cần hỗ trợ để em kiểm tra trạng thái nhé ạ!"
                             else:
                                 final_content = (
                                     f"Dạ anh/chị đang trao đổi về đơn hàng {target_oid} nhưng hệ thống nhận diện mã đơn {arg_oid}. "
-                                    "Để đảm bảo an toàn, anh/chị vui lòng xác nhận chính xác mã đơn cần hủy nhé ạ!"
+                                    "Để đảm bảo an toàn, anh/chị vui lòng xác nhận chính xác mã đơn nhé ạ!"
                                 )
                             execute("clear_cancellation", {})
                             continue
 
-                        result = execute(name, args)
+                        call_args = dict(args)
+                        call_args["order_id"] = arg_oid or target_oid
+                        result = execute(name, call_args)
                         state["tool_count"] += 1
                         trace.setdefault("tools", []).append({"name": name, "status": "error" if isinstance(result, dict) and result.get("error") else "ok"})
                         tool_content = json.dumps(result, ensure_ascii=False) if isinstance(result, (dict, list)) else str(result)
@@ -296,21 +298,39 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
                         )
                         if is_eligible:
                             ord_obj = result.get("order", {}) if isinstance(result, dict) else {}
-                            raw_reason = args.get("reason", "ordered_by_mistake")
-                            canonical_reason = raw_reason if raw_reason in ("ordered_by_mistake", "no_longer_needed") else "ordered_by_mistake"
-                            action_proposal = {
-                                "action": "cancel_order",
-                                "order_id": chosen_oid,
-                                "order_version": ord_obj.get("version", 1),
-                                "reason": canonical_reason,
-                                "cancel_reason": canonical_reason,
-                                "status": "pending_user_confirmation"
-                            }
-                            refusal_set = True
-                            final_content = (
-                                f"Dạ em đã ghi nhận yêu cầu hủy đơn hàng {chosen_oid}. "
-                                "Em đã mở bảng xem lại đề xuất trên màn hình, anh/chị vui lòng kiểm tra và bấm 'Xác nhận hủy' để hệ thống xử lý an toàn nhé ạ!"
-                            )
+                            act_type = result.get("action_type", "cancel")
+                            ex_kind = result.get("exchange_kind")
+                            if act_type == "cancel":
+                                raw_reason = args.get("reason", "ordered_by_mistake")
+                                canonical_reason = raw_reason if raw_reason in ("ordered_by_mistake", "no_longer_needed") else "ordered_by_mistake"
+                                action_proposal = {
+                                    "action": "cancel_order",
+                                    "order_id": chosen_oid,
+                                    "order_version": ord_obj.get("version", 1),
+                                    "reason": canonical_reason,
+                                    "cancel_reason": canonical_reason,
+                                    "status": "pending_user_confirmation"
+                                }
+                                refusal_set = True
+                                final_content = (
+                                    f"Dạ em đã kiểm tra điều kiện cho đơn hàng {chosen_oid}. "
+                                    "Em đã mở bảng chọn lý do trên màn hình, anh/chị vui lòng chọn lý do và bấm xác nhận để gửi yêu cầu hủy nhé ạ!"
+                                )
+                            else:
+                                action_proposal = {
+                                    "action": f"{act_type}_order",
+                                    "order_id": chosen_oid,
+                                    "order_version": ord_obj.get("version", 1),
+                                    "action_type": act_type,
+                                    "exchange_kind": ex_kind,
+                                    "status": "pending_user_confirmation",
+                                }
+                                refusal_set = True
+                                label_vi = "trả hàng" if act_type == "return" else "đổi hàng"
+                                final_content = (
+                                    f"Dạ đơn hàng {chosen_oid} đủ điều kiện gửi yêu cầu {label_vi}. "
+                                    "Em đã mở bảng chọn lý do trên màn hình, anh/chị vui lòng chọn lý do, đính kèm ảnh nếu cần và bấm xác nhận để gửi yêu cầu nhé ạ!"
+                                )
                         else:
                             action_proposal = None
                             refusal_set = True
@@ -325,7 +345,7 @@ def run_dispute_agent(state: MultiAgentState, execute: Any, gateway: Any, timeou
                                 status_desc = result.get("order", {}).get("status") if (isinstance(result, dict) and result.get("order")) else "delivered"
                                 final_content = (
                                     f"Dạ đơn hàng {chosen_oid} hiện ở trạng thái '{status_desc}', "
-                                    "shop không thể hỗ trợ hủy đơn qua hệ thống. "
+                                    "chưa đủ điều kiện tạo yêu cầu này trên hệ thống. "
                                     "Nếu cần hỗ trợ thêm, anh/chị vui lòng liên hệ nhân viên CSKH để được trợ giúp nhé ạ!"
                                 )
                     else:

@@ -646,16 +646,21 @@ class TestPrACorrectness(unittest.TestCase):
         self.assertIn("phương án đổi phù hợp", reply.lower())
 
     def test_f08a_3_staff_button_simulation_wording(self):
-        """F08a-3: Staff desk HTML buttons and JS alerts must use truthful reception wording."""
+        """F08a-3 (updated for R1-W3 W3-D1/W3-D10): Canned exchange buttons retired in favor of real #staff-case-ops-module without fake warehouse claims."""
         html_path = Path(__file__).resolve().parents[1] / "web" / "index.html"
         html_content = html_path.read_text(encoding="utf-8")
-        self.assertIn("📩 Xác nhận tiếp nhận Đổi 1-1", html_content)
-        self.assertIn("📩 Xác nhận tiếp nhận Đổi Size", html_content)
-        self.assertNotIn("✅ Duyệt Đổi Mới 1-1", html_content)
+        self.assertIn('id="staff-case-ops-module"', html_content)
+        self.assertIn('id="staff-order-actions-panel"', html_content)
+        self.assertNotIn("📩 Xác nhận tiếp nhận Đổi 1-1", html_content)
+        self.assertNotIn("📩 Xác nhận tiếp nhận Đổi Size", html_content)
+        staff_dialog_html = html_content.split('id="staff-desk-dialog"', 1)[1].split("</dialog>", 1)[0]
+        self.assertNotIn("✅ Duyệt Đổi Mới 1-1", staff_dialog_html)
 
         js_path = Path(__file__).resolve().parents[1] / "web" / "app.js"
         js_content = js_path.read_text(encoding="utf-8")
-        self.assertIn("Đã gửi phản hồi tiếp nhận cho khách hàng qua chat.", js_content)
+        self.assertIn("submitStaffOrderActionStep", js_content)
+        self.assertNotIn("approveExchange1to1", js_content)
+        self.assertNotIn("approveExchangeSize", js_content)
         self.assertNotIn("Đã duyệt thành công! Kho tổng đã ghi nhận giữ hàng", js_content)
 
     def test_f08a_4_no_automatic_queue_insertion(self):

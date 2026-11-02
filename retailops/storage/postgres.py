@@ -8,11 +8,12 @@ from retailops.core import ApiError
 IDENTITY_SCHEMA = 'retailops_identity'
 IDENTITY_SCHEMA_CURRENT = 5
 IDENTITY_SCHEMA_COMPATIBLE = (1, 2, 3, 4, 5)
-# Phase R1 W2 Business v5 backend schema version mapping (W2-D3):
-#   PostgreSQL business schema: 4 -> 5  (BUSINESS_SCHEMA_CURRENT = 5)
-#   SQLite business schema:     3 -> 4  (SQLITE_BUSINESS_SCHEMA_CURRENT = 4)
-BUSINESS_SCHEMA_CURRENT = 5
-BUSINESS_SCHEMA_COMPATIBLE = (2, 3, 4, 5)  # v2/v3/v4 remain readable for explicit operator migration.
+# Phase R1 W2/W3 Business schema version mappings:
+#   PostgreSQL business schema: 5 -> 6  (BUSINESS_SCHEMA_CURRENT = 6; v5 = Business v5)
+#   SQLite business schema:     4 -> 5  (SQLITE_BUSINESS_SCHEMA_CURRENT = 5; v4 = Business v5)
+BUSINESS_V5_SCHEMA_VERSION = 5
+BUSINESS_SCHEMA_CURRENT = 6
+BUSINESS_SCHEMA_COMPATIBLE = (2, 3, 4, 5, 6)  # v2..v5 remain readable for explicit operator migration.
 
 _LIBPQ_CONNINFO_KEYWORDS = frozenset({
     'authtype', 'service', 'user', 'password', 'passfile', 'channel_binding',
@@ -181,7 +182,7 @@ class Queries:
 
 
 @contextmanager
-def transaction(dsn, schema=IDENTITY_SCHEMA, *, write=False, read_only=False):
+def transaction(dsn, schema=IDENTITY_SCHEMA, *, write=False, read_only=False, lock_schema=True):
     valid_schema(schema)
     if write and read_only:
         raise ValueError('A PostgreSQL transaction cannot be both read-only and writable.')
@@ -195,7 +196,7 @@ def transaction(dsn, schema=IDENTITY_SCHEMA, *, write=False, read_only=False):
             connection.execute("SET LOCAL statement_timeout='15s'")
             connection.execute("SET LOCAL lock_timeout='5s'")
             connection.execute(sql.SQL('SET LOCAL search_path TO {}, pg_catalog').format(sql.Identifier(schema)))
-            if write:
+            if write and lock_schema:
                 connection.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))', (schema,))
             yield Queries(connection)
     except pg.Error as exc:

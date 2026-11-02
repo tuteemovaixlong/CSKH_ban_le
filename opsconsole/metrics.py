@@ -5,7 +5,7 @@ from collections import Counter
 
 MODES = ('general', 'retail')
 TOOLS = frozenset(('get_order', 'list_orders', 'get_product', 'search_products',
-                   'get_context', 'search_knowledge', 'prepare_cancellation',
+                   'get_context', 'search_knowledge', 'prepare_order_action', 'prepare_cancellation',
                    'get_runtime_info', 'get_current_time', 'track_shipment',
                    'check_inventory', 'request_human_support'))
 

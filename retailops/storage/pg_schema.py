@@ -1,7 +1,8 @@
 """Explicit PostgreSQL DDL and staged business migrations."""
 from retailops.core import ApiError
-from retailops.storage.postgres import (BUSINESS_SCHEMA_CURRENT, IDENTITY_SCHEMA,
-                                        IDENTITY_SCHEMA_CURRENT, assert_schema, valid_schema)
+from retailops.storage.postgres import (BUSINESS_SCHEMA_CURRENT, BUSINESS_V5_SCHEMA_VERSION,
+                                        IDENTITY_SCHEMA, IDENTITY_SCHEMA_CURRENT,
+                                        assert_schema, valid_schema)
 
 BUSINESS_DDL = [
     'CREATE TABLE customers (id TEXT PRIMARY KEY, name TEXT NOT NULL)',
@@ -22,7 +23,8 @@ BUSINESS_DDL = [
         product_id TEXT REFERENCES products(id),
         name TEXT NOT NULL, variant TEXT NOT NULL, amount BIGINT NOT NULL,
         status TEXT NOT NULL CHECK(status IN ('pending','delivered','cancelled')),
-        version INTEGER NOT NULL DEFAULT 1, cancel_reason TEXT)''',
+        version INTEGER NOT NULL DEFAULT 1, cancel_reason TEXT,
+        delivered_at DOUBLE PRECISION)''',
     'CREATE INDEX idx_orders_customer_id ON orders(customer_id)',
     'CREATE INDEX idx_orders_product_id ON orders(product_id)',
     '''CREATE TABLE proposals (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL REFERENCES customers(id),
@@ -247,8 +249,128 @@ BUSINESS_V5_DDL = [
     'CREATE INDEX IF NOT EXISTS idx_case_feedback_conv ON case_feedback_events(conversation_id)',
 ]
 
+BUSINESS_V6_TABLES_DDL = [
+    '''CREATE TABLE IF NOT EXISTS order_action_requests (
+        request_id TEXT PRIMARY KEY,
+        order_id TEXT NOT NULL REFERENCES orders(id),
+        customer_id TEXT NOT NULL REFERENCES customers(id),
+        case_id TEXT NOT NULL REFERENCES cases(case_id),
+        conversation_id TEXT NOT NULL,
+        type TEXT NOT NULL CHECK(type IN ('cancel', 'return', 'exchange')),
+        exchange_kind TEXT CHECK(
+            (type = 'exchange' AND exchange_kind IN ('size', 'one_to_one'))
+            OR (type <> 'exchange' AND exchange_kind IS NULL)
+        ),
+        status TEXT NOT NULL CHECK(
+            status IN ('requested', 'under_review', 'approved', 'rejected', 'received', 'inspected', 'completed')
+        ),
+        inspection_outcome TEXT CHECK(
+            inspection_outcome IS NULL OR inspection_outcome IN ('refund', 'exchange', 'no_action')
+        ),
+        refund_status TEXT NOT NULL DEFAULT 'not_applicable' CHECK(
+            refund_status IN ('not_applicable', 'pending', 'refunded', 'failed')
+        ),
+        refund_decision TEXT CHECK(
+            refund_decision IS NULL OR refund_decision IN ('approved', 'rejected')
+        ),
+        reason_code TEXT NOT NULL CHECK(char_length(trim(reason_code)) > 0),
+        reason_text TEXT CHECK(reason_text IS NULL OR char_length(reason_text) <= 500),
+        raised_by_role TEXT NOT NULL CHECK(raised_by_role IN ('customer', 'staff', 'manager')),
+        delivery_failure_attempts INTEGER CHECK(
+            delivery_failure_attempts IS NULL OR delivery_failure_attempts >= 1
+        ),
+        expected_order_version INTEGER NOT NULL CHECK(expected_order_version >= 1),
+        version INTEGER NOT NULL DEFAULT 1 CHECK(version >= 1),
+        created_at DOUBLE PRECISION NOT NULL,
+        updated_at DOUBLE PRECISION NOT NULL,
+        reviewed_at DOUBLE PRECISION,
+        received_at DOUBLE PRECISION,
+        inspected_at DOUBLE PRECISION,
+        completed_at DOUBLE PRECISION,
+        closed_at DOUBLE PRECISION,
+        CHECK(
+            (type = 'cancel' AND (
+                (status IN ('requested', 'under_review') AND closed_at IS NULL)
+                OR (status IN ('approved', 'rejected') AND closed_at IS NOT NULL)
+            ))
+            OR (type IN ('return', 'exchange') AND (
+                (status IN ('requested', 'under_review', 'approved', 'received', 'inspected') AND closed_at IS NULL)
+                OR (status IN ('rejected', 'completed') AND closed_at IS NOT NULL)
+            ))
+        ))''',
+    'CREATE INDEX IF NOT EXISTS idx_order_action_case ON order_action_requests(case_id, created_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_order_action_customer ON order_action_requests(customer_id, created_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_order_action_order ON order_action_requests(order_id, created_at DESC)',
+    '''CREATE UNIQUE INDEX IF NOT EXISTS idx_order_action_one_open_per_order
+        ON order_action_requests(order_id) WHERE closed_at IS NULL''',
+    '''CREATE TABLE IF NOT EXISTS order_action_decisions (
+        decision_id TEXT PRIMARY KEY,
+        request_id TEXT NOT NULL REFERENCES order_action_requests(request_id),
+        case_id TEXT NOT NULL REFERENCES cases(case_id),
+        order_id TEXT NOT NULL REFERENCES orders(id),
+        conversation_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        from_status TEXT,
+        to_status TEXT NOT NULL,
+        from_refund_status TEXT,
+        to_refund_status TEXT,
+        refund_decision TEXT,
+        inspection_outcome TEXT,
+        actor_principal_id TEXT NOT NULL,
+        actor_role TEXT NOT NULL,
+        note TEXT CHECK(note IS NULL OR char_length(note) <= 500),
+        created_at DOUBLE PRECISION NOT NULL)''',
+    'CREATE INDEX IF NOT EXISTS idx_order_action_decisions_req ON order_action_decisions(request_id, created_at ASC)',
+    'CREATE INDEX IF NOT EXISTS idx_order_action_decisions_case ON order_action_decisions(case_id, created_at ASC)',
+    '''CREATE OR REPLACE FUNCTION order_action_decisions_immutable() RETURNS trigger AS $$
+    BEGIN
+        RAISE EXCEPTION 'order_action_decisions is append-only';
+    END;
+    $$ LANGUAGE plpgsql''',
+    'DROP TRIGGER IF EXISTS trg_order_action_decisions_immutable ON order_action_decisions',
+    '''CREATE TRIGGER trg_order_action_decisions_immutable
+        BEFORE UPDATE OR DELETE ON order_action_decisions
+        FOR EACH ROW EXECUTE FUNCTION order_action_decisions_immutable()''',
+    '''CREATE TABLE IF NOT EXISTS order_action_evidence (
+        evidence_id TEXT PRIMARY KEY,
+        request_id TEXT NOT NULL REFERENCES order_action_requests(request_id),
+        case_id TEXT NOT NULL REFERENCES cases(case_id),
+        customer_id TEXT NOT NULL REFERENCES customers(id),
+        conversation_id TEXT NOT NULL,
+        uploaded_by_principal_id TEXT NOT NULL,
+        uploaded_by_role TEXT NOT NULL CHECK(uploaded_by_role IN ('customer', 'staff', 'manager')),
+        mime_type TEXT NOT NULL CHECK(mime_type IN ('image/jpeg', 'image/png', 'image/webp')),
+        byte_size INTEGER NOT NULL CHECK(byte_size > 0 AND byte_size <= 10485760),
+        width INTEGER NOT NULL CHECK(width > 0),
+        height INTEGER NOT NULL CHECK(height > 0),
+        sha256 TEXT NOT NULL,
+        storage_relpath TEXT NOT NULL,
+        created_at DOUBLE PRECISION NOT NULL,
+        file_purged_at DOUBLE PRECISION)''',
+    'CREATE INDEX IF NOT EXISTS idx_order_action_evidence_req ON order_action_evidence(request_id, created_at ASC)',
+    'CREATE INDEX IF NOT EXISTS idx_order_action_evidence_purge ON order_action_evidence(file_purged_at, request_id)',
+    '''CREATE TABLE IF NOT EXISTS integration_outbox (
+        event_id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at DOUBLE PRECISION NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'published', 'dead')),
+        attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0),
+        next_attempt_at DOUBLE PRECISION NOT NULL,
+        last_error TEXT,
+        published_at DOUBLE PRECISION)''',
+    'CREATE INDEX IF NOT EXISTS idx_integration_outbox_due ON integration_outbox(status, next_attempt_at, created_at)',
+]
+
+BUSINESS_V6_DDL = [
+    'ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivered_at DOUBLE PRECISION',
+    *BUSINESS_V6_TABLES_DDL,
+]
+
 BUSINESS_DDL.extend(P5C_BUSINESS_DDL)
 BUSINESS_DDL.extend(BUSINESS_V5_DDL)
+BUSINESS_DDL.extend(BUSINESS_V6_TABLES_DDL)
 IDENTITY_DDL.extend(P5C_IDENTITY_DDL)
 
 
@@ -284,7 +406,15 @@ def initialize_cache(db):
         db.raw.execute(statement)
 
 
-def initialize(db, schema, component, *, allow_identity_v5_upgrade=False, allow_business_v5_upgrade=False):
+def initialize(
+    db,
+    schema,
+    component,
+    *,
+    allow_identity_v5_upgrade=False,
+    allow_business_v5_upgrade=False,
+    allow_business_v6_upgrade=False,
+):
     from psycopg import sql
     valid_schema(schema)
     if (schema == IDENTITY_SCHEMA) != (component == 'identity'):
@@ -450,14 +580,26 @@ def initialize(db, schema, component, *, allow_identity_v5_upgrade=False, allow_
             for statement in P5C_IDENTITY_DDL:
                 db.raw.execute(statement)
         if component == 'business':
-            if row['version'] not in (1, 2, 3, 4, 5):
+            if row['version'] not in (1, 2, 3, 4, 5, 6):
                 raise ValueError('Unsupported PostgreSQL schema version or component.')
-            if row['version'] < BUSINESS_SCHEMA_CURRENT and not allow_business_v5_upgrade:
+            target_ver = (
+                BUSINESS_SCHEMA_CURRENT
+                if allow_business_v6_upgrade
+                else (BUSINESS_V5_SCHEMA_VERSION if allow_business_v5_upgrade and row['version'] <= BUSINESS_V5_SCHEMA_VERSION else BUSINESS_SCHEMA_CURRENT)
+            )
+            if row['version'] < BUSINESS_V5_SCHEMA_VERSION and not (allow_business_v5_upgrade or allow_business_v6_upgrade):
                 raise ApiError(
                     503,
                     'business_migration_required',
                     f"Kho dữ liệu business PostgreSQL ({schema}) đang ở schema v{row['version']}; khởi động bị chặn fail-closed. "
-                    "Hãy chạy lệnh operator database migrate-v5 với --confirm-preflight --confirm-backup.",
+                    "Hãy chạy lệnh operator database migrate-v6 với --confirm-preflight --confirm-backup.",
+                )
+            if row['version'] < target_ver and target_ver == BUSINESS_SCHEMA_CURRENT and not allow_business_v6_upgrade:
+                raise ApiError(
+                    503,
+                    'business_migration_required',
+                    f"Kho dữ liệu business PostgreSQL ({schema}) đang ở schema v{row['version']}; khởi động bị chặn fail-closed. "
+                    "Hãy chạy lệnh operator database migrate-v6 với --confirm-preflight --confirm-backup.",
                 )
             db.raw.execute(sql.SQL('SET LOCAL search_path TO {}, pg_catalog').format(sql.Identifier(schema)))
             if row['version'] == 1:
@@ -506,19 +648,27 @@ def initialize(db, schema, component, *, allow_identity_v5_upgrade=False, allow_
                 'CREATE INDEX IF NOT EXISTS idx_feedback_type ON conversation_feedback(feedback_type)',
             ):
                 db.raw.execute(statement)
-            if row['version'] == 4:
+            if row['version'] == 4 and target_ver >= BUSINESS_V5_SCHEMA_VERSION:
                 from retailops.business.schema import backfill_business_v5_cases
                 for statement in BUSINESS_V5_DDL:
                     db.raw.execute(statement)
                 backfill_business_v5_cases(db)
+                db.execute("UPDATE retailops_schema SET version=? WHERE component='business'", (BUSINESS_V5_SCHEMA_VERSION,))
+                row = {'component': 'business', 'version': BUSINESS_V5_SCHEMA_VERSION}
+            if row['version'] == BUSINESS_V5_SCHEMA_VERSION and target_ver >= BUSINESS_SCHEMA_CURRENT:
+                for statement in BUSINESS_V6_DDL:
+                    db.raw.execute(statement)
                 db.execute("UPDATE retailops_schema SET version=? WHERE component='business'", (BUSINESS_SCHEMA_CURRENT,))
                 row = {'component': 'business', 'version': BUSINESS_SCHEMA_CURRENT}
-            if row['version'] != BUSINESS_SCHEMA_CURRENT:
+            if row['version'] != target_ver:
                 raise ValueError('Unsupported PostgreSQL schema version or component.')
             for statement in P5C_BUSINESS_DDL:
                 db.raw.execute(statement)
             for statement in BUSINESS_V5_DDL:
                 db.raw.execute(statement)
+            if target_ver >= BUSINESS_SCHEMA_CURRENT:
+                for statement in BUSINESS_V6_DDL:
+                    db.raw.execute(statement)
         assert_schema(db, schema, component)
         return False
     if component == 'business':

@@ -780,7 +780,7 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         endpoint = f"/api/cancellation-proposals/{pid}/confirm"
         idemp_key = "idemp_key_fixed_synth_001"
 
-        # 1. First confirmation: success, order is cancelled
+        # 1. First confirmation: success, order action requested while order stays pending
         status, res1, _ = self.request(
             endpoint,
             {"confirmed": True},
@@ -789,18 +789,20 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertFalse(res1.get("replayed", False))
-        self.assertEqual(res1["order"]["status"], "cancelled")
-        self.assertEqual(res1["order"]["version"], 2)
+        self.assertEqual(res1["status"], "requested")
+        self.assertTrue(res1["order_action_request_id"].startswith("oar_"))
+        self.assertEqual(res1["order"]["status"], "pending")
+        self.assertEqual(res1["order"]["version"], 1)
 
         # Verify DB state
         bstore = self.sessions.business_store(self.tenant_id)
         with bstore.connection() as db:
             order = db.execute("SELECT * FROM orders WHERE id='O-90001'").fetchone()
-            self.assertEqual(order["status"], "cancelled")
-            self.assertEqual(order["version"], 2)
+            self.assertEqual(order["status"], "pending")
+            self.assertEqual(order["version"], 1)
 
             ev_cnt = db.execute(
-                "SELECT count(*) as c FROM business_events WHERE order_id='O-90001' AND kind='order_cancelled'"
+                "SELECT count(*) as c FROM business_events WHERE order_id='O-90001' AND kind='order_action_requested'"
             ).fetchone()["c"]
             self.assertEqual(ev_cnt, 1)
 
@@ -813,13 +815,14 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertTrue(res2.get("replayed", False))
-        self.assertEqual(res2["order"]["status"], "cancelled")
-        self.assertEqual(res2["order"]["version"], 2)
+        self.assertEqual(res2["order_action_request_id"], res1["order_action_request_id"])
+        self.assertEqual(res2["order"]["status"], "pending")
+        self.assertEqual(res2["order"]["version"], 1)
 
         # Verify no duplicate mutation or event
         with bstore.connection() as db:
             ev_cnt_after = db.execute(
-                "SELECT count(*) as c FROM business_events WHERE order_id='O-90001' AND kind='order_cancelled'"
+                "SELECT count(*) as c FROM business_events WHERE order_id='O-90001' AND kind='order_action_requested'"
             ).fetchone()["c"]
             self.assertEqual(ev_cnt_after, 1)
 
@@ -894,8 +897,8 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         }
         status, data, _, _ = restarted_web.route(env)
         self.assertEqual(status, 200)
-        self.assertEqual(data["order"]["status"], "cancelled")
-        self.assertEqual(data["order"]["version"], 2)
+        self.assertEqual(data["order"]["status"], "pending")
+        self.assertEqual(data["order"]["version"], 1)
 
         # 3. Replay sales import event through adapter
         restarted_adapter = SalesImportAdapter(restarted_sessions, default_secret=DEFAULT_DEV_SECRET)
@@ -911,7 +914,7 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
             kinds = [e["kind"] for e in evs]
             self.assertIn("order_imported", kinds)
             self.assertIn("cancellation_proposed", kinds)
-            self.assertIn("order_cancelled", kinds)
+            self.assertIn("order_action_requested", kinds)
 
     # -------------------------------------------------------------------------
     # 8. Failure Path: Delivered Order Ineligible for Cancellation
@@ -1080,16 +1083,17 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertFalse(conf_res1.get("replayed", False))
-        self.assertEqual(conf_res1["order"]["status"], "cancelled")
-        self.assertEqual(conf_res1["order"]["version"], 2)
+        self.assertEqual(conf_res1["status"], "requested")
+        self.assertEqual(conf_res1["order"]["status"], "pending")
+        self.assertEqual(conf_res1["order"]["version"], 1)
 
         # Check DB post first confirm
         with bstore.connection() as db:
             post_order = db.execute("SELECT * FROM orders WHERE id='O-90001'").fetchone()
-            self.assertEqual(post_order["status"], "cancelled")
-            self.assertEqual(post_order["version"], 2)
+            self.assertEqual(post_order["status"], "pending")
+            self.assertEqual(post_order["version"], 1)
             post_ev_count = db.execute(
-                "SELECT count(*) as c FROM business_events WHERE order_id='O-90001' AND kind='order_cancelled'"
+                "SELECT count(*) as c FROM business_events WHERE order_id='O-90001' AND kind='order_action_requested'"
             ).fetchone()["c"]
             self.assertEqual(post_ev_count, 1)
 
@@ -1127,17 +1131,18 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         )
         self.assertEqual(status_replay, 200)
         self.assertTrue(conf_res2.get("replayed", False))
-        self.assertEqual(conf_res2["order"]["status"], "cancelled")
-        self.assertEqual(conf_res2["order"]["version"], 2)
+        self.assertEqual(conf_res2["status"], "requested")
+        self.assertEqual(conf_res2["order"]["status"], "pending")
+        self.assertEqual(conf_res2["order"]["version"], 1)
 
         # Verify mutation occurred exactly once in database
         bstore_reopened = reopened_sessions.business_store(self.tenant_id)
         with bstore_reopened.connection() as db:
             reopen_order = db.execute("SELECT * FROM orders WHERE id='O-90001'").fetchone()
-            self.assertEqual(reopen_order["status"], "cancelled")
-            self.assertEqual(reopen_order["version"], 2)
+            self.assertEqual(reopen_order["status"], "pending")
+            self.assertEqual(reopen_order["version"], 1)
             reopen_ev_count = db.execute(
-                "SELECT count(*) as c FROM business_events WHERE order_id='O-90001' AND kind='order_cancelled'"
+                "SELECT count(*) as c FROM business_events WHERE order_id='O-90001' AND kind='order_action_requested'"
             ).fetchone()["c"]
             self.assertEqual(reopen_ev_count, 1)
 
@@ -1159,6 +1164,7 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
             "lifecycle_ids": {
                 "conversation_id": cid,
                 "proposal_id": proposal_id,
+                "order_action_request_id": conf_res1["order_action_request_id"],
                 "idempotency_key": idemp_valid,
             },
             "proposal_binding": {
@@ -1180,19 +1186,21 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
             "before_confirmation_state": {
                 "order_status": "pending",
                 "order_version": 1,
-                "order_cancelled_events": 0,
+                "order_action_requested_events": 0,
             },
             "after_confirmation_state": {
-                "order_status": "cancelled",
-                "order_version": 2,
+                "order_status": "pending",
+                "order_version": 1,
+                "request_status": "requested",
                 "replayed": False,
-                "order_cancelled_events": 1,
+                "order_action_requested_events": 1,
             },
             "after_reopen_replay_state": {
-                "order_status": "cancelled",
-                "order_version": 2,
+                "order_status": "pending",
+                "order_version": 1,
+                "request_status": "requested",
                 "replayed": True,
-                "order_cancelled_events": 1,
+                "order_action_requested_events": 1,
             },
             "security_checks": {
                 "wrong_customer_confirm_denied": True,

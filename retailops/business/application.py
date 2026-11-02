@@ -39,7 +39,9 @@ class Application:
         self.inference_gate = getattr(self, 'inference_gate', None) or InferenceGate()
         self.overload_429_count = 0
         self.semantic_cache = SemanticCache(min_similarity=0.65)
-        self.tenant_id = tenant_id or 'default'
+        self.tenant_id = tenant_id or getattr(self.store, 'tenant_id', None) or 'default'
+        if getattr(self.store, 'tenant_id', None) in (None, 'default') and self.tenant_id != 'default':
+            self.store.tenant_id = self.tenant_id
         self.tool_cache = tool_cache if tool_cache is not None else ToolCache(default_ttl=180.0)
         self.internal_events = []
         if orchestrator is None:
@@ -338,25 +340,28 @@ class Application:
                         code = 'tool_unavailable' if exc.code == 'database_unavailable' else exc.code
                         msg = 'Dịch vụ tạm thời không khả dụng. Vui lòng thử lại sau.' if exc.code == 'database_unavailable' else exc.message
                         raise ApiError(exc.status, code, msg)
-                    if name in ('get_order', 'get_context', 'track_shipment', 'prepare_cancellation'):
+                    if name in ('get_order', 'get_context', 'track_shipment', 'prepare_order_action', 'prepare_cancellation'):
                         bound.context = {'order_id': None, 'product_id': None}
                         bound.cancel_order = None
+                        bound.prepared_order_action = None
                         bound.shipment = None
                     return {'error': exc.code, 'message': exc.message}
                 if name in ('cancel_order', 'confirm_cancellation', 'update_shipping_address'):
                     self.tool_cache.invalidate(tenant_id, customer)
-                elif name not in ('request_human_support', 'prepare_cancellation'):
+                elif name not in ('request_human_support', 'prepare_order_action', 'prepare_cancellation'):
                     self.tool_cache.set(tenant_id, customer, name, arguments, res, read_epoch=read_epoch)
                 return res
 
             def capture():
                 return {'context': dict(bound.context), 'versions': dict(bound.versions), 'cancel_order': bound.cancel_order,
+                        'prepared_order_action': bound.prepared_order_action,
                         'knowledge': bound.knowledge.snapshot(), 'shipment': bound.shipment, 'human_support': bound.human_support}
 
             def restore(state):
                 bound.context = dict(state['context'])
                 bound.versions = dict(state['versions'])
                 bound.cancel_order = state['cancel_order']
+                bound.prepared_order_action = state.get('prepared_order_action')
                 bound.knowledge.restore(state.get('knowledge'))
                 bound.shipment = state.get('shipment')
                 bound.human_support = state.get('human_support')
@@ -371,6 +376,7 @@ class Application:
 
             if read_only_lookup:
                 bound.cancel_order = None
+                bound.prepared_order_action = None
                 bound.human_support = None
                 answer.pop('action_proposal', None)
                 answer.pop('requires_human', None)
@@ -388,6 +394,7 @@ class Application:
             if leaked:
                 answer['message'] = safe_msg
                 bound.cancel_order = None
+                bound.prepared_order_action = None
                 answer.pop('action_proposal', None)
 
             if isinstance(answer.get('messages'), list):
@@ -415,26 +422,39 @@ class Application:
             if getattr(bound, 'human_support', None):
                 _, bound.human_support = sanitize_structured_payload(bound.human_support, user_text=text)
 
-            # N01: Rollback cancel_order and mutated context if target order is invalid, unverified, or mismatched
-            if bound.cancel_order:
+            # N01: Rollback prepared_order_action / cancel_order and mutated context if target order is invalid, unverified, or mismatched
+            prepared = getattr(bound, 'prepared_order_action', None)
+            if prepared is None and bound.cancel_order:
+                prepared = {'order': bound.cancel_order, 'action_type': 'cancel', 'exchange_kind': None}
+            if prepared:
                 extracted_m = re.search(r'\bO-(\d+)\b', text, re.IGNORECASE)
                 extracted_oid = f"O-{extracted_m.group(1)}" if extracted_m else None
                 expected_oid = extracted_oid or snapshot.get('order_id')
-                cancel_oid = bound.cancel_order.get('id')
-                if not expected_oid or (cancel_oid and cancel_oid != expected_oid):
+                target_oid = (prepared.get('order') or {}).get('id')
+                if not expected_oid or (target_oid and target_oid != expected_oid):
+                    prepared = None
                     bound.cancel_order = None
+                    bound.prepared_order_action = None
                     if bound.context.get('order_id') != snapshot.get('order_id'):
                         bound.context['order_id'] = snapshot.get('order_id')
                         bound.context['product_id'] = snapshot.get('product_id')
                 elif answer.get('action_proposal') is not None:
                     prop = answer.get('action_proposal')
-                    if prop and (prop.get('action') != 'cancel_order' or prop.get('order_id') != cancel_oid):
+                    expected_prop_actions = {'cancel_order', 'return_order', 'exchange_order'}
+                    if prop and (prop.get('action') not in expected_prop_actions or prop.get('order_id') != target_oid):
+                        prepared = None
                         bound.cancel_order = None
+                        bound.prepared_order_action = None
                         if bound.context.get('order_id') != snapshot.get('order_id'):
                             bound.context['order_id'] = snapshot.get('order_id')
                             bound.context['product_id'] = snapshot.get('product_id')
 
-            result = {'action': 'choose_cancel_reason' if bound.cancel_order else 'reply',
+            if prepared:
+                ui_action = 'choose_cancel_reason' if prepared.get('action_type') == 'cancel' else 'choose_order_action_reason'
+            else:
+                ui_action = 'reply'
+
+            result = {'action': ui_action,
                       'message': answer['message'], 'source': answer['trace'].get('answer_source', 'llm_agent'),
                       'model_used': answer['trace'].get('model_responses', answer['trace'].get('model_calls', 0)) > 0,
                       'context': bound.context, 'trace': answer['trace'], 'provider_id': provider_id, 'replayed': False}
@@ -455,8 +475,13 @@ class Application:
                 result['trace']['knowledge'] = {'searches': bound.knowledge.searches,
                     'retrieved_sources': len(bound.knowledge.sources), 'cited_sources': len(result['sources']),
                     'citation_check': 'provenance_only', 'embedding_model': KNOWLEDGE_EMBEDDING_MODEL}
-            if bound.cancel_order:
-                result['order'] = bound.cancel_order
+            if prepared:
+                result['order'] = prepared['order']
+                result['order_action'] = {
+                    'action_type': prepared.get('action_type', 'cancel'),
+                    'exchange_kind': prepared.get('exchange_kind'),
+                    'order_id': prepared['order'].get('id'),
+                }
             if getattr(bound, 'shipment', None):
                 result['shipment'] = bound.shipment
             if getattr(bound, 'human_support', None):
@@ -494,6 +519,7 @@ class Application:
                 and not tool_calls_detected
                 and is_cacheable_query(text)
                 and not bound.cancel_order
+                and not prepared
                 and not bound.context.get('order_id')
                 and not bound.context.get('product_id')
                 and snapshot.get('order_id') is None

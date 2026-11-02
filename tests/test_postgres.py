@@ -133,8 +133,10 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
             results = list(pool.map(lambda _: confirm(), range(2)))
         self.assertEqual(sum(bool(r.get('replayed')) for r in results), 1)
-        self.assertEqual(store.lookup('C-001', 'O-101')['version'], 2)
-        self.assertEqual(sum(e['kind'] == 'order_cancelled' for e in store.events('C-001')), 1)
+        self.assertEqual(store.lookup('C-001', 'O-101')['version'], 1)
+        self.assertEqual(store.lookup('C-001', 'O-101')['status'], 'pending')
+        self.assertEqual(len(store.list_customer_order_actions('C-001')), 1)
+        self.assertEqual(sum(e['kind'] == 'order_action_requested' for e in store.events('C-001')), 1)
 
     def test_two_different_proposals_cannot_cancel_same_order_twice(self):
         store = self.sessions.business_store('shop-a')
@@ -149,8 +151,8 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             except ApiError as error:
                 return error.code
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-            self.assertCountEqual(list(pool.map(confirm, range(2))), ['ok', 'stale_order'])
-        self.assertEqual(sum(e['kind'] == 'order_cancelled' for e in store.events('C-001')), 1)
+            self.assertCountEqual(list(pool.map(confirm, range(2))), ['ok', 'order_action_conflict'])
+        self.assertEqual(sum(e['kind'] == 'order_action_requested' for e in store.events('C-001')), 1)
 
     def test_quota_reservation_is_shared_across_process_connections(self):
         barrier = threading.Barrier(2)
@@ -180,7 +182,9 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         self.sessions.purge()
         self.assertEqual(self.request('/api/orders', cookie=alice)[0], 401)
         self.restart()
-        self.assertEqual(self.request('/api/orders/O-101', cookie=self.login(self.alice))[1]['order']['status'], 'cancelled')
+        relogged = self.login(self.alice)
+        self.assertEqual(self.request('/api/orders/O-101', cookie=relogged)[1]['order']['status'], 'pending')
+        self.assertEqual(self.request('/api/order-actions', cookie=relogged)[1]['order_actions'][0]['status'], 'requested')
 
     def test_missing_schema_is_not_recreated_by_login_or_request(self):
         from psycopg import sql
@@ -214,15 +218,17 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         self.restart()
         self.assertEqual(self.request('/api/orders', cookie=cookie)[0], 401)
         current = self.login(('unused', token))
-        self.assertEqual(self.request('/api/orders/O-101', cookie=current)[1]['order']['status'], 'cancelled')
+        self.assertEqual(self.request('/api/orders/O-101', cookie=current)[1]['order']['status'], 'pending')
+        self.assertEqual(self.request('/api/order-actions', cookie=current)[1]['order_actions'][0]['status'], 'requested')
         store = self.sessions.business_store('old-shop')
         self.assertTrue(store.confirm('C-001', proposal['proposal_id'], {'confirmed': True}, 'import-confirm-key')['replayed'])
         store.lookup('C-001', 'O-101')  # Sequence repaired: new events cannot collide with imported IDs.
-        self.assertEqual(sum(e['kind'] == 'order_cancelled' for e in store.events('C-001')), 1)
+        self.assertEqual(sum(e['kind'] == 'order_action_requested' for e in store.events('C-001')), 1)
         with self.assertRaises(ApiError) as caught:
             self.sessions.control.reserve_api_attempt(1)
         self.assertEqual(caught.exception.code, 'api_daily_limit')
-        self.assertEqual(old.business_store('old-shop').orders('C-001')[0]['status'], 'cancelled')
+        self.assertEqual(old.business_store('old-shop').orders('C-001')[0]['status'], 'pending')
+        self.assertEqual(old.business_store('old-shop').list_customer_order_actions('C-001')[0]['status'], 'requested')
         with self.assertRaises(ValueError):
             import_snapshot(DSN, source)
 
@@ -249,7 +255,8 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         self.restart()
         app = Application(self.sessions.business_store('old-shop'), {})
         result = approval.confirm(app, 'C-001', proposal['proposal_id'], {'confirmed': True}, 'import-graph-confirm')
-        self.assertEqual(result['order']['version'], 2)
+        self.assertEqual(result['status'], 'requested')
+        self.assertEqual(result['order']['version'], 1)
         self.assertEqual(old.business_store('old-shop').orders('C-001')[0]['status'], 'pending')
 
     def test_business_v1_migration_is_explicit_preserves_data_and_idempotent(self):
@@ -263,7 +270,13 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             self.fresh_store()
         for _ in range(2):
             with store.connection(write=True) as db:
-                initialize(db, store.schema, 'business', allow_business_v5_upgrade=True)
+                initialize(
+                    db,
+                    store.schema,
+                    'business',
+                    allow_business_v5_upgrade=True,
+                    allow_business_v6_upgrade=True,
+                )
         self.assertEqual(self.fresh_store().orders('C-001')[0]['status'], 'pending')
         with store.connection() as db:
             self.assertEqual(db.execute('SELECT version FROM retailops_schema').fetchone()['version'], BUSINESS_SCHEMA_CURRENT)
@@ -2403,6 +2416,55 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         self.assertEqual(idem_out['status'], 'already_purged')
         self.assertTrue(idem_out['idempotent_replay'])
         self.assertFalse(idem_out['executed'])
+
+    def test_w3_postgres_outbox_skip_locked_worker_and_readonly_cli(self):
+        """Phase R1 W3: PostgreSQL FOR UPDATE SKIP LOCKED outbox worker + read-only outbox-status CLI."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        out_dir = Path(self.temp.name) / 'w3-outbox-data'
+        self.sessions.data_root = out_dir
+        store = self.sessions.business_store('shop-a')
+        store.data_root = out_dir
+        store.create_order_action_request(
+            'C-001',
+            {'order_id': 'O-101', 'type': 'cancel', 'expected_order_version': 1, 'reason_code': 'changed_mind'},
+            actor={'principal_id': 'p-cust-pg', 'role': 'customer', 'tenant_id': 'shop-a'},
+        )
+        store.create_order_action_request(
+            'C-001',
+            {'order_id': 'O-102', 'type': 'return', 'expected_order_version': 1, 'reason_code': 'defective_item'},
+            actor={'principal_id': 'p-cust-pg', 'role': 'customer', 'tenant_id': 'shop-a'},
+        )
+
+        def _pg_worker(_i):
+            w_store = self.sessions.business_store('shop-a', migrate=False)
+            w_store.data_root = out_dir
+            return w_store.process_outbox_batch(batch_size=10)
+
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            results = list(pool.map(_pg_worker, range(3)))
+        self.assertEqual(sum(r['published'] for r in results), 2)
+
+        jsonl_files = list((out_dir / 'integration' / 'shop-a').glob('*.jsonl'))
+        self.assertEqual(len(jsonl_files), 1)
+        lines = [ln for ln in jsonl_files[0].read_text(encoding='utf-8').splitlines() if ln.strip()]
+        self.assertEqual(len(lines), 2)
+
+        cli_env = {**os.environ, 'RETAILOPS_STORAGE_BACKEND': 'postgresql', 'RETAILOPS_DATABASE_URL': DSN}
+        proc = subprocess.run(
+            [sys.executable, '-m', 'retailops', 'database', 'outbox-status'],
+            env=cli_env,
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            timeout=15,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        report = json.loads(proc.stdout)
+        self.assertEqual(report['result'], 'OUTBOX_STATUS')
+        self.assertEqual(report['backend'], 'postgresql')
+        self.assertTrue(report['read_only'])
+        self.assertGreaterEqual(report['totals']['published'], 2)
 
 
 if __name__ == '__main__':

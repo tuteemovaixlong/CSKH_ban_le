@@ -1,19 +1,27 @@
 """Business route dispatch for both HTTP adapters; identity comes from the server."""
+from email.parser import BytesParser
+from email.policy import HTTP as EMAIL_HTTP_POLICY
 import json
 import math
 from pathlib import Path
 import re
 import time
 import urllib.parse
-from retailops.core import ApiError, fields, require
+from retailops.core import ApiError, BinaryPayload, EVIDENCE_MAX_BYTES, fields, require
 from retailops.workflow import approval
 from retailops.business.permissions import ACTIVE_BUSINESS_ROLES, READ, CANCEL, STAFF, MANAGER
 from retailops.identity.contracts import RequestContext
+
+EVIDENCE_UPLOAD_ROUTE_RE = re.compile(r"/api/order-actions/[A-Za-z0-9_-]{1,80}/evidence")
 
 CUSTOMER_SAFE_EVENT_KINDS = frozenset({
     'order_viewed',
     'cancellation_proposed',
     'order_cancelled',
+    'order_action_requested',
+    'order_action_status_changed',
+    'order_action_refund_updated',
+    'order_action_evidence_uploaded',
     'proposal_dismissed',
     'order_status_updated_by_manager',
     'customer_messaged_staff',
@@ -32,6 +40,55 @@ ALLOWED_DIRECT_TOOLS = frozenset({
     'search_products',
     'search_knowledge',
 })
+
+
+def parse_evidence_request_body(
+    content_type: str | None,
+    content_length: str | None,
+    stream,
+    *,
+    max_size: int = EVIDENCE_MAX_BYTES,
+) -> dict:
+    length_str = content_length if isinstance(content_length, str) else ""
+    require(
+        bool(length_str) and length_str.isascii() and length_str.isdecimal(),
+        400,
+        "invalid_length",
+        "Độ dài yêu cầu không hợp lệ.",
+    )
+    size = int(length_str)
+    require(size > 0, 400, "empty_evidence", "Tệp bằng chứng rỗng.")
+    require(size <= max_size, 413, "evidence_too_large", "Ảnh bằng chứng vượt quá giới hạn 10 MB.")
+    raw = stream.read(size)
+    require(len(raw) == size, 400, "invalid_length", "Nội dung yêu cầu chưa đầy đủ.")
+    ct_full = (content_type or "").strip()
+    ct_main = ct_full.split(";", 1)[0].strip().lower()
+    if ct_main == "multipart/form-data":
+        header_blob = f"Content-Type: {ct_full}\r\nMIME-Version: 1.0\r\n\r\n".encode("latin-1", errors="ignore")
+        msg = BytesParser(policy=EMAIL_HTTP_POLICY).parsebytes(header_blob + raw)
+        require(msg.is_multipart(), 400, "invalid_multipart", "Dữ liệu multipart không hợp lệ.")
+        file_parts = []
+        for part in msg.iter_parts():
+            disp_name = part.get_param("name", header="content-disposition")
+            if part.get_filename() is not None or disp_name in ("file", "evidence", "image"):
+                file_parts.append(part)
+        require(
+            len(file_parts) == 1,
+            400,
+            "invalid_evidence_upload",
+            "Mỗi yêu cầu tải lên chỉ được chứa đúng một tệp ảnh bằng chứng.",
+        )
+        payload = file_parts[0].get_payload(decode=True)
+        require(isinstance(payload, (bytes, bytearray)) and len(payload) > 0, 400, "empty_evidence", "Tệp bằng chứng rỗng.")
+        require(len(payload) <= max_size, 413, "evidence_too_large", "Ảnh bằng chứng vượt quá giới hạn 10 MB.")
+        return {
+            "_raw_evidence_bytes": bytes(payload),
+            "_declared_content_type": file_parts[0].get_content_type(),
+        }
+    return {
+        "_raw_evidence_bytes": raw,
+        "_declared_content_type": ct_main or "application/octet-stream",
+    }
 
 
 def _admin_control(app):
@@ -192,7 +249,15 @@ def _check_staff_tenant_scope(app, ctx: RequestContext) -> None:
         )
 
 
-def _authorize_staff_transcript_view(app, ctx: RequestContext, actor: dict, *, cid: str | None = None, case_id: str | None = None):
+def _authorize_staff_transcript_view(
+    app,
+    ctx: RequestContext,
+    actor: dict,
+    *,
+    cid: str | None = None,
+    case_id: str | None = None,
+    audit_resolved: bool = True,
+):
     _check_staff_tenant_scope(app, ctx)
     now = app.store._now() if hasattr(app.store, '_now') else time.time()
     with app.store.connection() as db:
@@ -239,14 +304,15 @@ def _authorize_staff_transcript_view(app, ctx: RequestContext, actor: dict, *, c
             'case_retention_expired',
             'Ca hỗ trợ đã đóng và quá thời hạn lưu trữ để xem lại.',
         )
-        app.store.event(
-            case_row['customer_id'],
-            'resolved_case_viewed',
-            conv['order_id'] if conv is not None else None,
-            case_id=case_row['case_id'],
-            conversation_id=cid,
-            actor=actor,
-        )
+        if audit_resolved:
+            app.store.event(
+                case_row['customer_id'],
+                'resolved_case_viewed',
+                conv['order_id'] if conv is not None else None,
+                case_id=case_row['case_id'],
+                conversation_id=cid,
+                actor=actor,
+            )
         return cid, case_row['case_id'], True
 
     raise ApiError(
@@ -446,6 +512,34 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             if not report_data:
                 return (404, {"error": "benchmark_report_not_found"})
             return (200, report_data)
+        if path == '/api/order-actions':
+            items = app.store.list_customer_order_actions(customer)
+            for item in items:
+                if isinstance(item.get('order'), dict):
+                    item['order'] = _format_order_for_api(item['order'], app)
+            return (200, {'order_actions': items})
+        m_oa_ev_get = re.fullmatch(r"/api/order-actions/([A-Za-z0-9_-]{1,80})/evidence/(ev_[a-f0-9]{32})", path)
+        if m_oa_ev_get:
+            req_id, ev_id = m_oa_ev_get[1], m_oa_ev_get[2]
+            req_row, ev_row = app.store.get_order_action_evidence_record(req_id, ev_id)
+            if STAFF in ctx.permissions:
+                actor = _extract_actor(app, customer, binding=binding, context=ctx)
+                _authorize_staff_transcript_view(
+                    app,
+                    ctx,
+                    actor,
+                    case_id=req_row["case_id"],
+                    audit_resolved=True,
+                )
+            else:
+                require(
+                    req_row["customer_id"] == customer,
+                    404,
+                    "order_action_not_found",
+                    "Không tìm thấy yêu cầu đơn hàng.",
+                )
+            data, mime_type = app.store.read_order_action_evidence_bytes(ev_row)
+            return (200, BinaryPayload(data, mime_type, headers=[("Content-Disposition", "inline")]))
         if path == '/api/cancellation-proposals':
             _require_ctx_permission(ctx, CANCEL)
             with app.store.connection() as db:
@@ -473,6 +567,29 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             return (200, {"escalations": app.store.escalations(), **desk})
         if path == "/api/conversations":
             return (200, {"conversations": app.store.list_conversations(customer)})
+        m_case_oa = re.fullmatch(r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/order-actions", path)
+        if m_case_oa:
+            _require_ctx_permission(ctx, STAFF)
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
+            _, resolved_case_id, ro = _authorize_staff_transcript_view(
+                app, ctx, actor, case_id=m_case_oa[1], audit_resolved=False
+            )
+            items = app.store.list_case_order_actions(resolved_case_id)
+            for item in items:
+                if isinstance(item.get('order'), dict):
+                    item['order'] = _format_order_for_api(item['order'], app)
+            with app.store.connection() as db:
+                case_row = db.execute("SELECT customer_id FROM cases WHERE case_id = ?", (resolved_case_id,)).fetchone()
+            customer_orders = [
+                _format_order_for_api(o, app)
+                for o in (app.store.orders(case_row['customer_id']) if case_row else [])
+            ]
+            return (200, {
+                "case_id": resolved_case_id,
+                "read_only": ro,
+                "order_actions": items,
+                "customer_orders": customer_orders,
+            })
         m_case_trans = re.fullmatch(r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/messages", path)
         if m_case_trans:
             _require_ctx_permission(ctx, STAFF)
@@ -667,6 +784,105 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             staff_label = _actor_display_name(ctx)
             res = app.store.resolve_escalation(cid, staff_label, actor=actor, case_id=case_id, handoff_id=handoff_id)
             return (200, res)
+        m_staff_case_oa = re.fullmatch(r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/order-actions", path)
+        if m_staff_case_oa:
+            _require_ctx_permission(ctx, STAFF)
+            _check_staff_tenant_scope(app, ctx)
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
+            res = app.store.create_delivery_failure_cancel_request(
+                m_staff_case_oa[1],
+                body,
+                actor=actor,
+                idempotency_key=idempotency_key,
+            )
+            if isinstance(res.get('order'), dict):
+                res['order'] = _format_order_for_api(res['order'], app)
+            if isinstance(res.get('order_action'), dict) and isinstance(res['order_action'].get('order'), dict):
+                res['order_action']['order'] = _format_order_for_api(res['order_action']['order'], app)
+            return (201, res)
+        m_oa_ev_post = re.fullmatch(r"/api/order-actions/([A-Za-z0-9_-]{1,80})/evidence", path)
+        if m_oa_ev_post:
+            oa_id = m_oa_ev_post[1]
+            require(
+                isinstance(body, dict) and isinstance(body.get("_raw_evidence_bytes"), (bytes, bytearray)),
+                415,
+                "unsupported_evidence_type",
+                "Đường dẫn này nhận tệp ảnh nhị phân hoặc multipart/form-data.",
+            )
+            if STAFF in ctx.permissions:
+                _require_ctx_permission(ctx, STAFF)
+                _check_staff_tenant_scope(app, ctx)
+            else:
+                _require_ctx_permission(ctx, CANCEL)
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
+            res = app.store.upload_order_action_evidence(
+                oa_id,
+                bytes(body["_raw_evidence_bytes"]),
+                customer_id=customer,
+                actor=actor,
+            )
+            if isinstance(res.get("order_action"), dict) and isinstance(res["order_action"].get("order"), dict):
+                res["order_action"]["order"] = _format_order_for_api(res["order_action"]["order"], app)
+            return (201, res)
+        m_oa_step = re.fullmatch(
+            r"/api/order-actions/([A-Za-z0-9_-]{1,80})/(approve|reject|mark-received|mark-inspected|complete|refund-request|refund-decision|refund-outcome)",
+            path,
+        )
+        if m_oa_step:
+            oa_id, step_slug = m_oa_step[1], m_oa_step[2]
+            if step_slug in ("refund-decision", "refund-outcome"):
+                _require_ctx_permission(ctx, MANAGER)
+            else:
+                _require_ctx_permission(ctx, STAFF)
+            _check_staff_tenant_scope(app, ctx)
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
+            if step_slug == "refund-request":
+                res = app.store.request_order_action_refund(
+                    oa_id, body, actor=actor, idempotency_key=idempotency_key
+                )
+            elif step_slug == "refund-decision":
+                res = app.store.decide_order_action_refund(
+                    oa_id, body, actor=actor, idempotency_key=idempotency_key
+                )
+            elif step_slug == "refund-outcome":
+                res = app.store.record_order_action_refund_outcome(
+                    oa_id, body, actor=actor, idempotency_key=idempotency_key
+                )
+            else:
+                act_map = {
+                    "approve": "approve",
+                    "reject": "reject",
+                    "mark-received": "mark_received",
+                    "mark-inspected": "mark_inspected",
+                    "complete": "complete",
+                }
+                res = app.store.transition_order_action_request(
+                    oa_id, act_map[step_slug], body, actor=actor, idempotency_key=idempotency_key
+                )
+                if res.get("order_mutated") and hasattr(app, "tool_cache"):
+                    ord_cust = (res.get("order") or {}).get("customer_id")
+                    tenant_id = ctx.tenant_id or getattr(app, "tenant_id", "default")
+                    if ord_cust:
+                        app.tool_cache.invalidate(tenant_id=tenant_id, customer=ord_cust)
+            if isinstance(res.get('order'), dict):
+                res['order'] = _format_order_for_api(res['order'], app)
+            if isinstance(res.get('order_action'), dict) and isinstance(res['order_action'].get('order'), dict):
+                res['order_action']['order'] = _format_order_for_api(res['order_action']['order'], app)
+            return (200, res)
+        if path == "/api/order-actions":
+            _require_ctx_permission(ctx, CANCEL)
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
+            res = app.store.create_order_action_request(
+                customer,
+                body,
+                actor=actor,
+                idempotency_key=idempotency_key,
+            )
+            if isinstance(res.get('order'), dict):
+                res['order'] = _format_order_for_api(res['order'], app)
+            if isinstance(res.get('order_action'), dict) and isinstance(res['order_action'].get('order'), dict):
+                res['order_action']['order'] = _format_order_for_api(res['order_action']['order'], app)
+            return (201, res)
         if path == "/api/cancellation-proposals":
             _require_ctx_permission(ctx, CANCEL)
             result = app.store.propose(customer, body)
@@ -912,28 +1128,48 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             return (200, {"status": "ok", "removed": removed, "message": f"Đã xóa sản phẩm {pid}."})
         if path == "/api/manager/orders/update-status":
             _require_ctx_permission(ctx, MANAGER)
-            require(isinstance(body, dict) and {"order_id", "status"}.issubset(set(body)), 400, "invalid_body", "Thiếu order_id hoặc status.")
+            require(
+                isinstance(body, dict)
+                and {"order_id", "status"}.issubset(set(body))
+                and set(body).issubset({"order_id", "status", "version", "expected_order_version"}),
+                400,
+                "invalid_body",
+                "Thiếu order_id hoặc status, hoặc có trường không hợp lệ.",
+            )
             oid, new_status = body["order_id"], body["status"]
-            require(new_status in ('pending', 'delivered', 'cancelled'), 400, "invalid_status", "Trạng thái phải là pending, delivered hoặc cancelled.")
+            if "version" in body and "expected_order_version" in body:
+                require(
+                    body["version"] == body["expected_order_version"],
+                    400,
+                    "invalid_order_version",
+                    "Trường version và expected_order_version xung đột.",
+                )
+            expected_ver = body.get("version") if "version" in body else body.get("expected_order_version")
             actor = _extract_actor(app, customer, binding=binding, context=ctx)
-            with app.store.connection(write=True) as db:
-                row = db.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone()
-                require(row is not None, 404, "order_not_found", f"Không tìm thấy đơn hàng {oid}.")
-                cur_status = row["status"]
-                if cur_status == new_status:
-                    return (200, {"status": "ok", "order_id": oid, "new_status": new_status, "message": f"Đơn hàng {oid} đã ở trạng thái {new_status}."})
-                require(cur_status == 'pending', 400, "invalid_transition", f"Không thể chuyển trạng thái từ '{cur_status}' sang '{new_status}'. Đơn đã vào trạng thái kết thúc.")
-                db.execute("UPDATE orders SET status=?, version=version+1 WHERE id=?", (new_status, oid))
-                app.store.log(db, row["customer_id"], "order_status_updated_by_manager", oid, new_status=new_status, previous_status=cur_status, actor=actor)
-            if hasattr(app, 'tool_cache'):
+            res = app.store.manager_update_order_status(
+                oid,
+                new_status,
+                expected_version=expected_ver,
+                actor=actor,
+                idempotency_key=idempotency_key,
+            )
+            if res.get("changed") and hasattr(app, 'tool_cache'):
                 tenant_id = ctx.tenant_id or getattr(app, 'tenant_id', 'default')
-                app.tool_cache.invalidate(tenant_id=tenant_id, customer=row["customer_id"])
-            return (200, {"status": "ok", "order_id": oid, "new_status": new_status, "message": f"Đã cập nhật trạng thái đơn {oid} sang {new_status}."})
+                app.tool_cache.invalidate(tenant_id=tenant_id, customer=res["customer_id"])
+            return (200, {
+                "status": "ok",
+                "order_id": res["order_id"],
+                "new_status": res["new_status"],
+                "version": res["version"],
+                "delivered_at": res["delivered_at"],
+                "message": res["message"],
+            })
         m = re.fullmatch(r"/api/cancellation-proposals/([a-f0-9-]{36})/(confirm|dismiss)", path)
         if m:
             _require_ctx_permission(ctx, CANCEL)
             if m[2] == "confirm":
-                res = approval.confirm(app, customer, m[1], body, idempotency_key)
+                actor = _extract_actor(app, customer, binding=binding, context=ctx)
+                res = approval.confirm(app, customer, m[1], body, idempotency_key, actor=actor)
                 if hasattr(app, 'tool_cache'):
                     tenant_id = ctx.tenant_id or getattr(app, 'tenant_id', 'default')
                     app.tool_cache.invalidate(tenant_id=tenant_id, customer=customer)

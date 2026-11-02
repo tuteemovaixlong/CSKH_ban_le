@@ -583,8 +583,10 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
             idempotency_key=f"idem_{prop_id}",
         )
         self.assertEqual(status_c, 200)
-        self.assertEqual(confirm_res["order"]["status"], "cancelled")
-        self.assertEqual(confirm_res["order"]["version"], 2)
+        self.assertEqual(confirm_res["status"], "requested")
+        self.assertTrue(confirm_res["order_action_request_id"].startswith("oar_"))
+        self.assertEqual(confirm_res["order"]["status"], "pending")
+        self.assertEqual(confirm_res["order"]["version"], 1)
 
     def test_p5e_ai3_entity_and_owner_boundary_and_unicode_confusables(self):
         app = Application(self.store, {}, infer=_DeterministicGateway())
@@ -1694,6 +1696,7 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
             "version": 1,
             "cancel_reason": None,
             "product_id": "P-602",
+            "delivered_at": None,
         }
         code_nd_list, nd_list_res, _ = _wsgi_call(web, "GET", "/api/orders", cookie=cookie_non_demo)
         self.assertEqual(code_nd_list, 200)

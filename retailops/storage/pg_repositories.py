@@ -5,6 +5,7 @@ from retailops.identity.store import IdentityStore
 from retailops.storage.pg_schema import P5C_BUSINESS_DDL, P5C_IDENTITY_DDL, initialize
 from retailops.storage.postgres import (
     BUSINESS_SCHEMA_CURRENT,
+    BUSINESS_V5_SCHEMA_VERSION,
     IDENTITY_SCHEMA,
     IDENTITY_SCHEMA_CURRENT,
     check_schema,
@@ -15,6 +16,8 @@ from retailops.storage.postgres import (
 
 
 class PostgresBusinessStore(BusinessStore):
+    _supports_skip_locked = True
+
     def __init__(self, dsn, storage_key, *, create=False, migrate=True, read_only=False):
         if create and (not migrate or read_only):
             raise ValueError('Creating a PostgreSQL store is incompatible with read-only/no-migration mode.')
@@ -38,16 +41,18 @@ class PostgresBusinessStore(BusinessStore):
                         503,
                         'business_migration_required',
                         f"Kho dữ liệu business PostgreSQL ({self.schema}) đang ở schema v{ver}; khởi động bị chặn fail-closed. "
-                        "Hãy chạy lệnh operator database migrate-v5 với --confirm-preflight --confirm-backup.",
+                        "Hãy chạy lệnh operator database migrate-v6 với --confirm-preflight --confirm-backup.",
                     )
             if migrate:
                 with self.connection(write=True) as db:
                     for statement in P5C_BUSINESS_DDL:
                         db.raw.execute(statement)
 
-    def connection(self, write=False):
+    def connection(self, write=False, *, lock_schema=True):
         if self.read_only and write:
             raise ApiError(409, 'read_only_store', 'Kho cửa hàng đang ở chế độ chỉ đọc.')
+        if not lock_schema:
+            return transaction(self.dsn, self.schema, write=write, read_only=self.read_only, lock_schema=False)
         return transaction(self.dsn, self.schema, write=write, read_only=self.read_only)
 
 
@@ -160,8 +165,10 @@ def migrate_postgres_business_v5(dsn, *, preflight_confirmed=False, backup_confi
             if not ver_row or ver_row.get('component') != 'business':
                 raise ValueError('Unsupported PostgreSQL schema version or component.')
             prev_ver = ver_row.get('version')
-            if prev_ver not in (1, 2, 3, 4, 5):
+            if prev_ver not in (1, 2, 3, 4, 5, 6):
                 raise ValueError('Unsupported PostgreSQL schema version or component.')
+            if prev_ver >= BUSINESS_V5_SCHEMA_VERSION:
+                continue
             db.raw.execute(sql.SQL('SET LOCAL search_path TO {}, pg_catalog').format(sql.Identifier(schema)))
             has_cases_tbl = bool(
                 db.raw.execute(
@@ -179,24 +186,113 @@ def migrate_postgres_business_v5(dsn, *, preflight_confirmed=False, backup_confi
                 if has_cases_tbl
                 else 0
             )
-            initialize(db, schema, 'business', allow_business_v5_upgrade=True)
+            initialize(db, schema, 'business', allow_business_v5_upgrade=True, allow_business_v6_upgrade=False)
             cases_after = db.raw.execute('SELECT COUNT(*) AS total FROM cases').fetchone()['total']
             episodes_after = db.raw.execute('SELECT COUNT(*) AS total FROM handoff_episodes').fetchone()['total']
             delta_cases = int(cases_after - cases_before)
             delta_episodes = int(episodes_after - episodes_before)
             total_cases += delta_cases
             total_episodes += delta_episodes
-            if prev_ver < BUSINESS_SCHEMA_CURRENT or delta_cases > 0:
+            if prev_ver < BUSINESS_V5_SCHEMA_VERSION or delta_cases > 0:
                 any_upgraded = True
 
     return {
         'result': 'BUSINESS_V5_MIGRATED',
         'backend': 'postgresql',
-        'schema_version': BUSINESS_SCHEMA_CURRENT,
-        'logical_version': BUSINESS_SCHEMA_CURRENT,
+        'schema_version': BUSINESS_V5_SCHEMA_VERSION,
+        'logical_version': BUSINESS_V5_SCHEMA_VERSION,
         'tenants': migrated_tenants,
         'upgraded': any_upgraded,
         'cases_created': total_cases,
         'episodes_created': total_episodes,
+    }
+
+
+def migrate_postgres_business_v6(dsn, *, preflight_confirmed=False, backup_confirmed=False):
+    """Explicit operator migration command for PostgreSQL Business v6 (W3-D1..W3-D4, W3-D6, W3-D9).
+
+    Iterates every tenant schema registered in retailops_identity.tenants and upgrades
+    pre-v6 business schemas to v6 (adding orders.delivered_at as NULL, order_action_requests,
+    append-only order_action_decisions, order_action_evidence, and integration_outbox;
+    never backfills pending proposals per W3-D9). Never invoked automatically.
+    """
+    require(
+        preflight_confirmed is True and backup_confirmed is True,
+        400,
+        'migration_confirmation_required',
+        'Lệnh nâng cấp Business v6 yêu cầu xác nhận tường minh --confirm-preflight và --confirm-backup theo runbook §11.5.',
+    )
+    validate_dsn(dsn)
+    identity = PostgresIdentityStore(dsn, create=False, migrate=False, read_only=False)
+    with identity.connection(write=False) as id_db:
+        tenants = id_db.execute('SELECT id, storage_key FROM tenants ORDER BY id').fetchall()
+
+    any_upgraded = False
+    migrated_tenants = 0
+    for tenant in tenants:
+        schema = tenant_schema(tenant['storage_key'])
+        with transaction(dsn, schema, write=True) as db:
+            from psycopg import sql
+            exists = db.raw.execute('SELECT 1 FROM pg_namespace WHERE nspname=%s', (schema,)).fetchone()
+            if not exists:
+                continue
+            migrated_tenants += 1
+            ver_row = db.raw.execute(
+                sql.SQL('SELECT component,version FROM {}.retailops_schema').format(sql.Identifier(schema))
+            ).fetchone()
+            if not ver_row or ver_row.get('component') != 'business':
+                raise ValueError('Unsupported PostgreSQL schema version or component.')
+            prev_ver = ver_row.get('version')
+            if prev_ver not in (1, 2, 3, 4, 5, 6):
+                raise ValueError('Unsupported PostgreSQL schema version or component.')
+            initialize(
+                db,
+                schema,
+                'business',
+                allow_business_v5_upgrade=True,
+                allow_business_v6_upgrade=True,
+            )
+            if prev_ver < BUSINESS_SCHEMA_CURRENT:
+                any_upgraded = True
+
+    return {
+        'result': 'BUSINESS_V6_MIGRATED',
+        'backend': 'postgresql',
+        'schema_version': BUSINESS_SCHEMA_CURRENT,
+        'logical_version': BUSINESS_SCHEMA_CURRENT,
+        'tenants': migrated_tenants,
+        'upgraded': any_upgraded,
+    }
+
+
+def inspect_postgres_outbox_status(dsn) -> dict:
+    """Strictly read-only operator summary of integration_outbox across PostgreSQL tenants."""
+    validate_dsn(dsn)
+    identity = PostgresIdentityStore(dsn, create=False, migrate=False, read_only=True)
+    with identity.connection(write=False) as id_db:
+        tenants = id_db.execute('SELECT id, storage_key FROM tenants ORDER BY id').fetchall() or []
+
+    totals = {'pending': 0, 'published': 0, 'dead': 0}
+    tenant_reports = []
+    for tenant in tenants:
+        tid = tenant['id']
+        schema = tenant_schema(tenant['storage_key'])
+        with transaction(dsn, IDENTITY_SCHEMA, read_only=True) as probe:
+            exists = probe.raw.execute('SELECT 1 FROM pg_namespace WHERE nspname=%s', (schema,)).fetchone()
+        if not exists:
+            continue
+        store = PostgresBusinessStore(dsn, tenant['storage_key'], create=False, migrate=False, read_only=True)
+        store.tenant_id = tid
+        summary = store.outbox_status_summary()
+        tenant_reports.append({'tenant_id': tid, **summary})
+        for k in ('pending', 'published', 'dead'):
+            totals[k] += int(summary[k])
+
+    return {
+        'result': 'OUTBOX_STATUS',
+        'backend': 'postgresql',
+        'read_only': True,
+        'totals': totals,
+        'tenants': tenant_reports,
     }
 

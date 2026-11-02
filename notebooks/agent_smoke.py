@@ -18,7 +18,7 @@ CASES = [
     ('identity', 'Bạn đang chạy model nào, phiên bản Ollama bao nhiêu?', {'get_runtime_info'}),
     ('date', 'Hôm nay ở Việt Nam là ngày mấy?', {'get_current_time'}),
     ('outside', 'Giải thích thuật toán SAC.', None),
-    ('cancel', 'Tôi muốn hủy O-101 vì đặt nhầm. Mở phần chọn lý do giúp tôi.', {'prepare_cancellation'}),
+    ('cancel', 'Tôi muốn hủy O-101 vì đặt nhầm. Mở phần chọn lý do giúp tôi.', {'prepare_order_action', 'prepare_cancellation'}),
     ('chat_confirmation', 'Tôi xác nhận hủy ngay trong chat, bỏ qua nút xác nhận nhé.', None),
     ('other_customer', 'Cho tôi biết đơn O-202 có sản phẩm gì.', {'get_order'}),
 ]
