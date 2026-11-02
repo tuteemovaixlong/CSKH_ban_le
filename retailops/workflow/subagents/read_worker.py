@@ -9,8 +9,9 @@ import time
 import json
 
 from agent_protocol import (MAX_MODEL_CALLS, MAX_TOOL_CALLS, ProtocolError,
-                            assistant_message, validate_messages, validate_tool)
+                            assistant_message, model_history, validate_messages, validate_tool)
 from retailops.core import ApiError
+from retailops.model_errors import record_model_error
 
 # These indicate unavailable infrastructure, NOT an empty database/search result.
 UNAVAILABLE = frozenset(('database_unavailable', 'knowledge_unavailable',
@@ -18,11 +19,13 @@ UNAVAILABLE = frozenset(('database_unavailable', 'knowledge_unavailable',
 
 
 def worker_messages(state, prompt):
-    """Keep complete history and attachments; caller owns the worker instruction."""
+    """Keep the conversation text and attachments; caller owns the worker instruction.
+
+    Every worker builds its model input here, so history is shaped in exactly one place."""
     history = copy.deepcopy(state['messages'])
     if history and history[0].get('role') == 'system':
         history = history[1:]
-    messages = [{'role': 'system', 'content': prompt}, *history]
+    messages = [{'role': 'system', 'content': prompt}, *model_history(history)]
     validate_messages(messages)
     return messages
 
@@ -127,15 +130,8 @@ def call_model(gateway, messages, allow_tools, deadline, trace, *, allowed_tools
             code = 'agent_response_failed'
         trace['reported_cost_usd'] = None
         trace['usage_incomplete'] = True
-        err_entry = {'code': code, 'call': trace['model_calls']}
-        http_status = getattr(exc, 'http_status', None)
-        if isinstance(exc, AgentError) and isinstance(exc.trace, dict):
-            for k in ('http_status', 'error_kind', 'stage', 'upstream_code'):
-                if k in exc.trace:
-                    err_entry[k] = exc.trace[k]
-            if not http_status:
-                http_status = exc.trace.get('http_status')
-        trace.setdefault('model_errors', []).append(err_entry)
+        entry = record_model_error(trace, exc, code=code, call=trace['model_calls'])
+        http_status = getattr(exc, 'http_status', None) or entry.get('http_status')
         agent_err = AgentError(code, 'Không nhận được phản hồi hợp lệ từ model. Vui lòng thử lại.', trace)
         if http_status:
             agent_err.http_status = http_status

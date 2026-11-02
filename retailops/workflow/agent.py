@@ -7,10 +7,11 @@ from typing import TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from agent_protocol import (MAX_MODEL_CALLS, MAX_TOOL_CALLS, PROTOCOL, ProtocolError,
-                            assistant_message, request_mode, sanitize_general_answer,
+                            assistant_message, model_history, request_mode, sanitize_general_answer,
                             validate_messages, validate_tool)
 from retailops_agent import AgentError
 from retailops.knowledge.citations import CitationError, cited_sources
+from retailops.model_errors import record_model_error
 
 
 class AgentState(TypedDict):
@@ -54,12 +55,17 @@ def run(gateway, text, history, execute, identity, timeout=110, *, saver=None,
             message = assistant_message(response)
         except AgentError as exc:
             trace['reported_cost_usd'] = None
-            raise AgentError(exc.code, str(exc), trace) from None
-        except TimeoutError:
+            entry = record_model_error(trace, exc, code=exc.code)
+            failure = AgentError(exc.code, str(exc), trace)
+            failure.http_status = getattr(exc, 'http_status', None) or entry.get('http_status')
+            raise failure from None
+        except TimeoutError as exc:
             trace['reported_cost_usd'] = None
+            record_model_error(trace, exc, code='agent_timeout')
             raise AgentError('agent_timeout', 'Model đã vượt thời gian xử lý. Chat chưa thay đổi đơn.', trace) from None
-        except (RuntimeError, ValueError, OSError, KeyError, TypeError):
+        except (RuntimeError, ValueError, OSError, KeyError, TypeError) as exc:
             trace['reported_cost_usd'] = None
+            record_model_error(trace, exc, code='agent_response_failed')
             raise AgentError('agent_response_failed', 'Không nhận được câu trả lời hợp lệ từ model. Chat chưa thực hiện thay đổi đơn.', trace) from None
 
         calls = message.get('tool_calls', [])
@@ -131,7 +137,7 @@ def run(gateway, text, history, execute, identity, timeout=110, *, saver=None,
         user = {'role': 'user', 'content': text}
         if attachment:
             user['attachment'] = attachment
-        initial = {'messages': list(history)+[user], 'fresh': [user], 'tool_count': 0,
+        initial = {'messages': model_history(list(history)+[user]), 'fresh': [user], 'tool_count': 0,
                    'bound': capture(), 'complete': False,
                    'trace': {'turn_id': str(uuid.uuid4()), 'protocol': PROTOCOL, 'model': identity['name'],
                              'provider': identity.get('provider', 'custom'), 'model_digest': identity.get('digest'),

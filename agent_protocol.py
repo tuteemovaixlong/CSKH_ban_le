@@ -176,7 +176,49 @@ def _parse_call_args(inner_str):
 
 
 class ProtocolError(ValueError):
-    pass
+    """Invalid transcript or model reply; `diagnostics` carries safe, non-secret context."""
+    def __init__(self, *args, **diagnostics):
+        super().__init__(*args)
+        self.diagnostics = diagnostics
+
+
+def model_history(messages):
+    """The one place that shapes a transcript before any worker sends it to a model (W3.2-D8).
+
+    Chat templates such as Gemma's need strictly alternating user/assistant turns and reject a
+    `tool` turn or a `system` turn inside the history. Only the turn in progress (from the last
+    user message on) keeps native tool calls and tool results. Earlier turns keep their text so a
+    follow-up such as "hiện có những size nào" still resolves its reference, but stale tool output
+    is never replayed: history cannot establish current order state anyway.
+    """
+    turns = [m for m in messages if isinstance(m, dict)]
+    lead = []
+    if turns and turns[0].get('role') == 'system':
+        lead, turns = [turns[0]], turns[1:]
+    last_user = max((i for i, m in enumerate(turns) if m.get('role') == 'user'), default=None)
+    if last_user is None:
+        return lead + turns
+    settled, current = turns[:last_user], turns[last_user:]
+    plain = []
+    for message in settled:
+        role = message.get('role')
+        text = message.get('content')
+        if role not in ('user', 'assistant') or not isinstance(text, str) or not text.strip():
+            continue
+        if role == 'assistant' and message.get('tool_calls'):
+            continue  # a preamble before tool calls is not a reply to the user
+        entry = {key: message[key] for key in ('role', 'content', 'attachment') if key in message}
+        if plain and plain[-1]['role'] == role:
+            plain[-1]['content'] = (plain[-1]['content'] + '\n' + text)[:2000 if role == 'user' else 7500]
+            if 'attachment' in entry:
+                plain[-1]['attachment'] = entry['attachment']
+        else:
+            plain.append(entry)
+    while plain and plain[0]['role'] != 'user':
+        plain.pop(0)
+    while plain and plain[-1]['role'] != 'assistant':
+        plain.pop()
+    return lead + plain + current
 
 
 def _fold(text):

@@ -13,6 +13,7 @@ import urllib.request
 import uuid
 
 from agent_protocol import GENERAL_SYSTEM, PROTOCOL, SYSTEM, TOOLS, ProtocolError, assistant_message, request_mode, validate_messages, scoped_tools
+from retailops.model_errors import BODY_LIMIT, filter_provider_text, provider_error_text
 from retailops_agent import AgentError
 from retailops_baseline import NoRedirects
 
@@ -250,7 +251,15 @@ class OpenRouterAgent:
                     raise ValueError('Invalid provider response')
                 return result
         except urllib.error.HTTPError as exc:
-            status = exc.code; exc.close()
+            status = exc.code
+            try:
+                body = exc.read(BODY_LIMIT)
+            except Exception:
+                body = b''
+            finally:
+                exc.close()
+            # The provider message is kept only in the trace, filtered and cut to 300 characters.
+            detail = {'http_status': status, 'provider_message': self._safe_text(provider_error_text(body))}
             error_map = {
                 400: ('api_unavailable', f'Yêu cầu API không hợp lệ (HTTP {status}).', 'bad_request'),
                 401: ('api_auth_failed', 'API chưa xác thực được. Chủ demo cần kiểm tra API key/quyền truy cập.', 'authentication_failed'),
@@ -264,12 +273,17 @@ class OpenRouterAgent:
             }
             if status in error_map:
                 code, msg, kind = error_map[status]
-                raise AgentError(code, msg, {'http_status': status, 'error_kind': kind}) from None
-            raise AgentError('api_unavailable', f'API chưa hoàn tất yêu cầu (HTTP {status}). Không tự chuyển sang model khác.', {'http_status': status, 'error_kind': f'http_{status}'}) from None
+                raise AgentError(code, msg, {**detail, 'error_kind': kind}) from None
+            raise AgentError('api_unavailable', f'API chưa hoàn tất yêu cầu (HTTP {status}). Không tự chuyển sang model khác.', {**detail, 'error_kind': f'http_{status}'}) from None
         except (RuntimeError, OSError, ValueError) as exc:
-            # Strip URLs, upstream bodies and credentials from exceptions.
+            # The exception text is filtered for the trace only; URLs, bodies and credentials never reach users.
             err_kind = 'timeout' if isinstance(exc, (TimeoutError, urllib.error.URLError)) and 'timed out' in str(exc).lower() else type(exc).__name__
-            raise AgentError('api_unavailable', 'Không nhận được phản hồi API hợp lệ. Bạn có thể thử lại sau.', {'error_kind': err_kind}) from None
+            raise AgentError('api_unavailable', 'Không nhận được phản hồi API hợp lệ. Bạn có thể thử lại sau.',
+                             {'error_kind': err_kind, 'provider_message': self._safe_text(str(exc))}) from None
+
+    def _safe_text(self, text):
+        """Provider/transport text that may enter a trace: no key, URL, endpoint or opaque token."""
+        return filter_provider_text(text, secrets=(self.key, self.endpoint), keep=(self.model,))
 
     def _chat_anthropic(self, messages, allow_tools, timeout, *, allowed_tools=None):
         validate_messages(messages)
@@ -428,15 +442,24 @@ class OpenRouterAgent:
         if not isinstance(choices, list) or len(choices) != 1 or not isinstance(choices[0], dict):
             raise ProtocolError('Invalid API choices')
         choice = choices[0]
+        raw_usage = result.get('usage') if isinstance(result.get('usage'), dict) else {}
+        reply_facts = {'finish_reason': str(choice.get('finish_reason'))[:32],
+                       'completion_tokens': raw_usage.get('completion_tokens') if type(raw_usage.get('completion_tokens')) is int else None}
         if choice.get('finish_reason') not in ('stop', 'tool_calls'):
-            raise ProtocolError('API response incomplete or refused')
+            raise ProtocolError('API response incomplete or refused', **reply_facts)
         raw = choice.get('message')
         if not isinstance(raw, dict) or raw.get('role') != 'assistant':
-            raise ProtocolError('Invalid API message')
+            raise ProtocolError('Invalid API message', **reply_facts)
         entry = {'role': 'assistant', 'content': raw.get('content') or ''}
         if raw.get('tool_calls'):
             entry['tool_calls'] = raw['tool_calls']
-        clean = assistant_message({'message': entry})
+        try:
+            clean = assistant_message({'message': entry})
+        except ProtocolError as exc:
+            # Tokens were generated even though nothing usable came back: record that, not "0 token".
+            exc.diagnostics = {**reply_facts,
+                               'had_reasoning': bool(raw.get('reasoning') or raw.get('reasoning_content'))}
+            raise
         if clean.get('tool_calls'):
             ids = []
             if not entry.get('tool_calls'):
