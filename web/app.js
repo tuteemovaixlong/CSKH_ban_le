@@ -1592,17 +1592,42 @@ document.querySelectorAll('#csat-stars .star').forEach(star => {
 // Staff Live Chat Console (Human-in-the-loop Desk)
 let activeStaffTicket = null;
 let staffDeskTimer = null;
+let staffReplySending = false;
 let staffQueueBucket = 'waiting';
 let staffDeskData = { waiting: [], in_progress: [], resolved: [], open_count: 0 };
 
-function notifyStaffAlert(msg) {
-  if (typeof alert === 'function') alert(msg);
-  else console.warn(msg);
+function setStaffDeskNotice(msg, kind = 'error') {
+  const noticeEl = byId('staff-desk-notice');
+  if (!noticeEl) {
+    if (msg) console.warn(msg);
+    return;
+  }
+  const text = (msg || '').trim();
+  if (!text) {
+    noticeEl.textContent = '';
+    noticeEl.hidden = true;
+    if (noticeEl.style) noticeEl.style.display = 'none';
+    noticeEl.classList?.remove?.('is-error', 'is-success');
+    return;
+  }
+  noticeEl.textContent = text;
+  noticeEl.hidden = false;
+  if (noticeEl.style) noticeEl.style.display = 'block';
+  noticeEl.classList?.toggle?.('is-error', kind === 'error');
+  noticeEl.classList?.toggle?.('is-success', kind === 'success');
+}
+
+function notifyStaffAlert(msg, kind = 'error') {
+  setStaffDeskNotice(msg, kind);
 }
 
 function openStaffDesk() {
   const dlg = byId('staff-desk-dialog');
   if (dlg) {
+    setStaffDeskNotice('', '');
+    if (!activeStaffTicket) {
+      syncStaffTicketActions(null, true);
+    }
     dlg.showModal();
     loadStaffQueue();
     startStaffDeskPolling();
@@ -1737,15 +1762,27 @@ function syncStaffTicketActions(caseObj, readOnly = false) {
   const btnSend = byId('btn-send-staff-reply');
   const replyInput = byId('staff-reply-input');
 
-  const isClosed = Boolean(readOnly || (caseObj && caseObj.status === 'resolved'));
+  const isClosed = Boolean(!caseObj || readOnly || caseObj.status === 'resolved');
   if (isClosed) {
-    if (chatActions && chatActions.style) chatActions.style.display = 'none';
-    if (chatComposer && chatComposer.style) chatComposer.style.display = 'none';
-    if (actionBar && actionBar.style) actionBar.style.display = 'none';
+    if (chatActions) {
+      chatActions.hidden = true;
+      if (chatActions.style) chatActions.style.display = 'none';
+    }
+    if (chatComposer) {
+      chatComposer.hidden = true;
+      if (chatComposer.style) chatComposer.style.display = 'none';
+    }
+    if (actionBar) {
+      actionBar.hidden = true;
+      if (actionBar.style) actionBar.style.display = 'none';
+    }
     return;
   }
 
-  if (chatActions && chatActions.style) chatActions.style.display = 'block';
+  if (chatActions) {
+    chatActions.hidden = false;
+    if (chatActions.style) chatActions.style.display = 'flex';
+  }
   const holder = caseObj ? caseObj.holder : (activeStaffTicket ? activeStaffTicket.holder : null);
   const heldByOther = Boolean(
     holder
@@ -1767,9 +1804,15 @@ function syncStaffTicketActions(caseObj, readOnly = false) {
     }
   }
   if (btnResolve) btnResolve.disabled = heldByOther;
-  if (chatComposer && chatComposer.style) chatComposer.style.display = 'flex';
-  if (actionBar && actionBar.style) actionBar.style.display = heldByOther ? 'none' : 'flex';
-  if (btnSend) btnSend.disabled = heldByOther;
+  if (chatComposer) {
+    chatComposer.hidden = false;
+    if (chatComposer.style) chatComposer.style.display = 'flex';
+  }
+  if (actionBar) {
+    actionBar.hidden = heldByOther;
+    if (actionBar.style) actionBar.style.display = heldByOther ? 'none' : 'flex';
+  }
+  if (btnSend) btnSend.disabled = heldByOther || staffReplySending;
   if (replyInput) replyInput.disabled = heldByOther;
 }
 
@@ -1865,6 +1908,7 @@ async function refreshStaffTranscript(cid, forceScroll = false, caseId = null) {
 
 async function selectStaffTicket(ticket) {
   activeStaffTicket = ticket;
+  setStaffDeskNotice('', '');
   document.querySelectorAll('.ticket-card').forEach(c => c.classList.remove('active'));
 
   const isClosed = ticket.status === 'resolved' || ticket.reason_code === 'resolved';
@@ -1899,19 +1943,33 @@ async function claimOrReleaseStaffTicket() {
       };
       syncStaffTicketActions(res.case, false);
     }
+    setStaffDeskNotice(action === 'claim' ? 'Đã nhận ca hỗ trợ.' : 'Đã trả ca hỗ trợ về hàng chờ.', 'success');
     await loadStaffQueue(true);
   } catch (err) {
-    notifyStaffAlert('Không thể cập nhật trạng thái nhận ca: ' + err.message);
+    setStaffDeskNotice('Không thể cập nhật trạng thái nhận ca: ' + err.message, 'error');
     await loadStaffQueue(true);
   }
 }
 
 async function sendStaffReply() {
-  if (!activeStaffTicket || activeStaffTicket.status === 'resolved') return;
+  if (staffReplySending) return;
+  if (!activeStaffTicket) {
+    setStaffDeskNotice('Vui lòng chọn một ca hỗ trợ ở cột bên trái trước khi gửi phản hồi.', 'error');
+    return;
+  }
+  if (activeStaffTicket.status === 'resolved') {
+    setStaffDeskNotice('Ca hỗ trợ đã đóng, không thể gửi thêm phản hồi.', 'error');
+    return;
+  }
   const input = byId('staff-reply-input');
   const text = (input?.value || '').trim();
-  if (!text) return;
+  if (!text) {
+    setStaffDeskNotice('Vui lòng nhập nội dung phản hồi trước khi bấm gửi.', 'error');
+    input?.focus?.();
+    return;
+  }
 
+  staffReplySending = true;
   const btn = byId('btn-send-staff-reply');
   if (btn) btn.disabled = true;
 
@@ -1926,6 +1984,7 @@ async function sendStaffReply() {
       renderedStaffTurnIds.add(replyRes.turn_id);
     }
     input.value = '';
+    setStaffDeskNotice('Đã gửi phản hồi trực tiếp cho khách hàng.', 'success');
 
     // Append to staff transcript
     const transcriptEl = byId('staff-chat-transcript');
@@ -1937,7 +1996,8 @@ async function sendStaffReply() {
     row.append(label, el('div', 'bubble bubble-staff', text));
     transcriptEl.append(row);
     transcriptEl.scrollTop = transcriptEl.scrollHeight;
-    transcriptEl.dataset.turnsCount = (parseInt(transcriptEl.dataset.turnsCount || '0', 10) + 1).toString();
+    const prevCount = parseInt(transcriptEl.dataset.turnsCount || '0', 10);
+    transcriptEl.dataset.turnsCount = ((prevCount >= 0 ? prevCount : 0) + 1).toString();
 
     // Instantly display on customer screen if this ticket matches current active conversation!
     if (conversationId && activeStaffTicket.conversation_id === conversationId) {
@@ -1947,9 +2007,10 @@ async function sendStaffReply() {
 
     loadStaffQueue(true);
   } catch (err) {
-    notifyStaffAlert('Lỗi gửi phản hồi: ' + err.message);
+    setStaffDeskNotice('Lỗi gửi phản hồi: ' + err.message, 'error');
   } finally {
-    if (btn) btn.disabled = false;
+    staffReplySending = false;
+    syncStaffTicketActions(activeStaffTicket, activeStaffTicket?.status === 'resolved');
   }
 }
 
@@ -1966,13 +2027,14 @@ async function resolveStaffTicket() {
       activeStaffTicket = { ...activeStaffTicket, status: 'resolved', holder: null, holder_name: null };
       syncStaffTicketActions(res.case, true);
     }
+    setStaffDeskNotice('Đã hoàn tất và đóng ca hỗ trợ.', 'success');
     if (conversationId && activeStaffTicket.conversation_id === conversationId) {
       message('Chuyên viên CSKH đã hỗ trợ xong và hoàn tất phiên này. Hệ thống chuyển lại Trợ lý AI.', 'assistant', 'interface');
       setHumanMode(false);
     }
     loadStaffQueue(true);
   } catch (err) {
-    notifyStaffAlert('Lỗi hoàn tất: ' + err.message);
+    setStaffDeskNotice('Lỗi hoàn tất: ' + err.message, 'error');
   }
 }
 
@@ -1986,13 +2048,13 @@ async function approveExchange1to1() {
     };
     if (activeStaffTicket.case_id) payload.case_id = activeStaffTicket.case_id;
     await api('/api/staff/reply', payload);
-    notifyStaffAlert('Đã gửi phản hồi tiếp nhận cho khách hàng qua chat.');
+    setStaffDeskNotice('Đã gửi phản hồi tiếp nhận cho khách hàng qua chat.', 'success');
     refreshStaffTranscript(activeStaffTicket.conversation_id, true, activeStaffTicket.case_id || null);
     if (conversationId && activeStaffTicket.conversation_id === conversationId) {
       humanMessage(replyMsg, staffLabel());
     }
   } catch (err) {
-    notifyStaffAlert('Lỗi tiếp nhận: ' + err.message);
+    setStaffDeskNotice('Lỗi tiếp nhận: ' + err.message, 'error');
   }
 }
 
@@ -2006,13 +2068,13 @@ async function approveExchangeSize() {
     };
     if (activeStaffTicket.case_id) payload.case_id = activeStaffTicket.case_id;
     await api('/api/staff/reply', payload);
-    notifyStaffAlert('Đã gửi phản hồi tiếp nhận cho khách hàng qua chat.');
+    setStaffDeskNotice('Đã gửi phản hồi tiếp nhận cho khách hàng qua chat.', 'success');
     refreshStaffTranscript(activeStaffTicket.conversation_id, true, activeStaffTicket.case_id || null);
     if (conversationId && activeStaffTicket.conversation_id === conversationId) {
       humanMessage(replyMsg, staffLabel());
     }
   } catch (err) {
-    notifyStaffAlert('Lỗi tiếp nhận: ' + err.message);
+    setStaffDeskNotice('Lỗi tiếp nhận: ' + err.message, 'error');
   }
 }
 
@@ -2055,7 +2117,7 @@ if (btnApproveSize) btnApproveSize.onclick = () => approveExchangeSize();
 const staffReplyInput = byId('staff-reply-input');
 if (staffReplyInput) {
   staffReplyInput.onkeydown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       sendStaffReply();
     }
@@ -2508,11 +2570,7 @@ document.querySelectorAll('.sop-action-btn').forEach(btn => {
       message(`[Mô phỏng] SOP 5: Mô phỏng tiếp nhận khẩn cấp & kích hoạt Strict Mode. Chuyên viên quản lý ca sẽ liên hệ khách hàng. (Chế độ demo giao diện - chưa kết nối backend mutation)`, 'assistant', 'ui_simulation');
     } else if (sop === '6') {
       mgrDialog?.close?.();
-      const staffDialog = byId('staff-desk-dialog');
-      if (staffDialog && typeof staffDialog.showModal === 'function') {
-        staffDialog.showModal();
-        if (typeof refreshStaffQueue === 'function') refreshStaffQueue();
-      }
+      openStaffDesk();
     }
   };
 });
@@ -2521,11 +2579,7 @@ const btnMgrOpenStaffDesk = byId('btn-manager-open-staff-desk');
 if (btnMgrOpenStaffDesk) {
   btnMgrOpenStaffDesk.onclick = () => {
     mgrDialog?.close?.();
-    const staffDialog = byId('staff-desk-dialog');
-    if (staffDialog && typeof staffDialog.showModal === 'function') {
-      staffDialog.showModal();
-      if (typeof refreshStaffQueue === 'function') refreshStaffQueue();
-    }
+    openStaffDesk();
   };
 }
 

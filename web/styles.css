@@ -2754,8 +2754,61 @@ button:disabled {
   color: #64748b !important;
 }
 
+.staff-bucket-tabs {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.staff-desk-notice {
+  margin: 0;
+  padding: 10px 24px;
+  font-size: 13px;
+  line-height: 1.45;
+  border-bottom: 1px solid #cbd5e1;
+  background: #eff6ff;
+  color: #1e3a8a;
+  flex-shrink: 0;
+}
+
+.staff-desk-notice.is-error {
+  background: #fef2f2;
+  border-bottom-color: #fecaca;
+  color: #991b1b;
+}
+
+.staff-desk-notice.is-success {
+  background: #f0fdf4;
+  border-bottom-color: #bbf7d0;
+  color: #166534;
+}
+
+.staff-action-bar {
+  display: flex;
+  padding: 10px 20px;
+  background: #eff6ff;
+  border-bottom: 1px solid #bfdbfe;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.staff-action-bar-label {
+  font-size: 13px;
+  color: #1e3a8a;
+}
+
+.staff-proposal-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .staff-chat-transcript {
   flex: 1 !important;
+  min-height: 0 !important;
   overflow-y: auto !important;
   padding: 20px 24px !important;
   display: flex !important;
@@ -2772,13 +2825,20 @@ button:disabled {
 }
 
 .staff-chat-composer {
-  padding: 16px 24px !important;
-  border-top: 1px solid #e2e8f0 !important;
-  background: #ffffff !important;
-  display: flex !important;
-  flex-direction: column !important;
-  gap: 10px !important;
-  flex-shrink: 0 !important;
+  padding: 16px 24px;
+  border-top: 1px solid #e2e8f0;
+  background: #ffffff;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.staff-chat-composer[hidden],
+.chat-header-tools[hidden],
+.staff-action-bar[hidden],
+.staff-desk-notice[hidden] {
+  display: none !important;
 }
 
 .staff-chat-composer textarea {

@@ -61,11 +61,14 @@ let mockAdminAccounts = [
 let mockAdminAuditLogs = [];
 let forceAdminError = null;
 let forceFeedbackError = null;
+let forceStaffReplyError = null;
 let mockTranscriptResponse = null;
 let mockStaffCases = null;
+let alertCalls = [];
 const persistent = process.env.RETAILOPS_UI_TEST_MODE === 'persistent';
 if (persistent) document.body.dataset.dataMode = 'persistent-demo';
 const context=vm.createContext({document,console,Intl,Date,URLSearchParams,AbortSignal,crypto:{randomUUID:()=> 'fixture-id'},
+  alert:msg=>{ alertCalls.push(String(msg)); },
   requestAnimationFrame:fn=>fn(),location:{reload(){reloaded=true;}},
   fetch:async(url,options)=>{
     requests.push({url,options});
@@ -129,6 +132,15 @@ const context=vm.createContext({document,console,Intl,Date,URLSearchParams,Abort
         turns: [],
         feedbacks: []
       };
+    }
+    else if(url==='/api/staff/reply') {
+      if (forceStaffReplyError) {
+        status = forceStaffReplyError.status;
+        body = { error: forceStaffReplyError.error || 'staff_reply_failed', message: forceStaffReplyError.message };
+      } else {
+        const payload = JSON.parse(options.body || '{}');
+        body = { status: 'ok', turn_id: 501, case_id: payload.case_id || 'case_w1', message: payload.message };
+      }
     }
     else if(url==='/api/manager/kpis') body={total_orders:2,pending_orders:1,delivered_orders:1,cancelled_orders:0,total_revenue:919000,active_products:3};
     else if(url==='/api/manager/products') body={products:[],count:0};
@@ -439,7 +451,67 @@ function collectText(node) {
   await run('setStaffQueueBucket("resolved")');
   await run('selectStaffTicket(staffDeskData.resolved[0])');
   assert.equal(get('staff-chat-composer').style.display, 'none');
+  assert.equal(get('staff-chat-composer').hidden, true);
   assert.equal(get('staff-chat-actions').style.display, 'none');
+
+  // R1-W3 Item 0: Direct reply button (#btn-send-staff-reply), Enter key, CSP-safe hidden state, and in-dialog notice banner (no alert())
+  const indexHtml = fs.readFileSync(path.join(__dirname, '../web/index.html'), 'utf8');
+  const stylesCss = fs.readFileSync(path.join(__dirname, '../web/styles.css'), 'utf8');
+  assert.ok(indexHtml.includes('id="staff-desk-notice"'), 'Staff Desk dialog must contain #staff-desk-notice banner');
+  const composerCssBlock = (stylesCss.match(/\.staff-chat-composer\s*\{[^}]*\}/) || [''])[0];
+  assert.ok(!/display\s*:\s*flex\s*!important/i.test(composerCssBlock), '.staff-chat-composer must not force display:flex !important over hidden state');
+
+  // Re-select active case and test empty click -> shows inline notice instead of silent no-op
+  await run('setStaffQueueBucket("waiting")');
+  await run('selectStaffTicket(staffDeskData.in_progress[0])');
+  assert.equal(get('staff-chat-composer').hidden, false);
+  alertCalls = [];
+  get('staff-reply-input').value = '   ';
+  const replyCountBeforeEmpty = requests.filter(r => r.url === '/api/staff/reply').length;
+  await get('btn-send-staff-reply').onclick();
+  assert.equal(requests.filter(r => r.url === '/api/staff/reply').length, replyCountBeforeEmpty);
+  assert.equal(get('staff-desk-notice').hidden, false);
+  assert.equal(alertCalls.length, 0);
+
+  // Button click with text -> exactly 1 POST /api/staff/reply with case_id, clears input, appends to transcript, shows inline notice
+  get('staff-reply-input').value = 'Shop xin chào anh/chị ạ';
+  const replyCountBeforeClick = requests.filter(r => r.url === '/api/staff/reply').length;
+  await get('btn-send-staff-reply').onclick();
+  const clickCalls = requests.filter(r => r.url === '/api/staff/reply').slice(replyCountBeforeClick);
+  assert.equal(clickCalls.length, 1);
+  const clickPayload = JSON.parse(clickCalls[0].options.body);
+  assert.equal(clickPayload.case_id, 'case_w1');
+  assert.equal(clickPayload.message, 'Shop xin chào anh/chị ạ');
+  assert.equal(get('staff-reply-input').value, '');
+  assert.ok(collectText(get('staff-chat-transcript')).includes('Shop xin chào anh/chị ạ'));
+  assert.equal(get('staff-desk-notice').hidden, false);
+  assert.equal(alertCalls.length, 0);
+
+  // Enter key in #staff-reply-input -> exactly 1 POST /api/staff/reply with case_id, clears input, appends to transcript
+  get('staff-reply-input').value = 'Phản hồi gửi bằng phím Enter';
+  const replyCountBeforeEnter = requests.filter(r => r.url === '/api/staff/reply').length;
+  let enterPrevented = false;
+  get('staff-reply-input').onkeydown({ key: 'Enter', shiftKey: false, isComposing: false, preventDefault() { enterPrevented = true; } });
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(enterPrevented, true);
+  const enterCalls = requests.filter(r => r.url === '/api/staff/reply').slice(replyCountBeforeEnter);
+  assert.equal(enterCalls.length, 1);
+  const enterPayload = JSON.parse(enterCalls[0].options.body);
+  assert.equal(enterPayload.case_id, 'case_w1');
+  assert.equal(enterPayload.message, 'Phản hồi gửi bằng phím Enter');
+  assert.equal(get('staff-reply-input').value, '');
+  assert.ok(collectText(get('staff-chat-transcript')).includes('Phản hồi gửi bằng phím Enter'));
+
+  // API error on POST /api/staff/reply -> error shown inside #staff-desk-notice (not alert()), draft preserved
+  forceStaffReplyError = { status: 409, error: 'case_held_by_other', message: 'Ca hỗ trợ đang do nhân viên khác phụ trách.' };
+  get('staff-reply-input').value = 'Tin nhắn khi API lỗi';
+  await get('btn-send-staff-reply').onclick();
+  assert.equal(alertCalls.length, 0, 'Staff Desk must never use window.alert()');
+  assert.equal(get('staff-desk-notice').hidden, false);
+  assert.ok(get('staff-desk-notice').textContent.includes('Ca hỗ trợ đang do nhân viên khác phụ trách.'));
+  assert.equal(get('staff-reply-input').value, 'Tin nhắn khi API lỗi');
+  forceStaffReplyError = null;
 
   await get('logout').onclick();
   assert.equal(authenticated,false);assert.equal(reloaded,true);
