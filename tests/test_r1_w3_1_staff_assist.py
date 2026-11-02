@@ -899,6 +899,99 @@ class PhaseR1W31Item3StaffConsentedOrderActionsTests(PhaseR1W31BaseTestCase):
         self.assertEqual(st_mgr, 201)
         self.assertEqual(mgr_created["order_action"]["raised_by_role"], "customer")
 
+    def test_postgres_psycopg_placeholder_safety_for_w3_1_queries(self):
+        """Ensure W3.1 LIKE / NOT LIKE queries never pass unescaped '%' literals to psycopg."""
+        import contextlib
+        import re
+        from retailops.storage.postgres import Queries
+
+        store = self.store_a
+        st, conv = self._req("POST", "/api/conversations", {}, cookie=self.cust1)
+        self.assertEqual(st, 201)
+        cid = conv["conversation_id"]
+        case_id = conv["case_id"]
+        self._req(
+            "POST",
+            "/api/feedback",
+            {"conversation_id": cid, "feedback_type": "human_handoff", "comment": "Cần hỗ trợ"},
+            cookie=self.cust1,
+        )
+        st_claim, _ = self._req(
+            "POST", f"/api/staff/cases/{case_id}/claim", {}, cookie=self.staff_a1
+        )
+        self.assertEqual(st_claim, 200)
+        self._req(
+            "POST",
+            "/api/staff/reply",
+            {"conversation_id": cid, "message": "Em đang kiểm tra đơn ạ."},
+            cookie=self.staff_a1,
+        )
+        self._req(
+            "POST",
+            "/api/staff/customer-message",
+            {"conversation_id": cid, "message": "ok anh đồng ý hủy O-104"},
+            cookie=self.cust1,
+        )
+        consent_tid = store.conversation_transcript(cid)["turns"][-1]["id"]
+
+        orig_conn = store.connection
+
+        class _PsycopgStrictRaw:
+            def __init__(self, sqlite_conn):
+                self._sqlite = sqlite_conn
+
+            def execute(self, pg_sql, parameters=()):
+                tokens = re.findall(r"%.", pg_sql)
+                for tok in tokens:
+                    if tok != "%s":
+                        raise AssertionError(f"Unescaped '%' token {tok!r} in SQL: {pg_sql}")
+                expected = len(parameters or ())
+                if len(tokens) != expected:
+                    raise AssertionError(
+                        f"Placeholder count mismatch ({len(tokens)} != {expected}) in SQL: {pg_sql}"
+                    )
+                sqlite_sql = pg_sql.replace("%s", "?")
+                return self._sqlite.execute(sqlite_sql, parameters)
+
+        @contextlib.contextmanager
+        def strict_connection(*args, **kwargs):
+            with orig_conn(*args, **kwargs) as db:
+                yield Queries(_PsycopgStrictRaw(db))
+
+        store.connection = strict_connection
+        try:
+            st_convs, convs = self._req("GET", "/api/conversations", cookie=self.cust1)
+            self.assertEqual(st_convs, 200)
+            self.assertEqual(len(convs["conversations"]), 1)
+            st_cases, cases = self._req("GET", "/api/staff/cases", cookie=self.staff_a1)
+            self.assertEqual(st_cases, 200)
+            self.assertEqual(len(cases["in_progress"]), 1)
+            st_escs, escs = self._req("GET", "/api/staff/escalations", cookie=self.staff_a1)
+            self.assertEqual(st_escs, 200)
+            self.assertEqual(len(escs["escalations"]), 1)
+            st_det, detail = self._req("GET", f"/api/staff/cases/{case_id}/messages", cookie=self.staff_a1)
+            self.assertEqual(st_det, 200)
+            self.assertEqual(detail["case"]["case_id"], case_id)
+            st_ord, orders_res = self._req("GET", f"/api/staff/cases/{case_id}/orders", cookie=self.staff_a1)
+            self.assertEqual(st_ord, 200)
+            self.assertGreaterEqual(len(orders_res["orders"]), 1)
+            st_create, created = self._req(
+                "POST",
+                f"/api/staff/cases/{case_id}/order-actions",
+                {
+                    "order_id": "O-104",
+                    "expected_order_version": 1,
+                    "type": "cancel",
+                    "reason_code": "changed_mind",
+                    "consent_turn_id": consent_tid,
+                },
+                cookie=self.staff_a1,
+            )
+            self.assertEqual(st_create, 201)
+            self.assertEqual(created["order_action"]["raised_by_role"], "customer")
+        finally:
+            store.connection = orig_conn
+
 
 if __name__ == "__main__":
     unittest.main()

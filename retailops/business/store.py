@@ -499,8 +499,8 @@ class BusinessStore:
         base_created = d.get('case_created_at') if 'case_created_at' in d else d.get('created_at')
         open_since = float(resumed_at if resumed_at is not None else (base_created or 0.0))
         last_resolve = db.execute(
-            "SELECT MAX(id) AS max_id FROM agent_turns WHERE conversation_id = ? AND request_id LIKE 'sys-notice-resolve-%'",
-            (cid,),
+            "SELECT MAX(id) AS max_id FROM agent_turns WHERE conversation_id = ? AND request_id LIKE ?",
+            (cid, 'sys-notice-resolve-%'),
         ).fetchone()
         min_turn_id = int(last_resolve['max_id'] or 0) if last_resolve is not None else 0
         last_turn = db.execute(
@@ -509,11 +509,11 @@ class BusinessStore:
                WHERE conversation_id = ?
                  AND created_at >= ?
                  AND id > ?
-                 AND request_id NOT LIKE 'sys-notice-%'
-                 AND request_id NOT LIKE 'sys-reminder-%'
-                 AND request_id NOT LIKE 'sys-oar-%'
+                 AND request_id NOT LIKE ?
+                 AND request_id NOT LIKE ?
+                 AND request_id NOT LIKE ?
                ORDER BY id DESC LIMIT 1""",
-            (cid, open_since - 1e-6, min_turn_id),
+            (cid, open_since - 1e-6, min_turn_id, 'sys-notice-%', 'sys-reminder-%', 'sys-oar-%'),
         ).fetchone()
         if last_turn is None:
             return None
@@ -2910,9 +2910,9 @@ class BusinessStore:
             rows = db.execute('''
                 SELECT c.id, c.customer_id, c.order_id, c.product_id, c.provider_id, c.expires_at,
                        SUM(CASE WHEN t.id IS NOT NULL
-                                 AND t.request_id NOT LIKE 'sys-reminder-%'
-                                 AND t.request_id NOT LIKE 'sys-oar-%'
-                                 AND t.request_id NOT LIKE 'sys-notice-%'
+                                 AND t.request_id NOT LIKE ?
+                                 AND t.request_id NOT LIKE ?
+                                 AND t.request_id NOT LIKE ?
                            THEN 1 ELSE 0 END) as turns_count,
                        COUNT(t.id) as raw_turns_count,
                        MAX(t.created_at) as last_activity,
@@ -2923,7 +2923,7 @@ class BusinessStore:
                 GROUP BY c.id, c.customer_id, c.order_id, c.product_id, c.provider_id, c.expires_at
                 ORDER BY COALESCE(MAX(t.created_at), c.expires_at) DESC
                 LIMIT ?
-            ''', (customer, now, limit)).fetchall()
+            ''', ('sys-reminder-%', 'sys-oar-%', 'sys-notice-%', customer, now, limit)).fetchall()
 
             conversations = []
             for r in rows:
@@ -2935,11 +2935,11 @@ class BusinessStore:
                 first_turn = db.execute('''
                     SELECT messages, result FROM agent_turns
                     WHERE conversation_id=?
-                      AND request_id NOT LIKE 'sys-reminder-%'
-                      AND request_id NOT LIKE 'sys-oar-%'
-                      AND request_id NOT LIKE 'sys-notice-%'
+                      AND request_id NOT LIKE ?
+                      AND request_id NOT LIKE ?
+                      AND request_id NOT LIKE ?
                     ORDER BY id ASC LIMIT 1
-                ''', (cid,)).fetchone()
+                ''', (cid, 'sys-reminder-%', 'sys-oar-%', 'sys-notice-%')).fetchone()
                 if first_turn is None and raw_cnt > 0:
                     first_turn = db.execute('''
                         SELECT messages, result FROM agent_turns
@@ -4427,8 +4427,8 @@ class BusinessStore:
         if not cid:
             return open_since, 0
         last_resolve = db.execute(
-            "SELECT MAX(id) AS max_id FROM agent_turns WHERE conversation_id = ? AND request_id LIKE 'sys-notice-resolve-%'",
-            (cid,),
+            "SELECT MAX(id) AS max_id FROM agent_turns WHERE conversation_id = ? AND request_id LIKE ?",
+            (cid, "sys-notice-resolve-%"),
         ).fetchone()
         min_turn_id = int(last_resolve["max_id"] or 0) if last_resolve is not None else 0
         return open_since, min_turn_id
