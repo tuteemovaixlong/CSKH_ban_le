@@ -83,10 +83,20 @@ class StaffDeskTests(unittest.TestCase):
         self.assertEqual(reply_res["staff_name"], "Nguyễn Mai Anh")
         self.assertIn("size L", reply_res["message"])
 
-        # Verify turn was created
+        # Verify turn was created alongside persisted handoff milestone sys-notice turn (W3.1-D3)
         transcript = self.store.conversation_transcript(self.cid)
-        self.assertEqual(len(transcript["turns"]), 2)
-        last_turn = transcript["turns"][-1]
+        chat_turns = [
+            t for t in transcript["turns"]
+            if not str(t.get("request_id") or "").startswith("sys-notice-")
+        ]
+        notice_turns = [
+            t for t in transcript["turns"]
+            if str(t.get("request_id") or "").startswith("sys-notice-")
+        ]
+        self.assertEqual(len(chat_turns), 2)
+        self.assertEqual(len(notice_turns), 1)
+        self.assertTrue(str(notice_turns[0]["request_id"]).startswith("sys-notice-handoff-"))
+        last_turn = chat_turns[-1]
         res = json.loads(last_turn["result"])
         self.assertEqual(res["author"], "staff")
         self.assertEqual(res["staff_name"], "Nguyễn Mai Anh")
@@ -101,6 +111,9 @@ class StaffDeskTests(unittest.TestCase):
         resolve_res = self.store.resolve_escalation(self.cid, "Nguyễn Mai Anh")
         self.assertTrue(resolve_res["resolved"])
         transcript_after = self.store.conversation_transcript(self.cid)
+        self.assertTrue(
+            any(str(t.get("request_id") or "").startswith("sys-notice-resolve-") for t in transcript_after["turns"])
+        )
         handoff_resolved = [f for f in transcript_after["feedbacks"] if f["feedback_type"] == "human_handoff"][0]
         self.assertEqual(handoff_resolved["reason_code"], "resolved")
 
@@ -208,20 +221,27 @@ class StaffDeskTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(res["status"], "ok")
 
-        # 4. Check transcript has both customer message and staff reply
+        # 4. Check transcript has persisted handoff sys-notice, customer message, and staff reply
         status, transcript = api_result(self.app, "C-001", "GET", f"/api/staff/conversations/{self.cid}/messages")
         self.assertEqual(status, 200)
         turns = transcript["turns"]
-        self.assertGreaterEqual(len(turns), 3)  # initial turn + customer msg + staff reply
+        chat_turns = [
+            t for t in turns
+            if not str(t.get("request_id") or "").startswith("sys-notice-")
+        ]
+        self.assertGreaterEqual(len(chat_turns), 3)  # initial turn + customer msg + staff reply
+        self.assertTrue(
+            any(str(t.get("request_id") or "").startswith("sys-notice-handoff-") for t in turns)
+        )
 
         # Check customer turn
-        cust_turn = json.loads(turns[1]["messages"])
+        cust_turn = json.loads(chat_turns[1]["messages"])
         self.assertEqual(cust_turn[0]["role"], "user")
         self.assertEqual(cust_turn[0]["content"], "hello shop ơi hỗ trợ em")
 
         # Check staff turn
-        staff_turn = json.loads(turns[2]["messages"])
-        staff_res = json.loads(turns[2]["result"])
+        staff_turn = json.loads(chat_turns[2]["messages"])
+        staff_res = json.loads(chat_turns[2]["result"])
         self.assertEqual(staff_turn[0]["role"], "assistant")
         self.assertEqual(staff_turn[0]["content"], "Dạ chào bạn, Mai Anh CSKH nghe đây ạ!")
         self.assertEqual(staff_res["author"], "staff")
