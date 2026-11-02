@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import hashlib
 import io
@@ -929,6 +930,416 @@ class PhaseR1W3OrderActionCreationAndFacadeTests(unittest.TestCase):
         self.assertEqual(st_d, 200)
         self.assertIn("Đã bỏ đề xuất", dis["message"])
         self.assertEqual(len(self.store_a.list_customer_order_actions("C-001")), 1)
+
+
+class PhaseR1W3ReviewLifecycleDeliveryFailureRefundAndManagerStatusTests(unittest.TestCase):
+    """Items 5, 6, 7 & 8: Review/post-review transitions, delivery-failure cancel, manual refund, and Manager order status."""
+
+    ORIGIN = "https://retailops.example.com"
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.pers = self.root / "persistent"
+        self.sessions = PersistentSessions(self.pers, data_mode="persistent-demo")
+        self.store_a = self.sessions.provision_tenant("shop-a", "Shop A", seed_demo=True)
+        for cid, cname in (
+            ("C-STAFF-1", "Nhân viên 1"),
+            ("C-STAFF-2", "Nhân viên 2"),
+            ("C-MGR-1", "Quản lý 1"),
+            ("C-MGR-2", "Quản lý 2"),
+        ):
+            self.store_a.add_customer(cid, cname)
+        with self.store_a.connection(write=True) as db:
+            db.execute(
+                "INSERT INTO orders(id, customer_id, product_id, name, variant, amount, status, version) "
+                "VALUES ('O-105', 'C-001', 'P-101', 'Áo thun Essential', 'Đen / L', 299000, 'pending', 1)"
+            )
+            db.execute(
+                "INSERT INTO orders(id, customer_id, product_id, name, variant, amount, status, version) "
+                "VALUES ('O-106', 'C-001', 'P-102', 'Áo khoác Everyday', 'Xám / M', 599000, 'delivered', 1)"
+            )
+        self.web = PublicWeb(self.ORIGIN, self.sessions)
+        self.cust1 = self._issue_cookie("shop-a", "p-cust-1", "Khách 1", "C-001", "customer")
+        self.staff1 = self._issue_cookie("shop-a", "p-staff-1", "Nhân viên 1", "C-STAFF-1", "staff")
+        self.staff2 = self._issue_cookie("shop-a", "p-staff-2", "Nhân viên 2", "C-STAFF-2", "staff")
+        self.mgr1 = self._issue_cookie("shop-a", "p-mgr-1", "Quản lý 1", "C-MGR-1", "manager")
+        self.mgr2 = self._issue_cookie("shop-a", "p-mgr-2", "Quản lý 2", "C-MGR-2", "manager")
+
+    def _issue_cookie(self, tenant_id: str, principal_id: str, name: str, customer_id: str, role: str) -> str:
+        mid = self.sessions.create_member(tenant_id, principal_id, name, customer_id, role)
+        tok = secrets.token_urlsafe(32)
+        self.sessions.control.register_credential(mid, tok)
+        return f"{self.sessions.cookie_name}={self.sessions.login(tok)}"
+
+    def _req(self, method: str, path: str, body: dict | None = None, *, cookie: str | None = None):
+        raw = b"" if body is None else json.dumps(body, ensure_ascii=False).encode("utf-8")
+        env = {
+            "REQUEST_METHOD": method,
+            "PATH_INFO": path,
+            "QUERY_STRING": "",
+            "HTTP_HOST": "retailops.example.com",
+            "wsgi.input": io.BytesIO(raw),
+        }
+        if method != "GET":
+            env["HTTP_ORIGIN"] = self.ORIGIN
+        if body is not None:
+            env["CONTENT_TYPE"] = "application/json"
+            env["CONTENT_LENGTH"] = str(len(raw))
+        if cookie:
+            env["HTTP_COOKIE"] = cookie
+        try:
+            status, payload, _, _ = self.web.route(env)
+            return status, payload
+        except ApiError as err:
+            return err.status, {"error": err.code, "message": err.message}
+
+    def _notice_turns(self, cid: str) -> list[dict]:
+        st, trans = self._req("GET", f"/api/conversations/{cid}/messages", cookie=self.cust1)
+        self.assertEqual(st, 200)
+        notices = []
+        for t in trans["turns"]:
+            res = json.loads(t["result"]) if isinstance(t["result"], str) else t["result"]
+            if res.get("author") == "system_order_action":
+                notices.append(res)
+        return notices
+
+    def test_item5_cancel_and_return_lifecycle_holder_rules_concurrency_and_exact_customer_notices(self):
+        # 1. Create cancel request on pending O-101
+        st, created = self._req(
+            "POST",
+            "/api/order-actions",
+            {"order_id": "O-101", "type": "cancel", "expected_order_version": 1, "reason_code": "changed_mind"},
+            cookie=self.cust1,
+        )
+        self.assertEqual(st, 201)
+        req_id = created["order_action_request_id"]
+        case_id = created["case_id"]
+        cid = created["conversation_id"]
+
+        # Unclaimed case: Staff1 blocked (409 case_not_claimed)
+        st_unclaimed, err_unclaimed = self._req(
+            "POST",
+            f"/api/order-actions/{req_id}/approve",
+            {"version": 1},
+            cookie=self.staff1,
+        )
+        self.assertEqual((st_unclaimed, err_unclaimed["error"]), (409, "case_not_claimed"))
+        self.assertEqual(len(self._notice_turns(cid)), 0)
+
+        # Claim case by Staff1 -> request transitions requested (v1) -> under_review (v2), 1 notice
+        st_claim, _ = self._req("POST", f"/api/staff/cases/{case_id}/claim", {}, cookie=self.staff1)
+        self.assertEqual(st_claim, 200)
+        _, case_oas = self._req("GET", f"/api/staff/cases/{case_id}/order-actions", cookie=self.staff1)
+        oar_after_claim = case_oas["order_actions"][0]
+        self.assertEqual((oar_after_claim["status"], oar_after_claim["version"]), ("under_review", 2))
+        self.assertEqual(len(self._notice_turns(cid)), 1)
+        # System notice turns do NOT pollute has_turns / LLM history
+        self.assertFalse(self.store_a.has_turns("C-001", cid))
+        self.assertEqual(self.store_a.history("C-001", cid), [])
+
+        # Staff2 (not holding case) blocked with 409 case_held_by_other
+        st_other, err_other = self._req(
+            "POST",
+            f"/api/order-actions/{req_id}/approve",
+            {"version": 2},
+            cookie=self.staff2,
+        )
+        self.assertEqual((st_other, err_other["error"]), (409, "case_held_by_other"))
+
+        # Invalid transition on cancel (mark-received not allowed) -> 409
+        st_bad, err_bad = self._req(
+            "POST",
+            f"/api/order-actions/{req_id}/mark-received",
+            {"version": 2},
+            cookie=self.staff1,
+        )
+        self.assertEqual((st_bad, err_bad["error"]), (409, "invalid_order_action_transition"))
+
+        # Concurrent approval race between Staff1 (holder) and Manager1 with same version=2 -> exactly 1 wins!
+        def _race_approve(cookie):
+            return self._req("POST", f"/api/order-actions/{req_id}/approve", {"version": 2, "note": "Đồng ý hủy"}, cookie=cookie)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(_race_approve, [self.staff1, self.mgr1]))
+        statuses = sorted(s for s, _ in outcomes)
+        self.assertEqual(statuses, [200, 409])
+        loser = [b for s, b in outcomes if s == 409][0]
+        self.assertEqual(loser["error"], "order_action_version_conflict")
+
+        # Order O-101 is now cancelled (version 2), closed_at set, and exactly 2 notices total (under_review + approved)
+        ord_101 = self.store_a.lookup("C-001", "O-101")
+        self.assertEqual((ord_101["status"], ord_101["version"]), ("cancelled", 2))
+        self.assertEqual(len(self._notice_turns(cid)), 2)
+
+        # 2. Full return/exchange lifecycle on delivered O-102 with out-of-order rejection + exact 1 notice per step
+        st_r, r_created = self._req(
+            "POST",
+            "/api/order-actions",
+            {
+                "order_id": "O-102",
+                "type": "exchange",
+                "exchange_kind": "size",
+                "expected_order_version": 1,
+                "reason_code": "wrong_size",
+            },
+            cookie=self.cust1,
+        )
+        self.assertEqual(st_r, 201)
+        rid = r_created["order_action_request_id"]
+        rcase = r_created["case_id"]
+        rcid = r_created["conversation_id"]
+
+        # Out-of-order mark-received before approve -> 409
+        self.assertEqual(
+            self._req("POST", f"/api/order-actions/{rid}/mark-received", {"version": 1}, cookie=self.mgr1)[0],
+            409,
+        )
+        # Claim -> under_review (v2, notice #1)
+        self.assertEqual(self._req("POST", f"/api/staff/cases/{rcase}/claim", {}, cookie=self.staff1)[0], 200)
+        self.assertEqual(len(self._notice_turns(rcid)), 1)
+
+        # Approve -> approved (v3, notice #2, closed_at still None)
+        st_ap, ap_res = self._req("POST", f"/api/order-actions/{rid}/approve", {"version": 2}, cookie=self.staff1)
+        self.assertEqual((st_ap, ap_res["status"]), (200, "approved"))
+        self.assertIsNone(ap_res["order_action"]["closed_at"])
+        self.assertEqual(len(self._notice_turns(rcid)), 2)
+
+        # Out-of-order complete before mark-received/mark-inspected -> 409
+        self.assertEqual(
+            self._req("POST", f"/api/order-actions/{rid}/complete", {"version": 3}, cookie=self.staff1)[0],
+            409,
+        )
+
+        # Mark-received -> received (v4, notice #3)
+        st_rc, rc_res = self._req("POST", f"/api/order-actions/{rid}/mark-received", {"version": 3}, cookie=self.staff1)
+        self.assertEqual((st_rc, rc_res["status"]), (200, "received"))
+        self.assertEqual(len(self._notice_turns(rcid)), 3)
+
+        # Mark-inspected without outcome -> 400; with outcome='exchange' -> inspected (v5, notice #4)
+        self.assertEqual(
+            self._req("POST", f"/api/order-actions/{rid}/mark-inspected", {"version": 4}, cookie=self.staff1)[0],
+            400,
+        )
+        st_in, in_res = self._req(
+            "POST",
+            f"/api/order-actions/{rid}/mark-inspected",
+            {"version": 4, "inspection_outcome": "exchange"},
+            cookie=self.staff1,
+        )
+        self.assertEqual((st_in, in_res["status"], in_res["order_action"]["inspection_outcome"]), (200, "inspected", "exchange"))
+        self.assertEqual(len(self._notice_turns(rcid)), 4)
+
+        # Complete -> completed (v6, notice #5, closed_at set)
+        st_cp, cp_res = self._req("POST", f"/api/order-actions/{rid}/complete", {"version": 5}, cookie=self.staff1)
+        self.assertEqual((st_cp, cp_res["status"]), (200, "completed"))
+        self.assertIsNotNone(cp_res["order_action"]["closed_at"])
+        notices = self._notice_turns(rcid)
+        self.assertEqual(
+            [n["order_action_status"] for n in notices],
+            ["under_review", "approved", "received", "inspected", "completed"],
+        )
+
+    def test_item6_delivery_failure_cancel_requires_attempts_and_manager_only_decision(self):
+        conv = self.store_a.new_conversation("C-001")
+        cid = conv["conversation_id"]
+        handoff = self.store_a.request_human_handoff("C-001", cid, reason_code="shipping_issue", comment="Shipper gọi nhỡ")
+        case_id = handoff["case_id"]
+
+        # Unclaimed case -> 409 case_not_claimed
+        st_unc, _ = self._req(
+            "POST",
+            f"/api/staff/cases/{case_id}/order-actions",
+            {"order_id": "O-105", "delivery_failure_attempts": 3, "note": "Giao 3 lần không nghe máy"},
+            cookie=self.staff1,
+        )
+        self.assertEqual(st_unc, 409)
+
+        # Staff1 claims case
+        self.assertEqual(self._req("POST", f"/api/staff/cases/{case_id}/claim", {}, cookie=self.staff1)[0], 200)
+
+        # Missing or invalid delivery_failure_attempts -> 400
+        for bad_body in (
+            {"order_id": "O-105", "note": "Thiếu số lần giao"},
+            {"order_id": "O-105", "delivery_failure_attempts": 0, "note": "Số lần = 0"},
+            {"order_id": "O-105", "delivery_failure_attempts": 2},
+        ):
+            st_b, _ = self._req("POST", f"/api/staff/cases/{case_id}/order-actions", bad_body, cookie=self.staff1)
+            self.assertEqual(st_b, 400, bad_body)
+
+        # Valid delivery-failure cancel created by Staff1 holding case
+        st_ok, created = self._req(
+            "POST",
+            f"/api/staff/cases/{case_id}/order-actions",
+            {"order_id": "O-105", "delivery_failure_attempts": 3, "note": "Shipper báo khách hẹn lại 3 lần không nhận"},
+            cookie=self.staff1,
+        )
+        self.assertEqual(st_ok, 201)
+        req_id = created["order_action_request_id"]
+        self.assertEqual(created["order_action"]["raised_by_role"], "staff")
+        self.assertEqual(created["order_action"]["delivery_failure_attempts"], 3)
+
+        # Staff1 (even though holding the case!) MUST get 403 on both approve and reject
+        for act in ("approve", "reject"):
+            st_s, body_s = self._req("POST", f"/api/order-actions/{req_id}/{act}", {"version": 1}, cookie=self.staff1)
+            self.assertEqual((st_s, body_s["error"]), (403, "permission_denied"))
+
+        # Manager1 approves -> 200, order O-105 becomes cancelled
+        st_m, body_m = self._req(
+            "POST",
+            f"/api/order-actions/{req_id}/approve",
+            {"version": 1, "note": "Quản lý xác nhận hủy đơn hoàn kho"},
+            cookie=self.mgr1,
+        )
+        self.assertEqual(st_m, 200)
+        self.assertEqual(body_m["order"]["status"], "cancelled")
+
+    def test_item7_manual_refund_staff_requests_manager_decides_and_records_outcome(self):
+        st, created = self._req(
+            "POST",
+            "/api/order-actions",
+            {"order_id": "O-106", "type": "return", "expected_order_version": 1, "reason_code": "defective_item"},
+            cookie=self.cust1,
+        )
+        self.assertEqual(st, 201)
+        req_id = created["order_action_request_id"]
+        case_id = created["case_id"]
+
+        # Staff1 claims case (v1 -> v2 under_review)
+        self.assertEqual(self._req("POST", f"/api/staff/cases/{case_id}/claim", {}, cookie=self.staff1)[0], 200)
+
+        # Refund request BEFORE request is approved -> 409 invalid_refund_state
+        self.assertEqual(
+            self._req("POST", f"/api/order-actions/{req_id}/refund-request", {"version": 2}, cookie=self.staff1)[0],
+            409,
+        )
+
+        # Staff1 approves return request (v2 -> v3 approved)
+        self.assertEqual(self._req("POST", f"/api/order-actions/{req_id}/approve", {"version": 2}, cookie=self.staff1)[0], 200)
+
+        # Staff1 submits refund request (v3 -> v4, refund_status='pending')
+        st_rr, rr = self._req(
+            "POST",
+            f"/api/order-actions/{req_id}/refund-request",
+            {"version": 3, "note": "Đề nghị hoàn 599.000đ qua chuyển khoản"},
+            cookie=self.staff1,
+        )
+        self.assertEqual((st_rr, rr["refund_status"], rr["refund_decision"]), (200, "pending", None))
+
+        # Staff1 CANNOT decide refund or record refund outcome -> 403
+        self.assertEqual(
+            self._req(
+                "POST",
+                f"/api/order-actions/{req_id}/refund-decision",
+                {"version": 4, "decision": "approved"},
+                cookie=self.staff1,
+            )[0],
+            403,
+        )
+        self.assertEqual(
+            self._req(
+                "POST",
+                f"/api/order-actions/{req_id}/refund-outcome",
+                {"version": 4, "outcome": "refunded"},
+                cookie=self.staff1,
+            )[0],
+            403,
+        )
+
+        # Manager1 CANNOT record refund outcome BEFORE refund-decision approved -> 409 refund_not_approved
+        st_early, err_early = self._req(
+            "POST",
+            f"/api/order-actions/{req_id}/refund-outcome",
+            {"version": 4, "outcome": "refunded"},
+            cookie=self.mgr1,
+        )
+        self.assertEqual((st_early, err_early["error"]), (409, "refund_not_approved"))
+
+        # Manager1 approves refund (v4 -> v5, refund_decision='approved')
+        st_dec, dec = self._req(
+            "POST",
+            f"/api/order-actions/{req_id}/refund-decision",
+            {"version": 4, "decision": "approved", "note": "Duyệt chi hoàn tiền"},
+            cookie=self.mgr1,
+        )
+        self.assertEqual((st_dec, dec["refund_status"], dec["refund_decision"]), (200, "pending", "approved"))
+
+        # Manager1 records outcome refunded (v5 -> v6)
+        st_out, out = self._req(
+            "POST",
+            f"/api/order-actions/{req_id}/refund-outcome",
+            {"version": 5, "outcome": "refunded", "note": "Đã chuyển khoản hoàn tất"},
+            cookie=self.mgr1,
+        )
+        self.assertEqual((st_out, out["refund_status"]), (200, "refunded"))
+
+        # Verify audit events and outbox rows for every step
+        with self.store_a.connection() as db:
+            refund_evs = db.execute(
+                "SELECT COUNT(*) FROM business_events WHERE kind='order_action_refund_updated'"
+            ).fetchone()[0]
+            self.assertEqual(refund_evs, 3)
+            outbox_rows = [
+                json.loads(r["payload_json"])
+                for r in db.execute(
+                    "SELECT payload_json FROM integration_outbox WHERE payload_json LIKE ? ORDER BY created_at ASC",
+                    (f"%{req_id}%",),
+                ).fetchall()
+            ]
+            event_types = [r["event_type"] for r in outbox_rows]
+            self.assertIn("refund_requested", event_types)
+            self.assertIn("refund_decided", event_types)
+            self.assertTrue(
+                any(r["event_type"] == "request_status_changed" and r.get("after", {}).get("refund_status") == "refunded" for r in outbox_rows)
+            )
+
+    def test_item8_manager_direct_order_status_version_check_delivered_at_and_outbox(self):
+        # Wrong version -> 409 stale_order
+        st_bad, err_bad = self._req(
+            "POST",
+            "/api/manager/orders/update-status",
+            {"order_id": "O-101", "status": "delivered", "version": 9},
+            cookie=self.mgr1,
+        )
+        self.assertEqual((st_bad, err_bad["error"]), (409, "stale_order"))
+
+        # Correct version=1 -> 200, delivered_at populated, outbox order_status_changed written
+        st_ok, ok_body = self._req(
+            "POST",
+            "/api/manager/orders/update-status",
+            {"order_id": "O-101", "status": "delivered", "version": 1},
+            cookie=self.mgr1,
+        )
+        self.assertEqual(st_ok, 200)
+        self.assertEqual((ok_body["new_status"], ok_body["version"]), ("delivered", 2))
+        self.assertIsNotNone(ok_body["delivered_at"])
+
+        ord_after = self.store_a.lookup("C-001", "O-101")
+        self.assertIsNotNone(ord_after["delivered_at"])
+
+        # Creating a return request on O-101 now shows numeric days_since_delivery (0 ngày kể từ khi giao)
+        st_ret, ret_body = self._req(
+            "POST",
+            "/api/order-actions",
+            {"order_id": "O-101", "type": "return", "expected_order_version": 2, "reason_code": "wrong_item"},
+            cookie=self.cust1,
+        )
+        self.assertEqual(st_ret, 201)
+        self.assertEqual(ret_body["order_action"]["days_since_delivery"], 0)
+        self.assertIn("0 ngày kể từ khi giao", ret_body["order_action"]["delivery_age_label"])
+
+        with self.store_a.connection() as db:
+            ob = [
+                json.loads(r["payload_json"])
+                for r in db.execute(
+                    "SELECT payload_json FROM integration_outbox WHERE event_type='order_status_changed'"
+                ).fetchall()
+            ]
+            self.assertEqual(len(ob), 1)
+            self.assertEqual(ob[0]["order_id"], "O-101")
+            self.assertEqual(ob[0]["before"], {"status": "pending", "version": 1})
+            self.assertEqual(ob[0]["after"], {"status": "delivered", "version": 2})
 
 
 if __name__ == "__main__":
