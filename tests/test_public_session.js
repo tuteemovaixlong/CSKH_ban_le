@@ -84,6 +84,7 @@ let forceStaffReplyError = null;
 let mockTranscriptResponse = null;
 let mockStaffCases = null;
 let mockStaffCaseOrderActions = null;
+let mockStaffCaseOrders = null;
 let mockStaffCaseTranscriptMap = null;
 let alertCalls = [];
 const storageMap = new Map();
@@ -224,39 +225,91 @@ const context=vm.createContext({document,console,Intl,Date,URLSearchParams,Abort
         };
       }
     }
+    else if(/^\/api\/staff\/cases\/[^/]+\/orders$/.test(url)) {
+      const cidMatch = url.split('/')[4];
+      if (mockStaffCaseOrders && mockStaffCaseOrders[cidMatch]) {
+        body = mockStaffCaseOrders[cidMatch];
+      } else {
+        const oaEntry = (mockStaffCaseOrderActions && mockStaffCaseOrderActions[cidMatch]) || null;
+        const custOrders = (oaEntry && oaEntry.customer_orders) || [];
+        const openOas = ((oaEntry && oaEntry.order_actions) || []).filter(r => r && r.closed_at == null && !['rejected', 'completed'].includes(r.status) && !(r.type === 'cancel' && r.status === 'approved'));
+        body = {
+          case_id: cidMatch,
+          read_only: Boolean(oaEntry && oaEntry.read_only),
+          orders: custOrders.map(o => ({
+            ...o,
+            allowed_action_types: o.status === 'pending' ? ['cancel'] : (o.status === 'delivered' ? ['return', 'exchange'] : []),
+            open_order_action: openOas.find(r => r.order_id === o.id) || null
+          })),
+          consent_turns: []
+        };
+      }
+    }
     else if(/^\/api\/staff\/cases\/[^/]+\/order-actions$/.test(url)) {
       const cidMatch = url.split('/')[4];
       if (options.method === 'POST') {
         const payload = JSON.parse(options.body || '{}');
-        const created = {
-          request_id: 'oar_df_1',
-          order_id: payload.order_id,
-          case_id: cidMatch,
-          conversation_id: 'fixture-conversation',
-          type: 'cancel',
-          exchange_kind: null,
-          status: 'under_review',
-          inspection_outcome: null,
-          refund_status: 'not_applicable',
-          refund_decision: null,
-          reason_code: 'delivery_failed',
-          reason_label: 'Giao hàng thất bại',
-          reason_text: payload.note,
-          raised_by_role: mockSessionRole || 'staff',
-          delivery_failure_attempts: payload.delivery_failure_attempts,
-          expected_order_version: payload.expected_order_version || 1,
-          version: 1,
-          closed_at: null,
-          order: { id: payload.order_id, name: 'Áo thun Essential', amount: 299000, status: 'pending', version: 1 },
-          delivery_age_label: 'chưa có ngày giao',
-          evidence: [],
-          decisions: [{ decision_id: 'oad_df_1', action: 'submit', from_status: null, to_status: 'under_review', actor_role: mockSessionRole || 'staff', note: payload.note }]
-        };
-        if (mockStaffCaseOrderActions && mockStaffCaseOrderActions[cidMatch]) {
-          mockStaffCaseOrderActions[cidMatch].order_actions.unshift(created);
+        if (payload.delivery_failure_attempts != null) {
+          const created = {
+            request_id: 'oar_df_1',
+            order_id: payload.order_id,
+            case_id: cidMatch,
+            conversation_id: 'fixture-conversation',
+            type: 'cancel',
+            exchange_kind: null,
+            status: 'under_review',
+            inspection_outcome: null,
+            refund_status: 'not_applicable',
+            refund_decision: null,
+            reason_code: 'delivery_failed',
+            reason_label: 'Giao hàng thất bại',
+            reason_text: payload.note,
+            raised_by_role: mockSessionRole || 'staff',
+            delivery_failure_attempts: payload.delivery_failure_attempts,
+            expected_order_version: payload.expected_order_version || 1,
+            version: 1,
+            closed_at: null,
+            order: { id: payload.order_id, name: 'Áo thun Essential', amount: 299000, status: 'pending', version: 1 },
+            delivery_age_label: 'chưa có ngày giao',
+            evidence: [],
+            decisions: [{ decision_id: 'oad_df_1', action: 'submit', from_status: null, to_status: 'under_review', actor_role: mockSessionRole || 'staff', note: payload.note }]
+          };
+          if (mockStaffCaseOrderActions && mockStaffCaseOrderActions[cidMatch]) {
+            mockStaffCaseOrderActions[cidMatch].order_actions.unshift(created);
+          }
+          status = 201;
+          body = { status: 'under_review', order_action_request_id: created.request_id, order_action: created, message: 'Đã tạo yêu cầu hủy do giao thất bại, chờ Quản lý duyệt' };
+        } else {
+          const created = {
+            request_id: 'oar_coa_1',
+            order_id: payload.order_id,
+            case_id: cidMatch,
+            conversation_id: 'fixture-conversation',
+            type: payload.type,
+            exchange_kind: payload.exchange_kind || null,
+            status: 'requested',
+            inspection_outcome: null,
+            refund_status: 'not_applicable',
+            refund_decision: null,
+            reason_code: payload.reason_code,
+            reason_label: payload.reason_code,
+            reason_text: payload.reason_text || null,
+            raised_by_role: 'customer',
+            delivery_failure_attempts: null,
+            expected_order_version: payload.expected_order_version || 1,
+            version: 1,
+            closed_at: null,
+            order: { id: payload.order_id, name: 'Áo khoác Everyday', amount: 520000, status: payload.type === 'cancel' ? 'pending' : 'delivered', version: payload.expected_order_version || 1 },
+            delivery_age_label: '2 ngày kể từ khi giao',
+            evidence: [],
+            decisions: [{ decision_id: 'oad_coa_1', action: 'submit', from_status: null, to_status: 'requested', actor_role: mockSessionRole || 'staff', note: `[consent_turn_id=${payload.consent_turn_id}]` }]
+          };
+          if (mockStaffCaseOrderActions && mockStaffCaseOrderActions[cidMatch]) {
+            mockStaffCaseOrderActions[cidMatch].order_actions.unshift(created);
+          }
+          status = 201;
+          body = { status: 'requested', order_action_request_id: created.request_id, order_action: created, consent_turn_id: payload.consent_turn_id, message: 'Đã tạo yêu cầu theo đồng ý của khách hàng' };
         }
-        status = 201;
-        body = { status: 'under_review', order_action_request_id: created.request_id, order_action: created, message: 'Đã tạo yêu cầu hủy do giao thất bại, chờ Quản lý duyệt' };
       } else {
         body = (mockStaffCaseOrderActions && mockStaffCaseOrderActions[cidMatch]) || {
           case_id: cidMatch,
@@ -1061,6 +1114,130 @@ function collectText(node) {
   await run('refreshStaffTranscript("fixture-conversation", true, "case_held_silent")');
   assert.equal(get('staff-active-silent-badge').hidden, true);
   assert.equal(get('staff-active-silent-badge').textContent, '');
+  await run('closeStaffDeskDialog()');
+
+  // R1-W3.1 Item 4 (W3.1-D1, W3.1-D5): "Tạo yêu cầu theo đồng ý của khách" & collapsible "Thao tác khác"
+  mockStaffCases = {
+    waiting: [],
+    in_progress: [
+      { case_id: 'case_no_pending_1', conversation_id: 'fixture-conversation', customer_id: 'C-001', customer_name: 'Khách A', status: 'in_progress', holder: 'p_staff_1', holder_name: 'Khách B', version: 2 },
+      { case_id: 'case_consent_1', conversation_id: 'fixture-conversation', customer_id: 'C-001', customer_name: 'Khách A', status: 'in_progress', holder: 'p_staff_1', holder_name: 'Khách B', version: 2 }
+    ],
+    resolved: [],
+    open_count: 2
+  };
+  mockStaffCaseTranscriptMap = {
+    case_no_pending_1: {
+      conversation: { id: 'fixture-conversation' },
+      case: { case_id: 'case_no_pending_1', status: 'in_progress', holder: 'p_staff_1', holder_name: 'Khách B', version: 2 },
+      read_only: false,
+      turns: [],
+      feedbacks: []
+    },
+    case_consent_1: {
+      conversation: { id: 'fixture-conversation' },
+      case: { case_id: 'case_consent_1', status: 'in_progress', holder: 'p_staff_1', holder_name: 'Khách B', version: 2 },
+      read_only: false,
+      turns: [],
+      feedbacks: []
+    }
+  };
+  mockStaffCaseOrderActions = {
+    case_no_pending_1: {
+      case_id: 'case_no_pending_1',
+      read_only: false,
+      order_actions: [],
+      customer_orders: [
+        { id: 'O-302', name: 'Áo khoác Everyday', variant: 'Đen / L', amount: 520000, status: 'delivered', version: 3 }
+      ]
+    },
+    case_consent_1: {
+      case_id: 'case_consent_1',
+      read_only: false,
+      order_actions: [],
+      customer_orders: [
+        { id: 'O-301', name: 'Áo thun Essential', variant: 'Trắng / M', amount: 299000, status: 'pending', version: 1 },
+        { id: 'O-302', name: 'Áo khoác Everyday', variant: 'Đen / L', amount: 520000, status: 'delivered', version: 3 }
+      ]
+    }
+  };
+  mockStaffCaseOrders = {
+    case_no_pending_1: {
+      case_id: 'case_no_pending_1',
+      read_only: false,
+      orders: [
+        { id: 'O-302', name: 'Áo khoác Everyday', variant: 'Đen / L', amount: 520000, status: 'delivered', version: 3, allowed_action_types: ['return', 'exchange'], open_order_action: null }
+      ],
+      consent_turns: []
+    },
+    case_consent_1: {
+      case_id: 'case_consent_1',
+      read_only: false,
+      orders: [
+        { id: 'O-301', name: 'Áo thun Essential', variant: 'Trắng / M', amount: 299000, status: 'pending', version: 1, allowed_action_types: ['cancel'], open_order_action: null },
+        { id: 'O-302', name: 'Áo khoác Everyday', variant: 'Đen / L', amount: 520000, status: 'delivered', version: 3, allowed_action_types: ['return', 'exchange'], open_order_action: null }
+      ],
+      consent_turns: [
+        { turn_id: 992, excerpt: 'Ok shop đổi size lên XL cho mình nhé', created_at: 1760300120 },
+        { turn_id: 990, excerpt: 'Được nha shop ơi', created_at: 1760300060 }
+      ]
+    }
+  };
+
+  await run('openStaffDesk()');
+  // Case without pending orders and without consent turns: submit button is locked & "Thao tác khác" is absent
+  await run('selectStaffTicket(staffDeskData.in_progress[0])');
+  assert.equal(get('staff-consent-turn-select').value, '');
+  assert.equal(get('btn-create-consented-order-action').disabled, true, 'Submit button must be locked when no consent message is selected');
+  assert.equal(get('staff-order-actions-panel').querySelectorAll('details').length, 0, '"Thao tác khác" must be hidden when customer has no pending order');
+
+  // Case with pending + delivered orders and 2 recent customer turns
+  await run('selectStaffTicket(staffDeskData.in_progress[1])');
+  const otherOpsDetails = get('staff-order-actions-panel').querySelectorAll('details');
+  assert.equal(otherOpsDetails.length, 1, '"Thao tác khác" details block must appear when customer has a pending order');
+  assert.equal(otherOpsDetails[0].id, 'staff-other-ops');
+  assert.equal(otherOpsDetails[0].open, false, '"Thao tác khác" must be collapsed by default');
+  assert.ok(collectText(otherOpsDetails[0]).includes('Thao tác khác'));
+
+  // Newest customer consent turn (992) is listed first and pre-selected by default
+  const turnOptions = get('staff-consent-turn-select').children;
+  assert.equal(turnOptions[1].value, '992', 'Newest customer consent turn must be listed first');
+  assert.equal(turnOptions[2].value, '990');
+  assert.ok(turnOptions[1].textContent.includes('Ok shop đổi size lên XL cho mình nhé'), 'Consent turn option must show message excerpt');
+  assert.equal(get('staff-consent-turn-select').value, '992', 'Newest customer consent turn must be pre-selected');
+  assert.equal(get('btn-create-consented-order-action').disabled, false);
+
+  // Clearing consent turn selection locks the submit button
+  get('staff-consent-turn-select').value = '';
+  get('staff-consent-turn-select').onchange();
+  assert.equal(get('btn-create-consented-order-action').disabled, true, 'Clearing consent turn must lock submit button');
+
+  // Selecting delivered order O-302, exchange:size, reason wrong_size, note, and consent turn 990 unlocks & sends exact payload
+  get('staff-consent-order-select').value = 'O-302';
+  get('staff-consent-order-select').onchange();
+  get('staff-consent-type-select').value = 'exchange:size';
+  get('staff-consent-type-select').onchange();
+  assert.equal(get('staff-consent-reason-select').value, 'wrong_size');
+  get('staff-consent-note-input').value = 'Khách đồng ý đổi sang size XL';
+  get('staff-consent-note-input').oninput();
+  get('staff-consent-turn-select').value = '990';
+  get('staff-consent-turn-select').onchange();
+  assert.equal(get('btn-create-consented-order-action').disabled, false);
+
+  const staffOaReqsBefore = requests.filter(r => r.url === '/api/staff/cases/case_consent_1/order-actions' && r.options && r.options.method === 'POST').length;
+  await get('btn-create-consented-order-action').onclick();
+  const staffOaReqsAfter = requests.filter(r => r.url === '/api/staff/cases/case_consent_1/order-actions' && r.options && r.options.method === 'POST');
+  assert.equal(staffOaReqsAfter.length, staffOaReqsBefore + 1);
+  const sentConsentPayload = JSON.parse(staffOaReqsAfter.at(-1).options.body);
+  assert.deepEqual(sentConsentPayload, {
+    order_id: 'O-302',
+    expected_order_version: 3,
+    type: 'exchange',
+    exchange_kind: 'size',
+    reason_code: 'wrong_size',
+    reason_text: 'Khách đồng ý đổi sang size XL',
+    consent_turn_id: 990
+  });
   await run('closeStaffDeskDialog()');
 
   mockSessionRole = 'customer';

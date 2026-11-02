@@ -2885,7 +2885,8 @@ button:disabled {
   border-bottom: 1px solid #dbe4f0;
   background: #f8fafc;
   flex-shrink: 0;
-  max-height: 44vh;
+  max-height: 40vh;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
 }
@@ -2937,6 +2938,7 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  flex: 1 1 auto;
   overflow-y: auto;
   min-height: 0;
 }
@@ -2979,7 +2981,8 @@ button:disabled {
 }
 
 .case-ops-request-card,
-.case-ops-delivery-fail-card {
+.case-ops-delivery-fail-card,
+.case-ops-consented-card {
   background: #ffffff;
   border: 1px solid #cbd5e1;
   border-radius: 8px;
@@ -2989,6 +2992,56 @@ button:disabled {
   gap: 6px;
   font-size: 12px;
   color: #334155;
+}
+
+.case-ops-consented-card {
+  border-color: #93c5fd;
+  background: #f8fbff;
+  gap: 8px;
+}
+
+.case-ops-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 8px;
+}
+
+.case-ops-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.case-ops-field-wide {
+  grid-column: 1 / -1;
+}
+
+.case-ops-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.case-ops-other-details {
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #475569;
+}
+
+.case-ops-other-summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #334155;
+  user-select: none;
+  padding: 2px 0;
+}
+
+.case-ops-other-details[open] .case-ops-delivery-fail-card {
+  margin-top: 8px;
 }
 
 .case-ops-req-top {
@@ -3104,8 +3157,8 @@ button:disabled {
 }
 
 .staff-chat-transcript {
-  flex: 1 !important;
-  min-height: 0 !important;
+  flex: 1 1 auto !important;
+  min-height: 180px !important;
   overflow-y: auto !important;
   padding: 20px 24px !important;
   display: flex !important;
