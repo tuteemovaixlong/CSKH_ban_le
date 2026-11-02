@@ -56,7 +56,7 @@ jobs:
           python3 scripts/check_live_e2e_contract.py
           bash -n deploy/cutover-postgres.sh
           bash -n deploy/rollout-public-web.sh
-          python3 -m pip install --only-binary=:all: --require-hashes -r requirements-graph.txt
+          python3 -m pip install --only-binary=:all: --require-hashes -r requirements-web.txt -r requirements-graph.txt
           python3 -m unittest discover -s tests -v
           docker build -t retailops:deploy .
           docker run --rm --network none --entrypoint sh retailops:deploy -c 'test -f /app/deploy/rollout-public-web.sh && test -f /app/deploy/cutover-postgres.sh && test -f /app/deploy/live-e2e.py'
