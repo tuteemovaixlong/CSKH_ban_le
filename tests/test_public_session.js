@@ -5,7 +5,8 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 class Element {
-  constructor() {
+  constructor(tag='') {
+    this.tagName=String(tag).toUpperCase();
     this.children=[]; this.dataset={}; this.value=''; this.disabled=false; this.textContent='';
     this.style={};
     this._classes=new Set();
@@ -22,7 +23,22 @@ class Element {
   }
   append(...nodes) { this.children.push(...nodes); }
   replaceChildren(...nodes) { this.children=nodes; }
-  querySelector() { return this.button ||= new Element(); }
+  querySelector() { return this.button ||= new Element('button'); }
+  querySelectorAll(sel='') {
+    const tags = sel.split(',').map(s=>s.trim().toUpperCase()).filter(Boolean);
+    const out = [];
+    const walk = n => {
+      if (!n || typeof n !== 'object') return;
+      for (const ch of (n.children || [])) {
+        if (ch && typeof ch === 'object') {
+          if (!tags.length || tags.includes(ch.tagName)) out.push(ch);
+          walk(ch);
+        }
+      }
+    };
+    walk(this);
+    return out;
+  }
   before() {}
   showModal() {this.open=true;}
   close() {this.open=false;}
@@ -38,7 +54,7 @@ const nodes=new Map(), get=id=>{
   if(!nodes.has(id)) nodes.set(id,new Element());
   return nodes.get(id);
 };
-const document={body:{dataset:{auth:'cookie'}},getElementById:get,createElement:()=>new Element(),
+const document={body:{dataset:{auth:'cookie'}},getElementById:get,createElement:tag=>new Element(tag),
   createTextNode:text=>({textContent:text}),querySelector:get,querySelectorAll:()=>[]};
 const requests=[];
 let authenticated=false, reloaded=false;
@@ -98,6 +114,43 @@ const context=vm.createContext({document,console,Intl,Date,URLSearchParams,Abort
     else if(url==='/api/cancellation-proposals') body={proposals:[{proposal_id:'saved-proposal-id',reason:'ordered_by_mistake',expires_at:Date.now()/1000+600,order:{id:'O-101',name:'Áo thun',amount:299000}}]};
     else if(url==='/api/events') body={events:[]};
     else if(url==='/api/conversations') body={conversation_id:'fixture-conversation',case_id:'case_ui_1',provider_id:'api',context:{}};
+    else if(/^\/api\/conversations\/[^/]+\/focus$/.test(url)) {
+      const payload = JSON.parse(options.body || '{}');
+      const ordList = mockOrders || [{id:'O-202',name:'Áo polo',variant:'M',amount:399000,status:'pending',version:1}];
+      const found = ordList.find(o => o.id === payload.order_id) || ordList[0];
+      body = { order: found, context: { order_id: found.id, product_id: found.product_id || 'P-101' }, message: 'Đã chọn đơn ' + found.id, source: 'store_data' };
+    }
+    else if(url==='/api/order-actions' && options.method==='POST') {
+      const payload = JSON.parse(options.body || '{}');
+      body = {
+        status: 'ok',
+        message: 'Đã gửi yêu cầu ' + payload.type + ' cho đơn ' + payload.order_id + ', chờ cửa hàng duyệt.',
+        request: {
+          request_id: 'oar_ui_fixture_1',
+          order_id: payload.order_id,
+          case_id: 'case_ui_1',
+          conversation_id: payload.conversation_id || 'fixture-conversation',
+          type: payload.type,
+          exchange_kind: payload.exchange_kind || null,
+          status: 'requested',
+          reason_code: payload.reason_code,
+          reason_text: payload.reason_text || null,
+          version: 1
+        }
+      };
+    }
+    else if(/^\/api\/order-actions\/[^/]+\/evidence$/.test(url) && options.method==='POST') {
+      body = {
+        status: 'ok',
+        evidence: {
+          evidence_id: 'ev_ui_fixture_1',
+          request_id: url.split('/')[3],
+          mime_type: (options.headers && options.headers['Content-Type']) || 'image/jpeg',
+          byte_size: 2048,
+          sha256: 'a'.repeat(64)
+        }
+      };
+    }
     else if(url==='/api/feedback') {
       if (forceFeedbackError) {
         status = forceFeedbackError.status;
@@ -512,6 +565,66 @@ function collectText(node) {
   assert.ok(get('staff-desk-notice').textContent.includes('Ca hỗ trợ đang do nhân viên khác phụ trách.'));
   assert.equal(get('staff-reply-input').value, 'Tin nhắn khi API lỗi');
   forceStaffReplyError = null;
+  closeStaffDeskDialogFn: await run('closeStaffDeskDialog()');
+
+  // R1-W3 Item 11: Customer UI order-action reason + optional image evidence -> single POST /api/order-actions + status notice in chat
+  mockSessionRole = 'customer';
+  mockOrders = [
+    { id: 'O-101', customer_id: 'C-001', name: 'Áo thun Essential', variant: 'Trắng / M', amount: 299000, status: 'pending', version: 1, product_id: 'P-101' },
+    { id: 'O-102', customer_id: 'C-001', name: 'Áo khoác Everyday', variant: 'Đen / L', amount: 520000, status: 'delivered', version: 2, product_id: 'P-102' }
+  ];
+  await run('canCancel = true; currentSessionRole = "customer"; conversationId = "fixture-conversation"; selected = "O-102"; refresh()');
+  assert.ok(get('order-details').children.some(n => n.textContent === 'Yêu cầu trả / đổi hàng'));
+  assert.ok(!get('order-details').children.some(n => n.textContent === 'Yêu cầu hủy đơn này'));
+
+  const oaBeforePrepare = requests.filter(r => r.url === '/api/order-actions').length;
+  await run('chooseReason("O-102", "exchange", "size")');
+  // Opening reason UI creates ZERO requests!
+  assert.equal(requests.filter(r => r.url === '/api/order-actions').length, oaBeforePrepare);
+
+  const lastMsgRow = get('messages').children.at(-1);
+  const oaCard = lastMsgRow.children.find(c => c && c.className && c.className.includes('order-action-card'));
+  assert.ok(oaCard, 'Order action reason card must be rendered in chat');
+  const radios = oaCard.querySelectorAll('input').filter(i => i.type === 'radio');
+  assert.ok(radios.length >= 2);
+  radios[0].onchange(); // Select 'wrong_size'
+  const fileInput = oaCard.querySelectorAll('input').find(i => i.type === 'file');
+  fileInput.files = [{ name: 'anh_size.jpg', type: 'image/jpeg', size: 2048 }];
+  fileInput.onchange();
+  const noteArea = oaCard.querySelectorAll('textarea')[0];
+  noteArea.value = 'Áo hơi chật vai, muốn đổi lên XL';
+  const submitBtn = oaCard.querySelectorAll('button').find(b => b.textContent === 'Xác nhận gửi yêu cầu');
+  assert.equal(submitBtn.disabled, false);
+  await submitBtn.onclick();
+
+  const oaCalls = requests.filter(r => r.url === '/api/order-actions').slice(oaBeforePrepare);
+  assert.equal(oaCalls.length, 1, 'Confirming must send exactly one POST /api/order-actions');
+  const oaPayload = JSON.parse(oaCalls[0].options.body);
+  assert.equal(oaPayload.order_id, 'O-102');
+  assert.equal(oaPayload.type, 'exchange');
+  assert.equal(oaPayload.exchange_kind, 'size');
+  assert.equal(oaPayload.expected_order_version, 2);
+  assert.equal(oaPayload.reason_code, 'wrong_size');
+  assert.equal(oaPayload.reason_text, 'Áo hơi chật vai, muốn đổi lên XL');
+  assert.equal(submitBtn.disabled, true);
+  assert.equal(requests.filter(r => r.url === '/api/order-actions/oar_ui_fixture_1/evidence').length, 1);
+
+  // Customer receives system_order_action status notice in chat!
+  mockTranscriptResponse = {
+    conversation: { id: 'fixture-conversation' },
+    case: { case_id: 'case_ui_1', status: 'in_progress', version: 2, has_active_timer: false },
+    turns: [
+      {
+        id: 901,
+        messages: JSON.stringify([{ role: 'assistant', content: 'Yêu cầu đổi hàng (đổi size) của đơn O-102 đã được duyệt.' }]),
+        result: JSON.stringify({ author: 'system_order_action', order_id: 'O-102', message: 'Yêu cầu đổi hàng (đổi size) của đơn O-102 đã được duyệt.' })
+      }
+    ],
+    feedbacks: []
+  };
+  await run('pollHumanChat()');
+  assert.ok(collectText(get('messages')).includes('Yêu cầu đổi hàng (đổi size) của đơn O-102 đã được duyệt.'));
+  mockTranscriptResponse = null;
 
   await get('logout').onclick();
   assert.equal(authenticated,false);assert.equal(reloaded,true);

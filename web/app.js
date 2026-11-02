@@ -5,6 +5,11 @@ const byId = id => document.getElementById(id);
 const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; };
 const statuses = {pending: 'Chờ xử lý', delivered: 'Đã giao', cancelled: 'Đã hủy'};
 const reasons = {ordered_by_mistake: 'Tôi đặt nhầm', no_longer_needed: 'Tôi không còn cần'};
+const orderActionReasons = {
+  cancel: {ordered_by_mistake: 'Tôi đặt nhầm', no_longer_needed: 'Tôi không còn cần', changed_mind: 'Tôi đổi ý'},
+  return: {defective_item: 'Sản phẩm lỗi / hư hỏng', wrong_item: 'Giao sai sản phẩm / mẫu', not_as_described: 'Không giống mô tả', no_longer_needed: 'Tôi không còn nhu cầu'},
+  exchange: {wrong_size: 'Không vừa size / muốn đổi size', defective_item: 'Sản phẩm lỗi (đổi 1-1)', wrong_item: 'Giao sai mẫu (đổi 1-1)'}
+};
 const money = value => new Intl.NumberFormat('vi-VN', {style: 'currency', currency: 'VND'}).format(value);
 let token = '', orders = [], selected = null, pending = null, busy = false, conversationId = null;
 let providerId = 'custom', providerOptions = [];
@@ -376,6 +381,10 @@ async function pollBotCaseTimer() {
       if (resObj.author === 'system_reminder' && resObj.message) {
         renderedStaffTurnIds.add(t.id);
         message(resObj.message, 'assistant', 'case_timer');
+      } else if (resObj.author === 'system_order_action' && resObj.message) {
+        renderedStaffTurnIds.add(t.id);
+        message(resObj.message, 'assistant', 'store_data');
+        refresh().catch(() => {});
       }
     }
     const c = data.case || null;
@@ -415,6 +424,10 @@ async function pollHumanChat() {
       if (resObj.author === 'staff' && resObj.message) {
         humanMessage(resObj.message, resObj.staff_name || 'Chuyên viên CSKH');
         setModelStatus('Đã nhận phản hồi', resObj.staff_name || 'Chuyên viên CSKH');
+      } else if (resObj.author === 'system_order_action' && resObj.message) {
+        message(resObj.message, 'assistant', 'store_data');
+        setModelStatus('Cập nhật yêu cầu đơn hàng', resObj.order_id || 'Đã cập nhật trạng thái');
+        refresh().catch(() => {});
       }
     }
 
@@ -737,16 +750,26 @@ function renderOrder() {
   const total = el('div', 'detail-row total');
   total.append(el('span', '', 'Tổng cộng'), el('strong', '', money(order.amount)));
   area.append(top, el('p', 'order-date', 'Đơn ' + (order.customer_id ? ('khách ' + order.customer_id + ' · ') : '') + 'Phiên bản ' + order.version), item, total);
-  area.append(el('p', 'order-policy', order.status === 'pending' ? 'Có thể yêu cầu hủy. Cần chọn lý do và xác nhận.' : order.status === 'delivered' ? 'Đơn đã giao không đủ điều kiện hủy.' : 'Đơn đã hủy. Trạng thái được lưu trên máy chủ.'));
+  area.append(el('p', 'order-policy', order.status === 'pending'
+    ? 'Có thể yêu cầu hủy. Cần chọn lý do và xác nhận gửi cửa hàng duyệt.'
+    : order.status === 'delivered'
+      ? 'Đơn đã giao: có thể gửi yêu cầu trả hàng hoặc đổi hàng kèm ảnh bằng chứng.'
+      : 'Đơn đã hủy. Trạng thái được lưu trên máy chủ.'));
 
   const lookup = el('button', 'order-action', 'Tra cứu đơn này');
   lookup.onclick = () => act(() => lookupOrder(order.id));
   area.append(lookup);
 
   if (canCancel) {
-    const cancel = el('button', 'order-action', 'Yêu cầu hủy đơn này');
-    cancel.onclick = () => act(() => chooseReason(order.id));
-    area.append(cancel);
+    if (order.status === 'pending') {
+      const cancel = el('button', 'order-action', 'Yêu cầu hủy đơn này');
+      cancel.onclick = () => act(() => chooseReason(order.id, 'cancel'));
+      area.append(cancel);
+    } else if (order.status === 'delivered') {
+      const retEx = el('button', 'order-action', 'Yêu cầu trả / đổi hàng');
+      retEx.onclick = () => act(() => chooseReason(order.id, 'return'));
+      area.append(retEx);
+    }
   } else {
     area.append(el('p', 'order-policy', 'Tài khoản của bạn có quyền xem; không được tạo yêu cầu hủy.'));
   }
@@ -781,26 +804,217 @@ async function lookupOrder(id) {
   showContext(result.context); message(result.message, 'assistant', result.source); await refresh();
 }
 
-async function chooseReason(id) {
+async function uploadOrderActionEvidence(requestId, file) {
+  const response = await fetch('/api/order-actions/' + encodeURIComponent(requestId) + '/evidence', {
+    method: 'POST',
+    headers: {
+      ...(cookieAuth ? {} : {Authorization: 'Bearer ' + token}),
+      'Content-Type': (file && file.type) || 'application/octet-stream'
+    },
+    body: file,
+    credentials: cookieAuth ? 'same-origin' : 'omit',
+    cache: 'no-store',
+    signal: AbortSignal.timeout(150000),
+  });
+  let result = null;
+  try {
+    if (typeof response.json === 'function') result = await response.json();
+  } catch (_) {}
+  if (!response.ok) {
+    if (response.status === 401) lockPage(true);
+    const err = new Error((result && result.message) || ('Không tải được ảnh bằng chứng (HTTP ' + response.status + ').'));
+    err.status = response.status;
+    throw err;
+  }
+  return result;
+}
+
+async function chooseReason(id, requestedType = null, requestedExchangeKind = null) {
   if (!canCancel) { message('Tài khoản của bạn có quyền xem; không được tạo yêu cầu hủy.', 'assistant', 'interface'); return; }
   const result = await api('/api/conversations/' + conversationId + '/focus', {order_id: id});
   const order = result.order; showContext(result.context); selected = order.id; await refresh();
-  if (order.status !== 'pending') { message('Đơn ' + id + ' ' + statuses[order.status].toLowerCase() + ', không đủ điều kiện hủy.'); return; }
-  const row = message('Bạn chọn lý do hủy ' + id + ', rồi xem lại trước khi xác nhận nhé.', 'assistant', 'store_data');
-  const card = el('div', 'proposal'), group = 'reason-' + crypto.randomUUID(); let reason = null;
-  card.append(el('h3', '', 'Yêu cầu hủy · ' + id));
-  const button = el('button', 'primary', 'Xem lại và xác nhận'); button.disabled = true;
-  for (const [value, label] of Object.entries(reasons)) {
-    const line = el('label'), input = el('input'); input.type = 'radio'; input.name = group; input.value = value;
-    input.onchange = () => { reason = value; button.disabled = busy; };
-    line.append(input, document.createTextNode(label)); card.append(line);
+  let actionType = 'cancel';
+  let exchangeKind = null;
+  if (order.status === 'pending') {
+    actionType = 'cancel';
+  } else if (order.status === 'delivered') {
+    actionType = (requestedType === 'exchange' || requestedType === 'return') ? requestedType : 'return';
+    exchangeKind = actionType === 'exchange' ? (requestedExchangeKind === 'one_to_one' ? 'one_to_one' : 'size') : null;
+  } else {
+    message('Đơn ' + id + ' ' + (statuses[order.status] || order.status).toLowerCase() + ', không đủ điều kiện tạo yêu cầu.');
+    return;
   }
+
+  const introText = actionType === 'cancel'
+    ? ('Bạn chọn lý do hủy ' + id + ', có thể đính kèm ảnh nếu cần, rồi bấm xác nhận để gửi yêu cầu nhé.')
+    : ('Bạn chọn hình thức trả/đổi và lý do cho đơn ' + id + ', đính kèm ảnh bằng chứng nếu muốn, rồi bấm xác nhận nhé.');
+  const row = message(introText, 'assistant', 'store_data');
+  const card = el('div', 'proposal order-action-card');
+  const group = 'reason-' + crypto.randomUUID();
+  let reason = null;
+  let selectedFiles = [];
+
+  const titleHeading = el('h3', '');
+  const updateHeading = () => {
+    if (actionType === 'cancel') titleHeading.textContent = 'Yêu cầu hủy · ' + id;
+    else if (actionType === 'return') titleHeading.textContent = 'Yêu cầu trả hàng · ' + id;
+    else titleHeading.textContent = 'Yêu cầu đổi hàng (' + (exchangeKind === 'one_to_one' ? 'Đổi 1-1' : 'Đổi size') + ') · ' + id;
+  };
+  updateHeading();
+  card.append(titleHeading);
+
+  const button = el('button', 'primary order-action-submit-btn', 'Xác nhận gửi yêu cầu');
+  button.type = 'button';
+  button.disabled = true;
+
+  let kindSelect = null;
+  const reasonsBox = el('div', 'order-action-reasons');
+  const renderReasons = () => {
+    reasonsBox.replaceChildren();
+    reason = null;
+    button.disabled = true;
+    const opts = orderActionReasons[actionType] || {};
+    for (const [value, label] of Object.entries(opts)) {
+      const line = el('label'), input = el('input');
+      input.type = 'radio'; input.name = group; input.value = value;
+      input.onchange = () => { reason = value; button.disabled = busy; };
+      line.append(input, document.createTextNode(label));
+      reasonsBox.append(line);
+    }
+  };
+
+  if (order.status === 'delivered') {
+    const kindRow = el('div', 'order-action-field');
+    const kindLabel = el('span', 'order-action-field-label', 'Hình thức yêu cầu:');
+    kindSelect = el('select', 'order-action-kind-select');
+    for (const [val, lbl] of [
+      ['return', 'Trả hàng'],
+      ['exchange:size', 'Đổi hàng · Đổi size'],
+      ['exchange:one_to_one', 'Đổi hàng · Đổi 1-1']
+    ]) {
+      const opt = el('option', '', lbl);
+      opt.value = val;
+      kindSelect.append(opt);
+    }
+    kindSelect.value = actionType === 'exchange' ? ('exchange:' + (exchangeKind || 'size')) : 'return';
+    kindSelect.onchange = () => {
+      const val = kindSelect.value;
+      if (val.startsWith('exchange:')) {
+        actionType = 'exchange';
+        exchangeKind = val.split(':')[1] || 'size';
+      } else {
+        actionType = 'return';
+        exchangeKind = null;
+      }
+      updateHeading();
+      renderReasons();
+    };
+    kindRow.append(kindLabel, kindSelect);
+    card.append(kindRow);
+  }
+
+  renderReasons();
+  card.append(reasonsBox);
+
+  const noteInput = el('textarea', 'order-action-note');
+  noteInput.rows = 2;
+  noteInput.maxLength = 500;
+  noteInput.placeholder = 'Mô tả thêm tình trạng hoặc yêu cầu (tùy chọn, tối đa 500 ký tự)…';
+  card.append(noteInput);
+
+  const evWrap = el('div', 'order-action-evidence-wrap');
+  const evInput = el('input', 'order-action-evidence-input');
+  evInput.type = 'file';
+  evInput.accept = 'image/jpeg,image/png,image/webp';
+  evInput.multiple = true;
+  const evHint = el('small', 'order-action-evidence-hint', 'Đính kèm ảnh bằng chứng (tùy chọn, tối đa 5 ảnh JPEG/PNG/WebP, mỗi ảnh ≤ 10MB).');
+  const cardError = el('p', 'proposal-error');
+  cardError.setAttribute('role', 'alert');
+
+  evInput.onchange = () => {
+    cardError.textContent = '';
+    const files = Array.from(evInput.files || []);
+    if (files.length > 5) {
+      selectedFiles = [];
+      evInput.value = '';
+      cardError.textContent = 'Chỉ được đính kèm tối đa 5 ảnh cho mỗi yêu cầu.';
+      evHint.textContent = 'Chưa chọn ảnh bằng chứng.';
+      return;
+    }
+    for (const f of files) {
+      if (f.type && !['image/jpeg', 'image/png', 'image/webp'].includes(f.type)) {
+        selectedFiles = [];
+        evInput.value = '';
+        cardError.textContent = 'Chỉ chấp nhận ảnh định dạng JPEG, PNG hoặc WebP.';
+        evHint.textContent = 'Chưa chọn ảnh bằng chứng.';
+        return;
+      }
+      if (typeof f.size === 'number' && f.size > 10485760) {
+        selectedFiles = [];
+        evInput.value = '';
+        cardError.textContent = 'Mỗi ảnh bằng chứng không được vượt quá 10MB.';
+        evHint.textContent = 'Chưa chọn ảnh bằng chứng.';
+        return;
+      }
+    }
+    selectedFiles = files;
+    evHint.textContent = files.length
+      ? ('Đã chọn ' + files.length + ' ảnh bằng chứng: ' + files.map(f => f.name).join(', '))
+      : 'Đính kèm ảnh bằng chứng (tùy chọn, tối đa 5 ảnh JPEG/PNG/WebP, mỗi ảnh ≤ 10MB).';
+  };
+  evWrap.append(evInput, evHint);
+  card.append(evWrap, cardError);
+
   button.onclick = () => act(async () => {
-    const proposal = await api('/api/cancellation-proposals', {order_id: id, order_version: order.version, cancel_reason: reason});
-    card.querySelectorAll('button,input').forEach(n => { n.disabled = true; delete n.dataset.busyDisabled; });
-    openProposal(proposal); await refresh();
+    if (!reason) return;
+    cardError.textContent = '';
+    const payload = {
+      order_id: id,
+      type: actionType,
+      expected_order_version: order.version,
+      reason_code: reason,
+    };
+    if (conversationId) payload.conversation_id = conversationId;
+    if (actionType === 'exchange') payload.exchange_kind = exchangeKind || 'size';
+    const cleanNote = (noteInput.value || '').trim();
+    if (cleanNote) payload.reason_text = cleanNote.slice(0, 500);
+
+    let created;
+    try {
+      created = await api('/api/order-actions', payload);
+    } catch (err) {
+      cardError.textContent = err.message || 'Không gửi được yêu cầu đơn hàng.';
+      return;
+    }
+    const reqObj = created.request || {};
+    card.querySelectorAll('button,input,select,textarea').forEach(n => { n.disabled = true; delete n.dataset.busyDisabled; });
+
+    let uploadedCount = 0;
+    let uploadErr = null;
+    for (const f of selectedFiles) {
+      try {
+        await uploadOrderActionEvidence(reqObj.request_id, f);
+        uploadedCount += 1;
+      } catch (err) {
+        uploadErr = err;
+        break;
+      }
+    }
+    if (reqObj.case_id) currentCaseId = reqObj.case_id;
+    setHumanMode(true, 'Chuyên viên CSKH');
+    let confirmMsg = created.message || ('Đã gửi yêu cầu cho đơn ' + id + ', chờ cửa hàng duyệt.');
+    if (uploadedCount > 0) {
+      confirmMsg += ' (Đã đính kèm ' + uploadedCount + ' ảnh bằng chứng.)';
+    }
+    if (uploadErr) {
+      confirmMsg += ' Lưu ý tải ảnh: ' + uploadErr.message;
+    }
+    message(confirmMsg, 'assistant', 'store_data');
+    await refresh();
   });
-  card.append(button, el('small', '', 'Chọn lý do rồi kiểm tra đơn trước khi xác nhận.')); row.append(card);
+
+  card.append(button, el('small', '', 'Yêu cầu sẽ được chuyển tới nhân viên cửa hàng xét duyệt và thông báo trạng thái ngay trong hội thoại này.'));
+  row.append(card);
 }
 
 function openProposal(proposal) {
@@ -1109,8 +1323,13 @@ async function send(text, requestId = crypto.randomUUID(), retry = false, attach
   } else { showContext(result.context); }
   setModelStatus(result.replayed ? 'Kết quả đã lưu' : 'Đã phản hồi',
     selectedProvider()?.label || 'Model đã chọn');
-  if (result.action === 'choose_cancel_reason') await chooseReason(result.order.id);
-  else await refresh();
+  if (result.action === 'choose_cancel_reason' || result.action === 'choose_order_action_reason') {
+    await chooseReason(
+      result.order.id,
+      result.order_action?.action_type || (result.action === 'choose_cancel_reason' ? 'cancel' : 'return'),
+      result.order_action?.exchange_kind || null
+    );
+  } else await refresh();
   renderSidebarConversations().catch(() => {});
 }
 
@@ -1168,6 +1387,8 @@ async function loadConversation(cid) {
         hasHumanSupport = true;
       } else if (res.author === 'system_reminder') {
         message(res.message || '', 'assistant', 'case_timer');
+      } else if (res.author === 'system_order_action') {
+        message(res.message || '', 'assistant', 'store_data');
       } else {
         // Standard AI turn
         let userMsg = null;

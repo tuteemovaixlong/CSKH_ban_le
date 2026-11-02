@@ -1837,5 +1837,156 @@ class PhaseR1W3OutboxWorkerJsonlEnvelopeManifestAndCliTests(unittest.TestCase):
         self.assertEqual(cli_json["totals"], {"pending": 0, "published": 3, "dead": 1})
 
 
+class PhaseR1W3AgentPrepareOrderActionTests(unittest.TestCase):
+    """Item 11: prepare_order_action (and alias prepare_cancellation) strictly read-only, uncached, and action-aware."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="r1-w3-item11-")
+        self.addCleanup(self.tmp.cleanup)
+        self.store = BusinessStore(Path(self.tmp.name) / "business.sqlite3")
+        self.store.seed()
+
+        class ScriptedAgent:
+            def __init__(self):
+                self.replies = []
+
+            def chat(self, _messages, _allow_tools, _timeout):
+                return self.replies.pop(0)
+
+            def inspect(self):
+                return {
+                    "name": "qwen3.5:4b",
+                    "digest": "sha256:fixture",
+                    "details": {},
+                    "ollama_version": "0.6.0",
+                    "agent_protocol": "retailops-agent-v2",
+                    "provider": "custom",
+                    "identity_source": "fixture",
+                }
+
+        self.model = ScriptedAgent()
+        self.app = Application(self.store, {}, self.model, orchestrator="single_agent")
+        self.cid = self.store.new_conversation("C-001")["conversation_id"]
+
+    @staticmethod
+    def _tool_reply(name: str, args: dict):
+        return {
+            "message": {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{"function": {"name": name, "arguments": args}}],
+            }
+        }
+
+    @staticmethod
+    def _text_reply(text: str):
+        return {"message": {"role": "assistant", "content": text}}
+
+    def _chat(self, text: str) -> dict:
+        return self.app.chat(
+            "C-001",
+            {
+                "conversation_id": self.cid,
+                "text": text,
+                "request_id": f"req-{secrets.token_hex(12)}",
+            },
+        )
+
+    def test_item11_prepare_order_action_and_alias_are_strictly_readonly_and_uncached(self):
+        from agent_protocol import ProtocolError, TOOLS, validate_tool
+
+        self.assertEqual(len(TOOLS), 12)
+        self.assertIn("prepare_order_action", {t["function"]["name"] for t in TOOLS})
+
+        # Protocol validation: prepare_order_action & alias prepare_cancellation reject write flags or bad enums
+        validate_tool("prepare_order_action", {"order_id": "O-101"})
+        validate_tool("prepare_order_action", {"order_id": "O-102", "action_type": "return"})
+        validate_tool("prepare_order_action", {"order_id": "O-102", "action_type": "exchange", "exchange_kind": "one_to_one"})
+        validate_tool("prepare_cancellation", {"order_id": "O-101"})
+        for bad_name, bad_args in (
+            ("prepare_order_action", {"order_id": "O-101", "confirmed": True}),
+            ("prepare_order_action", {"order_id": "O-101", "action_type": "refund"}),
+            ("prepare_order_action", {"order_id": "O-102", "action_type": "return", "exchange_kind": "size"}),
+            ("prepare_cancellation", {"order_id": "O-101", "action_type": "return"}),
+        ):
+            with self.assertRaises(ProtocolError):
+                validate_tool(bad_name, bad_args)
+
+        # 1. prepare_order_action(O-101, cancel) -> eligible, opens reason card, creates ZERO rows!
+        self.model.replies = [
+            self._tool_reply("prepare_order_action", {"order_id": "O-101", "action_type": "cancel"}),
+            self._text_reply("Vui lòng chọn lý do hủy đơn O-101 trên giao diện."),
+        ]
+        res_cancel = self._chat("Tôi muốn hủy đơn O-101")
+        self.assertEqual(res_cancel["action"], "choose_cancel_reason")
+        self.assertEqual(res_cancel["order"]["id"], "O-101")
+        self.assertEqual(res_cancel["order_action"], {"action_type": "cancel", "exchange_kind": None, "order_id": "O-101"})
+
+        # 2. prepare_order_action(O-102, exchange, size) on delivered order -> eligible, choose_order_action_reason, ZERO rows!
+        self.model.replies = [
+            self._tool_reply(
+                "prepare_order_action",
+                {"order_id": "O-102", "action_type": "exchange", "exchange_kind": "size"},
+            ),
+            self._text_reply("Đơn O-102 đủ điều kiện đổi size, vui lòng chọn lý do và xác nhận."),
+        ]
+        res_ex = self._chat("Tôi muốn đổi size cho đơn O-102")
+        self.assertEqual(res_ex["action"], "choose_order_action_reason")
+        self.assertEqual(
+            res_ex["order_action"],
+            {"action_type": "exchange", "exchange_kind": "size", "order_id": "O-102"},
+        )
+
+        # 3. Alias prepare_cancellation(O-101) still works identically and remains read-only
+        self.model.replies = [
+            self._tool_reply("prepare_cancellation", {"order_id": "O-101"}),
+            self._text_reply("Mở chọn lý do hủy đơn O-101."),
+        ]
+        res_alias = self._chat("Hủy giúp tôi đơn O-101")
+        self.assertEqual(res_alias["action"], "choose_cancel_reason")
+
+        # 4. Ineligible combinations (return on pending O-101; cancel on delivered O-102) -> action == 'reply'
+        self.model.replies = [
+            self._tool_reply("prepare_order_action", {"order_id": "O-101", "action_type": "return"}),
+            self._text_reply("Đơn O-101 chưa giao nên chưa thể trả hàng."),
+        ]
+        self.assertEqual(self._chat("Trả hàng đơn O-101")["action"], "reply")
+
+        self.model.replies = [
+            self._tool_reply("prepare_order_action", {"order_id": "O-102", "action_type": "cancel"}),
+            self._text_reply("Đơn O-102 đã giao nên không thể hủy."),
+        ]
+        self.assertEqual(self._chat("Hủy đơn O-102")["action"], "reply")
+
+        # Verify ZERO requests, ZERO decisions, ZERO proposals, ZERO handoffs, ZERO outbox rows were created by tools!
+        with self.store.connection() as db:
+            for tbl in ("order_action_requests", "order_action_decisions", "proposals", "handoff_episodes", "integration_outbox"):
+                self.assertEqual(db.execute(f"SELECT COUNT(*) FROM {tbl}").fetchone()[0], 0, tbl)
+            self.assertEqual(db.execute("SELECT status FROM orders WHERE id='O-101'").fetchone()[0], "pending")
+            self.assertEqual(db.execute("SELECT status FROM orders WHERE id='O-102'").fetchone()[0], "delivered")
+
+        # Verify prepare_order_action is NEVER cached in tool_cache
+        self.assertIsNone(
+            self.app.tool_cache.get("default", "C-001", "prepare_order_action", {"order_id": "O-101", "action_type": "cancel"})
+        )
+
+        # 5. Once customer submits an open request on O-102, prepare_order_action reports ineligible (has_open_request=True)
+        self.store.create_order_action_request(
+            "C-001",
+            {
+                "order_id": "O-102",
+                "type": "return",
+                "expected_order_version": 1,
+                "reason_code": "defective_item",
+                "conversation_id": self.cid,
+            },
+        )
+        self.model.replies = [
+            self._tool_reply("prepare_order_action", {"order_id": "O-102", "action_type": "return"}),
+            self._text_reply("Đơn O-102 đã có yêu cầu đang chờ xử lý."),
+        ]
+        self.assertEqual(self._chat("Cho tôi gửi thêm yêu cầu trả hàng O-102")["action"], "reply")
+
+
 if __name__ == "__main__":
     unittest.main()

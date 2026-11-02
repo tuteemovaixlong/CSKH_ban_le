@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 
+from retailops.core import ORDER_ACTION_REASONS
 from retailops_conversation import normalize
 from retailops.knowledge.tool import KnowledgeTool
 
@@ -17,6 +18,7 @@ class BoundTools:
         self.identity = identity
         self.versions = {}
         self.cancel_order = None
+        self.prepared_order_action = None
         self.can_cancel = bool(can_cancel) and not bool(read_only)
         self.read_only = bool(read_only)
         self.user_text = str(user_text or '')
@@ -91,17 +93,76 @@ class BoundTools:
             order = self.read_order(oid) if oid else None
             return {'order': order, 'product': self.catalog.products.get(self.context['product_id']),
                     'note': 'These are current focused records, not permission to change them.'}
-        if name == 'prepare_cancellation':
+        if name in ('prepare_order_action', 'prepare_cancellation'):
             if not self.can_cancel:
-                return {'error': 'permission_denied', 'message': 'This account can view orders but cannot request cancellation.'}
+                return {'error': 'permission_denied', 'message': 'This account can view orders but cannot request order actions.'}
+            if name == 'prepare_cancellation':
+                action_type = 'cancel'
+                exchange_kind = None
+            else:
+                action_type = str(args.get('action_type') or 'cancel').strip().lower()
+                if action_type not in ('cancel', 'return', 'exchange'):
+                    return {'error': 'invalid_tool_arguments', 'message': 'action_type must be cancel, return, or exchange.'}
+                raw_kind = args.get('exchange_kind')
+                if action_type == 'exchange':
+                    exchange_kind = str(raw_kind or 'size').strip().lower()
+                    if exchange_kind not in ('size', 'one_to_one'):
+                        return {'error': 'invalid_tool_arguments', 'message': 'exchange_kind must be size or one_to_one.'}
+                elif raw_kind is not None:
+                    return {'error': 'invalid_tool_arguments', 'message': 'exchange_kind is only allowed when action_type is exchange.'}
+                else:
+                    exchange_kind = None
             order = self.read_order(args['order_id'])
-            eligible = order['status'] == 'pending'
-            self.cancel_order = order if eligible else None
-            return {'order': order, 'eligible': eligible, 'transaction_performed': False,
-                    'next_step': 'User must select a reason and press the separate confirmation button.' if eligible
-                    else 'Order cannot be cancelled in its current state.'}
-        if name in ('clear_cancellation', 'reset_cancellation'):
+            has_open_request = False
+            try:
+                with self.store.connection() as db:
+                    open_row = db.execute(
+                        'SELECT 1 FROM order_action_requests WHERE order_id = ? AND closed_at IS NULL LIMIT 1',
+                        (order['id'],),
+                    ).fetchone()
+                    has_open_request = open_row is not None
+            except Exception:
+                has_open_request = False
+            if action_type == 'cancel':
+                eligible = (order['status'] == 'pending') and (not has_open_request)
+            else:
+                eligible = (order['status'] == 'delivered') and (not has_open_request)
+            reason_options = {
+                code: label
+                for code, label in ORDER_ACTION_REASONS.get(action_type, {}).items()
+                if code != 'delivery_failed'
+            }
+            if eligible:
+                self.prepared_order_action = {
+                    'order': order,
+                    'action_type': action_type,
+                    'exchange_kind': exchange_kind,
+                }
+                self.cancel_order = order if action_type == 'cancel' else None
+            else:
+                self.prepared_order_action = None
+                self.cancel_order = None
+            if eligible:
+                next_step = 'User must select a reason and press the separate confirmation button.'
+            elif has_open_request:
+                next_step = 'Order already has an open order-action request.'
+            elif action_type == 'cancel':
+                next_step = 'Order cannot be cancelled in its current state.'
+            else:
+                next_step = f'Order is not eligible for {action_type} in its current state.'
+            return {
+                'order': order,
+                'action_type': action_type,
+                'exchange_kind': exchange_kind,
+                'eligible': eligible,
+                'has_open_request': has_open_request,
+                'reasons': reason_options,
+                'transaction_performed': False,
+                'next_step': next_step,
+            }
+        if name in ('clear_cancellation', 'reset_cancellation', 'clear_order_action'):
             self.cancel_order = None
+            self.prepared_order_action = None
             return {'cleared': True}
         if name == 'get_runtime_info':
             return {k: self.identity.get(k) for k in ('name', 'digest', 'details', 'ollama_version', 'agent_protocol', 'provider', 'identity_source')}

@@ -101,8 +101,8 @@ def filter_system_prompt_for_tools(system_text, allowed_tools):
         if 'search_knowledge' in line and 'search_knowledge' not in allowed_set:
             if 'For store policies, returns, shipping guidance' in line:
                 continue
-        if 'prepare_cancellation' in line and 'prepare_cancellation' not in allowed_set:
-            if 'The only cancellation-related tool is prepare_cancellation' in line:
+        if ('prepare_order_action' in line or 'prepare_cancellation' in line) and not ({'prepare_order_action', 'prepare_cancellation'} & allowed_set):
+            if 'The only cancellation-related tool is prepare_cancellation' in line or 'The only order-action preparation tool is prepare_order_action' in line:
                 continue
         lines.append(line)
     return '\n'.join(lines)

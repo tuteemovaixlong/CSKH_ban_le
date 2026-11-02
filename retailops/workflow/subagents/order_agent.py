@@ -40,7 +40,7 @@ ORDER_SYSTEM_PROMPT = (
     'Missing carrier information, payment details, or shipping address means the synthetic demo records do not provide those fields. '
     'Never claim or invent that missing fields are caused by status being pending or delivered. '
     'Do not call search_knowledge or get_runtime_info; policy inquiries are handled by policy specialist. '
-    'Never call prepare_cancellation or register_complaint; cancellation requests, returns, and disputes are handled exclusively by dispute specialist. '
+    'Never call prepare_order_action, prepare_cancellation, or register_complaint; cancellation requests, returns, and disputes are handled exclusively by dispute specialist. '
     'These tools do not file complaints, issue vouchers, cancel orders or promise redelivery. '
     'Do not claim any of those actions have occurred. For a status-only question get_order is enough. '
     'Track shipment only for a delivery question; missing tracking remains unknown. '
