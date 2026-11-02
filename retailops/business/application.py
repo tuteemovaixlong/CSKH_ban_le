@@ -39,7 +39,9 @@ class Application:
         self.inference_gate = getattr(self, 'inference_gate', None) or InferenceGate()
         self.overload_429_count = 0
         self.semantic_cache = SemanticCache(min_similarity=0.65)
-        self.tenant_id = tenant_id or 'default'
+        self.tenant_id = tenant_id or getattr(self.store, 'tenant_id', None) or 'default'
+        if getattr(self.store, 'tenant_id', None) in (None, 'default') and self.tenant_id != 'default':
+            self.store.tenant_id = self.tenant_id
         self.tool_cache = tool_cache if tool_cache is not None else ToolCache(default_ttl=180.0)
         self.internal_events = []
         if orchestrator is None:

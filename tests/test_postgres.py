@@ -133,8 +133,10 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
             results = list(pool.map(lambda _: confirm(), range(2)))
         self.assertEqual(sum(bool(r.get('replayed')) for r in results), 1)
-        self.assertEqual(store.lookup('C-001', 'O-101')['version'], 2)
-        self.assertEqual(sum(e['kind'] == 'order_cancelled' for e in store.events('C-001')), 1)
+        self.assertEqual(store.lookup('C-001', 'O-101')['version'], 1)
+        self.assertEqual(store.lookup('C-001', 'O-101')['status'], 'pending')
+        self.assertEqual(len(store.list_customer_order_actions('C-001')), 1)
+        self.assertEqual(sum(e['kind'] == 'order_action_requested' for e in store.events('C-001')), 1)
 
     def test_two_different_proposals_cannot_cancel_same_order_twice(self):
         store = self.sessions.business_store('shop-a')
@@ -149,8 +151,8 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             except ApiError as error:
                 return error.code
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-            self.assertCountEqual(list(pool.map(confirm, range(2))), ['ok', 'stale_order'])
-        self.assertEqual(sum(e['kind'] == 'order_cancelled' for e in store.events('C-001')), 1)
+            self.assertCountEqual(list(pool.map(confirm, range(2))), ['ok', 'order_action_conflict'])
+        self.assertEqual(sum(e['kind'] == 'order_action_requested' for e in store.events('C-001')), 1)
 
     def test_quota_reservation_is_shared_across_process_connections(self):
         barrier = threading.Barrier(2)
@@ -180,7 +182,9 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         self.sessions.purge()
         self.assertEqual(self.request('/api/orders', cookie=alice)[0], 401)
         self.restart()
-        self.assertEqual(self.request('/api/orders/O-101', cookie=self.login(self.alice))[1]['order']['status'], 'cancelled')
+        relogged = self.login(self.alice)
+        self.assertEqual(self.request('/api/orders/O-101', cookie=relogged)[1]['order']['status'], 'pending')
+        self.assertEqual(self.request('/api/order-actions', cookie=relogged)[1]['order_actions'][0]['status'], 'requested')
 
     def test_missing_schema_is_not_recreated_by_login_or_request(self):
         from psycopg import sql
@@ -214,15 +218,17 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         self.restart()
         self.assertEqual(self.request('/api/orders', cookie=cookie)[0], 401)
         current = self.login(('unused', token))
-        self.assertEqual(self.request('/api/orders/O-101', cookie=current)[1]['order']['status'], 'cancelled')
+        self.assertEqual(self.request('/api/orders/O-101', cookie=current)[1]['order']['status'], 'pending')
+        self.assertEqual(self.request('/api/order-actions', cookie=current)[1]['order_actions'][0]['status'], 'requested')
         store = self.sessions.business_store('old-shop')
         self.assertTrue(store.confirm('C-001', proposal['proposal_id'], {'confirmed': True}, 'import-confirm-key')['replayed'])
         store.lookup('C-001', 'O-101')  # Sequence repaired: new events cannot collide with imported IDs.
-        self.assertEqual(sum(e['kind'] == 'order_cancelled' for e in store.events('C-001')), 1)
+        self.assertEqual(sum(e['kind'] == 'order_action_requested' for e in store.events('C-001')), 1)
         with self.assertRaises(ApiError) as caught:
             self.sessions.control.reserve_api_attempt(1)
         self.assertEqual(caught.exception.code, 'api_daily_limit')
-        self.assertEqual(old.business_store('old-shop').orders('C-001')[0]['status'], 'cancelled')
+        self.assertEqual(old.business_store('old-shop').orders('C-001')[0]['status'], 'pending')
+        self.assertEqual(old.business_store('old-shop').list_customer_order_actions('C-001')[0]['status'], 'requested')
         with self.assertRaises(ValueError):
             import_snapshot(DSN, source)
 
@@ -249,7 +255,8 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         self.restart()
         app = Application(self.sessions.business_store('old-shop'), {})
         result = approval.confirm(app, 'C-001', proposal['proposal_id'], {'confirmed': True}, 'import-graph-confirm')
-        self.assertEqual(result['order']['version'], 2)
+        self.assertEqual(result['status'], 'requested')
+        self.assertEqual(result['order']['version'], 1)
         self.assertEqual(old.business_store('old-shop').orders('C-001')[0]['status'], 'pending')
 
     def test_business_v1_migration_is_explicit_preserves_data_and_idempotent(self):

@@ -4,8 +4,11 @@ from __future__ import annotations
 import argparse
 from contextlib import contextmanager
 import hashlib
+import io
+import json
 import os
 from pathlib import Path
+import secrets
 import sqlite3
 import tempfile
 import time
@@ -13,6 +16,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
 
+from retailops.business.application import Application
 from retailops.business.schema import (
     BUSINESS_V5_VERSION_MAPPING,
     BUSINESS_V6_VERSION_MAPPING,
@@ -26,6 +30,7 @@ from retailops.business.store import (
     migrate_sqlite_business_v6,
 )
 from retailops.core import ApiError
+from retailops.http.public import PublicWeb
 from retailops.identity.persistent import PersistentSessions
 from retailops.identity.postgres import PostgresSessions
 from retailops.identity.store import IdentityStore
@@ -659,6 +664,271 @@ class PhaseR1W3BusinessV6SchemaAndMigrationTests(unittest.TestCase):
             )
             with self.assertRaises(sqlite3.IntegrityError):
                 mem_c.execute("UPDATE order_action_decisions SET action='tamper' WHERE decision_id='dec_pg_1'")
+
+
+class PhaseR1W3OrderActionCreationAndFacadeTests(unittest.TestCase):
+    """Items 3 & 4: Unified order-action creation service and /api/cancellation-proposals* compatibility facade."""
+
+    ORIGIN = "https://retailops.example.com"
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.pers = self.root / "persistent"
+        self.sessions = PersistentSessions(self.pers, data_mode="persistent-demo")
+        self.store_a = self.sessions.provision_tenant("shop-a", "Shop A", seed_demo=True)
+        self.store_b = self.sessions.provision_tenant("shop-b", "Shop B", seed_demo=True)
+        with self.store_a.connection(write=True) as db:
+            db.execute(
+                "INSERT INTO orders(id, customer_id, product_id, name, variant, amount, status, version) "
+                "VALUES ('O-103', 'C-001', 'P-102', 'Áo khoác Everyday', 'Xanh navy / L', 599000, 'delivered', 1)"
+            )
+            db.execute(
+                "INSERT INTO orders(id, customer_id, product_id, name, variant, amount, status, version) "
+                "VALUES ('O-104', 'C-001', 'P-101', 'Áo thun Essential', 'Trắng / S', 299000, 'pending', 1)"
+            )
+        self.store_a.add_customer("C-STAFF-A", "Nhân viên A")
+        self.store_a.add_customer("C-MGR-A", "Quản lý A")
+        self.store_b.add_customer("C-STAFF-B", "Nhân viên B")
+        self.web = PublicWeb(self.ORIGIN, self.sessions)
+        self.cust1 = self._issue_cookie("shop-a", "p-cust-1", "Khách 1", "C-001", "customer")
+        self.cust2 = self._issue_cookie("shop-a", "p-cust-2", "Khách 2", "C-002", "customer")
+        self.staff_a = self._issue_cookie("shop-a", "p-staff-a", "Nhân viên A", "C-STAFF-A", "staff")
+        self.mgr_a = self._issue_cookie("shop-a", "p-mgr-a", "Quản lý A", "C-MGR-A", "manager")
+        self.staff_b = self._issue_cookie("shop-b", "p-staff-b", "Nhân viên B", "C-STAFF-B", "staff")
+
+    def _issue_cookie(self, tenant_id: str, principal_id: str, name: str, customer_id: str, role: str) -> str:
+        mid = self.sessions.create_member(tenant_id, principal_id, name, customer_id, role)
+        tok = secrets.token_urlsafe(32)
+        self.sessions.control.register_credential(mid, tok)
+        secret = self.sessions.login(tok)
+        return f"{self.sessions.cookie_name}={secret}"
+
+    def _req(self, method: str, path: str, body: dict | None = None, *, cookie: str | None = None, headers: dict | None = None):
+        raw = b"" if body is None else json.dumps(body, ensure_ascii=False).encode("utf-8")
+        env = {
+            "REQUEST_METHOD": method,
+            "PATH_INFO": path,
+            "QUERY_STRING": "",
+            "HTTP_HOST": "retailops.example.com",
+            "wsgi.input": io.BytesIO(raw),
+        }
+        if method != "GET":
+            env["HTTP_ORIGIN"] = self.ORIGIN
+        if body is not None:
+            env["CONTENT_TYPE"] = "application/json"
+            env["CONTENT_LENGTH"] = str(len(raw))
+        if cookie:
+            env["HTTP_COOKIE"] = cookie
+        for k, v in (headers or {}).items():
+            env["HTTP_" + k.upper().replace("-", "_")] = v
+        try:
+            status, payload, _, _ = self.web.route(env)
+            return status, payload
+        except ApiError as err:
+            return err.status, {"error": err.code, "message": err.message}
+
+    def test_item3_atomic_rollback_on_mid_tx_failure_leaves_zero_rows(self):
+        with patch.object(self.store_a, "_enqueue_outbox_in_tx", side_effect=RuntimeError("simulated_outbox_crash")):
+            with self.assertRaises(RuntimeError):
+                self.store_a.create_order_action_request(
+                    "C-001",
+                    {
+                        "order_id": "O-101",
+                        "type": "cancel",
+                        "expected_order_version": 1,
+                        "reason_code": "ordered_by_mistake",
+                    },
+                    actor={"principal_id": "p-cust-1", "role": "customer", "tenant_id": "shop-a"},
+                )
+
+        with self.store_a.connection() as db:
+            for tbl in (
+                "order_action_requests",
+                "order_action_decisions",
+                "handoff_episodes",
+                "integration_outbox",
+            ):
+                self.assertEqual(db.execute(f"SELECT COUNT(*) FROM {tbl}").fetchone()[0], 0, tbl)
+            ev_cnt = db.execute(
+                "SELECT COUNT(*) FROM business_events WHERE kind IN ('order_action_requested', 'human_escalation_requested')"
+            ).fetchone()[0]
+            self.assertEqual(ev_cnt, 0)
+
+    def test_item3_eligibility_version_customer_isolation_and_waiting_queue(self):
+        # 1. Wrong order status & wrong version & missing reason/exchange_kind rejected
+        st, body = self._req(
+            "POST",
+            "/api/order-actions",
+            {"order_id": "O-102", "type": "cancel", "expected_order_version": 1, "reason_code": "changed_mind"},
+            cookie=self.cust1,
+        )
+        self.assertEqual((st, body["error"]), (409, "not_cancellable"))
+
+        for bad_type in ("return", "exchange"):
+            payload = {"order_id": "O-101", "type": bad_type, "expected_order_version": 1, "reason_code": "defective_item"}
+            if bad_type == "exchange":
+                payload["exchange_kind"] = "one_to_one"
+            st, body = self._req("POST", "/api/order-actions", payload, cookie=self.cust1)
+            self.assertEqual((st, body["error"]), (409, "order_not_eligible"))
+
+        st, body = self._req(
+            "POST",
+            "/api/order-actions",
+            {"order_id": "O-101", "type": "cancel", "expected_order_version": 99, "reason_code": "changed_mind"},
+            cookie=self.cust1,
+        )
+        self.assertEqual((st, body["error"]), (409, "stale_order"))
+
+        st, body = self._req(
+            "POST",
+            "/api/order-actions",
+            {"order_id": "O-102", "type": "exchange", "expected_order_version": 1, "reason_code": "wrong_size"},
+            cookie=self.cust1,
+        )
+        self.assertEqual((st, body["error"]), (400, "invalid_exchange_kind"))
+
+        # Foreign order rejected with 404
+        st, body = self._req(
+            "POST",
+            "/api/order-actions",
+            {"order_id": "O-202", "type": "cancel", "expected_order_version": 1, "reason_code": "changed_mind"},
+            cookie=self.cust1,
+        )
+        self.assertEqual((st, body["error"]), (404, "order_not_found"))
+
+        # 2. Valid cancel (pending O-101), return (delivered O-102), exchange (delivered O-103), and C-002 cancel (O-202)
+        st1, c_res = self._req(
+            "POST",
+            "/api/order-actions",
+            {"order_id": "O-101", "type": "cancel", "expected_order_version": 1, "reason_code": "ordered_by_mistake"},
+            cookie=self.cust1,
+        )
+        self.assertEqual(st1, 201)
+        self.assertEqual(c_res["status"], "requested")
+
+        st2, r_res = self._req(
+            "POST",
+            "/api/order-actions",
+            {"order_id": "O-102", "type": "return", "expected_order_version": 1, "reason_code": "defective_item"},
+            cookie=self.cust1,
+        )
+        self.assertEqual(st2, 201)
+        self.assertEqual(r_res["order_action"]["delivery_age_label"], "chưa có ngày giao")
+
+        st3, x_res = self._req(
+            "POST",
+            "/api/order-actions",
+            {
+                "order_id": "O-103",
+                "type": "exchange",
+                "exchange_kind": "size",
+                "expected_order_version": 1,
+                "reason_code": "wrong_size",
+            },
+            cookie=self.cust1,
+        )
+        self.assertEqual(st3, 201)
+        self.assertEqual(x_res["order_action"]["exchange_kind"], "size")
+
+        st4, c2_res = self._req(
+            "POST",
+            "/api/order-actions",
+            {"order_id": "O-202", "type": "cancel", "expected_order_version": 1, "reason_code": "no_longer_needed"},
+            cookie=self.cust2,
+        )
+        self.assertEqual(st4, 201)
+
+        # 3. Customer isolation on GET /api/order-actions
+        _, l1 = self._req("GET", "/api/order-actions", cookie=self.cust1)
+        _, l2 = self._req("GET", "/api/order-actions", cookie=self.cust2)
+        self.assertEqual({x["order_id"] for x in l1["order_actions"]}, {"O-101", "O-102", "O-103"})
+        self.assertEqual([x["order_id"] for x in l2["order_actions"]], ["O-202"])
+
+        # 4. Staff Desk waiting queue contains created cases with reason_code='order_action_review'
+        st_q, desk = self._req("GET", "/api/staff/escalations", cookie=self.staff_a)
+        self.assertEqual(st_q, 200)
+        waiting_cases = {row["case_id"]: row for row in desk["waiting"]}
+        self.assertIn(c_res["case_id"], waiting_cases)
+        self.assertEqual(waiting_cases[c_res["case_id"]]["reason_code"], "order_action_review")
+
+        # 5. GET /api/staff/cases/<case_id>/order-actions: allowed to same-tenant Staff/Manager, denied to customer & cross-tenant Staff
+        case_id = c_res["case_id"]
+        st_cust, _ = self._req("GET", f"/api/staff/cases/{case_id}/order-actions", cookie=self.cust1)
+        self.assertEqual(st_cust, 403)
+        st_xb, _ = self._req("GET", f"/api/staff/cases/{case_id}/order-actions", cookie=self.staff_b)
+        self.assertIn(st_xb, (403, 404))
+        st_sa, sa_body = self._req("GET", f"/api/staff/cases/{case_id}/order-actions", cookie=self.staff_a)
+        self.assertEqual(st_sa, 200)
+        self.assertTrue(any(x["request_id"] == c_res["order_action_request_id"] for x in sa_body["order_actions"]))
+
+        # Verify submit decision + outbox event types recorded
+        with self.store_a.connection() as db:
+            outbox_types = [r["event_type"] for r in db.execute("SELECT event_type FROM integration_outbox").fetchall()]
+            self.assertIn("cancel_requested", outbox_types)
+            self.assertIn("return_requested", outbox_types)
+            self.assertIn("exchange_requested", outbox_types)
+
+    def test_item4_cancellation_proposals_facade_creates_requested_action_replays_once_and_keeps_order_pending(self):
+        # 1. Create proposal: order stays pending, no order_action_requests yet
+        st_p, prop = self._req(
+            "POST",
+            "/api/cancellation-proposals",
+            {"order_id": "O-101", "order_version": 1, "cancel_reason": "ordered_by_mistake"},
+            cookie=self.cust1,
+        )
+        self.assertEqual(st_p, 201)
+        pid = prop["proposal_id"]
+        self.assertEqual(self.store_a.list_customer_order_actions("C-001"), [])
+
+        # 2. Confirm twice with same Idempotency-Key -> replayed: True, 1 request, order still pending
+        idem = "idem_w3_item4_facade_0001"
+        st_c1, conf1 = self._req(
+            "POST",
+            f"/api/cancellation-proposals/{pid}/confirm",
+            {"confirmed": True},
+            cookie=self.cust1,
+            headers={"Idempotency-Key": idem},
+        )
+        st_c2, conf2 = self._req(
+            "POST",
+            f"/api/cancellation-proposals/{pid}/confirm",
+            {"confirmed": True},
+            cookie=self.cust1,
+            headers={"Idempotency-Key": idem},
+        )
+        self.assertEqual((st_c1, st_c2), (200, 200))
+        self.assertFalse(conf1["replayed"])
+        self.assertTrue(conf2["replayed"])
+        self.assertEqual(conf1["status"], "requested")
+        self.assertEqual(conf1["message"], "Đã gửi yêu cầu hủy, chờ cửa hàng duyệt")
+        self.assertEqual(conf1["order_action_request_id"], conf2["order_action_request_id"])
+        self.assertEqual(conf1["order"]["status"], "pending")
+        self.assertEqual(conf1["order"]["version"], 1)
+
+        actions = self.store_a.list_customer_order_actions("C-001")
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0]["request_id"], conf1["order_action_request_id"])
+        self.assertEqual(self.store_a.lookup("C-001", "O-101")["status"], "pending")
+
+        # 3. Dismiss on a separate pending order keeps proposals dismiss unchanged
+        st_p2, prop2 = self._req(
+            "POST",
+            "/api/cancellation-proposals",
+            {"order_id": "O-104", "order_version": 1, "cancel_reason": "no_longer_needed"},
+            cookie=self.cust1,
+        )
+        self.assertEqual(st_p2, 201)
+        st_d, dis = self._req(
+            "POST",
+            f"/api/cancellation-proposals/{prop2['proposal_id']}/dismiss",
+            {},
+            cookie=self.cust1,
+        )
+        self.assertEqual(st_d, 200)
+        self.assertIn("Đã bỏ đề xuất", dis["message"])
+        self.assertEqual(len(self.store_a.list_customer_order_actions("C-001")), 1)
 
 
 if __name__ == "__main__":

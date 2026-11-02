@@ -14,6 +14,8 @@ CUSTOMER_SAFE_EVENT_KINDS = frozenset({
     'order_viewed',
     'cancellation_proposed',
     'order_cancelled',
+    'order_action_requested',
+    'order_action_status_changed',
     'proposal_dismissed',
     'order_status_updated_by_manager',
     'customer_messaged_staff',
@@ -192,7 +194,15 @@ def _check_staff_tenant_scope(app, ctx: RequestContext) -> None:
         )
 
 
-def _authorize_staff_transcript_view(app, ctx: RequestContext, actor: dict, *, cid: str | None = None, case_id: str | None = None):
+def _authorize_staff_transcript_view(
+    app,
+    ctx: RequestContext,
+    actor: dict,
+    *,
+    cid: str | None = None,
+    case_id: str | None = None,
+    audit_resolved: bool = True,
+):
     _check_staff_tenant_scope(app, ctx)
     now = app.store._now() if hasattr(app.store, '_now') else time.time()
     with app.store.connection() as db:
@@ -239,14 +249,15 @@ def _authorize_staff_transcript_view(app, ctx: RequestContext, actor: dict, *, c
             'case_retention_expired',
             'Ca hỗ trợ đã đóng và quá thời hạn lưu trữ để xem lại.',
         )
-        app.store.event(
-            case_row['customer_id'],
-            'resolved_case_viewed',
-            conv['order_id'] if conv is not None else None,
-            case_id=case_row['case_id'],
-            conversation_id=cid,
-            actor=actor,
-        )
+        if audit_resolved:
+            app.store.event(
+                case_row['customer_id'],
+                'resolved_case_viewed',
+                conv['order_id'] if conv is not None else None,
+                case_id=case_row['case_id'],
+                conversation_id=cid,
+                actor=actor,
+            )
         return cid, case_row['case_id'], True
 
     raise ApiError(
@@ -446,6 +457,12 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             if not report_data:
                 return (404, {"error": "benchmark_report_not_found"})
             return (200, report_data)
+        if path == '/api/order-actions':
+            items = app.store.list_customer_order_actions(customer)
+            for item in items:
+                if isinstance(item.get('order'), dict):
+                    item['order'] = _format_order_for_api(item['order'], app)
+            return (200, {'order_actions': items})
         if path == '/api/cancellation-proposals':
             _require_ctx_permission(ctx, CANCEL)
             with app.store.connection() as db:
@@ -473,6 +490,18 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             return (200, {"escalations": app.store.escalations(), **desk})
         if path == "/api/conversations":
             return (200, {"conversations": app.store.list_conversations(customer)})
+        m_case_oa = re.fullmatch(r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/order-actions", path)
+        if m_case_oa:
+            _require_ctx_permission(ctx, STAFF)
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
+            _, resolved_case_id, ro = _authorize_staff_transcript_view(
+                app, ctx, actor, case_id=m_case_oa[1], audit_resolved=False
+            )
+            items = app.store.list_case_order_actions(resolved_case_id)
+            for item in items:
+                if isinstance(item.get('order'), dict):
+                    item['order'] = _format_order_for_api(item['order'], app)
+            return (200, {"case_id": resolved_case_id, "read_only": ro, "order_actions": items})
         m_case_trans = re.fullmatch(r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/messages", path)
         if m_case_trans:
             _require_ctx_permission(ctx, STAFF)
@@ -667,6 +696,20 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             staff_label = _actor_display_name(ctx)
             res = app.store.resolve_escalation(cid, staff_label, actor=actor, case_id=case_id, handoff_id=handoff_id)
             return (200, res)
+        if path == "/api/order-actions":
+            _require_ctx_permission(ctx, CANCEL)
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
+            res = app.store.create_order_action_request(
+                customer,
+                body,
+                actor=actor,
+                idempotency_key=idempotency_key,
+            )
+            if isinstance(res.get('order'), dict):
+                res['order'] = _format_order_for_api(res['order'], app)
+            if isinstance(res.get('order_action'), dict) and isinstance(res['order_action'].get('order'), dict):
+                res['order_action']['order'] = _format_order_for_api(res['order_action']['order'], app)
+            return (201, res)
         if path == "/api/cancellation-proposals":
             _require_ctx_permission(ctx, CANCEL)
             result = app.store.propose(customer, body)
@@ -933,7 +976,8 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
         if m:
             _require_ctx_permission(ctx, CANCEL)
             if m[2] == "confirm":
-                res = approval.confirm(app, customer, m[1], body, idempotency_key)
+                actor = _extract_actor(app, customer, binding=binding, context=ctx)
+                res = approval.confirm(app, customer, m[1], body, idempotency_key, actor=actor)
                 if hasattr(app, 'tool_cache'):
                     tenant_id = ctx.tenant_id or getattr(app, 'tenant_id', 'default')
                     app.tool_cache.invalidate(tenant_id=tenant_id, customer=customer)

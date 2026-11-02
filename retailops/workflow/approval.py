@@ -23,7 +23,7 @@ def proposal(store, customer, pid):
             'order_version': row['order_version'], 'expires_at': row['expires_at'], 'state': row['state']}
 
 
-def drive(app, customer, pid, decision=None):
+def drive(app, customer, pid, decision=None, *, actor=None):
     # Recheck role and ownership on EVERY resume, not only when creating the graph.
     app.require_permission(CANCEL)
     record = proposal(app.store, customer, pid)
@@ -36,7 +36,10 @@ def drive(app, customer, pid, decision=None):
         def commit(state):
             chosen = state['decision']
             if chosen['approved']:
-                result = app.store.confirm(customer, pid, {'confirmed': True}, chosen['key'])
+                if actor is not None:
+                    result = app.store.confirm(customer, pid, {'confirmed': True}, chosen['key'], actor)
+                else:
+                    result = app.store.confirm(customer, pid, {'confirmed': True}, chosen['key'])
             else:
                 result = app.store.dismiss(customer, pid)
             return {'result': result}
@@ -63,7 +66,7 @@ def drive(app, customer, pid, decision=None):
         return result['result']
 
 
-def confirm(app, customer, pid, body, key):
+def confirm(app, customer, pid, body, key, *, actor=None):
     app.require_permission(CANCEL)
     fields(body, {'confirmed'})
     require(body['confirmed'] is True, 400, 'confirmation_required', 'Cần xác nhận rõ ràng trước khi hủy.')
@@ -72,8 +75,10 @@ def confirm(app, customer, pid, body, key):
     # The transaction can commit just before a process dies saving its checkpoint.
     # The business record remains the authority, including the original request key.
     if proposal(app.store, customer, pid)['state'] == 'confirmed':
+        if actor is not None:
+            return app.store.confirm(customer, pid, body, key, actor)
         return app.store.confirm(customer, pid, body, key)
-    return drive(app, customer, pid, {'approved': True, 'key': key})
+    return drive(app, customer, pid, {'approved': True, 'key': key}, actor=actor)
 
 
 def dismiss(app, customer, pid):

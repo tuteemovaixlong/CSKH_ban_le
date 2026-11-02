@@ -446,16 +446,18 @@ def run_full(http: HttpClient, report: dict, secret_values: list[str]):
         cancel_chat_id = "e2e_cancel_" + uuid.uuid4().hex
         status, cancel_chat = chat(http, customer_cookie, conversation_id,
             "Tôi muốn hủy đơn O-101. Hãy kiểm tra điều kiện nhưng chưa được tự hủy nếu tôi chưa xác nhận.", cancel_chat_id)
-        require(status == 200 and "prepare_cancellation" in tool_names(cancel_chat), "cancel chat did not prepare cancellation")
-        require(cancel_chat.get("action") == "choose_cancel_reason", "cancel chat skipped reason/confirmation UI")
+        require(status == 200 and any(name in tool_names(cancel_chat) for name in ("prepare_order_action", "prepare_cancellation")),
+                "cancel chat did not prepare order action")
+        require(cancel_chat.get("action") in ("choose_order_action_reason", "choose_cancel_reason"),
+                "cancel chat skipped reason/confirmation UI")
         require((cancel_chat.get("order") or {}).get("status") == "pending", "cancel chat mutated the order")
         report["checks"]["model_prepares_but_does_not_mutate"] = True
         report["traces"]["cancel"] = trace_summary(cancel_chat)
 
         events_status, events_before = http.request("/api/events", cookie=customer_cookie)
         require(events_status == 200, "event read before proposal failed")
-        before_cancelled = sum(1 for event in events_before.get("events", [])
-                               if event.get("kind") == "order_cancelled" and event.get("order_id") == "O-101")
+        before_requested = sum(1 for event in events_before.get("events", [])
+                               if event.get("kind") == "order_action_requested" and event.get("order_id") == "O-101")
 
         proposal_status, proposal = http.request("/api/cancellation-proposals", {
             "order_id": "O-101",
@@ -487,19 +489,27 @@ def run_full(http: HttpClient, report: dict, secret_values: list[str]):
         idem = "e2e_confirm_" + uuid.uuid4().hex
         confirm_path = "/api/cancellation-proposals/" + proposal_id + "/confirm"
         first_status, first = http.request(confirm_path, {"confirmed": True}, cookie=customer_cookie,
-                                          headers=["Idempotency-Key: " + idem])
+                                           headers=["Idempotency-Key: " + idem])
         second_status, second = http.request(confirm_path, {"confirmed": True}, cookie=customer_cookie,
-                                            headers=["Idempotency-Key: " + idem])
+                                             headers=["Idempotency-Key: " + idem])
         require(first_status == 200 and first.get("replayed") is False, "first cancellation confirmation failed")
+        require(first.get("status") == "requested" and isinstance(first.get("order_action_request_id"), str),
+                "confirmation did not create requested order action")
         require(second_status == 200 and second.get("replayed") is True, "duplicate confirmation was not replayed")
+        require(second.get("order_action_request_id") == first.get("order_action_request_id"),
+                "replayed confirmation returned different request id")
         order_status, order_after = http.request("/api/orders/O-101", cookie=customer_cookie)
-        require(order_status == 200 and (order_after.get("order") or {}).get("status") == "cancelled",
-                "backend order did not become cancelled")
+        require(order_status == 200 and (order_after.get("order") or {}).get("status") == "pending",
+                "backend order did not stay pending while awaiting review")
+        oa_status, oa_list = http.request("/api/order-actions", cookie=customer_cookie)
+        oa_ids = [item.get("request_id") for item in oa_list.get("order_actions", [])]
+        require(oa_status == 200 and first["order_action_request_id"] in oa_ids,
+                "created order action request not listed")
         events_status, events_after = http.request("/api/events", cookie=customer_cookie)
         require(events_status == 200, "event read after confirmation failed")
-        after_cancelled = sum(1 for event in events_after.get("events", [])
-                              if event.get("kind") == "order_cancelled" and event.get("order_id") == "O-101")
-        require(after_cancelled == before_cancelled + 1, "duplicate confirmation produced wrong audit count")
+        after_requested = sum(1 for event in events_after.get("events", [])
+                              if event.get("kind") == "order_action_requested" and event.get("order_id") == "O-101")
+        require(after_requested == before_requested + 1, "duplicate confirmation produced wrong audit count")
         report["checks"]["confirm_idempotency_and_backend_state"] = True
 
         # R1 W1 retired the legacy 'viewer' role; role isolation is proven with an active

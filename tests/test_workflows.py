@@ -91,6 +91,8 @@ class WorkflowCases:
         self.assertEqual(exc.exception.code, 'request_conflict')
         p = restarted.store.propose(CUSTOMER, BODY)
         restarted.store.confirm(CUSTOMER, p['proposal_id'], {'confirmed': True}, KEY)
+        with restarted.store.connection(write=True) as db:
+            db.execute("UPDATE orders SET status='cancelled', version=version+1 WHERE id='O-101'")
         with self.assertRaises(ApiError) as exc:
             restarted.chat(CUSTOMER, body)
         self.assertEqual(exc.exception.code, 'order_changed_during_chat')
@@ -107,9 +109,11 @@ class WorkflowCases:
         with self.assertRaises(ApiError):
             approval.confirm(restarted, CUSTOMER, p['proposal_id'], {'confirmed': False}, KEY)
         result = approval.confirm(restarted, CUSTOMER, p['proposal_id'], {'confirmed': True}, KEY)
-        self.assertEqual(result['order']['version'], 2)
+        self.assertEqual(result['status'], 'requested')
+        self.assertEqual(result['order']['status'], 'pending')
+        self.assertEqual(result['order']['version'], 1)
         self.assertTrue(approval.confirm(self.application(), CUSTOMER, p['proposal_id'], {'confirmed': True}, KEY)['replayed'])
-        self.assertEqual(sum(e['kind'] == 'order_cancelled' for e in restarted.store.events(CUSTOMER)), 1)
+        self.assertEqual(sum(e['kind'] == 'order_action_requested' for e in restarted.store.events(CUSTOMER)), 1)
 
     def test_crash_after_cancellation_commit_replays_without_second_transaction(self):
         app = self.application()
@@ -122,7 +126,7 @@ class WorkflowCases:
             approval.confirm(app, CUSTOMER, p['proposal_id'], {'confirmed': True}, KEY)
         restarted = self.application()
         self.assertTrue(approval.confirm(restarted, CUSTOMER, p['proposal_id'], {'confirmed': True}, KEY)['replayed'])
-        self.assertEqual(sum(e['kind'] == 'order_cancelled' for e in restarted.store.events(CUSTOMER)), 1)
+        self.assertEqual(sum(e['kind'] == 'order_action_requested' for e in restarted.store.events(CUSTOMER)), 1)
 
     def test_approval_resume_rechecks_role_owner_expiry_and_order_version(self):
         app = self.application()

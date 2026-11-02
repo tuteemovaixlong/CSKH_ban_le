@@ -201,7 +201,8 @@ def main():
             assert request('/healthz')[1]['storage_backend'] == 'postgresql'
             assert request('/api/orders',jar='account')[0] == 401
             assert request('/api/login',{'token':code},jar='account')[0] == 200
-            assert request('/api/orders',jar='account')[1]['orders'][0]['status'] == 'cancelled'
+            assert request('/api/orders',jar='account')[1]['orders'][0]['status'] == 'pending'
+            assert request('/api/order-actions',jar='account')[1]['order_actions'][0]['status'] == 'requested'
             assert request('/api/orders/O-101',jar='account')[0] == 404
             # Runtime credentials must be the limited application role, never the bootstrap superuser.
             flags = run(pgbase+['exec','-T','postgres','psql','-U','postgres','-d','retailops','-Atc',
@@ -229,7 +230,7 @@ CREATE EXTENSION vector WITH SCHEMA retailops_extensions;
                 "from retailops.config import database_settings; import os; from psycopg.conninfo import make_conninfo; "
                 "from retailops.identity.postgres import PostgresSessions; "
                 "s=PostgresSessions(make_conninfo(database_settings(os.environ)[1],dbname='retailops_restore')); "
-                "assert s.business_store('ci-shop').orders('C-002')[0]['status']=='cancelled'; print('RESTORE_OK')"])
+                "st=s.business_store('ci-shop'); assert st.orders('C-002')[0]['status']=='pending' and st.list_customer_order_actions('C-002')[0]['status']=='requested'; print('RESTORE_OK')"])
             assert 'RESTORE_OK' in restored
             print('POSTGRES_HTTPS_IMPORT_RESTORE_OK (limited DB role; pgvector prebootstrapped; no external inference)')
         except Exception:

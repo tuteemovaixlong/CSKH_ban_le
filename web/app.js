@@ -754,6 +754,7 @@ function renderOrder() {
 
 const eventLabels = {
   order_viewed: 'Tra cứu đơn', cancellation_proposed: 'Tạo đề xuất hủy', order_cancelled: 'Đã xác nhận hủy',
+  order_action_requested: 'Gửi yêu cầu đơn hàng', order_action_status_changed: 'Cập nhật yêu cầu đơn hàng',
   proposal_dismissed: 'Bỏ đề xuất', model_extraction: 'Model phân tích yêu cầu', model_unavailable: 'Không kết nối được model',
   chat_replied: 'Trả lời hội thoại', agent_replied: 'Phản hồi hội thoại', agent_failed: 'Lượt chat chưa hoàn tất',
   product_created: 'Thêm sản phẩm', product_updated: 'Sửa sản phẩm', product_deleted: 'Xóa sản phẩm',
@@ -805,7 +806,7 @@ async function chooseReason(id) {
 function openProposal(proposal) {
   // Proposal ID is a stable idempotency key, not an authentication credential.
   pending = {...proposal, key: proposal.proposal_id};
-  byId('confirm-title').textContent = 'Hủy đơn ' + proposal.order.id + '?';
+  byId('confirm-title').textContent = 'Gửi yêu cầu hủy đơn ' + proposal.order.id + '?';
   byId('confirm-description').textContent = (proposal.order.display_name || proposal.order.name) + ' · ' + money(proposal.order.amount)
     + '. Hết hạn: ' + new Date(proposal.expires_at * 1000).toLocaleTimeString('vi-VN') + '.';
   byId('confirm-reason').textContent = reasons[proposal.reason];
@@ -827,7 +828,7 @@ async function confirm() {
   if (!pending) return;
   try {
     const result = await api('/api/cancellation-proposals/' + pending.proposal_id + '/confirm', {confirmed: true}, {'Idempotency-Key': pending.key});
-    pending = null; byId('confirm-dialog').close(); message(result.message + (result.replayed ? ' Đây là kết quả của lần xác nhận trước, không hủy lần thứ hai.' : ''));
+    pending = null; byId('confirm-dialog').close(); message(result.message + (result.replayed ? ' Đây là kết quả của lần xác nhận trước, không gửi lặp yêu cầu.' : ''));
     await refresh();
   } catch (error) {
     byId('confirm-error').textContent = error.message + ' Nếu mất mạng, bấm xác nhận lại sẽ dùng cùng mã yêu cầu để tránh thực hiện lặp.';

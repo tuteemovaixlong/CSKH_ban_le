@@ -10,10 +10,11 @@ from retailops.inference_gate import InferenceGate
 
 
 class PostgresSessions(PersistentSessions):
-    def __init__(self, dsn, infer=None, api_infer=None, api_daily_limit=20, capacity=50, data_mode=None, default_tenant_id=None, *, maintenance=True, read_only=False):
+    def __init__(self, dsn, infer=None, api_infer=None, api_daily_limit=20, capacity=50, data_mode=None, default_tenant_id=None, *, maintenance=True, read_only=False, data_root=None):
         if maintenance and read_only:
             raise ValueError('Read-only PostgreSQL sessions cannot run startup maintenance.')
         self.dsn = dsn
+        self.data_root = data_root
         self.maintenance = bool(maintenance)
         self.read_only = bool(read_only)
         if data_mode is not None:
@@ -58,7 +59,10 @@ class PostgresSessions(PersistentSessions):
 
     def provision_tenant(self, tenant_id, name, *, seed_demo=False):
         tenant = self.control.ensure_tenant(tenant_id, name)
-        store = self._configure_business_store(PostgresBusinessStore(self.dsn, tenant['storage_key'], create=True))
+        store = self._configure_business_store(
+            PostgresBusinessStore(self.dsn, tenant['storage_key'], create=True),
+            tenant_id=tenant_id,
+        )
         if seed_demo:
             store.seed()
         return store
@@ -71,7 +75,8 @@ class PostgresSessions(PersistentSessions):
                 self.control.tenant(tenant_id)['storage_key'],
                 migrate=do_migrate,
                 read_only=self.read_only,
-            )
+            ),
+            tenant_id=tenant_id,
         )
 
     def check_storage(self, member):

@@ -95,8 +95,26 @@ class PersistentSessions:
                 503, 'invalid_storage', 'Không mở được kho dữ liệu cửa hàng.')
         return self.directory/'tenants'/(tenant['storage_key']+'.sqlite3')
 
-    def _configure_business_store(self, store):
+    def _resolve_data_root(self) -> Path:
+        explicit = getattr(self, 'data_root', None)
+        if explicit is not None:
+            return Path(explicit)
+        directory = getattr(self, 'directory', None)
+        if directory is not None:
+            dpath = Path(directory)
+            if dpath.name in ('persistent', 'public-guests'):
+                return dpath.parent
+            return dpath
+        env_out = os.environ.get('RETAILOPS_OUTPUT', '').strip()
+        if env_out:
+            return Path(env_out)
+        import tempfile
+        return Path(tempfile.gettempdir()) / 'retailops_runtime_data'
+
+    def _configure_business_store(self, store, *, tenant_id=None):
         store.data_mode = getattr(self, 'data_mode', 'persistent-demo')
+        store.tenant_id = _clean_tenant_id(tenant_id) or getattr(store, 'tenant_id', None) or 'default'
+        store.data_root = self._resolve_data_root()
         if callable(getattr(self, 'store_clock', None)):
             store.clock = self.store_clock
         if getattr(self, 'case_timer_config', None) is not None:
@@ -105,7 +123,7 @@ class PersistentSessions:
 
     def provision_tenant(self, tenant_id, name, *, seed_demo=False):
         tenant = self.control.ensure_tenant(tenant_id, name)
-        store = self._configure_business_store(BusinessStore(self.tenant_path(tenant)))
+        store = self._configure_business_store(BusinessStore(self.tenant_path(tenant)), tenant_id=tenant_id)
         if seed_demo:
             store.seed()
         return store
@@ -120,7 +138,8 @@ class PersistentSessions:
                 create=False,
                 initialize_db=init_db,
                 read_only=self.read_only,
-            )
+            ),
+            tenant_id=tenant_id,
         )
 
     def create_member(self, tenant_id, principal_id, name, customer_id, role='customer'):

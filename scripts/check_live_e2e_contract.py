@@ -29,4 +29,9 @@ required_checks = (
 for name in required_checks:
     assert name in runner, f'missing live E2E check: {name}'
 
+assert 'order_action_request_id' in runner, 'live E2E must verify OD-05 order_action_request_id on confirm'
+assert '/api/order-actions' in runner, 'live E2E must verify created order action via /api/order-actions'
+assert 'first.get("status") == "requested"' in runner, 'live E2E must verify requested status after confirm'
+assert '(order_after.get("order") or {}).get("status") == "pending"' in runner, 'live E2E must verify order stays pending until human review'
+
 print('LIVE_E2E_CONTRACT_OK')

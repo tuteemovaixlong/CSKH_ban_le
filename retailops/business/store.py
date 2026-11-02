@@ -4,6 +4,7 @@ No HTTP, session or model dependency. This module never deletes a database or
 seeds demo data implicitly; its owner explicitly chooses those lifecycle actions.
 """
 from __future__ import annotations
+import hashlib
 import hmac
 import json
 import os
@@ -14,7 +15,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from contextlib import contextmanager
 from pathlib import Path
-from retailops.core import ApiError, REASONS, fields, require
+from retailops.core import ApiError, ORDER_ACTION_REASONS, REASONS, fields, require
 from retailops.guardrails.topic_filter import (
     SAFE_REFUSAL_MESSAGE,
     contains_canary_or_secret,
@@ -3415,54 +3416,681 @@ class BusinessStore:
         return out
 
 
+    @staticmethod
+    def _is_db_integrity_error(exc: Exception) -> bool:
+        if isinstance(exc, sqlite3.IntegrityError):
+            return True
+        if getattr(exc, "sqlstate", None) in ("23505", "23514", "23503"):
+            return True
+        return exc.__class__.__name__ in ("UniqueViolation", "IntegrityError", "CheckViolation", "ForeignKeyViolation")
+
+    @staticmethod
+    def _opaque_customer_ref(tenant_id: str, customer_id: str) -> str:
+        digest = hashlib.sha256(f"{tenant_id}:{customer_id}".encode("utf-8")).hexdigest()[:24]
+        return f"custref_{digest}"
+
+    @staticmethod
+    def _iso_utc(ts: float) -> str:
+        return datetime.fromtimestamp(float(ts), tz=timezone.utc).isoformat().replace("+00:00", "Z")
+
+    def _effective_tenant_id(self, actor: dict | None = None) -> str:
+        if isinstance(actor, dict):
+            tid = str(actor.get("tenant_id") or "").strip()
+            if tid:
+                return tid
+        tid = str(getattr(self, "tenant_id", "") or "").strip()
+        return tid or "default"
+
+    @staticmethod
+    def _normalize_actor(actor: dict | None, fallback_principal: str, fallback_role: str) -> dict:
+        if isinstance(actor, dict):
+            pid = str(actor.get("principal_id") or "").strip() or fallback_principal
+            role = str(actor.get("role") or "").strip() or fallback_role
+            return {
+                "principal_id": pid,
+                "role": role,
+                "tenant_id": actor.get("tenant_id"),
+                "membership_id": actor.get("membership_id"),
+                "display_name": actor.get("display_name"),
+                "actor_type": actor.get("actor_type", "principal"),
+            }
+        return {
+            "principal_id": fallback_principal,
+            "role": fallback_role,
+            "tenant_id": None,
+            "membership_id": None,
+            "display_name": None,
+            "actor_type": "system" if fallback_role == "system" else "principal",
+        }
+
+    @staticmethod
+    def _sanitize_reason_text(text: str | None) -> str | None:
+        if text is None:
+            return None
+        require(isinstance(text, str), 400, "invalid_reason_text", "Ghi chú lý do phải là chuỗi ký tự.")
+        cleaned = text.strip()
+        require(len(cleaned) <= 500, 400, "reason_text_too_long", "Ghi chú lý do tối đa 500 ký tự.")
+        if not cleaned:
+            return None
+        if contains_canary_or_secret(cleaned):
+            _, cleaned = sanitize_structured_payload(cleaned, preserve_reasoning=False)
+            cleaned = str(cleaned)[:500]
+        return cleaned
+
+    def _enqueue_outbox_in_tx(
+        self,
+        db,
+        *,
+        event_type: str,
+        actor: dict | None,
+        tenant_id: str | None = None,
+        customer_id: str | None = None,
+        case_id: str | None = None,
+        order_action_request_id: str | None = None,
+        order_id: str | None = None,
+        before: dict | None = None,
+        after: dict | None = None,
+        reason_code: str | None = None,
+        reason_text: str | None = None,
+        evidence_refs: list[dict] | None = None,
+        correlation_id: str | None = None,
+        idempotency_key: str | None = None,
+        source: str = "app",
+        now: float | None = None,
+        extra_fields: dict | None = None,
+    ) -> dict:
+        require(source in ("app", "worker", "import"), 400, "invalid_outbox_source", "Nguồn outbox không hợp lệ.")
+        now_ts = self._now() if now is None else float(now)
+        resolved_tid = str(tenant_id or self._effective_tenant_id(actor)).strip() or "default"
+        norm_actor = self._normalize_actor(actor, "system", "system")
+        event_id = str(uuid.uuid4())
+        envelope: dict = {
+            "schema": "retailops.order_action",
+            "schema_version": 1,
+            "event_id": event_id,
+            "event_type": event_type,
+            "occurred_at": self._iso_utc(now_ts),
+            "tenant_id": resolved_tid,
+            "actor": {
+                "principal_id": norm_actor["principal_id"],
+                "role": norm_actor["role"],
+            },
+        }
+        if customer_id:
+            envelope["customer_ref"] = self._opaque_customer_ref(resolved_tid, str(customer_id))
+        if case_id is not None:
+            envelope["case_id"] = case_id
+        if order_action_request_id is not None:
+            envelope["order_action_request_id"] = order_action_request_id
+        if order_id is not None:
+            envelope["order_id"] = order_id
+        allowed_state_keys = ("status", "version", "refund_status", "refund_decision", "inspection_outcome")
+        if isinstance(before, dict):
+            envelope["before"] = {k: v for k, v in before.items() if k in allowed_state_keys}
+        if isinstance(after, dict):
+            envelope["after"] = {k: v for k, v in after.items() if k in allowed_state_keys}
+        if reason_code is not None:
+            envelope["reason_code"] = str(reason_code)[:64]
+        clean_rt = self._sanitize_reason_text(reason_text) if reason_text is not None else None
+        if clean_rt is not None:
+            envelope["reason_text"] = clean_rt
+        if evidence_refs:
+            envelope["evidence_refs"] = [
+                {"evidence_id": str(ref["evidence_id"]), "sha256": str(ref["sha256"])}
+                for ref in evidence_refs
+                if isinstance(ref, dict) and ref.get("evidence_id") and ref.get("sha256")
+            ]
+        if isinstance(extra_fields, dict):
+            for k, v in extra_fields.items():
+                if k not in envelope and k not in ("customer_id", "customer_name", "phone", "address", "comment", "message"):
+                    envelope[k] = v
+        envelope["correlation_id"] = str(correlation_id or event_id)
+        envelope["idempotency_key"] = str(idempotency_key or event_id)
+        envelope["source"] = source
+
+        payload_json = json.dumps(envelope, ensure_ascii=False, separators=(",", ":"))
+        db.execute(
+            """INSERT INTO integration_outbox(
+                   event_id, tenant_id, event_type, payload_json, created_at,
+                   status, attempts, next_attempt_at, last_error, published_at
+               ) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, NULL, NULL)""",
+            (event_id, resolved_tid, event_type, payload_json, now_ts, now_ts),
+        )
+        return envelope
+
+    def _serialize_order_action_in_tx(self, db, row, *, now: float | None = None) -> dict:
+        now_ts = self._now() if now is None else float(now)
+        d = dict(row)
+        ord_row = db.execute("SELECT * FROM orders WHERE id = ?", (d["order_id"],)).fetchone()
+        order_dict = dict(ord_row) if ord_row is not None else None
+        delivered_at = order_dict.get("delivered_at") if order_dict is not None else None
+        if delivered_at is None:
+            days_since_delivery = None
+            delivery_age_label = "chưa có ngày giao"
+        else:
+            days_since_delivery = max(0, int((now_ts - float(delivered_at)) // 86400))
+            delivery_age_label = f"{days_since_delivery} ngày kể từ khi giao"
+        decisions = [
+            dict(r)
+            for r in db.execute(
+                """SELECT decision_id, request_id, case_id, order_id, conversation_id,
+                          action, from_status, to_status, from_refund_status, to_refund_status,
+                          refund_decision, inspection_outcome, actor_principal_id, actor_role,
+                          note, created_at
+                   FROM order_action_decisions
+                   WHERE request_id = ?
+                   ORDER BY created_at ASC, decision_id ASC""",
+                (d["request_id"],),
+            ).fetchall()
+        ]
+        ev_rows = db.execute(
+            """SELECT evidence_id, request_id, case_id, uploaded_by_role, mime_type,
+                      byte_size, width, height, sha256, created_at, file_purged_at
+               FROM order_action_evidence
+               WHERE request_id = ?
+               ORDER BY created_at ASC, evidence_id ASC""",
+            (d["request_id"],),
+        ).fetchall()
+        evidence = []
+        for ev in ev_rows:
+            ev_d = dict(ev)
+            ev_d["purged"] = ev_d.get("file_purged_at") is not None
+            ev_d["download_url"] = f"/api/order-actions/{d['request_id']}/evidence/{ev_d['evidence_id']}"
+            evidence.append(ev_d)
+        reason_label = ORDER_ACTION_REASONS.get(d["type"], {}).get(d["reason_code"])
+        return {
+            **d,
+            "expected_order_version": int(d["expected_order_version"]),
+            "version": int(d["version"]),
+            "reason_label": reason_label or d["reason_code"],
+            "order": order_dict,
+            "delivered_at": delivered_at,
+            "days_since_delivery": days_since_delivery,
+            "delivery_age_label": delivery_age_label,
+            "decisions": decisions,
+            "evidence": evidence,
+        }
+
+    def _resolve_or_open_conversation_for_action_in_tx(
+        self,
+        db,
+        *,
+        customer_id: str,
+        order_id: str,
+        product_id: str | None,
+        conversation_id: str | None,
+        case_id: str | None,
+        now_ts: float,
+    ) -> str:
+        if case_id is not None:
+            case_row = db.execute("SELECT * FROM cases WHERE case_id = ?", (case_id,)).fetchone()
+            require(case_row is not None, 404, "case_not_found", "Không tìm thấy ca hỗ trợ.")
+            require(
+                case_row["customer_id"] == customer_id,
+                403,
+                "object_scope_denied",
+                "Đơn hàng không thuộc khách hàng của ca hỗ trợ.",
+            )
+            cid = case_row["conversation_id"]
+            conv = db.execute("SELECT * FROM conversations WHERE id = ?", (cid,)).fetchone()
+            if conv is None:
+                self._ensure_customer_in_tx(db, customer_id)
+                db.execute(
+                    """INSERT INTO conversations(id, customer_id, order_id, product_id, revision, expires_at, provider_id)
+                       VALUES (?, ?, ?, ?, 0, ?, 'custom')""",
+                    (cid, customer_id, order_id, product_id, now_ts + self.CONVERSATION_TTL),
+                )
+            elif float(conv["expires_at"]) <= now_ts:
+                db.execute(
+                    "UPDATE conversations SET expires_at = ? WHERE id = ?",
+                    (now_ts + self.CONVERSATION_TTL, cid),
+                )
+            return cid
+
+        if conversation_id is not None:
+            require(
+                isinstance(conversation_id, str) and bool(re.fullmatch(r"[a-f0-9-]{36}", conversation_id)),
+                400,
+                "invalid_conversation",
+                "Mã cuộc trò chuyện không hợp lệ.",
+            )
+            return conversation_id
+
+        existing = db.execute(
+            """SELECT id FROM conversations
+               WHERE customer_id = ? AND order_id = ? AND expires_at > ?
+               ORDER BY expires_at DESC LIMIT 1""",
+            (customer_id, order_id, now_ts),
+        ).fetchone()
+        if existing is not None:
+            return existing["id"]
+
+        cid = str(uuid.uuid4())
+        self._ensure_customer_in_tx(db, customer_id)
+        db.execute(
+            """INSERT INTO conversations(id, customer_id, order_id, product_id, revision, expires_at, provider_id)
+               VALUES (?, ?, ?, ?, 0, ?, 'custom')""",
+            (cid, customer_id, order_id, product_id, now_ts + self.CONVERSATION_TTL),
+        )
+        self._ensure_active_case_in_tx(db, cid, customer_id, now_ts)
+        return cid
+
+    def _create_order_action_request_in_tx(
+        self,
+        db,
+        *,
+        customer_id: str,
+        order_id: str,
+        action_type: str,
+        expected_order_version: int,
+        reason_code: str,
+        reason_text: str | None = None,
+        exchange_kind: str | None = None,
+        conversation_id: str | None = None,
+        case_id: str | None = None,
+        actor: dict | None = None,
+        raised_by_role: str = "customer",
+        delivery_failure_attempts: int | None = None,
+        correlation_id: str | None = None,
+        idempotency_key: str | None = None,
+        proposal_id: str | None = None,
+        now: float | None = None,
+    ) -> dict:
+        require(
+            isinstance(action_type, str) and action_type in ("cancel", "return", "exchange"),
+            400,
+            "invalid_action_type",
+            "Loại yêu cầu đơn hàng phải là cancel, return hoặc exchange.",
+        )
+        require(
+            type(expected_order_version) is int and expected_order_version >= 1,
+            400,
+            "invalid_order_version",
+            "Phiên bản đơn hàng dự kiến không hợp lệ.",
+        )
+        require(
+            isinstance(reason_code, str) and bool(re.fullmatch(r"[a-z0-9_-]{2,64}", reason_code.strip())),
+            400,
+            "invalid_reason_code",
+            "Mã lý do bắt buộc và phải đúng định dạng.",
+        )
+        clean_reason_code = reason_code.strip()
+        require(
+            raised_by_role in ("customer", "staff", "manager"),
+            400,
+            "invalid_role",
+            "Vai trò tạo yêu cầu không hợp lệ.",
+        )
+        if raised_by_role == "customer":
+            require(
+                clean_reason_code != "delivery_failed" and delivery_failure_attempts is None,
+                403,
+                "permission_denied",
+                "Khách hàng không được tạo yêu cầu hủy do giao thất bại.",
+            )
+        if action_type == "exchange":
+            require(
+                exchange_kind in ("size", "one_to_one"),
+                400,
+                "invalid_exchange_kind",
+                "Yêu cầu đổi hàng phải chọn kiểu size hoặc one_to_one.",
+            )
+        else:
+            require(
+                exchange_kind is None,
+                400,
+                "invalid_exchange_kind",
+                "Chỉ yêu cầu đổi hàng mới có trường exchange_kind.",
+            )
+
+        clean_reason_text = self._sanitize_reason_text(reason_text)
+        if clean_reason_text is None:
+            default_label = ORDER_ACTION_REASONS.get(action_type, {}).get(clean_reason_code)
+            if default_label:
+                clean_reason_text = default_label
+
+        now_ts = self._now() if now is None else float(now)
+        order = self.owned(db, customer_id, order_id)
+        require(
+            int(order["version"]) == expected_order_version,
+            409,
+            "stale_order",
+            "Đơn đã thay đổi; vui lòng tải lại thông tin trước khi gửi yêu cầu.",
+        )
+        if action_type == "cancel":
+            require(
+                order["status"] == "pending",
+                409,
+                "not_cancellable",
+                "Đơn không ở trạng thái pending nên không đủ điều kiện yêu cầu hủy.",
+            )
+        else:
+            require(
+                order["status"] == "delivered",
+                409,
+                "order_not_eligible",
+                "Yêu cầu trả hoặc đổi hàng chỉ áp dụng cho đơn đã giao (delivered).",
+            )
+
+        existing_open = db.execute(
+            "SELECT request_id FROM order_action_requests WHERE order_id = ? AND closed_at IS NULL LIMIT 1",
+            (order_id,),
+        ).fetchone()
+        require(
+            existing_open is None,
+            409,
+            "order_action_conflict",
+            "Đơn hàng này đang có một yêu cầu xử lý chưa hoàn tất.",
+        )
+
+        resolved_cid = self._resolve_or_open_conversation_for_action_in_tx(
+            db,
+            customer_id=customer_id,
+            order_id=order_id,
+            product_id=order.get("product_id"),
+            conversation_id=conversation_id,
+            case_id=case_id,
+            now_ts=now_ts,
+        )
+        type_vi = {"cancel": "hủy đơn", "return": "trả hàng", "exchange": "đổi hàng"}[action_type]
+        handoff_comment = f"Yêu cầu {type_vi} {order_id}: {clean_reason_text or clean_reason_code}"[:300]
+        handoff = self._request_human_handoff_in_tx(
+            db,
+            customer_id,
+            resolved_cid,
+            reason_code="order_action_review",
+            comment=handoff_comment,
+            now=now_ts,
+        )
+        resolved_case_id = handoff["case_id"]
+        req_id = f"oar_{uuid.uuid4().hex}"
+        norm_actor = self._normalize_actor(actor, customer_id, raised_by_role)
+
+        try:
+            db.execute(
+                """INSERT INTO order_action_requests(
+                       request_id, order_id, customer_id, case_id, conversation_id,
+                       type, exchange_kind, status, inspection_outcome,
+                       refund_status, refund_decision, reason_code, reason_text,
+                       raised_by_role, delivery_failure_attempts, expected_order_version,
+                       version, created_at, updated_at, reviewed_at, received_at,
+                       inspected_at, completed_at, closed_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, 'requested', NULL, 'not_applicable', NULL,
+                             ?, ?, ?, ?, ?, 1, ?, ?, NULL, NULL, NULL, NULL, NULL)""",
+                (
+                    req_id,
+                    order_id,
+                    customer_id,
+                    resolved_case_id,
+                    resolved_cid,
+                    action_type,
+                    exchange_kind,
+                    clean_reason_code,
+                    clean_reason_text,
+                    raised_by_role,
+                    delivery_failure_attempts,
+                    expected_order_version,
+                    now_ts,
+                    now_ts,
+                ),
+            )
+        except Exception as exc:
+            if self._is_db_integrity_error(exc):
+                raise ApiError(
+                    409,
+                    "order_action_conflict",
+                    "Đơn hàng này đang có một yêu cầu xử lý chưa hoàn tất.",
+                ) from None
+            raise
+
+        dec_id = f"oad_{uuid.uuid4().hex}"
+        db.execute(
+            """INSERT INTO order_action_decisions(
+                   decision_id, request_id, case_id, order_id, conversation_id,
+                   action, from_status, to_status, from_refund_status, to_refund_status,
+                   refund_decision, inspection_outcome, actor_principal_id, actor_role,
+                   note, created_at
+               ) VALUES (?, ?, ?, ?, ?, 'submit', NULL, 'requested', 'not_applicable', 'not_applicable',
+                         NULL, NULL, ?, ?, ?, ?)""",
+            (
+                dec_id,
+                req_id,
+                resolved_case_id,
+                order_id,
+                resolved_cid,
+                norm_actor["principal_id"],
+                raised_by_role,
+                clean_reason_text,
+                now_ts,
+            ),
+        )
+
+        log_payload = {
+            "request_id": req_id,
+            "case_id": resolved_case_id,
+            "handoff_id": handoff["handoff_id"],
+            "conversation_id": resolved_cid,
+            "type": action_type,
+            "exchange_kind": exchange_kind,
+            "status": "requested",
+            "reason_code": clean_reason_code,
+            "raised_by_role": raised_by_role,
+            "expected_order_version": expected_order_version,
+        }
+        if delivery_failure_attempts is not None:
+            log_payload["delivery_failure_attempts"] = delivery_failure_attempts
+        if proposal_id is not None:
+            log_payload["proposal_id"] = proposal_id
+        if actor is not None:
+            log_payload["actor"] = norm_actor
+        self.log(db, customer_id, "order_action_requested", order_id, **log_payload)
+
+        outbox_event_type = {
+            "cancel": "cancel_requested",
+            "return": "return_requested",
+            "exchange": "exchange_requested",
+        }[action_type]
+        self._enqueue_outbox_in_tx(
+            db,
+            event_type=outbox_event_type,
+            actor={"principal_id": norm_actor["principal_id"], "role": raised_by_role, "tenant_id": norm_actor.get("tenant_id")},
+            customer_id=customer_id,
+            case_id=resolved_case_id,
+            order_action_request_id=req_id,
+            order_id=order_id,
+            before={"status": order["status"], "version": int(order["version"])},
+            after={"status": "requested", "version": 1},
+            reason_code=clean_reason_code,
+            reason_text=clean_reason_text,
+            correlation_id=correlation_id or proposal_id or req_id,
+            idempotency_key=idempotency_key or proposal_id or req_id,
+            source="app",
+            now=now_ts,
+            extra_fields={"exchange_kind": exchange_kind} if exchange_kind else None,
+        )
+
+        req_row = db.execute(
+            "SELECT * FROM order_action_requests WHERE request_id = ?",
+            (req_id,),
+        ).fetchone()
+        return self._serialize_order_action_in_tx(db, req_row, now=now_ts)
+
+    def create_order_action_request(
+        self,
+        customer_id: str,
+        body: dict,
+        *,
+        actor: dict | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict:
+        require(isinstance(body, dict), 400, "invalid_body", "Yêu cầu phải là đối tượng JSON.")
+        allowed = {
+            "order_id",
+            "type",
+            "action_type",
+            "exchange_kind",
+            "expected_order_version",
+            "order_version",
+            "reason_code",
+            "reason_text",
+            "conversation_id",
+        }
+        require(
+            set(body).issubset(allowed),
+            400,
+            "invalid_fields",
+            "Các trường của yêu cầu không hợp lệ.",
+        )
+        if "type" in body and "action_type" in body:
+            require(body["type"] == body["action_type"], 400, "invalid_action_type", "Trường type và action_type xung đột.")
+        action_type = body.get("type") if "type" in body else body.get("action_type")
+        if "expected_order_version" in body and "order_version" in body:
+            require(
+                body["expected_order_version"] == body["order_version"],
+                400,
+                "invalid_order_version",
+                "Trường expected_order_version và order_version xung đột.",
+            )
+        expected_ver = (
+            body.get("expected_order_version")
+            if "expected_order_version" in body
+            else body.get("order_version")
+        )
+        oid = body.get("order_id")
+        require(isinstance(oid, str) and bool(oid.strip()), 400, "invalid_order_id", "Thiếu mã đơn hàng.")
+        now_ts = self._now()
+        with self.connection(write=True) as db:
+            req = self._create_order_action_request_in_tx(
+                db,
+                customer_id=customer_id,
+                order_id=oid.strip(),
+                action_type=action_type,
+                expected_order_version=expected_ver,
+                reason_code=body.get("reason_code"),
+                reason_text=body.get("reason_text"),
+                exchange_kind=body.get("exchange_kind"),
+                conversation_id=body.get("conversation_id"),
+                actor=actor,
+                raised_by_role="customer",
+                correlation_id=idempotency_key,
+                idempotency_key=idempotency_key,
+                now=now_ts,
+            )
+        type_msg = {
+            "cancel": "Đã gửi yêu cầu hủy, chờ cửa hàng duyệt",
+            "return": "Đã gửi yêu cầu trả hàng, chờ cửa hàng duyệt",
+            "exchange": "Đã gửi yêu cầu đổi hàng, chờ cửa hàng duyệt",
+        }[req["type"]]
+        return {
+            "status": req["status"],
+            "order_action_request_id": req["request_id"],
+            "order_action": req,
+            "order": req["order"],
+            "case_id": req["case_id"],
+            "conversation_id": req["conversation_id"],
+            "message": type_msg,
+        }
+
+    def list_customer_order_actions(self, customer_id: str, *, limit: int = 50) -> list[dict]:
+        now_ts = self._now()
+        with self.connection() as db:
+            rows = db.execute(
+                """SELECT * FROM order_action_requests
+                   WHERE customer_id = ?
+                   ORDER BY created_at DESC, request_id DESC
+                   LIMIT ?""",
+                (customer_id, limit),
+            ).fetchall()
+            return [self._serialize_order_action_in_tx(db, r, now=now_ts) for r in rows]
+
+    def list_case_order_actions(self, case_id: str) -> list[dict]:
+        require(
+            isinstance(case_id, str) and bool(re.fullmatch(r"[A-Za-z0-9_-]{1,80}", case_id)),
+            400,
+            "invalid_case_id",
+            "Mã ca hỗ trợ không hợp lệ.",
+        )
+        now_ts = self._now()
+        with self.connection() as db:
+            case_row = db.execute("SELECT case_id FROM cases WHERE case_id = ?", (case_id,)).fetchone()
+            require(case_row is not None, 404, "case_not_found", "Không tìm thấy ca hỗ trợ.")
+            rows = db.execute(
+                """SELECT * FROM order_action_requests
+                   WHERE case_id = ?
+                   ORDER BY created_at DESC, request_id DESC""",
+                (case_id,),
+            ).fetchall()
+            return [self._serialize_order_action_in_tx(db, r, now=now_ts) for r in rows]
+
     def propose(self, customer, body):
         fields(body, {"order_id", "order_version", "cancel_reason"})
         oid, version, reason = body["order_id"], body["order_version"], body["cancel_reason"]
         require(isinstance(oid, str) and type(version) is int and isinstance(reason, str) and reason in REASONS,
                 400, "invalid_proposal", "Chọn mã đơn và một lý do được hỗ trợ.")
+        now_ts = self._now()
         with self.connection(write=True) as db:
             order = self.owned(db, customer, oid)
             require(order["status"] == "pending", 409, "not_cancellable", "Đơn không còn ở trạng thái cho phép hủy.")
             require(order["version"] == version, 409, "stale_order", "Đơn đã thay đổi. Vui lòng tải lại thông tin.")
-            pid, expires = str(uuid.uuid4()), time.time() + 600
+            pid, expires = str(uuid.uuid4()), now_ts + 600
             db.execute("INSERT INTO proposals(id,customer_id,order_id,order_version,reason,expires_at) VALUES (?,?,?,?,?,?)",
                        (pid, customer, oid, version, reason, expires))
             self.log(db, customer, "cancellation_proposed", oid, proposal_id=pid, reason=reason)
         return {"proposal_id": pid, "order": order, "reason": reason, "expires_at": expires,
                 "message": "Đơn chưa bị hủy. Vui lòng xem lại và xác nhận."}
 
-    def confirm(self, customer, pid, body, key):
+    def confirm(self, customer, pid, body, key, actor=None):
         fields(body, {"confirmed"})
         require(body["confirmed"] is True, 400, "confirmation_required", "Cần xác nhận rõ ràng trước khi hủy.")
         require(isinstance(key, str) and re.fullmatch(r"[A-Za-z0-9_-]{16,128}", key),
                 400, "idempotency_required", "Thiếu mã chống thực hiện lặp.")
+        now_ts = self._now()
         with self.connection(write=True) as db:
             p = db.execute("SELECT * FROM proposals WHERE id=? AND customer_id=?", (pid, customer)).fetchone()
             require(p is not None, 404, "proposal_not_found", "Không tìm thấy đề xuất của bạn.")
             if p["state"] == "confirmed":
                 require(hmac.compare_digest(p["confirm_key"], key), 409, "already_confirmed", "Đề xuất đã được thực hiện.")
                 return {**json.loads(p["result"]), "replayed": True}
-            require(p["state"] == "pending" and p["expires_at"] > time.time(),
+            require(p["state"] == "pending" and float(p["expires_at"]) > now_ts,
                     409, "inactive_proposal", "Đề xuất đã hết hạn hoặc bị bỏ. Hãy tạo yêu cầu mới.")
             used = db.execute("SELECT id FROM proposals WHERE customer_id=? AND confirm_key=?", (customer, key)).fetchone()
             require(used is None, 409, "idempotency_conflict", "Mã xác nhận đã dùng cho đề xuất khác.")
+            req = self._create_order_action_request_in_tx(
+                db,
+                customer_id=customer,
+                order_id=p["order_id"],
+                action_type="cancel",
+                expected_order_version=int(p["order_version"]),
+                reason_code=p["reason"],
+                reason_text=ORDER_ACTION_REASONS["cancel"].get(p["reason"], p["reason"]),
+                actor=actor,
+                raised_by_role="customer",
+                correlation_id=key,
+                idempotency_key=key,
+                proposal_id=pid,
+                now=now_ts,
+            )
             order = self.owned(db, customer, p["order_id"])
-            require(order["status"] == "pending" and order["version"] == p["order_version"],
-                    409, "stale_order", "Đơn đã thay đổi; yêu cầu hủy chưa được thực hiện.")
-            db.execute("UPDATE orders SET status='cancelled', version=version+1, cancel_reason=? WHERE id=? AND customer_id=?",
-                       (p["reason"], p["order_id"], customer))
-            order = self.owned(db, customer, p["order_id"])
-            result = {"order": order, "proposal_id": pid, "replayed": False, "message": "Đã hủy đơn mẫu và lưu nhật ký."}
+            result = {
+                "order": order,
+                "proposal_id": pid,
+                "order_action_request_id": req["request_id"],
+                "status": req["status"],
+                "order_action": req,
+                "case_id": req["case_id"],
+                "conversation_id": req["conversation_id"],
+                "replayed": False,
+                "message": "Đã gửi yêu cầu hủy, chờ cửa hàng duyệt",
+            }
             db.execute("UPDATE proposals SET state='confirmed', confirm_key=?, result=? WHERE id=?",
                        (key, json.dumps(result, ensure_ascii=False), pid))
-            self.log(db, customer, "order_cancelled", order["id"], proposal_id=pid, reason=p["reason"], version=order["version"])
             return result
 
     def dismiss(self, customer, pid):
         with self.connection(write=True) as db:
             p = db.execute("SELECT * FROM proposals WHERE id=? AND customer_id=?", (pid, customer)).fetchone()
             require(p is not None, 404, "proposal_not_found", "Không tìm thấy đề xuất của bạn.")
-            require(p["state"] != "confirmed", 409, "already_confirmed", "Đơn đã được hủy; không thể giữ lại bằng thao tác này.")
+            require(p["state"] != "confirmed", 409, "already_confirmed", "Yêu cầu hủy đã được gửi; không thể bỏ đề xuất bằng thao tác này.")
             if p["state"] == "pending":
                 db.execute("UPDATE proposals SET state='dismissed' WHERE id=?", (pid,))
                 self.log(db, customer, "proposal_dismissed", p["order_id"], proposal_id=pid)
