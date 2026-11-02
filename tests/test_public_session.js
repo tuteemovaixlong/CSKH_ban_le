@@ -1240,6 +1240,52 @@ function collectText(node) {
   });
   await run('closeStaffDeskDialog()');
 
+  // R1-W3.1 Item 5 (W3.1-D6): Enlarged default Staff Desk, fullscreen toggle persisted in localStorage, and wide 3-column CSS layout
+  assert.ok(indexHtml.includes('id="btn-maximize-staff-desk"'), 'web/index.html must include #btn-maximize-staff-desk in Staff Desk header');
+  const staffDialogCss = (stylesCss.match(/#staff-desk-dialog\s*\{[^}]*\}/) || [''])[0];
+  assert.ok(/width\s*:\s*96vw/i.test(staffDialogCss) && /height\s*:\s*92vh/i.test(staffDialogCss), '#staff-desk-dialog must default to 96vw x 92vh');
+  assert.ok(!/1120px|850px/.test(staffDialogCss), '#staff-desk-dialog must drop old 1120px/850px caps');
+  const staffMaxCss = (stylesCss.match(/#staff-desk-dialog\.is-maximized\s*\{[^}]*\}/) || [''])[0];
+  assert.ok(
+    /width\s*:\s*100vw/i.test(staffMaxCss)
+      && /height\s*:\s*100vh/i.test(staffMaxCss)
+      && /border-radius\s*:\s*0/i.test(staffMaxCss)
+      && /border\s*:\s*none/i.test(staffMaxCss),
+    '#staff-desk-dialog.is-maximized must occupy fullscreen with no radius and no border'
+  );
+  const queuePanelCss = (stylesCss.match(/\.staff-queue-panel\s*\{[^}]*\}/) || [''])[0];
+  assert.ok(/flex\s*:\s*0\s+0\s+320px/i.test(queuePanelCss), '.staff-queue-panel must have fixed width');
+  assert.ok(
+    /@media\s*\(\s*min-width\s*:\s*1400px\s*\)[\s\S]*\.staff-active-chat-panel[\s\S]*display\s*:\s*grid[\s\S]*#staff-case-ops-module[\s\S]*grid-column\s*:\s*2/i.test(stylesCss),
+    'CSS must define 3-column wide layout (queue | transcript | right-hand #staff-case-ops-module) at >=1400px'
+  );
+
+  await run('openStaffDesk()');
+  assert.equal(get('staff-desk-dialog').classList.contains('is-maximized'), false, 'Staff Desk starts in default non-maximized size');
+  assert.equal(get('btn-maximize-staff-desk')['aria-pressed'], 'false');
+
+  // Click maximize -> fullscreen class applied and saved in localStorage
+  get('btn-maximize-staff-desk').onclick();
+  assert.equal(get('staff-desk-dialog').classList.contains('is-maximized'), true, 'Clicking maximize must add .is-maximized to #staff-desk-dialog');
+  assert.equal(get('btn-maximize-staff-desk')['aria-pressed'], 'true');
+  assert.equal(localStorage.getItem('retailops.staff.deskMaximized'), '1');
+
+  // Close (including Esc native dialog close) and reopen -> fullscreen preference is retained
+  get('staff-desk-dialog').close();
+  if (typeof get('staff-desk-dialog').onclose === 'function') get('staff-desk-dialog').onclose();
+  get('staff-desk-dialog').classList.remove('is-maximized');
+  await run('openStaffDesk()');
+  assert.equal(get('staff-desk-dialog').open, true);
+  assert.equal(get('staff-desk-dialog').classList.contains('is-maximized'), true, 'Reopening Staff Desk must restore .is-maximized from localStorage');
+  assert.equal(get('btn-maximize-staff-desk')['aria-pressed'], 'true');
+
+  // Click restore -> returns to default size and updates localStorage
+  get('btn-maximize-staff-desk').onclick();
+  assert.equal(get('staff-desk-dialog').classList.contains('is-maximized'), false, 'Clicking restore must remove .is-maximized');
+  assert.equal(get('btn-maximize-staff-desk')['aria-pressed'], 'false');
+  assert.equal(localStorage.getItem('retailops.staff.deskMaximized'), '0');
+  await run('closeStaffDeskDialog()');
+
   mockSessionRole = 'customer';
   await run('openSession()');
   await get('logout').onclick();

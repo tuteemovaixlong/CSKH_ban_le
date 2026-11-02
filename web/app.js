@@ -1864,6 +1864,7 @@ document.querySelectorAll('#csat-stars .star').forEach(star => {
 
 // Staff Live Chat Console (Human-in-the-loop Desk)
 const STAFF_CASE_OPS_COLLAPSED_KEY = 'retailops.staff.caseOpsCollapsed';
+const STAFF_DESK_MAXIMIZED_KEY = 'retailops.staff.deskMaximized';
 const STAFF_OA_STATUS_VI = {
   requested: 'Chờ tiếp nhận',
   under_review: 'Đang xem xét',
@@ -1904,6 +1905,7 @@ let staffReplySending = false;
 let staffQueueBucket = 'waiting';
 let staffDeskData = { waiting: [], in_progress: [], resolved: [], open_count: 0 };
 let staffCaseOpsCollapsed = false;
+let staffDeskMaximized = false;
 let staffCaseOrderActions = [];
 let staffCaseCustomerOrders = [];
 let staffCaseOrders = [];
@@ -2020,6 +2022,40 @@ function toggleStaffCaseOps() {
   applyStaffCaseOpsCollapseState(next);
 }
 
+function readStaffDeskSavedMaximized() {
+  try {
+    if (typeof localStorage !== 'undefined' && localStorage && typeof localStorage.getItem === 'function') {
+      return localStorage.getItem(STAFF_DESK_MAXIMIZED_KEY) === '1';
+    }
+  } catch (e) {}
+  return false;
+}
+
+function writeStaffDeskSavedMaximized(maximized) {
+  try {
+    if (typeof localStorage !== 'undefined' && localStorage && typeof localStorage.setItem === 'function') {
+      localStorage.setItem(STAFF_DESK_MAXIMIZED_KEY, maximized ? '1' : '0');
+    }
+  } catch (e) {}
+}
+
+function applyStaffDeskMaximizedState(maximized) {
+  staffDeskMaximized = Boolean(maximized);
+  const dlg = byId('staff-desk-dialog');
+  const btn = byId('btn-maximize-staff-desk');
+  if (dlg) dlg.classList?.toggle?.('is-maximized', staffDeskMaximized);
+  if (btn) {
+    btn.setAttribute('aria-pressed', staffDeskMaximized ? 'true' : 'false');
+    btn.textContent = staffDeskMaximized ? '🗗 Thu nhỏ' : '⛶ Phóng to';
+  }
+}
+
+function toggleStaffDeskMaximized() {
+  const next = !staffDeskMaximized;
+  writeStaffDeskSavedMaximized(next);
+  applyStaffDeskMaximizedState(next);
+}
+
 function isOrderActionOpen(req) {
   if (!req) return false;
   if (req.refund_status === 'pending') return true;
@@ -2058,6 +2094,7 @@ function openStaffDesk() {
   const dlg = byId('staff-desk-dialog');
   if (dlg) {
     setStaffDeskNotice('', '');
+    applyStaffDeskMaximizedState(readStaffDeskSavedMaximized());
     applyStaffCaseOpsCollapseState(readStaffCaseOpsSavedCollapsed());
     if (!activeStaffTicket) {
       syncStaffTicketActions(null, true);
@@ -3405,6 +3442,10 @@ if (staffDeskDialog) {
 
 const refreshStaffQueue = byId('refresh-staff-queue');
 if (refreshStaffQueue) refreshStaffQueue.onclick = () => loadStaffQueue();
+
+const btnMaximizeStaffDesk = byId('btn-maximize-staff-desk');
+if (btnMaximizeStaffDesk) btnMaximizeStaffDesk.onclick = () => toggleStaffDeskMaximized();
+applyStaffDeskMaximizedState(readStaffDeskSavedMaximized());
 
 const btnSendStaffReply = byId('btn-send-staff-reply');
 if (btnSendStaffReply) btnSendStaffReply.onclick = () => sendStaffReply();
