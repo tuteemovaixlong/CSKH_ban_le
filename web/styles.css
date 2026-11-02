@@ -2638,8 +2638,15 @@ button:disabled {
   display: flex !important;
   justify-content: space-between !important;
   align-items: center !important;
+  gap: 16px !important;
+  flex-wrap: nowrap !important;
   background: #f8fafc !important;
   flex-shrink: 0 !important;
+}
+
+.staff-header-info {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .staff-header-info h2 {
@@ -2659,6 +2666,13 @@ button:disabled {
   display: flex !important;
   gap: 10px !important;
   align-items: center !important;
+  flex-wrap: nowrap !important;
+  flex-shrink: 0 !important;
+}
+
+.staff-header-actions button {
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .staff-desk-workspace {
@@ -2777,13 +2791,20 @@ button:disabled {
 }
 
 .staff-chat-header {
-  padding: 14px 24px !important;
+  padding: 12px 24px !important;
   border-bottom: 1px solid #e2e8f0 !important;
   display: flex !important;
   justify-content: space-between !important;
   align-items: center !important;
+  gap: 12px !important;
+  flex-wrap: nowrap !important;
   background: #ffffff !important;
   flex-shrink: 0 !important;
+}
+
+.chat-header-user {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .chat-header-user strong {
@@ -2791,11 +2812,39 @@ button:disabled {
   font-size: 15px !important;
   color: #0f172a !important;
   font-weight: 650 !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chat-header-user span {
+  display: block;
+  margin-top: 2px;
   font-size: 12px !important;
+  line-height: 1.4;
   color: #64748b !important;
+  overflow-wrap: anywhere;
+}
+
+.chat-header-bar-controls,
+.chat-header-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.staff-case-status-pill {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #334155;
+  border: 1px solid #cbd5e1;
+  white-space: nowrap;
 }
 
 .staff-bucket-tabs {
@@ -2828,26 +2877,226 @@ button:disabled {
   color: #166534;
 }
 
-.staff-action-bar {
+.staff-case-ops-module {
+  border-bottom: 1px solid #dbe4f0;
+  background: #f8fafc;
+  flex-shrink: 0;
+  max-height: 44vh;
   display: flex;
-  padding: 10px 20px;
-  background: #eff6ff;
-  border-bottom: 1px solid #bfdbfe;
-  justify-content: space-between;
+  flex-direction: column;
+}
+
+.staff-case-ops-header {
+  padding: 8px 24px;
+  display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
+  flex-wrap: nowrap;
+  background: #eff6ff;
+  border-bottom: 1px solid #dbeafe;
   flex-shrink: 0;
 }
 
-.staff-action-bar-label {
-  font-size: 13px;
+.staff-case-ops-module.is-collapsed .staff-case-ops-header {
+  border-bottom: none;
+}
+
+.staff-case-ops-title-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1 1 auto;
+  font-size: 12.5px;
   color: #1e3a8a;
 }
 
-.staff-proposal-buttons {
+.staff-case-ops-summary {
+  font-size: 11.5px;
+  color: #475569;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.staff-case-ops-header-actions {
   display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+}
+
+.staff-case-ops-body {
+  padding: 10px 24px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.staff-case-lifecycle-bar {
+  display: flex;
+  align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+#staff-case-ops-module button,
+#staff-case-ops-module .primary,
+#staff-case-ops-module .secondary {
+  width: auto;
+  min-width: 0;
+  margin-top: 0;
+  padding: 5px 11px;
+  font-size: 12px;
+  font-weight: 550;
+  line-height: 1.35;
+  border-radius: 6px;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+.staff-order-actions-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.case-ops-empty-hint {
+  margin: 0;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.case-ops-request-card,
+.case-ops-delivery-fail-card {
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: #334155;
+}
+
+.case-ops-req-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.case-ops-req-badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.case-ops-pill {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #1e293b;
+}
+
+.case-ops-pill.is-open {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.case-ops-pill.is-approved {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.case-ops-pill.is-rejected {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.case-ops-pill.is-refund {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.case-ops-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  font-size: 11.5px;
+  color: #475569;
+}
+
+.case-ops-evidence-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.case-ops-evidence-thumb {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+  cursor: pointer;
+}
+
+.case-ops-decisions {
+  border-top: 1px dashed #e2e8f0;
+  padding-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: #475569;
+}
+
+.case-ops-controls-row {
+  border-top: 1px solid #f1f5f9;
+  padding-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.case-ops-input,
+.case-ops-select {
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: #1e293b;
+  background: #ffffff;
+}
+
+.case-ops-input {
+  min-width: 170px;
+  flex: 1 1 180px;
+}
+
+.case-ops-role-gate-note {
+  font-size: 11.5px;
+  color: #9a3412;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 6px;
+  padding: 3px 8px;
 }
 
 .staff-chat-transcript {
@@ -2880,7 +3129,10 @@ button:disabled {
 
 .staff-chat-composer[hidden],
 .chat-header-tools[hidden],
-.staff-action-bar[hidden],
+.staff-case-status-pill[hidden],
+.staff-case-ops-module[hidden],
+.staff-case-ops-body[hidden],
+.staff-order-actions-panel[hidden],
 .staff-desk-notice[hidden] {
   display: none !important;
 }

@@ -7,6 +7,7 @@ const path = require('node:path');
 class Element {
   constructor(tag='') {
     this.tagName=String(tag).toUpperCase();
+    this._id='';
     this.children=[]; this.dataset={}; this.value=''; this.disabled=false; this.textContent='';
     this.style={};
     this._classes=new Set();
@@ -21,6 +22,8 @@ class Element {
       contains:(cls)=>this._classes.has(cls)
     };
   }
+  get id() { return this._id; }
+  set id(v) { this._id=String(v||''); if (this._id) nodes.set(this._id, this); }
   append(...nodes) { this.children.push(...nodes); }
   replaceChildren(...nodes) { this.children=nodes; }
   querySelector() { return this.button ||= new Element('button'); }
@@ -80,10 +83,18 @@ let forceFeedbackError = null;
 let forceStaffReplyError = null;
 let mockTranscriptResponse = null;
 let mockStaffCases = null;
+let mockStaffCaseOrderActions = null;
+let mockStaffCaseTranscriptMap = null;
 let alertCalls = [];
+const storageMap = new Map();
+const localStorage = {
+  getItem: k => (storageMap.has(k) ? storageMap.get(k) : null),
+  setItem: (k, v) => { storageMap.set(k, String(v)); },
+  removeItem: k => { storageMap.delete(k); }
+};
 const persistent = process.env.RETAILOPS_UI_TEST_MODE === 'persistent';
 if (persistent) document.body.dataset.dataMode = 'persistent-demo';
-const context=vm.createContext({document,console,Intl,Date,URLSearchParams,AbortSignal,crypto:{randomUUID:()=> 'fixture-id'},
+const context=vm.createContext({document,console,Intl,Date,URLSearchParams,AbortSignal,localStorage,crypto:{randomUUID:()=> 'fixture-id'},
   alert:msg=>{ alertCalls.push(String(msg)); },
   requestAnimationFrame:fn=>fn(),location:{reload(){reloaded=true;}},
   fetch:async(url,options)=>{
@@ -177,14 +188,120 @@ const context=vm.createContext({document,console,Intl,Date,URLSearchParams,Abort
     }
     else if(/^\/api\/staff\/cases\/[^/]+\/messages$/.test(url)) {
       const cidMatch = url.split('/')[4];
-      const isClosedCase = cidMatch === 'case_r1';
-      body = {
-        conversation: { id: 'fixture-conversation' },
-        case: { case_id: cidMatch, status: isClosedCase ? 'resolved' : 'waiting', holder: null, version: 1 },
-        read_only: isClosedCase,
-        turns: [],
-        feedbacks: []
-      };
+      if (mockStaffCaseTranscriptMap && mockStaffCaseTranscriptMap[cidMatch]) {
+        body = mockStaffCaseTranscriptMap[cidMatch];
+      } else {
+        const allMockCases = mockStaffCases
+          ? [...(mockStaffCases.waiting || []), ...(mockStaffCases.in_progress || []), ...(mockStaffCases.resolved || [])]
+          : [];
+        const matchedCase = allMockCases.find(c => c.case_id === cidMatch);
+        const isClosedCase = matchedCase ? matchedCase.status === 'resolved' : cidMatch === 'case_r1';
+        body = {
+          conversation: { id: 'fixture-conversation' },
+          case: matchedCase || { case_id: cidMatch, status: isClosedCase ? 'resolved' : 'waiting', holder: null, version: 1 },
+          read_only: isClosedCase,
+          turns: [],
+          feedbacks: []
+        };
+      }
+    }
+    else if(/^\/api\/staff\/cases\/[^/]+\/order-actions$/.test(url)) {
+      const cidMatch = url.split('/')[4];
+      if (options.method === 'POST') {
+        const payload = JSON.parse(options.body || '{}');
+        const created = {
+          request_id: 'oar_df_1',
+          order_id: payload.order_id,
+          case_id: cidMatch,
+          conversation_id: 'fixture-conversation',
+          type: 'cancel',
+          exchange_kind: null,
+          status: 'under_review',
+          inspection_outcome: null,
+          refund_status: 'not_applicable',
+          refund_decision: null,
+          reason_code: 'delivery_failed',
+          reason_label: 'Giao hàng thất bại',
+          reason_text: payload.note,
+          raised_by_role: mockSessionRole || 'staff',
+          delivery_failure_attempts: payload.delivery_failure_attempts,
+          expected_order_version: payload.expected_order_version || 1,
+          version: 1,
+          closed_at: null,
+          order: { id: payload.order_id, name: 'Áo thun Essential', amount: 299000, status: 'pending', version: 1 },
+          delivery_age_label: 'chưa có ngày giao',
+          evidence: [],
+          decisions: [{ decision_id: 'oad_df_1', action: 'submit', from_status: null, to_status: 'under_review', actor_role: mockSessionRole || 'staff', note: payload.note }]
+        };
+        if (mockStaffCaseOrderActions && mockStaffCaseOrderActions[cidMatch]) {
+          mockStaffCaseOrderActions[cidMatch].order_actions.unshift(created);
+        }
+        status = 201;
+        body = { status: 'under_review', order_action_request_id: created.request_id, order_action: created, message: 'Đã tạo yêu cầu hủy do giao thất bại, chờ Quản lý duyệt' };
+      } else {
+        body = (mockStaffCaseOrderActions && mockStaffCaseOrderActions[cidMatch]) || {
+          case_id: cidMatch,
+          read_only: cidMatch === 'case_r1',
+          order_actions: [],
+          customer_orders: []
+        };
+      }
+    }
+    else if(/^\/api\/order-actions\/[^/]+\/(approve|reject|mark-received|mark-inspected|complete|refund-request|refund-decision|refund-outcome)$/.test(url) && options.method === 'POST') {
+      const parts = url.split('/');
+      const reqId = parts[3];
+      const stepSlug = parts[4];
+      const payload = JSON.parse(options.body || '{}');
+      let targetReq = null;
+      if (mockStaffCaseOrderActions) {
+        for (const entry of Object.values(mockStaffCaseOrderActions)) {
+          const found = (entry.order_actions || []).find(r => r.request_id === reqId);
+          if (found) { targetReq = found; break; }
+        }
+      }
+      if (!targetReq) {
+        status = 404;
+        body = { error: 'order_action_not_found', message: 'Không tìm thấy yêu cầu.' };
+      } else {
+        const prevStatus = targetReq.status;
+        const prevRefund = targetReq.refund_status;
+        targetReq.version += 1;
+        if (stepSlug === 'approve') {
+          targetReq.status = 'approved';
+          if (targetReq.type === 'cancel') {
+            targetReq.closed_at = 1760000100;
+            if (targetReq.order) targetReq.order.status = 'cancelled';
+          }
+          targetReq.decisions.push({ decision_id: 'oad_' + targetReq.version, action: 'approve', from_status: prevStatus, to_status: 'approved', actor_role: mockSessionRole, note: payload.note || null });
+        } else if (stepSlug === 'reject') {
+          targetReq.status = 'rejected';
+          targetReq.closed_at = 1760000100;
+          targetReq.decisions.push({ decision_id: 'oad_' + targetReq.version, action: 'reject', from_status: prevStatus, to_status: 'rejected', actor_role: mockSessionRole, note: payload.note || null });
+        } else if (stepSlug === 'mark-received') {
+          targetReq.status = 'received';
+          targetReq.decisions.push({ decision_id: 'oad_' + targetReq.version, action: 'mark_received', from_status: prevStatus, to_status: 'received', actor_role: mockSessionRole, note: payload.note || null });
+        } else if (stepSlug === 'mark-inspected') {
+          targetReq.status = 'inspected';
+          targetReq.inspection_outcome = payload.inspection_outcome;
+          targetReq.decisions.push({ decision_id: 'oad_' + targetReq.version, action: 'mark_inspected', from_status: prevStatus, to_status: 'inspected', inspection_outcome: payload.inspection_outcome, actor_role: mockSessionRole, note: payload.note || null });
+        } else if (stepSlug === 'complete') {
+          targetReq.status = 'completed';
+          targetReq.closed_at = 1760000200;
+          targetReq.decisions.push({ decision_id: 'oad_' + targetReq.version, action: 'complete', from_status: prevStatus, to_status: 'completed', actor_role: mockSessionRole, note: payload.note || null });
+        } else if (stepSlug === 'refund-request') {
+          targetReq.refund_status = 'pending';
+          targetReq.refund_decision = null;
+          targetReq.decisions.push({ decision_id: 'oad_' + targetReq.version, action: 'refund_request', from_refund_status: prevRefund, to_refund_status: 'pending', actor_role: mockSessionRole, note: payload.note || null });
+        } else if (stepSlug === 'refund-decision') {
+          targetReq.refund_decision = payload.decision;
+          targetReq.refund_status = payload.decision === 'approved' ? 'pending' : 'not_applicable';
+          targetReq.decisions.push({ decision_id: 'oad_' + targetReq.version, action: payload.decision === 'approved' ? 'refund_approve' : 'refund_reject', from_refund_status: 'pending', to_refund_status: targetReq.refund_status, refund_decision: payload.decision, actor_role: mockSessionRole, note: payload.note || null });
+        } else if (stepSlug === 'refund-outcome') {
+          targetReq.refund_status = payload.outcome;
+          targetReq.decisions.push({ decision_id: 'oad_' + targetReq.version, action: 'refund_outcome', from_refund_status: 'pending', to_refund_status: payload.outcome, refund_decision: 'approved', actor_role: mockSessionRole, note: payload.note || null });
+        }
+        body = { status: targetReq.status, order_action: targetReq, customer_notice: 'Đã cập nhật ' + stepSlug };
+      }
     }
     else if(url==='/api/staff/reply') {
       if (forceStaffReplyError) {
@@ -230,7 +347,7 @@ const context=vm.createContext({document,console,Intl,Date,URLSearchParams,Abort
     else if(url.startsWith('/api/admin/audit-log')) {
       body = { audit_logs: mockAdminAuditLogs };
     }
-    return {status,ok:status===200,json:async()=>body};
+    return {status,ok:status>=200&&status<300,json:async()=>body};
   }});
 const source=fs.readFileSync(path.join(__dirname,'../web/app.js'),'utf8');
 const run=code=>vm.runInContext(code,context);
@@ -625,6 +742,170 @@ function collectText(node) {
   await run('pollHumanChat()');
   assert.ok(collectText(get('messages')).includes('Yêu cầu đổi hàng (đổi size) của đơn O-102 đã được duyệt.'));
   mockTranscriptResponse = null;
+
+  // R1-W3 Item 12: Staff Desk "Thao tác ca" collapsible module (W3-D10), canned buttons removed, CSS/header layout, and role/state button matrix
+  assert.ok(!indexHtml.includes('btn-approve-exchange-1to1') && !indexHtml.includes('btn-approve-exchange-size'), 'Canned exchange buttons must be removed from web/index.html');
+  assert.ok(!indexHtml.includes('id="staff-action-bar"'), 'Old #staff-action-bar must be removed from web/index.html');
+  assert.ok(!source.includes('approveExchange1to1') && !source.includes('approveExchangeSize'), 'Canned exchange handlers must be removed from web/app.js');
+  const posHeader = indexHtml.indexOf('id="staff-chat-header"');
+  const posModule = indexHtml.indexOf('id="staff-case-ops-module"');
+  const posTranscript = indexHtml.indexOf('id="staff-chat-transcript"');
+  assert.ok(posHeader > 0 && posModule > posHeader && posTranscript > posModule, '#staff-case-ops-module must sit between header and transcript');
+  assert.ok(stylesCss.includes('#staff-case-ops-module .primary'), 'CSS must scope .primary inside #staff-case-ops-module');
+  const staffHeaderCss = (stylesCss.match(/\.staff-chat-header\s*\{[^}]*\}/) || [''])[0];
+  assert.ok(/flex-wrap\s*:\s*nowrap/i.test(staffHeaderCss), '.staff-chat-header must enforce single-row nowrap layout');
+
+  mockStaffCaseTranscriptMap = {
+    case_empty_oa: {
+      conversation: { id: 'fixture-conversation' },
+      case: { case_id: 'case_empty_oa', status: 'in_progress', holder: 'p_staff_1', holder_name: 'Khách B', version: 2 },
+      read_only: false,
+      turns: [],
+      feedbacks: []
+    },
+    case_open_oa: {
+      conversation: { id: 'fixture-conversation' },
+      case: { case_id: 'case_open_oa', status: 'waiting', holder: null, holder_name: null, version: 1 },
+      read_only: false,
+      turns: [],
+      feedbacks: []
+    }
+  };
+  mockStaffCaseOrderActions = {
+    case_empty_oa: {
+      case_id: 'case_empty_oa',
+      read_only: false,
+      order_actions: [],
+      customer_orders: []
+    },
+    case_open_oa: {
+      case_id: 'case_open_oa',
+      read_only: false,
+      order_actions: [
+        {
+          request_id: 'oar_staff_1',
+          order_id: 'O-102',
+          case_id: 'case_open_oa',
+          conversation_id: 'fixture-conversation',
+          type: 'exchange',
+          exchange_kind: 'size',
+          status: 'requested',
+          inspection_outcome: null,
+          refund_status: 'not_applicable',
+          refund_decision: null,
+          reason_code: 'wrong_size',
+          reason_label: 'Không vừa size / muốn đổi size',
+          reason_text: 'Chật vai, xin đổi sang XL',
+          raised_by_role: 'customer',
+          delivery_failure_attempts: null,
+          expected_order_version: 2,
+          version: 1,
+          closed_at: null,
+          order: { id: 'O-102', name: 'Áo khoác Everyday', variant: 'Đen / L', amount: 520000, status: 'delivered', version: 2 },
+          days_since_delivery: 4,
+          delivery_age_label: '4 ngày kể từ khi giao',
+          evidence: [{ evidence_id: 'ev_11111111111111111111111111111111', mime_type: 'image/jpeg', sha256: 'b'.repeat(64), purged: false, download_url: '/api/order-actions/oar_staff_1/evidence/ev_11111111111111111111111111111111' }],
+          decisions: [{ decision_id: 'oad_1', action: 'submit', from_status: null, to_status: 'requested', actor_role: 'customer', note: 'Chật vai, xin đổi sang XL' }]
+        }
+      ],
+      customer_orders: [
+        { id: 'O-101', name: 'Áo thun Essential', variant: 'Trắng / M', amount: 299000, status: 'pending', version: 1 },
+        { id: 'O-102', name: 'Áo khoác Everyday', variant: 'Đen / L', amount: 520000, status: 'delivered', version: 2 }
+      ]
+    }
+  };
+
+  mockSessionRole = 'staff';
+  await run('openSession()');
+  await run('openStaffDesk()');
+  assert.equal(get('staff-case-ops-body').hidden, false);
+
+  // Collapse module and verify localStorage persistence across cases without open requests
+  get('btn-toggle-staff-case-ops').onclick();
+  assert.equal(get('staff-case-ops-body').hidden, true);
+  assert.equal(get('btn-toggle-staff-case-ops')['aria-expanded'], 'false');
+  assert.equal(localStorage.getItem('retailops.staff.caseOpsCollapsed'), '1');
+
+  await run('selectStaffTicket({ case_id: "case_empty_oa", conversation_id: "fixture-conversation", customer_id: "C-001", status: "in_progress", holder: "p_staff_1" })');
+  assert.equal(get('staff-case-ops-body').hidden, true, 'Saved collapsed state must apply when case has no open request');
+
+  // Selecting a case WITH an open order-action request auto-expands the module while preserving saved preference
+  await run('selectStaffTicket({ case_id: "case_open_oa", conversation_id: "fixture-conversation", customer_id: "C-001", status: "waiting", holder: null })');
+  assert.equal(get('staff-case-ops-body').hidden, false, 'Module must auto-expand when case has open order-action request');
+  assert.equal(get('btn-toggle-staff-case-ops')['aria-expanded'], 'true');
+  assert.equal(localStorage.getItem('retailops.staff.caseOpsCollapsed'), '1');
+
+  const panelEl = get('staff-order-actions-panel');
+  const panelTxtUnclaimed = collectText(panelEl);
+  assert.ok(panelTxtUnclaimed.includes('Đơn O-102'));
+  assert.ok(panelTxtUnclaimed.includes('Đổi hàng (Đổi size)'));
+  assert.ok(panelTxtUnclaimed.includes('4 ngày kể từ khi giao'));
+  assert.ok(panelTxtUnclaimed.includes('Lịch sử quyết định (1)'));
+  assert.equal(panelEl.querySelectorAll('img').length, 1);
+  // Unclaimed case: Staff cannot approve/reject before claiming!
+  assert.equal(panelEl.querySelectorAll('button').filter(b => b.dataset.action === 'approve').length, 0);
+  assert.ok(panelTxtUnclaimed.includes('Nhận ca để duyệt hoặc từ chối yêu cầu'));
+
+  // Claim case -> Staff holds case -> can review customer exchange lifecycle + request refund + raise delivery-failure cancel
+  mockStaffCaseTranscriptMap.case_open_oa.case = { case_id: 'case_open_oa', status: 'in_progress', holder: 'p_staff_1', holder_name: 'Khách B', version: 2 };
+  mockStaffCaseOrderActions.case_open_oa.order_actions[0].status = 'under_review';
+  await run('selectStaffTicket({ case_id: "case_open_oa", conversation_id: "fixture-conversation", customer_id: "C-001", status: "in_progress", holder: "p_staff_1" })');
+
+  let approveBtn = panelEl.querySelectorAll('button').find(b => b.dataset.action === 'approve');
+  let rejectBtn = panelEl.querySelectorAll('button').find(b => b.dataset.action === 'reject');
+  assert.ok(approveBtn && rejectBtn, 'Holding staff must see Approve and Reject on customer request');
+  await approveBtn.onclick();
+  assert.equal(mockStaffCaseOrderActions.case_open_oa.order_actions[0].status, 'approved');
+
+  // After approve on exchange -> mark-received & refund-request appear
+  const markReceivedBtn = panelEl.querySelectorAll('button').find(b => b.dataset.action === 'mark-received');
+  const refundReqBtn = panelEl.querySelectorAll('button').find(b => b.dataset.action === 'refund-request');
+  assert.ok(markReceivedBtn && refundReqBtn, 'Approved exchange must show mark-received and refund-request');
+  await markReceivedBtn.onclick();
+  assert.equal(mockStaffCaseOrderActions.case_open_oa.order_actions[0].status, 'received');
+
+  // After received -> inspection outcome select + mark-inspected appear
+  const outcomeSel = panelEl.querySelectorAll('select').find(s => s.dataset.role === 'inspection-outcome');
+  const markInspectedBtn = panelEl.querySelectorAll('button').find(b => b.dataset.action === 'mark-inspected');
+  assert.ok(outcomeSel && markInspectedBtn);
+  outcomeSel.value = 'refund';
+  await markInspectedBtn.onclick();
+  assert.equal(mockStaffCaseOrderActions.case_open_oa.order_actions[0].status, 'inspected');
+  assert.equal(mockStaffCaseOrderActions.case_open_oa.order_actions[0].inspection_outcome, 'refund');
+
+  // Staff submits manual refund request -> Staff must NOT see Manager-only refund-approve/reject buttons
+  const refundReqBtn2 = panelEl.querySelectorAll('button').find(b => b.dataset.action === 'refund-request');
+  await refundReqBtn2.onclick();
+  assert.equal(mockStaffCaseOrderActions.case_open_oa.order_actions[0].refund_status, 'pending');
+  assert.equal(panelEl.querySelectorAll('button').filter(b => b.dataset.action === 'refund-approve').length, 0);
+  assert.ok(collectText(panelEl).includes('Chờ Quản lý duyệt hoàn tiền'));
+
+  // Staff creates delivery-failure cancel on pending order O-101 -> Staff must NOT see approve/reject on delivery-failure cancel (W3-D8)
+  get('staff-df-order-select').value = 'O-101';
+  get('staff-df-attempts-input').value = '2';
+  get('staff-df-note-input').value = 'Bưu tá gọi 2 lần thuê bao không liên lạc được';
+  await get('btn-create-delivery-failure').onclick();
+  assert.equal(mockStaffCaseOrderActions.case_open_oa.order_actions[0].request_id, 'oar_df_1');
+  assert.ok(collectText(panelEl).includes('chưa có ngày giao'));
+  assert.ok(collectText(panelEl).includes('Chờ Quản lý duyệt (yêu cầu hủy do giao thất bại)'));
+  assert.equal(panelEl.querySelectorAll('button').filter(b => b.dataset.action === 'approve').length, 0);
+
+  // Switch to Manager -> Manager sees approve/reject on delivery-failure cancel AND refund-decision / refund-outcome!
+  mockSessionRole = 'manager';
+  await run('openSession()');
+  await run('selectStaffTicket({ case_id: "case_open_oa", conversation_id: "fixture-conversation", customer_id: "C-001", status: "in_progress", holder: "p_staff_1" })');
+  const mgrApproveDf = panelEl.querySelectorAll('button').find(b => b.dataset.action === 'approve');
+  const mgrRefundApprove = panelEl.querySelectorAll('button').find(b => b.dataset.action === 'refund-approve');
+  assert.ok(mgrApproveDf, 'Manager must see approve button on delivery-failure cancel');
+  assert.ok(mgrRefundApprove, 'Manager must see refund-approve button');
+  await mgrApproveDf.onclick();
+  assert.equal(mockStaffCaseOrderActions.case_open_oa.order_actions[0].status, 'approved');
+  await panelEl.querySelectorAll('button').find(b => b.dataset.action === 'refund-approve').onclick();
+  const mgrRefundOutcome = panelEl.querySelectorAll('button').find(b => b.dataset.action === 'refund-outcome-refunded');
+  assert.ok(mgrRefundOutcome, 'Manager must see refund-outcome button after approving refund');
+  await mgrRefundOutcome.onclick();
+  assert.equal(mockStaffCaseOrderActions.case_open_oa.order_actions[1].refund_status, 'refunded');
+  await run('closeStaffDeskDialog()');
 
   await get('logout').onclick();
   assert.equal(authenticated,false);assert.equal(reloaded,true);

@@ -1812,11 +1812,106 @@ document.querySelectorAll('#csat-stars .star').forEach(star => {
 });
 
 // Staff Live Chat Console (Human-in-the-loop Desk)
+const STAFF_CASE_OPS_COLLAPSED_KEY = 'retailops.staff.caseOpsCollapsed';
+const STAFF_OA_STATUS_VI = {
+  requested: 'Chờ tiếp nhận',
+  under_review: 'Đang xem xét',
+  approved: 'Đã duyệt',
+  rejected: 'Đã từ chối',
+  received: 'Đã nhận hàng',
+  inspected: 'Đã kiểm tra',
+  completed: 'Hoàn tất'
+};
+const STAFF_OA_OUTCOME_VI = {
+  refund: 'Hoàn tiền',
+  exchange: 'Đổi hàng',
+  no_action: 'Không xử lý'
+};
+const STAFF_OA_ROLE_VI = {
+  customer: 'Khách hàng',
+  staff: 'Nhân viên',
+  manager: 'Quản lý'
+};
+const STAFF_OA_DECISION_VI = {
+  submit: 'Gửi yêu cầu',
+  claim_review: 'Nhận ca xem xét',
+  approve: 'Duyệt yêu cầu',
+  reject: 'Từ chối yêu cầu',
+  mark_received: 'Đã nhận hàng gửi về',
+  mark_inspected: 'Đã kiểm tra hàng',
+  complete: 'Hoàn tất xử lý',
+  refund_request: 'Gửi yêu cầu hoàn tiền',
+  refund_approve: 'Duyệt hoàn tiền',
+  refund_reject: 'Từ chối hoàn tiền',
+  refund_outcome: 'Ghi nhận kết quả hoàn tiền'
+};
+
 let activeStaffTicket = null;
 let staffDeskTimer = null;
 let staffReplySending = false;
 let staffQueueBucket = 'waiting';
 let staffDeskData = { waiting: [], in_progress: [], resolved: [], open_count: 0 };
+let staffCaseOpsCollapsed = false;
+let staffCaseOrderActions = [];
+let staffCaseCustomerOrders = [];
+let staffCaseOrderActionsReadOnly = false;
+let staffCaseOpenRequestSig = '';
+let staffOrderActionBusy = false;
+
+function makeStaffIdempotencyKey(prefix = 'staff-oa-') {
+  const rand = (typeof crypto !== 'undefined' && crypto && typeof crypto.randomUUID === 'function')
+    ? crypto.randomUUID()
+    : (Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12));
+  return prefix + rand;
+}
+
+function readStaffCaseOpsSavedCollapsed() {
+  try {
+    if (typeof localStorage !== 'undefined' && localStorage && typeof localStorage.getItem === 'function') {
+      return localStorage.getItem(STAFF_CASE_OPS_COLLAPSED_KEY) === '1';
+    }
+  } catch (e) {}
+  return false;
+}
+
+function writeStaffCaseOpsSavedCollapsed(collapsed) {
+  try {
+    if (typeof localStorage !== 'undefined' && localStorage && typeof localStorage.setItem === 'function') {
+      localStorage.setItem(STAFF_CASE_OPS_COLLAPSED_KEY, collapsed ? '1' : '0');
+    }
+  } catch (e) {}
+}
+
+function applyStaffCaseOpsCollapseState(collapsed) {
+  staffCaseOpsCollapsed = Boolean(collapsed);
+  const modEl = byId('staff-case-ops-module');
+  const bodyEl = byId('staff-case-ops-body');
+  const toggleBtn = byId('btn-toggle-staff-case-ops');
+  if (modEl) modEl.classList?.toggle?.('is-collapsed', staffCaseOpsCollapsed);
+  if (bodyEl) {
+    bodyEl.hidden = staffCaseOpsCollapsed;
+    if (bodyEl.style) bodyEl.style.display = staffCaseOpsCollapsed ? 'none' : 'flex';
+  }
+  if (toggleBtn) {
+    toggleBtn.setAttribute('aria-expanded', staffCaseOpsCollapsed ? 'false' : 'true');
+    toggleBtn.textContent = staffCaseOpsCollapsed ? 'Mở rộng ▼' : 'Thu gọn ▲';
+  }
+}
+
+function toggleStaffCaseOps() {
+  const next = !staffCaseOpsCollapsed;
+  writeStaffCaseOpsSavedCollapsed(next);
+  applyStaffCaseOpsCollapseState(next);
+}
+
+function isOrderActionOpen(req) {
+  if (!req) return false;
+  if (req.refund_status === 'pending') return true;
+  if (req.closed_at != null) return false;
+  if (req.status === 'rejected' || req.status === 'completed') return false;
+  if (req.type === 'cancel' && req.status === 'approved') return false;
+  return true;
+}
 
 function setStaffDeskNotice(msg, kind = 'error') {
   const noticeEl = byId('staff-desk-notice');
@@ -1847,6 +1942,7 @@ function openStaffDesk() {
   const dlg = byId('staff-desk-dialog');
   if (dlg) {
     setStaffDeskNotice('', '');
+    applyStaffCaseOpsCollapseState(readStaffCaseOpsSavedCollapsed());
     if (!activeStaffTicket) {
       syncStaffTicketActions(null, true);
     }
@@ -1882,6 +1978,9 @@ async function pollStaffDesk() {
   }
   if (activeStaffTicket && activeStaffTicket.status !== 'resolved') {
     await refreshStaffTranscript(activeStaffTicket.conversation_id, false, activeStaffTicket.case_id);
+    if (activeStaffTicket.case_id) {
+      await loadStaffCaseOrderActions(activeStaffTicket.case_id, false);
+    }
   }
   await loadStaffQueue(true);
 }
@@ -1975,16 +2074,480 @@ async function loadStaffQueue(silent = false) {
   }
 }
 
+function formatStaffOrderActionType(req) {
+  const isDeliveryFailure = Boolean(
+    req.delivery_failure_attempts != null
+    || req.reason_code === 'delivery_failed'
+    || ['staff', 'manager'].includes(req.raised_by_role)
+  );
+  if (req.type === 'cancel') {
+    return isDeliveryFailure
+      ? ('Hủy đơn · Giao thất bại' + (req.delivery_failure_attempts ? ` (${req.delivery_failure_attempts} lần)` : ''))
+      : 'Hủy đơn';
+  }
+  if (req.type === 'return') return 'Trả hàng';
+  if (req.type === 'exchange') {
+    if (req.exchange_kind === 'size') return 'Đổi hàng (Đổi size)';
+    if (req.exchange_kind === 'one_to_one') return 'Đổi hàng (Đổi 1-1)';
+    return 'Đổi hàng';
+  }
+  return req.type || 'Yêu cầu đơn hàng';
+}
+
+function formatStaffRefundStatus(req) {
+  if (!req) return '';
+  if (req.refund_status === 'pending' && !req.refund_decision) return 'Hoàn tiền: Chờ Quản lý duyệt';
+  if (req.refund_status === 'pending' && req.refund_decision === 'approved') return 'Hoàn tiền: Đã duyệt · Chờ ghi kết quả';
+  if (req.refund_status === 'refunded') return 'Hoàn tiền: Đã hoàn tiền';
+  if (req.refund_status === 'failed') return 'Hoàn tiền: Hoàn tiền thất bại';
+  if (req.refund_status === 'not_applicable' && req.refund_decision === 'rejected') return 'Hoàn tiền: Đã từ chối';
+  return '';
+}
+
+function renderStaffCaseOrderActions() {
+  const panelEl = byId('staff-order-actions-panel');
+  const summaryEl = byId('staff-case-ops-summary');
+  const openCount = staffCaseOrderActions.filter(isOrderActionOpen).length;
+  if (summaryEl) {
+    if (!activeStaffTicket) {
+      summaryEl.textContent = 'Chưa chọn ca hỗ trợ';
+    } else if (!staffCaseOrderActions.length) {
+      summaryEl.textContent = 'Chưa có yêu cầu đơn hàng';
+    } else if (openCount > 0) {
+      summaryEl.textContent = `${openCount} yêu cầu đang mở / tổng ${staffCaseOrderActions.length}`;
+    } else {
+      summaryEl.textContent = `${staffCaseOrderActions.length} yêu cầu (đã đóng)`;
+    }
+  }
+  if (!panelEl) return;
+  panelEl.replaceChildren();
+  if (!activeStaffTicket) return;
+
+  const caseObj = activeStaffTicket;
+  const isClosed = Boolean(staffCaseOrderActionsReadOnly || caseObj.status === 'resolved');
+  const isManager = currentSessionRole === 'manager';
+  const isHolder = Boolean(
+    !isClosed
+    && caseObj.status === 'in_progress'
+    && caseObj.holder
+    && currentSessionPrincipalId
+    && caseObj.holder === currentSessionPrincipalId
+  );
+  const canReview = Boolean(!isClosed && (isManager || isHolder));
+
+  if (!staffCaseOrderActions.length) {
+    panelEl.append(
+      el('p', 'case-ops-empty-hint', 'Ca hỗ trợ này chưa có yêu cầu hủy/trả/đổi đơn hàng.')
+    );
+  }
+
+  staffCaseOrderActions.forEach(req => {
+    const card = el('div', 'case-ops-request-card');
+    card.dataset.requestId = req.request_id || '';
+    card.dataset.status = req.status || '';
+
+    const topRow = el('div', 'case-ops-req-top');
+    const ord = req.order || {};
+    const ordName = ord.display_name || ord.name || '';
+    const ordParts = [`Đơn ${req.order_id}`];
+    if (ordName) ordParts.push(ordName + (ord.variant ? ` (${ord.variant})` : ''));
+    if (ord.amount != null) ordParts.push(money(ord.amount));
+    if (ord.status) ordParts.push(`[${statuses[ord.status] || ord.status}]`);
+    topRow.append(el('strong', '', ordParts.join(' · ')));
+
+    const badges = el('div', 'case-ops-req-badges');
+    badges.append(el('span', 'case-ops-pill', formatStaffOrderActionType(req)));
+    const statusCls = req.status === 'rejected'
+      ? ' is-rejected'
+      : (['approved', 'completed'].includes(req.status) ? ' is-approved' : ' is-open');
+    const statusText = (STAFF_OA_STATUS_VI[req.status] || req.status)
+      + (req.inspection_outcome ? ` · KQ: ${STAFF_OA_OUTCOME_VI[req.inspection_outcome] || req.inspection_outcome}` : '');
+    badges.append(el('span', 'case-ops-pill' + statusCls, statusText));
+    const refundLabel = formatStaffRefundStatus(req);
+    if (refundLabel) {
+      badges.append(el('span', 'case-ops-pill is-refund', refundLabel));
+    }
+    topRow.append(badges);
+    card.append(topRow);
+
+    const metaRow = el('div', 'case-ops-meta-row');
+    const reasonLabel = req.reason_label || orderActionReasons[req.type]?.[req.reason_code] || req.reason_code || '—';
+    const extraReason = (req.reason_text && req.reason_text !== reasonLabel) ? ` — "${req.reason_text}"` : '';
+    metaRow.append(el('span', '', `Lý do: ${reasonLabel}${extraReason}`));
+    const ageLabel = req.delivery_age_label
+      || (req.days_since_delivery != null
+        ? `${req.days_since_delivery} ngày kể từ khi giao`
+        : (req.delivered_at != null
+          ? `${Math.max(0, Math.floor((Date.now() / 1000 - Number(req.delivered_at)) / 86400))} ngày kể từ khi giao`
+          : 'chưa có ngày giao'));
+    metaRow.append(el('span', '', `Giao hàng: ${ageLabel}`));
+    metaRow.append(el('span', '', `Người tạo: ${STAFF_OA_ROLE_VI[req.raised_by_role] || req.raised_by_role || 'Khách hàng'} · v${req.version}`));
+    card.append(metaRow);
+
+    const evList = Array.isArray(req.evidence) ? req.evidence : [];
+    const evRow = el('div', 'case-ops-evidence-row');
+    evRow.append(el('span', '', `Ảnh bằng chứng (${evList.length}/5):`));
+    if (!evList.length) {
+      evRow.append(el('span', 'case-ops-empty-hint', 'Chưa có ảnh đính kèm'));
+    } else {
+      evList.forEach(ev => {
+        if (ev.purged || ev.file_purged_at != null) {
+          const shaShort = String(ev.sha256 || '').slice(0, 12);
+          evRow.append(el('span', 'case-ops-pill', `Đã xóa tệp sau 90 ngày · SHA-256 ${shaShort}…`));
+        } else {
+          const img = el('img', 'case-ops-evidence-thumb');
+          img.src = ev.download_url || `/api/order-actions/${encodeURIComponent(req.request_id)}/evidence/${encodeURIComponent(ev.evidence_id)}`;
+          img.alt = `Ảnh bằng chứng ${ev.evidence_id}`;
+          img.onclick = () => openLightbox(img.src, `Bằng chứng đơn ${req.order_id} (${ev.evidence_id})`);
+          evRow.append(img);
+        }
+      });
+    }
+    card.append(evRow);
+
+    const decs = Array.isArray(req.decisions) ? req.decisions : [];
+    const decBox = el('div', 'case-ops-decisions');
+    decBox.append(el('strong', '', `Lịch sử quyết định (${decs.length}):`));
+    if (!decs.length) {
+      decBox.append(el('span', 'case-ops-empty-hint', 'Chưa có lịch sử quyết định.'));
+    } else {
+      decs.forEach(d => {
+        const isRefundStep = typeof d.action === 'string' && d.action.startsWith('refund_');
+        const trans = isRefundStep
+          ? `${d.from_refund_status || '—'} → ${d.to_refund_status || '—'}${d.refund_decision ? ` (${d.refund_decision})` : ''}`
+          : `${d.from_status ? `${d.from_status} → ` : ''}${d.to_status || ''}`;
+        const lineText = `• ${STAFF_OA_DECISION_VI[d.action] || d.action} [${STAFF_OA_ROLE_VI[d.actor_role] || d.actor_role || '—'}] ${trans}`
+          + (d.inspection_outcome ? ` · KQ: ${STAFF_OA_OUTCOME_VI[d.inspection_outcome] || d.inspection_outcome}` : '')
+          + (d.note ? ` — ${d.note}` : '');
+        decBox.append(el('div', '', lineText));
+      });
+    }
+    card.append(decBox);
+
+    if (!isClosed) {
+      const ctrlRow = el('div', 'case-ops-controls-row');
+      const noteInput = el('input', 'case-ops-input');
+      noteInput.type = 'text';
+      noteInput.placeholder = 'Ghi chú quyết định (tùy chọn)...';
+      noteInput.dataset.role = 'decision-note';
+
+      const actionNodes = [];
+      const gateNotes = [];
+      const isDeliveryFailure = Boolean(
+        req.delivery_failure_attempts != null
+        || req.reason_code === 'delivery_failed'
+        || ['staff', 'manager'].includes(req.raised_by_role)
+      );
+
+      const mkActionBtn = (cls, label, actName, onClick) => {
+        const b = el('button', cls, label);
+        b.type = 'button';
+        b.dataset.action = actName;
+        b.disabled = staffOrderActionBusy;
+        b.onclick = onClick;
+        actionNodes.push(b);
+      };
+
+      if (req.status === 'requested' || req.status === 'under_review') {
+        if (isDeliveryFailure) {
+          if (isManager) {
+            mkActionBtn('primary', '✓ Duyệt hủy', 'approve', () => submitStaffOrderActionStep(req, 'approve', { note: noteInput.value }));
+            mkActionBtn('secondary', '✕ Từ chối', 'reject', () => submitStaffOrderActionStep(req, 'reject', { note: noteInput.value }));
+          } else {
+            gateNotes.push('Chờ Quản lý duyệt (yêu cầu hủy do giao thất bại)');
+          }
+        } else if (canReview) {
+          mkActionBtn('primary', '✓ Duyệt', 'approve', () => submitStaffOrderActionStep(req, 'approve', { note: noteInput.value }));
+          mkActionBtn('secondary', '✕ Từ chối', 'reject', () => submitStaffOrderActionStep(req, 'reject', { note: noteInput.value }));
+        } else if (!caseObj.holder) {
+          gateNotes.push('Nhận ca để duyệt hoặc từ chối yêu cầu');
+        } else {
+          gateNotes.push('Ca đang do nhân viên khác giữ');
+        }
+      } else if ((req.type === 'return' || req.type === 'exchange') && req.status === 'approved') {
+        if (canReview) {
+          mkActionBtn('primary', '📦 Đã nhận hàng', 'mark-received', () => submitStaffOrderActionStep(req, 'mark-received', { note: noteInput.value }));
+        } else if (!caseObj.holder) {
+          gateNotes.push('Nhận ca để xác nhận đã nhận hàng');
+        } else {
+          gateNotes.push('Ca đang do nhân viên khác giữ');
+        }
+      } else if ((req.type === 'return' || req.type === 'exchange') && req.status === 'received') {
+        if (canReview) {
+          const outcomeSelect = el('select', 'case-ops-select');
+          outcomeSelect.dataset.role = 'inspection-outcome';
+          [
+            ['refund', 'KQ kiểm tra: Hoàn tiền'],
+            ['exchange', 'KQ kiểm tra: Đổi hàng'],
+            ['no_action', 'KQ kiểm tra: Không xử lý']
+          ].forEach(([val, lbl]) => {
+            const opt = el('option', '', lbl);
+            opt.value = val;
+            outcomeSelect.append(opt);
+          });
+          outcomeSelect.value = req.type === 'exchange' ? 'exchange' : 'refund';
+          actionNodes.push(outcomeSelect);
+          mkActionBtn(
+            'primary',
+            '🔍 Đã kiểm tra',
+            'mark-inspected',
+            () => submitStaffOrderActionStep(req, 'mark-inspected', { inspection_outcome: outcomeSelect.value, note: noteInput.value })
+          );
+        } else if (!caseObj.holder) {
+          gateNotes.push('Nhận ca để ghi kết quả kiểm tra');
+        } else {
+          gateNotes.push('Ca đang do nhân viên khác giữ');
+        }
+      } else if ((req.type === 'return' || req.type === 'exchange') && req.status === 'inspected') {
+        if (canReview) {
+          mkActionBtn('primary', '✓ Hoàn tất', 'complete', () => submitStaffOrderActionStep(req, 'complete', { note: noteInput.value }));
+        } else if (!caseObj.holder) {
+          gateNotes.push('Nhận ca để hoàn tất yêu cầu');
+        } else {
+          gateNotes.push('Ca đang do nhân viên khác giữ');
+        }
+      }
+
+      if (['approved', 'received', 'inspected', 'completed'].includes(req.status) && req.refund_status === 'not_applicable') {
+        if (canReview) {
+          mkActionBtn('secondary', '💸 Gửi yêu cầu hoàn tiền', 'refund-request', () => submitStaffOrderActionStep(req, 'refund-request', { note: noteInput.value }));
+        }
+      } else if (req.refund_status === 'pending' && !req.refund_decision) {
+        if (isManager) {
+          mkActionBtn('primary', '✓ Duyệt hoàn tiền', 'refund-approve', () => submitStaffOrderActionStep(req, 'refund-decision', { decision: 'approved', note: noteInput.value }));
+          mkActionBtn('secondary', '✕ Từ chối hoàn tiền', 'refund-reject', () => submitStaffOrderActionStep(req, 'refund-decision', { decision: 'rejected', note: noteInput.value }));
+        } else {
+          gateNotes.push('Chờ Quản lý duyệt hoàn tiền');
+        }
+      } else if (req.refund_status === 'pending' && req.refund_decision === 'approved') {
+        if (isManager) {
+          mkActionBtn('primary', '💰 Ghi nhận Đã hoàn tiền', 'refund-outcome-refunded', () => submitStaffOrderActionStep(req, 'refund-outcome', { outcome: 'refunded', note: noteInput.value }));
+          mkActionBtn('secondary', '⚠ Ghi nhận Hoàn thất bại', 'refund-outcome-failed', () => submitStaffOrderActionStep(req, 'refund-outcome', { outcome: 'failed', note: noteInput.value }));
+        } else {
+          gateNotes.push('Chờ Quản lý ghi kết quả hoàn tiền');
+        }
+      }
+
+      if (actionNodes.length > 0) {
+        ctrlRow.append(noteInput, ...actionNodes);
+      }
+      gateNotes.forEach(txt => {
+        ctrlRow.append(el('span', 'case-ops-role-gate-note', txt));
+      });
+      if (actionNodes.length > 0 || gateNotes.length > 0) {
+        card.append(ctrlRow);
+      }
+    }
+
+    panelEl.append(card);
+  });
+
+  if (!isClosed && isHolder) {
+    const openOrderIds = new Set(
+      staffCaseOrderActions.filter(r => r && r.closed_at == null && !['rejected', 'completed'].includes(r.status) && !(r.type === 'cancel' && r.status === 'approved'))
+        .map(r => r.order_id)
+    );
+    const eligiblePendingOrders = staffCaseCustomerOrders.filter(o => o && o.status === 'pending' && !openOrderIds.has(o.id));
+    if (eligiblePendingOrders.length > 0) {
+      const dfCard = el('div', 'case-ops-delivery-fail-card');
+      dfCard.append(el('strong', '', '🚚 Tạo yêu cầu hủy do giao thất bại (chờ Quản lý duyệt)'));
+      const dfRow = el('div', 'case-ops-controls-row');
+      const ordSel = el('select', 'case-ops-select');
+      ordSel.id = 'staff-df-order-select';
+      eligiblePendingOrders.forEach(o => {
+        const opt = el('option', '', `${o.id} · ${o.display_name || o.name || 'Đơn hàng'} (${money(o.amount || 0)})`);
+        opt.value = o.id;
+        ordSel.append(opt);
+      });
+      const attemptsInput = el('input', 'case-ops-select');
+      attemptsInput.type = 'number';
+      attemptsInput.id = 'staff-df-attempts-input';
+      attemptsInput.min = '1';
+      attemptsInput.step = '1';
+      attemptsInput.value = '1';
+      attemptsInput.setAttribute('aria-label', 'Số lần giao thất bại');
+
+      const dfNoteInput = el('input', 'case-ops-input');
+      dfNoteInput.type = 'text';
+      dfNoteInput.id = 'staff-df-note-input';
+      dfNoteInput.placeholder = 'Ghi chú giao thất bại (bắt buộc)...';
+
+      const dfBtn = el('button', 'secondary', 'Tạo yêu cầu hủy do giao thất bại');
+      dfBtn.type = 'button';
+      dfBtn.id = 'btn-create-delivery-failure';
+      dfBtn.dataset.action = 'create-delivery-failure';
+      dfBtn.disabled = staffOrderActionBusy;
+      dfBtn.onclick = () => submitStaffDeliveryFailureCancel();
+
+      dfRow.append(ordSel, attemptsInput, dfNoteInput, dfBtn);
+      dfCard.append(dfRow);
+      panelEl.append(dfCard);
+    }
+  }
+}
+
+async function loadStaffCaseOrderActions(caseId, isCaseSelection = false) {
+  if (!caseId) {
+    staffCaseOrderActions = [];
+    staffCaseCustomerOrders = [];
+    staffCaseOrderActionsReadOnly = false;
+    staffCaseOpenRequestSig = '';
+    renderStaffCaseOrderActions();
+    return;
+  }
+  try {
+    const res = await api(`/api/staff/cases/${encodeURIComponent(caseId)}/order-actions`);
+    if (!activeStaffTicket || activeStaffTicket.case_id !== caseId) return;
+    staffCaseOrderActions = Array.isArray(res?.order_actions) ? res.order_actions : [];
+    staffCaseCustomerOrders = Array.isArray(res?.customer_orders) ? res.customer_orders : [];
+    staffCaseOrderActionsReadOnly = Boolean(res?.read_only);
+    const openReqs = staffCaseOrderActions.filter(isOrderActionOpen);
+    const nextSig = caseId + ':' + openReqs.map(r => r.request_id).sort().join(',');
+    if (openReqs.length > 0 && (isCaseSelection || nextSig !== staffCaseOpenRequestSig)) {
+      applyStaffCaseOpsCollapseState(false);
+    } else if (isCaseSelection && openReqs.length === 0) {
+      applyStaffCaseOpsCollapseState(readStaffCaseOpsSavedCollapsed());
+    }
+    staffCaseOpenRequestSig = nextSig;
+    renderStaffCaseOrderActions();
+  } catch (err) {
+    if (!activeStaffTicket || activeStaffTicket.case_id !== caseId) return;
+    staffCaseOrderActions = [];
+    staffCaseCustomerOrders = [];
+    renderStaffCaseOrderActions();
+  }
+}
+
+async function submitStaffOrderActionStep(req, slug, extra = {}) {
+  if (!req || !req.request_id || staffOrderActionBusy) return;
+  staffOrderActionBusy = true;
+  renderStaffCaseOrderActions();
+  try {
+    const payload = { version: Number(req.version) };
+    if (extra.inspection_outcome) payload.inspection_outcome = extra.inspection_outcome;
+    if (extra.decision) payload.decision = extra.decision;
+    if (extra.outcome) payload.outcome = extra.outcome;
+    const cleanNote = (extra.note || '').trim();
+    if (cleanNote) payload.note = cleanNote;
+    const res = await api(
+      `/api/order-actions/${encodeURIComponent(req.request_id)}/${slug}`,
+      payload,
+      { 'Idempotency-Key': makeStaffIdempotencyKey('staff-oa-') }
+    );
+    setStaffDeskNotice(
+      res.customer_notice || res.message || `Đã cập nhật yêu cầu đơn ${req.order_id}.`,
+      'success'
+    );
+    if (activeStaffTicket?.case_id) {
+      await loadStaffCaseOrderActions(activeStaffTicket.case_id, false);
+      await refreshStaffTranscript(activeStaffTicket.conversation_id, true, activeStaffTicket.case_id);
+    }
+    await loadStaffQueue(true);
+  } catch (err) {
+    setStaffDeskNotice('Không thể cập nhật yêu cầu đơn hàng: ' + err.message, 'error');
+    if (activeStaffTicket?.case_id) {
+      await loadStaffCaseOrderActions(activeStaffTicket.case_id, false);
+    }
+  } finally {
+    staffOrderActionBusy = false;
+    renderStaffCaseOrderActions();
+  }
+}
+
+async function submitStaffDeliveryFailureCancel() {
+  if (!activeStaffTicket?.case_id || staffOrderActionBusy) return;
+  const orderSel = byId('staff-df-order-select');
+  const attemptsEl = byId('staff-df-attempts-input');
+  const noteEl = byId('staff-df-note-input');
+  const orderId = (orderSel?.value || '').trim();
+  const attempts = parseInt(String(attemptsEl?.value || ''), 10);
+  const note = (noteEl?.value || '').trim();
+  if (!orderId) {
+    setStaffDeskNotice('Vui lòng chọn đơn hàng pending cần báo giao thất bại.', 'error');
+    return;
+  }
+  if (!Number.isInteger(attempts) || attempts < 1) {
+    setStaffDeskNotice('Số lần giao thất bại phải là số nguyên từ 1 trở lên.', 'error');
+    return;
+  }
+  if (!note) {
+    setStaffDeskNotice('Vui lòng nhập ghi chú giao thất bại trước khi gửi.', 'error');
+    return;
+  }
+  const ordObj = staffCaseCustomerOrders.find(o => o.id === orderId);
+  const payload = {
+    order_id: orderId,
+    delivery_failure_attempts: attempts,
+    note
+  };
+  if (ordObj && Number.isInteger(ordObj.version)) {
+    payload.expected_order_version = ordObj.version;
+  }
+  staffOrderActionBusy = true;
+  renderStaffCaseOrderActions();
+  try {
+    const res = await api(
+      `/api/staff/cases/${encodeURIComponent(activeStaffTicket.case_id)}/order-actions`,
+      payload,
+      { 'Idempotency-Key': makeStaffIdempotencyKey('staff-df-') }
+    );
+    setStaffDeskNotice(res.message || 'Đã tạo yêu cầu hủy do giao thất bại, chờ Quản lý duyệt.', 'success');
+    await loadStaffCaseOrderActions(activeStaffTicket.case_id, true);
+    await refreshStaffTranscript(activeStaffTicket.conversation_id, true, activeStaffTicket.case_id);
+    await loadStaffQueue(true);
+  } catch (err) {
+    setStaffDeskNotice('Không thể tạo yêu cầu hủy do giao thất bại: ' + err.message, 'error');
+  } finally {
+    staffOrderActionBusy = false;
+    renderStaffCaseOrderActions();
+  }
+}
+
 function syncStaffTicketActions(caseObj, readOnly = false) {
+  const modEl = byId('staff-case-ops-module');
   const chatActions = byId('staff-chat-actions');
   const chatComposer = byId('staff-chat-composer');
-  const actionBar = byId('staff-action-bar');
+  const statusPill = byId('staff-active-status-pill');
   const btnClaim = byId('btn-claim-ticket');
   const btnResolve = byId('btn-resolve-ticket');
   const btnSend = byId('btn-send-staff-reply');
   const replyInput = byId('staff-reply-input');
 
-  const isClosed = Boolean(!caseObj || readOnly || caseObj.status === 'resolved');
+  if (!caseObj) {
+    if (modEl) {
+      modEl.hidden = true;
+      if (modEl.style) modEl.style.display = 'none';
+    }
+    if (statusPill) {
+      statusPill.hidden = true;
+      statusPill.textContent = '';
+    }
+    if (chatActions) {
+      chatActions.hidden = true;
+      if (chatActions.style) chatActions.style.display = 'none';
+    }
+    if (chatComposer) {
+      chatComposer.hidden = true;
+      if (chatComposer.style) chatComposer.style.display = 'none';
+    }
+    return;
+  }
+
+  if (modEl) {
+    modEl.hidden = false;
+    if (modEl.style) modEl.style.display = 'flex';
+  }
+
+  const isClosed = Boolean(readOnly || caseObj.status === 'resolved');
+  if (statusPill) {
+    statusPill.hidden = false;
+    statusPill.textContent = isClosed
+      ? '✓ Đã đóng (chỉ đọc)'
+      : (caseObj.holder
+        ? ('🟡 Đang xử lý' + (caseObj.holder_name ? ': ' + caseObj.holder_name : ''))
+        : '🔴 Hàng chờ');
+  }
+
   if (isClosed) {
     if (chatActions) {
       chatActions.hidden = true;
@@ -1994,10 +2557,7 @@ function syncStaffTicketActions(caseObj, readOnly = false) {
       chatComposer.hidden = true;
       if (chatComposer.style) chatComposer.style.display = 'none';
     }
-    if (actionBar) {
-      actionBar.hidden = true;
-      if (actionBar.style) actionBar.style.display = 'none';
-    }
+    renderStaffCaseOrderActions();
     return;
   }
 
@@ -2030,12 +2590,9 @@ function syncStaffTicketActions(caseObj, readOnly = false) {
     chatComposer.hidden = false;
     if (chatComposer.style) chatComposer.style.display = 'flex';
   }
-  if (actionBar) {
-    actionBar.hidden = heldByOther;
-    if (actionBar.style) actionBar.style.display = heldByOther ? 'none' : 'flex';
-  }
   if (btnSend) btnSend.disabled = heldByOther || staffReplySending;
   if (replyInput) replyInput.disabled = heldByOther;
+  renderStaffCaseOrderActions();
 }
 
 async function refreshStaffTranscript(cid, forceScroll = false, caseId = null) {
@@ -2107,12 +2664,15 @@ async function refreshStaffTranscript(cid, forceScroll = false, caseId = null) {
         } else if (m.role === 'assistant') {
           const isStaff = m.author === 'staff' || res.author === 'staff';
           const isReminder = res.author === 'system_reminder';
+          const isOrderNotice = res.author === 'system_order_action';
           const row = el('div', 'message assistant' + (isStaff ? ' human-message' : ''));
           const label = el('div', 'message-label');
           label.append(el('span', isStaff ? 'human-badge-mini' : 'mini-r', isStaff ? 'NV' : 'R'));
           const senderName = isStaff
             ? (m.staff_name || res.staff_name || 'Chuyên viên CSKH')
-            : (isReminder ? 'Trợ lý AI · Nhắc tự động' : 'Trợ lý AI');
+            : (isOrderNotice
+              ? 'Hệ thống · Yêu cầu đơn hàng'
+              : (isReminder ? 'Trợ lý AI · Nhắc tự động' : 'Trợ lý AI'));
           label.append(document.createTextNode(' ' + senderName));
           row.append(label, el('div', 'bubble' + (isStaff ? ' bubble-staff' : ''), m.content));
           transcriptEl.append(row);
@@ -2130,6 +2690,10 @@ async function refreshStaffTranscript(cid, forceScroll = false, caseId = null) {
 
 async function selectStaffTicket(ticket) {
   activeStaffTicket = ticket;
+  staffCaseOrderActions = [];
+  staffCaseCustomerOrders = [];
+  staffCaseOrderActionsReadOnly = false;
+  staffCaseOpenRequestSig = '';
   setStaffDeskNotice('', '');
   document.querySelectorAll('.ticket-card').forEach(c => c.classList.remove('active'));
 
@@ -2138,6 +2702,7 @@ async function selectStaffTicket(ticket) {
   byId('staff-active-meta').textContent = 'Mã ca: ' + (ticket.case_id || ticket.conversation_id)
     + ' · Lý do: ' + (ticket.comment || ticket.reason_code || (isClosed ? (ticket.resolved_reason || 'Đã đóng') : 'Yêu cầu gặp nhân viên'))
     + (isClosed ? ' · [Chỉ đọc · Ca đã đóng]' : '');
+  applyStaffCaseOpsCollapseState(readStaffCaseOpsSavedCollapsed());
   syncStaffTicketActions(ticket, isClosed);
 
   const transcriptEl = byId('staff-chat-transcript');
@@ -2146,6 +2711,9 @@ async function selectStaffTicket(ticket) {
   transcriptEl.innerHTML = '<p class="transcript-placeholder">Đang tải lịch sử hội thoại...</p>';
 
   await refreshStaffTranscript(ticket.conversation_id, true, ticket.case_id || null);
+  if (ticket.case_id) {
+    await loadStaffCaseOrderActions(ticket.case_id, true);
+  }
 }
 
 async function claimOrReleaseStaffTicket() {
@@ -2166,6 +2734,10 @@ async function claimOrReleaseStaffTicket() {
       syncStaffTicketActions(res.case, false);
     }
     setStaffDeskNotice(action === 'claim' ? 'Đã nhận ca hỗ trợ.' : 'Đã trả ca hỗ trợ về hàng chờ.', 'success');
+    await loadStaffCaseOrderActions(caseId, false);
+    if (action === 'claim' && activeStaffTicket?.conversation_id) {
+      await refreshStaffTranscript(activeStaffTicket.conversation_id, false, caseId);
+    }
     await loadStaffQueue(true);
   } catch (err) {
     setStaffDeskNotice('Không thể cập nhật trạng thái nhận ca: ' + err.message, 'error');
@@ -2260,45 +2832,9 @@ async function resolveStaffTicket() {
   }
 }
 
-async function approveExchange1to1() {
-  if (!activeStaffTicket || activeStaffTicket.status === 'resolved') return;
-  const replyMsg = "Dạ chuyên viên CSKH đã tiếp nhận thông tin yêu cầu đổi hàng. Shop sẽ liên hệ xác nhận chi tiết hỗ trợ mình sớm nhất ạ.";
-  try {
-    const payload = {
-      conversation_id: activeStaffTicket.conversation_id,
-      message: replyMsg
-    };
-    if (activeStaffTicket.case_id) payload.case_id = activeStaffTicket.case_id;
-    await api('/api/staff/reply', payload);
-    setStaffDeskNotice('Đã gửi phản hồi tiếp nhận cho khách hàng qua chat.', 'success');
-    refreshStaffTranscript(activeStaffTicket.conversation_id, true, activeStaffTicket.case_id || null);
-    if (conversationId && activeStaffTicket.conversation_id === conversationId) {
-      humanMessage(replyMsg, staffLabel());
-    }
-  } catch (err) {
-    setStaffDeskNotice('Lỗi tiếp nhận: ' + err.message, 'error');
-  }
-}
-
-async function approveExchangeSize() {
-  if (!activeStaffTicket || activeStaffTicket.status === 'resolved') return;
-  const replyMsg = "Dạ chuyên viên CSKH đã tiếp nhận thông tin yêu cầu đổi hàng. Shop sẽ liên hệ xác nhận chi tiết hỗ trợ mình sớm nhất ạ.";
-  try {
-    const payload = {
-      conversation_id: activeStaffTicket.conversation_id,
-      message: replyMsg
-    };
-    if (activeStaffTicket.case_id) payload.case_id = activeStaffTicket.case_id;
-    await api('/api/staff/reply', payload);
-    setStaffDeskNotice('Đã gửi phản hồi tiếp nhận cho khách hàng qua chat.', 'success');
-    refreshStaffTranscript(activeStaffTicket.conversation_id, true, activeStaffTicket.case_id || null);
-    if (conversationId && activeStaffTicket.conversation_id === conversationId) {
-      humanMessage(replyMsg, staffLabel());
-    }
-  } catch (err) {
-    setStaffDeskNotice('Lỗi tiếp nhận: ' + err.message, 'error');
-  }
-}
+const btnToggleStaffCaseOps = byId('btn-toggle-staff-case-ops');
+if (btnToggleStaffCaseOps) btnToggleStaffCaseOps.onclick = () => toggleStaffCaseOps();
+applyStaffCaseOpsCollapseState(readStaffCaseOpsSavedCollapsed());
 
 const btnBucketWaiting = byId('staff-bucket-waiting');
 if (btnBucketWaiting) btnBucketWaiting.onclick = () => setStaffQueueBucket('waiting');
@@ -2329,12 +2865,6 @@ if (refreshStaffQueue) refreshStaffQueue.onclick = () => loadStaffQueue();
 
 const btnSendStaffReply = byId('btn-send-staff-reply');
 if (btnSendStaffReply) btnSendStaffReply.onclick = () => sendStaffReply();
-
-const btnApprove1to1 = byId('btn-approve-exchange-1to1');
-if (btnApprove1to1) btnApprove1to1.onclick = () => approveExchange1to1();
-
-const btnApproveSize = byId('btn-approve-exchange-size');
-if (btnApproveSize) btnApproveSize.onclick = () => approveExchangeSize();
 
 const staffReplyInput = byId('staff-reply-input');
 if (staffReplyInput) {

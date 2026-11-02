@@ -202,21 +202,29 @@
               <strong id="staff-active-customer">Chọn một ca từ hàng đợi</strong>
               <span id="staff-active-meta">Lịch sử chat và ngữ cảnh sẽ hiển thị tại đây</span>
             </div>
-            <div class="chat-header-tools" id="staff-chat-actions" hidden>
-              <button type="button" class="secondary btn-sm" id="btn-claim-ticket">✋ Nhận ca</button>
-              <button type="button" class="secondary btn-sm" id="btn-resolve-ticket">✓ Hoàn tất ca & Đóng</button>
+            <div class="chat-header-bar-controls" id="staff-chat-header-controls">
+              <span class="staff-case-status-pill" id="staff-active-status-pill" hidden></span>
             </div>
           </div>
           <div class="staff-desk-notice" id="staff-desk-notice" role="status" aria-live="polite" hidden></div>
-          <div class="staff-action-bar" id="staff-action-bar" hidden>
-            <div class="staff-action-bar-label">
-              <strong>🎯 Thao tác nhanh (1-Click Action):</strong> <span id="staff-proposal-desc">Tiếp nhận yêu cầu đổi hàng từ khách</span>
+          <section class="staff-case-ops-module" id="staff-case-ops-module" aria-label="Thao tác ca" hidden>
+            <div class="staff-case-ops-header" id="staff-case-ops-header">
+              <div class="staff-case-ops-title-group">
+                <strong>🧰 Thao tác ca</strong>
+                <span class="staff-case-ops-summary" id="staff-case-ops-summary">Chưa có yêu cầu đơn hàng</span>
+              </div>
+              <div class="staff-case-ops-header-actions">
+                <button type="button" class="secondary btn-sm" id="btn-toggle-staff-case-ops" aria-expanded="true" aria-controls="staff-case-ops-body">Thu gọn ▲</button>
+              </div>
             </div>
-            <div class="staff-proposal-buttons" id="staff-proposal-buttons">
-              <button type="button" class="primary" id="btn-approve-exchange-1to1">📩 Xác nhận tiếp nhận Đổi 1-1</button>
-              <button type="button" class="primary" id="btn-approve-exchange-size">📩 Xác nhận tiếp nhận Đổi Size</button>
+            <div class="staff-case-ops-body" id="staff-case-ops-body">
+              <div class="staff-case-lifecycle-bar chat-header-tools" id="staff-chat-actions" hidden>
+                <button type="button" class="secondary btn-sm" id="btn-claim-ticket">✋ Nhận ca</button>
+                <button type="button" class="secondary btn-sm" id="btn-resolve-ticket">✓ Hoàn tất ca &amp; Đóng</button>
+              </div>
+              <div class="staff-order-actions-panel" id="staff-order-actions-panel"></div>
             </div>
-          </div>
+          </section>
           <div class="staff-chat-transcript" id="staff-chat-transcript">
             <p class="transcript-placeholder">Vui lòng chọn một ca cần hỗ trợ ở cột bên trái để bắt đầu tiếp nhận.</p>
           </div>
