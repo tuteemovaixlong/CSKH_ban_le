@@ -907,6 +907,41 @@ function collectText(node) {
   assert.equal(mockStaffCaseOrderActions.case_open_oa.order_actions[1].refund_status, 'refunded');
   await run('closeStaffDeskDialog()');
 
+  // R1-W3.1 Item 0 (W3.1-D4): Zero inline style="..." in HTML/JS templates, [hidden] rule, attachment & Manager button isolation
+  assert.ok(!/\bstyle\s*=/i.test(indexHtml), 'web/index.html must not contain any style= attributes');
+  assert.ok(!/\bstyle\s*=/i.test(source), 'web/app.js HTML strings must not contain any style= attributes');
+  for (const extraJs of ['chat-focus.js', 'embed.js']) {
+    const extraSrc = fs.readFileSync(path.join(__dirname, '../web', extraJs), 'utf8');
+    assert.ok(!/\bstyle\s*=\s*["']/i.test(extraSrc), `${extraJs} must not contain any style="..." attributes`);
+  }
+  assert.ok(/\[hidden\]\s*\{\s*display\s*:\s*none\s*!important/i.test(stylesCss), 'styles.css must define [hidden] { display: none !important; }');
+
+  // Manager session: Manager-only buttons visible, unused attachment controls hidden
+  assert.equal(get('btn-open-manager-console').hidden, false);
+  assert.equal(get('btn-sidebar-manager-nav').hidden, false);
+  assert.equal(get('btn-panel-manager-banner').hidden, false);
+  assert.equal(get('chat-file-input').hidden, true);
+  assert.equal(get('attachment-preview').hidden, true);
+
+  // Staff session: Manager-only buttons hidden
+  mockSessionRole = 'staff';
+  await run('openSession()');
+  await run('closeStaffDeskDialog()');
+  assert.equal(get('btn-open-manager-console').hidden, true);
+  assert.equal(get('btn-sidebar-manager-nav').hidden, true);
+  assert.equal(get('btn-panel-manager-banner').hidden, true);
+
+  // Customer session: Manager-only buttons AND unused attachment controls hidden
+  mockSessionRole = 'customer';
+  await run('openSession()');
+  assert.equal(get('btn-open-manager-console').hidden, true);
+  assert.equal(get('btn-sidebar-manager-nav').hidden, true);
+  assert.equal(get('btn-panel-manager-banner').hidden, true);
+  assert.equal(get('chat-file-input').hidden, true);
+  assert.equal(get('attachment-preview').hidden, true);
+  assert.equal(get('btn-clear-order-search').hidden, true);
+  assert.equal(get('order-tabs').hidden, true);
+
   await get('logout').onclick();
   assert.equal(authenticated,false);assert.equal(reloaded,true);
   assert.equal(requests.at(-1).url,'/api/logout');

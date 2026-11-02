@@ -16,6 +16,10 @@
   box-sizing: border-box
 }
 
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   display: flex;
@@ -3213,6 +3217,7 @@ button:disabled {
 .google-icon {
   width: 20px;
   height: 20px;
+  min-width: 20px;
   flex-shrink: 0;
 }
 
@@ -3242,7 +3247,16 @@ button:disabled {
 body[data-role="customer"] #toggle-staff-desk,
 body[data-role="viewer"] #toggle-staff-desk,
 body[data-role="customer"] #toggle-inspector,
-body[data-role="viewer"] #toggle-inspector {
+body[data-role="viewer"] #toggle-inspector,
+body[data-role="customer"] #btn-open-manager-console,
+body[data-role="customer"] #btn-sidebar-manager-nav,
+body[data-role="customer"] #btn-panel-manager-banner,
+body[data-role="viewer"] #btn-open-manager-console,
+body[data-role="viewer"] #btn-sidebar-manager-nav,
+body[data-role="viewer"] #btn-panel-manager-banner,
+body[data-role="staff"] #btn-open-manager-console,
+body[data-role="staff"] #btn-sidebar-manager-nav,
+body[data-role="staff"] #btn-panel-manager-banner {
   display: none !important;
 }
 
@@ -4283,5 +4297,141 @@ body[data-role="staff"] #toggle-staff-desk {
   padding: 36px 16px;
   color: #94a3b8;
   font-size: 14px;
+}
+
+/* CSP-safe hidden & inline-style replacement classes (W3.1-D4) */
+body [hidden] {
+  display: none !important;
+}
+
+#chat-file-input,
+.chat-file-input-hidden {
+  display: none !important;
+}
+
+.staff-empty-hint {
+  margin: 0;
+  padding: 20px 10px;
+  text-align: center;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.staff-empty-hint.is-error {
+  padding: 15px;
+  color: #ef4444;
+}
+
+.manager-table-placeholder,
+.manager-table-empty {
+  text-align: center;
+  padding: 24px;
+  color: #64748b;
+}
+
+.manager-table-error {
+  text-align: center;
+  padding: 24px;
+  color: #ef4444;
+}
+
+.manager-table-placeholder.compact,
+.manager-table-empty.compact,
+.manager-table-error.compact {
+  padding: 18px 20px;
+}
+
+.product-base-tag {
+  color: #0284c7;
+  font-size: 10px;
+}
+
+.product-desc-sub {
+  color: #64748b;
+}
+
+.admin-toolbar-filters {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  flex: 1;
+}
+
+.admin-inline-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.admin-tenant-input {
+  max-width: 160px;
+}
+
+.admin-account-search-input {
+  max-width: 240px;
+}
+
+.admin-table-spaced {
+  margin-bottom: 16px;
+}
+
+.admin-detail-panel {
+  padding: 14px;
+  margin-bottom: 16px;
+}
+
+.admin-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.admin-detail-title {
+  margin: 4px 0 0;
+}
+
+.admin-detail-meta {
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.admin-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.admin-field-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.admin-full-input {
+  width: 100%;
+}
+
+.admin-detail-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.admin-confirm-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  margin-right: 8px;
+}
+
+.admin-audit-heading {
+  margin: 8px 0;
 }
 

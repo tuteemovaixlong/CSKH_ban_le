@@ -656,16 +656,30 @@ async function act(callback) {
   }
 }
 
+function syncManagerButtonsVisibility() {
+  const isManager = currentSessionRole === 'manager'
+    || currentSessionRole === 'platform_admin'
+    || (orderScope === 'store_all' && !['customer', 'staff', 'viewer'].includes(currentSessionRole));
+  const btnHeaderMgr = byId('btn-open-manager-console');
+  if (btnHeaderMgr) {
+    btnHeaderMgr.hidden = !isManager;
+    if (btnHeaderMgr.style) btnHeaderMgr.style.display = isManager ? 'inline-flex' : 'none';
+  }
+  const btnSidebarMgr = byId('btn-sidebar-manager-nav');
+  if (btnSidebarMgr) {
+    btnSidebarMgr.hidden = !isManager;
+    if (btnSidebarMgr.style) btnSidebarMgr.style.display = isManager ? 'flex' : 'none';
+  }
+  const btnPanelMgr = byId('btn-panel-manager-banner');
+  if (btnPanelMgr) {
+    btnPanelMgr.hidden = !isManager;
+    if (btnPanelMgr.style) btnPanelMgr.style.display = isManager ? 'flex' : 'none';
+  }
+}
+
 function renderOrder() {
   const isManager = orderScope === 'store_all';
-
-  // Toggle manager buttons visibility
-  const btnHeaderMgr = byId('btn-open-manager-console');
-  if (btnHeaderMgr && btnHeaderMgr.style) btnHeaderMgr.style.display = isManager ? 'inline-flex' : 'none';
-  const btnSidebarMgr = byId('btn-sidebar-manager-nav');
-  if (btnSidebarMgr && btnSidebarMgr.style) btnSidebarMgr.style.display = isManager ? 'flex' : 'none';
-  const btnPanelMgr = byId('btn-panel-manager-banner');
-  if (btnPanelMgr && btnPanelMgr.style) btnPanelMgr.style.display = isManager ? 'flex' : 'none';
+  syncManagerButtonsVisibility();
 
   let filtered = orders;
   if (managerFilter !== 'all') {
@@ -1544,12 +1558,15 @@ async function openConversationHistoryDialog() {
 async function openSession() {
   const session = await api('/api/session');
   currentSessionRole = session.role || 'customer';
+  orderScope = 'customer';
   currentSessionTenantId = session.tenant_id || null;
   currentSessionPrincipalId = session.principal_id || null;
   currentSessionName = (session.name || '').trim();
   const staffRepName = byId('staff-rep-name');
   if (staffRepName) staffRepName.textContent = staffLabel();
   document.body.dataset.role = currentSessionRole;
+  syncManagerButtonsVisibility();
+  clearAttachment();
   canCancel = Array.isArray(session.permissions) ? session.permissions.includes('orders:cancel') : true;
   byId('profile-name').textContent = session.name || 'Khách hàng';
   byId('profile-avatar').textContent = (session.name || 'KH').slice(0, 2).toUpperCase();
@@ -1691,6 +1708,8 @@ byId('approve-confirm').onclick = () => act(confirm); byId('dismiss-confirm').on
 byId('confirm-dialog').oncancel = event => { event.preventDefault(); act(dismiss); };
 const error = el('p', 'proposal-error'); error.id = 'confirm-error'; error.setAttribute('role', 'alert');
 byId('confirm-dialog').querySelector('.dialog-actions').before(error);
+if (byId('order-tabs')) byId('order-tabs').hidden = true;
+renderAttachmentPreview();
 renderOrder();
 if (cookieAuth) {
   byId('login-description').textContent = persistentAccount
@@ -2020,7 +2039,7 @@ function renderStaffBucketList() {
       : (staffQueueBucket === 'in_progress'
         ? 'Không có ca nào đang được giữ xử lý.'
         : 'Chưa có ca đã xử lý trong thời hạn lưu.');
-    listEl.innerHTML = `<p class="staff-empty-hint" style="padding:20px 10px;text-align:center;color:#94a3b8;">${emptyMsg}</p>`;
+    listEl.innerHTML = `<p class="staff-empty-hint">${emptyMsg}</p>`;
     return;
   }
 
@@ -2054,7 +2073,7 @@ async function loadStaffQueue(silent = false) {
   const listEl = byId('staff-queue-list');
   if (!listEl) return;
   if (!silent) {
-    listEl.innerHTML = '<p class="staff-empty-hint" style="padding:15px 10px;text-align:center;color:#94a3b8;">Đang tải danh sách ca chờ...</p>';
+    listEl.innerHTML = '<p class="staff-empty-hint">Đang tải danh sách ca chờ...</p>';
   }
   try {
     const res = await api('/api/staff/cases');
@@ -2069,7 +2088,7 @@ async function loadStaffQueue(silent = false) {
     renderStaffBucketList();
   } catch (err) {
     if (!silent) {
-      listEl.innerHTML = '<p class="staff-empty-hint" style="color:#ef4444;padding:15px;">Lỗi tải hàng đợi: ' + err.message + '</p>';
+      listEl.innerHTML = '<p class="staff-empty-hint is-error">Lỗi tải hàng đợi: ' + err.message + '</p>';
     }
   }
 }
@@ -2891,6 +2910,7 @@ if (lightboxDialog) {
 
 const btnAttach = byId('btn-attach');
 const chatFileInput = byId('chat-file-input');
+if (chatFileInput) chatFileInput.hidden = true;
 if (btnAttach && chatFileInput) {
   btnAttach.onclick = () => chatFileInput.click();
   chatFileInput.onchange = () => {
@@ -3158,7 +3178,7 @@ function renderManagerProductsTable() {
 
   if (!filtered.length) {
     const tr = el('tr');
-    tr.innerHTML = '<td colspan="8" style="text-align:center; padding:24px; color:#64748b;">Không tìm thấy sản phẩm nào.</td>';
+    tr.innerHTML = '<td colspan="8" class="manager-table-empty">Không tìm thấy sản phẩm nào.</td>';
     tbody.append(tr);
     return;
   }
@@ -3168,10 +3188,10 @@ function renderManagerProductsTable() {
     const isImmutable = ['P-101', 'P-102', 'P-202'].includes(p.id);
 
     const tdId = el('td');
-    tdId.innerHTML = `<strong>${p.id}</strong>` + (isImmutable ? '<br><small style="color:#0284c7; font-size:10px;">[Cơ sở]</small>' : '');
+    tdId.innerHTML = `<strong>${p.id}</strong>` + (isImmutable ? '<br><small class="product-base-tag">[Cơ sở]</small>' : '');
 
     const tdName = el('td');
-    tdName.innerHTML = `<strong>${p.name}</strong><br><small style="color:#64748b;">${p.description ? p.description.slice(0, 45) + '...' : ''}</small>`;
+    tdName.innerHTML = `<strong>${p.name}</strong><br><small class="product-desc-sub">${p.description ? p.description.slice(0, 45) + '...' : ''}</small>`;
 
     const tdCat = el('td', '', p.category || 'Chưa phân loại');
     const tdPrice = el('td', '', (p.price !== null && p.price !== undefined) ? money(p.price) : 'Chưa có giá');
@@ -3358,7 +3378,7 @@ async function loadManagerOrdersTable() {
 
   if (!filtered.length) {
     const tr = el('tr');
-    tr.innerHTML = '<td colspan="8" style="text-align:center; padding:24px; color:#64748b;">Không tìm thấy đơn hàng nào.</td>';
+    tr.innerHTML = '<td colspan="8" class="manager-table-empty">Không tìm thấy đơn hàng nào.</td>';
     tbody.append(tr);
     return;
   }
@@ -3421,7 +3441,7 @@ async function loadManagerAuditTrail() {
     const events = hist.events || [];
     if (!events.length) {
       const tr = el('tr');
-      tr.innerHTML = '<td colspan="5" style="text-align:center; padding:24px; color:#64748b;">Chưa có sự kiện nào.</td>';
+      tr.innerHTML = '<td colspan="5" class="manager-table-empty">Chưa có sự kiện nào.</td>';
       tbody.append(tr);
       return;
     }
@@ -3441,7 +3461,7 @@ async function loadManagerAuditTrail() {
   } catch (e) {
     console.warn('Lỗi tải Audit Trail:', e);
     const tr = el('tr');
-    tr.innerHTML = '<td colspan="5" style="text-align:center; padding:24px; color:#ef4444;">Không thể tải nhật ký quản lý toàn shop. Vui lòng kiểm tra quyền hạn hoặc bấm thử lại.</td>';
+    tr.innerHTML = '<td colspan="5" class="manager-table-error">Không thể tải nhật ký quản lý toàn shop. Vui lòng kiểm tra quyền hạn hoặc bấm thử lại.</td>';
     tbody.append(tr);
   }
 }
@@ -3449,10 +3469,14 @@ async function loadManagerAuditTrail() {
 // Search and filter chips in right sidebar
 const sideSearchInput = byId('order-search-input');
 const sideClearSearchBtn = byId('btn-clear-order-search');
+if (sideClearSearchBtn) sideClearSearchBtn.hidden = true;
 if (sideSearchInput) {
   sideSearchInput.oninput = () => {
     orderSearchQuery = sideSearchInput.value.trim();
-    if (sideClearSearchBtn && sideClearSearchBtn.style) sideClearSearchBtn.style.display = orderSearchQuery ? 'inline' : 'none';
+    if (sideClearSearchBtn) {
+      sideClearSearchBtn.hidden = !orderSearchQuery;
+      if (sideClearSearchBtn.style) sideClearSearchBtn.style.display = orderSearchQuery ? 'inline' : 'none';
+    }
     renderOrder();
   };
 }
@@ -3460,6 +3484,7 @@ if (sideClearSearchBtn) {
   sideClearSearchBtn.onclick = () => {
     sideSearchInput.value = '';
     orderSearchQuery = '';
+    sideClearSearchBtn.hidden = true;
     if (sideClearSearchBtn.style) sideClearSearchBtn.style.display = 'none';
     renderOrder();
   };
@@ -3571,7 +3596,7 @@ async function loadAdminAccounts() {
     tbody.replaceChildren();
     if (!adminAccounts.length) {
       const tr = el('tr');
-      tr.innerHTML = '<td colspan="8" style="text-align:center; padding:20px; color:#64748b;">Không có tài khoản nào trong phạm vi truy vấn.</td>';
+      tr.innerHTML = '<td colspan="8" class="manager-table-empty compact">Không có tài khoản nào trong phạm vi truy vấn.</td>';
       tbody.append(tr);
       return;
     }
@@ -3606,7 +3631,7 @@ async function loadAdminAccounts() {
     setAdminGovernanceMessage(err.message || 'Không thể tải danh sách tài khoản.', '');
     tbody.replaceChildren();
     const tr = el('tr');
-    tr.innerHTML = `<td colspan="8" style="text-align:center; padding:20px; color:#ef4444;">${err.message || 'Lỗi tải danh sách tài khoản.'}</td>`;
+    tr.innerHTML = `<td colspan="8" class="manager-table-error compact">${err.message || 'Lỗi tải danh sách tài khoản.'}</td>`;
     tbody.append(tr);
   }
 }
@@ -3668,7 +3693,7 @@ async function loadAdminAuditLog(targetMembershipId = null) {
     tbody.replaceChildren();
     if (!logs.length) {
       const tr = el('tr');
-      tr.innerHTML = '<td colspan="6" style="text-align:center; padding:18px; color:#64748b;">Chưa có bản ghi audit quản trị.</td>';
+      tr.innerHTML = '<td colspan="6" class="manager-table-empty compact">Chưa có bản ghi audit quản trị.</td>';
       tbody.append(tr);
       return;
     }
