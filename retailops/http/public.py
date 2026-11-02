@@ -9,10 +9,10 @@ import weakref
 from http import HTTPStatus
 from urllib.parse import urlsplit
 from agent_protocol import PROTOCOL
-from retailops.core import ApiError, ROOT, VERSION, fields, require
+from retailops.core import ApiError, BinaryPayload, EVIDENCE_MAX_BYTES, ROOT, VERSION, fields, require
 from retailops.config import DEFAULT_CASE_TIMER_SCAN_SECONDS, public_origin
 from retailops.identity.contracts import RequestContext, SessionBackend
-from retailops.http.routes import api_result
+from retailops.http.routes import EVIDENCE_UPLOAD_ROUTE_RE, api_result, parse_evidence_request_body
 from retailops.http.assets import ASSETS
 
 CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
@@ -253,8 +253,16 @@ class PublicWeb:
         body = None
         if method == 'POST':
             require(env.get('HTTP_ORIGIN') == self.origin, 403, 'invalid_origin', 'Nguồn yêu cầu không hợp lệ.')
-            max_size = 10_485_760 if path in ('/api/chat', '/api/staff/customer-message') else 16384
-            body = self.json_body(env, max_size=max_size)
+            if EVIDENCE_UPLOAD_ROUTE_RE.fullmatch(path):
+                body = parse_evidence_request_body(
+                    env.get('CONTENT_TYPE'),
+                    env.get('CONTENT_LENGTH'),
+                    env['wsgi.input'],
+                    max_size=EVIDENCE_MAX_BYTES,
+                )
+            else:
+                max_size = 10_485_760 if path in ('/api/chat', '/api/staff/customer-message') else 16384
+                body = self.json_body(env, max_size=max_size)
         if method == 'POST' and path == '/api/login':
             fields(body, {'token'})
             secret = self.sessions.login(body['token'])
@@ -285,6 +293,9 @@ class PublicWeb:
                 query=env.get('QUERY_STRING', ''),
                 context=request_context,
             )
+            if isinstance(result, BinaryPayload):
+                headers.extend(result.headers)
+                return status, result.data, result.content_type, headers
             if path in ('/api/session', '/api/profile'):
                 result.update(meta)
                 if request_context.principal_id is not None:

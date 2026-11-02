@@ -25,6 +25,19 @@ ORDER_ACTION_REASONS = {
     },
 }
 STATUSES = {"pending": "Chờ xử lý", "delivered": "Đã giao", "cancelled": "Đã hủy"}
+EVIDENCE_MAX_BYTES = 10_485_760
+EVIDENCE_MAX_COUNT = 5
+EVIDENCE_RETENTION_SECONDS = 90 * 86400
+
+
+class BinaryPayload:
+    __slots__ = ("data", "content_type", "headers")
+
+    def __init__(self, data: bytes, content_type: str, headers=None):
+        self.data = bytes(data)
+        self.content_type = str(content_type)
+        self.headers = list(headers) if headers else []
+
 
 class ApiError(Exception):
     def __init__(self, status, code, message, trace=None, headers=None):

@@ -46,6 +46,8 @@ def build_private_app(settings: Settings | None = None) -> Application:
     gateways = build_gateways(settings)
     store = BusinessStore(settings.output/'business.sqlite3')
     store.data_mode = settings.data_mode
+    store.tenant_id = 'default'
+    store.data_root = settings.output
     store.case_timer_config = settings.case_timer_config
     store.seed()
     token_hash = hashlib.sha256(settings.access_token.encode()).hexdigest()

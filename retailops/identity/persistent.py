@@ -308,7 +308,13 @@ class PersistentSessions:
         return {'session_scope': 'persistent-account', 'data_mode': self.data_mode, 'session_seconds': self.session_seconds}
 
     def run_case_timers_once(self, now: float | None = None) -> dict:
-        totals = {'reminded': 0, 'resolved_inactivity': 0, 'resolved_completed': 0, 'tenants': 0}
+        totals = {
+            'reminded': 0,
+            'resolved_inactivity': 0,
+            'resolved_completed': 0,
+            'evidence_purged': 0,
+            'tenants': 0,
+        }
         if getattr(self, 'read_only', False):
             return totals
         with self.control.connection() as db:
@@ -320,9 +326,11 @@ class PersistentSessions:
             except ApiError:
                 continue
             res = store.process_due_case_timers(now=now)
+            ev_res = store.purge_expired_evidence(now=now) if hasattr(store, 'purge_expired_evidence') else {}
             totals['tenants'] += 1
             for k in ('reminded', 'resolved_inactivity', 'resolved_completed'):
                 totals[k] += int(res.get(k, 0))
+            totals['evidence_purged'] += int(ev_res.get('purged', 0))
         return totals
 
     @property

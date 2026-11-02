@@ -1342,5 +1342,333 @@ class PhaseR1W3ReviewLifecycleDeliveryFailureRefundAndManagerStatusTests(unittes
             self.assertEqual(ob[0]["after"], {"status": "delivered", "version": 2})
 
 
+class PhaseR1W3EvidenceStorageExifStripAuthAndPurgeTests(unittest.TestCase):
+    """Item 9 isolated acceptance tests: JPEG/PNG/WebP magic bytes, EXIF/GPS strip, 5-image/10MB caps, auth, 90d purge."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name) / "data"
+        self.now = 1_785_000_000.0
+        self.sessions = PersistentSessions(self.root / "persistent")
+        self.sessions.store_clock = lambda: self.now
+
+        # Tenant A (seed_demo already creates C-001 and C-002)
+        self.store_a = self.sessions.provision_tenant("tenant-ev-a", "Store Evidence A", seed_demo=True)
+        self.store_a.add_customer("C-STAFF1", "Staff Một")
+        self.store_a.add_customer("C-MGR1", "Manager Một")
+        with self.store_a.connection(write=True) as db:
+            db.execute(
+                "UPDATE orders SET status = 'delivered', delivered_at = ? WHERE id = 'O-202'",
+                (self.now - 2 * 86400,),
+            )
+        # Tenant B (isolated tenant)
+        self.store_b = self.sessions.provision_tenant("tenant-ev-b", "Store Evidence B", seed_demo=True)
+        self.store_b.add_customer("C-MGRB", "Manager B")
+
+        self.origin = "https://retailops.example.com"
+        self.web = PublicWeb(self.origin, self.sessions, start_timer_worker=False)
+        self.cust1 = self._issue_cookie("tenant-ev-a", "p-cust1-a", "Khách A", "C-001", "customer")
+        self.cust2 = self._issue_cookie("tenant-ev-a", "p-cust2-a", "Khách B", "C-002", "customer")
+        self.staff1 = self._issue_cookie("tenant-ev-a", "p-staff1-a", "Staff Một", "C-STAFF1", "staff")
+        self.mgr1 = self._issue_cookie("tenant-ev-a", "p-mgr1-a", "Manager Một", "C-MGR1", "manager")
+        self.cust_b = self._issue_cookie("tenant-ev-b", "p-cust1-b", "Khách Tenant B", "C-001", "customer")
+        self.mgr_b = self._issue_cookie("tenant-ev-b", "p-mgr1-b", "Manager Tenant B", "C-MGRB", "manager")
+
+    def _issue_cookie(self, tenant_id: str, principal_id: str, name: str, customer_id: str, role: str) -> str:
+        mid = self.sessions.create_member(tenant_id, principal_id, name, customer_id, role)
+        tok = secrets.token_urlsafe(32)
+        self.sessions.control.register_credential(mid, tok)
+        return f"{self.sessions.cookie_name}={self.sessions.login(tok)}"
+
+    def _raw_call(self, method: str, path: str, payload: bytes = b"", *, content_type: str = "application/json", cookie: str = "", length_override: str | None = None):
+        env = {
+            "REQUEST_METHOD": method,
+            "PATH_INFO": path,
+            "HTTP_HOST": "retailops.example.com",
+            "HTTP_COOKIE": cookie,
+            "QUERY_STRING": "",
+            "wsgi.input": io.BytesIO(payload),
+        }
+        if method == "POST":
+            env["HTTP_ORIGIN"] = self.origin
+            env["CONTENT_TYPE"] = content_type
+            env["CONTENT_LENGTH"] = length_override if length_override is not None else str(len(payload))
+        captured: dict = {}
+
+        def start_response(status, headers):
+            captured["status"] = int(status.split()[0])
+            captured["headers"] = dict(headers)
+
+        raw_out = b"".join(self.web(env, start_response))
+        return captured["status"], captured["headers"], raw_out
+
+    def _json_req(self, method: str, path: str, body: dict | None = None, *, cookie: str):
+        raw = json.dumps(body).encode("utf-8") if body is not None else b""
+        st, hdrs, out = self._raw_call(method, path, raw, content_type="application/json", cookie=cookie)
+        return st, json.loads(out.decode("utf-8"))
+
+    @staticmethod
+    def _make_jpeg_with_exif_and_gps() -> bytes:
+        from PIL import Image
+
+        img = Image.new("RGB", (48, 32), color=(210, 45, 70))
+        exif = Image.Exif()
+        exif[0x010E] = "Customer Private Home Photo"  # ImageDescription
+        exif[0x013B] = "Nguyen Van Secret"  # Artist
+        exif[0x0131] = "CameraOS 9.9"  # Software
+        # GPS IFD (0x8825)
+        exif[0x8825] = {
+            1: "N",
+            2: (10.0, 46.0, 36.0),
+            3: "E",
+            4: (106.0, 42.0, 3.0),
+        }
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", exif=exif.tobytes())
+        raw = buf.getvalue()
+        # Sanity check: source bytes truly carry EXIF & GPS tags
+        with Image.open(io.BytesIO(raw)) as verify_src:
+            src_exif = verify_src.getexif()
+            assert len(src_exif) >= 3
+            assert len(src_exif.get_ifd(0x8825)) >= 2
+        return raw
+
+    @staticmethod
+    def _make_png_with_text() -> bytes:
+        from PIL import Image, PngImagePlugin
+
+        img = Image.new("RGBA", (24, 24), color=(20, 120, 220, 255))
+        meta = PngImagePlugin.PngInfo()
+        meta.add_text("Author", "Private PII Author")
+        meta.add_text("GPS", "10.7769,106.7009")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG", pnginfo=meta)
+        return buf.getvalue()
+
+    @staticmethod
+    def _make_webp() -> bytes:
+        from PIL import Image
+
+        img = Image.new("RGB", (30, 20), color=(40, 180, 90))
+        buf = io.BytesIO()
+        img.save(buf, format="WEBP", quality=85)
+        return buf.getvalue()
+
+    def test_item9_exif_stripped_magic_bytes_limits_auth_and_90_day_purge(self):
+        from PIL import Image
+
+        # Create return request on delivered O-102 (Customer 1, Tenant A)
+        st, created = self._json_req(
+            "POST",
+            "/api/order-actions",
+            {"order_id": "O-102", "type": "return", "expected_order_version": 1, "reason_code": "defective_item"},
+            cookie=self.cust1,
+        )
+        self.assertEqual(st, 201)
+        req_id = created["order_action_request_id"]
+        case_id = created["case_id"]
+
+        # Create second request on O-202 (Customer 2, Tenant A — another case in same tenant)
+        st2, created2 = self._json_req(
+            "POST",
+            "/api/order-actions",
+            {"order_id": "O-202", "type": "return", "expected_order_version": 1, "reason_code": "wrong_item"},
+            cookie=self.cust2,
+        )
+        self.assertEqual(st2, 201)
+        req_id_other_case = created2["order_action_request_id"]
+
+        # 1. Reject PDF (%PDF-1.7) and invalid magic bytes (GIF, EXE, polyglot)
+        st_pdf, _, raw_pdf = self._raw_call(
+            "POST",
+            f"/api/order-actions/{req_id}/evidence",
+            b"%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\n",
+            content_type="application/pdf",
+            cookie=self.cust1,
+        )
+        self.assertEqual((st_pdf, json.loads(raw_pdf)["error"]), (415, "pdf_evidence_deferred"))
+
+        for bad_bytes in (b"GIF89a\x01\x00\x01\x00\x80\x00\x00", b"MZ\x90\x00\x03\x00\x00\x00", b"\xff\xd8\xffNOT_A_VALID_JPEG"):
+            st_bad, _, raw_bad = self._raw_call(
+                "POST",
+                f"/api/order-actions/{req_id}/evidence",
+                bad_bytes,
+                content_type="image/jpeg",
+                cookie=self.cust1,
+            )
+            self.assertIn(st_bad, (400, 415))
+
+        # 2. Reject > 10 MB on evidence route (413 evidence_too_large), AND verify other routes still cap at 16 KB!
+        st_huge, _, raw_huge = self._raw_call(
+            "POST",
+            f"/api/order-actions/{req_id}/evidence",
+            b"x",
+            content_type="image/jpeg",
+            cookie=self.cust1,
+            length_override=str(10_485_761),
+        )
+        self.assertEqual((st_huge, json.loads(raw_huge)["error"]), (413, "evidence_too_large"))
+
+        big_json = json.dumps({"pad": "a" * 20_000}).encode("utf-8")
+        st_other_route, _, raw_other_route = self._raw_call(
+            "POST",
+            "/api/order-actions",
+            big_json,
+            content_type="application/json",
+            cookie=self.cust1,
+        )
+        self.assertEqual((st_other_route, json.loads(raw_other_route)["error"]), (413, "body_too_large"))
+
+        # 3. Upload JPEG with EXIF+GPS, PNG with text chunks, and 3 WebPs (total 5 images) -> 6th rejected with 409!
+        jpeg_with_exif = self._make_jpeg_with_exif_and_gps()
+        st_up1, _, raw_up1 = self._raw_call(
+            "POST",
+            f"/api/order-actions/{req_id}/evidence",
+            jpeg_with_exif,
+            content_type="image/jpeg",
+            cookie=self.cust1,
+        )
+        self.assertEqual(st_up1, 201, raw_up1)
+        ev1 = json.loads(raw_up1)["evidence"]
+        ev1_id = ev1["evidence_id"]
+        self.assertEqual((ev1["mime_type"], ev1["width"], ev1["height"]), ("image/jpeg", 48, 32))
+
+        # Verify stored file is outside web root under <data_root>/evidence/tenant-ev-a/<ev_id> with ZERO EXIF/GPS
+        stored_path = self.root / "evidence" / "tenant-ev-a" / ev1_id
+        self.assertTrue(stored_path.is_file())
+        stored_bytes = stored_path.read_bytes()
+        self.assertEqual(hashlib.sha256(stored_bytes).hexdigest(), ev1["sha256"])
+        self.assertNotIn(b"Nguyen Van Secret", stored_bytes)
+        self.assertNotIn(b"Customer Private Home Photo", stored_bytes)
+        with Image.open(io.BytesIO(stored_bytes)) as clean_img:
+            clean_exif = clean_img.getexif()
+            self.assertEqual(len(clean_exif), 0)
+            self.assertEqual(len(clean_exif.get_ifd(0x8825)), 0)
+
+        # Upload #2 (PNG with PII text metadata) -> metadata stripped
+        png_with_meta = self._make_png_with_text()
+        st_up2, _, raw_up2 = self._raw_call(
+            "POST",
+            f"/api/order-actions/{req_id}/evidence",
+            png_with_meta,
+            content_type="image/png",
+            cookie=self.cust1,
+        )
+        self.assertEqual(st_up2, 201)
+        ev2 = json.loads(raw_up2)["evidence"]
+        png_stored = (self.root / "evidence" / "tenant-ev-a" / ev2["evidence_id"]).read_bytes()
+        self.assertNotIn(b"Private PII Author", png_stored)
+        self.assertNotIn(b"10.7769", png_stored)
+
+        # Uploads #3, #4, #5 (WebP, including one multipart/form-data upload)
+        webp_raw = self._make_webp()
+        boundary = "----RetailOpsEvidenceBoundary99"
+        mp_body = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="photo3.webp"\r\n'
+            f"Content-Type: image/webp\r\n\r\n"
+        ).encode("utf-8") + webp_raw + f"\r\n--{boundary}--\r\n".encode("utf-8")
+        st_mp, _, _ = self._raw_call(
+            "POST",
+            f"/api/order-actions/{req_id}/evidence",
+            mp_body,
+            content_type=f"multipart/form-data; boundary={boundary}",
+            cookie=self.cust1,
+        )
+        self.assertEqual(st_mp, 201)
+        for _ in range(2):
+            st_w, _, _ = self._raw_call(
+                "POST",
+                f"/api/order-actions/{req_id}/evidence",
+                webp_raw,
+                content_type="image/webp",
+                cookie=self.cust1,
+            )
+            self.assertEqual(st_w, 201)
+
+        # Upload #6 -> MUST fail with 409 evidence_limit_exceeded!
+        st_6, _, raw_6 = self._raw_call(
+            "POST",
+            f"/api/order-actions/{req_id}/evidence",
+            webp_raw,
+            content_type="image/webp",
+            cookie=self.cust1,
+        )
+        self.assertEqual((st_6, json.loads(raw_6)["error"]), (409, "evidence_limit_exceeded"))
+
+        # 4. Authorization checks on EVERY GET download:
+        # Unauthenticated -> 401
+        self.assertEqual(self._raw_call("GET", f"/api/order-actions/{req_id}/evidence/{ev1_id}")[0], 401)
+        # Other customer in same tenant (case 2) -> 404
+        self.assertEqual(self._raw_call("GET", f"/api/order-actions/{req_id}/evidence/{ev1_id}", cookie=self.cust2)[0], 404)
+        # Mismatched case/request ID (trying to fetch case 1's evidence via case 2's request_id) -> 404
+        self.assertEqual(
+            self._raw_call("GET", f"/api/order-actions/{req_id_other_case}/evidence/{ev1_id}", cookie=self.mgr1)[0],
+            404,
+        )
+        # Cross-tenant customer & manager -> 404
+        self.assertEqual(self._raw_call("GET", f"/api/order-actions/{req_id}/evidence/{ev1_id}", cookie=self.cust_b)[0], 404)
+        self.assertEqual(self._raw_call("GET", f"/api/order-actions/{req_id}/evidence/{ev1_id}", cookie=self.mgr_b)[0], 404)
+
+        # Owning customer & same-tenant Staff/Manager -> 200 with nosniff + clean image bytes
+        for ok_cookie in (self.cust1, self.staff1, self.mgr1):
+            st_dl, hdrs_dl, bytes_dl = self._raw_call("GET", f"/api/order-actions/{req_id}/evidence/{ev1_id}", cookie=ok_cookie)
+            self.assertEqual(st_dl, 200)
+            self.assertEqual(hdrs_dl.get("Content-Type"), "image/jpeg")
+            self.assertEqual(hdrs_dl.get("X-Content-Type-Options"), "nosniff")
+            self.assertEqual(bytes_dl, stored_bytes)
+
+        # Once Staff1 claims case (status -> under_review), customer upload is rejected (409 evidence_upload_closed)
+        self.assertEqual(self._json_req("POST", f"/api/staff/cases/{case_id}/claim", {}, cookie=self.staff1)[0], 200)
+        st_closed_cust, _, raw_closed_cust = self._raw_call(
+            "POST",
+            f"/api/order-actions/{req_id}/evidence",
+            webp_raw,
+            content_type="image/webp",
+            cookie=self.cust1,
+        )
+        self.assertEqual((st_closed_cust, json.loads(raw_closed_cust)["error"]), (409, "evidence_upload_closed"))
+
+        # 5. Close request (reject) -> outbox carries evidence_refs (opaque ID + sha256 only, no bytes/URLs), then test 90-day purge!
+        st_rej, _ = self._json_req("POST", f"/api/order-actions/{req_id}/reject", {"version": 2, "note": "Không đủ điều kiện"}, cookie=self.staff1)
+        self.assertEqual(st_rej, 200)
+
+        with self.store_a.connection() as db:
+            rej_ob = json.loads(
+                db.execute(
+                    "SELECT payload_json FROM integration_outbox WHERE event_type='request_rejected' ORDER BY created_at DESC LIMIT 1"
+                ).fetchone()["payload_json"]
+            )
+            self.assertEqual(len(rej_ob["evidence_refs"]), 5)
+            self.assertEqual(set(rej_ob["evidence_refs"][0].keys()), {"evidence_id", "sha256"})
+
+        # At closed_at + 89 days: purge does NOT delete files yet
+        self.now += 89 * 86400
+        res_early = self.web.run_case_timers_once(now=self.now)
+        self.assertEqual(res_early["evidence_purged"], 0)
+        self.assertTrue(stored_path.is_file())
+
+        # At closed_at + 90 days + 1s: background purge deletes all 5 files, keeps sha256 & metadata in DB, GET returns 410
+        self.now += 86400 + 1
+        res_due = self.web.run_case_timers_once(now=self.now)
+        self.assertEqual(res_due["evidence_purged"], 5)
+        self.assertFalse(stored_path.is_file())
+
+        st_gone, _, raw_gone = self._raw_call("GET", f"/api/order-actions/{req_id}/evidence/{ev1_id}", cookie=self.cust1)
+        self.assertEqual((st_gone, json.loads(raw_gone)["error"]), (410, "evidence_purged"))
+
+        with self.store_a.connection() as db:
+            ev_meta = db.execute(
+                "SELECT sha256, mime_type, byte_size, width, height, file_purged_at FROM order_action_evidence WHERE evidence_id=?",
+                (ev1_id,),
+            ).fetchone()
+            self.assertEqual(ev_meta["sha256"], ev1["sha256"])
+            self.assertEqual(ev_meta["mime_type"], "image/jpeg")
+            self.assertGreater(ev_meta["byte_size"], 0)
+            self.assertEqual((ev_meta["width"], ev_meta["height"]), (48, 32))
+            self.assertEqual(ev_meta["file_purged_at"], self.now)
+
+
 if __name__ == "__main__":
     unittest.main()

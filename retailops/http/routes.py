@@ -1,14 +1,18 @@
 """Business route dispatch for both HTTP adapters; identity comes from the server."""
+from email.parser import BytesParser
+from email.policy import HTTP as EMAIL_HTTP_POLICY
 import json
 import math
 from pathlib import Path
 import re
 import time
 import urllib.parse
-from retailops.core import ApiError, fields, require
+from retailops.core import ApiError, BinaryPayload, EVIDENCE_MAX_BYTES, fields, require
 from retailops.workflow import approval
 from retailops.business.permissions import ACTIVE_BUSINESS_ROLES, READ, CANCEL, STAFF, MANAGER
 from retailops.identity.contracts import RequestContext
+
+EVIDENCE_UPLOAD_ROUTE_RE = re.compile(r"/api/order-actions/[A-Za-z0-9_-]{1,80}/evidence")
 
 CUSTOMER_SAFE_EVENT_KINDS = frozenset({
     'order_viewed',
@@ -17,6 +21,7 @@ CUSTOMER_SAFE_EVENT_KINDS = frozenset({
     'order_action_requested',
     'order_action_status_changed',
     'order_action_refund_updated',
+    'order_action_evidence_uploaded',
     'proposal_dismissed',
     'order_status_updated_by_manager',
     'customer_messaged_staff',
@@ -35,6 +40,55 @@ ALLOWED_DIRECT_TOOLS = frozenset({
     'search_products',
     'search_knowledge',
 })
+
+
+def parse_evidence_request_body(
+    content_type: str | None,
+    content_length: str | None,
+    stream,
+    *,
+    max_size: int = EVIDENCE_MAX_BYTES,
+) -> dict:
+    length_str = content_length if isinstance(content_length, str) else ""
+    require(
+        bool(length_str) and length_str.isascii() and length_str.isdecimal(),
+        400,
+        "invalid_length",
+        "Độ dài yêu cầu không hợp lệ.",
+    )
+    size = int(length_str)
+    require(size > 0, 400, "empty_evidence", "Tệp bằng chứng rỗng.")
+    require(size <= max_size, 413, "evidence_too_large", "Ảnh bằng chứng vượt quá giới hạn 10 MB.")
+    raw = stream.read(size)
+    require(len(raw) == size, 400, "invalid_length", "Nội dung yêu cầu chưa đầy đủ.")
+    ct_full = (content_type or "").strip()
+    ct_main = ct_full.split(";", 1)[0].strip().lower()
+    if ct_main == "multipart/form-data":
+        header_blob = f"Content-Type: {ct_full}\r\nMIME-Version: 1.0\r\n\r\n".encode("latin-1", errors="ignore")
+        msg = BytesParser(policy=EMAIL_HTTP_POLICY).parsebytes(header_blob + raw)
+        require(msg.is_multipart(), 400, "invalid_multipart", "Dữ liệu multipart không hợp lệ.")
+        file_parts = []
+        for part in msg.iter_parts():
+            disp_name = part.get_param("name", header="content-disposition")
+            if part.get_filename() is not None or disp_name in ("file", "evidence", "image"):
+                file_parts.append(part)
+        require(
+            len(file_parts) == 1,
+            400,
+            "invalid_evidence_upload",
+            "Mỗi yêu cầu tải lên chỉ được chứa đúng một tệp ảnh bằng chứng.",
+        )
+        payload = file_parts[0].get_payload(decode=True)
+        require(isinstance(payload, (bytes, bytearray)) and len(payload) > 0, 400, "empty_evidence", "Tệp bằng chứng rỗng.")
+        require(len(payload) <= max_size, 413, "evidence_too_large", "Ảnh bằng chứng vượt quá giới hạn 10 MB.")
+        return {
+            "_raw_evidence_bytes": bytes(payload),
+            "_declared_content_type": file_parts[0].get_content_type(),
+        }
+    return {
+        "_raw_evidence_bytes": raw,
+        "_declared_content_type": ct_main or "application/octet-stream",
+    }
 
 
 def _admin_control(app):
@@ -464,6 +518,28 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 if isinstance(item.get('order'), dict):
                     item['order'] = _format_order_for_api(item['order'], app)
             return (200, {'order_actions': items})
+        m_oa_ev_get = re.fullmatch(r"/api/order-actions/([A-Za-z0-9_-]{1,80})/evidence/(ev_[a-f0-9]{32})", path)
+        if m_oa_ev_get:
+            req_id, ev_id = m_oa_ev_get[1], m_oa_ev_get[2]
+            req_row, ev_row = app.store.get_order_action_evidence_record(req_id, ev_id)
+            if STAFF in ctx.permissions:
+                actor = _extract_actor(app, customer, binding=binding, context=ctx)
+                _authorize_staff_transcript_view(
+                    app,
+                    ctx,
+                    actor,
+                    case_id=req_row["case_id"],
+                    audit_resolved=True,
+                )
+            else:
+                require(
+                    req_row["customer_id"] == customer,
+                    404,
+                    "order_action_not_found",
+                    "Không tìm thấy yêu cầu đơn hàng.",
+                )
+            data, mime_type = app.store.read_order_action_evidence_bytes(ev_row)
+            return (200, BinaryPayload(data, mime_type, headers=[("Content-Disposition", "inline")]))
         if path == '/api/cancellation-proposals':
             _require_ctx_permission(ctx, CANCEL)
             with app.store.connection() as db:
@@ -723,6 +799,30 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 res['order'] = _format_order_for_api(res['order'], app)
             if isinstance(res.get('order_action'), dict) and isinstance(res['order_action'].get('order'), dict):
                 res['order_action']['order'] = _format_order_for_api(res['order_action']['order'], app)
+            return (201, res)
+        m_oa_ev_post = re.fullmatch(r"/api/order-actions/([A-Za-z0-9_-]{1,80})/evidence", path)
+        if m_oa_ev_post:
+            oa_id = m_oa_ev_post[1]
+            require(
+                isinstance(body, dict) and isinstance(body.get("_raw_evidence_bytes"), (bytes, bytearray)),
+                415,
+                "unsupported_evidence_type",
+                "Đường dẫn này nhận tệp ảnh nhị phân hoặc multipart/form-data.",
+            )
+            if STAFF in ctx.permissions:
+                _require_ctx_permission(ctx, STAFF)
+                _check_staff_tenant_scope(app, ctx)
+            else:
+                _require_ctx_permission(ctx, CANCEL)
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
+            res = app.store.upload_order_action_evidence(
+                oa_id,
+                bytes(body["_raw_evidence_bytes"]),
+                customer_id=customer,
+                actor=actor,
+            )
+            if isinstance(res.get("order_action"), dict) and isinstance(res["order_action"].get("order"), dict):
+                res["order_action"]["order"] = _format_order_for_api(res["order_action"]["order"], app)
             return (201, res)
         m_oa_step = re.fullmatch(
             r"/api/order-actions/([A-Za-z0-9_-]{1,80})/(approve|reject|mark-received|mark-inspected|complete|refund-request|refund-decision|refund-outcome)",

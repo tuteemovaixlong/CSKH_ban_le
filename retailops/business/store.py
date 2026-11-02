@@ -10,12 +10,26 @@ import json
 import os
 import re
 import sqlite3
+import tempfile
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from contextlib import contextmanager
 from pathlib import Path
-from retailops.core import ApiError, ORDER_ACTION_REASONS, REASONS, fields, require
+from retailops.core import (
+    ApiError,
+    EVIDENCE_MAX_COUNT,
+    EVIDENCE_RETENTION_SECONDS,
+    ORDER_ACTION_REASONS,
+    REASONS,
+    fields,
+    require,
+)
+from retailops.business.evidence import (
+    atomic_write_bytes,
+    inspect_and_reencode_evidence,
+    resolve_protected_subdir,
+)
 from retailops.guardrails.topic_filter import (
     SAFE_REFUSAL_MESSAGE,
     contains_canary_or_secret,
@@ -3622,6 +3636,18 @@ class BusinessStore:
         clean_rt = self._sanitize_reason_text(reason_text) if reason_text is not None else None
         if clean_rt is not None:
             envelope["reason_text"] = clean_rt
+        if evidence_refs is None and order_action_request_id is not None:
+            ev_rows = db.execute(
+                """SELECT evidence_id, sha256 FROM order_action_evidence
+                   WHERE request_id = ?
+                   ORDER BY created_at ASC, evidence_id ASC""",
+                (order_action_request_id,),
+            ).fetchall()
+            if ev_rows:
+                evidence_refs = [
+                    {"evidence_id": r["evidence_id"], "sha256": r["sha256"]}
+                    for r in ev_rows
+                ]
         if evidence_refs:
             envelope["evidence_refs"] = [
                 {"evidence_id": str(ref["evidence_id"]), "sha256": str(ref["sha256"])}
@@ -5220,3 +5246,284 @@ class BusinessStore:
             "changed": True,
             "message": f"Đã cập nhật trạng thái đơn {oid} sang {new_status}.",
         }
+
+    def _effective_data_root(self) -> Path:
+        explicit = getattr(self, "data_root", None)
+        if explicit is not None:
+            return Path(explicit)
+        db_path = getattr(self, "path", None)
+        if db_path is not None:
+            p = Path(db_path)
+            if p.parent.name in ("tenants", "public-guests"):
+                return p.parent.parent
+            return p.parent
+        env_out = os.environ.get("RETAILOPS_OUTPUT", "").strip()
+        if env_out:
+            return Path(env_out)
+        return Path(tempfile.gettempdir()) / "retailops_runtime_data"
+
+    def upload_order_action_evidence(
+        self,
+        request_id: str,
+        raw_bytes: bytes,
+        *,
+        customer_id: str | None = None,
+        actor: dict | None = None,
+    ) -> dict:
+        require(
+            isinstance(request_id, str) and bool(re.fullmatch(r"[A-Za-z0-9_-]{1,80}", request_id)),
+            400,
+            "invalid_request_id",
+            "Mã yêu cầu đơn hàng không hợp lệ.",
+        )
+        clean = inspect_and_reencode_evidence(raw_bytes)
+        norm_actor = self._normalize_actor(actor, str(customer_id or "customer"), "customer")
+        caller_role = norm_actor["role"]
+        require(
+            caller_role in ("customer", "staff", "manager"),
+            403,
+            "permission_denied",
+            "Tài khoản không có quyền tải ảnh bằng chứng.",
+        )
+
+        safe_tid, _, target_dir = resolve_protected_subdir(
+            self._effective_data_root(), "evidence", self._effective_tenant_id(actor)
+        )
+        now_ts = self._now()
+        evidence_id = f"ev_{uuid.uuid4().hex}"
+        storage_relpath = f"evidence/{safe_tid}/{evidence_id}"
+        written_path: Path | None = None
+
+        try:
+            with self.connection(write=True) as db:
+                req_row = db.execute(
+                    "SELECT * FROM order_action_requests WHERE request_id = ?",
+                    (request_id,),
+                ).fetchone()
+                require(req_row is not None, 404, "order_action_not_found", "Không tìm thấy yêu cầu đơn hàng.")
+
+                if caller_role == "customer":
+                    require(
+                        bool(customer_id) and req_row["customer_id"] == customer_id,
+                        404,
+                        "order_action_not_found",
+                        "Không tìm thấy yêu cầu đơn hàng.",
+                    )
+                    require(
+                        req_row["status"] == "requested" and req_row["closed_at"] is None,
+                        409,
+                        "evidence_upload_closed",
+                        "Khách hàng chỉ được đính kèm ảnh khi yêu cầu còn ở trạng thái requested.",
+                    )
+                    case_row = db.execute(
+                        "SELECT status FROM cases WHERE case_id = ?",
+                        (req_row["case_id"],),
+                    ).fetchone()
+                    require(
+                        case_row is not None and case_row["status"] != "resolved",
+                        409,
+                        "case_already_resolved",
+                        "Ca hỗ trợ đã đóng, không thể tải thêm ảnh bằng chứng.",
+                    )
+                    uploaded_by_principal = norm_actor["principal_id"]
+                    uploaded_by_role = "customer"
+                else:
+                    self._check_case_reviewer_authority_in_tx(db, req_row["case_id"], norm_actor)
+                    require(
+                        req_row["closed_at"] is None,
+                        409,
+                        "evidence_upload_closed",
+                        "Yêu cầu đơn hàng đã đóng, không thể tải thêm ảnh bằng chứng.",
+                    )
+                    uploaded_by_principal = norm_actor["principal_id"]
+                    uploaded_by_role = caller_role
+
+                cnt_row = db.execute(
+                    "SELECT COUNT(*) AS cnt FROM order_action_evidence WHERE request_id = ?",
+                    (request_id,),
+                ).fetchone()
+                existing_count = int(cnt_row["cnt"] if cnt_row and "cnt" in cnt_row else (cnt_row[0] if cnt_row else 0))
+                require(
+                    existing_count < EVIDENCE_MAX_COUNT,
+                    409,
+                    "evidence_limit_exceeded",
+                    f"Mỗi yêu cầu đơn hàng chỉ được đính kèm tối đa {EVIDENCE_MAX_COUNT} ảnh bằng chứng.",
+                )
+
+                written_path = atomic_write_bytes(target_dir, evidence_id, clean["bytes"])
+                db.execute(
+                    """INSERT INTO order_action_evidence(
+                           evidence_id, request_id, case_id, customer_id, conversation_id,
+                           uploaded_by_principal_id, uploaded_by_role, mime_type, byte_size,
+                           width, height, sha256, storage_relpath, created_at, file_purged_at
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)""",
+                    (
+                        evidence_id,
+                        request_id,
+                        req_row["case_id"],
+                        req_row["customer_id"],
+                        req_row["conversation_id"],
+                        uploaded_by_principal,
+                        uploaded_by_role,
+                        clean["mime_type"],
+                        clean["byte_size"],
+                        clean["width"],
+                        clean["height"],
+                        clean["sha256"],
+                        storage_relpath,
+                        now_ts,
+                    ),
+                )
+                self.log(
+                    db,
+                    req_row["customer_id"],
+                    "order_action_evidence_uploaded",
+                    req_row["order_id"],
+                    request_id=request_id,
+                    case_id=req_row["case_id"],
+                    evidence_id=evidence_id,
+                    mime_type=clean["mime_type"],
+                    byte_size=clean["byte_size"],
+                    width=clean["width"],
+                    height=clean["height"],
+                    sha256=clean["sha256"],
+                    actor=actor if actor is not None else norm_actor,
+                )
+                serialized = self._serialize_order_action_in_tx(db, req_row, now=now_ts)
+        except Exception:
+            if written_path is not None:
+                written_path.unlink(missing_ok=True)
+            raise
+
+        return {
+            "status": "ok",
+            "evidence": {
+                "evidence_id": evidence_id,
+                "request_id": request_id,
+                "case_id": req_row["case_id"],
+                "mime_type": clean["mime_type"],
+                "byte_size": clean["byte_size"],
+                "width": clean["width"],
+                "height": clean["height"],
+                "sha256": clean["sha256"],
+                "uploaded_by_role": uploaded_by_role,
+                "created_at": now_ts,
+                "purged": False,
+                "download_url": f"/api/order-actions/{request_id}/evidence/{evidence_id}",
+            },
+            "order_action": serialized,
+            "message": "Đã lưu ảnh bằng chứng (đã xóa dữ liệu EXIF/GPS).",
+        }
+
+    def get_order_action_evidence_record(self, request_id: str, evidence_id: str) -> tuple[dict, dict]:
+        require(
+            isinstance(request_id, str) and bool(re.fullmatch(r"[A-Za-z0-9_-]{1,80}", request_id)),
+            400,
+            "invalid_request_id",
+            "Mã yêu cầu đơn hàng không hợp lệ.",
+        )
+        require(
+            isinstance(evidence_id, str) and bool(re.fullmatch(r"ev_[a-f0-9]{32}", evidence_id)),
+            400,
+            "invalid_evidence_id",
+            "Mã bằng chứng không hợp lệ.",
+        )
+        with self.connection() as db:
+            req_row = db.execute(
+                "SELECT * FROM order_action_requests WHERE request_id = ?",
+                (request_id,),
+            ).fetchone()
+            require(req_row is not None, 404, "order_action_not_found", "Không tìm thấy yêu cầu đơn hàng.")
+            ev_row = db.execute(
+                "SELECT * FROM order_action_evidence WHERE evidence_id = ? AND request_id = ?",
+                (evidence_id, request_id),
+            ).fetchone()
+            require(ev_row is not None, 404, "evidence_not_found", "Không tìm thấy tệp bằng chứng trên yêu cầu này.")
+        return dict(req_row), dict(ev_row)
+
+    def _resolve_evidence_file_path(self, storage_relpath: str) -> Path:
+        _, base_root, _ = resolve_protected_subdir(
+            self._effective_data_root(), "evidence", getattr(self, "tenant_id", "default")
+        )
+        rel = str(storage_relpath or "").strip().lstrip("/")
+        parts = rel.split("/")
+        require(
+            len(parts) == 3 and parts[0] == "evidence" and all(pt and pt not in (".", "..") for pt in parts),
+            500,
+            "unsafe_storage_path",
+            "Đường dẫn bằng chứng lưu trữ không hợp lệ.",
+        )
+        evidence_root = (base_root / "evidence").resolve()
+        full_path = (base_root / Path(*parts)).resolve()
+        require(
+            full_path.is_relative_to(evidence_root),
+            500,
+            "unsafe_storage_path",
+            "Đường dẫn bằng chứng nằm ngoài vùng lưu trữ bảo vệ.",
+        )
+        return full_path
+
+    def read_order_action_evidence_bytes(self, evidence_row: dict) -> tuple[bytes, str]:
+        require(
+            evidence_row.get("file_purged_at") is None,
+            410,
+            "evidence_purged",
+            "Tệp ảnh bằng chứng đã được xóa sau 90 ngày đóng yêu cầu; chỉ còn lưu mã băm và metadata.",
+        )
+        full_path = self._resolve_evidence_file_path(evidence_row["storage_relpath"])
+        require(full_path.is_file(), 404, "evidence_file_missing", "Không tìm thấy tệp ảnh bằng chứng trên kho lưu trữ.")
+        data = full_path.read_bytes()
+        require(
+            hashlib.sha256(data).hexdigest() == evidence_row["sha256"],
+            500,
+            "evidence_integrity_error",
+            "Mã băm tệp bằng chứng không khớp với bản ghi kiểm toán.",
+        )
+        return data, str(evidence_row["mime_type"])
+
+    def purge_expired_evidence(self, *, now: float | None = None) -> dict:
+        now_ts = self._now() if now is None else float(now)
+        cutoff = now_ts - float(EVIDENCE_RETENTION_SECONDS)
+        with self.connection() as db:
+            due = [
+                dict(r)
+                for r in db.execute(
+                    """SELECT e.evidence_id, e.request_id, e.case_id, e.customer_id,
+                              e.sha256, e.storage_relpath, r.order_id
+                       FROM order_action_evidence e
+                       JOIN order_action_requests r ON r.request_id = e.request_id
+                       WHERE e.file_purged_at IS NULL
+                         AND r.closed_at IS NOT NULL
+                         AND r.closed_at <= ?
+                       ORDER BY r.closed_at ASC, e.evidence_id ASC""",
+                    (cutoff,),
+                ).fetchall()
+            ]
+        purged = 0
+        for item in due:
+            try:
+                fpath = self._resolve_evidence_file_path(item["storage_relpath"])
+                fpath.unlink(missing_ok=True)
+            except ApiError:
+                continue
+            with self.connection(write=True) as db:
+                won = db.execute(
+                    """UPDATE order_action_evidence
+                       SET file_purged_at = ?
+                       WHERE evidence_id = ? AND file_purged_at IS NULL""",
+                    (now_ts, item["evidence_id"]),
+                ).rowcount
+                if won == 1:
+                    purged += 1
+                    self.log(
+                        db,
+                        item["customer_id"],
+                        "order_action_evidence_purged",
+                        item["order_id"],
+                        evidence_id=item["evidence_id"],
+                        request_id=item["request_id"],
+                        case_id=item["case_id"],
+                        sha256=item["sha256"],
+                        purged_at=now_ts,
+                    )
+        return {"purged": purged}

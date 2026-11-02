@@ -5,8 +5,8 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 from agent_protocol import PROTOCOL
-from retailops.core import ApiError, ROOT, VERSION, require
-from retailops.http.routes import api_result
+from retailops.core import ApiError, BinaryPayload, EVIDENCE_MAX_BYTES, ROOT, VERSION, require
+from retailops.http.routes import EVIDENCE_UPLOAD_ROUTE_RE, api_result, parse_evidence_request_body
 from retailops.http.assets import ASSETS
 from retailops.identity.contracts import RequestContext
 
@@ -46,7 +46,7 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass  # Do not write tokens, request bodies or upstream URLs to access logs.
 
-    def reply(self, status, body, content_type="application/json; charset=utf-8"):
+    def reply(self, status, body, content_type="application/json; charset=utf-8", extra_headers=None):
         payload = body if isinstance(body, bytes) else json.dumps(body, ensure_ascii=False).encode()
         self.send_response(status)
         self.send_header("Content-Type", content_type)
@@ -55,6 +55,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+        for h_name, h_val in (extra_headers or ()):
+            self.send_header(h_name, h_val)
         self.end_headers()
         self.wfile.write(payload)
 
@@ -94,12 +96,20 @@ class Handler(BaseHTTPRequestHandler):
         body = None
         if self.command == "POST":
             require(self.headers.get("Origin") in (None, "http://" + host), 403, "invalid_origin", "Nguồn yêu cầu không hợp lệ.")
-            require(self.headers.get_content_type() == "application/json", 415, "json_required", "Yêu cầu phải là JSON.")
             lengths = self.headers.get_all("Content-Length", [])
             require(len(lengths) == 1 and self.headers.get("Transfer-Encoding") is None, 400, "invalid_length", "Độ dài yêu cầu không hợp lệ.")
-            size = int(lengths[0])
-            require(0 < size <= 16384, 413, "body_too_large", "Yêu cầu quá lớn hoặc rỗng.")
-            body = json.loads(self.rfile.read(size))
+            if EVIDENCE_UPLOAD_ROUTE_RE.fullmatch(path):
+                body = parse_evidence_request_body(
+                    self.headers.get("Content-Type"),
+                    lengths[0],
+                    self.rfile,
+                    max_size=EVIDENCE_MAX_BYTES,
+                )
+            else:
+                require(self.headers.get_content_type() == "application/json", 415, "json_required", "Yêu cầu phải là JSON.")
+                size = int(lengths[0])
+                require(0 < size <= 16384, 413, "body_too_large", "Yêu cầu quá lớn hoặc rỗng.")
+                body = json.loads(self.rfile.read(size))
         request_context = RequestContext.from_app(
             app,
             customer,
@@ -116,4 +126,6 @@ class Handler(BaseHTTPRequestHandler):
             self.headers.get("Idempotency-Key"),
             context=request_context,
         )
+        if isinstance(result, BinaryPayload):
+            return self.reply(status, result.data, result.content_type, extra_headers=result.headers)
         return self.reply(status, result)
