@@ -22,6 +22,7 @@ from retailops.knowledge.embedding import MODEL_ID as KNOWLEDGE_EMBEDDING_MODEL
 from retailops_providers import API_MODEL
 from retailops_conversation import Catalog, describe_order
 from retailops.business.cache import SemanticCache, ToolCache, is_cacheable_query, is_cache_eligible_for_lookup
+from retailops.business.progress import TurnProgress
 from retailops.inference_gate import InferenceGate, GatedGateway
 from retailops.workflow.answer_check import check_final_answer
 
@@ -48,6 +49,7 @@ class Application:
             self.store.tenant_id = self.tenant_id
         self.tool_cache = tool_cache if tool_cache is not None else ToolCache(default_ttl=180.0)
         self.internal_events = []
+        self.progress = TurnProgress()  # what a running turn has done so far, for the chat's progress line
         self.agent_mode = resolve_agent_mode(orchestrator)
         # Older callers read the name from before W3.2: the agent loop was 'single_agent', the supervisor graph 'multi_agent'.
         self.orchestrator = 'multi_agent' if self.agent_mode == 'legacy' else 'single_agent'
@@ -108,6 +110,10 @@ class Application:
         require(provider_id != 'api' or self.api_infer is not None, 503, 'provider_not_configured',
                 'API chưa được chủ demo cấu hình. Hãy chọn custom model.')
         return self.store.new_conversation(customer, provider_id)
+
+    def turn_progress(self, customer, conversation_id):
+        """Progress of the turn this customer has running in this conversation; nothing about anyone else's."""
+        return self.progress.read((customer, conversation_id))
 
     def authenticate(self, header):
         return authenticate_bearer(header, self.tokens)
@@ -252,6 +258,9 @@ class Application:
                 self.store.finish_turn(customer, snapshot, request_id, digest, [user_msg, assistant_msg], cached_result, {})
                 return cached_result
 
+            progress_key = (customer, snapshot['id'])
+            self.progress.start(progress_key, request_id)
+            stack.callback(self.progress.finish, progress_key, request_id)
             from retailops.workflow.checkpoints import workflow
             saver, snapshot = stack.enter_context(workflow(self.store, customer, 'chat-v1',
                 [snapshot['id'], request_id], fingerprint, snapshot, expires_at=snapshot['expires_at']))
@@ -370,7 +379,8 @@ class Application:
                                         saver=saver, capture=capture, restore=restore, before_model=before_model, attachment=attachment)
             else:
                 answer = run_agent(gated_gateway, text, self.store.history(customer, snapshot['id']), execute, identity,
-                                   saver=saver, capture=capture, restore=restore, before_model=before_model, attachment=attachment)
+                                   saver=saver, capture=capture, restore=restore, before_model=before_model, attachment=attachment,
+                                   progress=lambda state: self.progress.update(progress_key, request_id, state))
 
             if read_only_lookup:
                 bound.cancel_order = None

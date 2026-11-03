@@ -646,6 +646,11 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 app, ctx, actor, case_id=m_case_trans[1]
             )
             return (200, app.store.conversation_transcript(cid, case_id=resolved_case_id, read_only=ro))
+        m_progress = re.fullmatch(r"/api/conversations/([a-f0-9-]{36})/progress", path)
+        if m_progress:
+            # What the customer's own running turn has done so far (tool names only); nothing for anyone else's.
+            _require_ctx_permission(ctx, READ)
+            return (200, app.turn_progress(customer, m_progress[1]))
         m_trans = re.fullmatch(r"/api/(?:staff/)?conversations/([a-f0-9-]{36})/messages", path)
         if m_trans:
             cid = m_trans[1]

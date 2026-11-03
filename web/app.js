@@ -4,12 +4,10 @@
 const byId = id => document.getElementById(id);
 const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; };
 const statuses = {pending: 'Chờ xử lý', delivered: 'Đã giao', cancelled: 'Đã hủy'};
-const reasons = {ordered_by_mistake: 'Tôi đặt nhầm', no_longer_needed: 'Tôi không còn cần'};
-const orderActionReasons = {
-  cancel: {ordered_by_mistake: 'Tôi đặt nhầm', no_longer_needed: 'Tôi không còn cần', changed_mind: 'Tôi đổi ý'},
-  return: {defective_item: 'Sản phẩm lỗi / hư hỏng', wrong_item: 'Giao sai sản phẩm / mẫu', not_as_described: 'Không giống mô tả', no_longer_needed: 'Tôi không còn nhu cầu'},
-  exchange: {wrong_size: 'Không vừa size / muốn đổi size', defective_item: 'Sản phẩm lỗi (đổi 1-1)', wrong_item: 'Giao sai mẫu (đổi 1-1)'}
-};
+// W3.2-D2: request reasons come from the one shared catalog (GET /api/order-action-reasons); no list lives here.
+let reasonCatalog = null;
+const stockLabels = {in_stock: 'còn hàng', out_of_stock: 'hết hàng', unknown: 'chưa rõ tồn kho'};
+const exchangeKindLabels = {other_variant: 'Đổi sang biến thể khác', same_variant: 'Đổi cùng biến thể'};
 const money = value => new Intl.NumberFormat('vi-VN', {style: 'currency', currency: 'VND'}).format(value);
 let token = '', orders = [], selected = null, pending = null, busy = false, conversationId = null;
 let providerId = 'custom', providerOptions = [];
@@ -141,7 +139,7 @@ const ratingLabels = {
 };
 const cookieAuth = document.body?.dataset.auth === 'cookie';
 const persistentAccount = ['persistent-demo', 'production', 'live'].includes(document.body?.dataset.dataMode);
-const sourceLabels = {tool_result: 'Kết quả công cụ đã xác minh', interface: 'Hướng dẫn giao diện', store_data: 'Dữ liệu đơn hàng', llm_agent: 'Hội thoại model', ui_simulation: 'Mô phỏng giao diện', case_timer: 'Nhắc tự động'};
+const sourceLabels = {tool_result: 'Kết quả công cụ đã xác minh', interface: 'Hướng dẫn giao diện', store_data: 'Dữ liệu đơn hàng', llm_agent: 'Hội thoại model', safety_rail: 'Rào an toàn', ui_simulation: 'Mô phỏng giao diện', case_timer: 'Nhắc tự động'};
 function showContext(context) {
   selected = context?.order_id || null;
   byId('conversation-context').textContent = context?.order_id ? 'Đang trao đổi: ' + context.order_id
@@ -861,8 +859,42 @@ async function uploadOrderActionEvidence(requestId, file) {
   return result;
 }
 
-async function chooseReason(id, requestedType = null, requestedExchangeKind = null) {
+async function loadReasonCatalog(force = false) {
+  if (reasonCatalog && !force) return reasonCatalog;
+  try {
+    const data = await api('/api/order-action-reasons');
+    reasonCatalog = data && Array.isArray(data.reasons) ? data : null;
+  } catch (error) {
+    reasonCatalog = null;
+  }
+  return reasonCatalog;
+}
+
+function reasonEntry(code) {
+  return (reasonCatalog?.reasons || []).find(entry => entry.code === code) || null;
+}
+
+function reasonLabel(code) {
+  return reasonEntry(code)?.label || code || '—';
+}
+
+// Reasons a request type can use, in catalog order; staff-only reasons only when the caller is staff.
+function reasonsForType(actionType, staff = false) {
+  return (reasonCatalog?.reasons || []).filter(entry => Array.isArray(entry.applies_to)
+    && entry.applies_to.includes(actionType) && (staff || !entry.staff_only));
+}
+
+function variantStockText(variant) {
+  if (typeof variant.stock === 'number') return variant.stock > 0 ? 'còn ' + variant.stock : 'hết hàng';
+  return stockLabels[variant.stock_status] || stockLabels.unknown;
+}
+
+async function chooseReason(id, requestedType = null, requestedExchangeKind = null, requestedTargetVariantId = null) {
   if (!canCancel) { message('Tài khoản của bạn có quyền xem; không được tạo yêu cầu hủy.', 'assistant', 'interface'); return; }
+  if (!(await loadReasonCatalog())) {
+    message('Chưa tải được danh mục lý do yêu cầu. Bạn thử lại sau một lát nhé.', 'assistant', 'interface');
+    return;
+  }
   const result = await api('/api/conversations/' + conversationId + '/focus', {order_id: id});
   const order = result.order; showContext(result.context); selected = order.id; await refresh();
   let actionType = 'cancel';
@@ -871,7 +903,7 @@ async function chooseReason(id, requestedType = null, requestedExchangeKind = nu
     actionType = 'cancel';
   } else if (order.status === 'delivered') {
     actionType = (requestedType === 'exchange' || requestedType === 'return') ? requestedType : 'return';
-    exchangeKind = actionType === 'exchange' ? (requestedExchangeKind === 'one_to_one' ? 'one_to_one' : 'size') : null;
+    exchangeKind = actionType === 'exchange' ? (requestedExchangeKind === 'same_variant' ? 'same_variant' : 'other_variant') : null;
   } else {
     message('Đơn ' + id + ' ' + (statuses[order.status] || order.status).toLowerCase() + ', không đủ điều kiện tạo yêu cầu.');
     return;
@@ -883,14 +915,17 @@ async function chooseReason(id, requestedType = null, requestedExchangeKind = nu
   const row = message(introText, 'assistant', 'store_data');
   const card = el('div', 'proposal order-action-card');
   const group = 'reason-' + crypto.randomUUID();
+  const textLimit = Number(reasonCatalog.text_max_length) || 500;
   let reason = null;
+  let targetVariantId = null;
+  let exchangeOptions = null;
   let selectedFiles = [];
 
   const titleHeading = el('h3', '');
   const updateHeading = () => {
     if (actionType === 'cancel') titleHeading.textContent = 'Yêu cầu hủy · ' + id;
     else if (actionType === 'return') titleHeading.textContent = 'Yêu cầu trả hàng · ' + id;
-    else titleHeading.textContent = 'Yêu cầu đổi hàng (' + (exchangeKind === 'one_to_one' ? 'Đổi 1-1' : 'Đổi size') + ') · ' + id;
+    else titleHeading.textContent = 'Yêu cầu đổi hàng (' + exchangeKindLabels[exchangeKind] + ') · ' + id;
   };
   updateHeading();
   card.append(titleHeading);
@@ -899,47 +934,102 @@ async function chooseReason(id, requestedType = null, requestedExchangeKind = nu
   button.type = 'button';
   button.disabled = true;
 
-  let kindSelect = null;
+  const noteInput = el('textarea', 'order-action-note');
+  noteInput.rows = 2;
+  noteInput.maxLength = textLimit;
+  const needsText = () => Boolean(reason && reasonEntry(reason)?.requires_text);
+  const needsTarget = () => actionType === 'exchange' && exchangeKind === 'other_variant';
+  const syncSubmit = () => {
+    const textMissing = needsText() && !(noteInput.value || '').trim();
+    noteInput.required = needsText();
+    noteInput.placeholder = needsText()
+      ? 'Mô tả lý do (bắt buộc, tối đa ' + textLimit + ' ký tự)…'
+      : 'Mô tả thêm tình trạng hoặc yêu cầu (tùy chọn, tối đa ' + textLimit + ' ký tự)…';
+    button.disabled = busy || !reason || textMissing || (needsTarget() && !targetVariantId);
+  };
+
+  const cardError = el('p', 'proposal-error');
+  cardError.setAttribute('role', 'alert');
+
   const reasonsBox = el('div', 'order-action-reasons');
   const renderReasons = () => {
     reasonsBox.replaceChildren();
     reason = null;
-    button.disabled = true;
-    const opts = orderActionReasons[actionType] || {};
-    for (const [value, label] of Object.entries(opts)) {
+    for (const entry of reasonsForType(actionType)) {
       const line = el('label'), input = el('input');
-      input.type = 'radio'; input.name = group; input.value = value;
-      input.onchange = () => { reason = value; button.disabled = busy; };
-      line.append(input, document.createTextNode(label));
+      input.type = 'radio'; input.name = group; input.value = entry.code;
+      input.onchange = () => { reason = entry.code; syncSubmit(); };
+      line.append(input, document.createTextNode(entry.label));
       reasonsBox.append(line);
     }
+    syncSubmit();
+  };
+
+  // An exchange to another variant names the variant: the real variants of the product with their stock.
+  const targetBox = el('div', 'order-action-field order-action-target');
+  targetBox.hidden = true;
+  const targetSelect = el('select', 'order-action-target-select');
+  const targetHint = el('small', 'order-action-target-hint', '');
+  targetBox.append(el('span', 'order-action-field-label', 'Biến thể muốn đổi sang:'), targetSelect, targetHint);
+  targetSelect.onchange = () => { targetVariantId = targetSelect.value || null; syncSubmit(); };
+  const renderTarget = async () => {
+    targetBox.hidden = !needsTarget();
+    if (!needsTarget()) { targetVariantId = null; syncSubmit(); return; }
+    if (!exchangeOptions) {
+      try {
+        exchangeOptions = await api('/api/orders/' + encodeURIComponent(id) + '/exchange-options');
+      } catch (err) {
+        cardError.textContent = err.message || 'Không tải được danh sách biến thể của sản phẩm.';
+        exchangeOptions = {variants: []};
+      }
+    }
+    if (!needsTarget()) return;  // the customer switched to another kind while the options were loading
+    const variants = Array.isArray(exchangeOptions.variants) ? exchangeOptions.variants : [];
+    targetSelect.replaceChildren();
+    const placeholder = el('option', '', '— Chọn biến thể —');
+    placeholder.value = '';
+    targetSelect.append(placeholder);
+    for (const variant of variants) {
+      const option = el('option', '', variant.label + ' · ' + variantStockText(variant) + (variant.is_current ? ' (đang giữ)' : ''));
+      option.value = variant.id;
+      option.disabled = Boolean(variant.is_current);
+      targetSelect.append(option);
+    }
+    const wanted = variants.some(v => v.id === requestedTargetVariantId && !v.is_current) ? requestedTargetVariantId : '';
+    targetSelect.value = wanted;
+    targetVariantId = wanted || null;
+    targetHint.textContent = variants.length
+      ? 'Tồn kho chỉ để tham khảo; cửa hàng quyết định khi duyệt yêu cầu.'
+      : 'Đơn này chưa có danh sách biến thể để chọn. Hãy chọn "Đổi cùng biến thể" hoặc nhờ nhân viên hỗ trợ.';
+    syncSubmit();
   };
 
   if (order.status === 'delivered') {
     const kindRow = el('div', 'order-action-field');
     const kindLabel = el('span', 'order-action-field-label', 'Hình thức yêu cầu:');
-    kindSelect = el('select', 'order-action-kind-select');
+    const kindSelect = el('select', 'order-action-kind-select');
     for (const [val, lbl] of [
       ['return', 'Trả hàng'],
-      ['exchange:size', 'Đổi hàng · Đổi size'],
-      ['exchange:one_to_one', 'Đổi hàng · Đổi 1-1']
+      ['exchange:other_variant', 'Đổi hàng · ' + exchangeKindLabels.other_variant + ' (màu, size, kiểu…)'],
+      ['exchange:same_variant', 'Đổi hàng · ' + exchangeKindLabels.same_variant + ' (hàng lỗi)']
     ]) {
       const opt = el('option', '', lbl);
       opt.value = val;
       kindSelect.append(opt);
     }
-    kindSelect.value = actionType === 'exchange' ? ('exchange:' + (exchangeKind || 'size')) : 'return';
+    kindSelect.value = actionType === 'exchange' ? ('exchange:' + exchangeKind) : 'return';
     kindSelect.onchange = () => {
       const val = kindSelect.value;
       if (val.startsWith('exchange:')) {
         actionType = 'exchange';
-        exchangeKind = val.split(':')[1] || 'size';
+        exchangeKind = val.split(':')[1] === 'same_variant' ? 'same_variant' : 'other_variant';
       } else {
         actionType = 'return';
         exchangeKind = null;
       }
       updateHeading();
       renderReasons();
+      return renderTarget();
     };
     kindRow.append(kindLabel, kindSelect);
     card.append(kindRow);
@@ -947,11 +1037,9 @@ async function chooseReason(id, requestedType = null, requestedExchangeKind = nu
 
   renderReasons();
   card.append(reasonsBox);
+  card.append(targetBox);
 
-  const noteInput = el('textarea', 'order-action-note');
-  noteInput.rows = 2;
-  noteInput.maxLength = 500;
-  noteInput.placeholder = 'Mô tả thêm tình trạng hoặc yêu cầu (tùy chọn, tối đa 500 ký tự)…';
+  noteInput.oninput = () => syncSubmit();
   card.append(noteInput);
 
   const evWrap = el('div', 'order-action-evidence-wrap');
@@ -960,8 +1048,6 @@ async function chooseReason(id, requestedType = null, requestedExchangeKind = nu
   evInput.accept = 'image/jpeg,image/png,image/webp';
   evInput.multiple = true;
   const evHint = el('small', 'order-action-evidence-hint', 'Đính kèm ảnh bằng chứng (tùy chọn, tối đa 5 ảnh JPEG/PNG/WebP, mỗi ảnh ≤ 10MB).');
-  const cardError = el('p', 'proposal-error');
-  cardError.setAttribute('role', 'alert');
 
   evInput.onchange = () => {
     cardError.textContent = '';
@@ -998,7 +1084,7 @@ async function chooseReason(id, requestedType = null, requestedExchangeKind = nu
   card.append(evWrap, cardError);
 
   button.onclick = () => act(async () => {
-    if (!reason) return;
+    if (!reason || (needsText() && !(noteInput.value || '').trim()) || (needsTarget() && !targetVariantId)) return;
     cardError.textContent = '';
     const payload = {
       order_id: id,
@@ -1007,9 +1093,12 @@ async function chooseReason(id, requestedType = null, requestedExchangeKind = nu
       reason_code: reason,
     };
     if (conversationId) payload.conversation_id = conversationId;
-    if (actionType === 'exchange') payload.exchange_kind = exchangeKind || 'size';
+    if (actionType === 'exchange') {
+      payload.exchange_kind = exchangeKind;
+      if (exchangeKind === 'other_variant') payload.target_variant_id = targetVariantId;
+    }
     const cleanNote = (noteInput.value || '').trim();
-    if (cleanNote) payload.reason_text = cleanNote.slice(0, 500);
+    if (cleanNote) payload.reason_text = cleanNote.slice(0, textLimit);
 
     let created;
     try {
@@ -1047,6 +1136,7 @@ async function chooseReason(id, requestedType = null, requestedExchangeKind = nu
 
   card.append(button, el('small', '', 'Yêu cầu sẽ được chuyển tới nhân viên cửa hàng xét duyệt và thông báo trạng thái ngay trong hội thoại này.'));
   row.append(card);
+  await renderTarget();
 }
 
 function openProposal(proposal) {
@@ -1055,7 +1145,7 @@ function openProposal(proposal) {
   byId('confirm-title').textContent = 'Gửi yêu cầu hủy đơn ' + proposal.order.id + '?';
   byId('confirm-description').textContent = (proposal.order.display_name || proposal.order.name) + ' · ' + money(proposal.order.amount)
     + '. Hết hạn: ' + new Date(proposal.expires_at * 1000).toLocaleTimeString('vi-VN') + '.';
-  byId('confirm-reason').textContent = reasons[proposal.reason];
+  byId('confirm-reason').textContent = reasonLabel(proposal.reason);
   byId('confirm-error').textContent = ''; byId('confirm-dialog').showModal();
 }
 
@@ -1255,6 +1345,50 @@ function showTrace(row, trace, replayed = false) {
   row.append(details);
 }
 
+// W3.2-D10: while a turn runs, the page asks what the agent has done so far and shows it in the status line.
+const toolProgressLabels = {
+  get_order: 'đơn hàng', list_orders: 'danh sách đơn', get_context: 'đơn đang trao đổi', get_product: 'sản phẩm',
+  search_products: 'danh mục sản phẩm', check_inventory: 'tồn kho', track_shipment: 'vận chuyển',
+  search_knowledge: 'chính sách cửa hàng', prepare_order_action: 'điều kiện yêu cầu', request_human_support: 'chuyển nhân viên',
+  get_current_time: 'thời gian', get_runtime_info: 'thông tin model'
+};
+let progressTimer = null, progressToken = 0;
+
+function progressStatus(state) {
+  if (!state || !state.active) return null;
+  const done = [];
+  for (const tool of Array.isArray(state.tools) ? state.tools : []) {
+    const label = toolProgressLabels[tool.name] || tool.name;
+    if (typeof label === 'string' && !done.includes(label)) done.push(label);
+  }
+  if (!done.length) return {title: 'Model đang xử lý…', detail: 'Đang đọc hội thoại và lập kế hoạch'};
+  return {title: 'Đã kiểm tra ' + done[done.length - 1] + '…',
+    detail: 'Đã kiểm tra: ' + done.join(' → ') + ' · đang tổng hợp (bước ' + Math.max(1, Number(state.model_calls) || 1) + ')'};
+}
+
+async function pollTurnProgress() {
+  const token = progressToken;
+  if (!conversationId || !token) return;
+  try {
+    const status = progressStatus(await api('/api/conversations/' + conversationId + '/progress'));
+    if (status && token === progressToken) setModelStatus(status.title, status.detail);
+  } catch (error) {
+    // The progress line is a courtesy; the answer does not depend on it.
+  }
+}
+
+function startProgressPolling() {
+  stopProgressPolling();
+  progressToken += 1;
+  if (typeof setInterval === 'function') progressTimer = setInterval(pollTurnProgress, 3000);
+}
+
+function stopProgressPolling() {
+  progressToken += 1;  // a poll that is still in flight must not overwrite the final status
+  if (progressTimer && typeof clearInterval === 'function') clearInterval(progressTimer);
+  progressTimer = null;
+}
+
 async function send(text, requestId = crypto.randomUUID(), retry = false, attachment = null) {
   text = text ? text.trim() : '';
   if (!text && !attachment) return;
@@ -1316,6 +1450,7 @@ async function send(text, requestId = crypto.randomUUID(), retry = false, attach
   byId('message').value = '';
   setModelStatus('Model đang xử lý…', 'Đang đọc hội thoại và gọi công cụ khi cần');
   byId('messages').setAttribute('aria-busy', 'true');
+  startProgressPolling();
   let result;
   try {
     const payload = {text, conversation_id: conversationId, request_id: requestId};
@@ -1334,7 +1469,7 @@ async function send(text, requestId = crypto.randomUUID(), retry = false, attach
     row.append(retryButton);
     setModelStatus('Chat chưa hoàn tất', 'Có thể thử lại hoặc dùng các nút thao tác');
     return;
-  } finally { byId('messages').removeAttribute('aria-busy'); }
+  } finally { stopProgressPolling(); byId('messages').removeAttribute('aria-busy'); }
   const row = message(result.message, 'assistant', result.source, result.trace?.model);
   if (result.case?.case_id) currentCaseId = result.case.case_id;
   if (result.shipment) showShipment(row, result.shipment);
@@ -1365,7 +1500,8 @@ async function send(text, requestId = crypto.randomUUID(), retry = false, attach
     await chooseReason(
       result.order.id,
       result.order_action?.action_type || (result.action === 'choose_cancel_reason' ? 'cancel' : 'return'),
-      result.order_action?.exchange_kind || null
+      result.order_action?.exchange_kind || null,
+      result.order_action?.target_variant_id || null
     );
   } else await refresh();
   renderSidebarConversations().catch(() => {});
@@ -1619,6 +1755,7 @@ async function openSession() {
   if (byId('confirm-dialog').open) byId('confirm-dialog').close();
   byId('messages').replaceChildren();
 
+  loadReasonCatalog(true);  // request reasons come from the shared catalog (of this role); warm it while the page settles
   try {
     const choices = await api('/api/providers');
     providerOptions = choices.providers;
@@ -1938,6 +2075,8 @@ function resetStaffConsentDraft(caseId = null) {
     consentTurnId: '',
     turnManuallyChanged: false,
     otherOpsOpen: false,
+    targetVariantId: '',
+    variantOptions: {},
     dfOrderId: '',
     dfAttempts: '1',
     dfNote: ''
@@ -1953,8 +2092,8 @@ function getConsentTypeChoicesForOrder(ord) {
   if (allowed.includes('cancel')) choices.push({ value: 'cancel', label: 'Hủy đơn' });
   if (allowed.includes('return')) choices.push({ value: 'return', label: 'Trả hàng' });
   if (allowed.includes('exchange')) {
-    choices.push({ value: 'exchange:size', label: 'Đổi size' });
-    choices.push({ value: 'exchange:one_to_one', label: 'Đổi 1-1' });
+    choices.push({ value: 'exchange:other_variant', label: exchangeKindLabels.other_variant });
+    choices.push({ value: 'exchange:same_variant', label: exchangeKindLabels.same_variant });
   }
   return choices;
 }
@@ -1962,8 +2101,9 @@ function getConsentTypeChoicesForOrder(ord) {
 function getConsentReasonsForTypeKey(typeKey) {
   const raw = String(typeKey || '');
   const baseType = raw.startsWith('exchange:') ? 'exchange' : raw;
-  const src = (staffCaseOrderReasonsMap && staffCaseOrderReasonsMap[baseType]) || orderActionReasons[baseType] || {};
-  return Object.entries(src).filter(([code]) => code !== 'delivery_failed');
+  const fromCatalog = reasonsForType(baseType, true).map(entry => [entry.code, entry.label]);
+  const src = fromCatalog.length ? fromCatalog : Object.entries((staffCaseOrderReasonsMap && staffCaseOrderReasonsMap[baseType]) || {});
+  return src.filter(([code]) => code !== 'delivery_failed');
 }
 
 function formatConsentTurnOptionLabel(turn) {
@@ -2092,6 +2232,7 @@ function notifyStaffAlert(msg, kind = 'error') {
 
 function openStaffDesk() {
   const dlg = byId('staff-desk-dialog');
+  loadReasonCatalog();  // staff see the same catalog as customers (plus the staff-only reasons)
   if (dlg) {
     setStaffDeskNotice('', '');
     applyStaffDeskMaximizedState(readStaffDeskSavedMaximized());
@@ -2274,8 +2415,7 @@ function formatStaffOrderActionType(req) {
   }
   if (req.type === 'return') return 'Trả hàng';
   if (req.type === 'exchange') {
-    if (req.exchange_kind === 'size') return 'Đổi hàng (Đổi size)';
-    if (req.exchange_kind === 'one_to_one') return 'Đổi hàng (Đổi 1-1)';
+    if (exchangeKindLabels[req.exchange_kind]) return 'Đổi hàng (' + exchangeKindLabels[req.exchange_kind] + ')';
     return 'Đổi hàng';
   }
   return req.type || 'Yêu cầu đơn hàng';
@@ -2358,9 +2498,17 @@ function renderStaffCaseOrderActions() {
     card.append(topRow);
 
     const metaRow = el('div', 'case-ops-meta-row');
-    const reasonLabel = req.reason_label || orderActionReasons[req.type]?.[req.reason_code] || req.reason_code || '—';
-    const extraReason = (req.reason_text && req.reason_text !== reasonLabel) ? ` — "${req.reason_text}"` : '';
-    metaRow.append(el('span', '', `Lý do: ${reasonLabel}${extraReason}`));
+    const reasonText = req.reason_label || reasonLabel(req.reason_code);
+    const extraReason = (req.reason_text && req.reason_text !== reasonText) ? ` — "${req.reason_text}"` : '';
+    metaRow.append(el('span', '', `Lý do: ${reasonText}${extraReason}`));
+    if (req.type === 'exchange') {
+      // Current variant -> wanted variant with its stock, for the person who approves (stock informs, never blocks).
+      const variantLine = req.exchange_kind === 'other_variant'
+        ? `Biến thể: ${req.current_variant_label || '—'} → ${req.target_variant_label || '(chưa chọn biến thể đích)'}`
+          + ` · Tồn kho đích: ${variantStockText({stock: req.target_stock, stock_status: req.target_stock_status})}`
+        : `Biến thể: ${req.current_variant_label || '—'} (đổi cùng biến thể)`;
+      metaRow.append(el('span', 'case-ops-variant-line', variantLine));
+    }
     const ageLabel = req.delivery_age_label
       || (req.days_since_delivery != null
         ? `${req.days_since_delivery} ngày kể từ khi giao`
@@ -2612,6 +2760,15 @@ function renderStaffCaseOrderActions() {
       cReasonSel.setAttribute('aria-label', 'Lý do');
       reasonField.append(cReasonSel);
 
+      const targetField = el('div', 'case-ops-field case-ops-field-wide');
+      targetField.id = 'staff-consent-target-field';
+      targetField.hidden = true;
+      targetField.append(el('label', 'case-ops-label', 'Biến thể khách muốn đổi sang (tồn kho chỉ để tham khảo)'));
+      const cTargetSel = el('select', 'case-ops-select');
+      cTargetSel.id = 'staff-consent-target-select';
+      cTargetSel.setAttribute('aria-label', 'Biến thể đích');
+      targetField.append(cTargetSel);
+
       const turnField = el('div', 'case-ops-field case-ops-field-wide');
       turnField.append(el('label', 'case-ops-label', 'Tin nhắn đồng ý của khách (30 phút gần nhất)'));
       const cTurnSel = el('select', 'case-ops-select');
@@ -2666,16 +2823,7 @@ function renderStaffCaseOrderActions() {
           rOpt.value = code;
           cReasonSel.append(rOpt);
         });
-        let nextReason = preferredReason;
-        if (!entries.some(([code]) => code === nextReason)) {
-          if (cTypeSel.value === 'exchange:size' && entries.some(([code]) => code === 'wrong_size')) {
-            nextReason = 'wrong_size';
-          } else if (cTypeSel.value === 'exchange:one_to_one' && entries.some(([code]) => code === 'defective_item')) {
-            nextReason = 'defective_item';
-          } else {
-            nextReason = entries[0][0];
-          }
-        }
+        const nextReason = entries.some(([code]) => code === preferredReason) ? preferredReason : entries[0][0];
         cReasonSel.value = nextReason;
         cReasonSel.disabled = staffOrderActionBusy;
         staffConsentDraft.reasonCode = nextReason;
@@ -2707,26 +2855,76 @@ function renderStaffCaseOrderActions() {
         populateConsentReasons(staffConsentDraft.reasonCode);
       };
 
+      // An exchange to another variant names the variant (real variants of the order's product, with stock).
+      const populateConsentTargets = async () => {
+        const wantsTarget = cTypeSel.value === 'exchange:other_variant' && Boolean(cOrdSel.value);
+        targetField.hidden = !wantsTarget;
+        cTargetSel.replaceChildren();
+        if (!wantsTarget) {
+          staffConsentDraft.targetVariantId = '';
+          return;
+        }
+        const orderId = cOrdSel.value;
+        let options = staffConsentDraft.variantOptions[orderId];
+        if (!options) {
+          try {
+            options = await api(`/api/staff/cases/${encodeURIComponent(caseObj.case_id)}/orders/${encodeURIComponent(orderId)}/exchange-options`);
+          } catch (err) {
+            options = { variants: [] };
+          }
+          staffConsentDraft.variantOptions[orderId] = options;
+        }
+        if (cOrdSel.value !== orderId || cTypeSel.value !== 'exchange:other_variant') return;  // the choice moved on meanwhile
+        const variants = Array.isArray(options.variants) ? options.variants : [];
+        const placeholder = el('option', '', variants.length ? '— Chọn biến thể —' : '— Đơn này chưa có danh sách biến thể —');
+        placeholder.value = '';
+        cTargetSel.append(placeholder);
+        variants.forEach(v => {
+          const opt = el('option', '', `${v.label} · ${variantStockText(v)}${v.is_current ? ' (đang giữ)' : ''}`);
+          opt.value = v.id;
+          opt.disabled = Boolean(v.is_current);
+          cTargetSel.append(opt);
+        });
+        const keep = variants.some(v => v.id === staffConsentDraft.targetVariantId && !v.is_current) ? staffConsentDraft.targetVariantId : '';
+        cTargetSel.value = keep;
+        cTargetSel.disabled = staffOrderActionBusy;
+        staffConsentDraft.targetVariantId = keep;
+        syncConsentSubmitState();
+      };
+
       const syncConsentSubmitState = () => {
         const selOrd = effectiveOrders.find(o => o.id === cOrdSel.value);
         const validTurn = /^[1-9]\d*$/.test(String(cTurnSel.value || '').trim());
+        const needsTarget = cTypeSel.value === 'exchange:other_variant';
+        const needsText = Boolean(reasonEntry(cReasonSel.value)?.requires_text);
+        cNoteInput.required = needsText;
+        cNoteInput.placeholder = needsText ? 'Mô tả lý do (bắt buộc)...' : 'Ghi chú bổ sung (tùy chọn)...';
         cSubmitBtn.disabled = Boolean(
           staffOrderActionBusy
           || !isOrderEligibleForConsent(selOrd)
           || !cTypeSel.value
           || !cReasonSel.value
           || !validTurn
+          || (needsTarget && !cTargetSel.value)
+          || (needsText && !(cNoteInput.value || '').trim())
         );
       };
 
       cOrdSel.onchange = () => {
         staffConsentDraft.orderId = cOrdSel.value;
+        staffConsentDraft.targetVariantId = '';
         populateConsentTypes('');
         syncConsentSubmitState();
+        return populateConsentTargets();
       };
       cTypeSel.onchange = () => {
         staffConsentDraft.typeKey = cTypeSel.value;
         populateConsentReasons('');
+        syncConsentSubmitState();
+        return populateConsentTargets();
+      };
+      cTargetSel.onchange = () => {
+        staffConsentDraft.targetVariantId = cTargetSel.value;
         syncConsentSubmitState();
       };
       cReasonSel.onchange = () => {
@@ -2740,13 +2938,15 @@ function renderStaffCaseOrderActions() {
       };
       cNoteInput.oninput = () => {
         staffConsentDraft.noteText = cNoteInput.value;
+        syncConsentSubmitState();
       };
       cSubmitBtn.onclick = () => submitStaffConsentedOrderAction();
 
       populateConsentTypes(staffConsentDraft.typeKey);
       syncConsentSubmitState();
+      populateConsentTargets();
 
-      formGrid.append(ordField, typeField, reasonField, turnField);
+      formGrid.append(ordField, typeField, reasonField, targetField, turnField);
       actionRow.append(cNoteInput, cSubmitBtn);
       consentCard.append(formGrid, actionRow);
       if (!sortedConsentTurns.length) {
@@ -2922,12 +3122,18 @@ async function submitStaffConsentedOrderAction() {
 
   let actionType = typeKey;
   let exchangeKind = null;
-  if (typeKey === 'exchange:size') {
+  if (typeKey.startsWith('exchange:')) {
     actionType = 'exchange';
-    exchangeKind = 'size';
-  } else if (typeKey === 'exchange:one_to_one') {
-    actionType = 'exchange';
-    exchangeKind = 'one_to_one';
+    exchangeKind = typeKey.split(':')[1] === 'same_variant' ? 'same_variant' : 'other_variant';
+  }
+  const targetVariantId = (byId('staff-consent-target-select')?.value || '').trim();
+  if (exchangeKind === 'other_variant' && !targetVariantId) {
+    setStaffDeskNotice('Vui lòng chọn biến thể khách muốn đổi sang.', 'error');
+    return;
+  }
+  if (reasonEntry(reasonCode)?.requires_text && !reasonText) {
+    setStaffDeskNotice('Lý do này bắt buộc nhập mô tả.', 'error');
+    return;
   }
 
   const effectiveOrders = staffCaseOrders.length > 0 ? staffCaseOrders : staffCaseCustomerOrders;
@@ -2941,6 +3147,9 @@ async function submitStaffConsentedOrderAction() {
   };
   if (exchangeKind) {
     payload.exchange_kind = exchangeKind;
+  }
+  if (exchangeKind === 'other_variant') {
+    payload.target_variant_id = targetVariantId;
   }
   if (reasonText) {
     payload.reason_text = reasonText;
@@ -2956,6 +3165,8 @@ async function submitStaffConsentedOrderAction() {
     );
     staffConsentDraft.noteText = '';
     staffConsentDraft.orderId = '';
+    staffConsentDraft.targetVariantId = '';
+    staffConsentDraft.variantOptions = {};
     setStaffDeskNotice(res.message || 'Đã tạo yêu cầu theo đồng ý của khách hàng.', 'success');
     await loadStaffCaseOrderActions(activeStaffTicket.case_id, true);
     await refreshStaffTranscript(activeStaffTicket.conversation_id, true, activeStaffTicket.case_id);
