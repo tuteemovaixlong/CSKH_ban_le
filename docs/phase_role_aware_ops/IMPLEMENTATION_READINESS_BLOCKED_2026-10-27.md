@@ -301,3 +301,24 @@ Cả hai quyết định dùng đúng hành vi code đã được kiểm chứng
 | `W3.2-RR-04` | MAJOR | Model đã bật native tool-calling và thinking trên vLLM nhưng app không tận dụng: định tuyến theo từ khóa, mỗi worker chỉ thấy vài tool, câu trả lời của model bị thay bằng câu soạn sẵn, trần 4 lượt model quá thấp cho chuỗi nhiều bước | W3.2-D9 đến W3.2-D12 |
 
 **Kết luận:** W3.2 **READY** để thực thi theo [W3.2 execution handoff](W3_2_EXECUTION_HANDOFF_2026-11-02.md) sau khi W3.1 được merge. Readiness tổng thể vẫn `BLOCKED` cho `W4–W6` (trừ phần AI W3.2 kéo lên). Migration business v7 và deploy cần owner duyệt riêng, theo runbook như W3.
+
+### 2026-11-03 W3.2 production deploy record and incident
+
+**Merged:** PR #55 (W3.2, merge `12b4b24`), PR #56 (`6ec6c43`: `/healthz` kiểm tra danh mục lý do, image bắt buộc có `data/order_action_reasons.json`) và PR #57 (`92db18d`: rollout dừng khi còn mount `/opt/retailops/patches`).
+
+**Migration business v7 trên DB production**, cùng mô hình W3:
+- Preflight chỉ đọc: identity v5; 41 tenant ở business v6; 509 đơn; 0 yêu cầu đơn hàng; `/data` ghi được.
+- Backup: `pre-w32-20261103T124846.dump` (đọc lại được 1082 mục dữ liệu bảng) và `final-pre-w32-20261103T125531.dump` (sau khi dừng `web`).
+- Diễn tập trên DB tạm: lần đầu `upgraded: True`, chạy lại `False`; 41 cột `target_variant_id`; W3.2 khởi động được trên v7.
+- `database migrate-v7` trên DB thật: 41 tenant lên v7, số đơn và case không đổi, `exchange_requests_mapped: 0`.
+
+**Sự cố sau rollout:**
+- *Triệu chứng.* Image W3.2 đầu tiên (`c966bf3f…`) qua rollout và `/healthz`, nhưng mọi request đã đăng nhập trả `400 bad_request`; live smoke dừng ở `session lookup failed`.
+- *Nguyên nhân gốc.* `/opt/retailops/compose.public.yaml` trên EC2 còn 3 mount từ thời `scripts/update_ec2.py`: `/opt/retailops/patches/{data,evals,mcp_config.json}` → `/app/...` (chỉ đọc). Bản tháng 9 của `/app/data` che mất `data/order_action_reasons.json` của image. `Application` đọc danh mục này theo kiểu fail-closed, nên mọi phiên đăng nhập đều lỗi. Bước so mã nguồn của rollout chỉ xét code nên không phát hiện, và `/healthz` khi đó chưa kiểm tra danh mục.
+- *Hệ quả phụ.* Từ tháng 9 tới 2026-11-03, `data/` (chính sách, sản phẩm), `evals/` và `mcp_config.json` trên production là bản cũ trên host, không phải bản trong image.
+- *Xử lý.* PR #56 làm `/healthz` trả 503 khi thiếu danh mục. Nhờ đó lần chạy workflow `41649491137` tự rollback và lộ ra mount cũ. Ba mount được gỡ tay (backup `compose.public.yaml.bak-20261103T141956`). Image `sha256:03bdf0baae39e37c249259a9ca4eeea1d0bcbfe7664f3f8acd99241668041808` được kích hoạt và rollout tay: `PUBLIC_WEB_ROLLOUT_OK`, `CATALOG_OK`, `ADMIN_CONSOLE_READY`, `LIVE_E2E_SMOKE_OK` (`LIVE_SMOKE_20261103T143058Z`). PR #57 chặn tái diễn.
+- *Ảnh hưởng.* Khoảng 13:00–14:30 UTC người dùng đã đăng nhập không dùng được; dữ liệu không mất, DB v7 đúng.
+
+**Lần chạy workflow:** `41636882867` đỏ có chủ đích (đưa image lên trước migrate, tự rollback); `41649491137` đỏ do health gate mới (đúng thiết kế). `RETAILOPS_DEPLOY_ENABLED` để `false`.
+
+**Còn mở:** owner chạy bộ kịch bản với model thật trên Colab (`scripts/run_agent_scenarios.py --endpoint …`); xác nhận nguyên nhân 503 cũ qua `trace.model_errors` ở lần lỗi tiếp theo; dọn tài khoản và tenant chẩn đoán `diag-*` cùng các tenant `e2e-smoke-*` (W6); đổi tên `/opt/retailops/patches` thành thư mục đã ngừng dùng.
