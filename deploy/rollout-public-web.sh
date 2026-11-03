@@ -131,8 +131,9 @@ PY
   echo "PUBLIC_WEB_SOURCE_MATCH=$live_source"
 }
 
-# Retire ONLY the old script's exact read-only code mounts. Keep /data,
-# catalog/knowledge fixtures, secrets, custom configuration and DB mounts intact.
+# Retire ONLY the old script's exact read-only code mounts. Keep /data, secrets,
+# custom configuration and DB mounts intact. Any other /opt/retailops/patches mount
+# (data/, evals/, mcp_config.json) shadows release content and stops the rollout.
 # Back up the original compose file so rollback restores code AND its mounts.
 compose_candidate=$(mktemp /opt/retailops/compose.image-code.XXXXXX)
 if ! docker run --rm -i --pull never --network none --entrypoint python "$image_ref" /app/deploy/source_consistency.py strip < compose.public.yaml > "$compose_candidate"; then

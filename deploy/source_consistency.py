@@ -30,6 +30,23 @@ def strip_legacy_code_mounts(source):
     return ''.join(lines)
 
 
+def legacy_patch_mounts(source):
+    """Mounts from /opt/retailops/patches that remain after the code mounts are stripped.
+
+    Such a mount shadows release content (for example data/, evals/, mcp_config.json) with an old host
+    copy. Incident 2026-11-03: /app/data from September hid data/order_action_reasons.json, so every
+    signed-in request of W3.2 failed. A rollout must stop until an operator removes them.
+    """
+    found = []
+    for line in source.splitlines():
+        value = line.strip()
+        if value.startswith('- '):
+            value = value[2:].split(' #', 1)[0].strip().strip('\"\'')
+            if value.startswith('/opt/retailops/patches'):
+                found.append(value)
+    return found
+
+
 def source_digest(root):
     root = Path(root)
     paths = list(root.glob('*.py')) + list((root / 'retailops').rglob('*.py'))
@@ -46,7 +63,15 @@ def main():
     parser.add_argument('operation', choices=('strip', 'digest'))
     args = parser.parse_args()
     if args.operation == 'strip':
-        sys.stdout.write(strip_legacy_code_mounts(sys.stdin.read()))
+        stripped = strip_legacy_code_mounts(sys.stdin.read())
+        leftovers = legacy_patch_mounts(stripped)
+        if leftovers:
+            for mount in leftovers:
+                print(f'PUBLIC_WEB_LEGACY_PATCH_MOUNT_REJECTED {mount}', file=sys.stderr)
+            print('Remove every /opt/retailops/patches mount from compose.public.yaml (keep a backup), '
+                  'then run the rollout again.', file=sys.stderr)
+            sys.exit(3)
+        sys.stdout.write(stripped)
     else:
         print(source_digest(Path(__file__).resolve().parents[1]))
 
