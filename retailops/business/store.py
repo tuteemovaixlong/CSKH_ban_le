@@ -12,6 +12,7 @@ import re
 import sqlite3
 import tempfile
 import time
+import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
 from contextlib import contextmanager
@@ -4060,8 +4061,23 @@ class BusinessStore:
             ev_d["purged"] = ev_d.get("file_purged_at") is not None
             ev_d["download_url"] = f"/api/order-actions/{d['request_id']}/evidence/{ev_d['evidence_id']}"
             evidence.append(ev_d)
+        exchange_view = {}
+        if d.get("type") == "exchange":
+            exchange_view = {
+                "current_variant_label": order_dict.get("variant") if order_dict is not None else None,
+                "target_stock_status": None,
+                "target_stock": None,
+            }
+            if d.get("target_variant_id"):
+                target_row = db.execute(
+                    "SELECT stock FROM product_variants WHERE id = ?", (d["target_variant_id"],)
+                ).fetchone()
+                stock = target_row["stock"] if target_row is not None else None
+                exchange_view["target_stock_status"] = self._stock_status(stock)
+                exchange_view["target_stock"] = int(stock) if stock is not None else None
         return {
             **d,
+            **exchange_view,
             "expected_order_version": int(d["expected_order_version"]),
             "version": int(d["version"]),
             "reason_label": reason_catalog().label(d["reason_code"]),
@@ -4137,6 +4153,130 @@ class BusinessStore:
         self._ensure_active_case_in_tx(db, cid, customer_id, now_ts)
         return cid
 
+    # ---- general exchange (W3.2-D1, W3.2-D5) ---------------------------------------------------------
+    @staticmethod
+    def _stock_status(stock) -> str:
+        """Stock is for display only and never blocks a request: in_stock / out_of_stock / unknown."""
+        if stock is None:
+            return "unknown"
+        return "in_stock" if int(stock) > 0 else "out_of_stock"
+
+    @staticmethod
+    def _fold_variant(text) -> str | None:
+        """Lower-case, accent-free, single-spaced form used to compare variant attributes."""
+        if text is None:
+            return None
+        folded = "".join(
+            c for c in unicodedata.normalize("NFD", str(text).lower().replace("đ", "d"))
+            if unicodedata.category(c) != "Mn"
+        )
+        folded = " ".join(folded.split())
+        if folded.startswith("size "):
+            folded = folded[5:]
+        return folded or None
+
+    @classmethod
+    def _variant_attributes(cls, variant_text) -> tuple[str | None, str | None]:
+        """(size, color) of an order's free-text variant, e.g. "Trắng · Size M · Số lượng 1" -> ("m", "trang")."""
+        if not variant_text:
+            return None, None
+        size, color = _parse_variant_string(variant_text)
+        return cls._fold_variant(size), cls._fold_variant(color)
+
+    def _order_product_in_tx(self, db, order: dict) -> dict | None:
+        """The catalog product an order belongs to: its product_id, else a unique match on the product name."""
+        if order.get("product_id"):
+            row = db.execute("SELECT id, name FROM products WHERE id = ?", (order["product_id"],)).fetchone()
+            if row is not None:
+                return {"id": row["id"], "name": row["name"]}
+        rows = db.execute("SELECT id, name FROM products WHERE name = ? LIMIT 2", (order.get("name"),)).fetchall()
+        return {"id": rows[0]["id"], "name": rows[0]["name"]} if len(rows) == 1 else None
+
+    def _exchange_variants_in_tx(self, db, order: dict) -> dict:
+        """Variants of the order's product with stock status and which one the order holds.
+
+        The current variant comes from the order's structured items when it has them; otherwise from
+        comparing the normalized size/color in its variant text. Only attributes the order states are
+        compared, so an order that says just "M" treats every size-M variant as the current one.
+        """
+        product = self._order_product_in_tx(db, order)
+        base = {
+            "order_id": order["id"],
+            "product_id": product["id"] if product else None,
+            "product_name": product["name"] if product else None,
+            "current_variant_label": order.get("variant"),
+            "variants": [],
+        }
+        if product is None:
+            return base
+        rows = [
+            dict(r)
+            for r in db.execute(
+                "SELECT id, variant_name, size, color, stock FROM product_variants WHERE product_id = ? ORDER BY id",
+                (product["id"],),
+            ).fetchall()
+        ]
+        known = {r["id"] for r in rows}
+        item_ids = {
+            r["variant_id"]
+            for r in db.execute(
+                "SELECT variant_id FROM order_items WHERE order_id = ? AND variant_id IS NOT NULL", (order["id"],)
+            ).fetchall()
+        } & known
+        want_size, want_color = self._variant_attributes(order.get("variant"))
+        for r in rows:
+            if item_ids:
+                is_current = r["id"] in item_ids
+            elif want_size is None and want_color is None:
+                is_current = False
+            else:
+                is_current = (
+                    (want_size is None or want_size == self._fold_variant(r["size"]))
+                    and (want_color is None or want_color == self._fold_variant(r["color"]))
+                )
+            base["variants"].append(
+                {
+                    "id": r["id"],
+                    "label": r["variant_name"],
+                    "size": r["size"],
+                    "color": r["color"],
+                    "stock": int(r["stock"]) if r["stock"] is not None else None,
+                    "stock_status": self._stock_status(r["stock"]),
+                    "is_current": is_current,
+                }
+            )
+        return base
+
+    @staticmethod
+    def _public_exchange_options(options: dict, *, staff: bool) -> dict:
+        out = dict(options)
+        out["variants"] = [
+            {k: v for k, v in variant.items() if staff or k != "stock"} for variant in options["variants"]
+        ]
+        return out
+
+    def exchange_options(self, customer_id: str, order_id: str) -> dict:
+        """Variants a customer could swap their own order to, with stock status (customers see no counts)."""
+        with self.connection() as db:
+            order = self.owned(db, customer_id, order_id)
+            options = self._exchange_variants_in_tx(db, order)
+        return self._public_exchange_options(options, staff=False)
+
+    def case_exchange_options(self, case_id: str, order_id: str) -> dict:
+        """Same list for Staff/Manager, limited to orders of the case's customer; includes stock counts."""
+        require(
+            isinstance(case_id, str) and bool(re.fullmatch(r"[A-Za-z0-9_-]{1,80}", case_id)),
+            400,
+            "invalid_case_id",
+            "Mã ca hỗ trợ không hợp lệ.",
+        )
+        with self.connection() as db:
+            case_row = db.execute("SELECT customer_id FROM cases WHERE case_id = ?", (case_id,)).fetchone()
+            require(case_row is not None, 404, "case_not_found", "Không tìm thấy ca hỗ trợ.")
+            order = self.owned(db, case_row["customer_id"], order_id)
+            options = self._exchange_variants_in_tx(db, order)
+        return self._public_exchange_options(options, staff=True)
+
     def _create_order_action_request_in_tx(
         self,
         db,
@@ -4148,6 +4288,7 @@ class BusinessStore:
         reason_code: str,
         reason_text: str | None = None,
         exchange_kind: str | None = None,
+        target_variant_id: str | None = None,
         conversation_id: str | None = None,
         case_id: str | None = None,
         actor: dict | None = None,
@@ -4207,12 +4348,39 @@ class BusinessStore:
                 "invalid_exchange_kind",
                 "Yêu cầu đổi hàng phải chọn đổi sang biến thể khác (other_variant) hoặc đổi cùng biến thể (same_variant).",
             )
+            if exchange_kind == "other_variant":
+                require(
+                    isinstance(target_variant_id, str) and bool(target_variant_id.strip()),
+                    400,
+                    "target_variant_required",
+                    "Đổi sang biến thể khác bắt buộc chọn biến thể đích.",
+                )
+                target_variant_id = target_variant_id.strip()
+                require(
+                    len(target_variant_id) <= 128 and target_variant_id.isprintable(),
+                    400,
+                    "invalid_target_variant",
+                    "Mã biến thể đích không hợp lệ.",
+                )
+            else:
+                require(
+                    target_variant_id is None,
+                    400,
+                    "target_variant_not_allowed",
+                    "Đổi cùng biến thể không có biến thể đích.",
+                )
         else:
             require(
                 exchange_kind is None,
                 400,
                 "invalid_exchange_kind",
                 "Chỉ yêu cầu đổi hàng mới có trường exchange_kind.",
+            )
+            require(
+                target_variant_id is None,
+                400,
+                "target_variant_not_allowed",
+                "Chỉ yêu cầu đổi sang biến thể khác mới có biến thể đích.",
             )
 
         now_ts = self._now() if now is None else float(now)
@@ -4238,6 +4406,32 @@ class BusinessStore:
                 "Yêu cầu trả hoặc đổi hàng chỉ áp dụng cho đơn đã giao (delivered).",
             )
 
+        target_variant_label = None
+        if action_type == "exchange" and exchange_kind == "other_variant":
+            # The target must be a variant of this order's own product and differ from the one the order
+            # holds. Stock is deliberately not checked: staff decide when they review (W3.2-D5).
+            options = self._exchange_variants_in_tx(db, order)
+            require(
+                options["product_id"] is not None,
+                409,
+                "order_product_unknown",
+                "Đơn chưa liên kết với sản phẩm trong danh mục nên chưa chọn được biến thể đích.",
+            )
+            target = next((v for v in options["variants"] if v["id"] == target_variant_id), None)
+            require(
+                target is not None,
+                400,
+                "invalid_target_variant",
+                "Biến thể đích không thuộc sản phẩm của đơn hàng.",
+            )
+            require(
+                not target["is_current"],
+                400,
+                "target_is_current_variant",
+                "Biến thể đích trùng với biến thể hiện tại của đơn; hãy chọn biến thể khác hoặc đổi cùng biến thể.",
+            )
+            target_variant_label = str(target["label"])[:200]
+
         existing_open = db.execute(
             "SELECT request_id FROM order_action_requests WHERE order_id = ? AND closed_at IS NULL LIMIT 1",
             (order_id,),
@@ -4259,7 +4453,10 @@ class BusinessStore:
             now_ts=now_ts,
         )
         type_vi = {"cancel": "hủy đơn", "return": "trả hàng", "exchange": "đổi hàng"}[action_type]
-        handoff_comment = f"Yêu cầu {type_vi} {order_id}: {clean_reason_text or clean_reason_code}"[:300]
+        handoff_comment = f"Yêu cầu {type_vi} {order_id}: {clean_reason_text or clean_reason_code}"
+        if target_variant_label:
+            handoff_comment += f" → {target_variant_label}"
+        handoff_comment = handoff_comment[:300]
         handoff = self._request_human_handoff_in_tx(
             db,
             customer_id,
@@ -4276,12 +4473,12 @@ class BusinessStore:
             db.execute(
                 """INSERT INTO order_action_requests(
                        request_id, order_id, customer_id, case_id, conversation_id,
-                       type, exchange_kind, status, inspection_outcome,
+                       type, exchange_kind, target_variant_id, target_variant_label, status, inspection_outcome,
                        refund_status, refund_decision, reason_code, reason_text,
                        raised_by_role, delivery_failure_attempts, expected_order_version,
                        version, created_at, updated_at, reviewed_at, received_at,
                        inspected_at, completed_at, closed_at
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, 'requested', NULL, 'not_applicable', NULL,
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'requested', NULL, 'not_applicable', NULL,
                              ?, ?, ?, ?, ?, 1, ?, ?, NULL, NULL, NULL, NULL, NULL)""",
                 (
                     req_id,
@@ -4291,6 +4488,8 @@ class BusinessStore:
                     resolved_cid,
                     action_type,
                     exchange_kind,
+                    target_variant_id,
+                    target_variant_label,
                     clean_reason_code,
                     clean_reason_text,
                     raised_by_role,
@@ -4352,6 +4551,8 @@ class BusinessStore:
             "raised_by_role": raised_by_role,
             "expected_order_version": expected_order_version,
         }
+        if target_variant_id is not None:
+            log_payload["target_variant_id"] = target_variant_id
         if delivery_failure_attempts is not None:
             log_payload["delivery_failure_attempts"] = delivery_failure_attempts
         if consent_turn_id is not None:
@@ -4371,6 +4572,8 @@ class BusinessStore:
         outbox_extra: dict[str, object] = {}
         if exchange_kind:
             outbox_extra["exchange_kind"] = exchange_kind
+        if target_variant_id is not None:
+            outbox_extra["target_variant_id"] = target_variant_id
         if consent_turn_id is not None:
             outbox_extra["consent_turn_id"] = consent_turn_id
         self._enqueue_outbox_in_tx(
@@ -4412,6 +4615,7 @@ class BusinessStore:
             "type",
             "action_type",
             "exchange_kind",
+            "target_variant_id",
             "expected_order_version",
             "order_version",
             "reason_code",
@@ -4452,6 +4656,7 @@ class BusinessStore:
                 reason_code=body.get("reason_code"),
                 reason_text=body.get("reason_text"),
                 exchange_kind=body.get("exchange_kind"),
+                target_variant_id=body.get("target_variant_id"),
                 conversation_id=body.get("conversation_id"),
                 actor=actor,
                 raised_by_role="customer",
@@ -4666,6 +4871,7 @@ class BusinessStore:
             "type",
             "action_type",
             "exchange_kind",
+            "target_variant_id",
             "reason_code",
             "reason_text",
             "consent_turn_id",
@@ -4752,6 +4958,7 @@ class BusinessStore:
                 reason_code=body.get("reason_code"),
                 reason_text=body.get("reason_text"),
                 exchange_kind=body.get("exchange_kind"),
+                target_variant_id=body.get("target_variant_id"),
                 case_id=case_id,
                 actor=norm_actor,
                 raised_by_role="customer",
