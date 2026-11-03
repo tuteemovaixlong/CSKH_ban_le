@@ -1971,13 +1971,15 @@ class PhaseR1W3AgentPrepareOrderActionTests(unittest.TestCase):
         # Protocol validation: prepare_order_action & alias prepare_cancellation reject write flags or bad enums
         validate_tool("prepare_order_action", {"order_id": "O-101"})
         validate_tool("prepare_order_action", {"order_id": "O-102", "action_type": "return"})
-        validate_tool("prepare_order_action", {"order_id": "O-102", "action_type": "exchange", "exchange_kind": "same_variant"})
+        validate_tool("prepare_order_action", {"order_id": "O-102", "action_type": "exchange", "target_variant": "size XL"})  # W3.2: free text
+        validate_tool("prepare_order_action", {"order_id": "O-102", "action_type": "exchange"})
         validate_tool("prepare_cancellation", {"order_id": "O-101"})
         for bad_name, bad_args in (
             ("prepare_order_action", {"order_id": "O-101", "confirmed": True}),
             ("prepare_order_action", {"order_id": "O-101", "action_type": "refund"}),
-            ("prepare_order_action", {"order_id": "O-102", "action_type": "return", "exchange_kind": "other_variant"}),
-            ("prepare_order_action", {"order_id": "O-102", "action_type": "exchange", "exchange_kind": "size"}),
+            ("prepare_order_action", {"order_id": "O-102", "action_type": "return", "target_variant": "size XL"}),
+            ("prepare_order_action", {"order_id": "O-102", "action_type": "exchange", "exchange_kind": "other_variant"}),  # W3.2: the server derives the kind
+            ("prepare_order_action", {"order_id": "O-102", "action_type": "exchange", "target_variant": ""}),
             ("prepare_cancellation", {"order_id": "O-101", "action_type": "return"}),
         ):
             with self.assertRaises(ProtocolError):
@@ -1991,21 +1993,23 @@ class PhaseR1W3AgentPrepareOrderActionTests(unittest.TestCase):
         res_cancel = self._chat("Tôi muốn hủy đơn O-101")
         self.assertEqual(res_cancel["action"], "choose_cancel_reason")
         self.assertEqual(res_cancel["order"]["id"], "O-101")
-        self.assertEqual(res_cancel["order_action"], {"action_type": "cancel", "exchange_kind": None, "order_id": "O-101"})
+        self.assertEqual(res_cancel["order_action"], {"action_type": "cancel", "exchange_kind": None,
+                                                      "target_variant_id": None, "order_id": "O-101"})
 
         # 2. prepare_order_action(O-102, exchange, other_variant) on delivered order -> eligible, choose_order_action_reason, ZERO rows!
         self.model.replies = [
             self._tool_reply(
                 "prepare_order_action",
-                {"order_id": "O-102", "action_type": "exchange", "exchange_kind": "other_variant"},
+                {"order_id": "O-102", "action_type": "exchange", "target_variant": "size XL"},
             ),
             self._text_reply("Đơn O-102 đủ điều kiện đổi size, vui lòng chọn lý do và xác nhận."),
         ]
         res_ex = self._chat("Tôi muốn đổi size cho đơn O-102")
         self.assertEqual(res_ex["action"], "choose_order_action_reason")
+        # W3.2: the server matched the customer's words to one real variant of the product and carries its ID.
         self.assertEqual(
             res_ex["order_action"],
-            {"action_type": "exchange", "exchange_kind": "other_variant", "order_id": "O-102"},
+            {"action_type": "exchange", "exchange_kind": "other_variant", "target_variant_id": "P-102-XL-Đen", "order_id": "O-102"},
         )
 
         # 3. Alias prepare_cancellation(O-101) still works identically and remains read-only

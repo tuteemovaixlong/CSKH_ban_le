@@ -43,7 +43,13 @@ def build_multiagent_graph(gateway: Any, execute: Any, saver: Any = None,
         restore(state.get("bound", {}))
         before_model()
         new_state = run_dispute_agent(state, execute, gateway)
-        new_state["bound"] = capture()
+        snapshot = capture()
+        if new_state.get("trace", {}).get("answer_source") == "tool_result":
+            # The tools refused (for example an order that is not the customer's) and the reply was rendered from
+            # that result, so passages the model retrieved for its unused draft are not sources of the reply.
+            snapshot["knowledge"] = {**snapshot.get("knowledge", {}), "sources": []}
+            restore(snapshot)
+        new_state["bound"] = snapshot
         return new_state
 
     def witty_worker(state: MultiAgentState) -> MultiAgentState:
@@ -140,7 +146,6 @@ def run_multiagent(gateway: Any, text: str, history: list, execute: Any, identit
             "sentiment": "neutral",
             "strict_mode": False,
             "consecutive_ood_count": 0,
-            "action_proposal": None,
             "requires_human": False,
             "human_reason": None
         }
@@ -170,6 +175,5 @@ def run_multiagent(gateway: Any, text: str, history: list, execute: Any, identit
         "intent": final_state.get("intent"),
         "subagent_history": final_state.get("subagent_history"),
         "sentiment": final_state.get("sentiment"),
-        "action_proposal": final_state.get("action_proposal"),
         "requires_human": final_state.get("requires_human")
     }

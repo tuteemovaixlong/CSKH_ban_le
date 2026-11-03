@@ -2,16 +2,36 @@
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
+import re
 
+from retailops.business.variants import match_variants
 from retailops.order_reasons import reason_catalog
 from retailops_conversation import normalize
 from retailops.knowledge.tool import KnowledgeTool
 
 ROOT = Path(__file__).resolve().parent
+_ORDER_ID = re.compile(r'\bO-(\d+)\b', re.IGNORECASE)
+
+
+def customer_named_orders(text):
+    """Order IDs the customer wrote in a message."""
+    return {f'O-{digits}' for digits in _ORDER_ID.findall(text or '')}
+
+
+def confirmed_orders_for(text, snapshot):
+    """Orders a request form may be prepared for: the ones the customer named, else the one in focus.
+
+    The model never chooses the target of a transaction on its own: an order that is neither named in the
+    customer's message nor the conversation's focused order has to be confirmed with the customer first.
+    """
+    named = customer_named_orders(text)
+    focus = snapshot.get('order_id') if isinstance(snapshot, dict) else None
+    return named or ({focus} if focus else set())
 
 
 class BoundTools:
-    def __init__(self, store, catalog, customer, snapshot, identity, *, can_cancel=True, read_only=False, user_text=''):
+    def __init__(self, store, catalog, customer, snapshot, identity, *, can_cancel=True, read_only=False, user_text='',
+                 confirmed_orders=None):
         self.store, self.catalog, self.customer, self.snapshot = store, catalog, customer, snapshot
         self.conversation_id = snapshot.get('id') if isinstance(snapshot, dict) else None
         self.context = {k: (snapshot.get(k) if isinstance(snapshot, dict) else None) for k in ('order_id', 'product_id')}
@@ -22,6 +42,8 @@ class BoundTools:
         self.can_cancel = bool(can_cancel) and not bool(read_only)
         self.read_only = bool(read_only)
         self.user_text = str(user_text or '')
+        # None: not enforced (direct callers). A set: the only orders prepare_order_action may open a form for.
+        self.confirmed_orders = None if confirmed_orders is None else frozenset(confirmed_orders)
         self.knowledge = KnowledgeTool(store)
         self.shipment = None
         self.human_support = None
@@ -86,8 +108,15 @@ class BoundTools:
             if self.context['product_id'] != product['id']:
                 self.context['order_id'] = None
             self.context['product_id'] = product['id']
-            return {'product': product, 'source': self.catalog.source,
-                    'note': 'Null or absent attributes are unknown; listed variants do not imply stock.'}
+            result = {'product': product, 'source': self.catalog.source,
+                      'note': 'Null or absent attributes are unknown. `availability` (when present) is the only stock '
+                              'information: each variant is in_stock, out_of_stock or unknown.'}
+            availability = getattr(self.store, 'product_variant_availability', None)
+            if callable(availability):
+                listed = availability(product['id'])
+                if listed:
+                    result['availability'] = listed
+            return result
         if name == 'get_context':
             oid = self.context['order_id']
             order = self.read_order(oid) if oid else None
@@ -97,22 +126,27 @@ class BoundTools:
             if not self.can_cancel:
                 return {'error': 'permission_denied', 'message': 'This account can view orders but cannot request order actions.'}
             if name == 'prepare_cancellation':
-                action_type = 'cancel'
-                exchange_kind = None
+                action_type, target_text = 'cancel', None
             else:
                 action_type = str(args.get('action_type') or 'cancel').strip().lower()
                 if action_type not in ('cancel', 'return', 'exchange'):
                     return {'error': 'invalid_tool_arguments', 'message': 'action_type must be cancel, return, or exchange.'}
-                raw_kind = args.get('exchange_kind')
-                if action_type == 'exchange':
-                    exchange_kind = str(raw_kind or 'other_variant').strip().lower()
-                    if exchange_kind not in ('other_variant', 'same_variant'):
-                        return {'error': 'invalid_tool_arguments', 'message': 'exchange_kind must be other_variant or same_variant.'}
-                elif raw_kind is not None:
-                    return {'error': 'invalid_tool_arguments', 'message': 'exchange_kind is only allowed when action_type is exchange.'}
-                else:
-                    exchange_kind = None
-            order = self.read_order(args['order_id'])
+                target_text = args.get('target_variant')
+                if target_text is not None and action_type != 'exchange':
+                    return {'error': 'invalid_tool_arguments', 'message': 'target_variant is only allowed when action_type is exchange.'}
+            order = self.read_order(args['order_id'], focus=False)
+            if self.confirmed_orders is not None and order['id'] not in self.confirmed_orders:
+                self.prepared_order_action = None
+                self.cancel_order = None
+                return {
+                    'order_id': order['id'], 'action_type': action_type, 'eligible': False,
+                    'ineligible_reason': {
+                        'code': 'order_not_confirmed',
+                        'message': 'The customer did not name this order in their message and it is not the order in focus.'},
+                    'transaction_performed': False,
+                    'next_step': 'Ask the customer which order they mean (its ID), then call this tool again.',
+                }
+            self.context = {'order_id': order['id'], 'product_id': order['product_id']}  # the customer's order is now the focus
             has_open_request = False
             try:
                 with self.store.connection() as db:
@@ -123,42 +157,69 @@ class BoundTools:
                     has_open_request = open_row is not None
             except Exception:
                 has_open_request = False
-            if action_type == 'cancel':
-                eligible = (order['status'] == 'pending') and (not has_open_request)
-            else:
-                eligible = (order['status'] == 'delivered') and (not has_open_request)
+            ineligible = None
+            if has_open_request:
+                ineligible = {'code': 'open_request_exists',
+                              'message': 'This order already has an open order-action request.'}
+            elif action_type == 'cancel' and order['status'] != 'pending':
+                ineligible = {'code': 'order_not_pending',
+                              'message': f"Only a pending order can be cancelled; this order is {order['status']}."}
+            elif action_type != 'cancel' and order['status'] != 'delivered':
+                ineligible = {'code': 'order_not_delivered',
+                              'message': f"Only a delivered order can be returned or exchanged; this order is {order['status']}."}
+            eligible = ineligible is None
             reason_options = [
                 {'code': e['code'], 'label': e['label'], 'requires_text': e['requires_text']}
                 for e in reason_catalog().options(action_type, role='customer')
             ]
+            exchange_kind, target_variant_id, exchange_view = None, None, None
+            if action_type == 'exchange':
+                options = self.store.exchange_options(self.customer, order['id'])
+                matches = match_variants(options['variants'], target_text) if target_text else []
+                if len(matches) == 1:
+                    exchange_kind, target_variant_id = 'other_variant', matches[0]['id']
+                exchange_view = {
+                    'product_id': options['product_id'],
+                    'current_variant': order.get('variant'),
+                    'kinds': {'other_variant': 'swap to another variant of the same product (color, size, style)',
+                              'same_variant': 'replace the same variant, for a defective item'},
+                    'variants': [{k: v[k] for k in ('id', 'label', 'stock_status', 'is_current')}
+                                 for v in options['variants']],
+                    'requested_target': target_text,
+                    'matched_variants': [{'id': v['id'], 'label': v['label'], 'stock_status': v['stock_status']}
+                                         for v in matches],
+                    'note': 'Stock is information for the customer and staff; it never decides whether a request '
+                            'may be made. The customer picks the target on the form.',
+                }
             if eligible:
                 self.prepared_order_action = {
                     'order': order,
                     'action_type': action_type,
                     'exchange_kind': exchange_kind,
+                    'target_variant_id': target_variant_id,
                 }
                 self.cancel_order = order if action_type == 'cancel' else None
             else:
                 self.prepared_order_action = None
                 self.cancel_order = None
             if eligible:
-                next_step = 'User must select a reason and press the separate confirmation button.'
-            elif has_open_request:
-                next_step = 'Order already has an open order-action request.'
-            elif action_type == 'cancel':
-                next_step = 'Order cannot be cancelled in its current state.'
+                next_step = 'A request form is open on the customer\'s screen: they pick a reason and press the separate confirmation button.'
             else:
-                next_step = f'Order is not eligible for {action_type} in its current state.'
-            return {
+                next_step = ineligible['message']
+            result = {
                 'order': order,
                 'action_type': action_type,
                 'exchange_kind': exchange_kind,
                 'eligible': eligible,
+                'ineligible_reason': ineligible,
                 'has_open_request': has_open_request,
                 'reasons': reason_options,
                 'transaction_performed': False,
                 'next_step': next_step,
             }
+            if exchange_view is not None:
+                result['exchange'] = exchange_view
+            return result
         if name in ('clear_cancellation', 'reset_cancellation', 'clear_order_action'):
             self.cancel_order = None
             self.prepared_order_action = None

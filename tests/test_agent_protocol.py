@@ -16,7 +16,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(request['messages'][0]['content'], SYSTEM)
         self.assertEqual(request['tools'], TOOLS)
         self.assertFalse(request['think']); self.assertFalse(request['stream'])
-        self.assertEqual(request['options']['num_ctx'], 8192)
+        self.assertEqual(request['options']['num_ctx'], 16384)  # owner raised the serving window from 8,192 on 2026-11-03
         self.assertEqual(request['options']['num_predict'], 640)
         self.assertNotIn('format', request)
 

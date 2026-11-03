@@ -44,7 +44,6 @@ class MultiAgentState(TypedDict):
     strict_mode: bool
     consecutive_ood_count: int
 
-    # Human-in-the-loop and Sensitive Proposals
-    action_proposal: dict[str, Any] | None
+    # Human hand-off
     requires_human: bool
     human_reason: str | None

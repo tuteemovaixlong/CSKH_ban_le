@@ -12,7 +12,6 @@ import re
 import sqlite3
 import tempfile
 import time
-import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
 from contextlib import contextmanager
@@ -24,6 +23,7 @@ from retailops.core import (
     fields,
     require,
 )
+from retailops.business.variants import fold_attribute
 from retailops.order_reasons import reason_catalog
 from retailops.business.evidence import (
     atomic_write_bytes,
@@ -2162,7 +2162,9 @@ class BusinessStore:
             if not clean_turn:
                 continue
             size = sum(len(m.get('content', '')) + len(json.dumps(m.get('tool_calls', []), ensure_ascii=False)) for m in clean_turn)
-            if characters + size > 4500 or count + len(clean_turn) > 16:
+            # The newest turn is always kept, however large, so one big tool result can never empty the history;
+            # older turns stop at 9,000 characters / 32 messages (the 16,384-token window of W3.2).
+            if turns and (characters + size > 9000 or count + len(clean_turn) > 32):
                 break  # Keep whole contiguous turns, never orphan tool calls/results.
             characters += size; count += len(clean_turn); turns.append(clean_turn)
 
@@ -4164,16 +4166,7 @@ class BusinessStore:
     @staticmethod
     def _fold_variant(text) -> str | None:
         """Lower-case, accent-free, single-spaced form used to compare variant attributes."""
-        if text is None:
-            return None
-        folded = "".join(
-            c for c in unicodedata.normalize("NFD", str(text).lower().replace("đ", "d"))
-            if unicodedata.category(c) != "Mn"
-        )
-        folded = " ".join(folded.split())
-        if folded.startswith("size "):
-            folded = folded[5:]
-        return folded or None
+        return fold_attribute(text)
 
     @classmethod
     def _variant_attributes(cls, variant_text) -> tuple[str | None, str | None]:
@@ -4254,6 +4247,19 @@ class BusinessStore:
             {k: v for k, v in variant.items() if staff or k != "stock"} for variant in options["variants"]
         ]
         return out
+
+    def product_variant_availability(self, product_id: str) -> list[dict]:
+        """Every variant of a catalog product with its stock status (never a count), for customer answers."""
+        with self.connection() as db:
+            rows = db.execute(
+                "SELECT variant_name, size, color, stock FROM product_variants WHERE product_id = ? ORDER BY id",
+                (product_id,),
+            ).fetchall()
+        return [
+            {"label": r["variant_name"], "size": r["size"], "color": r["color"],
+             "stock_status": self._stock_status(r["stock"])}
+            for r in rows
+        ]
 
     def exchange_options(self, customer_id: str, order_id: str) -> dict:
         """Variants a customer could swap their own order to, with stock status (customers see no counts)."""

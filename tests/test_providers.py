@@ -56,7 +56,11 @@ class ApiAdapterTests(unittest.TestCase):
         with patch.object(adapter, 'request', side_effect=[first, api_response('Final API text')]) as call:
             result = run_agent(adapter, 'Explain O-101', [], lambda name, args: {'result': name}, adapter.inspect())
         first_payload, second_payload = [x.args[0] for x in call.call_args_list]
-        self.assertEqual(first_payload['messages'][0], {'role': 'system', 'content': SYSTEM})
+        # W3.2: the agent loop owns the system turn: the fixed rules plus the server context, sent once.
+        self.assertEqual(first_payload['messages'][0]['role'], 'system')
+        self.assertTrue(first_payload['messages'][0]['content'].startswith(SYSTEM))
+        self.assertIn('Server context (set by the server)', first_payload['messages'][0]['content'])
+        self.assertEqual(first_payload['messages'][0]['content'].count(SYSTEM[:80]), 1)
         self.assertEqual(first_payload['tools'], TOOLS)
         self.assertEqual(second_payload['tools'], TOOLS)
         assistant = second_payload['messages'][2]

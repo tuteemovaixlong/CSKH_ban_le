@@ -10,33 +10,11 @@ from agent_protocol import classify_user_text
 from retailops.guardrails.sentiment import analyze_sentiment
 from retailops.guardrails.topic_filter import check_topic_safety, is_read_only_lookup_intent
 from retailops.workflow.state import MultiAgentState, WorkerType
+from retailops.workflow.safety import EXTREME_RAGE_KEYWORDS, HUMAN_REQUEST_KEYWORDS
 
-HUMAN_ESCALATION_KEYWORDS = [
-    "gặp nhân viên", "gặp người", "gặp quản lý", "gặp tư vấn viên", "chuyển máy",
-    "nói chuyện với người", "nhân viên đâu", "admin đâu", "human agent", "talk to human",
-    "gặp người thật", "người thật", "tư vấn viên", "kết nối nhân viên", "gặp cskh",
-    "nhân viên hỗ trợ", "chuyên viên", "nhân viên trực tiếp", "gặp người trực tiếp",
-    "chuyển người", "người hỗ trợ", "quản lý đâu", "cho gặp quản lý", "nhân viên trực",
-    "nói chuyện với nhân viên", "gọi người thật", "gọi nhân viên", "không muốn chat với bot",
-    "không làm việc với bot", "đừng trả lời tự động", "chuyển qua cskh", "chuyển cho nhân viên",
-    "bấm nút gặp nhân viên", "kết nối với tư vấn viên", "gọi tư vấn viên", "yêu cầu gặp người thật",
-    "yêu cầu gặp quản lý", "chuyển em sang người thật", "kết nối giúp em với người thật",
-    "nối máy ngay cho quản lý", "nối máy cho quản lý", "kêu người có trách nhiệm",
-    "yêu cầu nhân viên thật", "gọi quản lý ra đây", "người quản lý ra đây", "nhân viên cskh",
-    "chuyển sang nhân viên", "gặp quản lý gấp", "gặp nhân viên quản lý", "đang bực lắm",
-    "đổi giúp đc ko shop", "đổi giúp được không shop"
-]
-
-EXTREME_RAGE_KEYWORDS = [
-    "bóc phốt", "tẩy chay", "báo công an", "sập tiệm", "khởi kiện", "thưa kiện", "kiện cáo",
-    "quay clip đăng tiktok", "quay clip", "livestream",
-    "đăng bài tố cáo", "đăng bài facebook", "đăng facebook tố cáo", "báo cơ quan chức năng",
-    "đồ vô trách nhiệm", "làm ăn chụp giật", "chửi cho các người", "ăn cướp",
-    "khiếu nại lên sàn", "khiếu nại sàn", "báo sàn", "báo lên sàn",
-    "khiếu nại lên shopee", "khiếu nại lên lazada", "khiếu nại lên tiktok",
-    "hiệp hội bảo vệ người tiêu dùng", "tố cáo khắp nơi", "không tự chịu nổi", "đăng tiktok bóc phốt",
-    "quay clip tiktok bóc phốt", "đăng lên các hội nhóm mua sắm"
-]
+# The rails shared with the customer agent live in retailops.workflow.safety; the two phrases below are
+# legacy-only routing hints that the agent-first loop deliberately does not carry.
+HUMAN_ESCALATION_KEYWORDS = [*HUMAN_REQUEST_KEYWORDS, "đổi giúp đc ko shop", "đổi giúp được không shop"]
 
 ORDER_KEYWORDS = [
     "đơn hàng", "mã đơn", "tra cứu đơn", "kiểm tra đơn", "check đơn", "xem đơn", "tra đơn",

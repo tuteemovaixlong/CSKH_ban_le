@@ -12,7 +12,8 @@ import urllib.error
 import urllib.request
 import uuid
 
-from agent_protocol import GENERAL_SYSTEM, PROTOCOL, SYSTEM, TOOLS, ProtocolError, assistant_message, request_mode, validate_messages, scoped_tools
+from agent_protocol import (GENERAL_SYSTEM, PROTOCOL, SYSTEM, TOOLS, ProtocolError, assistant_message, merge_system,
+                            request_mode, validate_messages, scoped_tools)
 from retailops.model_errors import BODY_LIMIT, filter_provider_text, provider_error_text
 from retailops_agent import AgentError
 from retailops_baseline import NoRedirects
@@ -223,9 +224,7 @@ class OpenRouterAgent:
         if allowed_tools is not None:
             system_prompt = filter_system_prompt_for_tools(system_prompt, allowed_tools)
         if translated and translated[0].get('role') == 'system':
-            worker_prompt = translated[0]['content']
-            content = system_prompt if worker_prompt == system_prompt else system_prompt + '\n\n' + worker_prompt
-            translated[0] = {'role': 'system', 'content': content}
+            translated[0] = {'role': 'system', 'content': merge_system(system_prompt, translated[0]['content'])}
             return translated
         return [{'role': 'system', 'content': system_prompt}, *translated]
 
@@ -307,7 +306,7 @@ class OpenRouterAgent:
         while i < len(messages):
             m = messages[i]
             if m['role'] == 'system':
-                system_prompt += '\n\n' + m['content']
+                system_prompt = merge_system(system_prompt, m['content'])
                 i += 1
             elif m['role'] == 'user':
                 if m.get('attachment') and m['attachment'].get('type') == 'image' and m['attachment'].get('data'):

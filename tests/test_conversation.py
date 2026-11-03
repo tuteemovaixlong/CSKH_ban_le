@@ -8,7 +8,7 @@ import unittest
 import uuid
 from pathlib import Path
 
-from agent_protocol import PROTOCOL, validate_messages
+from agent_protocol import MAX_MODEL_CALLS, PROTOCOL, validate_messages
 from retailops_api import ApiError, Application, BusinessStore
 
 IDENTITY = {'name': 'qwen3.5:4b', 'digest': 'fixture-digest', 'ollama_version': 'fixture', 'agent_protocol': PROTOCOL}
@@ -92,7 +92,8 @@ class ConversationTests(unittest.TestCase):
         reopened = BusinessStore(self.store.path)
         self.assertEqual(reopened.history('C-001', self.cid)[0]['content'], 'Xem O-101')
         def final(messages):
-            self.assertEqual(messages[0]['content'], 'Xem O-101')
+            self.assertEqual(messages[0]['role'], 'system')  # W3.2: the agent loop sends its own system turn first
+            self.assertEqual(messages[1]['content'], 'Xem O-101')
             current = json.loads(messages[-1]['content'])['order']
             self.assertEqual((current['status'], current['version']), ('cancelled', 2))
             return response('The tool just reported cancellation')
@@ -152,9 +153,9 @@ class ConversationTests(unittest.TestCase):
         self.assertEqual(self.count('agent_turns'), 0)
 
     def test_loop_budget_stops_uncooperative_model(self):
-        self.model.replies = [response('', ('get_current_time', {})) for _ in range(4)]
+        self.model.replies = [response('', ('get_current_time', {})) for _ in range(MAX_MODEL_CALLS)]  # W3.2-D10: 6 calls
         self.assert_error('agent_budget_exceeded', lambda: self.chat('Hôm nay ngày mấy?'))
-        self.assertEqual(len(self.model.inputs), 4)
+        self.assertEqual(len(self.model.inputs), MAX_MODEL_CALLS)
         self.assertEqual(self.count('agent_turns'), 0)
 
     def test_replay_survives_restart_and_input_conflict_is_rejected(self):
@@ -194,8 +195,8 @@ class ConversationTests(unittest.TestCase):
         history = self.store.history('C-001', self.cid)
         validate_messages(history + [{'role': 'user', 'content': 'next'}])
         self.assertEqual(self.count('agent_turns'), 9)
-        self.assertLessEqual(len(history), 16)
-        self.assertLessEqual(sum(len(m['content']) for m in history), 4500)
+        self.assertLessEqual(len(history), 32)  # W3.2: the window follows the 16,384-token serving context (was 16 / 4,500)
+        self.assertLessEqual(sum(len(m['content']) for m in history), 9000)
 
     def test_order_change_during_generation_prevents_stale_answer_commit(self):
         def changed(messages):

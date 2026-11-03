@@ -1,4 +1,5 @@
 """Unit tests for Store Manager CRUD, Product Catalog, and Operational KPIs."""
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -361,15 +362,20 @@ class TestManagerCRUD(unittest.TestCase):
         # Session B immediately observes new price without reload
         self.assertEqual(customer_app.catalog.products[pid]['price'], 390000)
 
-    def test_dispute_agent_out_of_stock_real_inventory(self):
+    def test_dispute_worker_reads_real_inventory_through_the_tool(self):
+        """W3.2: the worker has no scripted stock answer; the model asks check_inventory and the store, not a
+        script, says that P-101 size XL is out of stock. Stock never creates or blocks a proposal (there is none)."""
         from retailops.workflow.subagents.dispute_agent import run_dispute_agent
         from retailops_tools import BoundTools
 
         class MockGateway:
-            def __init__(self, reply=""):
-                self.reply = reply
+            def __init__(self, reply, calls):
+                self.reply, self.calls = reply, calls
 
             def chat(self, messages, tools_allowed=True, timeout=30):
+                if self.calls and tools_allowed:
+                    calls, self.calls = self.calls, []
+                    return {"message": {"role": "assistant", "content": "", "tool_calls": calls}}
                 return {"message": {"role": "assistant", "content": self.reply}}
 
         snapshot = {'order_id': 'O-101', 'product_id': 'P-101'}
@@ -382,14 +388,16 @@ class TestManagerCRUD(unittest.TestCase):
             "bound": {"order_id": "O-101", "product_id": "P-101"},
             "intent": "unknown", "next_worker": "dispute_agent", "subagent_history": [],
             "sentiment": "neutral", "strict_mode": False, "consecutive_ood_count": 0,
-            "action_proposal": None, "requires_human": False, "human_reason": None
+            "requires_human": False, "human_reason": None
         }
+        color = self.store.get_product('P-101')['variants'][0].split(' · ')[0]
+        check = {"function": {"name": "check_inventory", "arguments": {"product_id": "P-101", "size": "XL", "color": color}}}
+        res = run_dispute_agent(state, tools, MockGateway("Size XL hiện hết hàng ạ.", [check]))
 
-        res = run_dispute_agent(state, tools, MockGateway())
-        # Since XL is out of stock (stock == 0), no action proposal should be confirmed as ready
-        self.assertIsNone(res.get("action_proposal"))
-        last_msg = res["messages"][-1]["content"]
-        self.assertIn("hết hàng", last_msg.lower())
+        tool_message = next(m for m in res["messages"] if m["role"] == "tool")
+        self.assertEqual(json.loads(tool_message["content"])["stock"], 0)
+        self.assertEqual(res["messages"][-1]["content"], "Size XL hiện hết hàng ạ.")  # the model's own words
+        self.assertNotIn("action_proposal", res)
 
     def test_variant_stock_preserved_on_metadata_update(self):
         # 1. P-203 has size M Navy stock = 0, size L Navy stock = 18, size S = 12, size XL = 5
@@ -467,16 +475,20 @@ class TestManagerCRUD(unittest.TestCase):
         p_read2 = cust_tools('get_product', {'product_id': 'P-203'})
         self.assertEqual(p_read2['product']['price'], 999999)
 
-    def test_dispute_agent_nonexistent_order_no_proposal(self):
+    def test_dispute_worker_reports_a_nonexistent_order_from_the_tool_result(self):
+        """W3.2: an order the store does not know is reported from the tool's order_not_found, never invented."""
         from retailops.workflow.subagents.dispute_agent import run_dispute_agent
         from retailops_tools import BoundTools
 
         class MockGateway:
-            def __init__(self, reply=""):
-                self.reply = reply
+            def __init__(self):
+                self.calls = [{"function": {"name": "get_order", "arguments": {"order_id": "O-999999"}}}]
 
             def chat(self, messages, tools_allowed=True, timeout=30):
-                return {"message": {"role": "assistant", "content": self.reply}}
+                if self.calls and tools_allowed:
+                    calls, self.calls = self.calls, []
+                    return {"message": {"role": "assistant", "content": "", "tool_calls": calls}}
+                return {"message": {"role": "assistant", "content": "Đã đổi mới cho anh/chị."}}  # would be a lie
 
         snapshot = {'order_id': None, 'product_id': None}
         tools = BoundTools(self.store, self.app.catalog, 'C-001', snapshot, {'name': 'test'})
@@ -487,14 +499,14 @@ class TestManagerCRUD(unittest.TestCase):
             "bound": {},
             "intent": "unknown", "next_worker": "dispute_agent", "subagent_history": [],
             "sentiment": "negative", "strict_mode": False, "consecutive_ood_count": 0,
-            "action_proposal": None, "requires_human": False, "human_reason": None
+            "requires_human": False, "human_reason": None
         }
 
         res = run_dispute_agent(state, tools, MockGateway())
-        # For non-existent order, dispute agent must NOT create an exchange proposal!
-        self.assertIsNone(res.get("action_proposal"))
+        self.assertNotIn("action_proposal", res)
         last_msg = res["messages"][-1]["content"]
         self.assertIn("không tìm thấy", last_msg.lower())
+        self.assertNotIn("Đã đổi mới", last_msg)  # a denied lookup is answered from the tool, not by the model
 
     def test_delete_product_with_existing_orders_blocked(self):
         # Order O-302 references product P-104

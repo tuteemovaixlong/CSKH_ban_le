@@ -15,13 +15,32 @@ from retailops.order_reasons import reason_catalog
 from retailops.identity.bearer import authenticate_bearer
 from retailops.business.permissions import CANCEL, READ, ROLE_PERMISSIONS
 from retailops_agent import AgentError, run_agent
-from retailops_tools import BoundTools
+from retailops_tools import BoundTools, confirmed_orders_for
 from retailops.knowledge.citations import CitationError, cited_sources
 from retailops.knowledge.embedding import MODEL_ID as KNOWLEDGE_EMBEDDING_MODEL
 from retailops_providers import API_MODEL
 from retailops_conversation import Catalog, describe_order
 from retailops.business.cache import SemanticCache, ToolCache, is_cacheable_query, is_cache_eligible_for_lookup
 from retailops.inference_gate import InferenceGate, GatedGateway
+
+AGENT_MODES = ('agent', 'legacy')
+_ORCHESTRATOR_NAMES = {'single_agent': 'agent', 'multi_agent': 'legacy'}  # the names used before W3.2
+
+
+def resolve_agent_mode(requested=None, environ=None):
+    """'agent' (the customer agent loop, the default) or 'legacy' (the supervisor graph), by configuration only.
+
+    Order of precedence: the caller, RETAILOPS_AGENT_MODE, then the older RETAILOPS_ORCHESTRATOR name.
+    An unknown value stops startup instead of silently choosing a mode.
+    """
+    env = os.environ if environ is None else environ
+    value = str(requested or env.get('RETAILOPS_AGENT_MODE', '') or env.get('RETAILOPS_ORCHESTRATOR', '') or 'agent')
+    value = value.strip().lower()
+    value = _ORCHESTRATOR_NAMES.get(value, value)
+    if value not in AGENT_MODES:
+        raise ValueError('RETAILOPS_AGENT_MODE must be agent or legacy.')
+    return value
+
 
 class Application:
     def __init__(self, store, tokens, infer=None, api_infer=None, api_daily_limit=20, *, role='customer', orchestrator=None,
@@ -46,16 +65,9 @@ class Application:
             self.store.tenant_id = self.tenant_id
         self.tool_cache = tool_cache if tool_cache is not None else ToolCache(default_ttl=180.0)
         self.internal_events = []
-        if orchestrator is None:
-            infer_cls = getattr(getattr(infer, '__class__', None), '__name__', '')
-            api_infer_cls = getattr(getattr(api_infer, '__class__', None), '__name__', '')
-            mock_classes = ('ScriptedAgent', 'Gateway', 'LoopbackProxyAgent', 'FakeAgent', 'ModelFixture', 'FakeGateway')
-            if infer_cls in mock_classes or api_infer_cls in mock_classes:
-                self.orchestrator = 'single_agent'
-            else:
-                self.orchestrator = os.environ.get('RETAILOPS_ORCHESTRATOR', 'multi_agent')
-        else:
-            self.orchestrator = orchestrator
+        self.agent_mode = resolve_agent_mode(orchestrator)
+        # Older callers read the name from before W3.2: the agent loop was 'single_agent', the supervisor graph 'multi_agent'.
+        self.orchestrator = 'multi_agent' if self.agent_mode == 'legacy' else 'single_agent'
 
     def record_internal_event(self, event_type, **kwargs):
         event = {
@@ -295,6 +307,7 @@ class Application:
                 can_cancel=(CANCEL in self.permissions and not read_only_lookup),
                 read_only=read_only_lookup,
                 user_text=text,
+                confirmed_orders=confirmed_orders_for(text, snapshot),
             )
 
             tool_execution_count = 0
@@ -368,7 +381,7 @@ class Application:
                 bound.shipment = state.get('shipment')
                 bound.human_support = state.get('human_support')
 
-            if getattr(self, 'orchestrator', 'multi_agent') == 'multi_agent' and not (hasattr(run_agent, 'side_effect') or hasattr(run_agent, 'mock_calls')):
+            if getattr(self, 'agent_mode', 'agent') == 'legacy' and not (hasattr(run_agent, 'side_effect') or hasattr(run_agent, 'mock_calls')):
                 from retailops.workflow.graph import run_multiagent
                 answer = run_multiagent(gated_gateway, text, self.store.history(customer, snapshot['id']), execute, identity,
                                         saver=saver, capture=capture, restore=restore, before_model=before_model, attachment=attachment)
@@ -380,7 +393,6 @@ class Application:
                 bound.cancel_order = None
                 bound.prepared_order_action = None
                 bound.human_support = None
-                answer.pop('action_proposal', None)
                 answer.pop('requires_human', None)
 
             grounded_msg = enforce_final_answer_grounding(
@@ -397,7 +409,6 @@ class Application:
                 answer['message'] = safe_msg
                 bound.cancel_order = None
                 bound.prepared_order_action = None
-                answer.pop('action_proposal', None)
 
             if isinstance(answer.get('messages'), list):
                 _, sanitized_msgs = sanitize_structured_payload(answer['messages'], user_text=text)
@@ -424,32 +435,20 @@ class Application:
             if getattr(bound, 'human_support', None):
                 _, bound.human_support = sanitize_structured_payload(bound.human_support, user_text=text)
 
-            # N01: Rollback prepared_order_action / cancel_order and mutated context if target order is invalid, unverified, or mismatched
+            # N01 backstop: the form may only target an order the customer named or the one in focus. prepare_order_action
+            # already refuses anything else with order_not_confirmed, so this only catches a state set by other means.
             prepared = getattr(bound, 'prepared_order_action', None)
             if prepared is None and bound.cancel_order:
                 prepared = {'order': bound.cancel_order, 'action_type': 'cancel', 'exchange_kind': None}
             if prepared:
-                extracted_m = re.search(r'\bO-(\d+)\b', text, re.IGNORECASE)
-                extracted_oid = f"O-{extracted_m.group(1)}" if extracted_m else None
-                expected_oid = extracted_oid or snapshot.get('order_id')
                 target_oid = (prepared.get('order') or {}).get('id')
-                if not expected_oid or (target_oid and target_oid != expected_oid):
+                if target_oid not in confirmed_orders_for(text, snapshot):
                     prepared = None
                     bound.cancel_order = None
                     bound.prepared_order_action = None
                     if bound.context.get('order_id') != snapshot.get('order_id'):
                         bound.context['order_id'] = snapshot.get('order_id')
                         bound.context['product_id'] = snapshot.get('product_id')
-                elif answer.get('action_proposal') is not None:
-                    prop = answer.get('action_proposal')
-                    expected_prop_actions = {'cancel_order', 'return_order', 'exchange_order'}
-                    if prop and (prop.get('action') not in expected_prop_actions or prop.get('order_id') != target_oid):
-                        prepared = None
-                        bound.cancel_order = None
-                        bound.prepared_order_action = None
-                        if bound.context.get('order_id') != snapshot.get('order_id'):
-                            bound.context['order_id'] = snapshot.get('order_id')
-                            bound.context['product_id'] = snapshot.get('product_id')
 
             if prepared:
                 ui_action = 'choose_cancel_reason' if prepared.get('action_type') == 'cancel' else 'choose_order_action_reason'
@@ -466,8 +465,6 @@ class Application:
             result['trace'].setdefault('rag_retrieval_ms', 0.0)
             result['trace'].setdefault('db_ms', 0.0)
             result['trace']['in_flight_inferences'] = getattr(self.inference_gate, 'in_flight', 0)
-            if answer.get('action_proposal'):
-                result['action_proposal'] = answer['action_proposal']
             # A second provenance check also covers a completed checkpoint replay.
             try:
                 result['sources'] = cited_sources(answer['message'], bound.knowledge.sources)
@@ -482,6 +479,7 @@ class Application:
                 result['order_action'] = {
                     'action_type': prepared.get('action_type', 'cancel'),
                     'exchange_kind': prepared.get('exchange_kind'),
+                    'target_variant_id': prepared.get('target_variant_id'),
                     'order_id': prepared['order'].get('id'),
                 }
             if getattr(bound, 'shipment', None):

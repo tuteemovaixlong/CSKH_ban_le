@@ -209,7 +209,8 @@ class TestAuditRemediation(unittest.TestCase):
             ])
 
     def test_dispute_agent_does_not_hallucinate_order_or_product_id(self):
-        """Dispute agent must not invent O-302 or hardcode inventory if no order is provided."""
+        """W3.2: with no order given, the worker invents no order or stock itself; it passes the model's own words
+        through and calls no tool (there is no scripted "send me your order ID" answer any more)."""
         from retailops.workflow.subagents.dispute_agent import run_dispute_agent
         state = {
             "messages": [{"role": "user", "content": "Áo bị kẹt khóa rồi em ơi!"}],
@@ -220,12 +221,14 @@ class TestAuditRemediation(unittest.TestCase):
             "complete": False,
             "subagent_history": []
         }
-        res_state = run_dispute_agent(state, lambda name, args: {}, self.agent)
+        executed = []
+        res_state = run_dispute_agent(state, lambda name, args: executed.append(name) or {}, self.agent)
         reply = res_state["fresh"][-1]["content"]
-        # Must not fabricate O-302 or O-303
+        self.assertEqual(reply, "Phản hồi thử nghiệm từ agent.")
+        self.assertEqual(executed, [])  # no order, no tool call: nothing was looked up on the model's behalf
         self.assertNotIn("O-302", reply)
         self.assertNotIn("O-303", reply)
-        self.assertIn("Mã đơn", reply)
+        self.assertNotIn("action_proposal", res_state)
 
     def test_staff_reply_does_not_prematurely_resolve_handoff(self):
         """Staff replying must keep ticket active in human mode; only staff_resolve should resolve it."""

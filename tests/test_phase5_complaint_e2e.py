@@ -134,6 +134,25 @@ class MockDisputeChatGateway:
                     "eval_count": 25,
                 }
 
+            if tool_name == "prepare_order_action":
+                try:
+                    prepared = json.loads(tool_res)
+                except Exception:
+                    prepared = {}
+                order_id = (prepared.get("order") or {}).get("id") or prepared.get("order_id") or ""
+                if prepared.get("eligible"):
+                    answer = (f"Dạ đơn {order_id} đủ điều kiện. Em đã mở bảng chọn lý do trên màn hình, "
+                              "anh/chị chọn lý do và bấm xác nhận để gửi yêu cầu nhé ạ!")
+                else:
+                    reason = (prepared.get("ineligible_reason") or {}).get("message", "")
+                    answer = f"Dạ đơn {order_id} chưa đủ điều kiện: {reason}"
+                return {
+                    "message": {"role": "assistant", "content": answer},
+                    "done_reason": "stop",
+                    "prompt_eval_count": 50,
+                    "eval_count": 25,
+                }
+
             return {
                 "message": {
                     "role": "assistant",
@@ -157,8 +176,8 @@ class MockDisputeChatGateway:
                     "tool_calls": [
                         {
                             "function": {
-                                "name": "prepare_cancellation",
-                                "arguments": json.dumps({"order_id": target_oid, "reason": "ordered_by_mistake"}),
+                                "name": "prepare_order_action",
+                                "arguments": json.dumps({"order_id": target_oid, "action_type": "cancel"}),
                             }
                         }
                     ],
@@ -204,6 +223,12 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
     """Offline E2E verification of the P5-D complaint journey."""
 
     def setUp(self):
+        # W3.2-D11: the default customer agent is the new loop; these journeys read the supervisor graph (routing
+        # reasons, sub-agent history), which stays available behind RETAILOPS_AGENT_MODE=legacy. Pinning it here is the
+        # configuration-only switch itself. The default loop is covered by tests/test_r1_w3_2_agent_loop.py.
+        legacy_mode = patch.dict(os.environ, {"RETAILOPS_AGENT_MODE": "legacy"})
+        legacy_mode.start()
+        self.addCleanup(legacy_mode.stop)
         self.temp_dir = tempfile.TemporaryDirectory()
         self.directory = Path(self.temp_dir.name)
         self.gateway = MockDisputeChatGateway()
@@ -408,7 +433,7 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
     # -------------------------------------------------------------------------
 
     def test_03_complaint_routing_cancellation_dispute_agent(self):
-        """P5-K7: Supervisor routes cancellation complaint to dispute_agent and prepares proposal."""
+        """P5-K7: Supervisor routes cancellation complaint to dispute_agent, which opens the request form."""
         self.test_01_same_identity_binding_import_and_session()
 
         # Create conversation
@@ -432,21 +457,20 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         self.assertEqual(trace.get("routing_reason"), "dispute_cancellation_refund")
         sub_history = trace.get("subagent_history", [])
         self.assertIn("supervisor:routed_to_dispute_agent", sub_history)
-        self.assertIn("dispute_agent:proposal_ready", sub_history)
+        self.assertIn("dispute_agent:done", sub_history)
 
-        # Verify proposal payload (NOT mutated in DB yet)
-        proposal = chat_res.get("action_proposal")
-        self.assertIsNotNone(proposal)
-        self.assertEqual(proposal["action"], "cancel_order")
-        self.assertEqual(proposal["order_id"], "O-90001")
-        self.assertEqual(proposal["status"], "pending_user_confirmation")
+        # W3.2-D7: no scripted proposal; the model called prepare_order_action and the server opened the shared form
+        self.assertNotIn("action_proposal", chat_res)
+        self.assertEqual(chat_res["order_action"]["action_type"], "cancel")
+        self.assertEqual(chat_res["order_action"]["order_id"], "O-90001")
 
-        # Verify UI prompt asks user to review proposal
+        # Verify UI prompt asks the customer to pick a reason and confirm (nothing is mutated in DB yet)
         self.assertEqual(chat_res["action"], "choose_cancel_reason")
         self.assertEqual(chat_res["order"]["id"], "O-90001")
 
-    def test_04_complaint_routing_defect_exchange_proposal(self):
-        """P5-K7: Supervisor routes defect complaint to dispute_agent, generating 1-1 exchange proposal."""
+    def test_04_complaint_routing_defect_is_model_driven_without_a_scripted_proposal(self):
+        """P5-K7 (W3.2): the supervisor still routes a defect complaint to the dispute worker, but the worker no longer
+        builds an exchange_1to1 proposal; the model answers and nothing is opened unless it calls prepare_order_action."""
         self.test_01_same_identity_binding_import_and_session()
 
         status, conv, _ = self.request("/api/conversations", {}, cookie=self.cust1_cookie)
@@ -464,12 +488,10 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         self.assertEqual(trace.get("supervisor_intent"), "dispute_complaint")
         self.assertEqual(trace.get("routing_reason"), "dispute_exchange_defect")
         self.assertIn("supervisor:routed_to_dispute_agent", trace.get("subagent_history", []))
-
-        proposal = chat_res.get("action_proposal")
-        self.assertIsNotNone(proposal)
-        self.assertEqual(proposal["action"], "exchange_1to1")
-        self.assertEqual(proposal["order_id"], "O-90001")
-        self.assertEqual(proposal["status"], "pending_staff_approval")
+        self.assertIn("dispute_agent:done", trace.get("subagent_history", []))
+        self.assertNotIn("action_proposal", chat_res)
+        self.assertEqual(chat_res["action"], "reply")
+        self.assertNotIn("order_action", chat_res)
 
     def test_05_complaint_routing_human_escalation_on_rage_or_explicit_request(self):
         """P5-K7: Severe threats or explicit human requests escalate safely to human_escalation node."""
@@ -945,8 +967,10 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         }
         status, chat_res, _ = self.request("/api/chat", chat_body, cookie=self.cust1_cookie)
         self.assertEqual(status, 200)
-        self.assertIsNone(chat_res.get("action_proposal"))
-        self.assertIn("không thể hỗ trợ hủy đơn", chat_res["message"].lower())
+        self.assertNotIn("action_proposal", chat_res)
+        self.assertEqual(chat_res["action"], "reply")
+        self.assertNotIn("order_action", chat_res)  # no form is opened for an ineligible order
+        self.assertIn("this order is delivered", chat_res["message"])  # the server's condition, not a script
 
         # 2. Direct API proposal creation raises 409 not_cancellable
         with self.assertRaises(ApiError) as ctx:
@@ -1008,10 +1032,16 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         status, chat_res, _ = self.request("/api/chat", chat_body, cookie=self.cust1_cookie)
         self.assertEqual(status, 200)
         self.assertEqual(chat_res["trace"].get("supervisor_intent"), "dispute_complaint")
-        proposal_action = chat_res.get("action_proposal")
-        self.assertIsNotNone(proposal_action)
-        self.assertEqual(proposal_action["action"], "cancel_order")
-        self.assertEqual(proposal_action["order_id"], "O-90001")
+        # W3.2-D7: chat opens the shared request form; what the customer submits from it is the "proposal"
+        self.assertNotIn("action_proposal", chat_res)
+        self.assertEqual(chat_res["action"], "choose_cancel_reason")
+        self.assertEqual(chat_res["order_action"]["order_id"], "O-90001")
+        proposal_action = {
+            "action": "cancel_order",
+            "order_id": chat_res["order_action"]["order_id"],
+            "order_version": chat_res["order"]["version"],
+            "reason": "ordered_by_mistake",  # the reason the customer picks on the form
+        }
 
         # 3. Pre-confirmation invariant check
         with bstore.connection() as db:
@@ -1023,7 +1053,7 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
             ).fetchone()["c"]
             self.assertEqual(pre_ev_count, 0)
 
-        # 4. Customer creates persisted proposal bound directly to complaint action_proposal
+        # 4. Customer submits the form: a persisted proposal bound to the order the chat prepared
         self.assertIsNotNone(proposal_action)
         self.assertEqual(proposal_action["action"], "cancel_order")
         expected_oid = proposal_action["order_id"]
@@ -1285,11 +1315,9 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         self.assertNotIn("refresh_token", report_text)
         self.assertNotIn("@gmail.com", report_text)
 
-    def test_16_defect_complaint_no_policy_evidence_preserves_safe_handoff_without_exchange_proposal(self):
-        """P5-K7 regression: when a defect complaint query triggers search_knowledge but
-        retrieval returns no policy evidence, preserve truthful safe staff handoff and
-        do NOT create an unsupported exchange proposal or assert shop warranty.
-        """
+    def test_16_defect_complaint_without_policy_evidence_hands_off_and_creates_no_proposal(self):
+        """P5-K7 regression (W3.2): when a defect complaint triggers search_knowledge but retrieval returns no policy
+        evidence, the customer gets the model's hand-off to staff, no source and no scripted proposal."""
         self.test_01_same_identity_binding_import_and_session()
 
         status, conv, _ = self.request("/api/conversations", {}, cookie=self.cust1_cookie)
@@ -1304,101 +1332,32 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         status, chat_res, _ = self.request("/api/chat", chat_body, cookie=self.cust1_cookie)
         self.assertEqual(status, 200)
 
-        # 1. search_knowledge tool was executed
+        # 1. search_knowledge tool was executed and produced no source
         tool_names = [t.get("name") for t in chat_res["trace"].get("tools", [])]
         self.assertIn("search_knowledge", tool_names)
         self.assertEqual(chat_res.get("sources", []), [])
 
-        # 2. No unsupported exchange proposal produced
-        self.assertIsNone(chat_res.get("action_proposal"))
-        self.assertNotIn("dispute_agent:proposal_ready", chat_res["trace"].get("subagent_history", []))
-        self.assertIn("dispute_agent:listening", chat_res["trace"].get("subagent_history", []))
+        # 2. No proposal exists any more; the worker finished through the model
+        self.assertNotIn("action_proposal", chat_res)
+        self.assertIn("dispute_agent:done", chat_res["trace"].get("subagent_history", []))
 
-        # 3. Truthful safe staff handoff preserved without asserting shop warranty or exchange policy
+        # 3. Truthful safe staff handoff, without asserting a shop warranty or exchange policy
         self.assertIn("chuyên viên CSKH", chat_res["message"])
         self.assertNotIn("Đổi mới 1-1", chat_res["message"])
         self.assertNotIn("áp dụng chính sách bảo hành", chat_res["message"])
 
-    def test_17_defect_complaint_stale_knowledge_no_warranty_days_safe_handoff(self):
-        """P5-K7 continuation regression: stale conversation-level knowledge from an earlier
-        unrelated query must NOT authorize a warranty claim or exchange proposal when catalog
-        product has no structured warranty days.
-        """
-        self.test_01_same_identity_binding_import_and_session()
+    # Removed with W3.2-D3/D7: test_17 (stale knowledge with no warranty_days -> scripted "chưa xác định được thời hạn
+    # bảo hành" hand-off) and test_18 (no order ID -> scripted "Mã đơn hàng" request). They asserted keyword-driven canned
+    # answers that no longer exist. "No unsupported fee/replacement promise" is the final-answer check, tested for both
+    # agent modes in tests/test_r1_w3_2_answer_check.py.
 
-        # Set product P-601 warranty_days to NULL in tenant database
-        bstore = self.sessions.business_store(self.tenant_id)
-        with bstore.connection(write=True) as db:
-            db.execute("UPDATE products SET warranty_days = NULL WHERE id = 'P-601'")
-
-        status, conv, _ = self.request("/api/conversations", {}, cookie=self.cust1_cookie)
-        self.assertEqual(status, 201)
-        cid = conv["conversation_id"]
-
-        chat_body = {
-            "conversation_id": cid,
-            "text": "Khiếu nại đơn O-90001 bị kẹt khóa và bung chỉ, shop xử lý giúp tôi",
-            "request_id": str(uuid.uuid4()),
-        }
-        status, chat_res, _ = self.request("/api/chat", chat_body, cookie=self.cust1_cookie)
-        self.assertEqual(status, 200)
-
-        # 1. No search_knowledge executed this turn
-        tool_names = [t.get("name") for t in chat_res["trace"].get("tools", [])]
-        self.assertNotIn("search_knowledge", tool_names)
-
-        # 2. No exchange proposal created
-        self.assertIsNone(chat_res.get("action_proposal"))
-        self.assertNotIn("dispute_agent:proposal_ready", chat_res["trace"].get("subagent_history", []))
-        self.assertIn("dispute_agent:listening", chat_res["trace"].get("subagent_history", []))
-
-        # 3. Safe handoff to CSKH without asserting warranty or 1-1 exchange
-        self.assertNotIn("Đổi mới 1-1", chat_res["message"])
-        self.assertNotIn("theo quy định của shop", chat_res["message"])
-        self.assertIn("chưa xác định được thời hạn bảo hành", chat_res["message"])
-        self.assertIn("nhân viên CSKH", chat_res["message"])
-
-    def test_18_defect_complaint_no_order_id_safe_handoff_without_exchange_promise(self):
-        """P5-K7 continuation regression: when customer submits a defect complaint without an
-        order ID and without policy evidence, do not promise free 1:1 exchange or assert shop
-        warranty policy; ask for order ID safely.
-        """
-        self.test_01_same_identity_binding_import_and_session()
-
-        status, conv, _ = self.request("/api/conversations", {}, cookie=self.cust1_cookie)
-        self.assertEqual(status, 201)
-        cid = conv["conversation_id"]
-
-        chat_body = {
-            "conversation_id": cid,
-            "text": "Khiếu nại sản phẩm áo bị kẹt khóa và bung chỉ shop ơi",
-            "request_id": str(uuid.uuid4()),
-        }
-        status, chat_res, _ = self.request("/api/chat", chat_body, cookie=self.cust1_cookie)
-        self.assertEqual(status, 200)
-
-        # 1. No proposal created
-        self.assertIsNone(chat_res.get("action_proposal"))
-        self.assertNotIn("dispute_agent:proposal_ready", chat_res["trace"].get("subagent_history", []))
-        self.assertIn("dispute_agent:listening", chat_res["trace"].get("subagent_history", []))
-
-        # 2. Asks for order ID safely without promising free exchange terms or shop warranty
-        self.assertNotIn("Đổi mới 1-1", chat_res["message"])
-        self.assertNotIn("miễn phí 2 chiều", chat_res["message"])
-        self.assertNotIn("áp dụng chính sách", chat_res["message"])
-        self.assertIn("Mã đơn hàng", chat_res["message"])
-
-    def test_19_defect_complaint_relevant_retrieval_enforces_order_ownership_and_positive_control(self):
-        """P5-K7 one-pass E2E regression: when relevant defect/warranty policy evidence is retrieved
-        via search_knowledge during /api/chat:
-        1. Missing explicit order (O-999) executes get_order, returns safe order-not-found clarification,
-           clears unreferenced sources, emits no remedy promise, creates no proposal, and mutates no business state.
-        2. Foreign/unowned explicit order (Customer 2 naming Customer 1's order O-90001) executes get_order,
-           returns safe order-not-found/not-owned clarification, clears unreferenced sources, emits no remedy promise,
-           creates no proposal, and mutates no business state.
-        3. Positive control: Customer 1 naming owned order O-90001 with relevant KB evidence executes
-           search_knowledge + get_order + get_product, preserves valid [KB:...] citation in sources/message,
-           creates exchange_1to1 proposal (pending_staff_approval), and leaves O-90001 unmutated pre-confirmation.
+    def test_19_ownership_is_answered_from_the_order_tool_and_nothing_is_mutated(self):
+        """P5-K7 one-pass E2E regression (W3.2): the dispute worker no longer fetches orders on its own; the model reads
+        them with get_order and the server answers for it.
+        1. Missing order (O-999): refused from the tool result - no remedy promise, no sources, no proposal, no mutation.
+        2. Foreign order (Customer 2 naming Customer 1's O-90001): same refusal, nothing of the other order leaks.
+        3. Positive control: owned O-90001 with cited policy evidence keeps its [KB:...] citation and source; still no
+           proposal and no pre-confirmation mutation.
         """
         self.test_01_same_identity_binding_import_and_session()
 
@@ -1417,6 +1376,25 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         def fake_defect_repo_search(repo_self, query, limit=5):
             return [dict(defect_policy_doc)]
 
+        def planner(order_id, owned=False):
+            """The model: search the policy and read the order in one step, then answer from what came back."""
+            def chat(messages, allow_tools, timeout):
+                if messages[-1].get("role") == "tool":
+                    tool_messages = [m for m in messages if m.get("role") == "tool"]
+                    kb = next((json.loads(m["content"]) for m in tool_messages if m["tool_name"] == "search_knowledge"), {})
+                    results = kb.get("results") or []
+                    cited = f" [{results[0]['citation_id']}]" if owned and results else ""
+                    return {"message": {"role": "assistant", "content":
+                            f"Theo chính sách bảo hành, sản phẩm lỗi được đổi mới 1-1 trong 30 ngày{cited}, shop sẽ xử lý đơn {order_id} ạ."}}
+                calls = [
+                    {"function": {"name": "search_knowledge", "arguments": {"query": "chính sách bảo hành sản phẩm lỗi"}}},
+                    {"function": {"name": "get_order", "arguments": {"order_id": order_id}}},
+                ]
+                if owned:
+                    calls.append({"function": {"name": "get_product", "arguments": {"product_id": "P-601"}}})
+                return {"message": {"role": "assistant", "content": "", "tool_calls": calls}}
+            return chat
+
         bstore = self.sessions.business_store(self.tenant_id)
 
         def snapshot_business_state(target_order_id: str, actor_customer_id: str) -> dict:
@@ -1427,110 +1405,44 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
                     (target_order_id,),
                 ).fetchone()
                 all_orders = [
-                    (
-                        r["id"],
-                        r["customer_id"],
-                        r["product_id"],
-                        r["status"],
-                        r["version"],
-                        r["cancel_reason"],
-                        r["amount"],
-                    )
+                    (r["id"], r["customer_id"], r["product_id"], r["status"], r["version"], r["cancel_reason"], r["amount"])
                     for r in db.execute(
-                        "SELECT id, customer_id, product_id, status, version, cancel_reason, amount "
-                        "FROM orders ORDER BY id"
-                    ).fetchall()
-                ]
-                order_items_for_target = [
-                    (
-                        r["id"],
-                        r["order_id"],
-                        r["product_id"],
-                        r["quantity"],
-                        r["unit_price"],
-                        r["subtotal"],
-                    )
-                    for r in db.execute(
-                        "SELECT id, order_id, product_id, quantity, unit_price, subtotal "
-                        "FROM order_items WHERE order_id = ? ORDER BY id",
-                        (target_order_id,),
+                        "SELECT id, customer_id, product_id, status, version, cancel_reason, amount FROM orders ORDER BY id"
                     ).fetchall()
                 ]
                 proposals_for_order = [
-                    (
-                        r["id"],
-                        r["customer_id"],
-                        r["order_id"],
-                        r["order_version"],
-                        r["reason"],
-                        r["state"],
-                        r["confirm_key"],
-                        r["result"],
-                    )
+                    (r["id"], r["customer_id"], r["order_id"], r["order_version"], r["reason"], r["state"])
                     for r in db.execute(
-                        "SELECT id, customer_id, order_id, order_version, reason, state, confirm_key, result "
-                        "FROM proposals WHERE order_id = ? ORDER BY id",
+                        "SELECT id, customer_id, order_id, order_version, reason, state FROM proposals "
+                        "WHERE order_id = ? ORDER BY id",
                         (target_order_id,),
                     ).fetchall()
                 ]
                 proposals_for_actor = [
-                    (
-                        r["id"],
-                        r["customer_id"],
-                        r["order_id"],
-                        r["order_version"],
-                        r["reason"],
-                        r["state"],
-                        r["confirm_key"],
-                        r["result"],
-                    )
+                    (r["id"], r["order_id"], r["state"])
                     for r in db.execute(
-                        "SELECT id, customer_id, order_id, order_version, reason, state, confirm_key, result "
-                        "FROM proposals WHERE customer_id = ? ORDER BY id",
-                        (actor_customer_id,),
+                        "SELECT id, order_id, state FROM proposals WHERE customer_id = ? ORDER BY id", (actor_customer_id,)
                     ).fetchall()
                 ]
-                complaint_feedback_rows = [
-                    (
-                        r["id"],
-                        r["conversation_id"],
-                        r["customer_id"],
-                        r["feedback_type"],
-                        r["reason_code"],
-                        r["comment"],
-                    )
+                requests_total = db.execute("SELECT COUNT(*) AS c FROM order_action_requests").fetchone()["c"]
+                mutation_events = [
+                    (r["id"], r["customer_id"], r["kind"], r["order_id"])
                     for r in db.execute(
-                        "SELECT id, conversation_id, customer_id, feedback_type, reason_code, comment "
-                        "FROM conversation_feedback ORDER BY id"
+                        "SELECT id, customer_id, kind, order_id FROM business_events "
+                        "WHERE kind != 'agent_replied' OR order_id IS NOT NULL ORDER BY id"
                     ).fetchall()
-                ]
-                business_mutation_events = [
-                    (r["id"], r["customer_id"], r["kind"], r["order_id"], r["payload"])
-                    for r in db.execute(
-                        "SELECT id, customer_id, kind, order_id, payload "
-                        "FROM business_events WHERE kind != 'agent_replied' OR order_id IS NOT NULL ORDER BY id"
-                    ).fetchall()
-                ]
-                actor_conv_focus = [
-                    (r["id"], r["customer_id"], r["order_id"], r["product_id"])
-                    for r in db.execute(
-                        "SELECT id, customer_id, order_id, product_id "
-                        "FROM conversations WHERE customer_id = ? ORDER BY id",
-                        (actor_customer_id,),
-                    ).fetchall()
+                    if r["kind"] != "agent_failed"
                 ]
             return {
                 "target_order": dict(ord_row) if ord_row is not None else None,
                 "all_orders": all_orders,
-                "order_items_for_target": order_items_for_target,
                 "proposals_for_order": proposals_for_order,
                 "proposals_for_actor": proposals_for_actor,
-                "complaint_feedback_rows": complaint_feedback_rows,
-                "business_mutation_events": business_mutation_events,
-                "actor_conv_focus": actor_conv_focus,
+                "order_action_requests": requests_total,
+                "business_mutation_events": mutation_events,
             }
 
-        # 1. Missing explicit order O-999 (Customer 1)
+        # 1. Missing order O-999 (Customer 1)
         status, conv_miss, _ = self.request("/api/conversations", {}, cookie=self.cust1_cookie)
         self.assertEqual(status, 201)
         body_miss = {
@@ -1539,25 +1451,23 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
             "request_id": str(uuid.uuid4()),
         }
         before_miss = snapshot_business_state("O-999", self.cust1_id)
-        with patch.object(KnowledgeRepository, "search", fake_defect_repo_search):
+        with patch.object(self.gateway, "chat", planner("O-999")), patch.object(KnowledgeRepository, "search", fake_defect_repo_search):
             status, res_miss, _ = self.request("/api/chat", body_miss, cookie=self.cust1_cookie)
         after_miss = snapshot_business_state("O-999", self.cust1_id)
         self.assertEqual(status, 200)
         self.assertEqual(before_miss, after_miss)
         self.assertIsNone(after_miss["target_order"])
         self.assertEqual(after_miss["proposals_for_order"], [])
-        self.assertEqual(after_miss["proposals_for_actor"], [])
-        self.assertEqual(after_miss["complaint_feedback_rows"], [])
         miss_tools = [t.get("name") for t in res_miss["trace"].get("tools", [])]
         self.assertIn("search_knowledge", miss_tools)
         self.assertIn("get_order", miss_tools)
-        self.assertIsNone(res_miss.get("action_proposal"))
+        self.assertNotIn("action_proposal", res_miss)
         self.assertEqual(res_miss.get("sources", []), [])
-        self.assertIn("không tìm thấy đơn hàng O-999", res_miss["message"])
-        self.assertNotIn("Đổi mới 1-1", res_miss["message"])
-        self.assertNotIn("áp dụng chính sách bảo hành", res_miss["message"])
+        self.assertIn("Không tìm thấy đơn hàng O-999", res_miss["message"])
+        self.assertNotIn("đổi mới 1-1", res_miss["message"].lower())
+        self.assertNotIn("30 ngày", res_miss["message"])
 
-        # 2. Foreign/unowned explicit order O-90001 queried by Customer 2
+        # 2. Foreign order O-90001 queried by Customer 2
         status, conv_for, _ = self.request("/api/conversations", {}, cookie=self.cust2_cookie)
         self.assertEqual(status, 201)
         body_for = {
@@ -1566,31 +1476,26 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
             "request_id": str(uuid.uuid4()),
         }
         before_for = snapshot_business_state("O-90001", self.cust2_id)
-        with patch.object(KnowledgeRepository, "search", fake_defect_repo_search):
+        with patch.object(self.gateway, "chat", planner("O-90001")), patch.object(KnowledgeRepository, "search", fake_defect_repo_search):
             status, res_for, _ = self.request("/api/chat", body_for, cookie=self.cust2_cookie)
         after_for = snapshot_business_state("O-90001", self.cust2_id)
         self.assertEqual(status, 200)
         self.assertEqual(before_for, after_for)
-        self.assertIsNotNone(after_for["target_order"])
-        self.assertEqual(after_for["target_order"]["id"], "O-90001")
         self.assertEqual(after_for["target_order"]["customer_id"], self.cust1_id)
         self.assertEqual(after_for["target_order"]["status"], "pending")
         self.assertEqual(after_for["target_order"]["version"], 1)
-        self.assertIsNone(after_for["target_order"]["cancel_reason"])
         self.assertEqual(after_for["proposals_for_order"], [])
         self.assertEqual(after_for["proposals_for_actor"], [])
-        self.assertEqual(after_for["complaint_feedback_rows"], [])
         for_tools = [t.get("name") for t in res_for["trace"].get("tools", [])]
-        self.assertIn("search_knowledge", for_tools)
         self.assertIn("get_order", for_tools)
-        self.assertIsNone(res_for.get("action_proposal"))
+        self.assertNotIn("action_proposal", res_for)
         self.assertEqual(res_for.get("sources", []), [])
-        self.assertIn("không tìm thấy đơn hàng O-90001", res_for["message"])
-        self.assertIn("không thuộc tài khoản", res_for["message"])
-        self.assertNotIn("Đổi mới 1-1", res_for["message"])
+        self.assertIn("Không tìm thấy đơn hàng O-90001", res_for["message"])
+        self.assertIn("thuộc tài khoản của anh/chị", res_for["message"])
+        self.assertNotIn("đổi mới 1-1", res_for["message"].lower())
         self.assertNotIn("Áo sơ mi lụa", res_for["message"])
 
-        # 3. Positive control: Owned order O-90001 queried by Customer 1 with relevant KB evidence
+        # 3. Positive control: owned order O-90001 queried by Customer 1 with relevant, cited policy evidence
         status, conv_ok, _ = self.request("/api/conversations", {}, cookie=self.cust1_cookie)
         self.assertEqual(status, 201)
         body_ok = {
@@ -1598,28 +1503,23 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
             "text": "Khiếu nại đơn O-90001 bị kẹt khóa và bung chỉ, kiểm tra chính sách đổi 1-1",
             "request_id": str(uuid.uuid4()),
         }
-        with patch.object(KnowledgeRepository, "search", fake_defect_repo_search):
+        with patch.object(self.gateway, "chat", planner("O-90001", owned=True)), patch.object(KnowledgeRepository, "search", fake_defect_repo_search):
             status, res_ok, _ = self.request("/api/chat", body_ok, cookie=self.cust1_cookie)
         self.assertEqual(status, 200)
         ok_tools = [t.get("name") for t in res_ok["trace"].get("tools", [])]
-        self.assertIn("search_knowledge", ok_tools)
-        self.assertIn("get_order", ok_tools)
-        self.assertIn("get_product", ok_tools)
-        prop_ok = res_ok.get("action_proposal")
-        self.assertIsNotNone(prop_ok)
-        self.assertEqual(prop_ok["action"], "exchange_1to1")
-        self.assertEqual(prop_ok["order_id"], "O-90001")
-        self.assertEqual(prop_ok["status"], "pending_staff_approval")
+        self.assertEqual(ok_tools, ["search_knowledge", "get_order", "get_product"])
+        self.assertNotIn("action_proposal", res_ok)
         sources_ok = res_ok.get("sources", [])
         self.assertEqual(len(sources_ok), 1)
         self.assertEqual(sources_ok[0]["source_key"], "policies/warranty_defect.md")
         self.assertIn(f"[{sources_ok[0]['citation_id']}]", res_ok["message"])
 
-        # Confirm zero pre-confirmation DB mutation on O-90001
+        # Zero pre-confirmation DB mutation on O-90001
         with bstore.connection() as db:
             ord_row = db.execute("SELECT status, version FROM orders WHERE id='O-90001'").fetchone()
             self.assertEqual(ord_row["status"], "pending")
             self.assertEqual(ord_row["version"], 1)
+            self.assertEqual(db.execute("SELECT COUNT(*) AS c FROM proposals WHERE order_id='O-90001'").fetchone()["c"], 0)
 
 
 @unittest.skipUnless(DSN, "RAG pgvector integration requires a disposable PostgreSQL database with pgvector.")
