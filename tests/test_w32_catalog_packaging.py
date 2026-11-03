@@ -65,6 +65,8 @@ class HealthGatesReasonCatalogTests(unittest.TestCase):
         self.assertEqual(body['error'], 'reason_catalog_unavailable')
 
 
+@unittest.skipUnless((ROOT / '.dockerignore').is_file() and (ROOT / '.github').is_dir(),
+                     'repository build files are not shipped in the image; checked on the source tree')
 class ReasonCatalogShipsInImageTests(unittest.TestCase):
     def test_every_copied_data_path_is_explicitly_allowed_by_dockerignore(self):
         allowed = {line.strip() for line in (ROOT / '.dockerignore').read_text(encoding='utf-8').splitlines()}
