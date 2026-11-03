@@ -101,7 +101,7 @@ TOOLS = [
          {
              'order_id': {'type': 'string', 'description': 'Owned order ID (e.g. O-101).'},
              'action_type': {'type': 'string', 'enum': ['cancel', 'return', 'exchange'], 'description': 'Requested action type (defaults to cancel).'},
-             'exchange_kind': {'type': 'string', 'enum': ['size', 'one_to_one'], 'description': 'Optional exchange kind when action_type is exchange.'},
+             'exchange_kind': {'type': 'string', 'enum': ['other_variant', 'same_variant'], 'description': 'Optional exchange kind when action_type is exchange: other_variant swaps to another variant of the same product, same_variant replaces a defective item.'},
          },
          required=['order_id']),
     tool('get_runtime_info', 'Read the actual model name, digest and runtime version used for this turn.'),
@@ -293,7 +293,7 @@ def validate_tool(name, arguments):
         if act_type not in ('cancel', 'return', 'exchange'):
             raise ProtocolError('Invalid tool argument value')
         ex_kind = arguments.get('exchange_kind')
-        if ex_kind is not None and (act_type != 'exchange' or ex_kind.strip() not in ('size', 'one_to_one')):
+        if ex_kind is not None and (act_type != 'exchange' or ex_kind.strip() not in ('other_variant', 'same_variant')):
             raise ProtocolError('Invalid tool argument value')
     return arguments
 

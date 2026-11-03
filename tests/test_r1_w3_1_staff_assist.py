@@ -855,7 +855,7 @@ class PhaseR1W31Item3StaffConsentedOrderActionsTests(PhaseR1W31BaseTestCase):
         self.assertEqual(approved["order_action"]["status"], "approved")
         self.assertEqual(approved["order"]["status"], "cancelled")
 
-        # 4) Holding Staff creates exchange (size) on O-103 AND Manager creates return on O-106; Staff approves & completes exchange
+        # 4) Holding Staff creates exchange (same_variant) on O-103 AND Manager creates return on O-106; Staff approves & completes exchange
         st_ex, ex_created = self._req(
             "POST",
             f"/api/staff/cases/{case_id}/order-actions",
@@ -863,8 +863,8 @@ class PhaseR1W31Item3StaffConsentedOrderActionsTests(PhaseR1W31BaseTestCase):
                 "order_id": "O-103",
                 "expected_order_version": 1,
                 "type": "exchange",
-                "exchange_kind": "size",
-                "reason_code": "wrong_size",
+                "exchange_kind": "same_variant",
+                "reason_code": "defective_item",
                 "consent_turn_id": consent_tid,
             },
             cookie=self.staff_a1,
@@ -872,7 +872,7 @@ class PhaseR1W31Item3StaffConsentedOrderActionsTests(PhaseR1W31BaseTestCase):
         self.assertEqual(st_ex, 201)
         ex_id = ex_created["order_action_request_id"]
         self.assertEqual(ex_created["order_action"]["raised_by_role"], "customer")
-        self.assertEqual(ex_created["order_action"]["exchange_kind"], "size")
+        self.assertEqual(ex_created["order_action"]["exchange_kind"], "same_variant")
 
         st_ex_app, ex_app = self._req(
             "POST",

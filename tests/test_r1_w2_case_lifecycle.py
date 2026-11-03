@@ -188,17 +188,17 @@ class PhaseR1W2BusinessV5MigrationTests(unittest.TestCase):
             BUSINESS_V5_VERSION_MAPPING,
             {"logical_milestone": "business_v5", "sqlite": 4, "postgresql": 5},
         )
-        self.assertEqual(SQLITE_BUSINESS_SCHEMA_CURRENT, 5)
-        self.assertEqual(POSTGRES_BUSINESS_SCHEMA_CURRENT, 6)
-        self.assertEqual(BUSINESS_SCHEMA_CURRENT, 6)
+        self.assertEqual(SQLITE_BUSINESS_SCHEMA_CURRENT, 6)
+        self.assertEqual(POSTGRES_BUSINESS_SCHEMA_CURRENT, 7)
+        self.assertEqual(BUSINESS_SCHEMA_CURRENT, 7)
 
-        # 1. Fresh SQLite BusinessStore creates SQLite v5 (logical Business v6) directly with Business v5 + v6 tables
+        # 1. Fresh SQLite BusinessStore creates SQLite v6 (logical Business v7) directly with Business v5 + v6 tables
         fresh_sqlite = self.root / "fresh_business.sqlite3"
         store = BusinessStore(fresh_sqlite)
         store.seed()
         with store.connection() as db:
             ver_row = db.execute("SELECT component, version FROM retailops_schema").fetchone()
-            self.assertEqual((ver_row["component"], ver_row["version"]), ("business", 5))
+            self.assertEqual((ver_row["component"], ver_row["version"]), ("business", 6))
             tables = {
                 r[0]
                 for r in db.execute(
@@ -376,7 +376,7 @@ class PhaseR1W2BusinessV5MigrationTests(unittest.TestCase):
                     "episodes_created": 1,
                 },
             )
-            # Re-running migrate-v5 is 100% idempotent; then migrate-v6 makes stores current (v6)
+            # Re-running migrate-v5 is 100% idempotent; then migrate-v6 (W3 milestone) and migrate-v7 make stores current (v7)
             res2 = database_cli.run(
                 parser.parse_args(
                     ["database", "--output", str(legacy_root), "migrate-v5", "--confirm-preflight", "--confirm-backup"]
@@ -392,6 +392,13 @@ class PhaseR1W2BusinessV5MigrationTests(unittest.TestCase):
             )
             self.assertEqual(res_v6["result"], "BUSINESS_V6_MIGRATED")
             self.assertEqual(res_v6["upgraded"], True)
+            res_v7 = database_cli.run(
+                parser.parse_args(
+                    ["database", "--output", str(legacy_root), "migrate-v7", "--confirm-preflight", "--confirm-backup"]
+                )
+            )
+            self.assertEqual(res_v7["result"], "BUSINESS_V7_MIGRATED")
+            self.assertEqual(res_v7["upgraded"], True)
             chk = database_cli.run(parser.parse_args(["database", "--output", str(legacy_root), "check"]))
             self.assertEqual(chk, {"result": "SQLITE_SCHEMA_READY", "tenants_checked": 2})
 
@@ -654,13 +661,13 @@ class PhaseR1W2BusinessV5MigrationTests(unittest.TestCase):
             self.assertEqual(cases_a["pg-conv-2"]["status"], "resolved")
             self.assertEqual(cases_a["pg-conv-2"]["resolved_reason"], "migrated_v5")
 
-            # 3. Fresh PostgreSQL tenant schema initializes directly to v6 (logical Business v6)
+            # 3. Fresh PostgreSQL tenant schema initializes directly to v7 (logical Business v7)
             key_c = "c" * 32
             PostgresBusinessStore(pg_dsn, key_c, create=True)
             schema_c = tenant_schema(key_c)
             self.assertEqual(
                 state.schemas[schema_c].execute("SELECT version FROM retailops_schema").fetchone()[0],
-                6,
+                7,
             )
             self.assertIsNotNone(
                 state.schemas[schema_c].execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cases'").fetchone()

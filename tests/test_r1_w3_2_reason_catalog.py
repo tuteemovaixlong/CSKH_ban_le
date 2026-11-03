@@ -135,7 +135,7 @@ class ServerReasonChecksTests(RoleHarness):
     def post(self, order_id, action, reason_code, **extra):
         body = {'order_id': order_id, 'type': action, 'expected_order_version': 1, 'reason_code': reason_code, **extra}
         if action == 'exchange':
-            body.setdefault('exchange_kind', 'size')
+            body.setdefault('exchange_kind', 'same_variant')
         return self.request('POST', '/api/order-actions', body, cookie=self.cust1)
 
     def test_api_returns_the_catalog_by_role(self):

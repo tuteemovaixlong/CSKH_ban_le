@@ -1,11 +1,13 @@
 import time
 import uuid
 
-# Phase R1 W2/W3 backend schema version mappings:
+# Phase R1 W2/W3/W3.2 backend schema version mappings (SQLite and PostgreSQL number them differently):
 #   - Business v5 (W2-D3): SQLite 4, PostgreSQL 5 (cases, handoff_episodes, case_feedback_events)
 #   - Business v6 (W3-D1..W3-D4, W3-D6): SQLite 5, PostgreSQL 6
 #     (orders.delivered_at, order_action_requests, order_action_decisions,
 #      order_action_evidence, integration_outbox).
+#   - Business v7 (W3.2-D1, W3.2-D6): SQLite 6, PostgreSQL 7 (general exchange:
+#     exchange_kind other_variant/same_variant, target_variant_id, target_variant_label).
 SQLITE_BUSINESS_V5_SCHEMA_VERSION = 4
 POSTGRES_BUSINESS_V5_SCHEMA_VERSION = 5
 BUSINESS_V5_VERSION_MAPPING = {
@@ -13,13 +15,26 @@ BUSINESS_V5_VERSION_MAPPING = {
     'sqlite': SQLITE_BUSINESS_V5_SCHEMA_VERSION,
     'postgresql': POSTGRES_BUSINESS_V5_SCHEMA_VERSION,
 }
-SQLITE_BUSINESS_SCHEMA_CURRENT = 5
-POSTGRES_BUSINESS_SCHEMA_CURRENT = 6
+SQLITE_BUSINESS_V6_SCHEMA_VERSION = 5
+POSTGRES_BUSINESS_V6_SCHEMA_VERSION = 6
 BUSINESS_V6_VERSION_MAPPING = {
     'logical_milestone': 'business_v6',
+    'sqlite': SQLITE_BUSINESS_V6_SCHEMA_VERSION,
+    'postgresql': POSTGRES_BUSINESS_V6_SCHEMA_VERSION,
+}
+SQLITE_BUSINESS_SCHEMA_CURRENT = 6
+POSTGRES_BUSINESS_SCHEMA_CURRENT = 7
+BUSINESS_V7_VERSION_MAPPING = {
+    'logical_milestone': 'business_v7',
     'sqlite': SQLITE_BUSINESS_SCHEMA_CURRENT,
     'postgresql': POSTGRES_BUSINESS_SCHEMA_CURRENT,
 }
+
+# W3.2-D1: exchange is "swap to another variant of the same product" or "same variant again" (defective item).
+EXCHANGE_KINDS = ('other_variant', 'same_variant')
+# W3.2-D6: the W3 kinds are rewritten, never dropped: size -> other_variant (target left empty), one_to_one -> same_variant.
+LEGACY_EXCHANGE_KIND_MAP = {'size': 'other_variant', 'one_to_one': 'same_variant'}
+TARGET_VARIANT_LABEL_MAX = 200
 
 
 def migrate_v3(db):
@@ -256,30 +271,25 @@ def ensure_case_tables(db):
     db.execute('CREATE INDEX IF NOT EXISTS idx_case_feedback_conv ON case_feedback_events(conversation_id)')
 
 
-def ensure_order_action_tables(db):
-    """Create Business v6 order-action, append-only decision, evidence, and outbox tables on SQLite.
-
-    Also adds nullable orders.delivered_at (leaving existing orders NULL per W3-D6).
-    Never uses ON DELETE CASCADE from conversations so expired conversation cleanup preserves
-    every request, decision, evidence record, and outbox event.
-    """
-    orders_table = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='orders'").fetchone()
-    if orders_table:
-        order_cols = {row['name'] for row in db.execute('PRAGMA table_info(orders)')}
-        if 'delivered_at' not in order_cols:
-            db.execute('ALTER TABLE orders ADD COLUMN delivered_at REAL')
-
-    db.execute("""CREATE TABLE IF NOT EXISTS order_action_requests (
+# Business v7 shape of the request table (W3.2-D1, D5, D6). `target_variant_id` deliberately has no
+# foreign key: a manager editing a product recreates its product_variants rows, and the label snapshot
+# in `target_variant_label` is what keeps an old request readable. The target is all-or-nothing and only
+# an other_variant request may carry one (a migrated W3 `size` row has none). Each CHECK is named so the
+# PostgreSQL upgrade can find it. NULLs would slip through a plain CHECK, hence the IS NOT NULL guards.
+ORDER_ACTION_REQUESTS_DDL = """CREATE TABLE IF NOT EXISTS {table} (
                   request_id TEXT PRIMARY KEY,
                   order_id TEXT NOT NULL REFERENCES orders(id),
                   customer_id TEXT NOT NULL REFERENCES customers(id),
                   case_id TEXT NOT NULL REFERENCES cases(case_id),
                   conversation_id TEXT NOT NULL,
                   type TEXT NOT NULL CHECK(type IN ('cancel', 'return', 'exchange')),
-                  exchange_kind TEXT CHECK(
-                      (type = 'exchange' AND exchange_kind IN ('size', 'one_to_one'))
+                  exchange_kind TEXT CONSTRAINT order_action_requests_exchange_kind_v7_check CHECK(
+                      (type = 'exchange' AND exchange_kind IS NOT NULL
+                           AND exchange_kind IN ('other_variant', 'same_variant'))
                       OR (type <> 'exchange' AND exchange_kind IS NULL)
                   ),
+                  target_variant_id TEXT,
+                  target_variant_label TEXT,
                   status TEXT NOT NULL CHECK(
                       status IN ('requested', 'under_review', 'approved', 'rejected', 'received', 'inspected', 'completed')
                   ),
@@ -307,6 +317,12 @@ def ensure_order_action_tables(db):
                   inspected_at REAL,
                   completed_at REAL,
                   closed_at REAL,
+                  CONSTRAINT order_action_requests_target_variant_v7_check CHECK(
+                      (target_variant_label IS NULL OR length(target_variant_label) <= 200)
+                      AND ((target_variant_id IS NULL AND target_variant_label IS NULL)
+                           OR (exchange_kind IS NOT NULL AND exchange_kind = 'other_variant'
+                               AND target_variant_id IS NOT NULL AND target_variant_label IS NOT NULL))
+                  ),
                   CHECK(
                       (type = 'cancel' AND (
                           (status IN ('requested', 'under_review') AND closed_at IS NULL)
@@ -317,7 +333,67 @@ def ensure_order_action_tables(db):
                           OR (status IN ('rejected', 'completed') AND closed_at IS NOT NULL)
                       ))
                   )
-                )""")
+                )"""
+
+_REQUEST_COLUMNS_V6 = (
+    'request_id', 'order_id', 'customer_id', 'case_id', 'conversation_id', 'type', 'status',
+    'inspection_outcome', 'refund_status', 'refund_decision', 'reason_code', 'reason_text',
+    'raised_by_role', 'delivery_failure_attempts', 'expected_order_version', 'version',
+    'created_at', 'updated_at', 'reviewed_at', 'received_at', 'inspected_at', 'completed_at', 'closed_at',
+)
+
+
+def migrate_order_action_exchange_v7(db):
+    """Business v7 step (W3.2-D6): rewrite the W3 request table to the general-exchange shape.
+
+    `size` becomes `other_variant` with an empty target and `one_to_one` becomes `same_variant`; no
+    row is deleted. SQLite cannot alter a CHECK in place, so the table is rebuilt: create the new
+    table, copy every row, drop the old one, rename the new one. The caller must have switched
+    `PRAGMA foreign_keys=OFF` before BEGIN (the pragma is a no-op inside a transaction): the
+    decision and evidence tables point at this table and must keep their rows. Idempotent.
+    """
+    if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='order_action_requests'").fetchone():
+        return {'rebuilt': False, 'requests': 0, 'exchange_mapped': 0}
+    columns = {row['name'] for row in db.execute('PRAGMA table_info(order_action_requests)')}
+    if {'target_variant_id', 'target_variant_label'} <= columns:
+        return {'rebuilt': False, 'requests': db.execute('SELECT COUNT(*) FROM order_action_requests').fetchone()[0],
+                'exchange_mapped': 0}
+    if db.execute('PRAGMA foreign_keys').fetchone()[0]:
+        raise ValueError('The Business v7 rebuild needs PRAGMA foreign_keys=OFF before the transaction starts.')
+    before = db.execute('SELECT COUNT(*) FROM order_action_requests').fetchone()[0]
+    mapped = db.execute(
+        "SELECT COUNT(*) FROM order_action_requests WHERE exchange_kind IN ('size', 'one_to_one')").fetchone()[0]
+    db.execute(ORDER_ACTION_REQUESTS_DDL.format(table='order_action_requests_v7_new'))
+    names = ', '.join(_REQUEST_COLUMNS_V6)
+    db.execute(
+        f"""INSERT INTO order_action_requests_v7_new({names}, exchange_kind, target_variant_id, target_variant_label)
+            SELECT {names},
+                   CASE exchange_kind WHEN 'size' THEN 'other_variant' WHEN 'one_to_one' THEN 'same_variant'
+                                      ELSE exchange_kind END,
+                   NULL, NULL
+            FROM order_action_requests""")
+    after = db.execute('SELECT COUNT(*) FROM order_action_requests_v7_new').fetchone()[0]
+    if after != before:
+        raise ValueError(f'Business v7 rebuild lost rows ({before} -> {after}); migration aborted.')
+    db.execute('DROP TABLE order_action_requests')
+    db.execute('ALTER TABLE order_action_requests_v7_new RENAME TO order_action_requests')
+    return {'rebuilt': True, 'requests': after, 'exchange_mapped': mapped}
+
+
+def ensure_order_action_tables(db):
+    """Create Business v6/v7 order-action, append-only decision, evidence, and outbox tables on SQLite.
+
+    Also adds nullable orders.delivered_at (leaving existing orders NULL per W3-D6).
+    Never uses ON DELETE CASCADE from conversations so expired conversation cleanup preserves
+    every request, decision, evidence record, and outbox event.
+    """
+    orders_table = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='orders'").fetchone()
+    if orders_table:
+        order_cols = {row['name'] for row in db.execute('PRAGMA table_info(orders)')}
+        if 'delivered_at' not in order_cols:
+            db.execute('ALTER TABLE orders ADD COLUMN delivered_at REAL')
+
+    db.execute(ORDER_ACTION_REQUESTS_DDL.format(table='order_action_requests'))
     db.execute('CREATE INDEX IF NOT EXISTS idx_order_action_case ON order_action_requests(case_id, created_at DESC)')
     db.execute('CREATE INDEX IF NOT EXISTS idx_order_action_customer ON order_action_requests(customer_id, created_at DESC)')
     db.execute('CREATE INDEX IF NOT EXISTS idx_order_action_order ON order_action_requests(order_id, created_at DESC)')

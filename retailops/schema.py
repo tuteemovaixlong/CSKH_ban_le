@@ -1,8 +1,8 @@
 """Transactional schema initialization for legacy and new SQLite databases.
 
-Backend schema version mapping for Phase R1 W2/W3:
-- SQLite business schema current:     5 (logical Business v6; SQLite 4 = Business v5)
-- PostgreSQL business schema current: 6 (logical Business v6; PostgreSQL 5 = Business v5)
+Backend schema version mapping for Phase R1 W2/W3/W3.2:
+- SQLite business schema current:     6 (logical Business v7; SQLite 5 = Business v6, SQLite 4 = Business v5)
+- PostgreSQL business schema current: 7 (logical Business v7; PostgreSQL 6 = Business v6, PostgreSQL 5 = Business v5)
 - SQLite identity schema current:     5
 - PostgreSQL identity schema current: 5
 """
@@ -74,3 +74,12 @@ def migrate(db, component, initialize, *, target_version=None):
         from retailops.business.schema import ensure_order_action_tables
         ensure_order_action_tables(db)
         db.execute("UPDATE retailops_schema SET version=5 WHERE component='business'")
+        version = 5
+
+    if component == 'business' and version < 6 and target >= 6:
+        # Business v7 (W3.2-D6): rewrite the W3 request table to the general-exchange shape. Needs
+        # PRAGMA foreign_keys=OFF before BEGIN, which the operator migration sets.
+        from retailops.business.schema import ensure_order_action_tables, migrate_order_action_exchange_v7
+        migrate_order_action_exchange_v7(db)
+        ensure_order_action_tables(db)
+        db.execute("UPDATE retailops_schema SET version=6 WHERE component='business'")

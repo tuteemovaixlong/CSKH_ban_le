@@ -105,9 +105,9 @@ class BoundTools:
                     return {'error': 'invalid_tool_arguments', 'message': 'action_type must be cancel, return, or exchange.'}
                 raw_kind = args.get('exchange_kind')
                 if action_type == 'exchange':
-                    exchange_kind = str(raw_kind or 'size').strip().lower()
-                    if exchange_kind not in ('size', 'one_to_one'):
-                        return {'error': 'invalid_tool_arguments', 'message': 'exchange_kind must be size or one_to_one.'}
+                    exchange_kind = str(raw_kind or 'other_variant').strip().lower()
+                    if exchange_kind not in ('other_variant', 'same_variant'):
+                        return {'error': 'invalid_tool_arguments', 'message': 'exchange_kind must be other_variant or same_variant.'}
                 elif raw_kind is not None:
                     return {'error': 'invalid_tool_arguments', 'message': 'exchange_kind is only allowed when action_type is exchange.'}
                 else:

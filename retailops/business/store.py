@@ -45,8 +45,11 @@ from retailops.schema import migrate
 from retailops.business.schema import (
     BUSINESS_V5_VERSION_MAPPING,
     BUSINESS_V6_VERSION_MAPPING,
+    BUSINESS_V7_VERSION_MAPPING,
+    EXCHANGE_KINDS,
     SQLITE_BUSINESS_SCHEMA_CURRENT,
     SQLITE_BUSINESS_V5_SCHEMA_VERSION,
+    SQLITE_BUSINESS_V6_SCHEMA_VERSION,
     backfill_business_v5_cases,
     ensure_case_tables,
     ensure_import_tables,
@@ -55,6 +58,8 @@ from retailops.business.schema import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
+
+_MIGRATE_HINT = 'Hãy chạy lệnh operator database migrate-v7 với --confirm-preflight --confirm-backup.'
 
 def _parse_variant_string(v_str):
     delimiter = "·" if "·" in str(v_str) else ("/" if "/" in str(v_str) else None)
@@ -93,11 +98,12 @@ class VariantStockResult(int):
 def _inspect_sqlite_business_ready(path, *, target_version=SQLITE_BUSINESS_SCHEMA_CURRENT):
     """Read-only inspection of a business SQLite file without modifying a single byte.
 
-    Returns 'empty' for a missing, zero-byte, or zero-table file; 'v6_ready' when already at
-    SQLite business schema v5 (logical Business v6) with all Business v5 and v6 tables plus
-    orders.delivered_at; raises ValueError for wrong component / unsupported future version;
-    and raises ApiError(503, 'business_migration_required', ...) when an existing pre-v6
-    business DB is found.
+    Returns 'empty' for a missing, zero-byte, or zero-table file; 'v7_ready' when already at
+    SQLite business schema v6 (logical Business v7) with all Business v5 and v6 tables,
+    orders.delivered_at and the general-exchange columns; 'v6_ready' / 'v5_ready' for the
+    earlier milestones when `target_version` asks only for those; raises ValueError for wrong
+    component / unsupported future version; and raises ApiError(503, 'business_migration_required', ...)
+    when an existing business DB older than `target_version` is found.
     """
     db_path = Path(path)
     if not db_path.exists() or db_path.stat().st_size == 0:
@@ -123,8 +129,7 @@ def _inspect_sqlite_business_ready(path, *, target_version=SQLITE_BUSINESS_SCHEM
                 raise ApiError(
                     503,
                     'business_migration_required',
-                    'Kho dữ liệu cửa hàng thiếu dấu vết schema Business v6; khởi động bị chặn fail-closed. '
-                    'Hãy chạy lệnh operator database migrate-v6 với --confirm-preflight --confirm-backup.',
+                    f'Kho dữ liệu cửa hàng thiếu dấu vết schema Business v7; khởi động bị chặn fail-closed. {_MIGRATE_HINT}',
                 )
             ver = rows[0]['version']
             if ver not in range(1, SQLITE_BUSINESS_SCHEMA_CURRENT + 1):
@@ -133,18 +138,17 @@ def _inspect_sqlite_business_ready(path, *, target_version=SQLITE_BUSINESS_SCHEM
                 raise ApiError(
                     503,
                     'business_migration_required',
-                    f'Kho dữ liệu cửa hàng đang ở SQLite schema v{ver} (trước Business v6); khởi động bị chặn fail-closed. '
-                    'Hãy chạy lệnh operator database migrate-v6 với --confirm-preflight --confirm-backup.',
+                    f'Kho dữ liệu cửa hàng đang ở SQLite schema v{ver} (trước Business v7); khởi động bị chặn fail-closed. '
+                    f'{_MIGRATE_HINT}',
                 )
             required_v5_tables = {'cases', 'handoff_episodes', 'case_feedback_events'}
             if not required_v5_tables.issubset(tables):
                 raise ApiError(
                     503,
                     'business_migration_required',
-                    'Kho dữ liệu cửa hàng chưa đầy đủ các bảng Business v5; khởi động bị chặn fail-closed. '
-                    'Hãy chạy lệnh operator database migrate-v6 với --confirm-preflight --confirm-backup.',
+                    f'Kho dữ liệu cửa hàng chưa đầy đủ các bảng Business v5; khởi động bị chặn fail-closed. {_MIGRATE_HINT}',
                 )
-            if target_version >= SQLITE_BUSINESS_SCHEMA_CURRENT:
+            if target_version >= SQLITE_BUSINESS_V6_SCHEMA_VERSION:
                 required_v6_tables = {
                     'order_action_requests',
                     'order_action_decisions',
@@ -158,9 +162,18 @@ def _inspect_sqlite_business_ready(path, *, target_version=SQLITE_BUSINESS_SCHEM
                     raise ApiError(
                         503,
                         'business_migration_required',
-                        'Kho dữ liệu cửa hàng chưa đầy đủ các bảng/cột Business v6; khởi động bị chặn fail-closed. '
-                        'Hãy chạy lệnh operator database migrate-v6 với --confirm-preflight --confirm-backup.',
+                        f'Kho dữ liệu cửa hàng chưa đầy đủ các bảng/cột Business v6; khởi động bị chặn fail-closed. {_MIGRATE_HINT}',
                     )
+                if target_version >= SQLITE_BUSINESS_SCHEMA_CURRENT:
+                    request_cols = {row['name'] for row in ro_db.execute('PRAGMA table_info(order_action_requests)')}
+                    if not {'target_variant_id', 'target_variant_label'} <= request_cols:
+                        raise ApiError(
+                            503,
+                            'business_migration_required',
+                            f'Kho dữ liệu cửa hàng chưa đầy đủ các cột đổi hàng Business v7; khởi động bị chặn fail-closed. '
+                            f'{_MIGRATE_HINT}',
+                        )
+                    return 'v7_ready'
                 return 'v6_ready'
             return 'v5_ready'
         if 'memberships' in tables or 'tenants' in tables:
@@ -169,8 +182,7 @@ def _inspect_sqlite_business_ready(path, *, target_version=SQLITE_BUSINESS_SCHEM
             raise ApiError(
                 503,
                 'business_migration_required',
-                'Kho dữ liệu cửa hàng legacy chưa nâng cấp lên Business v6; khởi động bị chặn fail-closed. '
-                'Hãy chạy lệnh operator database migrate-v6 với --confirm-preflight --confirm-backup.',
+                f'Kho dữ liệu cửa hàng legacy chưa nâng cấp lên Business v7; khởi động bị chặn fail-closed. {_MIGRATE_HINT}',
             )
         raise ValueError('Database belongs to another RetailOps component.')
     except sqlite3.Error as exc:
@@ -201,7 +213,10 @@ def _migrate_single_sqlite_business_file(db_path: Path, *, target_version: int =
     db.row_factory = sqlite3.Row
     try:
         db.execute('PRAGMA journal_mode=WAL')
-        db.execute('PRAGMA foreign_keys=ON')
+        # The Business v7 step rebuilds order_action_requests, whose children (decisions, evidence)
+        # must keep their rows: foreign keys are switched off before BEGIN and foreign_key_check
+        # below proves the result is consistent before anything is committed.
+        db.execute('PRAGMA foreign_keys=' + ('OFF' if target_version >= SQLITE_BUSINESS_SCHEMA_CURRENT else 'ON'))
         db.execute('BEGIN IMMEDIATE')
         ver_before_row = (
             db.execute("SELECT version FROM retailops_schema WHERE component='business'").fetchone()
@@ -209,6 +224,14 @@ def _migrate_single_sqlite_business_file(db_path: Path, *, target_version: int =
             else None
         )
         ver_before = int(ver_before_row['version']) if ver_before_row else 0
+        has_requests = bool(
+            db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='order_action_requests'").fetchone()
+        )
+        requests_before = db.execute('SELECT COUNT(*) FROM order_action_requests').fetchone()[0] if has_requests else 0
+        legacy_exchange_rows = (
+            db.execute("SELECT COUNT(*) FROM order_action_requests WHERE exchange_kind IN ('size', 'one_to_one')").fetchone()[0]
+            if has_requests else 0
+        )
         cases_before = (
             db.execute('SELECT COUNT(*) FROM cases').fetchone()[0]
             if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cases'").fetchone()
@@ -224,10 +247,11 @@ def _migrate_single_sqlite_business_file(db_path: Path, *, target_version: int =
             ensure_import_tables(db)
             ensure_case_tables(db)
             backfill_res = backfill_business_v5_cases(db)
-            if target_version >= SQLITE_BUSINESS_SCHEMA_CURRENT:
+            if target_version >= SQLITE_BUSINESS_V6_SCHEMA_VERSION:
                 ensure_order_action_tables(db)
         else:
             backfill_res = {'cases_created': 0, 'episodes_created': 0}
+            legacy_exchange_rows = 0
         cases_after = (
             db.execute('SELECT COUNT(*) FROM cases').fetchone()[0]
             if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cases'").fetchone()
@@ -241,11 +265,21 @@ def _migrate_single_sqlite_business_file(db_path: Path, *, target_version: int =
         fk_errors = db.execute('PRAGMA foreign_key_check').fetchall()
         if fk_errors:
             raise sqlite3.IntegrityError(f'Foreign key check failed during Business migration: {[tuple(r) for r in fk_errors]}')
+        requests_after = (
+            db.execute('SELECT COUNT(*) FROM order_action_requests').fetchone()[0]
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='order_action_requests'").fetchone()
+            else 0
+        )
+        if requests_after < requests_before:
+            raise sqlite3.IntegrityError(
+                f'Business migration lost order-action requests ({requests_before} -> {requests_after}).')
         db.commit()
         return {
             'upgraded': bool(ver_before < target_version or state == 'needs_migration' or backfill_res['cases_created'] > 0),
             'cases_created': int(cases_after - cases_before),
             'episodes_created': int(episodes_after - episodes_before),
+            'order_action_requests': int(requests_after),
+            'exchange_requests_mapped': int(legacy_exchange_rows) if target_version >= SQLITE_BUSINESS_SCHEMA_CURRENT else 0,
         }
     except Exception:
         if db.in_transaction:
@@ -362,11 +396,11 @@ def migrate_sqlite_business_v6(path, *, preflight_confirmed=False, backup_confir
     )
     target = Path(path)
     if target.is_file():
-        single = _migrate_single_sqlite_business_file(target, target_version=SQLITE_BUSINESS_SCHEMA_CURRENT)
+        single = _migrate_single_sqlite_business_file(target, target_version=SQLITE_BUSINESS_V6_SCHEMA_VERSION)
         return {
             'result': 'BUSINESS_V6_MIGRATED',
             'backend': 'sqlite',
-            'schema_version': SQLITE_BUSINESS_SCHEMA_CURRENT,
+            'schema_version': SQLITE_BUSINESS_V6_SCHEMA_VERSION,
             'logical_version': BUSINESS_V6_VERSION_MAPPING['postgresql'],
             'tenants': 1,
             'upgraded': single['upgraded'],
@@ -375,16 +409,51 @@ def migrate_sqlite_business_v6(path, *, preflight_confirmed=False, backup_confir
     tenant_files = _resolve_sqlite_tenant_files(target, milestone_label='Business v6')
     any_upgraded = False
     for tf in tenant_files:
-        res = _migrate_single_sqlite_business_file(tf, target_version=SQLITE_BUSINESS_SCHEMA_CURRENT)
+        res = _migrate_single_sqlite_business_file(tf, target_version=SQLITE_BUSINESS_V6_SCHEMA_VERSION)
         any_upgraded = any_upgraded or res['upgraded']
 
     return {
         'result': 'BUSINESS_V6_MIGRATED',
         'backend': 'sqlite',
-        'schema_version': SQLITE_BUSINESS_SCHEMA_CURRENT,
+        'schema_version': SQLITE_BUSINESS_V6_SCHEMA_VERSION,
         'logical_version': BUSINESS_V6_VERSION_MAPPING['postgresql'],
         'tenants': len(tenant_files),
         'upgraded': any_upgraded,
+    }
+
+
+def migrate_sqlite_business_v7(path, *, preflight_confirmed=False, backup_confirmed=False):
+    """Explicit operator migration command for SQLite Business v7 (W3.2-D1, W3.2-D6).
+
+    Upgrades every tenant business database to SQLite schema v6 (logical Business v7): the request
+    table is rebuilt for general exchange, `size` becomes `other_variant` (target left empty) and
+    `one_to_one` becomes `same_variant`, and no row is deleted. Idempotent; databases older than
+    Business v6 are brought through the earlier steps first. Never invoked automatically.
+    """
+    require(
+        preflight_confirmed is True and backup_confirmed is True,
+        400,
+        'migration_confirmation_required',
+        'Lệnh nâng cấp Business v7 yêu cầu xác nhận tường minh --confirm-preflight và --confirm-backup theo runbook §11.5.',
+    )
+    target = Path(path)
+    tenant_files = [target] if target.is_file() else _resolve_sqlite_tenant_files(target, milestone_label='Business v7')
+    any_upgraded, mapped, requests = False, 0, 0
+    for tf in tenant_files:
+        res = _migrate_single_sqlite_business_file(tf, target_version=SQLITE_BUSINESS_SCHEMA_CURRENT)
+        any_upgraded = any_upgraded or res['upgraded']
+        mapped += res['exchange_requests_mapped']
+        requests += res['order_action_requests']
+
+    return {
+        'result': 'BUSINESS_V7_MIGRATED',
+        'backend': 'sqlite',
+        'schema_version': SQLITE_BUSINESS_SCHEMA_CURRENT,
+        'logical_version': BUSINESS_V7_VERSION_MAPPING['postgresql'],
+        'tenants': len(tenant_files),
+        'upgraded': any_upgraded,
+        'order_action_requests': requests,
+        'exchange_requests_mapped': mapped,
     }
 
 
@@ -4133,10 +4202,10 @@ class BusinessStore:
             clean_reason_text = reason_entry["label"]
         if action_type == "exchange":
             require(
-                exchange_kind in ("size", "one_to_one"),
+                exchange_kind in EXCHANGE_KINDS,
                 400,
                 "invalid_exchange_kind",
-                "Yêu cầu đổi hàng phải chọn kiểu size hoặc one_to_one.",
+                "Yêu cầu đổi hàng phải chọn đổi sang biến thể khác (other_variant) hoặc đổi cùng biến thể (same_variant).",
             )
         else:
             require(
@@ -4820,10 +4889,10 @@ class BusinessStore:
             type_label = "hủy đơn"
         elif action_type == "return":
             type_label = "trả hàng"
-        elif exchange_kind == "size":
-            type_label = "đổi size"
-        elif exchange_kind == "one_to_one":
-            type_label = "đổi 1-1"
+        elif exchange_kind == "other_variant":
+            type_label = "đổi sang biến thể khác"
+        elif exchange_kind == "same_variant":
+            type_label = "đổi cùng biến thể"
         else:
             type_label = "đổi hàng"
 
