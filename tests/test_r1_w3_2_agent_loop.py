@@ -470,6 +470,36 @@ class AdapterTests(RoleHarness):
         self.assertEqual([m['role'] for m in vllm.payloads[-1]['messages']], ['system', 'user', 'assistant', 'user'])
 
 
+    def test_exchange_then_which_sizes_reads_the_variants_of_the_focused_product(self):
+        """The handoff's two-turn case through the real adapter and a strict template: "đổi size" then "hiện có những size
+        nào". The second turn has no keyword and no tool result of the first; the history and the server context carry it."""
+        self.add_order('O-701', 'delivered', 'Đen · Size M · Số lượng 1')  # P-102
+
+        def script(payload):
+            messages = payload['messages']
+            last = messages[-1]
+            if last['role'] == 'tool':
+                data = json.loads(last['content'])
+                if 'exchange' in data:  # prepare_order_action
+                    return chat_reply('Đơn O-701 đủ điều kiện đổi; em đã mở form, anh/chị chọn biến thể và lý do nhé.')
+                return chat_reply('Hiện có: ' + ', '.join(v['label'] for v in data['availability']))
+            if 'hiện có những size nào' in last['content']:
+                focused = re.search(r'product (P-\d+)', messages[0]['content']).group(1)
+                return chat_reply('', [('get_product', {'product_id': focused})])
+            return chat_reply('', [('prepare_order_action', {'order_id': 'O-701', 'action_type': 'exchange'})])
+        vllm = FakeVllm(script, strict=True)
+        with vllm.install():
+            first = self.say('Em muốn đổi size cho đơn O-701')
+            second = self.say('hiện có những size nào')
+        self.assertEqual(first['action'], 'choose_order_action_reason')
+        self.assertEqual([t['name'] for t in second['trace']['tools']], ['get_product'])
+        for label in ('Đen · Size S', 'Đen · Size M', 'Đen · Size L', 'Đen · Size XL'):
+            self.assertIn(label, second['message'])
+        for payload in vllm.payloads:
+            self.assertIsNone(gemma_template_error(payload['messages']))
+        self.assertIn('order O-701 and product P-102', vllm.payloads[2]['messages'][0]['content'])
+
+
 class NoScriptedAnswersTests(unittest.TestCase):
     OLD = ("'size_exchange'", '"size_exchange"', 'exchange_1to1', 'pending_staff_approval', 'miễn phí 2 chiều',
            'đổi size tận nhà', 'Đổi mới 1-1 tận nhà', 'Đổi size 2 chiều')

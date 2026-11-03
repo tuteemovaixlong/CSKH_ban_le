@@ -10,6 +10,7 @@ import time
 import uuid
 
 logger = logging.getLogger("retailops.application")
+from retailops.agent_mode import resolve_agent_mode
 from retailops.core import ApiError, STATUSES, fields, require
 from retailops.order_reasons import reason_catalog
 from retailops.identity.bearer import authenticate_bearer
@@ -22,25 +23,7 @@ from retailops_providers import API_MODEL
 from retailops_conversation import Catalog, describe_order
 from retailops.business.cache import SemanticCache, ToolCache, is_cacheable_query, is_cache_eligible_for_lookup
 from retailops.inference_gate import InferenceGate, GatedGateway
-
-AGENT_MODES = ('agent', 'legacy')
-_ORCHESTRATOR_NAMES = {'single_agent': 'agent', 'multi_agent': 'legacy'}  # the names used before W3.2
-
-
-def resolve_agent_mode(requested=None, environ=None):
-    """'agent' (the customer agent loop, the default) or 'legacy' (the supervisor graph), by configuration only.
-
-    Order of precedence: the caller, RETAILOPS_AGENT_MODE, then the older RETAILOPS_ORCHESTRATOR name.
-    An unknown value stops startup instead of silently choosing a mode.
-    """
-    env = os.environ if environ is None else environ
-    value = str(requested or env.get('RETAILOPS_AGENT_MODE', '') or env.get('RETAILOPS_ORCHESTRATOR', '') or 'agent')
-    value = value.strip().lower()
-    value = _ORCHESTRATOR_NAMES.get(value, value)
-    if value not in AGENT_MODES:
-        raise ValueError('RETAILOPS_AGENT_MODE must be agent or legacy.')
-    return value
-
+from retailops.workflow.answer_check import check_final_answer
 
 class Application:
     def __init__(self, store, tokens, infer=None, api_infer=None, api_daily_limit=20, *, role='customer', orchestrator=None,
@@ -403,6 +386,12 @@ class Application:
                 catalog=getattr(self.catalog, 'products', None),
             )
             answer['message'] = grounded_msg
+            if answer['trace'].get('answer_source') != 'safety_rail':  # the rails' replies are written by the code itself
+                checked = check_final_answer(answer['message'], answer.get('messages'))
+                if checked.changed:
+                    answer['message'] = checked.text
+                    answer['trace']['answer_check'] = {'dropped_policy_promises': checked.dropped_policy,
+                                                       'dropped_done_claims': checked.dropped_claims}
 
             leaked, safe_msg = sanitize_output_against_canary_leak(text, answer.get('message', ''))
             if leaked:
@@ -459,6 +448,7 @@ class Application:
                       'message': answer['message'], 'source': answer['trace'].get('answer_source', 'llm_agent'),
                       'model_used': answer['trace'].get('model_responses', answer['trace'].get('model_calls', 0)) > 0,
                       'context': bound.context, 'trace': answer['trace'], 'provider_id': provider_id, 'replayed': False}
+            result['trace']['agent_mode'] = getattr(self, 'agent_mode', 'agent')
             result['trace']['queue_wait_ms'] = getattr(gated_gateway, 'total_queue_wait_ms', 0.0)
             result['trace']['provider_inference_ms'] = getattr(gated_gateway, 'total_provider_inference_ms', 0.0)
             result['trace'].setdefault('graph_retrieval_ms', 0.0)

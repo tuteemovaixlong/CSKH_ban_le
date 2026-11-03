@@ -105,6 +105,21 @@ Custom model mặc định tắt ở web công khai để không phụ thuộc C
 trong `inference.env`, rồi tạo lại container web bằng lệnh trên. Chỉ chọn custom
 khi Colab đang chạy. Web không tự chuyển nguồn khi model ngắt.
 
+## Quay lại graph cũ của trợ lý khách (`RETAILOPS_AGENT_MODE`)
+
+Từ W3.2 trợ lý AI của khách chạy **vòng agent mới** (mặc định): model tự lập kế hoạch và gọi công cụ, mã chỉ giữ
+các rào an toàn, ngân sách và bước kiểm tra câu trả lời cuối. Graph cũ (supervisor định tuyến theo từ khóa) vẫn
+còn để quay lại nếu agent mới kém hơn. Chỉ cần đổi cấu hình, không đổi mã hay image:
+
+```dotenv
+RETAILOPS_AGENT_MODE=legacy
+```
+
+Thêm dòng này vào `public.env` (hoặc `api.env`), rồi tạo lại container web bằng đúng lệnh ở mục 5. Đặt
+`RETAILOPS_AGENT_MODE=agent` hoặc xóa dòng để dùng lại agent mới. Giá trị khác `agent`/`legacy` làm web từ chối
+khởi động. `python -m retailops check-config` in `agent_mode` đang hiệu lực, và mỗi lượt chat ghi `agent_mode`
+trong chi tiết (`trace`). Hai chế độ dùng chung mô hình yêu cầu đơn hàng, danh mục lý do và bước kiểm tra cuối.
+
 ## Phiên, dữ liệu và giới hạn
 
 - Cookie có hiệu lực 8 giờ và được kiểm tra từ database; qua restart vẫn dùng được.
