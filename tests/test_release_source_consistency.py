@@ -1,6 +1,8 @@
 """Verify stale host code cannot silently mask a successfully rolled out image."""
 import importlib.util
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -33,6 +35,49 @@ class ReleaseSourceTests(unittest.TestCase):
                          '/patches/mcp_config.json:', '/elsewhere/retailops:', ':rw'):
             self.assertIn(expected, result)
         self.assertEqual(module.strip_legacy_code_mounts(result), result)
+
+    def test_leftover_patch_mounts_are_found_after_code_mounts_are_stripped(self):
+        compose = '''services:
+  web:
+    volumes:
+      - ${RETAILOPS_DATA_DIR:-/opt/retailops/artifacts}:/data
+      - /opt/retailops/patches/retailops:/app/retailops:ro
+      - /opt/retailops/patches/data:/app/data:ro
+      - "/opt/retailops/patches/evals:/app/evals:ro"  # legacy
+      - /opt/retailops/patches/mcp_config.json:/app/mcp_config.json:ro
+      - /opt/retailops/postgres-secrets/database-url:/run/secrets/retailops_database_url:ro
+'''
+        leftovers = module.legacy_patch_mounts(module.strip_legacy_code_mounts(compose))
+        self.assertEqual(leftovers, [
+            '/opt/retailops/patches/data:/app/data:ro',
+            '/opt/retailops/patches/evals:/app/evals:ro',
+            '/opt/retailops/patches/mcp_config.json:/app/mcp_config.json:ro',
+        ])
+        clean = '''services:
+  web:
+    volumes:
+      - ${RETAILOPS_DATA_DIR:-/opt/retailops/artifacts}:/data
+      - /opt/retailops/patches/web:/app/web:ro
+'''
+        self.assertEqual(module.legacy_patch_mounts(module.strip_legacy_code_mounts(clean)), [])
+
+    def test_strip_command_stops_the_rollout_on_a_leftover_patch_mount(self):
+        shadowed = ('services:\n  web:\n    volumes:\n'
+                    '      - /opt/retailops/patches/data:/app/data:ro\n')
+        result = subprocess.run([sys.executable, str(SCRIPT), 'strip'], input=shadowed,
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 3)
+        self.assertEqual(result.stdout, '')
+        self.assertIn('PUBLIC_WEB_LEGACY_PATCH_MOUNT_REJECTED /opt/retailops/patches/data:/app/data:ro',
+                      result.stderr)
+        clean = ('services:\n  web:\n    volumes:\n'
+                 '      - /opt/retailops/patches/web:/app/web:ro\n'
+                 '      - ${RETAILOPS_DATA_DIR:-/opt/retailops/artifacts}:/data\n')
+        result = subprocess.run([sys.executable, str(SCRIPT), 'strip'], input=clean,
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0)
+        self.assertNotIn('/opt/retailops/patches', result.stdout)
+        self.assertIn('/opt/retailops/artifacts}:/data', result.stdout)
 
     def test_source_digest_detects_changes_without_reading_data(self):
         with tempfile.TemporaryDirectory() as directory:
