@@ -286,3 +286,18 @@ Cả hai quyết định dùng đúng hành vi code đã được kiểm chứng
   - `database migrate-v6` trên DB thật cho kết quả giống diễn tập: 38 tenant lên v6; 152 bảng mới; 38 cột `orders.delivered_at`; số đơn, đề xuất và case không đổi.
 - **Rollout:** image `sha256:7975e9478f22418ea74488a6a531b9081e37cd616345e8d9470330bd9a1db3c1`; `PUBLIC_WEB_ROLLOUT_OK` (có `PUBLIC_WEB_SOURCE_MATCH`), `ADMIN_CONSOLE_SMOKE_OK`, `LIVE_E2E_SMOKE_OK`; outbox 0 `pending`, 0 `dead`; gián đoạn khoảng 6 phút. Lần chạy `41437516820` đỏ có chủ đích và tự rollback về W2.
 - **Kiểm thử của owner trên trình duyệt** phát hiện các khoảng trống nghiệp vụ và hiển thị, xử lý trong [W3.1](W3_1_EXECUTION_HANDOFF_2026-11-02.md) theo [§15](W0_OWNER_DECISION_DELTA_2026-10-29.md#15-w31-owner-decisions-2026-11-02): nhân viên không có cách tạo yêu cầu khi khách đang chat trực tiếp; ca có người giữ không có tín hiệu khi khách im lặng; các mốc của ca mất khi tải lại trang; CSP chặn `style="..."` nên một số phần tử lẽ ra ẩn vẫn hiện ở trang khách.
+
+### 2026-11-02 W3.1 verification and W3.2 readiness review
+
+**W3.1 (PR #54, head `9c8bc40`):** một lượt kiểm chứng theo 6 tiêu chí, **đạt**. CI 5/5 xanh; commit docs khớp patch; không đổi schema hay migration; 42 test W2–W3.1, các contract và test JS (Node thật) chạy lại cục bộ đều PASS. Kiểm tra tin đồng ý đúng tiêu chí (tin của chính khách, đúng hội thoại, đúng lần mở ca, trong 30 phút, người giữ ca hoặc Manager).
+
+**W3.2 — finding từ kiểm thử của owner trên production (W3):**
+
+| ID | Mức | Vấn đề | Đóng bằng |
+|---|---|---|---|
+| `W3.2-RR-01` | BLOCKER | Khách hỏi "đổi size… O-819125" (đơn `pending`), AI trả câu soạn sẵn "đổi size tận nhà miễn phí 2 chiều" từ nhánh từ khóa trong `dispute_agent`: không kiểm điều kiện đơn, không qua `prepare_order_action`, tự hứa chính sách không trích dẫn | W3.2-D3, W3.2-D7 |
+| `W3.2-RR-02` | MAJOR | Câu hỏi tiếp nối "hiện có những size nào" bị định tuyến sang agent trò chuyện chung (`witty_general_fallback`) vì định tuyến chỉ dò từ khóa ở tin cuối; lời gọi model sau đó thất bại (0 token) và trả 503 | W3.2-D3, W3.2-D8 |
+| `W3.2-RR-03` | MAJOR | Đổi hàng chỉ có `size`/`one_to_one` (khóa bằng CHECK trong DB); không đổi màu/kiểu được; lý do là danh sách riêng theo loại | W3.2-D1, W3.2-D2, W3.2-D4, W3.2-D6 |
+| `W3.2-RR-04` | MAJOR | Model đã bật native tool-calling và thinking trên vLLM nhưng app không tận dụng: định tuyến theo từ khóa, mỗi worker chỉ thấy vài tool, câu trả lời của model bị thay bằng câu soạn sẵn, trần 4 lượt model quá thấp cho chuỗi nhiều bước | W3.2-D9 đến W3.2-D12 |
+
+**Kết luận:** W3.2 **READY** để thực thi theo [W3.2 execution handoff](W3_2_EXECUTION_HANDOFF_2026-11-02.md) sau khi W3.1 được merge. Readiness tổng thể vẫn `BLOCKED` cho `W4–W6` (trừ phần AI W3.2 kéo lên). Migration business v7 và deploy cần owner duyệt riêng, theo runbook như W3.

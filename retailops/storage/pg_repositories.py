@@ -6,6 +6,7 @@ from retailops.storage.pg_schema import P5C_BUSINESS_DDL, P5C_IDENTITY_DDL, init
 from retailops.storage.postgres import (
     BUSINESS_SCHEMA_CURRENT,
     BUSINESS_V5_SCHEMA_VERSION,
+    BUSINESS_V6_SCHEMA_VERSION,
     IDENTITY_SCHEMA,
     IDENTITY_SCHEMA_CURRENT,
     check_schema,
@@ -41,7 +42,7 @@ class PostgresBusinessStore(BusinessStore):
                         503,
                         'business_migration_required',
                         f"Kho dữ liệu business PostgreSQL ({self.schema}) đang ở schema v{ver}; khởi động bị chặn fail-closed. "
-                        "Hãy chạy lệnh operator database migrate-v6 với --confirm-preflight --confirm-backup.",
+                        "Hãy chạy lệnh operator database migrate-v7 với --confirm-preflight --confirm-backup.",
                     )
             if migrate:
                 with self.connection(write=True) as db:
@@ -243,7 +244,7 @@ def migrate_postgres_business_v6(dsn, *, preflight_confirmed=False, backup_confi
             if not ver_row or ver_row.get('component') != 'business':
                 raise ValueError('Unsupported PostgreSQL schema version or component.')
             prev_ver = ver_row.get('version')
-            if prev_ver not in (1, 2, 3, 4, 5, 6):
+            if prev_ver not in (1, 2, 3, 4, 5, 6, 7):
                 raise ValueError('Unsupported PostgreSQL schema version or component.')
             initialize(
                 db,
@@ -252,16 +253,89 @@ def migrate_postgres_business_v6(dsn, *, preflight_confirmed=False, backup_confi
                 allow_business_v5_upgrade=True,
                 allow_business_v6_upgrade=True,
             )
-            if prev_ver < BUSINESS_SCHEMA_CURRENT:
+            if prev_ver < BUSINESS_V6_SCHEMA_VERSION:
                 any_upgraded = True
 
     return {
         'result': 'BUSINESS_V6_MIGRATED',
         'backend': 'postgresql',
+        'schema_version': BUSINESS_V6_SCHEMA_VERSION,
+        'logical_version': BUSINESS_V6_SCHEMA_VERSION,
+        'tenants': migrated_tenants,
+        'upgraded': any_upgraded,
+    }
+
+
+def migrate_postgres_business_v7(dsn, *, preflight_confirmed=False, backup_confirmed=False):
+    """Explicit operator migration command for PostgreSQL Business v7 (W3.2-D1, W3.2-D6).
+
+    Iterates every tenant schema registered in retailops_identity.tenants and upgrades business
+    schemas to v7 inside one transaction per tenant: adds target_variant_id / target_variant_label,
+    replaces the W3 CHECK on exchange_kind, and rewrites `size` -> `other_variant` (target left empty)
+    and `one_to_one` -> `same_variant`. No row is deleted. Idempotent. Never invoked automatically.
+    """
+    require(
+        preflight_confirmed is True and backup_confirmed is True,
+        400,
+        'migration_confirmation_required',
+        'Lệnh nâng cấp Business v7 yêu cầu xác nhận tường minh --confirm-preflight và --confirm-backup theo runbook §11.5.',
+    )
+    validate_dsn(dsn)
+    identity = PostgresIdentityStore(dsn, create=False, migrate=False, read_only=False)
+    with identity.connection(write=False) as id_db:
+        tenants = id_db.execute('SELECT id, storage_key FROM tenants ORDER BY id').fetchall()
+
+    any_upgraded = False
+    migrated_tenants = 0
+    requests_total = 0
+    mapped_total = 0
+    for tenant in tenants:
+        schema = tenant_schema(tenant['storage_key'])
+        with transaction(dsn, schema, write=True) as db:
+            from psycopg import sql
+            exists = db.raw.execute('SELECT 1 FROM pg_namespace WHERE nspname=%s', (schema,)).fetchone()
+            if not exists:
+                continue
+            migrated_tenants += 1
+            ver_row = db.raw.execute(
+                sql.SQL('SELECT component,version FROM {}.retailops_schema').format(sql.Identifier(schema))
+            ).fetchone()
+            if not ver_row or ver_row.get('component') != 'business':
+                raise ValueError('Unsupported PostgreSQL schema version or component.')
+            prev_ver = ver_row.get('version')
+            if prev_ver not in (1, 2, 3, 4, 5, 6, 7):
+                raise ValueError('Unsupported PostgreSQL schema version or component.')
+            requests_before, legacy_rows = 0, 0
+            if prev_ver == BUSINESS_V6_SCHEMA_VERSION:
+                requests_before = db.raw.execute('SELECT COUNT(*) AS total FROM order_action_requests').fetchone()['total']
+                legacy_rows = db.raw.execute(
+                    "SELECT COUNT(*) AS total FROM order_action_requests WHERE exchange_kind IN ('size', 'one_to_one')"
+                ).fetchone()['total']
+            initialize(
+                db,
+                schema,
+                'business',
+                allow_business_v5_upgrade=True,
+                allow_business_v6_upgrade=True,
+                allow_business_v7_upgrade=True,
+            )
+            requests_after = db.raw.execute('SELECT COUNT(*) AS total FROM order_action_requests').fetchone()['total']
+            if requests_after < requests_before:
+                raise ValueError('Business v7 migration lost order-action requests; the transaction is rolled back.')
+            requests_total += int(requests_after)
+            mapped_total += int(legacy_rows)
+            if prev_ver < BUSINESS_SCHEMA_CURRENT:
+                any_upgraded = True
+
+    return {
+        'result': 'BUSINESS_V7_MIGRATED',
+        'backend': 'postgresql',
         'schema_version': BUSINESS_SCHEMA_CURRENT,
         'logical_version': BUSINESS_SCHEMA_CURRENT,
         'tenants': migrated_tenants,
         'upgraded': any_upgraded,
+        'order_action_requests': requests_total,
+        'exchange_requests_mapped': mapped_total,
     }
 
 

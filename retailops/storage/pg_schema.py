@@ -1,7 +1,7 @@
 """Explicit PostgreSQL DDL and staged business migrations."""
 from retailops.core import ApiError
 from retailops.storage.postgres import (BUSINESS_SCHEMA_CURRENT, BUSINESS_V5_SCHEMA_VERSION,
-                                        IDENTITY_SCHEMA, IDENTITY_SCHEMA_CURRENT,
+                                        BUSINESS_V6_SCHEMA_VERSION, IDENTITY_SCHEMA, IDENTITY_SCHEMA_CURRENT,
                                         assert_schema, valid_schema)
 
 BUSINESS_DDL = [
@@ -257,10 +257,13 @@ BUSINESS_V6_TABLES_DDL = [
         case_id TEXT NOT NULL REFERENCES cases(case_id),
         conversation_id TEXT NOT NULL,
         type TEXT NOT NULL CHECK(type IN ('cancel', 'return', 'exchange')),
-        exchange_kind TEXT CHECK(
-            (type = 'exchange' AND exchange_kind IN ('size', 'one_to_one'))
+        exchange_kind TEXT CONSTRAINT order_action_requests_exchange_kind_v7_check CHECK(
+            (type = 'exchange' AND exchange_kind IS NOT NULL
+                 AND exchange_kind IN ('other_variant', 'same_variant'))
             OR (type <> 'exchange' AND exchange_kind IS NULL)
         ),
+        target_variant_id TEXT,
+        target_variant_label TEXT,
         status TEXT NOT NULL CHECK(
             status IN ('requested', 'under_review', 'approved', 'rejected', 'received', 'inspected', 'completed')
         ),
@@ -288,6 +291,12 @@ BUSINESS_V6_TABLES_DDL = [
         inspected_at DOUBLE PRECISION,
         completed_at DOUBLE PRECISION,
         closed_at DOUBLE PRECISION,
+        CONSTRAINT order_action_requests_target_variant_v7_check CHECK(
+            (target_variant_label IS NULL OR char_length(target_variant_label) <= 200)
+            AND ((target_variant_id IS NULL AND target_variant_label IS NULL)
+                 OR (exchange_kind IS NOT NULL AND exchange_kind = 'other_variant'
+                     AND target_variant_id IS NOT NULL AND target_variant_label IS NOT NULL))
+        ),
         CHECK(
             (type = 'cancel' AND (
                 (status IN ('requested', 'under_review') AND closed_at IS NULL)
@@ -368,6 +377,55 @@ BUSINESS_V6_DDL = [
     *BUSINESS_V6_TABLES_DDL,
 ]
 
+# Business v7 (W3.2-D1, W3.2-D6): rewrite a W3 request table to the general-exchange shape. Runs only when
+# the schema moves from version 6 to 7, in one transaction, and is safe to repeat. A fresh or v5 schema
+# already has the v7 table, so every statement is then a no-op. No statement contains a percent sign
+# because psycopg treats it as a placeholder.
+BUSINESS_V7_UPGRADE_DDL = [
+    'ALTER TABLE order_action_requests ADD COLUMN IF NOT EXISTS target_variant_id TEXT',
+    'ALTER TABLE order_action_requests ADD COLUMN IF NOT EXISTS target_variant_label TEXT',
+    # PostgreSQL named the W3 CHECK on exchange_kind itself, so find it by what it checks.
+    '''DO $$
+    DECLARE legacy RECORD;
+    BEGIN
+        FOR legacy IN
+            SELECT conname FROM pg_constraint
+            WHERE conrelid = 'order_action_requests'::regclass
+              AND contype = 'c'
+              AND position('exchange_kind' in pg_get_constraintdef(oid)) > 0
+              AND conname NOT IN ('order_action_requests_exchange_kind_v7_check',
+                                  'order_action_requests_target_variant_v7_check')
+        LOOP
+            EXECUTE 'ALTER TABLE order_action_requests DROP CONSTRAINT ' || quote_ident(legacy.conname);
+        END LOOP;
+    END
+    $$''',
+    '''UPDATE order_action_requests
+       SET exchange_kind = CASE exchange_kind WHEN 'size' THEN 'other_variant' WHEN 'one_to_one' THEN 'same_variant' END
+       WHERE exchange_kind IN ('size', 'one_to_one')''',
+    '''DO $$
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                       WHERE conrelid = 'order_action_requests'::regclass
+                         AND conname = 'order_action_requests_exchange_kind_v7_check') THEN
+            ALTER TABLE order_action_requests ADD CONSTRAINT order_action_requests_exchange_kind_v7_check CHECK (
+                (type = 'exchange' AND exchange_kind IS NOT NULL
+                     AND exchange_kind IN ('other_variant', 'same_variant'))
+                OR (type <> 'exchange' AND exchange_kind IS NULL));
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                       WHERE conrelid = 'order_action_requests'::regclass
+                         AND conname = 'order_action_requests_target_variant_v7_check') THEN
+            ALTER TABLE order_action_requests ADD CONSTRAINT order_action_requests_target_variant_v7_check CHECK (
+                (target_variant_label IS NULL OR char_length(target_variant_label) <= 200)
+                AND ((target_variant_id IS NULL AND target_variant_label IS NULL)
+                     OR (exchange_kind IS NOT NULL AND exchange_kind = 'other_variant'
+                         AND target_variant_id IS NOT NULL AND target_variant_label IS NOT NULL)));
+        END IF;
+    END
+    $$''',
+]
+
 BUSINESS_DDL.extend(P5C_BUSINESS_DDL)
 BUSINESS_DDL.extend(BUSINESS_V5_DDL)
 BUSINESS_DDL.extend(BUSINESS_V6_TABLES_DDL)
@@ -414,6 +472,7 @@ def initialize(
     allow_identity_v5_upgrade=False,
     allow_business_v5_upgrade=False,
     allow_business_v6_upgrade=False,
+    allow_business_v7_upgrade=False,
 ):
     from psycopg import sql
     valid_schema(schema)
@@ -580,26 +639,30 @@ def initialize(
             for statement in P5C_IDENTITY_DDL:
                 db.raw.execute(statement)
         if component == 'business':
-            if row['version'] not in (1, 2, 3, 4, 5, 6):
+            if row['version'] not in (1, 2, 3, 4, 5, 6, 7):
                 raise ValueError('Unsupported PostgreSQL schema version or component.')
-            target_ver = (
+            requested_ver = (
                 BUSINESS_SCHEMA_CURRENT
+                if allow_business_v7_upgrade
+                else BUSINESS_V6_SCHEMA_VERSION
                 if allow_business_v6_upgrade
                 else (BUSINESS_V5_SCHEMA_VERSION if allow_business_v5_upgrade and row['version'] <= BUSINESS_V5_SCHEMA_VERSION else BUSINESS_SCHEMA_CURRENT)
             )
-            if row['version'] < BUSINESS_V5_SCHEMA_VERSION and not (allow_business_v5_upgrade or allow_business_v6_upgrade):
+            target_ver = max(requested_ver, row['version'])  # an older milestone command never downgrades
+            any_business_upgrade = allow_business_v5_upgrade or allow_business_v6_upgrade or allow_business_v7_upgrade
+            if row['version'] < BUSINESS_V5_SCHEMA_VERSION and not any_business_upgrade:
                 raise ApiError(
                     503,
                     'business_migration_required',
                     f"Kho dữ liệu business PostgreSQL ({schema}) đang ở schema v{row['version']}; khởi động bị chặn fail-closed. "
-                    "Hãy chạy lệnh operator database migrate-v6 với --confirm-preflight --confirm-backup.",
+                    "Hãy chạy lệnh operator database migrate-v7 với --confirm-preflight --confirm-backup.",
                 )
-            if row['version'] < target_ver and target_ver == BUSINESS_SCHEMA_CURRENT and not allow_business_v6_upgrade:
+            if row['version'] < target_ver and target_ver == BUSINESS_SCHEMA_CURRENT and not allow_business_v7_upgrade:
                 raise ApiError(
                     503,
                     'business_migration_required',
                     f"Kho dữ liệu business PostgreSQL ({schema}) đang ở schema v{row['version']}; khởi động bị chặn fail-closed. "
-                    "Hãy chạy lệnh operator database migrate-v6 với --confirm-preflight --confirm-backup.",
+                    "Hãy chạy lệnh operator database migrate-v7 với --confirm-preflight --confirm-backup.",
                 )
             db.raw.execute(sql.SQL('SET LOCAL search_path TO {}, pg_catalog').format(sql.Identifier(schema)))
             if row['version'] == 1:
@@ -655,8 +718,13 @@ def initialize(
                 backfill_business_v5_cases(db)
                 db.execute("UPDATE retailops_schema SET version=? WHERE component='business'", (BUSINESS_V5_SCHEMA_VERSION,))
                 row = {'component': 'business', 'version': BUSINESS_V5_SCHEMA_VERSION}
-            if row['version'] == BUSINESS_V5_SCHEMA_VERSION and target_ver >= BUSINESS_SCHEMA_CURRENT:
+            if row['version'] == BUSINESS_V5_SCHEMA_VERSION and target_ver >= BUSINESS_V6_SCHEMA_VERSION:
                 for statement in BUSINESS_V6_DDL:
+                    db.raw.execute(statement)
+                db.execute("UPDATE retailops_schema SET version=? WHERE component='business'", (BUSINESS_V6_SCHEMA_VERSION,))
+                row = {'component': 'business', 'version': BUSINESS_V6_SCHEMA_VERSION}
+            if row['version'] == BUSINESS_V6_SCHEMA_VERSION and target_ver >= BUSINESS_SCHEMA_CURRENT:
+                for statement in BUSINESS_V7_UPGRADE_DDL:
                     db.raw.execute(statement)
                 db.execute("UPDATE retailops_schema SET version=? WHERE component='business'", (BUSINESS_SCHEMA_CURRENT,))
                 row = {'component': 'business', 'version': BUSINESS_SCHEMA_CURRENT}
@@ -666,7 +734,7 @@ def initialize(
                 db.raw.execute(statement)
             for statement in BUSINESS_V5_DDL:
                 db.raw.execute(statement)
-            if target_ver >= BUSINESS_SCHEMA_CURRENT:
+            if target_ver >= BUSINESS_V6_SCHEMA_VERSION:
                 for statement in BUSINESS_V6_DDL:
                     db.raw.execute(statement)
         assert_schema(db, schema, component)

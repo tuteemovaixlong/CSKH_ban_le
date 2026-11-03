@@ -20,7 +20,7 @@ class MockGateway:
         if tools_allowed and self.tool_calls:
             calls = self.tool_calls
             self.tool_calls = []
-            return {"message": {"role": "assistant", "content": None, "tool_calls": calls}}
+            return {"message": {"role": "assistant", "content": "", "tool_calls": calls}}
         return {"message": {"role": "assistant", "content": self.reply}}
 
 
@@ -52,35 +52,37 @@ class TestEcommerceOps(unittest.TestCase):
         self.assertIn("Nguyễn Văn Tuấn", shipment["shipper"])
         self.assertTrue(shipment["can_reassign_today"])
 
-    def test_sop2_damaged_item_exchange_proposal(self):
-        """SOP 2: Damaged item in transit -> AI checks warranty and generates 1-to-1 exchange proposal."""
+    def test_sop2_damaged_item_goes_to_the_model_with_server_tools(self):
+        """SOP 2 (W3.2-D3/D7): a damaged-item complaint reaches the dispute worker, which lets the model read the
+        order with the server tools and answer in its own words. No scripted 1-to-1 proposal exists any more."""
         state = {
             "messages": [{"role": "user", "content": "Áo khoác đơn O-302 của mình bị kẹt khóa kéo YKK cứng ngắc không kéo được, shop bảo hành đổi 1-1 giúp mình với!"}],
             "fresh": [], "trace": {}, "tool_count": 0, "complete": False,
             "bound": {"order_id": "O-302", "product_id": "P-104"},
             "intent": "unknown", "next_worker": "supervisor", "subagent_history": [],
             "sentiment": "neutral", "strict_mode": False, "consecutive_ood_count": 0,
-            "action_proposal": None, "requires_human": False, "human_reason": None
+            "requires_human": False, "human_reason": None
         }
 
-        # Step 1: Supervisor routes to dispute agent
+        # Step 1: Supervisor routes to the dispute worker
         routed_state = run_supervisor(state)
         self.assertEqual(routed_state["next_worker"], "dispute_agent")
 
-        # Step 2: Dispute agent creates 1-to-1 proposal
-        gateway = MockGateway(reply="Đã tạo đề xuất đổi mới 1-1.")
+        # Step 2: the model reads the order through the server tool and writes the reply itself
+        read_order = {"function": {"name": "get_order", "arguments": {"order_id": "O-302"}}}
+        gateway = MockGateway(reply="Em rất tiếc về sự cố khóa kéo ạ. Em đã xem đơn O-302, anh/chị gửi ảnh lỗi để em báo CSKH nhé.",
+                              tool_calls=[read_order])
         processed_state = run_dispute_agent(routed_state, self.tools, gateway)
 
         self.assertTrue(processed_state["complete"])
-        proposal = processed_state["action_proposal"]
-        self.assertIsNotNone(proposal)
-        self.assertEqual(proposal["action"], "exchange_1to1")
-        self.assertEqual(proposal["order_id"], "O-302")
-        self.assertEqual(proposal["status"], "pending_staff_approval")
-        self.assertIn("Đổi mới 1-1", processed_state["messages"][-1]["content"])
+        self.assertEqual(processed_state["messages"][-1]["content"], gateway.reply)
+        self.assertEqual([t["name"] for t in processed_state["trace"]["tools"]], ["get_order"])
+        self.assertNotIn("action_proposal", processed_state)
+        self.assertIsNone(self.tools.prepared_order_action)  # only prepare_order_action opens a form, and it was not called
 
-    def test_sop3_size_exchange_inventory_check(self):
-        """SOP 3: Size exchange -> AI checks inventory and generates 2-way exchange proposal."""
+    def test_sop3_size_exchange_reads_stock_from_the_server_and_prepares_the_target_variant(self):
+        """SOP 3 (W3.2-D1/D5/D7): inventory comes from the server tool; the exchange is a general "other variant"
+        request whose target is matched to a real variant of the product. Stock informs, it does not decide."""
         # 1. Direct tool check
         inv = self.tools("check_inventory", {"product_id": "P-203", "size": "L", "color": "Xanh Navy"})
         self.assertTrue(inv["in_stock"])
@@ -93,13 +95,16 @@ class TestEcommerceOps(unittest.TestCase):
             "bound": {"order_id": "O-303", "product_id": "P-203"},
             "intent": "unknown", "next_worker": "supervisor", "subagent_history": [],
             "sentiment": "neutral", "strict_mode": False, "consecutive_ood_count": 0,
-            "action_proposal": None, "requires_human": False, "human_reason": None
+            "requires_human": False, "human_reason": None
         }
 
         routed_state = run_supervisor(state)
         self.assertEqual(routed_state["next_worker"], "dispute_agent")
 
-        gateway = MockGateway(reply="Đã tạo đề xuất đổi size.")
+        prepare = {"function": {"name": "prepare_order_action", "arguments": {
+            "order_id": "O-303", "action_type": "exchange", "target_variant": "size L"}}}
+        gateway = MockGateway(reply="Size L còn hàng ạ, em đã mở form để anh/chị chọn lý do rồi bấm xác nhận.",
+                              tool_calls=[prepare])
         tools_c004 = BoundTools(
             self.store, self.catalog, "C-004",
             {"order_id": "O-303", "product_id": "P-203"},
@@ -107,12 +112,11 @@ class TestEcommerceOps(unittest.TestCase):
         )
         processed_state = run_dispute_agent(routed_state, tools_c004, gateway)
 
-        proposal = processed_state["action_proposal"]
-        self.assertIsNotNone(proposal)
-        self.assertEqual(proposal["action"], "size_exchange")
-        self.assertEqual(proposal["order_id"], "O-303")
-        self.assertEqual(proposal["target_size"], "L")
-        self.assertEqual(proposal["status"], "pending_staff_approval")
+        self.assertEqual(processed_state["messages"][-1]["content"], gateway.reply)
+        prepared = tools_c004.prepared_order_action
+        self.assertEqual((prepared["order"]["id"], prepared["action_type"], prepared["exchange_kind"], prepared["target_variant_id"]),
+                         ("O-303", "exchange", "other_variant", "P-203-L-Xanh_Navy"))
+        self.assertNotIn("action_proposal", processed_state)
 
     def test_sop4_mega_sale_sorting_delay_voucher(self):
         """SOP 4: Sorting hub bottleneck (>48h delay) -> AI detects delay and provides 50K compensation voucher."""
@@ -137,7 +141,7 @@ class TestEcommerceOps(unittest.TestCase):
             "fresh": [], "trace": {}, "tool_count": 0, "complete": False,
             "bound": {}, "intent": "unknown", "next_worker": "supervisor", "subagent_history": [],
             "sentiment": "neutral", "strict_mode": False, "consecutive_ood_count": 0,
-            "action_proposal": None, "requires_human": False, "human_reason": None
+            "requires_human": False, "human_reason": None
         }
 
         result = run_supervisor(state)
@@ -154,7 +158,7 @@ class TestEcommerceOps(unittest.TestCase):
             "fresh": [], "trace": {}, "tool_count": 0, "complete": False,
             "bound": {}, "intent": "unknown", "next_worker": "supervisor", "subagent_history": [],
             "sentiment": "neutral", "strict_mode": False, "consecutive_ood_count": 0,
-            "action_proposal": None, "requires_human": False, "human_reason": None
+            "requires_human": False, "human_reason": None
         }
 
         result = run_supervisor(state)

@@ -125,14 +125,14 @@ os.environ["VLLM_USE_FLASHINFER"] = "0"
 # 1. Bỏ --enforce-eager: Cho phép CUDA Graphs để tăng tốc decoding lên 1.5x - 2x.
 # 2. --enable-prefix-caching: Giữ cache KV của System Prompt + Tool Schema (giảm 1.5s TTFT).
 # 3. --kv-cache-dtype fp8: Tận dụng phần cứng FP8 của GPU L4, giảm 50% băng thông đọc/ghi KV.
-# 4. --max-model-len 4096: Vừa vặn CSKH, khởi tạo CUDA Graph cực nhanh, tránh OOM.
+# 4. --max-model-len 16384: cửa sổ 16k token cho agent nhiều bước (chủ sở hữu nâng từ 8192 ngày 2026-11-03).
 vllm_cmd = [
     sys.executable, "-m", "vllm.entrypoints.openai.api_server",
     "--model", MODEL,
     *quant_flags,
     "--port", "8001",
     "--gpu-memory-utilization", "0.88",
-    "--max-model-len", "8192",
+    "--max-model-len", "16384",
     "--kv-cache-dtype", "fp8",
     "--enable-prefix-caching",
     "--trust-remote-code",

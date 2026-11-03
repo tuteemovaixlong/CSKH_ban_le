@@ -87,6 +87,21 @@ let mockStaffCaseOrderActions = null;
 let mockStaffCaseOrders = null;
 let mockStaffCaseTranscriptMap = null;
 let alertCalls = [];
+// W3.2: the shared reason catalog and the variants of a product, as the API returns them.
+const mockReasonCatalog = [
+  { code: 'change_of_mind', label: 'Khách đổi ý', applies_to: ['cancel', 'return', 'exchange'], requires_text: false, staff_only: false },
+  { code: 'fit_issue', label: 'Không vừa', applies_to: ['return', 'exchange'], requires_text: false, staff_only: false },
+  { code: 'defective_item', label: 'Sản phẩm lỗi / hư hỏng', applies_to: ['return', 'exchange'], requires_text: false, staff_only: false },
+  { code: 'delivery_failed', label: 'Giao hàng thất bại', applies_to: ['cancel'], requires_text: false, staff_only: true },
+  { code: 'other', label: 'Lý do khác', applies_to: ['cancel', 'return', 'exchange'], requires_text: true, staff_only: false }
+];
+let mockProgress = { active: false };
+function exchangeOptionsBody(orderId, staff) {
+  const variants = [['S', 'out_of_stock', 0], ['M', 'in_stock', 4], ['L', 'in_stock', 9], ['XL', 'unknown', null]].map(([size, stock_status, stock]) => ({
+    id: 'P-102-' + size + '-Đen', label: 'Đen · Size ' + size, stock_status, is_current: size === 'L', ...(staff ? { stock } : {})
+  }));
+  return { order_id: orderId, product_id: 'P-102', current_variant_label: 'Đen · Size L', variants };
+}
 const storageMap = new Map();
 const localStorage = {
   getItem: k => (storageMap.has(k) ? storageMap.get(k) : null),
@@ -132,6 +147,19 @@ const context=vm.createContext({document,console,Intl,Date,URLSearchParams,Abort
       const found = ordList.find(o => o.id === payload.order_id) || ordList[0];
       body = { order: found, context: { order_id: found.id, product_id: found.product_id || 'P-101' }, message: 'Đã chọn đơn ' + found.id, source: 'store_data' };
     }
+    else if(url==='/api/order-action-reasons') {
+      const staffView = ['staff', 'manager'].includes(mockSessionRole);
+      body = { version: 1, role: mockSessionRole || 'customer', text_max_length: 500,
+        reasons: mockReasonCatalog.filter(r => staffView || !r.staff_only).map(r => {
+          const { staff_only, ...rest } = r;
+          return staffView ? r : rest;
+        }) };
+    }
+    else if(/^\/api\/orders\/[^/]+\/exchange-options$/.test(url)) body = exchangeOptionsBody(url.split('/')[3], false);
+    else if(/^\/api\/staff\/cases\/[^/]+\/orders\/[^/]+\/exchange-options$/.test(url)) {
+      body = { ...exchangeOptionsBody(url.split('/')[6], true), case_id: url.split('/')[4], read_only: false };
+    }
+    else if(/^\/api\/conversations\/[^/]+\/progress$/.test(url)) body = mockProgress;
     else if(url==='/api/order-actions' && options.method==='POST') {
       const payload = JSON.parse(options.body || '{}');
       body = {
@@ -756,7 +784,8 @@ function collectText(node) {
   forceStaffReplyError = null;
   closeStaffDeskDialogFn: await run('closeStaffDeskDialog()');
 
-  // R1-W3 Item 11: Customer UI order-action reason + optional image evidence -> single POST /api/order-actions + status notice in chat
+  // R1-W3.2 Item 6: the customer's request card runs on the shared model. Reasons come from the API, an exchange to
+  // another variant names the variant (with its stock) and "Lý do khác" needs a description.
   mockSessionRole = 'customer';
   mockOrders = [
     { id: 'O-101', customer_id: 'C-001', name: 'Áo thun Essential', variant: 'Trắng / M', amount: 299000, status: 'pending', version: 1, product_id: 'P-101' },
@@ -767,23 +796,44 @@ function collectText(node) {
   assert.ok(!get('order-details').children.some(n => n.textContent === 'Yêu cầu hủy đơn này'));
 
   const oaBeforePrepare = requests.filter(r => r.url === '/api/order-actions').length;
-  await run('chooseReason("O-102", "exchange", "size")');
-  // Opening reason UI creates ZERO requests!
+  await run('chooseReason("O-102", "exchange", "other_variant", "P-102-XL-Đen")');
+  assert.ok(requests.some(r => r.url === '/api/order-action-reasons'), 'reasons must be read from GET /api/order-action-reasons');
+  assert.ok(requests.some(r => r.url === '/api/orders/O-102/exchange-options'), 'target variants must be read from the exchange-options API');
+  // Opening the card creates ZERO order-action requests!
   assert.equal(requests.filter(r => r.url === '/api/order-actions').length, oaBeforePrepare);
 
   const lastMsgRow = get('messages').children.at(-1);
   const oaCard = lastMsgRow.children.find(c => c && c.className && c.className.includes('order-action-card'));
   assert.ok(oaCard, 'Order action reason card must be rendered in chat');
   const radios = oaCard.querySelectorAll('input').filter(i => i.type === 'radio');
-  assert.ok(radios.length >= 2);
-  radios[0].onchange(); // Select 'wrong_size'
+  assert.deepEqual(radios.map(r => r.value), ['change_of_mind', 'fit_issue', 'defective_item', 'other'],
+    'an exchange offers the catalog reasons that apply to exchanges, in catalog order and without staff-only reasons');
+  assert.deepEqual(oaCard.querySelectorAll('label').map(l => l.children[1].textContent),
+    ['Khách đổi ý', 'Không vừa', 'Sản phẩm lỗi / hư hỏng', 'Lý do khác']);
+  const targetSelect = oaCard.querySelectorAll('select').find(s => s.className === 'order-action-target-select');
+  assert.ok(targetSelect, 'an exchange to another variant needs a target variant select');
+  assert.deepEqual(targetSelect.children.map(o => o.textContent), [
+    '— Chọn biến thể —', 'Đen · Size S · hết hàng', 'Đen · Size M · còn hàng',
+    'Đen · Size L · còn hàng (đang giữ)', 'Đen · Size XL · chưa rõ tồn kho']);
+  assert.equal(targetSelect.children.find(o => o.value === 'P-102-L-Đen').disabled, true, 'the variant the order holds cannot be the target');
+  assert.equal(targetSelect.value, 'P-102-XL-Đen', 'the variant the assistant matched is pre-selected');
+  const submitBtn = oaCard.querySelectorAll('button').find(b => b.textContent === 'Xác nhận gửi yêu cầu');
+  assert.equal(submitBtn.disabled, true, 'a reason is required');
+  radios[3].onchange(); // "Lý do khác" needs a description
+  const noteArea = oaCard.querySelectorAll('textarea')[0];
+  assert.equal(noteArea.required, true);
+  assert.equal(submitBtn.disabled, true, '"Lý do khác" must not be sendable without a description');
+  noteArea.value = '   ';
+  noteArea.oninput();
+  assert.equal(submitBtn.disabled, true, 'a blank description does not count');
+  noteArea.value = 'Áo hơi chật vai, muốn đổi lên XL';
+  noteArea.oninput();
+  assert.equal(submitBtn.disabled, false);
   const fileInput = oaCard.querySelectorAll('input').find(i => i.type === 'file');
   fileInput.files = [{ name: 'anh_size.jpg', type: 'image/jpeg', size: 2048 }];
   fileInput.onchange();
-  const noteArea = oaCard.querySelectorAll('textarea')[0];
-  noteArea.value = 'Áo hơi chật vai, muốn đổi lên XL';
-  const submitBtn = oaCard.querySelectorAll('button').find(b => b.textContent === 'Xác nhận gửi yêu cầu');
-  assert.equal(submitBtn.disabled, false);
+  targetSelect.value = 'P-102-M-Đen'; // the customer picks another variant than the one suggested
+  targetSelect.onchange();
   await submitBtn.onclick();
 
   const oaCalls = requests.filter(r => r.url === '/api/order-actions').slice(oaBeforePrepare);
@@ -791,12 +841,50 @@ function collectText(node) {
   const oaPayload = JSON.parse(oaCalls[0].options.body);
   assert.equal(oaPayload.order_id, 'O-102');
   assert.equal(oaPayload.type, 'exchange');
-  assert.equal(oaPayload.exchange_kind, 'size');
+  assert.equal(oaPayload.exchange_kind, 'other_variant');
+  assert.equal(oaPayload.target_variant_id, 'P-102-M-Đen', 'the chosen target variant is what is sent');
   assert.equal(oaPayload.expected_order_version, 2);
-  assert.equal(oaPayload.reason_code, 'wrong_size');
+  assert.equal(oaPayload.reason_code, 'other');
   assert.equal(oaPayload.reason_text, 'Áo hơi chật vai, muốn đổi lên XL');
   assert.equal(submitBtn.disabled, true);
   assert.equal(requests.filter(r => r.url === '/api/order-actions/oar_ui_fixture_1/evidence').length, 1);
+
+  // An exchange to another variant cannot be sent without a target (stock never blocks it: Size S is out of stock)
+  await run('chooseReason("O-102", "exchange", "other_variant")');
+  const card2 = get('messages').children.at(-1).children.find(c => c && c.className && c.className.includes('order-action-card'));
+  const radios2 = card2.querySelectorAll('input').filter(i => i.type === 'radio');
+  const submit2 = card2.querySelectorAll('button').find(b => b.textContent === 'Xác nhận gửi yêu cầu');
+  const target2 = card2.querySelectorAll('select').find(s => s.className === 'order-action-target-select');
+  assert.equal(target2.value, '');
+  radios2[1].onchange();
+  assert.equal(submit2.disabled, true, 'a reason without a target variant is not enough');
+  target2.value = 'P-102-S-Đen';
+  target2.onchange();
+  assert.equal(submit2.disabled, false, 'an out-of-stock target is still allowed');
+
+  // Same-variant exchange (defective item): no target, and the kind select switches the form
+  await run('chooseReason("O-102", "exchange", "same_variant")');
+  const card3 = get('messages').children.at(-1).children.find(c => c && c.className && c.className.includes('order-action-card'));
+  const radios3 = card3.querySelectorAll('input').filter(i => i.type === 'radio');
+  const submit3 = card3.querySelectorAll('button').find(b => b.textContent === 'Xác nhận gửi yêu cầu');
+  assert.equal(card3.querySelectorAll('div').find(d => d.className.includes('order-action-target')).hidden, true, 'same variant needs no target');
+  radios3[2].onchange();
+  assert.equal(submit3.disabled, false);
+  const kindSelect3 = card3.querySelectorAll('select').find(s => s.className === 'order-action-kind-select');
+  assert.deepEqual(kindSelect3.children.map(o => o.value), ['return', 'exchange:other_variant', 'exchange:same_variant']);
+  kindSelect3.value = 'exchange:other_variant';
+  await kindSelect3.onchange();
+  assert.equal(card3.querySelectorAll('div').find(d => d.className.includes('order-action-target')).hidden, false);
+  assert.equal(submit3.disabled, true, 'switching the kind resets the reason');
+  kindSelect3.value = 'exchange:same_variant';
+  await kindSelect3.onchange();
+  card3.querySelectorAll('input').filter(i => i.type === 'radio')[2].onchange();
+  const oaBeforeSame = requests.filter(r => r.url === '/api/order-actions').length;
+  await submit3.onclick();
+  const samePayload = JSON.parse(requests.filter(r => r.url === '/api/order-actions').slice(oaBeforeSame)[0].options.body);
+  assert.equal(samePayload.exchange_kind, 'same_variant');
+  assert.equal(samePayload.reason_code, 'defective_item');
+  assert.ok(!('target_variant_id' in samePayload), 'a same-variant exchange sends no target variant');
 
   // Customer receives system_order_action status notice in chat!
   mockTranscriptResponse = {
@@ -805,14 +893,14 @@ function collectText(node) {
     turns: [
       {
         id: 901,
-        messages: JSON.stringify([{ role: 'assistant', content: 'Yêu cầu đổi hàng (đổi size) của đơn O-102 đã được duyệt.' }]),
-        result: JSON.stringify({ author: 'system_order_action', order_id: 'O-102', message: 'Yêu cầu đổi hàng (đổi size) của đơn O-102 đã được duyệt.' })
+        messages: JSON.stringify([{ role: 'assistant', content: 'Yêu cầu đổi hàng (đổi sang biến thể khác) của đơn O-102 đã được duyệt.' }]),
+        result: JSON.stringify({ author: 'system_order_action', order_id: 'O-102', message: 'Yêu cầu đổi hàng (đổi sang biến thể khác) của đơn O-102 đã được duyệt.' })
       }
     ],
     feedbacks: []
   };
   await run('pollHumanChat()');
-  assert.ok(collectText(get('messages')).includes('Yêu cầu đổi hàng (đổi size) của đơn O-102 đã được duyệt.'));
+  assert.ok(collectText(get('messages')).includes('Yêu cầu đổi hàng (đổi sang biến thể khác) của đơn O-102 đã được duyệt.'));
   mockTranscriptResponse = null;
 
   // R1-W3 Item 12: Staff Desk "Thao tác ca" collapsible module (W3-D10), canned buttons removed, CSS/header layout, and role/state button matrix
@@ -860,13 +948,18 @@ function collectText(node) {
           case_id: 'case_open_oa',
           conversation_id: 'fixture-conversation',
           type: 'exchange',
-          exchange_kind: 'size',
+          exchange_kind: 'other_variant',
           status: 'requested',
           inspection_outcome: null,
           refund_status: 'not_applicable',
           refund_decision: null,
-          reason_code: 'wrong_size',
-          reason_label: 'Không vừa size / muốn đổi size',
+          reason_code: 'fit_issue',
+          reason_label: 'Không vừa',
+          current_variant_label: 'Đen · Size L',
+          target_variant_id: 'P-102-XL-Đen',
+          target_variant_label: 'Đen · Size XL',
+          target_stock_status: 'in_stock',
+          target_stock: 3,
           reason_text: 'Chật vai, xin đổi sang XL',
           raised_by_role: 'customer',
           delivery_failure_attempts: null,
@@ -910,7 +1003,9 @@ function collectText(node) {
   const panelEl = get('staff-order-actions-panel');
   const panelTxtUnclaimed = collectText(panelEl);
   assert.ok(panelTxtUnclaimed.includes('Đơn O-102'));
-  assert.ok(panelTxtUnclaimed.includes('Đổi hàng (Đổi size)'));
+  assert.ok(panelTxtUnclaimed.includes('Đổi hàng (Đổi sang biến thể khác)'));
+  assert.ok(panelTxtUnclaimed.includes('Biến thể: Đen · Size L → Đen · Size XL'), 'the panel shows the current variant and the wanted one');
+  assert.ok(panelTxtUnclaimed.includes('Tồn kho đích: còn 3'), 'the panel shows the stock of the wanted variant');
   assert.ok(panelTxtUnclaimed.includes('4 ngày kể từ khi giao'));
   assert.ok(panelTxtUnclaimed.includes('Lịch sử quyết định (1)'));
   assert.equal(panelEl.querySelectorAll('img').length, 1);
@@ -1212,16 +1307,31 @@ function collectText(node) {
   get('staff-consent-turn-select').onchange();
   assert.equal(get('btn-create-consented-order-action').disabled, true, 'Clearing consent turn must lock submit button');
 
-  // Selecting delivered order O-302, exchange:size, reason wrong_size, note, and consent turn 990 unlocks & sends exact payload
+  // Selecting delivered order O-302 and an exchange to another variant: reasons come from the shared catalog, the
+  // target variant is required (stock is shown, never a blocker) and "Lý do khác" needs a description
   get('staff-consent-order-select').value = 'O-302';
-  get('staff-consent-order-select').onchange();
-  get('staff-consent-type-select').value = 'exchange:size';
-  get('staff-consent-type-select').onchange();
-  assert.equal(get('staff-consent-reason-select').value, 'wrong_size');
-  get('staff-consent-note-input').value = 'Khách đồng ý đổi sang size XL';
-  get('staff-consent-note-input').oninput();
+  await get('staff-consent-order-select').onchange();
+  get('staff-consent-type-select').value = 'exchange:other_variant';
+  await get('staff-consent-type-select').onchange();
+  assert.deepEqual(get('staff-consent-type-select').children.map(o => o.value), ['return', 'exchange:other_variant', 'exchange:same_variant']);
+  assert.deepEqual(get('staff-consent-reason-select').children.map(o => o.value), ['change_of_mind', 'fit_issue', 'defective_item', 'other'],
+    'staff pick from the same catalog (the delivery-failure reason has its own form)');
+  assert.equal(get('staff-consent-reason-select').value, 'change_of_mind');
+  assert.equal(get('staff-consent-target-field').hidden, false);
+  assert.ok(requests.some(r => r.url === '/api/staff/cases/case_consent_1/orders/O-302/exchange-options'));
+  assert.deepEqual(get('staff-consent-target-select').children.map(o => o.textContent), [
+    '— Chọn biến thể —', 'Đen · Size S · hết hàng', 'Đen · Size M · còn 4', 'Đen · Size L · còn 9 (đang giữ)', 'Đen · Size XL · chưa rõ tồn kho']);
   get('staff-consent-turn-select').value = '990';
   get('staff-consent-turn-select').onchange();
+  assert.equal(get('btn-create-consented-order-action').disabled, true, 'a target variant is required for an exchange to another variant');
+  get('staff-consent-target-select').value = 'P-102-XL-Đen';
+  get('staff-consent-target-select').onchange();
+  assert.equal(get('btn-create-consented-order-action').disabled, false);
+  get('staff-consent-reason-select').value = 'other';
+  get('staff-consent-reason-select').onchange();
+  assert.equal(get('btn-create-consented-order-action').disabled, true, '"Lý do khác" needs a description');
+  get('staff-consent-note-input').value = 'Khách đồng ý đổi sang size XL';
+  get('staff-consent-note-input').oninput();
   assert.equal(get('btn-create-consented-order-action').disabled, false);
 
   const staffOaReqsBefore = requests.filter(r => r.url === '/api/staff/cases/case_consent_1/order-actions' && r.options && r.options.method === 'POST').length;
@@ -1233,12 +1343,37 @@ function collectText(node) {
     order_id: 'O-302',
     expected_order_version: 3,
     type: 'exchange',
-    exchange_kind: 'size',
-    reason_code: 'wrong_size',
+    exchange_kind: 'other_variant',
+    target_variant_id: 'P-102-XL-Đen',
+    reason_code: 'other',
     reason_text: 'Khách đồng ý đổi sang size XL',
     consent_turn_id: 990
   });
   await run('closeStaffDeskDialog()');
+
+  // R1-W3.2 Item 6 (W3.2-D10): the progress line of a running turn comes from the turn's own trace
+  mockSessionRole = 'customer';
+  await run('conversationId = "fixture-conversation"');
+  await run('startProgressPolling()'); // the test context has no timers: starting must not throw
+  mockProgress = { active: true, phase: 'model', model_calls: 1, tools: [] };
+  await run('pollTurnProgress()');
+  assert.equal(get('model-status-title').textContent, 'Model đang xử lý…');
+  mockProgress = { active: true, phase: 'model', model_calls: 2, tools: [{ name: 'get_order', status: 'ok' }, { name: 'check_inventory', status: 'ok' }, { name: 'check_inventory', status: 'ok' }] };
+  await run('pollTurnProgress()');
+  assert.equal(get('model-status-title').textContent, 'Đã kiểm tra tồn kho…');
+  assert.ok(get('model-status-detail').textContent.includes('đơn hàng → tồn kho'), 'each tool is listed once, in the order it ran');
+  assert.ok(get('model-status-detail').textContent.includes('bước 2'));
+  assert.ok(requests.some(r => r.url === '/api/conversations/fixture-conversation/progress'));
+  const shownTitle = get('model-status-title').textContent;
+  mockProgress = { active: false };
+  await run('pollTurnProgress()');
+  assert.equal(get('model-status-title').textContent, shownTitle, 'an idle answer changes nothing');
+  mockProgress = { active: true, phase: 'tool', model_calls: 1, tools: [{ name: 'get_product', status: 'ok' }] };
+  const lateProgress = run('pollTurnProgress()');
+  await run('stopProgressPolling()');
+  await lateProgress;
+  assert.equal(get('model-status-title').textContent, shownTitle, 'a poll that finishes after the turn must not overwrite the final status');
+  mockProgress = { active: false };
 
   // R1-W3.1 Item 5 (W3.1-D6): Enlarged default Staff Desk, fullscreen toggle persisted in localStorage, and wide 3-column CSS layout
   assert.ok(indexHtml.includes('id="btn-maximize-staff-desk"'), 'web/index.html must include #btn-maximize-staff-desk in Staff Desk header');

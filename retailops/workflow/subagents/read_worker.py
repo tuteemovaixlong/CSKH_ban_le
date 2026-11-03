@@ -8,9 +8,10 @@ import math
 import time
 import json
 
-from agent_protocol import (MAX_MODEL_CALLS, MAX_TOOL_CALLS, ProtocolError,
-                            assistant_message, validate_messages, validate_tool)
+from agent_protocol import (LEGACY_MAX_MODEL_CALLS as MAX_MODEL_CALLS, LEGACY_MAX_TOOL_CALLS as MAX_TOOL_CALLS,
+                            ProtocolError, assistant_message, model_history, validate_messages, validate_tool)
 from retailops.core import ApiError
+from retailops.model_errors import record_model_error
 
 # These indicate unavailable infrastructure, NOT an empty database/search result.
 UNAVAILABLE = frozenset(('database_unavailable', 'knowledge_unavailable',
@@ -18,16 +19,19 @@ UNAVAILABLE = frozenset(('database_unavailable', 'knowledge_unavailable',
 
 
 def worker_messages(state, prompt):
-    """Keep complete history and attachments; caller owns the worker instruction."""
+    """Keep the conversation text and attachments; caller owns the worker instruction.
+
+    Every worker builds its model input here, so history is shaped in exactly one place."""
     history = copy.deepcopy(state['messages'])
     if history and history[0].get('role') == 'system':
         history = history[1:]
-    messages = [{'role': 'system', 'content': prompt}, *history]
+    messages = [{'role': 'system', 'content': prompt}, *model_history(history)]
     validate_messages(messages)
     return messages
 
 
-def _summarize_tool_result(name, args, result):
+def summarize_tool_result(name, args, result):
+    """One safe line about a tool result for the trace panel; never raises."""
     try:
         if not isinstance(result, dict):
             return 'Kết quả không xác định'
@@ -93,6 +97,9 @@ def _summarize_tool_result(name, args, result):
         return 'Đã thực thi công cụ'
 
 
+_summarize_tool_result = summarize_tool_result  # name used by older tests
+
+
 def call_model(gateway, messages, allow_tools, deadline, trace, *, allowed_tools=None):
     from retailops_agent import AgentError
     remaining = deadline - time.monotonic()
@@ -127,15 +134,8 @@ def call_model(gateway, messages, allow_tools, deadline, trace, *, allowed_tools
             code = 'agent_response_failed'
         trace['reported_cost_usd'] = None
         trace['usage_incomplete'] = True
-        err_entry = {'code': code, 'call': trace['model_calls']}
-        http_status = getattr(exc, 'http_status', None)
-        if isinstance(exc, AgentError) and isinstance(exc.trace, dict):
-            for k in ('http_status', 'error_kind', 'stage', 'upstream_code'):
-                if k in exc.trace:
-                    err_entry[k] = exc.trace[k]
-            if not http_status:
-                http_status = exc.trace.get('http_status')
-        trace.setdefault('model_errors', []).append(err_entry)
+        entry = record_model_error(trace, exc, code=code, call=trace['model_calls'])
+        http_status = getattr(exc, 'http_status', None) or entry.get('http_status')
         agent_err = AgentError(code, 'Không nhận được phản hồi hợp lệ từ model. Vui lòng thử lại.', trace)
         if http_status:
             agent_err.http_status = http_status
@@ -152,7 +152,8 @@ def call_model(gateway, messages, allow_tools, deadline, trace, *, allowed_tools
 
 
 def run_read_worker(state, execute, gateway, *, prompt, allowed_tools, render,
-                    worker, timeout=60):
+                    worker, timeout=60, tolerated=frozenset()):
+    """`tolerated` lists tool error codes the model may read and explain itself (a reply, not a refusal)."""
     from retailops_agent import AgentError
 
     state = copy.deepcopy(state)
@@ -259,7 +260,7 @@ def run_read_worker(state, execute, gateway, *, prompt, allowed_tools, render,
                 tool_entry['executed'] = False
                 tool_entry['stage'] = 'worker_scope_guard'
             trace.setdefault('tools', []).append(tool_entry)
-            if code in UNAVAILABLE:
+            if code in UNAVAILABLE and code not in tolerated:
                 trace['outcome'] = 'tool_unavailable'
                 raise AgentError('tool_unavailable', 'Nguồn dữ liệu chưa sẵn sàng. Chưa thể xác minh kết quả.', trace)
             entry = {'role': 'tool', 'tool_name': name,
@@ -268,7 +269,7 @@ def run_read_worker(state, execute, gateway, *, prompt, allowed_tools, render,
             state['fresh'].append(copy.deepcopy(entry))
             state['messages'].append(copy.deepcopy(entry))
             records.append({'name': name, 'args': args, 'result': result})
-            business_error = business_error or bool(code)
+            business_error = business_error or (bool(code) and code not in tolerated)
             if code:
                 has_step_error = True
             step_tools.append({
@@ -276,7 +277,7 @@ def run_read_worker(state, execute, gateway, *, prompt, allowed_tools, render,
                 'args': args,
                 'status': 'error' if code else 'ok',
                 'error_code': code,
-                'summary': _summarize_tool_result(name, args, result)
+                'summary': summarize_tool_result(name, args, result)
             })
 
         is_backtrack = has_step_error or (step > 0 and any(s.get('backtrack') or any(t.get('status') == 'error' for t in s.get('tools', [])) for s in trace['steps']))

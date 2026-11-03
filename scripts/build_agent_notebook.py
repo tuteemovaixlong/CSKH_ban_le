@@ -45,6 +45,7 @@ def build():
         "retailops_tools.py",
         "retailops_conversation.py",
         "data/products.json",
+        "data/order_action_reasons.json",
         "data/smoke.jsonl",
         "notebooks/agent_smoke.py",
         "notebooks/colab_runtime.py",

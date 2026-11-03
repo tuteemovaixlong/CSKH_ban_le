@@ -5,6 +5,7 @@ from pathlib import Path
 import sqlite3
 from contextlib import closing
 
+from retailops.business.schema import LEGACY_EXCHANGE_KIND_MAP
 from retailops.storage.pg_schema import initialize
 from retailops.storage.postgres import IDENTITY_SCHEMA, tenant_schema, transaction
 
@@ -29,9 +30,9 @@ def read_database(path, component, tables):
             db.row_factory = sqlite3.Row
             db.execute('BEGIN')
             marker = [dict(row) for row in db.execute('SELECT component,version FROM retailops_schema')]
-            allowed_versions = (1, 2, 3, 4, 5) if component == 'business' else (1, 2, 3, 4, 5)
+            allowed_versions = (1, 2, 3, 4, 5, 6) if component == 'business' else (1, 2, 3, 4, 5)
             if len(marker) != 1 or marker[0]['component'] != component or marker[0]['version'] not in allowed_versions:
-                raise ValueError('Import requires identity v1/v2/v3/v4/v5 and business v1/v2/v3/v4/v5 in a stopped persistent SQLite snapshot.')
+                raise ValueError('Import requires identity v1/v2/v3/v4/v5 and business v1/v2/v3/v4/v5/v6 in a stopped persistent SQLite snapshot.')
             if db.execute('PRAGMA integrity_check').fetchone()[0] != 'ok' or db.execute('PRAGMA foreign_key_check').fetchall():
                 raise ValueError('SQLite snapshot failed integrity checks.')
             if component == 'business':
@@ -59,6 +60,12 @@ def read_database(path, component, tables):
             if component == 'business':
                 for row in result.get('orders', ()):
                     row.setdefault('delivered_at', None)
+                # A W3 snapshot (SQLite 5) predates general exchange: carry its requests over the same way
+                # `migrate-v7` does, so the PostgreSQL target (always the current shape) accepts them.
+                for row in result.get('order_action_requests', ()):
+                    row['exchange_kind'] = LEGACY_EXCHANGE_KIND_MAP.get(row.get('exchange_kind'), row.get('exchange_kind'))
+                    row.setdefault('target_variant_id', None)
+                    row.setdefault('target_variant_label', None)
             if component == 'identity':
                 for row in result.get('memberships', ()):
                     row.setdefault('disabled_reason', None)

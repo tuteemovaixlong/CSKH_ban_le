@@ -149,7 +149,8 @@ class RagChatPostgresTests(unittest.TestCase):
             lambda messages: response('The write tool is unavailable. ['+
                 json.loads(next(m['content'] for m in messages if m.get('tool_name')=='search_knowledge'))['results'][0]['citation_id']+']')]
         result = self.app.chat('C-001', self.body())
-        self.assertEqual(result['trace']['tools'][-1], {'name':'execute_sql','status':'error'})
+        # W3.2: a refused tool call now says why in the trace (error_code), so the customer agent's turns can be audited
+        self.assertEqual(result['trace']['tools'][-1], {'name':'execute_sql','status':'error','error_code':'tool_not_allowed'})
         self.assertEqual(self.store.lookup('C-001','O-101')['status'], 'pending')
         self.assertEqual(result['action'], 'reply')
 

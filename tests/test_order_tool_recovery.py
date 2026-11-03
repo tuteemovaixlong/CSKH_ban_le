@@ -569,19 +569,26 @@ class OrderToolRecoveryTests(unittest.TestCase):
                 agent.request({'messages': []}, 5)
             self.assertEqual(cm.exception.trace.get('error_kind'), 'timeout')
 
-    def test_t18_order_id_typo_handling_and_normalization(self):
-        """T18: Order ID typos like O0819127 are routed appropriately and normalized by dispute handler."""
+    def test_t18_order_id_typo_is_routed_and_never_guessed_by_code(self):
+        """T18 (W3.2): a typo such as O0819127 still reaches the order worker; the dispute worker no longer rewrites
+        it into O-819127 on the model's behalf, so a wrong ID is answered with the tool's own order_not_found."""
         s = state('Kiểm tra đơn O0819127 xem giao đến đâu')
         r = run_supervisor(s)
         self.assertEqual(r['next_worker'], 'order_agent')
 
         from retailops.workflow.subagents.dispute_agent import run_dispute_agent
         disp_state = state('Tôi muốn hủy đơn O0819127')
-        mock_tool = lambda n, a: {'eligible': True, 'order': {'id': 'O-819127', 'status': 'pending'}, 'order_id': 'O-819127'}
-        tool_call = {'function': {'name': 'prepare_cancellation', 'arguments': json.dumps({'order_id': 'O0819127', 'reason': 'Đổi ý'})}}
+        seen = []
+
+        def mock_tool(name, args):
+            seen.append((name, args))
+            return {'error': 'order_not_found'}
+        tool_call = {'function': {'name': 'prepare_cancellation', 'arguments': json.dumps({'order_id': 'O0819127'})}}
         with patch.object(self.adapter, 'chat', return_value={'message': {'role': 'assistant', 'content': '', 'tool_calls': [tool_call]}}):
             out = run_dispute_agent(disp_state, mock_tool, self.adapter)
-        self.assertEqual(out.get('action_proposal', {}).get('order_id'), 'O-819127')
+        self.assertEqual(seen, [('prepare_cancellation', {'order_id': 'O0819127'})])  # passed through as written
+        self.assertIn('Không tìm thấy', out['messages'][-1]['content'])
+        self.assertNotIn('action_proposal', out)
 
     def test_t19_worker_model_errors_preserves_upstream_http_metadata(self):
         """T19: Worker model_errors preserves upstream http_status and error_kind diagnostics."""

@@ -77,7 +77,8 @@ print('BUSINESS_BOUNDARY_OK')
 
     def test_invalid_mode_or_flags_fail_before_any_data_is_created(self):
         for changes in ({'RETAILOPS_DATA_MODE': 'production'}, {'RETAILOPS_API_ENABLED': 'treu'},
-                        {'RETAILOPS_PUBLIC_CUSTOM_ENABLED': '1'}, {'RETAILOPS_API_DAILY_TURN_LIMIT': '0'}):
+                        {'RETAILOPS_PUBLIC_CUSTOM_ENABLED': '1'}, {'RETAILOPS_API_DAILY_TURN_LIMIT': '0'},
+                        {'RETAILOPS_AGENT_MODE': 'turbo'}):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 build_public_app(Settings.from_environment('public', {**self.env, **changes}))
         self.assertFalse(self.output.exists())

@@ -76,6 +76,7 @@ _PROMPT_LEAK_REGEXES = (
     re.compile(r"\bRETAILOPS_CANARY_[A-Za-z0-9_-]+\b", re.IGNORECASE),
     re.compile(r"You support a Vietnamese retail customer of RetailOps Shop using server-bound read-only tools", re.IGNORECASE),
     re.compile(r"Bạn là Chuyên viên Tiếp nhận Khiếu nại, Bảo hành & Đổi trả của shop Thương Mại Điện Tử", re.IGNORECASE),
+    re.compile(r"You help a customer of RetailOps Shop with a cancellation, return, exchange, defect or complaint", re.IGNORECASE),
     re.compile(r"\b(?:sk-(?:proj-|or-v1-|ant-)?[A-Za-z0-9_-]{16,}|AIza[0-9A-Za-z_-]{20,})\b"),
     re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"),
 )
@@ -503,6 +504,21 @@ def enforce_final_answer_grounding(
                 if isinstance(cat_p, dict):
                     inspected_products[pid] = cat_p
 
+    # Stock lives on the variants: get_product lists it per variant, prepare_order_action lists the variants of an
+    # exchange and check_inventory reports one. A product-level stock of None therefore does not make a stock claim
+    # fabricated when a tool of this turn reported variant stock for that product.
+    variant_stock_pids: set[str] = set()
+    for t_name, t_res in tool_Outputs:
+        exchange = t_res.get("exchange") if isinstance(t_res.get("exchange"), dict) else {}
+        if isinstance(t_res.get("product"), dict) and t_res.get("availability"):
+            variant_stock_pids.add(str(t_res["product"].get("id") or "").upper())
+        if exchange.get("variants") and exchange.get("product_id"):
+            variant_stock_pids.add(str(exchange["product_id"]).upper())
+        if t_name == "check_inventory" and t_res.get("product_id") and (
+            t_res.get("stock") is not None or t_res.get("in_stock") is not None
+        ):
+            variant_stock_pids.add(str(t_res["product_id"]).upper())
+
     for pid_match in re.findall(r"\b(P-\d{3,6})\b", user_text or "", flags=re.IGNORECASE):
         pid_up = pid_match.upper()
         if pid_up not in inspected_products and catalog is not None:
@@ -519,6 +535,8 @@ def enforce_final_answer_grounding(
     for pid, prod in inspected_products.items():
         p_price = prod.get("price")
         p_stock = prod.get("stock")
+        if p_stock is None and pid.upper() in variant_stock_pids:
+            p_stock = "per_variant"
         p_warranty = prod.get("warranty_days")
         if p_price is None or p_stock is None or p_warranty is None:
             pname = prod.get("name") or pid

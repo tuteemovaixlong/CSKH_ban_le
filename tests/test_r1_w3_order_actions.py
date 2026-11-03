@@ -41,6 +41,7 @@ from retailops.storage import cli as database_cli
 from retailops.storage.pg_repositories import (
     PostgresBusinessStore,
     migrate_postgres_business_v6,
+    migrate_postgres_business_v7,
 )
 from retailops.storage.pg_schema import (
     BUSINESS_DDL,
@@ -189,6 +190,18 @@ def _build_mock_pg_harness(tenant_keys_v5: list[str]):
                 mem.execute("ALTER TABLE orders ADD COLUMN delivered_at REAL")
                 mem.commit()
             return []
+        # Business v7 upgrade statements. SQLite cannot emulate PL/pgSQL DO blocks (they only drop and add
+        # named CHECK constraints), so they are no-ops here; the real PostgreSQL run is covered by the
+        # RETAILOPS_TEST_DATABASE_URL test in test_r1_w3_2_business_v7.py.
+        if q.startswith("DO $$"):
+            return []
+        if q.startswith("ALTER TABLE order_action_requests ADD COLUMN IF NOT EXISTS "):
+            column = q.split("IF NOT EXISTS ", 1)[1].split()[0]
+            cols = {r[1] for r in mem.execute("PRAGMA table_info(order_action_requests)").fetchall()}
+            if column not in cols:
+                mem.execute(q.replace(" IF NOT EXISTS", ""))
+                mem.commit()
+            return []
         sql_sqlite = (
             statement.replace("%s", "?")
             .replace("BIGSERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT")
@@ -318,9 +331,10 @@ class PhaseR1W3BusinessV6SchemaAndMigrationTests(unittest.TestCase):
         self.root = Path(self.temp.name)
 
     def test_item1_sqlite_fresh_v6_schema_partial_unique_append_only_and_no_cascade_cleanup(self):
-        self.assertEqual(SQLITE_BUSINESS_SCHEMA_CURRENT, 5)
-        self.assertEqual(POSTGRES_BUSINESS_SCHEMA_CURRENT, 6)
-        self.assertEqual(BUSINESS_SCHEMA_CURRENT, 6)
+        # W3.2 moved the current version on to Business v7 (SQLite 6, PostgreSQL 7); the W3 milestone is fixed history.
+        self.assertEqual(SQLITE_BUSINESS_SCHEMA_CURRENT, 6)
+        self.assertEqual(POSTGRES_BUSINESS_SCHEMA_CURRENT, 7)
+        self.assertEqual(BUSINESS_SCHEMA_CURRENT, 7)
         self.assertEqual(
             BUSINESS_V5_VERSION_MAPPING,
             {"logical_milestone": "business_v5", "sqlite": 4, "postgresql": 5},
@@ -337,7 +351,7 @@ class PhaseR1W3BusinessV6SchemaAndMigrationTests(unittest.TestCase):
 
         with store.connection(write=True) as db:
             ver_row = db.execute("SELECT component, version FROM retailops_schema").fetchone()
-            self.assertEqual((ver_row["component"], ver_row["version"]), ("business", 5))
+            self.assertEqual((ver_row["component"], ver_row["version"]), ("business", 6))
             order_cols = {r["name"] for r in db.execute("PRAGMA table_info(orders)").fetchall()}
             self.assertIn("delivered_at", order_cols)
 
@@ -496,7 +510,7 @@ class PhaseR1W3BusinessV6SchemaAndMigrationTests(unittest.TestCase):
             self.assertEqual((unconf.exception.status, unconf.exception.code), (400, "migration_confirmation_required"))
             self.assertEqual(_file_sha(t1_path), sha1_before)
 
-            # 2. Controlled migrate-v6 upgrades ALL tenants to SQLite v5 (logical Business v6)
+            # 2. Controlled migrate-v6 upgrades ALL tenants to SQLite v5 (logical Business v6, the W3 milestone)
             mig1 = database_cli.run(
                 parser.parse_args(
                     ["database", "--output", str(ws), "migrate-v6", "--confirm-preflight", "--confirm-backup"]
@@ -518,6 +532,30 @@ class PhaseR1W3BusinessV6SchemaAndMigrationTests(unittest.TestCase):
             mig2 = migrate_sqlite_business_v6(ws, preflight_confirmed=True, backup_confirmed=True)
             self.assertEqual(mig2["upgraded"], False)
             self.assertEqual(mig2["tenants"], 2)
+
+            # 4. Since W3.2 the W3 milestone is no longer current: startup and check stay blocked until migrate-v7
+            with self.assertRaises(ApiError) as still_blocked:
+                database_cli.run(parser.parse_args(["database", "--output", str(ws), "check"]))
+            self.assertEqual((still_blocked.exception.status, still_blocked.exception.code),
+                             (503, "business_migration_required"))
+            mig3 = database_cli.run(
+                parser.parse_args(
+                    ["database", "--output", str(ws), "migrate-v7", "--confirm-preflight", "--confirm-backup"]
+                )
+            )
+            self.assertEqual(
+                mig3,
+                {
+                    "result": "BUSINESS_V7_MIGRATED",
+                    "backend": "sqlite",
+                    "schema_version": 6,
+                    "logical_version": 7,
+                    "tenants": 2,
+                    "upgraded": True,
+                    "order_action_requests": 0,
+                    "exchange_requests_mapped": 0,
+                },
+            )
 
             chk = database_cli.run(parser.parse_args(["database", "--output", str(ws), "check"]))
             self.assertEqual(chk, {"result": "SQLITE_SCHEMA_READY", "tenants_checked": 2})
@@ -606,24 +644,55 @@ class PhaseR1W3BusinessV6SchemaAndMigrationTests(unittest.TestCase):
             mig2 = migrate_postgres_business_v6(pg_dsn, preflight_confirmed=True, backup_confirmed=True)
             self.assertEqual(mig2["upgraded"], False)
 
+            # Since W3.2 the W3 milestone is no longer current: the store and check stay blocked until migrate-v7
+            for pg_blocked in (
+                lambda: database_cli.run(parser.parse_args(["database", "check"])),
+                lambda: PostgresBusinessStore(pg_dsn, key_a, create=False),
+            ):
+                with self.assertRaises(ApiError) as still_blocked:
+                    pg_blocked()
+                self.assertEqual((still_blocked.exception.status, still_blocked.exception.code),
+                                 (503, "business_migration_required"))
+            for sc in (schema_a, schema_b):
+                self.assertEqual(state.schemas[sc].execute("SELECT version FROM retailops_schema").fetchone()[0], 6)
+
+            mig3 = database_cli.run(
+                parser.parse_args(["database", "migrate-v7", "--confirm-preflight", "--confirm-backup"])
+            )
+            self.assertEqual(
+                mig3,
+                {
+                    "result": "BUSINESS_V7_MIGRATED",
+                    "backend": "postgresql",
+                    "schema_version": 7,
+                    "logical_version": 7,
+                    "tenants": 2,
+                    "upgraded": True,
+                    "order_action_requests": 0,
+                    "exchange_requests_mapped": 0,
+                },
+            )
+            mig4 = migrate_postgres_business_v7(pg_dsn, preflight_confirmed=True, backup_confirmed=True)
+            self.assertEqual(mig4["upgraded"], False)
+
             chk = database_cli.run(parser.parse_args(["database", "check"]))
             self.assertEqual(chk["result"], "POSTGRES_SCHEMA_READY")
 
             for sc in (schema_a, schema_b):
                 mem = state.schemas[sc]
-                self.assertEqual(mem.execute("SELECT version FROM retailops_schema").fetchone()[0], 6)
+                self.assertEqual(mem.execute("SELECT version FROM retailops_schema").fetchone()[0], 7)
                 o102 = mem.execute("SELECT delivered_at FROM orders WHERE id='O-102'").fetchone()
                 self.assertIsNone(o102["delivered_at"])
                 # Pending proposal NOT backfilled (W3-D9)
                 self.assertEqual(mem.execute("SELECT COUNT(*) FROM proposals").fetchone()[0], 1)
                 self.assertEqual(mem.execute("SELECT COUNT(*) FROM order_action_requests").fetchone()[0], 0)
 
-            # 3. Fresh PostgreSQL tenant schema initializes directly to v6 and enforces partial unique + append-only
+            # 3. Fresh PostgreSQL tenant schema initializes directly to v7 and enforces partial unique + append-only
             key_c = "c" * 32
             PostgresBusinessStore(pg_dsn, key_c, create=True)
             schema_c = tenant_schema(key_c)
             mem_c = state.schemas[schema_c]
-            self.assertEqual(mem_c.execute("SELECT version FROM retailops_schema").fetchone()[0], 6)
+            self.assertEqual(mem_c.execute("SELECT version FROM retailops_schema").fetchone()[0], 7)
             mem_c.execute("INSERT INTO customers VALUES ('C-900', 'Khách C')")
             mem_c.execute(
                 "INSERT INTO orders(id, customer_id, product_id, name, variant, amount, status, version) "
@@ -772,7 +841,7 @@ class PhaseR1W3OrderActionCreationAndFacadeTests(unittest.TestCase):
         for bad_type in ("return", "exchange"):
             payload = {"order_id": "O-101", "type": bad_type, "expected_order_version": 1, "reason_code": "defective_item"}
             if bad_type == "exchange":
-                payload["exchange_kind"] = "one_to_one"
+                payload["exchange_kind"] = "same_variant"
             st, body = self._req("POST", "/api/order-actions", payload, cookie=self.cust1)
             self.assertEqual((st, body["error"]), (409, "order_not_eligible"))
 
@@ -826,14 +895,15 @@ class PhaseR1W3OrderActionCreationAndFacadeTests(unittest.TestCase):
             {
                 "order_id": "O-103",
                 "type": "exchange",
-                "exchange_kind": "size",
+                "exchange_kind": "same_variant",
                 "expected_order_version": 1,
-                "reason_code": "wrong_size",
+                "reason_code": "defective_item",
             },
             cookie=self.cust1,
         )
         self.assertEqual(st3, 201)
-        self.assertEqual(x_res["order_action"]["exchange_kind"], "size")
+        self.assertEqual(x_res["order_action"]["exchange_kind"], "same_variant")
+        self.assertIsNone(x_res["order_action"]["target_variant_id"])
 
         st4, c2_res = self._req(
             "POST",
@@ -1082,9 +1152,9 @@ class PhaseR1W3ReviewLifecycleDeliveryFailureRefundAndManagerStatusTests(unittes
             {
                 "order_id": "O-102",
                 "type": "exchange",
-                "exchange_kind": "size",
+                "exchange_kind": "same_variant",
                 "expected_order_version": 1,
-                "reason_code": "wrong_size",
+                "reason_code": "wrong_size",  # a W3 code: still accepted as an alias of fit_issue
             },
             cookie=self.cust1,
         )
@@ -1718,7 +1788,7 @@ class PhaseR1W3OutboxWorkerJsonlEnvelopeManifestAndCliTests(unittest.TestCase):
             {
                 "order_id": "O-102",
                 "type": "exchange",
-                "exchange_kind": "one_to_one",
+                "exchange_kind": "same_variant",
                 "expected_order_version": 1,
                 "reason_code": "defective_item",
             },
@@ -1901,12 +1971,15 @@ class PhaseR1W3AgentPrepareOrderActionTests(unittest.TestCase):
         # Protocol validation: prepare_order_action & alias prepare_cancellation reject write flags or bad enums
         validate_tool("prepare_order_action", {"order_id": "O-101"})
         validate_tool("prepare_order_action", {"order_id": "O-102", "action_type": "return"})
-        validate_tool("prepare_order_action", {"order_id": "O-102", "action_type": "exchange", "exchange_kind": "one_to_one"})
+        validate_tool("prepare_order_action", {"order_id": "O-102", "action_type": "exchange", "target_variant": "size XL"})  # W3.2: free text
+        validate_tool("prepare_order_action", {"order_id": "O-102", "action_type": "exchange"})
         validate_tool("prepare_cancellation", {"order_id": "O-101"})
         for bad_name, bad_args in (
             ("prepare_order_action", {"order_id": "O-101", "confirmed": True}),
             ("prepare_order_action", {"order_id": "O-101", "action_type": "refund"}),
-            ("prepare_order_action", {"order_id": "O-102", "action_type": "return", "exchange_kind": "size"}),
+            ("prepare_order_action", {"order_id": "O-102", "action_type": "return", "target_variant": "size XL"}),
+            ("prepare_order_action", {"order_id": "O-102", "action_type": "exchange", "exchange_kind": "other_variant"}),  # W3.2: the server derives the kind
+            ("prepare_order_action", {"order_id": "O-102", "action_type": "exchange", "target_variant": ""}),
             ("prepare_cancellation", {"order_id": "O-101", "action_type": "return"}),
         ):
             with self.assertRaises(ProtocolError):
@@ -1920,21 +1993,23 @@ class PhaseR1W3AgentPrepareOrderActionTests(unittest.TestCase):
         res_cancel = self._chat("Tôi muốn hủy đơn O-101")
         self.assertEqual(res_cancel["action"], "choose_cancel_reason")
         self.assertEqual(res_cancel["order"]["id"], "O-101")
-        self.assertEqual(res_cancel["order_action"], {"action_type": "cancel", "exchange_kind": None, "order_id": "O-101"})
+        self.assertEqual(res_cancel["order_action"], {"action_type": "cancel", "exchange_kind": None,
+                                                      "target_variant_id": None, "order_id": "O-101"})
 
-        # 2. prepare_order_action(O-102, exchange, size) on delivered order -> eligible, choose_order_action_reason, ZERO rows!
+        # 2. prepare_order_action(O-102, exchange, other_variant) on delivered order -> eligible, choose_order_action_reason, ZERO rows!
         self.model.replies = [
             self._tool_reply(
                 "prepare_order_action",
-                {"order_id": "O-102", "action_type": "exchange", "exchange_kind": "size"},
+                {"order_id": "O-102", "action_type": "exchange", "target_variant": "size XL"},
             ),
             self._text_reply("Đơn O-102 đủ điều kiện đổi size, vui lòng chọn lý do và xác nhận."),
         ]
         res_ex = self._chat("Tôi muốn đổi size cho đơn O-102")
         self.assertEqual(res_ex["action"], "choose_order_action_reason")
+        # W3.2: the server matched the customer's words to one real variant of the product and carries its ID.
         self.assertEqual(
             res_ex["order_action"],
-            {"action_type": "exchange", "exchange_kind": "size", "order_id": "O-102"},
+            {"action_type": "exchange", "exchange_kind": "other_variant", "target_variant_id": "P-102-XL-Đen", "order_id": "O-102"},
         )
 
         # 3. Alias prepare_cancellation(O-101) still works identically and remains read-only

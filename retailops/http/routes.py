@@ -7,7 +7,8 @@ from pathlib import Path
 import re
 import time
 import urllib.parse
-from retailops.core import ApiError, BinaryPayload, EVIDENCE_MAX_BYTES, ORDER_ACTION_REASONS, fields, require
+from retailops.core import ApiError, BinaryPayload, EVIDENCE_MAX_BYTES, fields, require
+from retailops.order_reasons import ACTION_TYPES, reason_catalog
 from retailops.workflow import approval
 from retailops.business.permissions import ACTIVE_BUSINESS_ROLES, READ, CANCEL, STAFF, MANAGER
 from retailops.identity.contracts import RequestContext
@@ -434,6 +435,9 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             ))
         if path == "/api/providers":
             return (200, app.providers())
+        if path == "/api/order-action-reasons":
+            _require_ctx_permission(ctx, READ)
+            return (200, reason_catalog().public(ctx.role))
         if path == "/api/orders":
             if ctx.role == 'manager':
                 with app.store.connection() as db:
@@ -553,6 +557,10 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
         if path == "/api/manager/events":
             _require_ctx_permission(ctx, MANAGER)
             return (200, {"events": app.store.manager_events(limit=100)})
+        m_exchange_options = re.fullmatch(r"/api/orders/([A-Z]{1,6}-[0-9]{1,8})/exchange-options", path)
+        if m_exchange_options:
+            # Variants of the order's own product with stock status; another customer's order is a 404.
+            return (200, app.store.exchange_options(customer, m_exchange_options[1]))
         m = re.fullmatch(r"/api/orders/([A-Z]{1,6}-[0-9]{1,8})", path)
         if m:
             return (200, {"order": _format_order_for_api(app.store.lookup(customer, m[1]), app)})
@@ -591,8 +599,22 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 "read_only": ro,
                 "orders": formatted_orders,
                 "consent_turns": info["consent_turns"],
-                "order_action_reasons": ORDER_ACTION_REASONS,
+                "order_action_reasons": {
+                    action: {e["code"]: e["label"] for e in reason_catalog().options(action, role=ctx.role)}
+                    for action in ACTION_TYPES
+                },
             })
+        m_case_exchange_options = re.fullmatch(
+            r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/orders/([A-Z]{1,6}-[0-9]{1,8})/exchange-options", path
+        )
+        if m_case_exchange_options:
+            _require_ctx_permission(ctx, STAFF)
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
+            _, resolved_case_id, ro = _authorize_staff_transcript_view(
+                app, ctx, actor, case_id=m_case_exchange_options[1], audit_resolved=False
+            )
+            options = app.store.case_exchange_options(resolved_case_id, m_case_exchange_options[2])
+            return (200, {**options, "case_id": resolved_case_id, "read_only": ro})
         m_case_oa = re.fullmatch(r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/order-actions", path)
         if m_case_oa:
             _require_ctx_permission(ctx, STAFF)
@@ -624,6 +646,11 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 app, ctx, actor, case_id=m_case_trans[1]
             )
             return (200, app.store.conversation_transcript(cid, case_id=resolved_case_id, read_only=ro))
+        m_progress = re.fullmatch(r"/api/conversations/([a-f0-9-]{36})/progress", path)
+        if m_progress:
+            # What the customer's own running turn has done so far (tool names only); nothing for anyone else's.
+            _require_ctx_permission(ctx, READ)
+            return (200, app.turn_progress(customer, m_progress[1]))
         m_trans = re.fullmatch(r"/api/(?:staff/)?conversations/([a-f0-9-]{36})/messages", path)
         if m_trans:
             cid = m_trans[1]

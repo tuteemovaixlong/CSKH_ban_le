@@ -101,7 +101,9 @@ class ChainTests(unittest.TestCase):
         self.assertEqual(result['trace']['tools'][0]['name'], 'get_order')
         self.assertEqual(result['trace']['model_digest'], 'http-fixture-digest')
         for request in self.upstream_requests:
-            self.assertEqual(request['messages'][0], {'role': 'system', 'content': SYSTEM})
+            # W3.2: the agent loop adds the server context to the fixed rules; the proxy sends them as one system turn.
+            self.assertEqual(request['messages'][0]['role'], 'system')
+            self.assertTrue(request['messages'][0]['content'].startswith(SYSTEM))
             self.assertEqual(request['tools'], TOOLS)
             self.assertNotIn('format', request)
         self.assertEqual(self.request(base+'/api/chat', body, token='c'*40)[0], 404)

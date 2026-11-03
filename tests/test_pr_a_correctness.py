@@ -90,6 +90,16 @@ class ScriptedAgent:
         return result
 
 
+def worker_state(text, order=None, product=None):
+    """The state the legacy dispute worker receives (W3.2: the worker is model-driven, no proposal slot)."""
+    return {
+        "messages": [{"role": "user", "content": text}],
+        "fresh": [], "trace": {}, "tool_count": 0, "complete": False,
+        "bound": {"order_id": order, "product_id": product},
+        "intent": "dispute_complaint", "next_worker": "dispute_agent", "subagent_history": [],
+    }
+
+
 class TestPrACorrectness(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.NamedTemporaryFile(suffix=".sqlite3", delete=False)
@@ -436,107 +446,101 @@ class TestPrACorrectness(unittest.TestCase):
     # =========================================================================
 
     def test_f04_cancellation_delivered_order_rejected(self):
-        """F04-1: Delivered order (O-102) cancellation tool returns eligible=False; proposal MUST NOT be created and refusal message preserved."""
+        """F04-1 (W3.2): a delivered order (O-102) is reported ineligible by the server tool; no form is prepared and
+        the model's own words reach the customer. There is no scripted proposal any more."""
         tools = BoundTools(self.store, self.app.catalog, "C-001", {"id": "c1"}, {"name": "test"}, can_cancel=True)
-        state = {
-            "messages": [{"role": "user", "content": "Hủy đơn O-102 giúp tôi"}],
-            "fresh": [], "trace": {}, "tool_count": 0, "complete": False,
-            "bound": {"order_id": "O-102", "product_id": "P-102"},
-            "intent": "cancel_order", "next_worker": "dispute_agent", "subagent_history": [],
-            "action_proposal": None,
-        }
-        res_state = run_dispute_agent(state, tools, self.agent)
-        self.assertIsNone(res_state.get("action_proposal"))
-        content = res_state["messages"][-1]["content"]
-        self.assertGreater(len(content), 0)
-        self.assertIn("delivered", content.lower())
+        gateway = ScriptedAgent(response("", ("prepare_order_action", {"order_id": "O-102", "action_type": "cancel"})),
+                                response("Đơn O-102 đã giao nên chưa thể hủy ạ."))
+        res_state = run_dispute_agent(worker_state("Hủy đơn O-102 giúp tôi", "O-102", "P-102"), tools, gateway)
+        verdict = json.loads(next(m for m in res_state["messages"] if m["role"] == "tool")["content"])
+        self.assertFalse(verdict["eligible"])
+        self.assertEqual(verdict["ineligible_reason"]["code"], "order_not_pending")
+        self.assertIn("delivered", verdict["ineligible_reason"]["message"])
+        self.assertIsNone(tools.prepared_order_action)
+        self.assertIsNone(tools.cancel_order)
+        self.assertEqual(res_state["messages"][-1]["content"], "Đơn O-102 đã giao nên chưa thể hủy ạ.")
+        self.assertNotIn("action_proposal", res_state)
 
     def test_f04_cancellation_model_calls_wrong_order_rejected(self):
-        """F04-G06/N01: Customer requests O-102; model calls prepare_cancellation(O-101).
-        Verified through Application: action is reply, no cancel card, no wrong order, no proposal, context untainted."""
+        """F04-G06/N01 (W3.2): the customer names O-102 and the model prepares O-101. The tool itself answers
+        order_not_confirmed, so no form opens, the focus is untouched and the model has to ask again."""
         cid = self.store.new_conversation("C-001", "custom")["conversation_id"]
-        self.app.infer = ScriptedAgent(
-            response("", ("prepare_cancellation", {"order_id": "O-101"}))
-        )
+        seen = []
+
+        def asks_again(messages):
+            seen.append(json.loads(messages[-1]["content"]))
+            return response("Anh/chị muốn hủy đơn O-102 hay O-101 ạ?")
+        self.app.infer = ScriptedAgent(response("", ("prepare_cancellation", {"order_id": "O-101"})), asks_again)
         res = self.app.chat("C-001", {"conversation_id": cid, "text": "Hủy luôn O-102", "request_id": "req_n01_wrong_order"})
+        self.assertEqual(seen[0]["ineligible_reason"]["code"], "order_not_confirmed")
         self.assertEqual(res["action"], "reply")
         self.assertNotIn("order", res)
-        self.assertIsNone(res.get("action_proposal"))
+        self.assertNotIn("action_proposal", res)
         self.assertNotEqual(res["context"].get("order_id"), "O-101")
 
     def test_f04_cancellation_pending_order_allowed(self):
-        """F04-2: Pending order (O-101) cancellation tool returns eligible=True; proposal IS created."""
+        """F04-2 (W3.2): a pending order (O-101) is eligible; the tool prepares the shared request form (nothing is
+        created) and the customer's own confirmation is what sends it."""
         tools = BoundTools(self.store, self.app.catalog, "C-001", {"id": "c1"}, {"name": "test"}, can_cancel=True)
-        state = {
-            "messages": [{"role": "user", "content": "Hủy đơn O-101 giúp tôi"}],
-            "fresh": [], "trace": {}, "tool_count": 0, "complete": False,
-            "bound": {"order_id": "O-101", "product_id": "P-101"},
-            "intent": "cancel_order", "next_worker": "dispute_agent", "subagent_history": [],
-            "action_proposal": None,
-        }
-        res_state = run_dispute_agent(state, tools, self.agent)
-        proposal = res_state.get("action_proposal")
-        self.assertIsNotNone(proposal)
-        self.assertEqual(proposal["action"], "cancel_order")
-        self.assertEqual(proposal["order_id"], "O-101")
-        self.assertEqual(proposal["status"], "pending_user_confirmation")
+        gateway = ScriptedAgent(response("", ("prepare_order_action", {"order_id": "O-101", "action_type": "cancel"})),
+                                response("Em đã mở bảng chọn lý do, anh/chị bấm xác nhận nhé."))
+        res_state = run_dispute_agent(worker_state("Hủy đơn O-101 giúp tôi", "O-101", "P-101"), tools, gateway)
+        self.assertEqual(tools.prepared_order_action["order"]["id"], "O-101")
+        self.assertEqual(tools.prepared_order_action["action_type"], "cancel")
+        self.assertEqual(tools.cancel_order["id"], "O-101")
+        self.assertNotIn("action_proposal", res_state)
+        with self.store.connection() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM order_action_requests").fetchone()[0], 0)
 
     def test_f04_cancellation_order_id_mismatch(self):
-        """F04-3: If tool result order ID does not match chosen_oid, proposal is not created."""
-        tools = MagicMock()
-        tools.side_effect = lambda name, args: {"eligible": True, "order": {"id": "O-OTHER", "status": "pending"}}
-        state = {
-            "messages": [{"role": "user", "content": "Hủy đơn O-101"}],
-            "fresh": [], "trace": {}, "tool_count": 0, "complete": False,
-            "bound": {"order_id": "O-101"}, "intent": "cancel_order", "next_worker": "dispute_agent",
-            "subagent_history": [], "action_proposal": None,
-        }
-        res_state = run_dispute_agent(state, tools, self.agent)
-        self.assertIsNone(res_state.get("action_proposal"))
+        """F04-3 (W3.2): if a form were ever prepared for an order the customer did not name (state set by something
+        other than the tool's own order_not_confirmed check), the Application backstop drops it."""
+        cid = self.store.new_conversation("C-001", "custom")["conversation_id"]
+        original = BoundTools.__call__
+
+        def prepares_another_order(bound, name, args):
+            if name == "prepare_order_action":
+                bound.prepared_order_action = {"order": {"id": "O-102", "version": 1}, "action_type": "cancel", "exchange_kind": None}
+                return {"eligible": True, "order": {"id": "O-102"}}
+            return original(bound, name, args)
+        self.app.infer = ScriptedAgent(response("", ("prepare_order_action", {"order_id": "O-102", "action_type": "cancel"})),
+                                       response("Em đã mở bảng chọn lý do."))
+        with patch("retailops.business.application.BoundTools.__call__", new=prepares_another_order):
+            res = self.app.chat("C-001", {"conversation_id": cid, "text": "Hủy đơn O-101", "request_id": "req_f04_mismatch_01"})
+        self.assertEqual(res["action"], "reply")
+        self.assertNotIn("order", res)
+        self.assertNotIn("order_action", res)
 
     # =========================================================================
     # [F05] Phân Giải Thứ Tự Ưu Tiên Đơn Hàng Mới & G07
     # =========================================================================
 
     def test_f05_new_explicit_order_beats_stale_focus(self):
-        """F05: When user explicitly names O-102 while focus was O-101, product_id from O-102 (P-102) is used."""
-        tools = BoundTools(self.store, self.app.catalog, "C-001", {"id": "c1"}, {"name": "test"}, can_cancel=True)
-        # Stale focus is O-101 (P-101)
-        state = {
-            "messages": [{"role": "user", "content": "Đơn O-102 bị rách chỉ shop ơi"}],
-            "fresh": [], "trace": {}, "tool_count": 0, "complete": False,
-            "bound": {"order_id": "O-101", "product_id": "P-101"},
-            "intent": "complaint", "next_worker": "dispute_agent", "subagent_history": [],
-            "action_proposal": None,
-        }
-        res_state = run_dispute_agent(state, tools, self.agent)
-        proposal = res_state.get("action_proposal")
-        self.assertIsNotNone(proposal)
-        self.assertEqual(proposal["order_id"], "O-102")
-        # P-102 has warranty_days = 90
-        self.assertIn("90 ngày", res_state["messages"][-1]["content"])
+        """F05 (W3.2): when the customer names O-102 while the focus was O-101, reading O-102 moves the context to
+        O-102 and its product P-102, not the stale focus."""
+        cid = self.store.new_conversation("C-001", "custom")["conversation_id"]
+        self.app.focus("C-001", cid, {"order_id": "O-101"})  # stale focus: O-101 / P-101
+        self.app.infer = ScriptedAgent(response("", ("get_order", {"order_id": "O-102"})),
+                                       response("Đơn O-102 là áo khoác Everyday, anh/chị gửi ảnh chỗ rách giúp em nhé."))
+        res = self.app.chat("C-001", {"conversation_id": cid, "text": "Đơn O-102 bị rách chỉ shop ơi", "request_id": "req_f05_explicit_01"})
+        self.assertEqual(res["context"], {"order_id": "O-102", "product_id": "P-102"})
 
     def test_f05_new_order_without_product_does_not_steal_old_focus(self):
-        """F05-G07/N07: If new order does not resolve to a product, dispute agent must NOT steal bound product from old focus."""
-        called_tools = []
-        def spy_tools(name, args):
-            called_tools.append((name, args))
-            if name == "get_order":
-                return {"order": {"id": "O-999", "customer_id": "C-001", "product_id": None, "variant": None}}
-            return {"error": "not_found"}
-
-        tools = MagicMock(side_effect=spy_tools)
-        state = {
-            "messages": [{"role": "user", "content": "Đơn O-999 bị rách shop ơi"}],
-            "fresh": [], "trace": {}, "tool_count": 0, "complete": False,
-            "bound": {"order_id": "O-101", "product_id": "P-101"},  # old focus
-            "intent": "defect_exchange", "next_worker": "dispute_agent", "subagent_history": [],
-            "action_proposal": None,
-        }
-        res_state = run_dispute_agent(state, tools, self.agent)
-        self.assertIsNone(res_state.get("action_proposal"))
-        self.assertTrue(any(call[0] == "get_order" and call[1].get("order_id") == "O-999" for call in called_tools))
-        self.assertFalse(any(call[0] == "get_product" and call[1].get("product_id") == "P-101" for call in called_tools))
+        """F05-G07/N07 (W3.2): reading an order that does not resolve to a product must not keep the product of the
+        old focus; the context follows the order the customer asked about."""
+        with self.store.connection(write=True) as db:
+            db.execute(
+                "INSERT INTO orders (id, customer_id, name, variant, amount, status, product_id, version) "
+                "VALUES ('O-991002', 'C-001', 'Áo Không Rõ Mã', 'Trắng · Size L', 200000, 'delivered', NULL, 1)"
+            )
+        try:
+            tools = BoundTools(self.store, self.app.catalog, "C-001", {"order_id": "O-101", "product_id": "P-101"},
+                               {"name": "test"}, can_cancel=True)  # old focus: O-101 / P-101
+            tools("get_order", {"order_id": "O-991002"})
+            self.assertEqual(tools.context, {"order_id": "O-991002", "product_id": None})
+        finally:
+            with self.store.connection(write=True) as db:
+                db.execute("DELETE FROM orders WHERE id='O-991002'")
 
     # =========================================================================
     # [F06] Phân Loại Tồn Kho Biến Thể Chính Xác (4 States)
@@ -582,68 +586,48 @@ class TestPrACorrectness(unittest.TestCase):
         self.assertTrue(inv_nhat.get("in_stock"))
 
     def test_f06_preserve_original_color_not_default_to_tieuchuan(self):
-        """F06-G08: O-301 original color is Trắng; asking to exchange size must preserve color Trắng, not default to Tiêu chuẩn."""
+        """F06-G08 (W3.2): O-301 is Trắng; "đổi sang size L" keeps the colour Trắng (it never falls back to a default
+        colour): the server matches the customer's words against the real variants of the product."""
         tools = BoundTools(self.store, self.app.catalog, "C-003", {"id": "c1"}, {"name": "test"}, can_cancel=True)
-        state = {
-            "messages": [{"role": "user", "content": "Đơn O-301 đổi sang size L"}],
-            "fresh": [], "trace": {}, "tool_count": 0, "complete": False,
-            "bound": {"order_id": "O-301", "product_id": "P-103"},
-            "intent": "size_exchange", "next_worker": "dispute_agent", "subagent_history": [],
-            "action_proposal": None,
-        }
-        res_state = run_dispute_agent(state, tools, self.agent)
-        # O-301 has original color Trắng, size M. Variant Trắng/L has stock 10.
-        reply = res_state["messages"][-1]["content"]
-        self.assertIn("trắng", reply.lower())
+        res = tools("prepare_order_action", {"order_id": "O-301", "action_type": "exchange", "target_variant": "size L"})
+        matched = res["exchange"]["matched_variants"]
+        self.assertEqual(len(matched), 1)
+        self.assertIn("Trắng", matched[0]["label"])
+        self.assertIn("Size L", matched[0]["label"])
 
     def test_f06_missing_size_color_clarification(self):
-        """F06-5: When customer asks to exchange size without specifying size, AI asks for clarification."""
+        """F06-5 (W3.2): "muốn đổi size" with no size: the tool matches nothing and lists the real variants, so the
+        model can ask which one; the server never guesses a target."""
         tools = BoundTools(self.store, self.app.catalog, "C-001", {"id": "c1"}, {"name": "test"}, can_cancel=True)
-        state = {
-            "messages": [{"role": "user", "content": "Đơn O-101 tôi mặc không vừa, muốn đổi size"}],
-            "fresh": [], "trace": {}, "tool_count": 0, "complete": False,
-            "bound": {"order_id": "O-101", "product_id": "P-101"},
-            "intent": "size_exchange", "next_worker": "dispute_agent", "subagent_history": [],
-            "action_proposal": None,
-        }
-        res_state = run_dispute_agent(state, tools, self.agent)
-        self.assertIsNone(res_state.get("action_proposal"))
-        self.assertIn("cho em biết chính xác size", res_state["messages"][-1]["content"].lower())
+        res = tools("prepare_order_action", {"order_id": "O-102", "action_type": "exchange"})
+        self.assertTrue(res["eligible"])
+        self.assertIsNone(res["exchange_kind"])
+        self.assertIsNone(tools.prepared_order_action["target_variant_id"])
+        self.assertEqual(res["exchange"]["matched_variants"], [])
+        self.assertGreaterEqual(len(res["exchange"]["variants"]), 2)
 
     # =========================================================================
     # [F08a] Ranh Giới Ngôn Từ Đổi Hàng Trung Thực & Real Owner
     # =========================================================================
 
     def test_f08a_1_exchange_valid_option_ai_wording(self):
-        """F08a-1: AI response for available exchange size does NOT claim proposal is created on screen."""
+        """F08a-1 (W3.2): what the model is told when it prepares an exchange: a form is open, the customer's separate
+        confirmation sends it, and nothing was created. The wording of the reply is the model's own."""
         tools = BoundTools(self.store, self.app.catalog, "C-004", {"id": "c1"}, {"name": "test"}, can_cancel=True)
-        state = {
-            "messages": [{"role": "user", "content": "Đơn O-303 mình mặc chật, muốn đổi sang size L"}],
-            "fresh": [], "trace": {}, "tool_count": 0, "complete": False,
-            "bound": {"order_id": "O-303", "product_id": "P-203"},
-            "intent": "size_exchange", "next_worker": "dispute_agent", "subagent_history": [],
-            "action_proposal": None,
-        }
-        res_state = run_dispute_agent(state, tools, self.agent)
-        reply = res_state["messages"][-1]["content"]
-        self.assertNotIn("phiếu đề xuất", reply.lower())
-        self.assertNotIn("xem trên màn hình", reply.lower())
-        self.assertIn("phương án đổi phù hợp", reply.lower())
+        res = tools("prepare_order_action", {"order_id": "O-303", "action_type": "exchange", "target_variant": "size L"})
+        self.assertTrue(res["eligible"])
+        self.assertIs(res["transaction_performed"], False)
+        self.assertIn("separate confirmation button", res["next_step"])
+        self.assertNotIn("phiếu đề xuất", json.dumps(res, ensure_ascii=False).lower())
 
     def test_f08a_2_customer_ui_rendering_check(self):
-        """F08a-2: Customer chat reply does not tell customer to look at screen proposal card for exchange."""
-        tools = BoundTools(self.store, self.app.catalog, "C-001", {"id": "c1"}, {"name": "test"}, can_cancel=True)
-        state = {
-            "messages": [{"role": "user", "content": "Đơn O-102 kẹt khóa đổi mới 1-1 giúp tôi"}],
-            "fresh": [], "trace": {}, "tool_count": 0, "complete": False,
-            "bound": {"order_id": "O-102", "product_id": "P-102"},
-            "intent": "defect_exchange", "next_worker": "dispute_agent", "subagent_history": [],
-            "action_proposal": None,
-        }
-        res_state = run_dispute_agent(state, tools, self.agent)
-        reply = res_state["messages"][-1]["content"]
-        self.assertNotIn("phiếu đề xuất", reply.lower())
-        self.assertIn("phương án đổi phù hợp", reply.lower())
+        """F08a-2 (W3.2): an ineligible exchange tells the model why, so it cannot say a form was opened."""
+        tools = BoundTools(self.store, self.app.catalog, "C-003", {"id": "c1"}, {"name": "test"}, can_cancel=True)
+        res = tools("prepare_order_action", {"order_id": "O-301", "action_type": "exchange", "target_variant": "size L"})
+        self.assertFalse(res["eligible"])  # O-301 is not delivered in the seed data
+        self.assertEqual(res["ineligible_reason"]["code"], "order_not_delivered")
+        self.assertIsNone(tools.prepared_order_action)
+        self.assertIn("Only a delivered order", res["next_step"])
 
     def test_f08a_3_staff_button_simulation_wording(self):
         """F08a-3 (updated for R1-W3 W3-D1/W3-D10): Canned exchange buttons retired in favor of real #staff-case-ops-module without fake warehouse claims."""
@@ -738,22 +722,24 @@ class TestPrACorrectness(unittest.TestCase):
     # =========================================================================
 
     def test_n01_application_cancellation_unclear_target_asks_clarification(self):
-        """N01: When customer says 'Hủy đơn giúp tôi' without explicit order id and model picks an order,
-        Application MUST reject side-effect, cancel_order is cleared, action is reply, and AI asks for order id."""
+        """N01 (W3.2): "Hủy đơn giúp tôi" names no order and the conversation has no focus, so a pick by the model is
+        answered order_not_confirmed by the tool: no form, no order in the result, and the model asks for the ID."""
         cid = self.store.new_conversation("C-001", "custom")["conversation_id"]
-        self.app.infer = ScriptedAgent(
-            response("", ("prepare_cancellation", {"order_id": "O-101"}))
-        )
+        seen = []
+
+        def asks(messages):
+            seen.append(json.loads(messages[-1]["content"]))
+            return response("Anh/chị cho em xin mã đơn hàng cần hủy nhé ạ.")
+        self.app.infer = ScriptedAgent(response("", ("prepare_cancellation", {"order_id": "O-101"})), asks)
         res = self.app.chat("C-001", {"conversation_id": cid, "text": "Hủy đơn giúp tôi nhé", "request_id": "req_n01_unclear_0001"})
+        self.assertEqual(seen[0]["ineligible_reason"]["code"], "order_not_confirmed")
         self.assertEqual(res["action"], "reply")
         self.assertNotIn("order", res)
-        self.assertIsNone(res.get("action_proposal"))
-        self.assertIn("cung cấp mã đơn hàng", res["message"].lower())
+        self.assertNotIn("action_proposal", res)
 
     def test_n02_revalidate_ownership_under_focus_change(self):
-        """N02: C-001 has focus on O-101/P-101. Owner of O-101 is changed to C-002 in DB.
-        Subsequent request to exchange size must revalidate ownership via get_order, fail with 404/denial,
-        and never execute check_inventory or produce an action proposal."""
+        """N02 (W3.2): C-001 has focus on O-101/P-101, then O-101 is transferred to C-002. Reading the order again
+        revalidates ownership (not found), so the focus is dropped and no inventory is checked."""
         cid = self.store.new_conversation("C-001", "custom")["conversation_id"]
         # Seed focus context
         with self.store.connection(write=True) as db:
@@ -762,12 +748,17 @@ class TestPrACorrectness(unittest.TestCase):
             db.execute("UPDATE orders SET customer_id='C-002' WHERE id='O-101'")
 
         try:
+            seen = []
+
+            def explains(messages):
+                seen.append(json.loads(messages[-1]["content"]))
+                return response("Em không tìm thấy đơn O-101 trong tài khoản của anh/chị ạ.")
+            self.app.infer = ScriptedAgent(response("", ("get_order", {"order_id": "O-101"})), explains)
             res = self.app.chat("C-001", {"conversation_id": cid, "text": "Đơn O-101 đổi size L", "request_id": "req_n02_ownership_001"})
-            self.assertIsNone(res.get("action_proposal"))
-            self.assertTrue(
-                "không tìm thấy" in res["message"].lower() or "không thuộc tài khoản" in res["message"].lower()
-            )
-            # Ensure check_inventory was not called
+            self.assertEqual(seen[0]["error"], "order_not_found")
+            self.assertNotIn("action_proposal", res)
+            self.assertIn("không tìm thấy", res["message"].lower())
+            self.assertIsNone(res["context"].get("order_id"))
             tool_names = [t.get("name") for t in res["trace"].get("tools", [])]
             self.assertNotIn("check_inventory", tool_names)
         finally:
@@ -780,6 +771,7 @@ class TestPrACorrectness(unittest.TestCase):
         and must NOT commit turn as successful reply."""
         from retailops.http.routes import api_result
         cid = self.store.new_conversation("C-001", "custom")["conversation_id"]
+        self.app.infer = ScriptedAgent(response("", ("get_order", {"order_id": "O-101"})))  # W3.2: the model asks for the tool
         with patch("retailops.business.application.BoundTools.__call__", side_effect=ApiError(503, "database_unavailable", "sensitive database detail")):
             with self.assertRaises(ApiError) as ctx:
                 self.app.chat("C-001", {"conversation_id": cid, "text": "Đơn O-101 đổi size L", "request_id": "req_n03_503_error_0001"})
@@ -797,6 +789,7 @@ class TestPrACorrectness(unittest.TestCase):
         self.assertIn(ev.get('tool'), ('get_order', 'read_order'))
 
         # HTTP layer verification: returns HTTP 503 and sanitized error code
+        self.app.infer = ScriptedAgent(response("", ("get_order", {"order_id": "O-101"})))
         with patch("retailops.business.application.BoundTools.__call__", side_effect=ApiError(503, "database_unavailable", "postgres://secret_pw@host/db")):
             with self.assertRaises(ApiError) as http_ctx:
                 api_result(self.app, "C-001", "POST", "/api/chat",
@@ -810,19 +803,17 @@ class TestPrACorrectness(unittest.TestCase):
         self.assertEqual(len(hist), 0)
 
     def test_n04_advanced_variant_color_size_resolution(self):
-        """N04: Dynamic size and color resolution:
-        1. Distinguishes old color from new requested color (e.g. 'áo trắng muốn đổi size L màu xanh nhạt').
-        2. Rejects explicit color requested by user if not in catalog instead of silently defaulting to original color.
-        3. Supports sizes like XS, 3XL in catalog."""
-        # 1. Test distinguishing old color vs requested color for O-301 (P-103, original color Trắng)
-        cid3 = self.store.new_conversation("C-003", "custom")["conversation_id"]
-        res = self.app.chat("C-003", {"conversation_id": cid3, "text": "Đơn O-301 áo trắng muốn đổi size L màu xanh nhạt", "request_id": "req_n04_distinguish_01"})
-        proposal = res.get("action_proposal")
-        self.assertIsNotNone(proposal)
-        self.assertEqual(proposal["target_color"], "Xanh Nhạt")
-        self.assertEqual(proposal["target_size"], "L")
+        """N04 (W3.2): the server, not a regex over the customer's text, maps the customer's words to real variants:
+        1. The old colour is told apart from the wanted colour ("áo trắng muốn đổi size L màu xanh nhạt").
+        2. A colour/size pair the product does not have matches nothing, instead of silently defaulting to the old colour.
+        3. Sizes such as XS and multiword colours resolve to the exact variant."""
+        # 1. O-301 (P-103, currently Trắng)
+        tools3 = BoundTools(self.store, self.app.catalog, "C-003", {"id": "c1"}, {"name": "test"}, can_cancel=True)
+        res = tools3("prepare_order_action", {"order_id": "O-301", "action_type": "exchange",
+                                              "target_variant": "áo trắng muốn đổi size L màu xanh nhạt"})
+        self.assertEqual([v["label"] for v in res["exchange"]["matched_variants"]], ["Xanh Nhạt · Size L"])
 
-        # 2. Add product P-901 and order O-9001
+        # 2. A product with several colours and sizes
         self.store.add_product({
             "id": "P-901", "name": "Áo Khoác Gió Đa Sắc", "category": "Áo khoác",
             "variants": ["Hồng Pastel · Size L", "Hồng Pastel · Size XS", "Be · Size L", "Be · Size 3XL", "Bạc · Size M"],
@@ -834,36 +825,37 @@ class TestPrACorrectness(unittest.TestCase):
                 "VALUES ('O-9001', 'C-001', 'Áo Khoác Gió Đa Sắc', 'Be · Size M · Số lượng 1', 450000, 'delivered', 'P-901', 1)"
             )
         try:
-            cid1 = self.store.new_conversation("C-001", "custom")["conversation_id"]
-            # Ca 2: Explicit color requested 'màu bạc' but Bạc / L is not in catalog -> AI clarifies, does NOT silently default to Be
-            res_bac = self.app.chat("C-001", {"conversation_id": cid1, "text": "Đơn O-9001 đổi size L màu bạc", "request_id": "req_n04_bac_0000000001"})
-            self.assertIsNone(res_bac.get("action_proposal"))
-            self.assertIn("không có biến thể màu bạc", res_bac["message"].lower())
+            tools1 = BoundTools(self.store, self.app.catalog, "C-001", {"id": "c2"}, {"name": "test"}, can_cancel=True)
+            res_bac = tools1("prepare_order_action", {"order_id": "O-9001", "action_type": "exchange", "target_variant": "đổi size L màu bạc"})
+            self.assertEqual(res_bac["exchange"]["matched_variants"], [])  # there is no Bạc · Size L, and no silent default to Be
+            self.assertIsNone(res_bac["exchange_kind"])
+            self.assertIn("Bạc · Size M", [v["label"] for v in res_bac["exchange"]["variants"]])  # the real options are shown
 
-            # Ca 3: Size XS with multiword color 'Hồng Pastel'
-            res_xs = self.app.chat("C-001", {"conversation_id": cid1, "text": "Đơn O-9001 đổi size XS màu hồng pastel", "request_id": "req_n04_xs_00000000001"})
-            prop_xs = res_xs.get("action_proposal")
-            self.assertIsNotNone(prop_xs)
-            self.assertEqual(prop_xs["target_size"], "XS")
-            self.assertEqual(prop_xs["target_color"], "Hồng Pastel")
+            # 3. Size XS with the multiword colour Hồng Pastel
+            res_xs = tools1("prepare_order_action", {"order_id": "O-9001", "action_type": "exchange", "target_variant": "đổi size XS màu hồng pastel"})
+            self.assertEqual([v["label"] for v in res_xs["exchange"]["matched_variants"]], ["Hồng Pastel · Size XS"])
+            self.assertEqual(res_xs["exchange_kind"], "other_variant")
+            self.assertEqual(tools1.prepared_order_action["target_variant_id"], res_xs["exchange"]["matched_variants"][0]["id"])
         finally:
             with self.store.connection(write=True) as db:
                 db.execute("DELETE FROM orders WHERE id='O-9001'")
             self.store.delete_product("P-901")
 
     def test_n05_unmapped_order_abstains_without_claiming_inventory_checked(self):
-        """N05: Order with product_id=None owned by customer must abstain clearly and NOT claim 'em đã kiểm tra kho'."""
+        """N05 (W3.2): an order with no catalog product has no variants to offer: the tool says so, matches nothing and
+        reports no stock, so the model has nothing to claim it checked."""
         with self.store.connection(write=True) as db:
             db.execute(
                 "INSERT INTO orders (id, customer_id, name, variant, amount, status, product_id, version) "
                 "VALUES ('O-991001', 'C-001', 'Áo Không Rõ Mã', 'Trắng · Size L', 200000, 'delivered', NULL, 1)"
             )
         try:
-            cid = self.store.new_conversation("C-001", "custom")["conversation_id"]
-            res = self.app.chat("C-001", {"conversation_id": cid, "text": "Đơn O-991001 đổi size L", "request_id": "req_n05_unmapped_00001"})
-            self.assertIsNone(res.get("action_proposal"))
-            self.assertNotIn("đã kiểm tra kho", res["message"].lower())
-            self.assertIn("chưa có thông tin liên kết sản phẩm", res["message"].lower())
+            tools = BoundTools(self.store, self.app.catalog, "C-001", {"id": "c1"}, {"name": "test"}, can_cancel=True)
+            res = tools("prepare_order_action", {"order_id": "O-991001", "action_type": "exchange", "target_variant": "size L"})
+            self.assertIsNone(res["exchange"]["product_id"])
+            self.assertEqual(res["exchange"]["variants"], [])
+            self.assertEqual(res["exchange"]["matched_variants"], [])
+            self.assertIsNone(res["exchange_kind"])
         finally:
             with self.store.connection(write=True) as db:
                 db.execute("DELETE FROM orders WHERE id='O-991001'")

@@ -56,7 +56,11 @@ class ApiAdapterTests(unittest.TestCase):
         with patch.object(adapter, 'request', side_effect=[first, api_response('Final API text')]) as call:
             result = run_agent(adapter, 'Explain O-101', [], lambda name, args: {'result': name}, adapter.inspect())
         first_payload, second_payload = [x.args[0] for x in call.call_args_list]
-        self.assertEqual(first_payload['messages'][0], {'role': 'system', 'content': SYSTEM})
+        # W3.2: the agent loop owns the system turn: the fixed rules plus the server context, sent once.
+        self.assertEqual(first_payload['messages'][0]['role'], 'system')
+        self.assertTrue(first_payload['messages'][0]['content'].startswith(SYSTEM))
+        self.assertIn('Server context (set by the server)', first_payload['messages'][0]['content'])
+        self.assertEqual(first_payload['messages'][0]['content'].count(SYSTEM[:80]), 1)
         self.assertEqual(first_payload['tools'], TOOLS)
         self.assertEqual(second_payload['tools'], TOOLS)
         assistant = second_payload['messages'][2]
@@ -315,7 +319,7 @@ class SelectionTests(unittest.TestCase):
 
     def test_v04_conversations_migrate_to_custom_without_reset(self):
         from contextlib import closing
-        from retailops.business.store import migrate_sqlite_business_v6
+        from retailops.business.store import migrate_sqlite_business_v7
         path = Path(self.temp.name)/'v04.sqlite3'
         with closing(sqlite3.connect(path)) as db, db:
             db.execute('CREATE TABLE conversations (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, order_id TEXT, product_id TEXT, revision INTEGER NOT NULL DEFAULT 0, expires_at REAL NOT NULL)')
@@ -323,7 +327,7 @@ class SelectionTests(unittest.TestCase):
         with self.assertRaises(ApiError) as err:
             BusinessStore(path)
         self.assertEqual(err.exception.code, 'business_migration_required')
-        migrate_sqlite_business_v6(path, preflight_confirmed=True, backup_confirmed=True)
+        migrate_sqlite_business_v7(path, preflight_confirmed=True, backup_confirmed=True)
         migrated = BusinessStore(path)
         with migrated.connection() as db:
             row = dict(db.execute("SELECT * FROM conversations WHERE id='old'").fetchone())

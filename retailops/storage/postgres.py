@@ -8,12 +8,13 @@ from retailops.core import ApiError
 IDENTITY_SCHEMA = 'retailops_identity'
 IDENTITY_SCHEMA_CURRENT = 5
 IDENTITY_SCHEMA_COMPATIBLE = (1, 2, 3, 4, 5)
-# Phase R1 W2/W3 Business schema version mappings:
-#   PostgreSQL business schema: 5 -> 6  (BUSINESS_SCHEMA_CURRENT = 6; v5 = Business v5)
-#   SQLite business schema:     4 -> 5  (SQLITE_BUSINESS_SCHEMA_CURRENT = 5; v4 = Business v5)
+# Phase R1 W2/W3/W3.2 Business schema version mappings:
+#   PostgreSQL business schema: 5 -> 6 -> 7  (BUSINESS_SCHEMA_CURRENT = 7; 5 = Business v5, 6 = Business v6)
+#   SQLite business schema:     4 -> 5 -> 6  (SQLITE_BUSINESS_SCHEMA_CURRENT = 6; 4 = Business v5, 5 = Business v6)
 BUSINESS_V5_SCHEMA_VERSION = 5
-BUSINESS_SCHEMA_CURRENT = 6
-BUSINESS_SCHEMA_COMPATIBLE = (2, 3, 4, 5, 6)  # v2..v5 remain readable for explicit operator migration.
+BUSINESS_V6_SCHEMA_VERSION = 6
+BUSINESS_SCHEMA_CURRENT = 7
+BUSINESS_SCHEMA_COMPATIBLE = (2, 3, 4, 5, 6, 7)  # v2..v6 remain readable for explicit operator migration.
 
 _LIBPQ_CONNINFO_KEYWORDS = frozenset({
     'authtype', 'service', 'user', 'password', 'passfile', 'channel_binding',

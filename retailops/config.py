@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Mapping
 from urllib.parse import urlsplit
 
+from retailops.agent_mode import AGENT_MODES, resolve_agent_mode
 from retailops.core import DATA_MODE, ROOT, VERSION
 
 DEFAULT_CASE_REMINDER_SECONDS = 300.0
@@ -154,6 +155,7 @@ class Settings:
     api_key: str = field(default='', repr=False)
     api_model: str = 'meta/muse-spark-1.3-contributor'
     api_daily_turn_limit: int = 20
+    agent_mode: str = 'agent'
     storage_backend: str = 'sqlite'
     database_url: str = field(default='', repr=False)
     demo_tenant_id: str = ''
@@ -174,6 +176,8 @@ class Settings:
             raise ValueError('Persistent/live accounts require the public HTTPS interface.')
         if self.storage_backend not in ('sqlite', 'postgresql'):
             raise ValueError('Storage backend must be sqlite or postgresql.')
+        if self.agent_mode not in AGENT_MODES:
+            raise ValueError('RETAILOPS_AGENT_MODE must be agent or legacy.')
         if self.storage_backend == 'postgresql':
             if self.interface != 'public' or self.data_mode not in ('persistent-demo', 'live'):
                 raise ValueError('PostgreSQL requires persistent-demo or live on the HTTPS interface.')
@@ -244,6 +248,7 @@ class Settings:
                 else ('gemini-2.5-flash' if env.get('GEMINI_API_KEY') else 'meta/muse-spark-1.3-contributor')
             ),
             api_daily_turn_limit=integer(env, 'RETAILOPS_API_DAILY_TURN_LIMIT', 20, 1, 10000),
+            agent_mode=resolve_agent_mode(environ=env),
             storage_backend=backend, database_url=database_url,
             demo_tenant_id=tenant_selector(env),
             case_reminder_seconds=positive_float(
@@ -268,4 +273,4 @@ class Settings:
         return {'version': VERSION, 'interface': self.interface, 'data_mode': self.data_mode,
                 'storage_backend': self.storage_backend,
                 'custom_enabled': self.custom_enabled, 'api_enabled': self.api_enabled,
-                'api_daily_turn_limit': self.api_daily_turn_limit}
+                'api_daily_turn_limit': self.api_daily_turn_limit, 'agent_mode': self.agent_mode}
