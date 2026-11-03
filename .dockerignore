@@ -15,6 +15,7 @@
 !data/knowledge/
 !data/knowledge/*
 !data/mock_shipments.json
+!data/order_action_reasons.json
 !Dockerfile
 !retailops_agent.py
 !retailops_tools.py

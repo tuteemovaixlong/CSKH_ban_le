@@ -14,6 +14,7 @@ from retailops.config import DEFAULT_CASE_TIMER_SCAN_SECONDS, public_origin
 from retailops.identity.contracts import RequestContext, SessionBackend
 from retailops.http.routes import EVIDENCE_UPLOAD_ROUTE_RE, api_result, parse_evidence_request_body
 from retailops.http.assets import ASSETS
+from retailops.order_reasons import ReasonCatalogError, reason_catalog
 
 CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 
@@ -152,6 +153,12 @@ class PublicWeb:
                     'Hệ thống xác thực đang bảo trì để đối soát dữ liệu.')
         if path == '/healthz' and method == 'GET':
             self.sessions.check_health()
+            # A release without a usable reason catalog fails every signed-in request, so it must not pass health.
+            try:
+                reason_catalog()
+            except ReasonCatalogError:
+                raise ApiError(503, 'reason_catalog_unavailable',
+                               'Danh mục lý do yêu cầu đơn hàng chưa sẵn sàng.') from None
             return 200, {'status': 'ok', 'scope': 'synthetic-demo', 'version': VERSION,
                          'data_mode': self.sessions.data_mode,
                          'storage_backend': self.sessions.metadata().get('storage_backend', 'sqlite'),
