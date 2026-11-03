@@ -398,3 +398,20 @@ Owner chốt sau khi thử W3/W3.1: tác vụ yêu cầu đơn hàng phải dùn
 | W3.2-D12 | **Đo trước khi tin:** bộ kịch bản kiểu tau-bench cho các tác vụ của khách (tra đơn, hủy, trả, đổi biến thể, hỏi tiếp nối, ngoài lề, chính sách) chạy bằng gateway giả trên CI; cùng bộ kịch bản có script chạy với model thật trên Colab, do owner chạy, báo tỉ lệ thành công, tính hợp lệ của tool call và độ trễ p50/p95. | Mới |
 
 **Bổ sung §16 (2026-11-03, owner):** cửa sổ ngữ cảnh phục vụ nâng từ 8.192 lên **16.384 token** (vLLM `--max-model-len 16384`), thay con số 8.192 trong W3.2-D10; ngân sách trong code đã nâng theo. `notebooks/colab_llama_server_gguf.py` vẫn `--n_ctx 8192` (không dùng trên production). Chế độ `RETAILOPS_AGENT_MODE=legacy` vẫn là graph cũ nhưng không còn các câu soạn sẵn đã bỏ theo W3.2-D7, nên không giống hệt hành vi W3.
+
+## 17. W4 owner decisions (2026-11-03)
+
+Owner chốt trước khi phát hành W4. Các quyết định dưới đây **bổ sung** §10 (Internal AI), §11.6 và §16; phần còn lại giữ nguyên. W4-D1 đến W4-D3 do owner chọn trực tiếp. W4-D4 đến W4-D10 là mặc định do review đề xuất, owner chấp nhận khi merge bản ghi này. W4 **không** bật dữ liệu khách thật: `RETAILOPS_DATA_MODE` giữ `persistent-demo`. Không cho phép `W5–W6`.
+
+| ID | Quyết định | Thay thế |
+|---|---|---|
+| W4-D1 | **Trợ lý ca cho Staff/Manager:** trên ca đang chọn, AI tóm tắt ca, trả lời câu hỏi của nhân viên về ca và **soạn nháp** câu trả lời cho khách. Nhân viên sửa rồi tự bấm gửi; AI không tự gửi cho khách, không tạo, duyệt hay đổi trạng thái yêu cầu đơn hàng. | Làm rõ §10 Internal AI |
+| W4-D2 | **Endpoint Colab hai lớp:** lớp 1 là vLLM `--api-key` (khóa trong Colab Secrets và `api.env`); lớp 2 là traffic policy của ngrok trên domain tĩnh, chặn mọi request không mang bí mật của lớp này. vLLM dùng header `Authorization: Bearer`, nên lớp 2 kiểm một header bí mật riêng (theo tinh thần "basic auth của ngrok"). Gói ngrok không hỗ trợ thì dừng và hỏi owner. | Chốt lựa chọn tunnel của §11.6 |
+| W4-D3 | **Ảnh và PDF tới model, có ClamAV:** ảnh đã làm sạch được gửi tới model khi endpoint đã bảo vệ; PDF có lớp chữ thì trích đoạn kèm số trang; PDF scan thì render tối đa 3 trang thành ảnh. Thêm dịch vụ ClamAV; PDF được nhận làm bằng chứng (≤20 MB, ≤20 trang) chỉ khi quét sạch; máy quét lỗi thì từ chối PDF. | Mở phần PDF đã hoãn ở W3-D4 |
+| W4-D4 | **Lịch sử trợ lý ca riêng từng người:** phân vùng `(tenant_id, principal_id, case_id)`; không hiện cho khách hay nhân viên khác; giữ trong thời hạn lưu của ca rồi xóa. | Đóng phần "retention of internal history" của §10 |
+| W4-D5 | **Công cụ của trợ lý ca chỉ đọc và gói trong ca:** transcript ca, đơn và yêu cầu đơn hàng của khách trong ca, kho chính sách; bỏ qua `ToolCache`/`SemanticCache`; mỗi lần dùng ghi audit. | Làm rõ §10 |
+| W4-D6 | **Không lưu ảnh/tệp thô trong lịch sử:** tệp đính kèm trong chat được làm sạch và lưu như bằng chứng (theo W3-D4 và W4-D3); hội thoại chỉ giữ `evidence_id` và hash. Migration chuyển các tệp đang nằm trong lịch sử cũ sang kho bằng chứng, hoặc thay bằng dấu đã gỡ nếu không hợp lệ. | Thực thi §11.6 "raw bytes never written" |
+| W4-D7 | **Giới hạn ảnh tới model:** tối đa 3 ảnh mỗi request, cạnh dài ≤1024 px, không EXIF; năng lực ảnh khai báo bằng cấu hình (`RETAILOPS_API_VISION`), chỉ bật khi endpoint đã có hai lớp bảo vệ. Owner đo chi phí token mỗi ảnh trên L4 trước khi nâng giới hạn. | Thay danh sách `TEXT_ONLY_MODELS` |
+| W4-D8 | **`customer_ref` có salt:** HMAC-SHA-256 với khóa bí mật của deploy; áp dụng cho sự kiện mới; chưa có hệ thống ngoài đọc JSONL nên không cần ánh xạ ngược. | Bổ sung §11.4 |
+| W4-D9 | **Business v8 và ClamAV theo runbook:** migration có kiểm soát như v5–v7 (bảng lịch sử trợ lý ca, mở rộng loại bằng chứng, chuyển tệp đính kèm cũ). Dịch vụ ClamAV là compose mới; vì deploy thường không làm mới file compose trên EC2, runbook phải cài tay có kiểm tra. | Mới |
+| W4-D10 | **Ghim runtime Colab:** ghim phiên bản `vllm` và digest chat template; tắt log request; giới hạn số ảnh mỗi request phía server. | Thực thi §11.6 |

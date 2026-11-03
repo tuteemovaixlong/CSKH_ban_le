@@ -322,3 +322,20 @@ Cả hai quyết định dùng đúng hành vi code đã được kiểm chứng
 **Lần chạy workflow:** `41636882867` đỏ có chủ đích (đưa image lên trước migrate, tự rollback); `41649491137` đỏ do health gate mới (đúng thiết kế). `RETAILOPS_DEPLOY_ENABLED` để `false`.
 
 **Còn mở:** owner chạy bộ kịch bản với model thật trên Colab (`scripts/run_agent_scenarios.py --endpoint …`); xác nhận nguyên nhân 503 cũ qua `trace.model_errors` ở lần lỗi tiếp theo; dọn tài khoản và tenant chẩn đoán `diag-*` cùng các tenant `e2e-smoke-*` (W6); đổi tên `/opt/retailops/patches` thành thư mục đã ngừng dùng.
+
+### 2026-11-03 W4 readiness review
+
+> **Phạm vi:** một lượt readiness review cho W4, chỉ BLOCKER/MAJOR. Đối chiếu README W4, §10 (Internal AI), §11.6 và §16 với code trên `main` (`c11285e`).
+
+**Finding đã được owner đóng bằng [§17](W0_OWNER_DECISION_DELTA_2026-10-29.md#17-w4-owner-decisions-2026-11-03):**
+
+| ID | Mức | Vấn đề | Đóng bằng |
+|---|---|---|---|
+| `W4-RR-01` | BLOCKER | Endpoint Colab là URL ngrok công khai, không có `--api-key` hay lớp truy cập thứ hai; `vllm>=0.6.0` chưa ghim; chat template lấy từ nhánh đang thay đổi | W4-D2, W4-D10 |
+| `W4-RR-02` | BLOCKER | Ảnh khách gửi trong chat được lưu nguyên base64 trong `agent_turns` và gửi lại khi đọc lịch sử, trái §11.6 | W4-D6, W4-D9 |
+| `W4-RR-03` | MAJOR | Chưa có AI cho Staff/Manager; phạm vi và lịch sử riêng của trợ lý ca chưa chốt | W4-D1, W4-D4, W4-D5 |
+| `W4-RR-04` | MAJOR | Model hiện tại nằm trong `TEXT_ONLY_MODELS`, nên ảnh bị chặn bằng tên model thay vì cấu hình năng lực | W4-D7 |
+| `W4-RR-05` | MAJOR | Chưa nhận PDF và chưa có máy quét mã độc | W4-D3, W4-D9 |
+| `W4-RR-06` | MAJOR | `customer_ref` trong JSONL là SHA-256 không salt, đoán ngược được với mã khách dạng `C-001` | W4-D8 |
+
+**Kết luận:** W4 **READY** để thực thi theo [W4 execution handoff](W4_EXECUTION_HANDOFF_2026-11-03.md). Readiness tổng thể vẫn `BLOCKED` cho `W5–W6`. Migration business v8, cài ClamAV và deploy W4 cần owner duyệt riêng, theo runbook như W3.2. W4 không bật dữ liệu khách thật.
