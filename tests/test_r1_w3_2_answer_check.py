@@ -47,11 +47,19 @@ class FinalAnswerCheckTests(unittest.TestCase):
                      'Em chưa có thông tin về phí đổi hàng, em xin phép kiểm tra thêm.',
                      'Kho chính sách không nêu phí ship cho trường hợp này.',
                      'Anh/chị có muốn đổi miễn phí không ạ?',
-                     'Em chưa thể xác nhận thời hạn đổi trả cho đơn này.'):
+                     'Em chưa thể xác nhận thời hạn đổi trả cho đơn này.',
+                     'Em chưa tìm thấy chính sách vận chuyển nào của shop nên chưa dám khẳng định thời gian hay phí giao hàng ạ.',
+                     'Em không tìm thấy quy định về phí đổi hàng trong kho chính sách của shop.'):
             with self.subTest(text=text):
                 checked = check_final_answer(text)
                 self.assertFalse(checked.changed)
                 self.assertEqual(checked.text, text)
+
+    def test_finding_something_is_not_a_hedge(self):
+        for promise in ('Em tìm thấy ưu đãi miễn phí đổi trả 2 chiều cho anh/chị ạ.',
+                        'Em thấy shop miễn phí đổi hàng trong 7 ngày ạ.'):
+            with self.subTest(promise=promise):
+                self.assertEqual(check_final_answer(promise).dropped_policy, 1)
 
     def test_a_structured_warranty_fact_from_a_tool_is_not_a_promise(self):
         messages = [tool_message('get_product', {'product': {'id': 'P-102', 'warranty_days': 90}})]

@@ -43,7 +43,8 @@ _DEADLINE = re.compile(
 _POLICY_CONTEXT = re.compile(
     r'đổi|trả|hoàn|hủy|huỷ|bảo hành|ship|vận chuyển|giao hàng|giao nhận|lấy hàng|thu hồi|gửi hàng|khiếu nại')
 _HEDGE = re.compile(
-    r'chưa (?:có|rõ|xác nhận|thể|nêu|đề cập)|không (?:có thông tin|rõ|nêu|đề cập|thể xác nhận|chắc chắn)|'
+    r'chưa (?:có|rõ|xác nhận|thể|nêu|đề cập|tìm thấy|thấy|biết|dám)|'
+    r'không (?:có thông tin|rõ|nêu|đề cập|thể xác nhận|chắc chắn|tìm thấy|thấy|biết|dám)|'
     r'cần xác nhận')
 
 _DONE_VERBS = (r'(?:hủy|huỷ)(?:\s+đơn)?|đổi(?!\s+ý)\s+(?:sang|mới|hàng|size|màu|cho)|trả hàng|hoàn tiền|hoàn trả|'
