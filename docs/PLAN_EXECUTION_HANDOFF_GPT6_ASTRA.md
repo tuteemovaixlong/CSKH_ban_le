@@ -4,7 +4,7 @@ Ngày cập nhật trạng thái: **06/10/2026 — Asia/Bangkok**.
 Trạng thái hiện tại: PR A/N08 merged `47ba72a`; PR B/#35 merged tại `b3a0ccd72c1d025b3af567486943123bf3e05526`. **PR B MERGED & POSTMERGE VERIFIED**. Artifact CI main [run 37418383578](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37418383578), ID `11392265139`: 10 batch × 100 mẫu/endpoint, nearest-rank P99 unrounded float đạt SLO $\le 50$ms; 60 chat HTTP 200, mọi batch có tool hook và saturation 1+5; 5/5 CI check-runs trên main completed/success; Ops Console [run 37418383604](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37418383604) completed/success. Module 2.5 đã hoàn tất, chuyển giao Phase 4.
 Working snapshot: branch `main`, merge commit `b3a0ccd72c1d025b3af567486943123bf3e05526`. CI [37418383578](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37418383578) và Ops Console [37418383604](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37418383604): 5/5 check-runs `completed/success` trên merge SHA.
 Quỹ đạo: PR A/N08 merged → PR B merged → Post-merge Verification trên main SUCCESS → Chuyển giao Phase 4 Scientific Evaluation.
-Nguồn review hiện hành: <a href="review%20gpt%206%20astra.md">review gpt 6 astra.md</a>. AC-09 đã đóng [§12.2](#122-trigger-ac09-artifact-integrity); [§12.3 — PRB-MERGE-POSTVERIFY](#123-trigger-prb-merge-postverify) đã hoàn thành. [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md) là hồ sơ PR A đã merge.
+Nguồn review hiện hành: `review gpt 6 astra.md` (file đã gỡ khỏi repo 2026-11-04; xem lịch sử git). AC-09 đã đóng [§12.2](#122-trigger-ac09-artifact-integrity); [§12.3 — PRB-MERGE-POSTVERIFY](#123-trigger-prb-merge-postverify) đã hoàn thành. [N08_STOPPING_CONDITIONS.md](N08_STOPPING_CONDITIONS.md) là hồ sơ PR A đã merge.
 
 ## 1. Mục đích và ranh giới trạng thái
 
@@ -21,7 +21,7 @@ Mốc **14/14 mục R01–R14** chỉ xác nhận đặc tả tài liệu tại 
 
 READY chỉ áp dụng cho **Module 2.5 PR A/B**. Các plan nghiên cứu, post-thesis hoặc superseded không được coi là cùng đạt READY chỉ vì file bàn giao này tồn tại.
 
-> **Phân định kế hoạch và thực thi:** Các bằng chứng N08/PR A ở phần này là lịch sử và đã dẫn tới merge PR #34 tại 47ba72a. PR B hiện có implementation candidate trong PR #35; không đánh dấu AC hoàn tất chỉ dựa trên CI xanh nếu test chưa kiểm đúng hợp đồng. Chi tiết review hiện tại ở <a href="review%20gpt%206%20astra.md">review gpt 6 astra.md</a>.
+> **Phân định kế hoạch và thực thi:** Các bằng chứng N08/PR A ở phần này là lịch sử và đã dẫn tới merge PR #34 tại 47ba72a. PR B hiện có implementation candidate trong PR #35; không đánh dấu AC hoàn tất chỉ dựa trên CI xanh nếu test chưa kiểm đúng hợp đồng. Chi tiết review hiện tại ở `review gpt 6 astra.md` (file đã gỡ khỏi repo 2026-11-04; xem lịch sử git).
 
 ## 2. Baseline đặc tả lịch sử — không phải snapshot candidate hiện tại
 
