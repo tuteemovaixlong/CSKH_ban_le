@@ -1,7 +1,7 @@
 # KẾ HOẠCH MODULE 2.5: SYSTEM HARDENING, CONTEXT INTEGRITY & VERIFICATION QUALITY GATE
 
 > **Mã kế hoạch:** `PLAN_MODULE_2_5_HARDENING_VERIFICATION`
-> **Trạng thái:** PR A/N08 MERGED `47ba72a`; PR B/#35 MERGED tại `b3a0ccd72c1d025b3af567486943123bf3e05526`. **PR B MERGED & POSTMERGE VERIFIED**. Module 2.5 hoàn tất; sẵn sàng chuyển giao Phase 4. Xem <a href="review%20gpt%206%20astra.md">review hiện hành</a>.
+> **Trạng thái:** PR A/N08 MERGED `47ba72a`; PR B/#35 MERGED tại `b3a0ccd72c1d025b3af567486943123bf3e05526`. **PR B MERGED & POSTMERGE VERIFIED**. Module 2.5 hoàn tất; sẵn sàng chuyển giao Phase 4. Xem review khi đó (file đã gỡ khỏi repo 2026-11-04; xem lịch sử git).
 > **Phiên bản:** 1.9 (2026-10-06)
 > **Bằng chứng PR B trên main:** Artifact CI [run 37418383578](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37418383578), ID `11392265139`: 10 batch × 100 mẫu/endpoint, nearest-rank unrounded P99 `/healthz` và `/api/session` đều $\le 50$ms; 60 chat HTTP 200, mọi batch có tool hook và saturation 1+5; bước kiểm tra độc lập `Validate headroom P99 measurement artifact integrity` PASS; 5/5 check-runs CI trên main completed/success. Ops Console [run 37418383604](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/37418383604) completed/success.
 > **Audit basis / Documentation baseline reviewed:** `c30ff1d`

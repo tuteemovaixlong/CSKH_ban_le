@@ -4,7 +4,7 @@
 
 ## Workstream hiện hành
 
-- [Phase R1 — Role-aware Staff/Manager Operations (implementation BLOCKED; W0 read-only only)](phase_role_aware_ops/README.md) · [owner decision delta](phase_role_aware_ops/W0_OWNER_DECISION_DELTA_2026-10-29.md) · [W0 baseline/decision register](phase_role_aware_ops/W0_BASELINE_AND_DECISION_REGISTER_2026-10-27.md) · [contract freeze](phase_role_aware_ops/W0_CONTRACT_FREEZE_AND_GAP_REGISTER_2026-10-29.md) · [review chronology (docs loop closed)](phase_role_aware_ops/W0_REVIEW_RECONCILIATION_2026-10-28.md) · [blocked readiness](phase_role_aware_ops/IMPLEMENTATION_READINESS_BLOCKED_2026-10-27.md) · [archive index](phase_role_aware_ops/archive/README.md)
+- [Phase R1 — Role-aware Staff/Manager Operations (W1–W3.2 in production; W4 in progress)](phase_role_aware_ops/README.md) · [owner decision delta](phase_role_aware_ops/W0_OWNER_DECISION_DELTA_2026-10-29.md) · [W0 baseline/decision register](phase_role_aware_ops/W0_BASELINE_AND_DECISION_REGISTER_2026-10-27.md) · [contract freeze](phase_role_aware_ops/W0_CONTRACT_FREEZE_AND_GAP_REGISTER_2026-10-29.md) · [review chronology (docs loop closed)](phase_role_aware_ops/W0_REVIEW_RECONCILIATION_2026-10-28.md) · [readiness & deploy records](phase_role_aware_ops/IMPLEMENTATION_READINESS_BLOCKED_2026-10-27.md) · [archive index](phase_role_aware_ops/archive/README.md)
 - [Phase 5 — Identity, Sales Simulator và Complaint E2E](phase5/README.md)
 - [Kết quả cleanup đơn legacy trên database live (2026-10-24)](04_OPERATIONS/ORDER_DATA_CLEANUP_2026-10-24.md)
 - [Handoff & thực thi remediation auto-seed khi Google login](phase5/DEMO_ORDER_SEEDING_REMEDIATION_HANDOFF_2026-10-24.md)
@@ -30,7 +30,7 @@
 4. [03_EVALUATION](03_EVALUATION/EVALUATION_PROTOCOL.md) — protocol, gate và experiment log.
 5. [04_OPERATIONS](04_OPERATIONS/RUNBOOK.md) — CI/CD, vận hành, risk và decision records.
 
-`_digest/` là lớp trích xuất có citation để các public docs tham chiếu. `phase4/` giữ hồ sơ nghiệm thu chi tiết. [Audit file classification](_audit/FILE_CLASSIFICATION.md) là inventory, không phải tài liệu kiến trúc.
+`_digest/` là lớp trích xuất có citation để các public docs tham chiếu. `phase4/` giữ hồ sơ nghiệm thu chi tiết.
 
 ## Mốc nguồn
 
