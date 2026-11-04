@@ -7,6 +7,8 @@ DATA_MODE = 'synthetic-demo'
 # Order-action reasons are declared once, in data/order_action_reasons.json (see retailops/order_reasons.py).
 STATUSES = {"pending": "Chờ xử lý", "delivered": "Đã giao", "cancelled": "Đã hủy"}
 EVIDENCE_MAX_BYTES = 10_485_760
+PDF_EVIDENCE_MAX_BYTES = 20_971_520
+CHAT_ATTACHMENT_JSON_MAX_BYTES = 28_311_552
 EVIDENCE_MAX_COUNT = 5
 EVIDENCE_RETENTION_SECONDS = 90 * 86400
 

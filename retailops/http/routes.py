@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import time
 import urllib.parse
-from retailops.core import ApiError, BinaryPayload, EVIDENCE_MAX_BYTES, fields, require
+from retailops.core import ApiError, BinaryPayload, EVIDENCE_MAX_BYTES, PDF_EVIDENCE_MAX_BYTES, fields, require
 from retailops.order_reasons import ACTION_TYPES, reason_catalog
 from retailops.workflow import approval
 from retailops.business.permissions import ACTIVE_BUSINESS_ROLES, READ, CANCEL, STAFF, MANAGER
@@ -49,7 +49,7 @@ def parse_evidence_request_body(
     content_length: str | None,
     stream,
     *,
-    max_size: int = EVIDENCE_MAX_BYTES,
+    max_size: int = PDF_EVIDENCE_MAX_BYTES,
 ) -> dict:
     length_str = content_length if isinstance(content_length, str) else ""
     require(
@@ -60,11 +60,17 @@ def parse_evidence_request_body(
     )
     size = int(length_str)
     require(size > 0, 400, "empty_evidence", "Tệp bằng chứng rỗng.")
-    require(size <= max_size, 413, "evidence_too_large", "Ảnh bằng chứng vượt quá giới hạn 10 MB.")
-    raw = stream.read(size)
-    require(len(raw) == size, 400, "invalid_length", "Nội dung yêu cầu chưa đầy đủ.")
     ct_full = (content_type or "").strip()
     ct_main = ct_full.split(";", 1)[0].strip().lower()
+    effective_max = (
+        min(int(max_size), PDF_EVIDENCE_MAX_BYTES)
+        if ct_main in ("application/pdf", "multipart/form-data")
+        else min(int(max_size), EVIDENCE_MAX_BYTES)
+    )
+    limit_label = "20 MB" if effective_max > EVIDENCE_MAX_BYTES else "10 MB"
+    require(size <= effective_max, 413, "evidence_too_large", f"Tệp bằng chứng vượt quá giới hạn {limit_label}.")
+    raw = stream.read(size)
+    require(len(raw) == size, 400, "invalid_length", "Nội dung yêu cầu chưa đầy đủ.")
     if ct_main == "multipart/form-data":
         header_blob = f"Content-Type: {ct_full}\r\nMIME-Version: 1.0\r\n\r\n".encode("latin-1", errors="ignore")
         msg = BytesParser(policy=EMAIL_HTTP_POLICY).parsebytes(header_blob + raw)
@@ -72,24 +78,30 @@ def parse_evidence_request_body(
         file_parts = []
         for part in msg.iter_parts():
             disp_name = part.get_param("name", header="content-disposition")
-            if part.get_filename() is not None or disp_name in ("file", "evidence", "image"):
+            if part.get_filename() is not None or disp_name in ("file", "evidence", "image", "document"):
                 file_parts.append(part)
         require(
             len(file_parts) == 1,
             400,
             "invalid_evidence_upload",
-            "Mỗi yêu cầu tải lên chỉ được chứa đúng một tệp ảnh bằng chứng.",
+            "Mỗi yêu cầu tải lên chỉ được chứa đúng một tệp bằng chứng.",
         )
         payload = file_parts[0].get_payload(decode=True)
         require(isinstance(payload, (bytes, bytearray)) and len(payload) > 0, 400, "empty_evidence", "Tệp bằng chứng rỗng.")
-        require(len(payload) <= max_size, 413, "evidence_too_large", "Ảnh bằng chứng vượt quá giới hạn 10 MB.")
+        part_ct = (file_parts[0].get_content_type() or "").lower()
+        part_is_pdf = part_ct == "application/pdf" or bytes(payload[:5]) == b"%PDF-"
+        part_max = min(int(max_size), PDF_EVIDENCE_MAX_BYTES if part_is_pdf else EVIDENCE_MAX_BYTES)
+        part_label = "20 MB" if part_is_pdf else "10 MB"
+        require(len(payload) <= part_max, 413, "evidence_too_large", f"Tệp bằng chứng vượt quá giới hạn {part_label}.")
         return {
             "_raw_evidence_bytes": bytes(payload),
-            "_declared_content_type": file_parts[0].get_content_type(),
+            "_declared_content_type": part_ct or "application/octet-stream",
+            "_filename": file_parts[0].get_filename(),
         }
     return {
         "_raw_evidence_bytes": raw,
         "_declared_content_type": ct_main or "application/octet-stream",
+        "_filename": None,
     }
 
 
@@ -544,7 +556,8 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                     "Không tìm thấy yêu cầu đơn hàng.",
                 )
             data, mime_type = app.store.read_order_action_evidence_bytes(ev_row)
-            return (200, BinaryPayload(data, mime_type, headers=[("Content-Disposition", "inline")]))
+            disp = 'attachment; filename="evidence.pdf"' if mime_type == "application/pdf" else "inline"
+            return (200, BinaryPayload(data, mime_type, headers=[("Content-Disposition", disp)]))
         m_chat_ev_get = re.fullmatch(r"/api/conversations/([a-f0-9-]{36})/evidence/(ev_[a-f0-9]{32})", path)
         if m_chat_ev_get:
             cid, ev_id = m_chat_ev_get[1], m_chat_ev_get[2]
@@ -567,7 +580,8 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                     "Không tìm thấy tệp đính kèm trên cuộc trò chuyện này.",
                 )
             data, mime_type = app.store.read_order_action_evidence_bytes(ev_row)
-            return (200, BinaryPayload(data, mime_type, headers=[("Content-Disposition", "inline")]))
+            disp = 'attachment; filename="attachment.pdf"' if mime_type == "application/pdf" else "inline"
+            return (200, BinaryPayload(data, mime_type, headers=[("Content-Disposition", disp)]))
         if path == '/api/cancellation-proposals':
             _require_ctx_permission(ctx, CANCEL)
             with app.store.connection() as db:
@@ -916,6 +930,7 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 bytes(body["_raw_evidence_bytes"]),
                 customer_id=customer,
                 actor=actor,
+                filename=body.get("_filename"),
             )
             if isinstance(res.get("order_action"), dict) and isinstance(res["order_action"].get("order"), dict):
                 res["order_action"]["order"] = _format_order_for_api(res["order_action"]["order"], app)

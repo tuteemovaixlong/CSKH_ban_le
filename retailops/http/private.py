@@ -5,7 +5,15 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 from agent_protocol import PROTOCOL
-from retailops.core import ApiError, BinaryPayload, EVIDENCE_MAX_BYTES, ROOT, VERSION, require
+from retailops.core import (
+    ApiError,
+    BinaryPayload,
+    CHAT_ATTACHMENT_JSON_MAX_BYTES,
+    PDF_EVIDENCE_MAX_BYTES,
+    ROOT,
+    VERSION,
+    require,
+)
 from retailops.http.routes import EVIDENCE_UPLOAD_ROUTE_RE, api_result, parse_evidence_request_body
 from retailops.http.assets import ASSETS
 from retailops.identity.contracts import RequestContext
@@ -103,12 +111,13 @@ class Handler(BaseHTTPRequestHandler):
                     self.headers.get("Content-Type"),
                     lengths[0],
                     self.rfile,
-                    max_size=EVIDENCE_MAX_BYTES,
+                    max_size=PDF_EVIDENCE_MAX_BYTES,
                 )
             else:
                 require(self.headers.get_content_type() == "application/json", 415, "json_required", "Yêu cầu phải là JSON.")
                 size = int(lengths[0])
-                require(0 < size <= 16384, 413, "body_too_large", "Yêu cầu quá lớn hoặc rỗng.")
+                max_json = CHAT_ATTACHMENT_JSON_MAX_BYTES if path in ("/api/chat", "/api/staff/customer-message") else 16384
+                require(0 < size <= max_json, 413, "body_too_large", "Yêu cầu quá lớn hoặc rỗng.")
                 body = json.loads(self.rfile.read(size))
         request_context = RequestContext.from_app(
             app,

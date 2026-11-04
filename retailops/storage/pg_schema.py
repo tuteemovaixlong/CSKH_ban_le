@@ -349,12 +349,22 @@ BUSINESS_V6_TABLES_DDL = [
         filename TEXT CHECK(filename IS NULL OR char_length(filename) <= 200),
         uploaded_by_principal_id TEXT NOT NULL,
         uploaded_by_role TEXT NOT NULL CHECK(uploaded_by_role IN ('customer', 'staff', 'manager')),
-        mime_type TEXT NOT NULL CHECK(mime_type IN ('image/jpeg', 'image/png', 'image/webp')),
-        byte_size INTEGER NOT NULL CHECK(byte_size > 0 AND byte_size <= 10485760),
+        mime_type TEXT NOT NULL CONSTRAINT order_action_evidence_mime_v8_check CHECK(
+            mime_type IN ('image/jpeg', 'image/png', 'image/webp', 'application/pdf')
+        ),
+        byte_size INTEGER NOT NULL CONSTRAINT order_action_evidence_byte_size_v8_check CHECK(
+            byte_size > 0
+            AND ((mime_type = 'application/pdf' AND byte_size <= 20971520)
+                 OR (mime_type <> 'application/pdf' AND byte_size <= 10485760))
+        ),
         width INTEGER CHECK(width IS NULL OR width > 0),
         height INTEGER CHECK(height IS NULL OR height > 0),
+        page_count INTEGER CHECK(page_count IS NULL OR (page_count >= 1 AND page_count <= 20)),
         sha256 TEXT NOT NULL,
         storage_relpath TEXT NOT NULL,
+        scan_status TEXT CHECK(scan_status IS NULL OR scan_status IN ('clean', 'not_applicable')),
+        scan_engine TEXT CHECK(scan_engine IS NULL OR char_length(scan_engine) <= 64),
+        scanned_at DOUBLE PRECISION,
         created_at DOUBLE PRECISION NOT NULL,
         file_purged_at DOUBLE PRECISION)''',
     'CREATE INDEX IF NOT EXISTS idx_order_action_evidence_req ON order_action_evidence(request_id, created_at ASC)',

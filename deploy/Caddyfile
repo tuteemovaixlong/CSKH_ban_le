@@ -5,7 +5,16 @@
 {$RETAILOPS_PUBLIC_HOST} {
 	# Only this exact DNS name receives a certificate. No on-demand TLS.
 	encode zstd gzip
-	request_body {
+	@evidence_upload path /api/order-actions/*/evidence
+	request_body @evidence_upload {
+		max_size 20MiB
+	}
+	@chat_upload path /api/chat /api/staff/customer-message
+	request_body @chat_upload {
+		max_size 27MiB
+	}
+	@default_body not path /api/order-actions/*/evidence /api/chat /api/staff/customer-message
+	request_body @default_body {
 		max_size 10MB
 	}
 	header {

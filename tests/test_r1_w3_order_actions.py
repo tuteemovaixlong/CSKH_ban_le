@@ -1551,7 +1551,7 @@ class PhaseR1W3EvidenceStorageExifStripAuthAndPurgeTests(unittest.TestCase):
         self.assertEqual(st2, 201)
         req_id_other_case = created2["order_action_request_id"]
 
-        # 1. Reject PDF (%PDF-1.7) and invalid magic bytes (GIF, EXE, polyglot)
+        # 1. Fail-closed PDF check when scanner is unconfigured (W4-D3) and reject invalid magic bytes (GIF, EXE, polyglot)
         st_pdf, _, raw_pdf = self._raw_call(
             "POST",
             f"/api/order-actions/{req_id}/evidence",
@@ -1559,7 +1559,7 @@ class PhaseR1W3EvidenceStorageExifStripAuthAndPurgeTests(unittest.TestCase):
             content_type="application/pdf",
             cookie=self.cust1,
         )
-        self.assertEqual((st_pdf, json.loads(raw_pdf)["error"]), (415, "pdf_evidence_deferred"))
+        self.assertEqual((st_pdf, json.loads(raw_pdf)["error"]), (503, "malware_scanner_unavailable"))
 
         for bad_bytes in (b"GIF89a\x01\x00\x01\x00\x80\x00\x00", b"MZ\x90\x00\x03\x00\x00\x00", b"\xff\xd8\xffNOT_A_VALID_JPEG"):
             st_bad, _, raw_bad = self._raw_call(

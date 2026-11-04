@@ -56,10 +56,11 @@ def build_private_app(settings: Settings | None = None) -> Application:
 
 def serve_public():
     from waitress import serve
+    from retailops.core import CHAT_ATTACHMENT_JSON_MAX_BYTES
     app = build_public_app()
     print('RetailOps synthetic HTTPS backend ready; awaiting Caddy.', flush=True)
     serve(app, host='0.0.0.0', port=8000, threads=8, connection_limit=100,
-          channel_timeout=30, max_request_header_size=16384, max_request_body_size=10_485_760,
+          channel_timeout=30, max_request_header_size=16384, max_request_body_size=CHAT_ATTACHMENT_JSON_MAX_BYTES,
           clear_untrusted_proxy_headers=True, expose_tracebacks=False, ident='RetailOps')
 
 

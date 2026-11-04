@@ -66,6 +66,12 @@ def read_database(path, component, tables):
                     row['exchange_kind'] = LEGACY_EXCHANGE_KIND_MAP.get(row.get('exchange_kind'), row.get('exchange_kind'))
                     row.setdefault('target_variant_id', None)
                     row.setdefault('target_variant_label', None)
+                for row in result.get('order_action_evidence', ()):
+                    row.setdefault('filename', None)
+                    row.setdefault('page_count', None)
+                    row.setdefault('scan_status', None)
+                    row.setdefault('scan_engine', None)
+                    row.setdefault('scanned_at', None)
             if component == 'identity':
                 for row in result.get('memberships', ()):
                     row.setdefault('disabled_reason', None)

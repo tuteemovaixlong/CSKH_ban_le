@@ -1,4 +1,4 @@
-"""Image evidence validation, EXIF/GPS-free pixel re-encoding, and protected storage paths (W3-D4, W4-D6)."""
+"""Image/PDF evidence validation, ClamAV scanning, pixel re-encoding, and protected storage (W3-D4, W4-D3, W4-D6)."""
 from __future__ import annotations
 
 import base64
@@ -7,17 +7,22 @@ import hashlib
 import io
 import os
 import re
+import time
 import uuid
 from pathlib import Path
 
 from PIL import Image, ImageOps
 
-from retailops.core import EVIDENCE_MAX_BYTES, ROOT, ApiError, require
+from retailops.business.clamav import ClamdScanner
+from retailops.core import EVIDENCE_MAX_BYTES, PDF_EVIDENCE_MAX_BYTES, ROOT, ApiError, require
 
 MAX_EVIDENCE_PIXELS = 25_000_000
 MAX_EVIDENCE_DIMENSION = 12_000
 MAX_MODEL_IMAGE_EDGE = 1024
 MAX_MODEL_IMAGES = 3
+PDF_MAX_BYTES = PDF_EVIDENCE_MAX_BYTES
+PDF_MAX_PAGES = 20
+PDF_MAX_EXCERPT_CHARS = 4000
 SAFE_SEGMENT_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 UNSAFE_FILENAME_CHARS_RE = re.compile(r"[\x00-\x1f\x7f/\\]+")
 
@@ -147,21 +152,29 @@ def project_image_for_model(raw_bytes: bytes, *, max_edge: int = MAX_MODEL_IMAGE
 
 
 def detect_evidence_magic(raw: bytes) -> tuple[str, str]:
-    """Inspect magic bytes and return (pil_format, mime_type). Rejects PDF and unknown formats."""
+    """Inspect magic bytes and return (format_tag, mime_type)."""
     require(isinstance(raw, (bytes, bytearray)) and len(raw) > 0, 400, "empty_evidence", "Tệp bằng chứng rỗng.")
+    head = bytes(raw[:1024])
+    if head.startswith(b"%PDF-"):
+        require(
+            len(raw) <= PDF_MAX_BYTES,
+            413,
+            "evidence_too_large",
+            "Tệp PDF vượt quá giới hạn 20 MB.",
+        )
+        return "PDF", "application/pdf"
+    if b"%PDF-" in head[:64]:
+        raise ApiError(
+            415,
+            "unsupported_evidence_type",
+            "Tệp PDF không hợp lệ (dữ liệu lạ trước header %PDF-).",
+        )
     require(
         len(raw) <= EVIDENCE_MAX_BYTES,
         413,
         "evidence_too_large",
         "Ảnh bằng chứng vượt quá giới hạn 10 MB.",
     )
-    head = bytes(raw[:1024])
-    if head.startswith(b"%PDF-") or b"%PDF-" in head[:64]:
-        raise ApiError(
-            415,
-            "pdf_evidence_deferred",
-            "Tệp PDF chưa được hỗ trợ trong giai đoạn W3; vui lòng tải ảnh JPEG, PNG hoặc WebP.",
-        )
     if len(raw) >= 3 and raw[:3] == b"\xff\xd8\xff":
         return "JPEG", "image/jpeg"
     if len(raw) >= 8 and raw[:8] == b"\x89PNG\r\n\x1a\n":
@@ -171,13 +184,162 @@ def detect_evidence_magic(raw: bytes) -> tuple[str, str]:
     raise ApiError(
         415,
         "unsupported_evidence_type",
-        "Chỉ chấp nhận ảnh bằng chứng định dạng JPEG, PNG hoặc WebP (kiểm tra theo magic bytes).",
+        "Chỉ chấp nhận tệp định dạng JPEG, PNG, WebP hoặc PDF (kiểm tra theo magic bytes).",
     )
+
+
+def project_pdf_for_model(
+    raw_bytes: bytes,
+    *,
+    include_pixels: bool = True,
+    max_pages_rendered: int = MAX_MODEL_IMAGES,
+    max_excerpt_chars: int = PDF_MAX_EXCERPT_CHARS,
+) -> dict:
+    """Project a validated PDF for model input: bounded [Trang N] excerpt for text PDFs, or <=3 rendered page images for scanned PDFs (W4-D3)."""
+    import pypdfium2 as pdfium
+
+    doc = None
+    try:
+        doc = pdfium.PdfDocument(bytes(raw_bytes))
+        page_count = len(doc)
+        if page_count < 1:
+            raise ApiError(400, "invalid_pdf_evidence", "Tệp PDF không có trang hợp lệ.")
+        if page_count > PDF_MAX_PAGES:
+            raise ApiError(
+                400,
+                "pdf_too_many_pages",
+                f"Tệp PDF vượt quá giới hạn {PDF_MAX_PAGES} trang.",
+            )
+        page_excerpts: list[str] = []
+        total_non_ws = 0
+        for idx in range(page_count):
+            page = doc[idx]
+            textpage = None
+            try:
+                textpage = page.get_textpage()
+                raw_txt = textpage.get_text_bounded() or ""
+                cleaned_lines = [
+                    re.sub(r"[ \t]+", " ", ln).strip()
+                    for ln in raw_txt.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+                ]
+                cleaned = "\n".join(ln for ln in cleaned_lines if ln).strip()
+                if cleaned:
+                    total_non_ws += len(re.sub(r"\s+", "", cleaned))
+                    page_excerpts.append(f"[Trang {idx + 1}] {cleaned}")
+            finally:
+                if textpage is not None:
+                    textpage.close()
+                page.close()
+
+        if total_non_ws > 0:
+            joined = "\n\n".join(page_excerpts)
+            if len(joined) > max_excerpt_chars:
+                joined = joined[: max_excerpt_chars - 1].rstrip() + "…"
+            return {
+                "pdf_mode": "text",
+                "page_count": int(page_count),
+                "excerpt": joined,
+                "images": [],
+            }
+
+        rendered_urls: list[str] = []
+        pages_to_render = min(int(max_pages_rendered), MAX_MODEL_IMAGES, page_count)
+        if include_pixels:
+            for idx in range(pages_to_render):
+                page = doc[idx]
+                try:
+                    pw, ph = page.get_size()
+                    long_pt = max(float(pw or 1.0), float(ph or 1.0), 1.0)
+                    scale = min(2.0, max(0.5, float(MAX_MODEL_IMAGE_EDGE) / long_pt))
+                    pil_img = page.render(scale=scale).to_pil()
+                    buf = io.BytesIO()
+                    pil_img.convert("RGB").save(buf, format="JPEG", quality=85, optimize=True)
+                    proj = project_image_for_model(buf.getvalue(), max_edge=MAX_MODEL_IMAGE_EDGE)
+                    rendered_urls.append(proj["data_url"])
+                finally:
+                    page.close()
+        else:
+            # Verify at least page 1 geometry is valid even when pixels are not requested
+            page0 = doc[0]
+            try:
+                _ = page0.get_size()
+            finally:
+                page0.close()
+
+        return {
+            "pdf_mode": "scanned",
+            "page_count": int(page_count),
+            "excerpt": "",
+            "images": rendered_urls,
+        }
+    except ApiError:
+        raise
+    except Exception:
+        raise ApiError(
+            400,
+            "invalid_pdf_evidence",
+            "Tệp PDF bị hỏng, có mật khẩu hoặc không thể đọc an toàn.",
+        ) from None
+    finally:
+        if doc is not None:
+            try:
+                doc.close()
+            except Exception:
+                pass
+
+
+def inspect_pdf_evidence(raw: bytes, *, scanner=None) -> dict:
+    """Validate PDF magic bytes, size (<=20 MB), ClamAV scan (fail-closed), and page count (<=20) (W4-D3)."""
+    fmt, mime_type = detect_evidence_magic(raw)
+    if fmt != "PDF":
+        raise ApiError(
+            415,
+            "unsupported_evidence_type",
+            "Tệp không phải định dạng PDF hợp lệ.",
+        )
+    raw_bytes = bytes(raw)
+    active_scanner = scanner if scanner is not None else ClamdScanner.from_environment()
+    scan_res = active_scanner.scan_bytes(raw_bytes)
+    require(
+        isinstance(scan_res, dict) and scan_res.get("status") == "clean",
+        503,
+        "malware_scanner_unavailable",
+        "Không xác nhận được trạng thái quét sạch cho tệp PDF.",
+    )
+    projected = project_pdf_for_model(raw_bytes, include_pixels=False)
+    return {
+        "bytes": raw_bytes,
+        "mime_type": mime_type,
+        "byte_size": len(raw_bytes),
+        "width": None,
+        "height": None,
+        "page_count": int(projected["page_count"]),
+        "sha256": hashlib.sha256(raw_bytes).hexdigest(),
+        "scan_status": "clean",
+        "scan_engine": str(scan_res.get("engine") or "clamav")[:64],
+        "scanned_at": float(scan_res.get("scanned_at") or time.time()),
+        "pdf_mode": projected["pdf_mode"],
+        "excerpt": projected["excerpt"],
+    }
+
+
+def inspect_evidence_bytes(raw: bytes, *, scanner=None) -> dict:
+    """Unified evidence validation and sanitization for images (JPEG/PNG/WebP) and PDFs (W3-D4, W4-D3)."""
+    fmt, _ = detect_evidence_magic(raw)
+    if fmt == "PDF":
+        return inspect_pdf_evidence(raw, scanner=scanner)
+    return inspect_and_reencode_evidence(raw)
 
 
 def inspect_and_reencode_evidence(raw: bytes) -> dict:
     """Validate magic bytes, decode image, apply orientation, strip ALL EXIF/GPS/metadata, and re-encode."""
     expected_fmt, mime_type = detect_evidence_magic(raw)
+    if expected_fmt == "PDF":
+        raise ApiError(
+            415,
+            "unsupported_evidence_type",
+            "Hàm mã hóa ảnh không nhận tệp PDF; hãy dùng inspect_evidence_bytes.",
+        )
     prev_max = Image.MAX_IMAGE_PIXELS
     Image.MAX_IMAGE_PIXELS = MAX_EVIDENCE_PIXELS
     try:
@@ -250,7 +412,11 @@ def inspect_and_reencode_evidence(raw: bytes) -> dict:
         "byte_size": len(clean_bytes),
         "width": int(width),
         "height": int(height),
+        "page_count": None,
         "sha256": hashlib.sha256(clean_bytes).hexdigest(),
+        "scan_status": "not_applicable",
+        "scan_engine": None,
+        "scanned_at": None,
     }
 
 

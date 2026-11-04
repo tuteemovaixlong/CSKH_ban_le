@@ -16,7 +16,7 @@ COPY opsconsole /app/opsconsole
 COPY evals /app/evals
 COPY scripts /app/scripts
 COPY notebooks /app/notebooks
-COPY deploy/compose.admin.yaml deploy/admin-console.py /app/deploy/
+COPY deploy/compose.admin.yaml deploy/compose.clamav.yaml deploy/admin-console.py /app/deploy/
 COPY tests /app/tests
 COPY data/smoke.jsonl /app/data/smoke.jsonl
 COPY data/products.json /app/data/products.json

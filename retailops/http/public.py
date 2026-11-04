@@ -9,7 +9,16 @@ import weakref
 from http import HTTPStatus
 from urllib.parse import urlsplit
 from agent_protocol import PROTOCOL
-from retailops.core import ApiError, BinaryPayload, EVIDENCE_MAX_BYTES, ROOT, VERSION, fields, require
+from retailops.core import (
+    ApiError,
+    BinaryPayload,
+    CHAT_ATTACHMENT_JSON_MAX_BYTES,
+    PDF_EVIDENCE_MAX_BYTES,
+    ROOT,
+    VERSION,
+    fields,
+    require,
+)
 from retailops.config import DEFAULT_CASE_TIMER_SCAN_SECONDS, public_origin
 from retailops.identity.contracts import RequestContext, SessionBackend
 from retailops.http.routes import EVIDENCE_UPLOAD_ROUTE_RE, api_result, parse_evidence_request_body
@@ -265,10 +274,10 @@ class PublicWeb:
                     env.get('CONTENT_TYPE'),
                     env.get('CONTENT_LENGTH'),
                     env['wsgi.input'],
-                    max_size=EVIDENCE_MAX_BYTES,
+                    max_size=PDF_EVIDENCE_MAX_BYTES,
                 )
             else:
-                max_size = 10_485_760 if path in ('/api/chat', '/api/staff/customer-message') else 16384
+                max_size = CHAT_ATTACHMENT_JSON_MAX_BYTES if path in ('/api/chat', '/api/staff/customer-message') else 16384
                 body = self.json_body(env, max_size=max_size)
         if method == 'POST' and path == '/api/login':
             fields(body, {'token'})

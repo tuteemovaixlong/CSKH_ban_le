@@ -42,11 +42,11 @@ function stageAttachment(file) {
     message('Chỉ hỗ trợ file ảnh (JPG, PNG, WEBP, GIF) hoặc tài liệu PDF.', 'assistant', 'interface');
     return;
   }
-  if (isPdf && file.size > 4 * 1024 * 1024) {
-    message('Dung lượng tài liệu PDF tối đa là 4MB để đảm bảo tốc độ truyền tải.', 'assistant', 'interface');
+  if (isPdf && file.size > 20 * 1024 * 1024) {
+    message('Dung lượng tài liệu PDF tối đa là 20MB.', 'assistant', 'interface');
     return;
   }
-  if (file.size > 10 * 1024 * 1024) {
+  if (!isPdf && file.size > 10 * 1024 * 1024) {
     message('Dung lượng tệp tối đa là 10MB.', 'assistant', 'interface');
     return;
   }
@@ -1082,9 +1082,9 @@ async function chooseReason(id, requestedType = null, requestedExchangeKind = nu
   const evWrap = el('div', 'order-action-evidence-wrap');
   const evInput = el('input', 'order-action-evidence-input');
   evInput.type = 'file';
-  evInput.accept = 'image/jpeg,image/png,image/webp';
+  evInput.accept = 'image/jpeg,image/png,image/webp,application/pdf';
   evInput.multiple = true;
-  const evHint = el('small', 'order-action-evidence-hint', 'Đính kèm ảnh bằng chứng (tùy chọn, tối đa 5 ảnh JPEG/PNG/WebP, mỗi ảnh ≤ 10MB).');
+  const evHint = el('small', 'order-action-evidence-hint', 'Đính kèm bằng chứng (tùy chọn, tối đa 5 tệp JPEG/PNG/WebP ≤ 10MB hoặc PDF ≤ 20MB).');
 
   evInput.onchange = () => {
     cardError.textContent = '';
@@ -1092,30 +1092,34 @@ async function chooseReason(id, requestedType = null, requestedExchangeKind = nu
     if (files.length > 5) {
       selectedFiles = [];
       evInput.value = '';
-      cardError.textContent = 'Chỉ được đính kèm tối đa 5 ảnh cho mỗi yêu cầu.';
-      evHint.textContent = 'Chưa chọn ảnh bằng chứng.';
+      cardError.textContent = 'Chỉ được đính kèm tối đa 5 tệp bằng chứng cho mỗi yêu cầu.';
+      evHint.textContent = 'Chưa chọn tệp bằng chứng.';
       return;
     }
     for (const f of files) {
-      if (f.type && !['image/jpeg', 'image/png', 'image/webp'].includes(f.type)) {
+      if (f.type && !['image/jpeg', 'image/png', 'image/webp', 'application/pdf'].includes(f.type)) {
         selectedFiles = [];
         evInput.value = '';
-        cardError.textContent = 'Chỉ chấp nhận ảnh định dạng JPEG, PNG hoặc WebP.';
-        evHint.textContent = 'Chưa chọn ảnh bằng chứng.';
+        cardError.textContent = 'Chỉ chấp nhận tệp JPEG, PNG, WebP hoặc PDF.';
+        evHint.textContent = 'Chưa chọn tệp bằng chứng.';
         return;
       }
-      if (typeof f.size === 'number' && f.size > 10485760) {
+      const isPdfFile = f.type === 'application/pdf';
+      const maxBytes = isPdfFile ? 20971520 : 10485760;
+      if (typeof f.size === 'number' && f.size > maxBytes) {
         selectedFiles = [];
         evInput.value = '';
-        cardError.textContent = 'Mỗi ảnh bằng chứng không được vượt quá 10MB.';
-        evHint.textContent = 'Chưa chọn ảnh bằng chứng.';
+        cardError.textContent = isPdfFile
+          ? 'Mỗi tệp PDF bằng chứng không được vượt quá 20MB.'
+          : 'Mỗi ảnh bằng chứng không được vượt quá 10MB.';
+        evHint.textContent = 'Chưa chọn tệp bằng chứng.';
         return;
       }
     }
     selectedFiles = files;
     evHint.textContent = files.length
-      ? ('Đã chọn ' + files.length + ' ảnh bằng chứng: ' + files.map(f => f.name).join(', '))
-      : 'Đính kèm ảnh bằng chứng (tùy chọn, tối đa 5 ảnh JPEG/PNG/WebP, mỗi ảnh ≤ 10MB).';
+      ? ('Đã chọn ' + files.length + ' tệp bằng chứng: ' + files.map(f => f.name).join(', '))
+      : 'Đính kèm bằng chứng (tùy chọn, tối đa 5 tệp JPEG/PNG/WebP ≤ 10MB hoặc PDF ≤ 20MB).';
   };
   evWrap.append(evInput, evHint);
   card.append(evWrap, cardError);
@@ -2566,6 +2570,12 @@ function renderStaffCaseOrderActions() {
         if (ev.purged || ev.file_purged_at != null) {
           const shaShort = String(ev.sha256 || '').slice(0, 12);
           evRow.append(el('span', 'case-ops-pill', `Đã xóa tệp sau 90 ngày · SHA-256 ${shaShort}…`));
+        } else if (ev.mime_type === 'application/pdf') {
+          const pdfLink = el('a', 'case-ops-pill', `📄 PDF (${ev.filename || ev.evidence_id})`);
+          pdfLink.href = ev.download_url || `/api/order-actions/${encodeURIComponent(req.request_id)}/evidence/${encodeURIComponent(ev.evidence_id)}`;
+          pdfLink.target = '_blank';
+          pdfLink.rel = 'noopener noreferrer';
+          evRow.append(pdfLink);
         } else {
           const img = el('img', 'case-ops-evidence-thumb');
           img.src = ev.download_url || `/api/order-actions/${encodeURIComponent(req.request_id)}/evidence/${encodeURIComponent(ev.evidence_id)}`;

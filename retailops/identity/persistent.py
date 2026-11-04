@@ -119,6 +119,8 @@ class PersistentSessions:
             store.clock = self.store_clock
         if getattr(self, 'case_timer_config', None) is not None:
             store.case_timer_config = self.case_timer_config
+        if getattr(self, 'malware_scanner', None) is not None:
+            store.malware_scanner = self.malware_scanner
         return store
 
     def provision_tenant(self, tenant_id, name, *, seed_demo=False):

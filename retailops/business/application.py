@@ -347,6 +347,7 @@ class Application:
                 first_fresh = saved_state['fresh'][0]
                 if isinstance(first_fresh, dict) and isinstance(first_fresh.get('attachment'), dict):
                     effective_attachment = first_fresh['attachment']
+            has_media_attachment = bool(effective_attachment)
             needs_visual_model = bool(
                 effective_attachment
                 and (
@@ -356,7 +357,7 @@ class Application:
             )
 
             if gateway is None:
-                if needs_visual_model:
+                if has_media_attachment:
                     return self._complete_media_human_fallback(
                         customer,
                         snapshot,
@@ -505,7 +506,7 @@ class Application:
                                        saver=saver, capture=capture, restore=restore, before_model=before_model, attachment=sanitized_attachment,
                                        progress=lambda state: self.progress.update(progress_key, request_id, state))
             except AgentError as exc:
-                if needs_visual_model:
+                if has_media_attachment:
                     return self._complete_media_human_fallback(
                         customer,
                         snapshot,
@@ -520,7 +521,7 @@ class Application:
                     )
                 raise
             except ApiError as exc:
-                if needs_visual_model and exc.status >= 500:
+                if has_media_attachment and exc.status >= 500:
                     return self._complete_media_human_fallback(
                         customer,
                         snapshot,
@@ -534,7 +535,7 @@ class Application:
                     )
                 raise
             except (RuntimeError, ValueError, OSError):
-                if needs_visual_model:
+                if has_media_attachment:
                     return self._complete_media_human_fallback(
                         customer,
                         snapshot,

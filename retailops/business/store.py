@@ -18,8 +18,10 @@ from contextlib import contextmanager
 from pathlib import Path
 from retailops.core import (
     ApiError,
+    EVIDENCE_MAX_BYTES,
     EVIDENCE_MAX_COUNT,
     EVIDENCE_RETENTION_SECONDS,
+    PDF_EVIDENCE_MAX_BYTES,
     fields,
     require,
 )
@@ -30,7 +32,9 @@ from retailops.business.evidence import (
     decode_attachment_data_payload,
     encode_image_data_url,
     inspect_and_reencode_evidence,
+    inspect_evidence_bytes,
     project_image_for_model,
+    project_pdf_for_model,
     resolve_protected_subdir,
     sanitize_attachment_filename,
 )
@@ -4070,8 +4074,9 @@ class BusinessStore:
             ).fetchall()
         ]
         ev_rows = db.execute(
-            """SELECT evidence_id, request_id, case_id, uploaded_by_role, mime_type,
-                      byte_size, width, height, sha256, created_at, file_purged_at
+            """SELECT evidence_id, request_id, case_id, filename, uploaded_by_role, mime_type,
+                      byte_size, width, height, page_count, sha256, scan_status, scan_engine,
+                      scanned_at, created_at, file_purged_at
                FROM order_action_evidence
                WHERE request_id = ?
                ORDER BY created_at ASC, evidence_id ASC""",
@@ -6162,6 +6167,9 @@ class BusinessStore:
             return Path(env_out)
         return Path(tempfile.gettempdir()) / "retailops_runtime_data"
 
+    def _active_malware_scanner(self):
+        return getattr(self, "malware_scanner", None)
+
     def upload_order_action_evidence(
         self,
         request_id: str,
@@ -6169,6 +6177,7 @@ class BusinessStore:
         *,
         customer_id: str | None = None,
         actor: dict | None = None,
+        filename: str | None = None,
     ) -> dict:
         require(
             isinstance(request_id, str) and bool(re.fullmatch(r"[A-Za-z0-9_-]{1,80}", request_id)),
@@ -6176,14 +6185,15 @@ class BusinessStore:
             "invalid_request_id",
             "Mã yêu cầu đơn hàng không hợp lệ.",
         )
-        clean = inspect_and_reencode_evidence(raw_bytes)
+        clean = inspect_evidence_bytes(raw_bytes, scanner=self._active_malware_scanner())
+        safe_filename = sanitize_attachment_filename(filename, default_name="") if filename else None
         norm_actor = self._normalize_actor(actor, str(customer_id or "customer"), "customer")
         caller_role = norm_actor["role"]
         require(
             caller_role in ("customer", "staff", "manager"),
             403,
             "permission_denied",
-            "Tài khoản không có quyền tải ảnh bằng chứng.",
+            "Tài khoản không có quyền tải tệp bằng chứng.",
         )
 
         safe_tid, _, target_dir = resolve_protected_subdir(
@@ -6213,7 +6223,7 @@ class BusinessStore:
                         req_row["status"] == "requested" and req_row["closed_at"] is None,
                         409,
                         "evidence_upload_closed",
-                        "Khách hàng chỉ được đính kèm ảnh khi yêu cầu còn ở trạng thái requested.",
+                        "Khách hàng chỉ được đính kèm bằng chứng khi yêu cầu còn ở trạng thái requested.",
                     )
                     case_row = db.execute(
                         "SELECT status FROM cases WHERE case_id = ?",
@@ -6223,7 +6233,7 @@ class BusinessStore:
                         case_row is not None and case_row["status"] != "resolved",
                         409,
                         "case_already_resolved",
-                        "Ca hỗ trợ đã đóng, không thể tải thêm ảnh bằng chứng.",
+                        "Ca hỗ trợ đã đóng, không thể tải thêm tệp bằng chứng.",
                     )
                     uploaded_by_principal = norm_actor["principal_id"]
                     uploaded_by_role = "customer"
@@ -6233,7 +6243,7 @@ class BusinessStore:
                         req_row["closed_at"] is None,
                         409,
                         "evidence_upload_closed",
-                        "Yêu cầu đơn hàng đã đóng, không thể tải thêm ảnh bằng chứng.",
+                        "Yêu cầu đơn hàng đã đóng, không thể tải thêm tệp bằng chứng.",
                     )
                     uploaded_by_principal = norm_actor["principal_id"]
                     uploaded_by_role = caller_role
@@ -6247,30 +6257,36 @@ class BusinessStore:
                     existing_count < EVIDENCE_MAX_COUNT,
                     409,
                     "evidence_limit_exceeded",
-                    f"Mỗi yêu cầu đơn hàng chỉ được đính kèm tối đa {EVIDENCE_MAX_COUNT} ảnh bằng chứng.",
+                    f"Mỗi yêu cầu đơn hàng chỉ được đính kèm tối đa {EVIDENCE_MAX_COUNT} tệp bằng chứng.",
                 )
 
                 written_path = atomic_write_bytes(target_dir, evidence_id, clean["bytes"])
                 db.execute(
                     """INSERT INTO order_action_evidence(
-                           evidence_id, request_id, case_id, customer_id, conversation_id,
+                           evidence_id, request_id, case_id, customer_id, conversation_id, filename,
                            uploaded_by_principal_id, uploaded_by_role, mime_type, byte_size,
-                           width, height, sha256, storage_relpath, created_at, file_purged_at
-                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)""",
+                           width, height, page_count, sha256, storage_relpath,
+                           scan_status, scan_engine, scanned_at, created_at, file_purged_at
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)""",
                     (
                         evidence_id,
                         request_id,
                         req_row["case_id"],
                         req_row["customer_id"],
                         req_row["conversation_id"],
+                        safe_filename,
                         uploaded_by_principal,
                         uploaded_by_role,
                         clean["mime_type"],
                         clean["byte_size"],
                         clean["width"],
                         clean["height"],
+                        clean.get("page_count"),
                         clean["sha256"],
                         storage_relpath,
+                        clean.get("scan_status"),
+                        clean.get("scan_engine"),
+                        clean.get("scanned_at"),
                         now_ts,
                     ),
                 )
@@ -6286,6 +6302,8 @@ class BusinessStore:
                     byte_size=clean["byte_size"],
                     width=clean["width"],
                     height=clean["height"],
+                    page_count=clean.get("page_count"),
+                    scan_status=clean.get("scan_status"),
                     sha256=clean["sha256"],
                     actor=actor if actor is not None else norm_actor,
                 )
@@ -6295,16 +6313,22 @@ class BusinessStore:
                 written_path.unlink(missing_ok=True)
             raise
 
+        is_pdf = clean["mime_type"] == "application/pdf"
         return {
             "status": "ok",
             "evidence": {
                 "evidence_id": evidence_id,
                 "request_id": request_id,
                 "case_id": req_row["case_id"],
+                "filename": safe_filename,
                 "mime_type": clean["mime_type"],
                 "byte_size": clean["byte_size"],
                 "width": clean["width"],
                 "height": clean["height"],
+                "page_count": clean.get("page_count"),
+                "scan_status": clean.get("scan_status"),
+                "scan_engine": clean.get("scan_engine"),
+                "scanned_at": clean.get("scanned_at"),
                 "sha256": clean["sha256"],
                 "uploaded_by_role": uploaded_by_role,
                 "created_at": now_ts,
@@ -6312,7 +6336,11 @@ class BusinessStore:
                 "download_url": f"/api/order-actions/{request_id}/evidence/{evidence_id}",
             },
             "order_action": serialized,
-            "message": "Đã lưu ảnh bằng chứng (đã xóa dữ liệu EXIF/GPS).",
+            "message": (
+                "Đã quét sạch và lưu tài liệu PDF bằng chứng."
+                if is_pdf
+                else "Đã lưu ảnh bằng chứng (đã xóa dữ liệu EXIF/GPS)."
+            ),
         }
 
     def get_order_action_evidence_record(self, request_id: str, evidence_id: str) -> tuple[dict, dict]:
@@ -6421,8 +6449,9 @@ class BusinessStore:
             }
 
         require("data" in attachment, 400, "invalid_attachment", "Thiếu nội dung tệp đính kèm.")
-        raw_bytes = decode_attachment_data_payload(attachment["data"])
-        clean = inspect_and_reencode_evidence(raw_bytes)
+        max_raw = PDF_EVIDENCE_MAX_BYTES if att_type == "document" else EVIDENCE_MAX_BYTES
+        raw_bytes = decode_attachment_data_payload(attachment["data"], max_raw_bytes=max_raw)
+        clean = inspect_evidence_bytes(raw_bytes, scanner=self._active_malware_scanner())
         ext_map = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "application/pdf": ".pdf"}
         default_name = "attachment" + ext_map.get(clean["mime_type"], "")
         safe_name = sanitize_attachment_filename(attachment.get("name"), default_name=default_name)
@@ -6450,8 +6479,9 @@ class BusinessStore:
                     """INSERT INTO order_action_evidence(
                            evidence_id, request_id, case_id, customer_id, conversation_id, filename,
                            uploaded_by_principal_id, uploaded_by_role, mime_type, byte_size,
-                           width, height, sha256, storage_relpath, created_at, file_purged_at
-                       ) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)""",
+                           width, height, page_count, sha256, storage_relpath,
+                           scan_status, scan_engine, scanned_at, created_at, file_purged_at
+                       ) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)""",
                     (
                         evidence_id,
                         case_row["case_id"],
@@ -6464,8 +6494,12 @@ class BusinessStore:
                         clean["byte_size"],
                         clean.get("width"),
                         clean.get("height"),
+                        clean.get("page_count"),
                         clean["sha256"],
                         storage_relpath,
+                        clean.get("scan_status"),
+                        clean.get("scan_engine"),
+                        clean.get("scanned_at"),
                         now_ts,
                     ),
                 )
@@ -6479,6 +6513,8 @@ class BusinessStore:
                     evidence_id=evidence_id,
                     mime_type=clean["mime_type"],
                     byte_size=clean["byte_size"],
+                    page_count=clean.get("page_count"),
+                    scan_status=clean.get("scan_status"),
                     sha256=clean["sha256"],
                     actor=actor if actor is not None else norm_actor,
                 )
@@ -6487,7 +6523,7 @@ class BusinessStore:
                 written_path.unlink(missing_ok=True)
             raise
 
-        return {
+        ref_meta = {
             "evidence_id": evidence_id,
             "type": "document" if clean["mime_type"] == "application/pdf" else "image",
             "mime_type": clean["mime_type"],
@@ -6495,6 +6531,10 @@ class BusinessStore:
             "sha256": clean["sha256"],
             "download_url": f"/api/conversations/{cid}/evidence/{evidence_id}",
         }
+        if clean["mime_type"] == "application/pdf":
+            ref_meta["page_count"] = clean.get("page_count")
+            ref_meta["pdf_mode"] = clean.get("pdf_mode")
+        return ref_meta
 
     def get_chat_evidence_record(self, cid: str, evidence_id: str) -> dict:
         require(
@@ -6538,7 +6578,10 @@ class BusinessStore:
             base_meta["evidence_id"] = ev_id
         if att_meta.get("sha256"):
             base_meta["sha256"] = att_meta["sha256"]
-        if not include_pixels or not ev_id:
+        if not ev_id:
+            return base_meta
+        is_pdf_hint = att_meta.get("mime_type") == "application/pdf" or att_meta.get("type") == "document"
+        if not include_pixels and not is_pdf_hint:
             return base_meta
         try:
             ev_row = self.get_chat_evidence_record(cid, str(ev_id))
@@ -6549,7 +6592,16 @@ class BusinessStore:
             return base_meta
         hydrated = dict(base_meta)
         hydrated["mime_type"] = mime_type
-        if mime_type != "application/pdf":
+        if mime_type == "application/pdf":
+            hydrated["type"] = "document"
+            pdf_proj = project_pdf_for_model(raw_bytes, include_pixels=include_pixels)
+            hydrated["pdf_mode"] = pdf_proj["pdf_mode"]
+            hydrated["page_count"] = pdf_proj["page_count"]
+            if pdf_proj["excerpt"]:
+                hydrated["excerpt"] = pdf_proj["excerpt"]
+            if pdf_proj["images"]:
+                hydrated["images"] = pdf_proj["images"]
+        elif include_pixels:
             proj = project_image_for_model(raw_bytes)
             hydrated["mime_type"] = proj["mime_type"]
             hydrated["data"] = proj["data_url"]
