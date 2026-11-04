@@ -216,7 +216,7 @@ class OpenRouterAgent:
                 'identity_source': 'configured_api_model', 'agent_protocol': PROTOCOL}
 
 
-    def translate(self, messages):
+    def translate(self, messages, *, extra_tool_names=()):
         validate_messages(messages)
         # Pre-allocate image budget from newest user turn backwards so total images never exceed MAX_MODEL_IMAGES (3).
         allowed_urls_by_index = {}
@@ -236,7 +236,7 @@ class OpenRouterAgent:
             if message['role'] == 'assistant':
                 saved = self._messages.get(index)
                 if saved is not None:
-                    if assistant_message({'message': saved}) != message:
+                    if assistant_message({'message': saved}, extra_tool_names=extra_tool_names) != message:
                         raise ProtocolError('Current tool transcript changed')
                     entry = copy.deepcopy(saved)
                 else:
@@ -298,9 +298,9 @@ class OpenRouterAgent:
             translated.append(entry)
         return translated
 
-    def payload_messages(self, messages, system_prompt, allowed_tools=None):
+    def payload_messages(self, messages, system_prompt, allowed_tools=None, *, extra_tool_names=()):
         """Exactly one system turn; preserve transport indices/tool IDs."""
-        translated = self.translate(messages)
+        translated = self.translate(messages, extra_tool_names=extra_tool_names)
         if allowed_tools is not None:
             system_prompt = filter_system_prompt_for_tools(system_prompt, allowed_tools)
         if translated and translated[0].get('role') == 'system':
@@ -375,15 +375,18 @@ class OpenRouterAgent:
         """Provider/transport text that may enter a trace: no key, URL, endpoint or opaque token."""
         return filter_provider_text(text, secrets=(self.key, self.tunnel_token, self.endpoint), keep=(self.model,))
 
-    def _chat_anthropic(self, messages, allow_tools, timeout, *, allowed_tools=None):
+    def _chat_anthropic(self, messages, allow_tools, timeout, *, allowed_tools=None,
+                        system_override=None, tool_schemas_override=None):
         validate_messages(messages)
-        mode = request_mode(messages)
-        system_prompt = GENERAL_SYSTEM if mode == 'general' else SYSTEM
-        if allowed_tools is not None:
+        mode = 'retail' if system_override is not None else request_mode(messages)
+        system_prompt = system_override if system_override is not None else (GENERAL_SYSTEM if mode == 'general' else SYSTEM)
+        if allowed_tools is not None and system_override is None:
             system_prompt = filter_system_prompt_for_tools(system_prompt, allowed_tools)
+        raw_tools = list(tool_schemas_override) if tool_schemas_override is not None else scoped_tools(allowed_tools)
+        extra_names = tuple(t['function']['name'] for t in raw_tools) if tool_schemas_override is not None else ()
         anthropic_tools = []
         if mode != 'general' and allow_tools:
-            for t in scoped_tools(allowed_tools):
+            for t in raw_tools:
                 fn = t['function']
                 anthropic_tools.append({
                     'name': fn['name'],
@@ -478,7 +481,7 @@ class OpenRouterAgent:
             entry['tool_calls'] = raw_tool_calls
             self._messages[len(messages)] = entry
 
-        clean = assistant_message({'message': entry})
+        clean = assistant_message({'message': entry}, extra_tool_names=extra_names)
         usage = result.get('usage') or {}
         prompt_tokens = usage.get('input_tokens', 0)
         completion_tokens = usage.get('output_tokens', 0)
@@ -490,15 +493,25 @@ class OpenRouterAgent:
     def chat_scoped(self, messages, allow_tools, timeout, allowed_tools):
         return self.chat(messages, allow_tools, timeout, allowed_tools=allowed_tools)
 
-    def chat(self, messages, allow_tools, timeout, *, allowed_tools=None):
-        available = scoped_tools(allowed_tools)
+    def chat_profile(self, messages, allow_tools, timeout, *, system_prompt, tool_schemas):
+        return self.chat(messages, allow_tools, timeout,
+                         system_override=system_prompt, tool_schemas_override=tool_schemas)
+
+    def chat(self, messages, allow_tools, timeout, *, allowed_tools=None,
+             system_override=None, tool_schemas_override=None):
+        available = list(tool_schemas_override) if tool_schemas_override is not None else scoped_tools(allowed_tools)
+        extra_names = tuple(t['function']['name'] for t in available) if tool_schemas_override is not None else ()
         if self.is_anthropic:
-            return self._chat_anthropic(messages, allow_tools, timeout, allowed_tools=allowed_tools)
-        mode = request_mode(messages)
-        system_prompt = GENERAL_SYSTEM if mode == 'general' else SYSTEM
+            return self._chat_anthropic(messages, allow_tools, timeout, allowed_tools=allowed_tools,
+                                        system_override=system_override, tool_schemas_override=tool_schemas_override)
+        mode = 'retail' if system_override is not None else request_mode(messages)
+        system_prompt = system_override if system_override is not None else (GENERAL_SYSTEM if mode == 'general' else SYSTEM)
         tools = [] if mode == 'general' else available
         tool_choice = 'none' if not tools or not allow_tools else 'auto'
-        payload = {'model': self.model, 'messages': self.payload_messages(messages, system_prompt, allowed_tools=allowed_tools),
+        payload = {'model': self.model, 'messages': self.payload_messages(
+                       messages, system_prompt,
+                       allowed_tools=(None if system_override is not None else allowed_tools),
+                       extra_tool_names=extra_names),
                    'stream': False, 'max_tokens': 2048, 'temperature': 0.2}
         custom_endpoint = self._explicit_endpoint if self.is_custom else os.getenv('RETAILOPS_API_ENDPOINT', '').strip()
         if custom_endpoint:
@@ -544,7 +557,7 @@ class OpenRouterAgent:
         if raw.get('tool_calls'):
             entry['tool_calls'] = raw['tool_calls']
         try:
-            clean = assistant_message({'message': entry})
+            clean = assistant_message({'message': entry}, extra_tool_names=extra_names)
         except ProtocolError as exc:
             # Tokens were generated even though nothing usable came back: record that, not "0 token".
             exc.diagnostics = {**reply_facts,

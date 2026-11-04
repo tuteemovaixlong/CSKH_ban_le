@@ -2546,6 +2546,8 @@ class BusinessStore:
                         leases_released=leases,
                     )
 
+        self.purge_expired_case_assist_turns(now=now_ts)
+
         return {
             'reminded': reminded,
             'resolved_inactivity': resolved_inactivity,
@@ -6673,6 +6675,349 @@ class BusinessStore:
                         purged_at=now_ts,
                     )
         return {"purged": purged}
+
+    # ---- Staff/Manager Case Assistant storage & retention (W4-D1, W4-D4, W4-D5) -----------------------
+    def purge_expired_case_assist_turns(self, *, now: float | None = None) -> dict:
+        """Delete Case Assistant history for resolved cases past their retention TTL (W4-D4)."""
+        now_ts = self._now() if now is None else float(now)
+        cutoff = now_ts - float(self.CONVERSATION_TTL)
+        with self.connection(write=True) as db:
+            has_table = True
+            try:
+                deleted = db.execute(
+                    """DELETE FROM case_assist_turns
+                       WHERE case_id IN (
+                           SELECT k.case_id
+                           FROM cases k
+                           LEFT JOIN conversations conv ON conv.id = k.conversation_id
+                           WHERE k.status = 'resolved'
+                             AND (
+                                 conv.id IS NULL
+                                 OR conv.expires_at <= ?
+                                 OR (k.resolved_at IS NOT NULL AND k.resolved_at < ?)
+                             )
+                       )
+                       OR NOT EXISTS (
+                           SELECT 1 FROM cases k2 WHERE k2.case_id = case_assist_turns.case_id
+                       )""",
+                    (now_ts, cutoff),
+                ).rowcount
+            except Exception:
+                has_table = False
+                deleted = 0
+        return {"purged": int(deleted or 0) if has_table else 0}
+
+    def authorize_case_assist(
+        self,
+        case_id: str,
+        *,
+        actor: dict | None,
+        write_attempt: bool = True,
+        mode: str = "ask",
+    ) -> dict:
+        """Verify Case Assistant access on `case_id` (W4-D1, W4-D4, W4-D5).
+
+        For `write_attempt=True` (`POST /api/staff/cases/<case_id>/assist`), the caller MUST either
+        actively hold the case (`status == 'in_progress' and holder == caller_id`) or have role `manager`.
+        Denied write attempts are recorded in `business_events` (`staff_case_assist_denied`).
+        """
+        require(
+            isinstance(case_id, str) and bool(re.fullmatch(r"[A-Za-z0-9_-]{1,80}", case_id)),
+            400,
+            "invalid_case_id",
+            "Mã ca hỗ trợ không hợp lệ.",
+        )
+        norm_actor = self._normalize_actor(actor, "", "")
+        caller_role = norm_actor.get("role")
+        caller_id = norm_actor.get("principal_id")
+        require(
+            caller_role in ("staff", "manager") and bool(caller_id),
+            403,
+            "permission_denied",
+            "Chỉ nhân viên hoặc quản lý mới được sử dụng Trợ lý ca.",
+        )
+        resolved_tid = self._effective_tenant_id(actor)
+        now_ts = self._now()
+
+        denied_err: ApiError | None = None
+        with self.connection(write=True) as db:
+            case_row = db.execute("SELECT * FROM cases WHERE case_id = ?", (case_id,)).fetchone()
+            require(case_row is not None, 404, "case_not_found", "Không tìm thấy ca hỗ trợ.")
+            cid = case_row["conversation_id"]
+            conv = (
+                db.execute(
+                    "SELECT id, customer_id, order_id, product_id, expires_at FROM conversations WHERE id = ?",
+                    (cid,),
+                ).fetchone()
+                if cid
+                else None
+            )
+
+            if case_row["status"] == "resolved":
+                within_retention = (
+                    conv is not None
+                    and float(conv["expires_at"]) > now_ts
+                    and (
+                        case_row["resolved_at"] is None
+                        or (now_ts - float(case_row["resolved_at"])) <= float(self.CONVERSATION_TTL)
+                    )
+                )
+                if not within_retention:
+                    db.execute("DELETE FROM case_assist_turns WHERE case_id = ?", (case_id,))
+                    if write_attempt:
+                        self.log(
+                            db,
+                            case_row["customer_id"],
+                            "staff_case_assist_denied",
+                            conv["order_id"] if conv is not None else None,
+                            case_id=case_id,
+                            conversation_id=cid,
+                            mode=mode,
+                            reason="case_retention_expired",
+                            actor=norm_actor,
+                        )
+                    denied_err = ApiError(
+                        403,
+                        "case_retention_expired",
+                        "Ca hỗ trợ đã đóng và quá thời hạn lưu trữ.",
+                    )
+
+            is_holder = (
+                case_row["status"] == "in_progress"
+                and case_row["holder"] is not None
+                and case_row["holder"] == caller_id
+            )
+            is_manager = caller_role == "manager"
+
+            if denied_err is None and write_attempt and not (is_holder or is_manager):
+                self.log(
+                    db,
+                    case_row["customer_id"],
+                    "staff_case_assist_denied",
+                    conv["order_id"] if conv is not None else None,
+                    case_id=case_id,
+                    conversation_id=cid,
+                    mode=mode,
+                    reason="case_not_held",
+                    case_status=case_row["status"],
+                    actor=norm_actor,
+                )
+                denied_err = ApiError(
+                    403,
+                    "case_not_held",
+                    "Chỉ nhân viên đang trực tiếp giữ ca hoặc Quản lý mới được gọi Trợ lý ca.",
+                )
+
+            if denied_err is None and not write_attempt and not (is_holder or is_manager):
+                open_ep = db.execute(
+                    "SELECT handoff_id FROM handoff_episodes WHERE case_id = ? AND status = 'pending' LIMIT 1",
+                    (case_id,),
+                ).fetchone()
+                can_view_case = (
+                    (case_row["status"] in ("waiting", "in_progress") and (open_ep is not None or case_row["holder"] is not None))
+                    or case_row["status"] == "resolved"
+                )
+                require(
+                    can_view_case,
+                    403,
+                    "case_not_escalated",
+                    "Ca hỗ trợ hiện chưa có yêu cầu chuyển tiếp nhân viên.",
+                )
+
+        if denied_err is not None:
+            raise denied_err
+
+        return {
+            "tenant_id": resolved_tid,
+            "principal_id": caller_id,
+            "actor_role": caller_role,
+            "actor": norm_actor,
+            "case_id": case_row["case_id"],
+            "conversation_id": cid or "",
+            "customer_id": case_row["customer_id"],
+            "order_id": conv["order_id"] if conv is not None else None,
+            "case_status": case_row["status"],
+            "can_assist": bool(is_holder or is_manager),
+        }
+
+    @staticmethod
+    def _serialize_case_assist_turn_row(row) -> dict:
+        d = dict(row)
+        try:
+            sources = json.loads(d.get("sources_json") or "[]")
+        except Exception:
+            sources = []
+        try:
+            trace = json.loads(d.get("trace_json") or "{}")
+        except Exception:
+            trace = {}
+        _, clean_trace = sanitize_structured_payload(trace, preserve_reasoning=True)
+        return {
+            "turn_id": d["turn_id"],
+            "case_id": d["case_id"],
+            "request_id": d["request_id"],
+            "mode": d["mode"],
+            "question": d["question"],
+            "answer": d["answer"],
+            "draft_reply": d.get("draft_reply"),
+            "sources": sources if isinstance(sources, list) else [],
+            "trace": clean_trace if isinstance(clean_trace, dict) else {},
+            "created_at": float(d["created_at"]),
+        }
+
+    def find_case_assist_replay(
+        self,
+        *,
+        tenant_id: str,
+        principal_id: str,
+        case_id: str,
+        request_id: str,
+        mode: str,
+        question: str,
+    ) -> dict | None:
+        with self.connection() as db:
+            row = db.execute(
+                """SELECT * FROM case_assist_turns
+                   WHERE tenant_id = ? AND principal_id = ? AND case_id = ? AND request_id = ?""",
+                (tenant_id, principal_id, case_id, request_id),
+            ).fetchone()
+        if row is None:
+            return None
+        require(
+            row["mode"] == mode and row["question"] == question,
+            409,
+            "request_conflict",
+            "Mã yêu cầu Trợ lý ca đã được dùng cho nội dung khác.",
+        )
+        return self._serialize_case_assist_turn_row(row)
+
+    def case_assist_model_history(
+        self,
+        *,
+        tenant_id: str,
+        principal_id: str,
+        case_id: str,
+        limit: int = 10,
+    ) -> list[dict]:
+        """Load ONLY the caller's own prior Case Assistant turns on this case (W4-D4)."""
+        with self.connection() as db:
+            rows = db.execute(
+                """SELECT mode, question, answer
+                   FROM case_assist_turns
+                   WHERE tenant_id = ? AND principal_id = ? AND case_id = ?
+                   ORDER BY created_at DESC, turn_id DESC
+                   LIMIT ?""",
+                (tenant_id, principal_id, case_id, max(1, min(int(limit), 20))),
+            ).fetchall()
+        history: list[dict] = []
+        for r in reversed(rows):
+            q = f"[Chế độ: {r['mode']}] {r['question']}".strip()[:2000]
+            a = str(r["answer"] or "").strip()[:7500]
+            if q and a:
+                history.append({"role": "user", "content": q})
+                history.append({"role": "assistant", "content": a})
+        return history
+
+    def save_case_assist_turn(
+        self,
+        *,
+        tenant_id: str,
+        actor: dict,
+        case_id: str,
+        conversation_id: str,
+        customer_id: str,
+        order_id: str | None,
+        request_id: str,
+        mode: str,
+        question: str,
+        answer: str,
+        draft_reply: str | None,
+        sources: list,
+        trace: dict,
+    ) -> dict:
+        now_ts = self._now()
+        turn_id = f"cat_{uuid.uuid4().hex}"
+        norm_actor = self._normalize_actor(actor, "", "")
+        sources_json = json.dumps(sources if isinstance(sources, list) else [], ensure_ascii=False)
+        trace_json = json.dumps(trace if isinstance(trace, dict) else {}, ensure_ascii=False)
+        tools_used = [
+            t.get("name")
+            for t in (trace.get("tools") or [])
+            if isinstance(t, dict) and isinstance(t.get("name"), str)
+        ]
+
+        with self.connection(write=True) as db:
+            existing = db.execute(
+                """SELECT * FROM case_assist_turns
+                   WHERE tenant_id = ? AND principal_id = ? AND case_id = ? AND request_id = ?""",
+                (tenant_id, norm_actor["principal_id"], case_id, request_id),
+            ).fetchone()
+            if existing is not None:
+                require(
+                    existing["mode"] == mode and existing["question"] == question,
+                    409,
+                    "request_conflict",
+                    "Mã yêu cầu Trợ lý ca đã được dùng cho nội dung khác.",
+                )
+                return {**self._serialize_case_assist_turn_row(existing), "replayed": True}
+
+            db.execute(
+                """INSERT INTO case_assist_turns(
+                       turn_id, tenant_id, principal_id, actor_role, case_id, conversation_id,
+                       request_id, mode, question, answer, draft_reply, sources_json, trace_json, created_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    turn_id,
+                    tenant_id,
+                    norm_actor["principal_id"],
+                    norm_actor["role"],
+                    case_id,
+                    conversation_id or "",
+                    request_id,
+                    mode,
+                    question,
+                    answer,
+                    draft_reply,
+                    sources_json,
+                    trace_json,
+                    now_ts,
+                ),
+            )
+            self.log(
+                db,
+                customer_id,
+                "staff_case_assist_used",
+                order_id,
+                case_id=case_id,
+                conversation_id=conversation_id or None,
+                turn_id=turn_id,
+                request_id=request_id,
+                mode=mode,
+                has_draft=bool(draft_reply),
+                tool_count=len(tools_used),
+                tools=tools_used,
+                actor=norm_actor,
+            )
+            saved = db.execute("SELECT * FROM case_assist_turns WHERE turn_id = ?", (turn_id,)).fetchone()
+        return {**self._serialize_case_assist_turn_row(saved), "replayed": False}
+
+    def list_case_assist_turns(self, case_id: str, *, actor: dict | None, limit: int = 50) -> dict:
+        """Return ONLY the caller's `(tenant_id, principal_id, case_id)` Case Assistant turns (W4-D4)."""
+        self.purge_expired_case_assist_turns()
+        ctx = self.authorize_case_assist(case_id, actor=actor, write_attempt=False)
+        with self.connection() as db:
+            rows = db.execute(
+                """SELECT * FROM case_assist_turns
+                   WHERE tenant_id = ? AND principal_id = ? AND case_id = ?
+                   ORDER BY created_at ASC, turn_id ASC
+                   LIMIT ?""",
+                (ctx["tenant_id"], ctx["principal_id"], ctx["case_id"], max(1, min(int(limit), 100))),
+            ).fetchall()
+        return {
+            "case_id": ctx["case_id"],
+            "can_assist": ctx["can_assist"],
+            "turns": [self._serialize_case_assist_turn_row(r) for r in rows],
+        }
 
     def _open_outbox_claim_tx(self):
         if getattr(self, "_supports_skip_locked", False):

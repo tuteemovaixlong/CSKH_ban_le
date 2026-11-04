@@ -307,7 +307,7 @@ def validate_tool(name, arguments):
     return arguments
 
 
-def assistant_message(response):
+def assistant_message(response, *, extra_tool_names=()):
     if not isinstance(response, dict) or response.get('done_reason') == 'length':
         raise ProtocolError('Missing or truncated model response')
     raw = response.get('message')
@@ -330,10 +330,11 @@ def assistant_message(response):
         # Do not extract text calls that occur inside markdown code blocks
         non_code_content = re.sub(r'```[\s\S]*?```', '', content)
         extracted_calls = []
+        extra_names = set(extra_tool_names or ())
         for m in _TEXT_CALL_PATTERN.finditer(non_code_content):
             t_name = m.group(1)
             t_args_str = m.group(2)
-            if t_name in TOOL_ARGUMENTS:
+            if t_name in TOOL_ARGUMENTS or t_name in extra_names:
                 parsed_args = _parse_call_args(t_args_str)
                 extracted_calls.append({'function': {'name': t_name, 'arguments': parsed_args}})
         if extracted_calls and len(extracted_calls) <= MAX_TOOLS_PER_STEP:
@@ -427,20 +428,23 @@ def scoped_tools(allowed_tools=None):
     return [tool for tool in TOOLS if tool['function']['name'] in canonical_names]
 
 
-def build_request(model, messages, allow_tools=True, *, allowed_tools=None):
+def build_request(model, messages, allow_tools=True, *, allowed_tools=None, system_override=None, tool_schemas_override=None):
     validate_messages(messages)
     if type(allow_tools) is not bool:
         raise ProtocolError('Invalid tool switch')
-    mode = request_mode(messages)
+    mode = 'retail' if system_override is not None else request_mode(messages)
     
-    if messages and messages[0].get('role') == 'system':
+    if system_override is not None:
+        system = system_override
+        actual_messages = messages[1:] if (messages and messages[0].get('role') == 'system') else messages
+    elif messages and messages[0].get('role') == 'system':
         system = messages[0]['content']
         actual_messages = messages[1:]
     else:
         system = GENERAL_SYSTEM if mode == 'general' else SYSTEM
         actual_messages = messages
 
-    available = scoped_tools(allowed_tools)
+    available = list(tool_schemas_override) if tool_schemas_override is not None else scoped_tools(allowed_tools)
     tools = [] if mode == 'general' else (available if allow_tools else [])
     formatted_messages = []
     for m in actual_messages:

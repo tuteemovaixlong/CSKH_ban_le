@@ -201,6 +201,7 @@ def initialize(db):
         BEGIN SELECT RAISE(ABORT,'Customer owns orders'); END""")
     ensure_case_tables(db)
     ensure_order_action_tables(db)
+    ensure_case_assist_tables(db)
 
 
 def ensure_case_tables(db):
@@ -483,6 +484,32 @@ def ensure_order_action_tables(db):
                   published_at REAL
                 )""")
     db.execute('CREATE INDEX IF NOT EXISTS idx_integration_outbox_due ON integration_outbox(status, next_attempt_at, created_at)')
+
+
+def ensure_case_assist_tables(db):
+    """Create W4 partitioned Staff/Manager Case Assistant history table (W4-D4)."""
+    db.execute("""CREATE TABLE IF NOT EXISTS case_assist_turns (
+                  turn_id TEXT PRIMARY KEY,
+                  tenant_id TEXT NOT NULL,
+                  principal_id TEXT NOT NULL,
+                  actor_role TEXT NOT NULL CHECK(actor_role IN ('staff', 'manager')),
+                  case_id TEXT NOT NULL REFERENCES cases(case_id) ON DELETE CASCADE,
+                  conversation_id TEXT NOT NULL,
+                  request_id TEXT NOT NULL,
+                  mode TEXT NOT NULL CHECK(mode IN ('ask', 'summary', 'draft')),
+                  question TEXT NOT NULL,
+                  answer TEXT NOT NULL,
+                  draft_reply TEXT,
+                  sources_json TEXT NOT NULL DEFAULT '[]',
+                  trace_json TEXT NOT NULL DEFAULT '{}',
+                  created_at REAL NOT NULL,
+                  UNIQUE(tenant_id, principal_id, case_id, request_id)
+                )""")
+    db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_case_assist_partition '
+        'ON case_assist_turns(tenant_id, principal_id, case_id, created_at ASC)'
+    )
+    db.execute('CREATE INDEX IF NOT EXISTS idx_case_assist_case ON case_assist_turns(case_id, created_at ASC)')
 
 
 def backfill_business_v5_cases(db, *, now=None):

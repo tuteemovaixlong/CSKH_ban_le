@@ -684,6 +684,24 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 app, ctx, actor, case_id=m_case_trans[1]
             )
             return (200, app.store.conversation_transcript(cid, case_id=resolved_case_id, read_only=ro))
+        m_case_assist_get = re.fullmatch(r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/assist", path)
+        if m_case_assist_get:
+            _require_ctx_permission(ctx, STAFF)
+            _check_staff_tenant_scope(app, ctx)
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
+            qparams = _parse_query_dict(query, {"limit"}) if query else {}
+            lim = 50
+            if "limit" in qparams and qparams["limit"] != "":
+                ok_lim, lim_val = _parse_non_negative_int(qparams["limit"])
+                require(ok_lim and 1 <= lim_val <= 100, 400, "invalid_limit", "Giới hạn lịch sử Trợ lý ca không hợp lệ.")
+                lim = lim_val
+            return (200, app.case_assist_history(actor, m_case_assist_get[1], limit=lim))
+        m_case_assist_progress = re.fullmatch(r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/assist/progress", path)
+        if m_case_assist_progress:
+            _require_ctx_permission(ctx, STAFF)
+            _check_staff_tenant_scope(app, ctx)
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
+            return (200, app.case_assist_progress(actor, m_case_assist_progress[1]))
         m_progress = re.fullmatch(r"/api/conversations/([a-f0-9-]{36})/progress", path)
         if m_progress:
             # What the customer's own running turn has done so far (tool names only); nothing for anyone else's.
@@ -882,6 +900,18 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             staff_label = _actor_display_name(ctx)
             res = app.store.resolve_escalation(cid, staff_label, actor=actor, case_id=case_id, handoff_id=handoff_id)
             return (200, res)
+        m_staff_case_assist = re.fullmatch(r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/assist", path)
+        if m_staff_case_assist:
+            _require_ctx_permission(ctx, STAFF)
+            _check_staff_tenant_scope(app, ctx)
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
+            try:
+                result = app.case_assist(actor, m_staff_case_assist[1], body)
+            except ApiError as exc:
+                _record_chat_usage(app, customer, body or {}, {"trace": exc.trace}, False)
+                raise
+            _record_chat_usage(app, customer, body or {}, result, True)
+            return (200, result)
         m_staff_case_oa = re.fullmatch(r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/order-actions", path)
         if m_staff_case_oa:
             _require_ctx_permission(ctx, STAFF)

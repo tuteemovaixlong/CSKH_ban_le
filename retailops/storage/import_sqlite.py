@@ -54,6 +54,8 @@ def read_database(path, component, tables):
                         'order_action_evidence',
                         'integration_outbox',
                     ])
+                if marker[0]['version'] >= 6:
+                    ordered.append('case_assist_turns')
                 tables = tuple(ordered)
             existing_tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             result = {table: [dict(row) for row in db.execute('SELECT * FROM "'+table+'"')] for table in tables if table in existing_tables}

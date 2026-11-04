@@ -438,9 +438,32 @@ BUSINESS_V7_UPGRADE_DDL = [
     $$''',
 ]
 
+BUSINESS_V8_CASE_ASSIST_DDL = [
+    '''CREATE TABLE IF NOT EXISTS case_assist_turns (
+        turn_id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        principal_id TEXT NOT NULL,
+        actor_role TEXT NOT NULL CHECK(actor_role IN ('staff', 'manager')),
+        case_id TEXT NOT NULL REFERENCES cases(case_id) ON DELETE CASCADE,
+        conversation_id TEXT NOT NULL,
+        request_id TEXT NOT NULL,
+        mode TEXT NOT NULL CHECK(mode IN ('ask', 'summary', 'draft')),
+        question TEXT NOT NULL,
+        answer TEXT NOT NULL,
+        draft_reply TEXT,
+        sources_json TEXT NOT NULL DEFAULT '[]',
+        trace_json TEXT NOT NULL DEFAULT '{}',
+        created_at DOUBLE PRECISION NOT NULL,
+        UNIQUE(tenant_id, principal_id, case_id, request_id))''',
+    '''CREATE INDEX IF NOT EXISTS idx_case_assist_partition
+        ON case_assist_turns(tenant_id, principal_id, case_id, created_at ASC)''',
+    'CREATE INDEX IF NOT EXISTS idx_case_assist_case ON case_assist_turns(case_id, created_at ASC)',
+]
+
 BUSINESS_DDL.extend(P5C_BUSINESS_DDL)
 BUSINESS_DDL.extend(BUSINESS_V5_DDL)
 BUSINESS_DDL.extend(BUSINESS_V6_TABLES_DDL)
+BUSINESS_DDL.extend(BUSINESS_V8_CASE_ASSIST_DDL)
 IDENTITY_DDL.extend(P5C_IDENTITY_DDL)
 
 
