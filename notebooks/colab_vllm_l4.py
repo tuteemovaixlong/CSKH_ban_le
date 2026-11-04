@@ -399,22 +399,22 @@ print(f"👉 Endpoint API OpenAI: {endpoint_url}")
 print("🔒 Bảo vệ biên (Lớp 1): Traffic Policy kiểm X-RetailOps-Tunnel-Token trên /v1/*")
 print("🔒 Bảo vệ ứng dụng (Lớp 2): vLLM --api-key (Bearer token)")
 print("=" * 70)
-print("\nĐể cập nhật endpoint lên EC2 an toàn (qua AWS SSM, chỉ tạo lại container web):")
+print("\nĐể cập nhật endpoint lên EC2 an toàn (qua AWS SSM):")
 print(
-    f"1. Trong /opt/retailops/api.env cập nhật:\n"
-    f"   RETAILOPS_API_ENABLED=true\n"
-    f"   RETAILOPS_API_ENDPOINT={endpoint_url}\n"
-    f"   RETAILOPS_API_MODEL={MODEL}\n"
-    f"   RETAILOPS_API_KEY_FILE=/opt/retailops/secrets/api_key\n"
-    f"   RETAILOPS_API_TUNNEL_TOKEN_FILE=/opt/retailops/secrets/api_tunnel_token"
+    f"1. Ghi giá trị TRỰC TIẾP vào /opt/retailops/api.env:\n"
+    f"   - Cập nhật endpoint & model:\n"
+    f"     RETAILOPS_API_ENABLED=true\n"
+    f"     RETAILOPS_API_ENDPOINT={endpoint_url}\n"
+    f"     RETAILOPS_API_MODEL={MODEL}\n"
+    f"   - SỬA dòng RETAILOPS_API_KEY có sẵn trong api.env (KHÔNG thêm dòng mới):\n"
+    f"     RETAILOPS_API_KEY=<giá trị RETAILOPS_API_KEY trong Colab Secrets>\n"
+    f"   - Thêm mới (hoặc cập nhật nếu đã có):\n"
+    f"     RETAILOPS_API_TUNNEL_TOKEN=<giá trị NGROK_TUNNEL_TOKEN trong Colab Secrets>\n"
+    f"     RETAILOPS_CUSTOMER_REF_KEY=<khóa HMAC bí mật tối thiểu 16 ký tự>\n"
+    f"   - Lưu ý: KHÔNG dùng biến dạng *_FILE trên EC2 (container web không mount thư mục secret ngoài; đặt cả biến trực tiếp lẫn *_FILE sẽ báo lỗi 'Set only one of...')."
 )
 print(
-    "2. Chạy:\n"
-    "   sudo docker compose --project-name retailops-web \\\n"
-    "     --env-file /opt/retailops/deployed.env \\\n"
-    "     --env-file /opt/retailops/public.env \\\n"
-    "     -f /opt/retailops/compose.public.yaml \\\n"
-    "     -f /opt/retailops/compose.postgres.yaml \\\n"
-    "     up -d --no-deps --no-build --pull never --force-recreate web"
+    '2. Chạy:\n'
+    '   sudo /opt/retailops/rollout-public-web.sh "<RETAILOPS_IMAGE trong deployed.env>"'
 )
 print("=" * 70)

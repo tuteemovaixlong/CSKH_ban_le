@@ -33,7 +33,10 @@ def main():
     require("deploy/init-postgres.sh", "CREATE EXTENSION vector WITH SCHEMA retailops_extensions",
             "GRANT USAGE ON SCHEMA retailops_extensions TO retailops")
     require("deploy/rollout-public-web.sh", "deployed.env", "previous_image", "deployed.rollback.",
-            "--force-recreate", "verify_live", "sha256sum", "PUBLIC_WEB_ROLLBACK_OK", "PUBLIC_WEB_ROLLOUT_OK")
+            "--force-recreate", "--no-deps", "compose.clamav.yaml", "verify_live", "sha256sum",
+            "PUBLIC_WEB_ROLLBACK_OK", "PUBLIC_WEB_ROLLOUT_OK")
+    require("deploy/admin-console.py", "compose.clamav.yaml")
+    require("deploy/live-e2e.py", "compose.clamav.yaml")
     require("deploy/cutover-postgres.sh", PGVECTOR, "docker pull", "POSTGRES_IMAGE_READY",
             "database migrate", "Public HTTPS did not become ready after PostgreSQL cutover.")
     require("deploy/enable-pgvector.sh", PGVECTOR, "pg_dump", "CREATE EXTENSION IF NOT EXISTS vector",

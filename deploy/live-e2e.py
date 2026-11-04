@@ -61,6 +61,8 @@ def compose_base() -> list[str]:
     ]
     if (ROOT / "postgres-secrets").is_dir():
         base += ["-f", "compose.postgres.yaml"]
+    if (ROOT / "compose.clamav.yaml").is_file():
+        base += ["-f", "compose.clamav.yaml"]
     return base
 
 

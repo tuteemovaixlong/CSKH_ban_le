@@ -61,6 +61,9 @@ if [[ -d postgres-secrets ]]; then
   test -f compose.postgres.yaml
   compose+=(-f compose.postgres.yaml)
 fi
+if [[ -f compose.clamav.yaml ]]; then
+  compose+=(-f compose.clamav.yaml)
+fi
 "${compose[@]}" config --quiet
 
 if [[ -n "$auto_host" && "$existing_host" != "$auto_host" ]]; then
@@ -98,6 +101,7 @@ restore_previous() {
   chmod 0644 "$rollback_env"
   rollback=(docker compose --project-name retailops-web --env-file "$rollback_env" --env-file public.env -f compose.public.yaml)
   if [[ -d postgres-secrets ]]; then rollback+=(-f compose.postgres.yaml); fi
+  if [[ -f compose.clamav.yaml ]]; then rollback+=(-f compose.clamav.yaml); fi
   "${rollback[@]}" config --quiet
   if ! "${rollback[@]}" up -d --no-deps --no-build --pull never --force-recreate --wait --wait-timeout 90 web; then
     rm -f "$rollback_env"

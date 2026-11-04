@@ -87,7 +87,10 @@ class PhaseR1W2Item0HygieneTests(unittest.TestCase):
                 helper, src = _load_colab_ngrok_helper(rel_path)
                 self.assertNotIn("update_ec2.py", src)
                 self.assertIn("RETAILOPS_API_ENDPOINT", src)
-                self.assertIn("--force-recreate web", src)
+                if rel_path == "notebooks/colab_vllm_l4.py":
+                    self.assertIn("/opt/retailops/rollout-public-web.sh", src)
+                else:
+                    self.assertIn("--force-recreate web", src)
                 self.assertIn("NGROK_DOMAIN", src)
 
                 class _FakeNgrok:
