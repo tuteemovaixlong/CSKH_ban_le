@@ -1391,7 +1391,9 @@ const toolProgressLabels = {
   get_order: 'đơn hàng', list_orders: 'danh sách đơn', get_context: 'đơn đang trao đổi', get_product: 'sản phẩm',
   search_products: 'danh mục sản phẩm', check_inventory: 'tồn kho', track_shipment: 'vận chuyển',
   search_knowledge: 'chính sách cửa hàng', prepare_order_action: 'điều kiện yêu cầu', request_human_support: 'chuyển nhân viên',
-  get_current_time: 'thời gian', get_runtime_info: 'thông tin model'
+  get_current_time: 'thời gian', get_runtime_info: 'thông tin model',
+  get_case_transcript: 'hội thoại ca', list_case_orders: 'đơn hàng trong ca',
+  get_case_order: 'chi tiết đơn trong ca', list_case_order_actions: 'yêu cầu đơn hàng của ca'
 };
 let progressTimer = null, progressToken = 0;
 
@@ -2304,6 +2306,7 @@ function stopStaffDeskPolling() {
     if (typeof clearInterval === 'function') clearInterval(staffDeskTimer);
     staffDeskTimer = null;
   }
+  stopStaffCaseAssistProgressPolling();
 }
 
 async function pollStaffDesk() {
@@ -3314,6 +3317,260 @@ async function submitStaffDeliveryFailureCancel() {
   }
 }
 
+let staffCaseAssistTurns = [];
+let staffCaseAssistCanAssist = null;
+let staffCaseAssistBusy = false;
+let staffCaseAssistLatestText = '';
+let staffCaseAssistProgressTimer = null;
+let staffCaseAssistProgressToken = 0;
+
+const STAFF_CASE_ASSIST_MODE_VI = {
+  summary: '📋 Tóm tắt ca',
+  draft: '✍️ Soạn nháp',
+  ask: '💬 Hỏi đáp'
+};
+
+function setStaffCaseAssistProgress(text) {
+  const progEl = byId('staff-case-assist-progress');
+  if (!progEl) return;
+  const clean = (text || '').trim();
+  progEl.hidden = !clean;
+  progEl.textContent = clean;
+}
+
+async function pollStaffCaseAssistProgress() {
+  const token = staffCaseAssistProgressToken;
+  const caseId = activeStaffTicket?.case_id;
+  if (!caseId || !token || !staffCaseAssistBusy) return;
+  try {
+    const state = await api('/api/staff/cases/' + encodeURIComponent(caseId) + '/assist/progress');
+    const status = progressStatus(state);
+    if (status && token === staffCaseAssistProgressToken && staffCaseAssistBusy) {
+      setStaffCaseAssistProgress(status.title + ' · ' + status.detail);
+    }
+  } catch (err) {
+    // Progress polling is informational only.
+  }
+}
+
+function startStaffCaseAssistProgressPolling() {
+  stopStaffCaseAssistProgressPolling();
+  staffCaseAssistProgressToken += 1;
+  setStaffCaseAssistProgress('Model đang xử lý… · Đang đọc hội thoại và lập kế hoạch');
+  if (typeof setInterval === 'function') {
+    staffCaseAssistProgressTimer = setInterval(pollStaffCaseAssistProgress, 2000);
+  }
+}
+
+function stopStaffCaseAssistProgressPolling() {
+  staffCaseAssistProgressToken += 1;
+  if (staffCaseAssistProgressTimer && typeof clearInterval === 'function') {
+    clearInterval(staffCaseAssistProgressTimer);
+  }
+  staffCaseAssistProgressTimer = null;
+  setStaffCaseAssistProgress('');
+}
+
+function canCallerUseCaseAssist(caseObj = activeStaffTicket) {
+  if (!caseObj || !caseObj.case_id) return false;
+  if (typeof staffCaseAssistCanAssist === 'boolean') return staffCaseAssistCanAssist;
+  if (currentSessionRole === 'manager') return true;
+  return Boolean(
+    caseObj.status === 'in_progress'
+    && caseObj.holder
+    && currentSessionPrincipalId
+    && caseObj.holder === currentSessionPrincipalId
+  );
+}
+
+function syncStaffCaseAssistControls(caseObj = activeStaffTicket) {
+  const btnSummary = byId('btn-case-assist-summary');
+  const btnDraft = byId('btn-case-assist-draft');
+  const btnAsk = byId('btn-case-assist-ask');
+  const inputEl = byId('staff-case-assist-input');
+  const btnInsert = byId('btn-case-assist-insert');
+  const insertBar = byId('staff-case-assist-insert-bar');
+  const hintEl = byId('staff-case-assist-hint');
+  const replyInput = byId('staff-reply-input');
+
+  const canAssist = canCallerUseCaseAssist(caseObj);
+  const disabled = Boolean(!canAssist || staffCaseAssistBusy);
+  if (btnSummary) btnSummary.disabled = disabled;
+  if (btnDraft) btnDraft.disabled = disabled;
+  if (btnAsk) btnAsk.disabled = disabled;
+  if (inputEl) inputEl.disabled = disabled;
+
+  if (hintEl) {
+    if (!caseObj || !caseObj.case_id) {
+      hintEl.textContent = 'Chọn một ca hỗ trợ để dùng Trợ lý ca';
+    } else if (canAssist) {
+      hintEl.textContent = 'Chỉ đọc trong phạm vi ca · lịch sử riêng từng người';
+    } else if (caseObj.status === 'resolved') {
+      hintEl.textContent = 'Ca đã đóng · chỉ Quản lý mới gọi thêm Trợ lý ca';
+    } else if (!caseObj.holder) {
+      hintEl.textContent = 'Nhận ca để bật Trợ lý ca (Quản lý dùng được ngay)';
+    } else {
+      hintEl.textContent = 'Chỉ nhân viên đang giữ ca hoặc Quản lý mới dùng được Trợ lý ca';
+    }
+  }
+
+  const hasInsertText = Boolean(staffCaseAssistLatestText);
+  if (insertBar) insertBar.hidden = !hasInsertText;
+  if (btnInsert) {
+    const canWriteReply = Boolean(
+      hasInsertText
+      && caseObj
+      && caseObj.status !== 'resolved'
+      && !(replyInput && replyInput.disabled)
+    );
+    btnInsert.disabled = !canWriteReply || staffCaseAssistBusy;
+  }
+}
+
+function renderStaffCaseAssist() {
+  const outEl = byId('staff-case-assist-output');
+  if (!outEl) return;
+  outEl.replaceChildren();
+  staffCaseAssistLatestText = '';
+
+  if (!activeStaffTicket || !activeStaffTicket.case_id) {
+    syncStaffCaseAssistControls(null);
+    return;
+  }
+
+  if (!Array.isArray(staffCaseAssistTurns) || !staffCaseAssistTurns.length) {
+    outEl.append(
+      el('p', 'case-ops-empty-hint', 'Chưa có lượt Trợ lý ca nào của bạn trên ca này.')
+    );
+    syncStaffCaseAssistControls(activeStaffTicket);
+    return;
+  }
+
+  staffCaseAssistTurns.forEach(turn => {
+    if (!turn || typeof turn !== 'object') return;
+    const card = el('div', 'staff-case-assist-turn');
+    if (turn.mode) card.dataset.mode = turn.mode;
+
+    const head = el('div', 'staff-case-assist-turn-head');
+    head.append(el('span', 'case-ops-pill', STAFF_CASE_ASSIST_MODE_VI[turn.mode] || '🤖 Trợ lý ca'));
+    const qText = String(turn.question || '').trim();
+    if (qText) {
+      head.append(el('span', '', qText));
+    }
+    card.append(head);
+
+    const ansText = String(turn.answer || '').trim();
+    if (ansText) {
+      card.append(el('p', 'staff-case-assist-answer', ansText));
+    }
+
+    const draftText = String(turn.draft_reply || '').trim();
+    if (draftText) {
+      const dBox = el('div', 'staff-case-assist-draft-box');
+      dBox.append(
+        el('strong', '', 'Bản nháp gợi ý gửi khách:'),
+        el('p', 'staff-case-assist-draft-text', draftText)
+      );
+      card.append(dBox);
+      staffCaseAssistLatestText = draftText;
+    } else if (ansText) {
+      staffCaseAssistLatestText = ansText;
+    }
+
+    if (Array.isArray(turn.sources) && turn.sources.length) {
+      showSources(card, turn.sources);
+    }
+    outEl.append(card);
+  });
+
+  syncStaffCaseAssistControls(activeStaffTicket);
+}
+
+async function loadStaffCaseAssistHistory(caseId) {
+  if (!caseId) {
+    staffCaseAssistTurns = [];
+    staffCaseAssistCanAssist = null;
+    renderStaffCaseAssist();
+    return;
+  }
+  try {
+    const res = await api('/api/staff/cases/' + encodeURIComponent(caseId) + '/assist');
+    if (!activeStaffTicket || activeStaffTicket.case_id !== caseId) return;
+    staffCaseAssistTurns = Array.isArray(res?.turns) ? res.turns : [];
+    staffCaseAssistCanAssist = typeof res?.can_assist === 'boolean' ? res.can_assist : null;
+  } catch (err) {
+    if (!activeStaffTicket || activeStaffTicket.case_id !== caseId) return;
+    staffCaseAssistTurns = [];
+    staffCaseAssistCanAssist = null;
+  }
+  renderStaffCaseAssist();
+}
+
+async function runStaffCaseAssist(mode = 'ask') {
+  if (!activeStaffTicket || !activeStaffTicket.case_id || staffCaseAssistBusy) return;
+  const caseId = activeStaffTicket.case_id;
+  const normMode = ['summary', 'draft', 'ask'].includes(mode) ? mode : 'ask';
+  const inputEl = byId('staff-case-assist-input');
+  const rawQuestion = (inputEl?.value || '').trim();
+  if (normMode === 'ask' && !rawQuestion) {
+    setStaffDeskNotice('Vui lòng nhập câu hỏi cho Trợ lý ca trước khi bấm Hỏi.', 'error');
+    inputEl?.focus?.();
+    return;
+  }
+
+  const payload = {
+    mode: normMode,
+    request_id: makeStaffIdempotencyKey('case-assist-')
+  };
+  if (rawQuestion) {
+    payload.question = rawQuestion;
+  }
+
+  staffCaseAssistBusy = true;
+  syncStaffCaseAssistControls(activeStaffTicket);
+  startStaffCaseAssistProgressPolling();
+  try {
+    const res = await api('/api/staff/cases/' + encodeURIComponent(caseId) + '/assist', payload);
+    if (normMode === 'ask' && inputEl) {
+      inputEl.value = '';
+    }
+    if (activeStaffTicket && activeStaffTicket.case_id === caseId && res) {
+      const turnEntry = {
+        turn_id: res.turn_id || null,
+        request_id: res.request_id || payload.request_id,
+        mode: res.mode || normMode,
+        question: rawQuestion,
+        answer: res.answer || res.message || '',
+        draft_reply: res.draft_reply || null,
+        sources: Array.isArray(res.sources) ? res.sources : [],
+        created_at: Date.now() / 1000
+      };
+      if (!res.replayed) {
+        staffCaseAssistTurns = [...staffCaseAssistTurns, turnEntry];
+      } else if (!staffCaseAssistTurns.some(t => t && t.request_id === turnEntry.request_id)) {
+        staffCaseAssistTurns = [...staffCaseAssistTurns, turnEntry];
+      }
+      renderStaffCaseAssist();
+    }
+  } catch (err) {
+    setStaffDeskNotice('Trợ lý ca chưa phản hồi được: ' + (err.message || 'Lỗi máy chủ'), 'error');
+  } finally {
+    stopStaffCaseAssistProgressPolling();
+    staffCaseAssistBusy = false;
+    syncStaffCaseAssistControls(activeStaffTicket);
+  }
+}
+
+function insertCaseAssistIntoReply() {
+  const text = (staffCaseAssistLatestText || '').trim();
+  if (!text) return;
+  const replyInput = byId('staff-reply-input');
+  if (!replyInput || replyInput.disabled) return;
+  // W4-D1: ONLY populate the reply input box for human review — NEVER send automatically.
+  replyInput.value = text;
+  replyInput.focus?.();
+}
+
 function syncStaffTicketActions(caseObj, readOnly = false) {
   const modEl = byId('staff-case-ops-module');
   const chatActions = byId('staff-chat-actions');
@@ -3342,6 +3599,7 @@ function syncStaffTicketActions(caseObj, readOnly = false) {
       chatComposer.hidden = true;
       if (chatComposer.style) chatComposer.style.display = 'none';
     }
+    syncStaffCaseAssistControls(null);
     return;
   }
 
@@ -3370,6 +3628,7 @@ function syncStaffTicketActions(caseObj, readOnly = false) {
       chatComposer.hidden = true;
       if (chatComposer.style) chatComposer.style.display = 'none';
     }
+    syncStaffCaseAssistControls(caseObj);
     renderStaffCaseOrderActions();
     return;
   }
@@ -3405,6 +3664,7 @@ function syncStaffTicketActions(caseObj, readOnly = false) {
   }
   if (btnSend) btnSend.disabled = heldByOther || staffReplySending;
   if (replyInput) replyInput.disabled = heldByOther;
+  syncStaffCaseAssistControls(caseObj);
   renderStaffCaseOrderActions();
 }
 
@@ -3506,6 +3766,9 @@ async function selectStaffTicket(ticket) {
   staffCaseCustomerOrders = [];
   staffCaseOrderActionsReadOnly = false;
   staffCaseOpenRequestSig = '';
+  staffCaseAssistTurns = [];
+  staffCaseAssistCanAssist = null;
+  stopStaffCaseAssistProgressPolling();
   setStaffDeskNotice('', '');
   document.querySelectorAll('.ticket-card').forEach(c => c.classList.remove('active'));
 
@@ -3515,6 +3778,7 @@ async function selectStaffTicket(ticket) {
     + ' · Lý do: ' + (ticket.comment || ticket.reason_code || (isClosed ? (ticket.resolved_reason || 'Đã đóng') : 'Yêu cầu gặp nhân viên'))
     + (isClosed ? ' · [Chỉ đọc · Ca đã đóng]' : '');
   applyStaffCaseOpsCollapseState(readStaffCaseOpsSavedCollapsed());
+  renderStaffCaseAssist();
   syncStaffTicketActions(ticket, isClosed);
 
   const transcriptEl = byId('staff-chat-transcript');
@@ -3524,7 +3788,10 @@ async function selectStaffTicket(ticket) {
 
   await refreshStaffTranscript(ticket.conversation_id, true, ticket.case_id || null);
   if (ticket.case_id) {
-    await loadStaffCaseOrderActions(ticket.case_id, true);
+    await Promise.all([
+      loadStaffCaseOrderActions(ticket.case_id, true),
+      loadStaffCaseAssistHistory(ticket.case_id)
+    ]);
   }
 }
 
@@ -3544,6 +3811,7 @@ async function claimOrReleaseStaffTicket() {
         customer_silent_seconds: res.case.customer_silent_seconds ?? null,
         handoff_id: res.handoff_id || activeStaffTicket.handoff_id || null
       };
+      staffCaseAssistCanAssist = null;
       syncStaffTicketActions(res.case, false);
     }
     setStaffDeskNotice(action === 'claim' ? 'Đã nhận ca hỗ trợ.' : 'Đã trả ca hỗ trợ về hàng chờ.', 'success');
@@ -3551,7 +3819,10 @@ async function claimOrReleaseStaffTicket() {
       renderedStaffTurnIds.add(res.notice_turn_id);
       caseSystemNoticeMessage(res.notice_message, action === 'claim' ? 'case_claimed' : 'case_released');
     }
-    await loadStaffCaseOrderActions(caseId, false);
+    await Promise.all([
+      loadStaffCaseOrderActions(caseId, false),
+      loadStaffCaseAssistHistory(caseId)
+    ]);
     if (activeStaffTicket?.conversation_id) {
       await refreshStaffTranscript(activeStaffTicket.conversation_id, false, caseId);
     }
@@ -3638,6 +3909,7 @@ async function resolveStaffTicket() {
     const res = await api('/api/staff/resolve', payload);
     if (res && res.case) {
       activeStaffTicket = { ...activeStaffTicket, status: 'resolved', holder: null, holder_name: null };
+      staffCaseAssistCanAssist = null;
       syncStaffTicketActions(res.case, true);
     }
     setStaffDeskNotice('Đã hoàn tất và đóng ca hỗ trợ.', 'success');
@@ -3707,6 +3979,28 @@ if (staffReplyInput) {
 
 const btnResolveTicket = byId('btn-resolve-ticket');
 if (btnResolveTicket) btnResolveTicket.onclick = () => resolveStaffTicket();
+
+const btnCaseAssistSummary = byId('btn-case-assist-summary');
+if (btnCaseAssistSummary) btnCaseAssistSummary.onclick = () => runStaffCaseAssist('summary');
+
+const btnCaseAssistDraft = byId('btn-case-assist-draft');
+if (btnCaseAssistDraft) btnCaseAssistDraft.onclick = () => runStaffCaseAssist('draft');
+
+const btnCaseAssistAsk = byId('btn-case-assist-ask');
+if (btnCaseAssistAsk) btnCaseAssistAsk.onclick = () => runStaffCaseAssist('ask');
+
+const btnCaseAssistInsert = byId('btn-case-assist-insert');
+if (btnCaseAssistInsert) btnCaseAssistInsert.onclick = () => insertCaseAssistIntoReply();
+
+const staffCaseAssistInput = byId('staff-case-assist-input');
+if (staffCaseAssistInput) {
+  staffCaseAssistInput.onkeydown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      runStaffCaseAssist('ask');
+    }
+  };
+}
 
 // Multimodal Attachment Wiring & Drag-and-Drop & Lightbox
 const closeLightbox = byId('close-lightbox');

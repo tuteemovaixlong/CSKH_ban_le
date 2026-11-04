@@ -84,6 +84,7 @@ jobs:
           node tests/test_knowledge_sources.js
           node tests/test_shipment_ui.js
           node tests/test_provider_selector.js
+          node tests/test_case_assistant_ui.js
           node tests/test_public_session.js
           RETAILOPS_UI_TEST_MODE=persistent node tests/test_public_session.js
       - name: Unit, pgvector and HTTP contract tests (no model, no secrets)
