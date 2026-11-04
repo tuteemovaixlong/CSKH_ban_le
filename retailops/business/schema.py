@@ -1,13 +1,15 @@
 import time
 import uuid
 
-# Phase R1 W2/W3/W3.2 backend schema version mappings (SQLite and PostgreSQL number them differently):
+# Phase R1 W2/W3/W3.2/W4 backend schema version mappings (SQLite and PostgreSQL number them differently):
 #   - Business v5 (W2-D3): SQLite 4, PostgreSQL 5 (cases, handoff_episodes, case_feedback_events)
 #   - Business v6 (W3-D1..W3-D4, W3-D6): SQLite 5, PostgreSQL 6
 #     (orders.delivered_at, order_action_requests, order_action_decisions,
 #      order_action_evidence, integration_outbox).
 #   - Business v7 (W3.2-D1, W3.2-D6): SQLite 6, PostgreSQL 7 (general exchange:
 #     exchange_kind other_variant/same_variant, target_variant_id, target_variant_label).
+#   - Business v8 (W4-D4, W4-D6, W4-D9): SQLite 7, PostgreSQL 8 (case_assist_turns,
+#     order_action_evidence PDF up to 20 MB + malware scan fields, legacy turn attachment backfill).
 SQLITE_BUSINESS_V5_SCHEMA_VERSION = 4
 POSTGRES_BUSINESS_V5_SCHEMA_VERSION = 5
 BUSINESS_V5_VERSION_MAPPING = {
@@ -22,10 +24,17 @@ BUSINESS_V6_VERSION_MAPPING = {
     'sqlite': SQLITE_BUSINESS_V6_SCHEMA_VERSION,
     'postgresql': POSTGRES_BUSINESS_V6_SCHEMA_VERSION,
 }
-SQLITE_BUSINESS_SCHEMA_CURRENT = 6
-POSTGRES_BUSINESS_SCHEMA_CURRENT = 7
+SQLITE_BUSINESS_V7_SCHEMA_VERSION = 6
+POSTGRES_BUSINESS_V7_SCHEMA_VERSION = 7
 BUSINESS_V7_VERSION_MAPPING = {
     'logical_milestone': 'business_v7',
+    'sqlite': SQLITE_BUSINESS_V7_SCHEMA_VERSION,
+    'postgresql': POSTGRES_BUSINESS_V7_SCHEMA_VERSION,
+}
+SQLITE_BUSINESS_SCHEMA_CURRENT = 7
+POSTGRES_BUSINESS_SCHEMA_CURRENT = 8
+BUSINESS_V8_VERSION_MAPPING = {
+    'logical_milestone': 'business_v8',
     'sqlite': SQLITE_BUSINESS_SCHEMA_CURRENT,
     'postgresql': POSTGRES_BUSINESS_SCHEMA_CURRENT,
 }
@@ -381,6 +390,93 @@ def migrate_order_action_exchange_v7(db):
     return {'rebuilt': True, 'requests': after, 'exchange_mapped': mapped}
 
 
+ORDER_ACTION_EVIDENCE_DDL = """CREATE TABLE IF NOT EXISTS {table} (
+                  evidence_id TEXT PRIMARY KEY,
+                  request_id TEXT REFERENCES order_action_requests(request_id),
+                  case_id TEXT REFERENCES cases(case_id),
+                  customer_id TEXT NOT NULL REFERENCES customers(id),
+                  conversation_id TEXT NOT NULL,
+                  filename TEXT CONSTRAINT order_action_evidence_filename_v8_check CHECK(
+                      filename IS NULL OR length(filename) <= 200
+                  ),
+                  uploaded_by_principal_id TEXT NOT NULL,
+                  uploaded_by_role TEXT NOT NULL CHECK(uploaded_by_role IN ('customer', 'staff', 'manager')),
+                  mime_type TEXT NOT NULL CONSTRAINT order_action_evidence_mime_v8_check CHECK(
+                      mime_type IN ('image/jpeg', 'image/png', 'image/webp', 'application/pdf')
+                  ),
+                  byte_size INTEGER NOT NULL CONSTRAINT order_action_evidence_byte_size_v8_check CHECK(
+                      byte_size > 0
+                      AND ((mime_type = 'application/pdf' AND byte_size <= 20971520)
+                           OR (mime_type <> 'application/pdf' AND byte_size <= 10485760))
+                  ),
+                  width INTEGER CONSTRAINT order_action_evidence_width_v8_check CHECK(width IS NULL OR width > 0),
+                  height INTEGER CONSTRAINT order_action_evidence_height_v8_check CHECK(height IS NULL OR height > 0),
+                  page_count INTEGER CONSTRAINT order_action_evidence_page_count_v8_check CHECK(
+                      page_count IS NULL OR (page_count >= 1 AND page_count <= 20)
+                  ),
+                  sha256 TEXT NOT NULL,
+                  storage_relpath TEXT NOT NULL,
+                  scan_status TEXT CONSTRAINT order_action_evidence_scan_status_v8_check CHECK(
+                      scan_status IS NULL OR scan_status IN ('clean', 'not_applicable')
+                  ),
+                  scan_engine TEXT CONSTRAINT order_action_evidence_scan_engine_v8_check CHECK(
+                      scan_engine IS NULL OR length(scan_engine) <= 64
+                  ),
+                  scanned_at REAL,
+                  created_at REAL NOT NULL,
+                  file_purged_at REAL
+                )"""
+
+
+def migrate_order_action_evidence_v8(db):
+    """Business v8 step (W4-D9): rebuild pre-v8 order_action_evidence to allow PDF (<=20 MB), chat refs, and scan fields."""
+    master = db.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='order_action_evidence'"
+    ).fetchone()
+    if not master:
+        return {'rebuilt': False, 'evidence_rows': 0}
+    info_rows = list(db.execute('PRAGMA table_info(order_action_evidence)'))
+    cols = {row['name'] for row in info_rows}
+    not_null_cols = {row['name'] for row in info_rows if int(row['notnull']) != 0}
+    ddl_sql = str(master['sql'] or '')
+    required_v8_cols = {'filename', 'page_count', 'scan_status', 'scan_engine', 'scanned_at'}
+    if (
+        required_v8_cols <= cols
+        and 'application/pdf' in ddl_sql
+        and not ({'request_id', 'case_id', 'width', 'height'} & not_null_cols)
+    ):
+        cnt = db.execute('SELECT COUNT(*) FROM order_action_evidence').fetchone()[0]
+        return {'rebuilt': False, 'evidence_rows': cnt}
+    if db.execute('PRAGMA foreign_keys').fetchone()[0]:
+        raise ValueError('The Business v8 evidence rebuild needs PRAGMA foreign_keys=OFF before the transaction starts.')
+    before = db.execute('SELECT COUNT(*) FROM order_action_evidence').fetchone()[0]
+    db.execute(ORDER_ACTION_EVIDENCE_DDL.format(table='order_action_evidence_v8_new'))
+    fn_expr = 'filename' if 'filename' in cols else 'NULL'
+    pc_expr = 'page_count' if 'page_count' in cols else 'NULL'
+    ss_expr = "COALESCE(scan_status, 'not_applicable')" if 'scan_status' in cols else "'not_applicable'"
+    se_expr = 'scan_engine' if 'scan_engine' in cols else 'NULL'
+    sa_expr = 'scanned_at' if 'scanned_at' in cols else 'NULL'
+    db.execute(
+        f"""INSERT INTO order_action_evidence_v8_new(
+                evidence_id, request_id, case_id, customer_id, conversation_id, filename,
+                uploaded_by_principal_id, uploaded_by_role, mime_type, byte_size,
+                width, height, page_count, sha256, storage_relpath,
+                scan_status, scan_engine, scanned_at, created_at, file_purged_at
+            )
+            SELECT evidence_id, request_id, case_id, customer_id, conversation_id, {fn_expr},
+                   uploaded_by_principal_id, uploaded_by_role, mime_type, byte_size,
+                   width, height, {pc_expr}, sha256, storage_relpath,
+                   {ss_expr}, {se_expr}, {sa_expr}, created_at, file_purged_at
+            FROM order_action_evidence"""
+    )
+    after = db.execute('SELECT COUNT(*) FROM order_action_evidence_v8_new').fetchone()[0]
+    if after != before:
+        raise ValueError(f'Business v8 evidence rebuild lost rows ({before} -> {after}); migration aborted.')
+    db.execute('DROP TABLE order_action_evidence')
+    db.execute('ALTER TABLE order_action_evidence_v8_new RENAME TO order_action_evidence')
+    return {'rebuilt': True, 'evidence_rows': after}
+
+
 def ensure_order_action_tables(db):
     """Create Business v6/v7 order-action, append-only decision, evidence, and outbox tables on SQLite.
 
@@ -430,43 +526,7 @@ def ensure_order_action_tables(db):
                   BEFORE DELETE ON order_action_decisions
                   BEGIN SELECT RAISE(ABORT, 'order_action_decisions is append-only'); END""")
 
-    db.execute("""CREATE TABLE IF NOT EXISTS order_action_evidence (
-                  evidence_id TEXT PRIMARY KEY,
-                  request_id TEXT REFERENCES order_action_requests(request_id),
-                  case_id TEXT REFERENCES cases(case_id),
-                  customer_id TEXT NOT NULL REFERENCES customers(id),
-                  conversation_id TEXT NOT NULL,
-                  filename TEXT CHECK(filename IS NULL OR length(filename) <= 200),
-                  uploaded_by_principal_id TEXT NOT NULL,
-                  uploaded_by_role TEXT NOT NULL CHECK(uploaded_by_role IN ('customer', 'staff', 'manager')),
-                  mime_type TEXT NOT NULL CHECK(mime_type IN ('image/jpeg', 'image/png', 'image/webp', 'application/pdf')),
-                  byte_size INTEGER NOT NULL CHECK(
-                      byte_size > 0
-                      AND ((mime_type = 'application/pdf' AND byte_size <= 20971520)
-                           OR (mime_type <> 'application/pdf' AND byte_size <= 10485760))
-                  ),
-                  width INTEGER CHECK(width IS NULL OR width > 0),
-                  height INTEGER CHECK(height IS NULL OR height > 0),
-                  page_count INTEGER CHECK(page_count IS NULL OR (page_count >= 1 AND page_count <= 20)),
-                  sha256 TEXT NOT NULL,
-                  storage_relpath TEXT NOT NULL,
-                  scan_status TEXT CHECK(scan_status IS NULL OR scan_status IN ('clean', 'not_applicable')),
-                  scan_engine TEXT CHECK(scan_engine IS NULL OR length(scan_engine) <= 64),
-                  scanned_at REAL,
-                  created_at REAL NOT NULL,
-                  file_purged_at REAL
-                )""")
-    ev_cols = {row['name'] for row in db.execute('PRAGMA table_info(order_action_evidence)')}
-    if 'filename' not in ev_cols:
-        db.execute('ALTER TABLE order_action_evidence ADD COLUMN filename TEXT')
-    if 'page_count' not in ev_cols:
-        db.execute('ALTER TABLE order_action_evidence ADD COLUMN page_count INTEGER')
-    if 'scan_status' not in ev_cols:
-        db.execute('ALTER TABLE order_action_evidence ADD COLUMN scan_status TEXT')
-    if 'scan_engine' not in ev_cols:
-        db.execute('ALTER TABLE order_action_evidence ADD COLUMN scan_engine TEXT')
-    if 'scanned_at' not in ev_cols:
-        db.execute('ALTER TABLE order_action_evidence ADD COLUMN scanned_at REAL')
+    db.execute(ORDER_ACTION_EVIDENCE_DDL.format(table='order_action_evidence'))
     db.execute('CREATE INDEX IF NOT EXISTS idx_order_action_evidence_req ON order_action_evidence(request_id, created_at ASC)')
     db.execute('CREATE INDEX IF NOT EXISTS idx_order_action_evidence_conv ON order_action_evidence(conversation_id, created_at DESC)')
     db.execute('CREATE INDEX IF NOT EXISTS idx_order_action_evidence_purge ON order_action_evidence(file_purged_at, request_id)')

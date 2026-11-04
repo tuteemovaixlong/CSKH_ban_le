@@ -19,6 +19,7 @@ from retailops.business import schema as business_schema
 from retailops.business.schema import (
     BUSINESS_V6_VERSION_MAPPING,
     BUSINESS_V7_VERSION_MAPPING,
+    BUSINESS_V8_VERSION_MAPPING,
     LEGACY_EXCHANGE_KIND_MAP,
     SQLITE_BUSINESS_SCHEMA_CURRENT,
     migrate_order_action_exchange_v7,
@@ -28,6 +29,7 @@ from retailops.business.store import (
     _inspect_sqlite_business_ready,
     migrate_sqlite_business_v6,
     migrate_sqlite_business_v7,
+    migrate_sqlite_business_v8,
 )
 from retailops.core import ApiError
 from retailops.identity.persistent import PersistentSessions
@@ -35,7 +37,11 @@ from retailops.identity.postgres import PostgresSessions
 from retailops.identity.store import IdentityStore
 from retailops.storage import cli as database_cli
 from retailops.storage import pg_schema
-from retailops.storage.pg_repositories import PostgresBusinessStore, migrate_postgres_business_v7
+from retailops.storage.pg_repositories import (
+    PostgresBusinessStore,
+    migrate_postgres_business_v7,
+    migrate_postgres_business_v8,
+)
 from retailops.storage.pg_schema import initialize as pg_initialize
 from retailops.storage.postgres import BUSINESS_SCHEMA_CURRENT, IDENTITY_SCHEMA, tenant_schema
 from test_r1_w3_order_actions import _build_mock_pg_harness, _create_sqlite_v5_tenant_db
@@ -202,10 +208,12 @@ class SqliteBusinessV7MigrationTests(unittest.TestCase):
             return database_cli.run(parser.parse_args(['database', '--output', str(ws), *words]))
 
     def test_version_mapping_is_recorded_in_code(self):
-        self.assertEqual(SQLITE_BUSINESS_SCHEMA_CURRENT, 6)
-        self.assertEqual(BUSINESS_SCHEMA_CURRENT, 7)
+        # W4 moved the current version on to Business v8 (SQLite 7, PostgreSQL 8); W3.2 (v7) remains fixed history.
+        self.assertEqual(SQLITE_BUSINESS_SCHEMA_CURRENT, 7)
+        self.assertEqual(BUSINESS_SCHEMA_CURRENT, 8)
         self.assertEqual(BUSINESS_V6_VERSION_MAPPING, {'logical_milestone': 'business_v6', 'sqlite': 5, 'postgresql': 6})
         self.assertEqual(BUSINESS_V7_VERSION_MAPPING, {'logical_milestone': 'business_v7', 'sqlite': 6, 'postgresql': 7})
+        self.assertEqual(BUSINESS_V8_VERSION_MAPPING, {'logical_milestone': 'business_v8', 'sqlite': 7, 'postgresql': 8})
         self.assertEqual(LEGACY_EXCHANGE_KIND_MAP, {'size': 'other_variant', 'one_to_one': 'same_variant'})
 
     def test_fixture_is_a_real_w3_database(self):
@@ -230,7 +238,7 @@ class SqliteBusinessV7MigrationTests(unittest.TestCase):
             with self.assertRaises(ApiError) as caught:
                 blocked()
             self.assertEqual((caught.exception.status, caught.exception.code), (503, 'business_migration_required'))
-            self.assertIn('migrate-v7', caught.exception.message)
+            self.assertIn('migrate-v8', caught.exception.message)
         self.assertEqual((file_sha(path_a), file_sha(path_b)), before)
         with self.assertRaises(ApiError) as unconfirmed:
             self.cli(ws, 'migrate-v7', '--confirm-preflight')
@@ -270,6 +278,9 @@ class SqliteBusinessV7MigrationTests(unittest.TestCase):
         again = self.cli(ws, 'migrate-v7', '--confirm-preflight', '--confirm-backup')
         self.assertEqual((again['upgraded'], again['exchange_requests_mapped'], again['order_action_requests']), (False, 0, 10))
         self.assertEqual((table_dump(path_a), table_dump(path_b)), dumps)
+        # Since W4 moved current to Business v8, step up to v8 before running current-version `check` / startup.
+        res_v8 = self.cli(ws, 'migrate-v8', '--confirm-preflight', '--confirm-backup')
+        self.assertEqual((res_v8['result'], res_v8['schema_version'], res_v8['upgraded']), ('BUSINESS_V8_MIGRATED', 7, True))
         self.assertEqual(self.cli(ws, 'check'), {'result': 'SQLITE_SCHEMA_READY', 'tenants_checked': 2})
         PersistentSessions(pers)  # startup now succeeds
 
@@ -300,11 +311,14 @@ class SqliteBusinessV7MigrationTests(unittest.TestCase):
         _create_sqlite_v5_tenant_db(path)
         result = migrate_sqlite_business_v7(path, preflight_confirmed=True, backup_confirmed=True)
         self.assertEqual((result['schema_version'], result['tenants'], result['upgraded']), (6, 1, True))
-        store = BusinessStore(path, create=False)
-        with store.connection() as db:
+        with closing(sqlite3.connect(path)) as db:
             self.assertEqual(db.execute('SELECT version FROM retailops_schema').fetchone()[0], 6)
             columns = {r[1] for r in db.execute('PRAGMA table_info(order_action_requests)')}
         self.assertTrue({'target_variant_id', 'target_variant_label'} <= columns)
+        migrate_sqlite_business_v8(path, preflight_confirmed=True, backup_confirmed=True)
+        store = BusinessStore(path, create=False)
+        with store.connection() as db:
+            self.assertEqual(db.execute('SELECT version FROM retailops_schema').fetchone()[0], 7)
 
     def test_a_failed_migration_rolls_back_to_the_untouched_w3_database(self):
         _, _, (path,) = self.workspace(1)
@@ -329,7 +343,7 @@ class SqliteBusinessV7MigrationTests(unittest.TestCase):
         store = BusinessStore(self.root / 'fresh.sqlite3')
         store.seed()
         with store.connection(write=True) as db:
-            self.assertEqual(db.execute('SELECT version FROM retailops_schema').fetchone()[0], 6)
+            self.assertEqual(db.execute('SELECT version FROM retailops_schema').fetchone()[0], 7)
             db.execute("INSERT INTO conversations(id, customer_id, expires_at, provider_id) VALUES ('c1', 'C-001', 9e9, 'custom')")
             db.execute("""INSERT INTO cases(case_id, conversation_id, customer_id, status, version, resume_count,
                           created_at, updated_at) VALUES ('k1', 'c1', 'C-001', 'waiting', 1, 0, 1, 1)""")
@@ -361,7 +375,7 @@ class SqliteBusinessV7MigrationTests(unittest.TestCase):
 class PostgresDdlStaticTests(unittest.TestCase):
     def test_no_statement_contains_a_percent_sign(self):
         """psycopg treats % as a placeholder, which is what broke the W3.1 LIKE patterns."""
-        for name in ('BUSINESS_V6_DDL', 'BUSINESS_V7_UPGRADE_DDL'):
+        for name in ('BUSINESS_V6_DDL', 'BUSINESS_V7_UPGRADE_DDL', 'BUSINESS_V8_UPGRADE_DDL'):
             for statement in getattr(pg_schema, name):
                 self.assertNotIn('%', statement, (name, statement[:80]))
 
@@ -438,7 +452,7 @@ class PostgresMockMigrationTests(unittest.TestCase):
                 with self.assertRaises(ApiError) as caught:
                     blocked()
                 self.assertEqual((caught.exception.status, caught.exception.code), (503, 'business_migration_required'))
-                self.assertIn('migrate-v7', caught.exception.message)
+                self.assertIn('migrate-v8', caught.exception.message)
             for schema in (schema_a, schema_b):
                 self.assertEqual(state.schemas[schema].execute('SELECT version FROM retailops_schema').fetchone()[0], 6)
             with self.assertRaises(ApiError) as unconfirmed:
@@ -460,10 +474,14 @@ class PostgresMockMigrationTests(unittest.TestCase):
                 kinds.update({r['request_id']: (r['exchange_kind'], r['target_variant_id'])
                               for r in mem.execute('SELECT request_id, exchange_kind, target_variant_id FROM order_action_requests')})
             self.assertEqual(kinds, {'oar_x': ('other_variant', None), 'oar_y': ('same_variant', None), 'oar_z': (None, None)})
+            mig_v8 = database_cli.run(
+                parser.parse_args(['database', '--output', str(Path(tempfile.mkdtemp())), 'migrate-v8', '--confirm-preflight', '--confirm-backup'])
+            )
+            self.assertEqual((mig_v8['result'], mig_v8['schema_version']), ('BUSINESS_V8_MIGRATED', 8))
             self.assertEqual(database_cli.run(parser.parse_args(['database', 'check']))['result'], 'POSTGRES_SCHEMA_READY')
 
-            PostgresBusinessStore(dsn, 'c' * 32, create=True)  # a fresh schema is v7 straight away
-            self.assertEqual(state.schemas[tenant_schema('c' * 32)].execute('SELECT version FROM retailops_schema').fetchone()[0], 7)
+            PostgresBusinessStore(dsn, 'c' * 32, create=True)  # a fresh schema is v8 straight away
+            self.assertEqual(state.schemas[tenant_schema('c' * 32)].execute('SELECT version FROM retailops_schema').fetchone()[0], 8)
 
 
 DSN = os.environ.get('RETAILOPS_TEST_DATABASE_URL', '')
@@ -537,7 +555,7 @@ class RealPostgresBusinessV7Tests(unittest.TestCase):
         self.assertTrue({'order_action_requests_exchange_kind_v7_check', 'order_action_requests_target_variant_v7_check'}
                         <= self.constraints())
         with transaction(DSN, self.schema) as db:
-            self.assertEqual(db.execute('SELECT version FROM retailops_schema').fetchone()['version'], 7)
+            self.assertEqual(db.execute('SELECT version FROM retailops_schema').fetchone()['version'], 8)
 
     def test_w3_schema_is_blocked_then_migrated_idempotently_with_the_mapping(self):
         from retailops.storage.postgres import transaction
@@ -558,6 +576,8 @@ class RealPostgresBusinessV7Tests(unittest.TestCase):
         self.assertEqual(self.constraints() & {'order_action_requests_check1'}, set())
         self.assertTrue({'order_action_requests_exchange_kind_v7_check', 'order_action_requests_target_variant_v7_check'}
                         <= self.constraints())
+        with tempfile.TemporaryDirectory() as tmp_out:
+            migrate_postgres_business_v8(DSN, preflight_confirmed=True, backup_confirmed=True, data_root=Path(tmp_out))
         PostgresBusinessStore(DSN, self.sessions.control.tenant('shop-a')['storage_key'])  # startup works again
 
     def test_v7_constraints_reject_malformed_exchange_rows(self):

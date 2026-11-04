@@ -188,17 +188,17 @@ class PhaseR1W2BusinessV5MigrationTests(unittest.TestCase):
             BUSINESS_V5_VERSION_MAPPING,
             {"logical_milestone": "business_v5", "sqlite": 4, "postgresql": 5},
         )
-        self.assertEqual(SQLITE_BUSINESS_SCHEMA_CURRENT, 6)
-        self.assertEqual(POSTGRES_BUSINESS_SCHEMA_CURRENT, 7)
-        self.assertEqual(BUSINESS_SCHEMA_CURRENT, 7)
+        self.assertEqual(SQLITE_BUSINESS_SCHEMA_CURRENT, 7)
+        self.assertEqual(POSTGRES_BUSINESS_SCHEMA_CURRENT, 8)
+        self.assertEqual(BUSINESS_SCHEMA_CURRENT, 8)
 
-        # 1. Fresh SQLite BusinessStore creates SQLite v6 (logical Business v7) directly with Business v5 + v6 tables
+        # 1. Fresh SQLite BusinessStore creates SQLite v7 (logical Business v8) directly with Business v5..v8 tables
         fresh_sqlite = self.root / "fresh_business.sqlite3"
         store = BusinessStore(fresh_sqlite)
         store.seed()
         with store.connection() as db:
             ver_row = db.execute("SELECT component, version FROM retailops_schema").fetchone()
-            self.assertEqual((ver_row["component"], ver_row["version"]), ("business", 6))
+            self.assertEqual((ver_row["component"], ver_row["version"]), ("business", 7))
             tables = {
                 r[0]
                 for r in db.execute(
@@ -399,6 +399,13 @@ class PhaseR1W2BusinessV5MigrationTests(unittest.TestCase):
             )
             self.assertEqual(res_v7["result"], "BUSINESS_V7_MIGRATED")
             self.assertEqual(res_v7["upgraded"], True)
+            res_v8 = database_cli.run(
+                parser.parse_args(
+                    ["database", "--output", str(legacy_root), "migrate-v8", "--confirm-preflight", "--confirm-backup"]
+                )
+            )
+            self.assertEqual(res_v8["result"], "BUSINESS_V8_MIGRATED")
+            self.assertEqual(res_v8["upgraded"], True)
             chk = database_cli.run(parser.parse_args(["database", "--output", str(legacy_root), "check"]))
             self.assertEqual(chk, {"result": "SQLITE_SCHEMA_READY", "tenants_checked": 2})
 
@@ -661,13 +668,13 @@ class PhaseR1W2BusinessV5MigrationTests(unittest.TestCase):
             self.assertEqual(cases_a["pg-conv-2"]["status"], "resolved")
             self.assertEqual(cases_a["pg-conv-2"]["resolved_reason"], "migrated_v5")
 
-            # 3. Fresh PostgreSQL tenant schema initializes directly to v7 (logical Business v7)
+            # 3. Fresh PostgreSQL tenant schema initializes directly to v8 (logical Business v8)
             key_c = "c" * 32
             PostgresBusinessStore(pg_dsn, key_c, create=True)
             schema_c = tenant_schema(key_c)
             self.assertEqual(
                 state.schemas[schema_c].execute("SELECT version FROM retailops_schema").fetchone()[0],
-                7,
+                8,
             )
             self.assertIsNotNone(
                 state.schemas[schema_c].execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cases'").fetchone()

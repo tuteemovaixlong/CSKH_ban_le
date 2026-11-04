@@ -30,9 +30,9 @@ def read_database(path, component, tables):
             db.row_factory = sqlite3.Row
             db.execute('BEGIN')
             marker = [dict(row) for row in db.execute('SELECT component,version FROM retailops_schema')]
-            allowed_versions = (1, 2, 3, 4, 5, 6) if component == 'business' else (1, 2, 3, 4, 5)
+            allowed_versions = (1, 2, 3, 4, 5, 6, 7) if component == 'business' else (1, 2, 3, 4, 5)
             if len(marker) != 1 or marker[0]['component'] != component or marker[0]['version'] not in allowed_versions:
-                raise ValueError('Import requires identity v1/v2/v3/v4/v5 and business v1/v2/v3/v4/v5/v6 in a stopped persistent SQLite snapshot.')
+                raise ValueError('Import requires identity v1/v2/v3/v4/v5 and business v1/v2/v3/v4/v5/v6/v7 in a stopped persistent SQLite snapshot.')
             if db.execute('PRAGMA integrity_check').fetchone()[0] != 'ok' or db.execute('PRAGMA foreign_key_check').fetchall():
                 raise ValueError('SQLite snapshot failed integrity checks.')
             if component == 'business':
@@ -54,7 +54,7 @@ def read_database(path, component, tables):
                         'order_action_evidence',
                         'integration_outbox',
                     ])
-                if marker[0]['version'] >= 6:
+                if marker[0]['version'] >= 7:
                     ordered.append('case_assist_turns')
                 tables = tuple(ordered)
             existing_tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
