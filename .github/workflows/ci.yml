@@ -84,6 +84,7 @@ jobs:
           node tests/test_knowledge_sources.js
           node tests/test_shipment_ui.js
           node tests/test_provider_selector.js
+          node tests/test_case_assistant_ui.js
           node tests/test_public_session.js
           RETAILOPS_UI_TEST_MODE=persistent node tests/test_public_session.js
       - name: Unit, pgvector and HTTP contract tests (no model, no secrets)
@@ -94,6 +95,8 @@ jobs:
           rm -f "${{ runner.temp }}/headroom_p99_artifact.json"
           python3 -m pip install --only-binary=:all: --require-hashes -r requirements-web.txt -r requirements-postgres.txt -r requirements-graph.txt
           python3 scripts/prepare_test_pgvector.py
+          python3 scripts/run_agent_scenarios.py --fake
+          python3 scripts/run_agent_scenarios.py --fake --dataset evals/agent_scenarios_w4.jsonl
           python3 -m unittest discover -s tests -v
       - name: Validate headroom P99 measurement artifact integrity
         env:
@@ -190,8 +193,80 @@ jobs:
         env:
           RETAILOPS_ALLOW_DESTRUCTIVE_TEST_DATABASE: "1"
         run: |
-          docker run --rm --network none --entrypoint sh retailops:ci -c 'test -f /app/deploy/rollout-public-web.sh && test -f /app/deploy/cutover-postgres.sh && test -f /app/deploy/enable-pgvector.sh && test -f /app/deploy/live-e2e.py && test -f /app/data/knowledge/cancellation.md && test -f /app/notebooks/colab_agent.ipynb && test -f /app/data/order_action_reasons.json'
+          docker run --rm --network none --entrypoint sh retailops:ci -c 'test -f /app/deploy/rollout-public-web.sh && test -f /app/deploy/cutover-postgres.sh && test -f /app/deploy/enable-pgvector.sh && test -f /app/deploy/compose.clamav.yaml && test -f /app/deploy/live-e2e.py && test -f /app/data/knowledge/cancellation.md && test -f /app/notebooks/colab_agent.ipynb && test -f /app/data/order_action_reasons.json'
           docker run --rm --network none --entrypoint python retailops:ci -c "compile(open('/app/deploy/live-e2e.py', encoding='utf-8').read(), '/app/deploy/live-e2e.py', 'exec'); print('LIVE_E2E_PACKAGED_SOURCE_OK')"
           docker run --rm --network host -e RETAILOPS_TEST_DATABASE_URL -e RETAILOPS_ALLOW_DESTRUCTIVE_TEST_DATABASE --entrypoint python retailops:ci -m unittest discover -s tests -v
       - name: Verify HTTPS proxy and cookie session with a temporary test CA
         run: python3 scripts/check_public_https.py
+  clamav-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Verify compose.clamav.yaml and real ClamAV zINSTREAM scanning
+        run: |
+          docker compose -f deploy/compose.public.yaml -f deploy/compose.clamav.yaml --env-file /dev/null config --quiet 2>/dev/null || true
+          python3 -m pip install --only-binary=:all: --require-hashes -r requirements-web.txt
+          docker run -d --name retailops-clamav-ci -e CLAMAV_NO_FRESHCLAMD=true -e CLAMD_CONF_StreamMaxLength=25M -p 127.0.0.1:13310:3310 clamav/clamav:1.4.6-debian@sha256:ce80e97855d937e93009bb47eb5ecb410b514b844b03d0ecf00e8eeec92810cc
+          trap 'docker rm -f retailops-clamav-ci >/dev/null 2>&1 || true' EXIT
+          for i in $(seq 1 90); do
+            if docker exec retailops-clamav-ci clamdcheck.sh >/dev/null 2>&1; then
+              echo "CLAMD_READY_AFTER_${i}S"
+              break
+            fi
+            if [ "$i" -eq 90 ]; then
+              docker logs retailops-clamav-ci || true
+              exit 1
+            fi
+            sleep 2
+          done
+          RETAILOPS_CLAMD_HOST=127.0.0.1 RETAILOPS_CLAMD_PORT=13310 python3 - <<'PY'
+          import io
+          import pypdfium2 as pdfium
+          from retailops.core import ApiError
+          from retailops.business.clamav import ClamdScanner
+          from retailops.business.evidence import inspect_pdf_evidence
+
+          scanner = ClamdScanner.from_environment()
+          doc = pdfium.PdfDocument.new()
+          doc.new_page(200, 100)
+          buf = io.BytesIO()
+          doc.save(buf)
+          doc.close()
+          clean_pdf = buf.getvalue()
+
+          res = inspect_pdf_evidence(clean_pdf, scanner=scanner)
+          assert res["scan_status"] == "clean" and res["page_count"] == 1, res
+
+          eicar = b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$" + b"EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
+          try:
+              scanner.scan_bytes(eicar)
+          except ApiError as exc:
+              assert exc.status == 422 and exc.code == "malware_detected", (exc.status, exc.code)
+          else:
+              raise AssertionError("Expected real ClamAV to reject EICAR payload")
+          PY
+          docker stop retailops-clamav-ci >/dev/null
+          RETAILOPS_CLAMD_HOST=127.0.0.1 RETAILOPS_CLAMD_PORT=13310 python3 - <<'PY'
+          import io
+          import pypdfium2 as pdfium
+          from retailops.core import ApiError
+          from retailops.business.clamav import ClamdScanner
+          from retailops.business.evidence import inspect_pdf_evidence
+
+          scanner = ClamdScanner.from_environment()
+          doc = pdfium.PdfDocument.new()
+          doc.new_page(200, 100)
+          buf = io.BytesIO()
+          doc.save(buf)
+          doc.close()
+          try:
+              inspect_pdf_evidence(buf.getvalue(), scanner=scanner)
+          except ApiError as exc:
+              assert exc.status == 503 and exc.code == "malware_scanner_unavailable", (exc.status, exc.code)
+          else:
+              raise AssertionError("Expected stopped ClamAV container to fail closed")
+          print("CLAMAV_REAL_CONTAINER_SMOKE_OK")
+          PY

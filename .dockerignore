@@ -43,6 +43,7 @@
 !scripts/
 !scripts/**
 !deploy/compose.admin.yaml
+!deploy/compose.clamav.yaml
 !deploy/admin-console.py
 !notebooks/
 !notebooks/**

@@ -26,6 +26,7 @@ class RoleHarness(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.pers = Path(self.temp.name) / 'persistent'
         self.sessions = PersistentSessions(self.pers, data_mode='persistent-demo')
+        self.sessions.customer_ref_key = 'test-w32-customer-ref-key-0123456789abcdef'
         self.store_a = self.sessions.provision_tenant('shop-a', 'Shop A', seed_demo=True)
         self.store_b = self.sessions.provision_tenant('shop-b', 'Shop B', seed_demo=True)
         self.store_a.add_customer('C-STAFF-A', 'Nhân viên A')

@@ -11,10 +11,10 @@ import uuid
 
 logger = logging.getLogger("retailops.application")
 from retailops.agent_mode import resolve_agent_mode
-from retailops.core import ApiError, STATUSES, fields, require
+from retailops.core import ApiError, EVIDENCE_MAX_BYTES, STATUSES, fields, require
 from retailops.order_reasons import reason_catalog
 from retailops.identity.bearer import authenticate_bearer
-from retailops.business.permissions import CANCEL, READ, ROLE_PERMISSIONS
+from retailops.business.permissions import CANCEL, READ, ROLE_PERMISSIONS, STAFF
 from retailops_agent import AgentError, run_agent
 from retailops_tools import BoundTools, confirmed_orders_for
 from retailops.knowledge.citations import CitationError, cited_sources
@@ -25,6 +25,68 @@ from retailops.business.cache import SemanticCache, ToolCache, is_cacheable_quer
 from retailops.business.progress import TurnProgress
 from retailops.inference_gate import InferenceGate, GatedGateway
 from retailops.workflow.answer_check import check_final_answer
+
+MEDIA_HUMAN_FALLBACK_MESSAGE = (
+    'Hệ thống hiện không phân tích được ảnh, chuyển nhân viên hỗ trợ trực tiếp cho bạn ngay trên ca này nhé.'
+)
+
+
+class _EvidenceHydratingGateway:
+    """Hydrate only the most recent chat attachment from the protected evidence store transiently per model call (W4-D6)."""
+
+    def __init__(self, target, store, customer_id: str, conversation_id: str):
+        self._target = target
+        self._store = store
+        self._customer_id = customer_id
+        self._conversation_id = conversation_id
+
+    def __getattr__(self, name):
+        return getattr(self._target, name)
+
+    def _project_messages(self, messages):
+        if not isinstance(messages, list):
+            return messages
+        recent_att_idx = None
+        for idx in range(len(messages) - 1, -1, -1):
+            msg = messages[idx]
+            if not isinstance(msg, dict) or msg.get('role') != 'user':
+                continue
+            att = msg.get('attachment')
+            if isinstance(att, dict) and not att.get('removed') and (att.get('evidence_id') or att.get('data')):
+                recent_att_idx = idx
+                break
+        if recent_att_idx is None:
+            return messages
+        include_pixels = bool(getattr(self._target, 'is_vision', False))
+        projected = []
+        for idx, msg in enumerate(messages):
+            if not isinstance(msg, dict) or msg.get('role') != 'user' or not isinstance(msg.get('attachment'), dict):
+                projected.append(msg)
+                continue
+            att = msg['attachment']
+            cloned = dict(msg)
+            if idx == recent_att_idx:
+                if att.get('evidence_id') and hasattr(self._store, 'load_attachment_for_model'):
+                    cloned['attachment'] = self._store.load_attachment_for_model(
+                        self._customer_id,
+                        self._conversation_id,
+                        att,
+                        include_pixels=include_pixels,
+                    )
+                elif not include_pixels and 'data' in att:
+                    cloned['attachment'] = {'type': att.get('type', 'image'), 'name': att.get('name', '')}
+                else:
+                    cloned['attachment'] = dict(att)
+            else:
+                cloned['attachment'] = {'type': att.get('type', 'image'), 'name': att.get('name', '')}
+            projected.append(cloned)
+        return projected
+
+    def chat(self, messages, allow_tools: bool, timeout: float):
+        return self._target.chat(self._project_messages(messages), allow_tools, timeout)
+
+    def chat_scoped(self, messages, allow_tools: bool, timeout: float, allowed_tools):
+        return self._target.chat_scoped(self._project_messages(messages), allow_tools, timeout, allowed_tools)
 
 class Application:
     def __init__(self, store, tokens, infer=None, api_infer=None, api_daily_limit=20, *, role='customer', orchestrator=None,
@@ -138,8 +200,9 @@ class Application:
                     400, 'invalid_attachment', 'Định dạng tệp đính kèm không hợp lệ.')
             require(attachment.get('type') in ('image', 'document'),
                     400, 'unsupported_attachment_type', 'Chỉ hỗ trợ tệp hình ảnh hoặc tài liệu.')
-            require(isinstance(attachment.get('data'), str) and len(attachment['data']) <= 6_000_000,
-                    400, 'attachment_too_large', 'Kích thước tệp đính kèm vượt quá 4MB.')
+            max_b64_chars = ((EVIDENCE_MAX_BYTES + 2) // 3) * 4 + 128
+            require(isinstance(attachment.get('data'), str) and 0 < len(attachment['data']) <= max_b64_chars,
+                    413, 'attachment_too_large', 'Kích thước tệp đính kèm vượt quá giới hạn cho phép.')
         if hasattr(self.store, 'peek_conversation_for_chat'):
             snapshot = self.store.peek_conversation_for_chat(customer, body['conversation_id'])
         else:
@@ -153,8 +216,9 @@ class Application:
             return replay
 
         gateway = self.infer if provider_id == 'custom' else self.api_infer if provider_id == 'api' else None
-        require(gateway is not None, 503, 'model_offline',
-                'Model chưa kết nối. Bạn vẫn có thể dùng các nút tra đơn và yêu cầu hủy.')
+        if gateway is None and attachment is None:
+            raise ApiError(503, 'model_offline',
+                           'Model chưa kết nối. Bạn vẫn có thể dùng các nút tra đơn và yêu cầu hủy.')
         conv_key = f"{customer}:{snapshot['id']}"
         conv_lock = self.inference_gate.get_conversation_lock(conv_key)
         if not conv_lock.acquire(blocking=False):
@@ -175,6 +239,10 @@ class Application:
             else:
                 snapshot = self.store.conversation(customer, snapshot['id'])
             provider_id = snapshot['provider_id']
+            gateway = self.infer if provider_id == 'custom' else self.api_infer if provider_id == 'api' else None
+            if gateway is None and attachment is None:
+                raise ApiError(503, 'model_offline',
+                               'Model chưa kết nối. Bạn vẫn có thể dùng các nút tra đơn và yêu cầu hủy.')
 
             # G02: Check interrupted runs in graph_runs under conv_lock BEFORE cache lookup & workflow
             run_key = [snapshot['id'], request_id]
@@ -265,11 +333,66 @@ class Application:
             saver, snapshot = stack.enter_context(workflow(self.store, customer, 'chat-v1',
                 [snapshot['id'], request_id], fingerprint, snapshot, expires_at=snapshot['expires_at']))
 
-            if hasattr(gateway, 'for_turn'):
-                gateway = gateway.for_turn()
-            gated_gateway = GatedGateway(gateway, self.inference_gate)
             saved = saver.get_tuple(saver.config())
             saved_state = saved.checkpoint.get('channel_values', {}) if saved else {}
+            sanitized_attachment = None
+            if not saved_state and attachment is not None:
+                if hasattr(self.store, 'store_chat_attachment'):
+                    sanitized_attachment = self.store.store_chat_attachment(customer, snapshot['id'], attachment)
+                else:
+                    sanitized_attachment = {'type': attachment.get('type', 'image'), 'name': attachment.get('name', '')}
+
+            effective_attachment = sanitized_attachment
+            if effective_attachment is None and isinstance(saved_state.get('fresh'), list) and saved_state['fresh']:
+                first_fresh = saved_state['fresh'][0]
+                if isinstance(first_fresh, dict) and isinstance(first_fresh.get('attachment'), dict):
+                    effective_attachment = first_fresh['attachment']
+            has_media_attachment = bool(effective_attachment)
+            needs_visual_model = bool(
+                effective_attachment
+                and (
+                    effective_attachment.get('type') == 'image'
+                    or effective_attachment.get('pdf_mode') == 'scanned'
+                )
+            )
+
+            if gateway is None:
+                if has_media_attachment:
+                    return self._complete_media_human_fallback(
+                        customer,
+                        snapshot,
+                        request_id,
+                        digest,
+                        text,
+                        effective_attachment,
+                        provider_id=provider_id,
+                        started=started,
+                        fallback_reason='model_offline',
+                    )
+                raise ApiError(503, 'model_offline',
+                               'Model chưa kết nối. Bạn vẫn có thể dùng các nút tra đơn và yêu cầu hủy.')
+
+            if hasattr(gateway, 'for_turn'):
+                gateway = gateway.for_turn()
+            gated_gateway = _EvidenceHydratingGateway(
+                GatedGateway(gateway, self.inference_gate),
+                self.store,
+                customer,
+                snapshot['id'],
+            )
+            run_agent_mocked = hasattr(run_agent, 'side_effect') or hasattr(run_agent, 'mock_calls')
+            if needs_visual_model and not bool(getattr(gateway, 'is_vision', False)) and not run_agent_mocked:
+                return self._complete_media_human_fallback(
+                    customer,
+                    snapshot,
+                    request_id,
+                    digest,
+                    text,
+                    effective_attachment,
+                    provider_id=provider_id,
+                    started=started,
+                    fallback_reason='vision_disabled',
+                )
             if saved_state.get('complete'):
                 trace = saved_state['trace']
                 identity = {'name': trace['model'], 'digest': trace['model_digest'],
@@ -373,14 +496,58 @@ class Application:
                 bound.shipment = state.get('shipment')
                 bound.human_support = state.get('human_support')
 
-            if getattr(self, 'agent_mode', 'agent') == 'legacy' and not (hasattr(run_agent, 'side_effect') or hasattr(run_agent, 'mock_calls')):
-                from retailops.workflow.graph import run_multiagent
-                answer = run_multiagent(gated_gateway, text, self.store.history(customer, snapshot['id']), execute, identity,
-                                        saver=saver, capture=capture, restore=restore, before_model=before_model, attachment=attachment)
-            else:
-                answer = run_agent(gated_gateway, text, self.store.history(customer, snapshot['id']), execute, identity,
-                                   saver=saver, capture=capture, restore=restore, before_model=before_model, attachment=attachment,
-                                   progress=lambda state: self.progress.update(progress_key, request_id, state))
+            try:
+                if getattr(self, 'agent_mode', 'agent') == 'legacy' and not run_agent_mocked:
+                    from retailops.workflow.graph import run_multiagent
+                    answer = run_multiagent(gated_gateway, text, self.store.history(customer, snapshot['id']), execute, identity,
+                                            saver=saver, capture=capture, restore=restore, before_model=before_model, attachment=sanitized_attachment)
+                else:
+                    answer = run_agent(gated_gateway, text, self.store.history(customer, snapshot['id']), execute, identity,
+                                       saver=saver, capture=capture, restore=restore, before_model=before_model, attachment=sanitized_attachment,
+                                       progress=lambda state: self.progress.update(progress_key, request_id, state))
+            except AgentError as exc:
+                if has_media_attachment:
+                    return self._complete_media_human_fallback(
+                        customer,
+                        snapshot,
+                        request_id,
+                        digest,
+                        text,
+                        effective_attachment,
+                        provider_id=provider_id,
+                        started=started,
+                        fallback_reason=exc.code,
+                        error_trace=exc.trace if isinstance(getattr(exc, 'trace', None), dict) else None,
+                    )
+                raise
+            except ApiError as exc:
+                if has_media_attachment and exc.status >= 500:
+                    return self._complete_media_human_fallback(
+                        customer,
+                        snapshot,
+                        request_id,
+                        digest,
+                        text,
+                        effective_attachment,
+                        provider_id=provider_id,
+                        started=started,
+                        fallback_reason=exc.code,
+                    )
+                raise
+            except (RuntimeError, ValueError, OSError):
+                if has_media_attachment:
+                    return self._complete_media_human_fallback(
+                        customer,
+                        snapshot,
+                        request_id,
+                        digest,
+                        text,
+                        effective_attachment,
+                        provider_id=provider_id,
+                        started=started,
+                        fallback_reason='model_unavailable',
+                    )
+                raise
 
             if read_only_lookup:
                 bound.cancel_order = None
@@ -547,7 +714,10 @@ class Application:
                     preserve_keys=('reasoning', 'thought', '_reasoning', 'thinking'),
                 )
             http_status = getattr(exc, 'http_status', None) or exc_trace.get('http_status')
-            if not http_status:
+            if http_status in (401, 403) or exc.code == 'api_auth_failed':
+                # Upstream provider/tunnel 401/403 is a server-side model auth failure, not a browser session 401.
+                http_status = 503
+            elif not http_status:
                 if exc.code in ('api_rate_limited', 'model_busy'):
                     http_status = 429
                 elif exc.code == 'agent_timeout':
@@ -568,6 +738,106 @@ class Application:
         finally:
             stack.close()
 
+    def _complete_media_human_fallback(
+        self,
+        customer: str,
+        snapshot: dict,
+        request_id: str,
+        digest: str,
+        text: str,
+        sanitized_attachment: dict | None,
+        *,
+        provider_id: str,
+        started: float,
+        fallback_reason: str,
+        error_trace: dict | None = None,
+    ) -> dict:
+        from retailops.guardrails.topic_filter import sanitize_structured_payload
+
+        reason_label = f"Tệp đính kèm cần nhân viên kiểm tra trực tiếp ({fallback_reason})"
+        handoff_info = None
+        if hasattr(self.store, 'request_human_handoff'):
+            handoff = self.store.request_human_handoff(
+                customer,
+                snapshot['id'],
+                reason_code='media_analysis_unavailable',
+                comment=reason_label,
+            )
+            handoff_info = {
+                'status': 'escalated_to_human',
+                'case_id': handoff.get('case_id'),
+                'handoff_id': handoff.get('handoff_id'),
+                'notice_turn_id': handoff.get('notice_turn_id'),
+                'notice_message': handoff.get('notice_message'),
+                'reason': reason_label,
+                'queue': 'staff_desk',
+                'message': MEDIA_HUMAN_FALLBACK_MESSAGE,
+            }
+        else:
+            handoff_info = {
+                'status': 'escalated_to_human',
+                'reason': reason_label,
+                'queue': 'staff_desk',
+                'message': MEDIA_HUMAN_FALLBACK_MESSAGE,
+            }
+
+        user_msg = {'role': 'user', 'content': text}
+        if sanitized_attachment is not None:
+            user_msg['attachment'] = sanitized_attachment
+        assistant_msg = {'role': 'assistant', 'content': MEDIA_HUMAN_FALLBACK_MESSAGE}
+
+        trace = {
+            'turn_id': str(uuid.uuid4()),
+            'protocol': 'media-human-fallback-v1',
+            'model': 'human_fallback',
+            'provider': provider_id,
+            'answer_source': 'media_human_fallback',
+            'degraded': True,
+            'fallback_reason': fallback_reason,
+            'latency_ms': round((time.monotonic() - started) * 1000, 2),
+            'model_calls': int((error_trace or {}).get('model_calls') or 0),
+            'prompt_tokens': 0,
+            'generated_tokens': 0,
+            'reported_cost_usd': None,
+            'tools': [],
+            'tool_count': 0,
+            'steps': [{'step': 1, 'worker': 'media_guard', 'action': 'human_handoff', 'summary': reason_label}],
+            'agent_mode': getattr(self, 'agent_mode', 'agent'),
+            'queue_wait_ms': 0.0,
+            'provider_inference_ms': 0.0,
+            'graph_retrieval_ms': 0.0,
+            'rag_retrieval_ms': 0.0,
+            'db_ms': 0.0,
+            'in_flight_inferences': getattr(self.inference_gate, 'in_flight', 0),
+        }
+        if isinstance(error_trace, dict) and error_trace.get('model_errors'):
+            _, clean_errs = sanitize_structured_payload(error_trace['model_errors'], user_text=text)
+            trace['model_errors'] = clean_errs
+
+        ctx_dict = {'order_id': snapshot.get('order_id'), 'product_id': snapshot.get('product_id')}
+        result = {
+            'action': 'reply',
+            'message': MEDIA_HUMAN_FALLBACK_MESSAGE,
+            'source': 'media_human_fallback',
+            'model_used': False,
+            'context': ctx_dict,
+            'trace': trace,
+            'provider_id': provider_id,
+            'replayed': False,
+            'sources': [],
+            'human_support': handoff_info,
+        }
+        self.store.finish_turn(
+            customer,
+            snapshot,
+            request_id,
+            digest,
+            [user_msg, assistant_msg],
+            result,
+            {},
+        )
+        return result
+
     def focus(self, customer, cid, body):
         self.require_permission(READ)
         fields(body, {'order_id'})
@@ -579,3 +849,335 @@ class Application:
         self.store.remember(customer, snapshot, order['id'], pid)
         return {'order': order, 'message': describe_order(order, STATUSES, reason_catalog().labels()),
                 'context': {'order_id': order['id'], 'product_id': pid}, 'source': 'store_data', 'model_used': False}
+
+    def case_assist_progress(self, actor: dict, case_id: str) -> dict:
+        """Progress of the caller's own running Case Assistant turn on `(tenant_id, principal_id, case_id)`."""
+        ctx = self.store.authorize_case_assist(case_id, actor=actor, write_attempt=False)
+        return self.progress.read(("case_assist", ctx["tenant_id"], ctx["principal_id"], ctx["case_id"]))
+
+    def case_assist_history(self, actor: dict, case_id: str, *, limit: int = 50) -> dict:
+        """Partitioned Case Assistant history for `(tenant_id, principal_id, case_id)` (W4-D4)."""
+        return self.store.list_case_assist_turns(case_id, actor=actor, limit=limit)
+
+    def case_assist(self, actor: dict, case_id: str, body: dict | None) -> dict:
+        """Bounded, read-only Staff/Manager Case Assistant turn (W4-D1, W4-D4, W4-D5).
+
+        Never reads or populates `SemanticCache` or `ToolCache`, never writes to `agent_turns`,
+        and never mutates orders, order-action requests, or case state.
+        """
+        from retailops.guardrails.topic_filter import (
+            sanitize_output_against_canary_leak,
+            sanitize_structured_payload,
+        )
+        from retailops.workflow.case_assist import (
+            CASE_ASSIST_MODES,
+            DEFAULT_MODE_PROMPTS,
+            CaseAssistBoundTools,
+            extract_case_assist_draft,
+            format_case_assist_user_prompt,
+            make_case_assist_profile,
+        )
+
+        started = time.monotonic()
+        require(isinstance(body, dict), 400, "invalid_body", "Yêu cầu phải là đối tượng JSON.")
+        require(
+            set(body).issubset({"mode", "question", "request_id", "provider_id"}),
+            400,
+            "invalid_fields",
+            "Các trường của yêu cầu Trợ lý ca không hợp lệ.",
+        )
+        raw_mode = body.get("mode")
+        mode = "ask" if raw_mode is None else raw_mode
+        require(
+            isinstance(mode, str) and mode in CASE_ASSIST_MODES,
+            400,
+            "invalid_mode",
+            "Chế độ Trợ lý ca phải là ask, summary hoặc draft.",
+        )
+
+        # Authorize BEFORE payload content checks so unauthorized callers always get 403 + audit.
+        case_ctx = self.store.authorize_case_assist(case_id, actor=actor, write_attempt=True, mode=mode)
+
+        raw_question = body.get("question")
+        if raw_question is None:
+            clean_question = ""
+        else:
+            require(isinstance(raw_question, str), 400, "invalid_question", "Câu hỏi phải là chuỗi ký tự.")
+            clean_question = raw_question.strip()
+        require(
+            len(clean_question) <= 2000,
+            400,
+            "invalid_question",
+            "Câu hỏi cho Trợ lý ca tối đa 2.000 ký tự.",
+        )
+        if mode == "ask":
+            require(
+                bool(clean_question),
+                400,
+                "invalid_question",
+                "Nhập câu hỏi cho Trợ lý ca (tối đa 2.000 ký tự).",
+            )
+        elif not clean_question:
+            clean_question = DEFAULT_MODE_PROMPTS[mode]
+
+        raw_req_id = body.get("request_id")
+        if raw_req_id is None:
+            request_id = f"ca_{uuid.uuid4().hex}"
+        else:
+            require(
+                isinstance(raw_req_id, str) and bool(re.fullmatch(r"[A-Za-z0-9_-]{8,128}", raw_req_id)),
+                400,
+                "invalid_request_id",
+                "Mã yêu cầu Trợ lý ca không hợp lệ.",
+            )
+            request_id = raw_req_id
+
+        replay = self.store.find_case_assist_replay(
+            tenant_id=case_ctx["tenant_id"],
+            principal_id=case_ctx["principal_id"],
+            case_id=case_ctx["case_id"],
+            request_id=request_id,
+            mode=mode,
+            question=clean_question,
+        )
+        if replay is not None:
+            return {**replay, "replayed": True}
+
+        raw_provider = body.get("provider_id")
+        if raw_provider is not None:
+            require(
+                isinstance(raw_provider, str) and raw_provider in ("custom", "api"),
+                400,
+                "invalid_provider",
+                "Nguồn model không hợp lệ.",
+            )
+            provider_id = raw_provider
+        else:
+            provider_id = self.default_provider
+            if provider_id == "custom" and self.infer is None and self.api_infer is not None:
+                provider_id = "api"
+            elif provider_id == "api" and self.api_infer is None and self.infer is not None:
+                provider_id = "custom"
+
+        gateway = self.infer if provider_id == "custom" else (self.api_infer if provider_id == "api" else None)
+        require(
+            gateway is not None,
+            503,
+            "model_offline",
+            "Model chưa kết nối để chạy Trợ lý ca.",
+        )
+
+        lock_key = f"case_assist:{case_ctx['tenant_id']}:{case_ctx['principal_id']}:{case_ctx['case_id']}"
+        assist_lock = self.inference_gate.get_conversation_lock(lock_key)
+        if not assist_lock.acquire(blocking=False):
+            self.overload_429_count += 1
+            raise ApiError(
+                429,
+                "model_busy",
+                "Trợ lý ca đang xử lý một yêu cầu khác của bạn trên ca này. Vui lòng thử lại sau.",
+            )
+
+        progress_key = ("case_assist", case_ctx["tenant_id"], case_ctx["principal_id"], case_ctx["case_id"])
+        stack = ExitStack()
+        stack.callback(assist_lock.release)
+        try:
+            replay = self.store.find_case_assist_replay(
+                tenant_id=case_ctx["tenant_id"],
+                principal_id=case_ctx["principal_id"],
+                case_id=case_ctx["case_id"],
+                request_id=request_id,
+                mode=mode,
+                question=clean_question,
+            )
+            if replay is not None:
+                return {**replay, "replayed": True}
+
+            self.progress.start(progress_key, request_id)
+            stack.callback(self.progress.finish, progress_key, request_id)
+
+            if hasattr(gateway, "for_turn"):
+                gateway = gateway.for_turn()
+            gated_gateway = GatedGateway(gateway, self.inference_gate)
+            identity = {**gated_gateway.inspect(), "selection": provider_id}
+
+            reserved = False
+
+            def before_model():
+                nonlocal reserved
+                if provider_id == "api" and not reserved:
+                    self.quota_store.reserve_api_attempt(self.api_daily_limit)
+                    reserved = True
+
+            bound = CaseAssistBoundTools(
+                self.store,
+                self.catalog,
+                case_id=case_ctx["case_id"],
+                customer_id=case_ctx["customer_id"],
+                conversation_id=case_ctx["conversation_id"],
+            )
+            profile = make_case_assist_profile(case_ctx["case_id"], mode)
+
+            def execute(name, arguments):
+                # W4-D5: Case Assistant bypasses ToolCache and SemanticCache unconditionally.
+                try:
+                    return bound(name, arguments)
+                except ApiError as exc:
+                    if exc.status == 429:
+                        raise
+                    if exc.status >= 500:
+                        code = "tool_unavailable" if exc.code == "database_unavailable" else exc.code
+                        msg = (
+                            "Dịch vụ tạm thời không khả dụng. Vui lòng thử lại sau."
+                            if exc.code == "database_unavailable"
+                            else exc.message
+                        )
+                        raise ApiError(exc.status, code, msg)
+                    return {"error": exc.code, "message": exc.message}
+
+            def capture():
+                return {"knowledge": bound.knowledge.snapshot()}
+
+            def restore(state):
+                if isinstance(state, dict):
+                    bound.knowledge.restore(state.get("knowledge"))
+
+            prior_history = self.store.case_assist_model_history(
+                tenant_id=case_ctx["tenant_id"],
+                principal_id=case_ctx["principal_id"],
+                case_id=case_ctx["case_id"],
+            )
+            user_prompt = format_case_assist_user_prompt(mode, clean_question)
+            answer = run_agent(
+                gated_gateway,
+                user_prompt,
+                prior_history,
+                execute,
+                identity,
+                capture=capture,
+                restore=restore,
+                before_model=before_model,
+                progress=lambda state: self.progress.update(progress_key, request_id, state),
+                profile=profile,
+            )
+
+            raw_answer_text = answer.get("message", "")
+            try:
+                sources = cited_sources(raw_answer_text, bound.knowledge.sources)
+            except CitationError as exc:
+                raise AgentError(
+                    exc.code,
+                    "Nguồn trích dẫn chính sách chưa hợp lệ. Hãy thử lại.",
+                    answer.get("trace"),
+                ) from None
+
+            checked = check_final_answer(raw_answer_text, answer.get("messages"))
+            if checked.changed:
+                raw_answer_text = checked.text
+                answer["trace"]["answer_check"] = {
+                    "dropped_policy_promises": checked.dropped_policy,
+                    "dropped_done_claims": checked.dropped_claims,
+                }
+
+            leaked, safe_text = sanitize_output_against_canary_leak(clean_question, raw_answer_text)
+            if leaked:
+                raw_answer_text = safe_text
+
+            clean_answer, draft_reply = extract_case_assist_draft(raw_answer_text, mode)
+            if draft_reply:
+                draft_checked = check_final_answer(draft_reply, answer.get("messages"))
+                if draft_checked.changed:
+                    draft_reply = draft_checked.text
+                draft_leaked, safe_draft = sanitize_output_against_canary_leak(clean_question, draft_reply)
+                if draft_leaked:
+                    draft_reply = safe_draft
+
+            trace_obj = dict(answer.get("trace") or {})
+            trace_obj["agent_mode"] = "case_assist"
+            trace_obj["case_assist_mode"] = mode
+            trace_obj["cache_bypassed"] = True
+            trace_obj["queue_wait_ms"] = getattr(gated_gateway, "total_queue_wait_ms", 0.0)
+            trace_obj["provider_inference_ms"] = getattr(gated_gateway, "total_provider_inference_ms", 0.0)
+            trace_obj["in_flight_inferences"] = getattr(self.inference_gate, "in_flight", 0)
+            if bound.knowledge.searches:
+                trace_obj["knowledge"] = {
+                    "searches": bound.knowledge.searches,
+                    "retrieved_sources": len(bound.knowledge.sources),
+                    "cited_sources": len(sources),
+                    "citation_check": "provenance_only",
+                    "embedding_model": KNOWLEDGE_EMBEDDING_MODEL,
+                }
+            _, sanitized_trace = sanitize_structured_payload(
+                trace_obj,
+                user_text=clean_question,
+                preserve_keys=("reasoning", "thought", "_reasoning", "thinking"),
+            )
+
+            saved = self.store.save_case_assist_turn(
+                tenant_id=case_ctx["tenant_id"],
+                actor=case_ctx["actor"],
+                case_id=case_ctx["case_id"],
+                conversation_id=case_ctx["conversation_id"],
+                customer_id=case_ctx["customer_id"],
+                order_id=case_ctx["order_id"],
+                request_id=request_id,
+                mode=mode,
+                question=clean_question,
+                answer=clean_answer,
+                draft_reply=draft_reply,
+                sources=sources,
+                trace=sanitized_trace,
+            )
+            return {
+                **saved,
+                "provider_id": provider_id,
+                "model_used": sanitized_trace.get("model_responses", sanitized_trace.get("model_calls", 0)) > 0,
+            }
+        except ApiError:
+            raise
+        except AgentError as exc:
+            exc_trace = exc.trace if isinstance(getattr(exc, "trace", None), dict) else {}
+            if exc_trace:
+                _, exc_trace = sanitize_structured_payload(
+                    exc_trace,
+                    user_text=clean_question,
+                    preserve_keys=("reasoning", "thought", "_reasoning", "thinking"),
+                )
+            http_status = getattr(exc, "http_status", None) or exc_trace.get("http_status")
+            if http_status in (401, 403) or exc.code == "api_auth_failed":
+                http_status = 503
+            elif not http_status:
+                if exc.code in ("api_rate_limited", "model_busy"):
+                    http_status = 429
+                elif exc.code == "agent_timeout":
+                    http_status = 504
+                else:
+                    http_status = 503
+            exc_trace["latency_ms"] = round((time.monotonic() - started) * 1000, 2)
+            self.store.event(
+                case_ctx["customer_id"],
+                "staff_case_assist_failed",
+                case_ctx["order_id"],
+                case_id=case_ctx["case_id"],
+                mode=mode,
+                code=exc.code,
+                trace=exc_trace,
+                actor=case_ctx["actor"],
+            )
+            raise ApiError(http_status, exc.code, str(exc), exc_trace) from None
+        except (RuntimeError, ValueError, OSError):
+            self.store.event(
+                case_ctx["customer_id"],
+                "staff_case_assist_failed",
+                case_ctx["order_id"],
+                case_id=case_ctx["case_id"],
+                mode=mode,
+                code="model_unavailable",
+                actor=case_ctx["actor"],
+            )
+            raise ApiError(
+                503,
+                "model_unavailable",
+                "Không kết nối được nguồn model đã chọn cho Trợ lý ca.",
+            ) from None
+        finally:
+            stack.close()

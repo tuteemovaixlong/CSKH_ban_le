@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import time
 import urllib.parse
-from retailops.core import ApiError, BinaryPayload, EVIDENCE_MAX_BYTES, fields, require
+from retailops.core import ApiError, BinaryPayload, EVIDENCE_MAX_BYTES, PDF_EVIDENCE_MAX_BYTES, fields, require
 from retailops.order_reasons import ACTION_TYPES, reason_catalog
 from retailops.workflow import approval
 from retailops.business.permissions import ACTIVE_BUSINESS_ROLES, READ, CANCEL, STAFF, MANAGER
@@ -23,6 +23,7 @@ CUSTOMER_SAFE_EVENT_KINDS = frozenset({
     'order_action_status_changed',
     'order_action_refund_updated',
     'order_action_evidence_uploaded',
+    'chat_attachment_stored',
     'proposal_dismissed',
     'order_status_updated_by_manager',
     'customer_messaged_staff',
@@ -48,7 +49,7 @@ def parse_evidence_request_body(
     content_length: str | None,
     stream,
     *,
-    max_size: int = EVIDENCE_MAX_BYTES,
+    max_size: int = PDF_EVIDENCE_MAX_BYTES,
 ) -> dict:
     length_str = content_length if isinstance(content_length, str) else ""
     require(
@@ -59,11 +60,17 @@ def parse_evidence_request_body(
     )
     size = int(length_str)
     require(size > 0, 400, "empty_evidence", "Tệp bằng chứng rỗng.")
-    require(size <= max_size, 413, "evidence_too_large", "Ảnh bằng chứng vượt quá giới hạn 10 MB.")
-    raw = stream.read(size)
-    require(len(raw) == size, 400, "invalid_length", "Nội dung yêu cầu chưa đầy đủ.")
     ct_full = (content_type or "").strip()
     ct_main = ct_full.split(";", 1)[0].strip().lower()
+    effective_max = (
+        min(int(max_size), PDF_EVIDENCE_MAX_BYTES)
+        if ct_main in ("application/pdf", "multipart/form-data")
+        else min(int(max_size), EVIDENCE_MAX_BYTES)
+    )
+    limit_label = "20 MB" if effective_max > EVIDENCE_MAX_BYTES else "10 MB"
+    require(size <= effective_max, 413, "evidence_too_large", f"Tệp bằng chứng vượt quá giới hạn {limit_label}.")
+    raw = stream.read(size)
+    require(len(raw) == size, 400, "invalid_length", "Nội dung yêu cầu chưa đầy đủ.")
     if ct_main == "multipart/form-data":
         header_blob = f"Content-Type: {ct_full}\r\nMIME-Version: 1.0\r\n\r\n".encode("latin-1", errors="ignore")
         msg = BytesParser(policy=EMAIL_HTTP_POLICY).parsebytes(header_blob + raw)
@@ -71,24 +78,30 @@ def parse_evidence_request_body(
         file_parts = []
         for part in msg.iter_parts():
             disp_name = part.get_param("name", header="content-disposition")
-            if part.get_filename() is not None or disp_name in ("file", "evidence", "image"):
+            if part.get_filename() is not None or disp_name in ("file", "evidence", "image", "document"):
                 file_parts.append(part)
         require(
             len(file_parts) == 1,
             400,
             "invalid_evidence_upload",
-            "Mỗi yêu cầu tải lên chỉ được chứa đúng một tệp ảnh bằng chứng.",
+            "Mỗi yêu cầu tải lên chỉ được chứa đúng một tệp bằng chứng.",
         )
         payload = file_parts[0].get_payload(decode=True)
         require(isinstance(payload, (bytes, bytearray)) and len(payload) > 0, 400, "empty_evidence", "Tệp bằng chứng rỗng.")
-        require(len(payload) <= max_size, 413, "evidence_too_large", "Ảnh bằng chứng vượt quá giới hạn 10 MB.")
+        part_ct = (file_parts[0].get_content_type() or "").lower()
+        part_is_pdf = part_ct == "application/pdf" or bytes(payload[:5]) == b"%PDF-"
+        part_max = min(int(max_size), PDF_EVIDENCE_MAX_BYTES if part_is_pdf else EVIDENCE_MAX_BYTES)
+        part_label = "20 MB" if part_is_pdf else "10 MB"
+        require(len(payload) <= part_max, 413, "evidence_too_large", f"Tệp bằng chứng vượt quá giới hạn {part_label}.")
         return {
             "_raw_evidence_bytes": bytes(payload),
-            "_declared_content_type": file_parts[0].get_content_type(),
+            "_declared_content_type": part_ct or "application/octet-stream",
+            "_filename": file_parts[0].get_filename(),
         }
     return {
         "_raw_evidence_bytes": raw,
         "_declared_content_type": ct_main or "application/octet-stream",
+        "_filename": None,
     }
 
 
@@ -543,7 +556,32 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                     "Không tìm thấy yêu cầu đơn hàng.",
                 )
             data, mime_type = app.store.read_order_action_evidence_bytes(ev_row)
-            return (200, BinaryPayload(data, mime_type, headers=[("Content-Disposition", "inline")]))
+            disp = 'attachment; filename="evidence.pdf"' if mime_type == "application/pdf" else "inline"
+            return (200, BinaryPayload(data, mime_type, headers=[("Content-Disposition", disp)]))
+        m_chat_ev_get = re.fullmatch(r"/api/conversations/([a-f0-9-]{36})/evidence/(ev_[a-f0-9]{32})", path)
+        if m_chat_ev_get:
+            cid, ev_id = m_chat_ev_get[1], m_chat_ev_get[2]
+            ev_row = app.store.get_chat_evidence_record(cid, ev_id)
+            if STAFF in ctx.permissions:
+                actor = _extract_actor(app, customer, binding=binding, context=ctx)
+                _authorize_staff_transcript_view(
+                    app,
+                    ctx,
+                    actor,
+                    cid=cid,
+                    case_id=ev_row.get("case_id"),
+                    audit_resolved=True,
+                )
+            else:
+                require(
+                    ev_row["customer_id"] == customer,
+                    404,
+                    "evidence_not_found",
+                    "Không tìm thấy tệp đính kèm trên cuộc trò chuyện này.",
+                )
+            data, mime_type = app.store.read_order_action_evidence_bytes(ev_row)
+            disp = 'attachment; filename="attachment.pdf"' if mime_type == "application/pdf" else "inline"
+            return (200, BinaryPayload(data, mime_type, headers=[("Content-Disposition", disp)]))
         if path == '/api/cancellation-proposals':
             _require_ctx_permission(ctx, CANCEL)
             with app.store.connection() as db:
@@ -646,6 +684,24 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 app, ctx, actor, case_id=m_case_trans[1]
             )
             return (200, app.store.conversation_transcript(cid, case_id=resolved_case_id, read_only=ro))
+        m_case_assist_get = re.fullmatch(r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/assist", path)
+        if m_case_assist_get:
+            _require_ctx_permission(ctx, STAFF)
+            _check_staff_tenant_scope(app, ctx)
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
+            qparams = _parse_query_dict(query, {"limit"}) if query else {}
+            lim = 50
+            if "limit" in qparams and qparams["limit"] != "":
+                ok_lim, lim_val = _parse_non_negative_int(qparams["limit"])
+                require(ok_lim and 1 <= lim_val <= 100, 400, "invalid_limit", "Giới hạn lịch sử Trợ lý ca không hợp lệ.")
+                lim = lim_val
+            return (200, app.case_assist_history(actor, m_case_assist_get[1], limit=lim))
+        m_case_assist_progress = re.fullmatch(r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/assist/progress", path)
+        if m_case_assist_progress:
+            _require_ctx_permission(ctx, STAFF)
+            _check_staff_tenant_scope(app, ctx)
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
+            return (200, app.case_assist_progress(actor, m_case_assist_progress[1]))
         m_progress = re.fullmatch(r"/api/conversations/([a-f0-9-]{36})/progress", path)
         if m_progress:
             # What the customer's own running turn has done so far (tool names only); nothing for anyone else's.
@@ -749,9 +805,16 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             res = app.store.record_feedback(customer, body)
             return (200, res)
         if path == "/api/staff/customer-message":
-            require(isinstance(body, dict) and {"conversation_id", "message"}.issubset(set(body)) and set(body).issubset({"conversation_id", "message"}), 400, "invalid_fields", "Các trường của yêu cầu không hợp lệ.")
+            require(
+                isinstance(body, dict)
+                and {"conversation_id", "message"}.issubset(set(body))
+                and set(body).issubset({"conversation_id", "message", "attachment"}),
+                400,
+                "invalid_fields",
+                "Các trường của yêu cầu không hợp lệ.",
+            )
             cid, msg = body["conversation_id"], body["message"]
-            res = app.store.customer_message(customer, cid, msg)
+            res = app.store.customer_message(customer, cid, msg, attachment=body.get("attachment"))
             return (200, res)
         m_case_act = re.fullmatch(r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/(claim|release)", path)
         if m_case_act:
@@ -837,6 +900,18 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             staff_label = _actor_display_name(ctx)
             res = app.store.resolve_escalation(cid, staff_label, actor=actor, case_id=case_id, handoff_id=handoff_id)
             return (200, res)
+        m_staff_case_assist = re.fullmatch(r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/assist", path)
+        if m_staff_case_assist:
+            _require_ctx_permission(ctx, STAFF)
+            _check_staff_tenant_scope(app, ctx)
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
+            try:
+                result = app.case_assist(actor, m_staff_case_assist[1], body)
+            except ApiError as exc:
+                _record_chat_usage(app, customer, body or {}, {"trace": exc.trace}, False)
+                raise
+            _record_chat_usage(app, customer, body or {}, result, True)
+            return (200, result)
         m_staff_case_oa = re.fullmatch(r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/order-actions", path)
         if m_staff_case_oa:
             _require_ctx_permission(ctx, STAFF)
@@ -885,6 +960,7 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 bytes(body["_raw_evidence_bytes"]),
                 customer_id=customer,
                 actor=actor,
+                filename=body.get("_filename"),
             )
             if isinstance(res.get("order_action"), dict) and isinstance(res["order_action"].get("order"), dict):
                 res["order_action"]["order"] = _format_order_for_api(res["order_action"]["order"], app)

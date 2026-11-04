@@ -1,7 +1,8 @@
 """Explicit PostgreSQL DDL and staged business migrations."""
 from retailops.core import ApiError
 from retailops.storage.postgres import (BUSINESS_SCHEMA_CURRENT, BUSINESS_V5_SCHEMA_VERSION,
-                                        BUSINESS_V6_SCHEMA_VERSION, IDENTITY_SCHEMA, IDENTITY_SCHEMA_CURRENT,
+                                        BUSINESS_V6_SCHEMA_VERSION, BUSINESS_V7_SCHEMA_VERSION,
+                                        IDENTITY_SCHEMA, IDENTITY_SCHEMA_CURRENT,
                                         assert_schema, valid_schema)
 
 BUSINESS_DDL = [
@@ -342,21 +343,41 @@ BUSINESS_V6_TABLES_DDL = [
         FOR EACH ROW EXECUTE FUNCTION order_action_decisions_immutable()''',
     '''CREATE TABLE IF NOT EXISTS order_action_evidence (
         evidence_id TEXT PRIMARY KEY,
-        request_id TEXT NOT NULL REFERENCES order_action_requests(request_id),
-        case_id TEXT NOT NULL REFERENCES cases(case_id),
+        request_id TEXT REFERENCES order_action_requests(request_id),
+        case_id TEXT REFERENCES cases(case_id),
         customer_id TEXT NOT NULL REFERENCES customers(id),
         conversation_id TEXT NOT NULL,
+        filename TEXT CONSTRAINT order_action_evidence_filename_v8_check CHECK(
+            filename IS NULL OR char_length(filename) <= 200
+        ),
         uploaded_by_principal_id TEXT NOT NULL,
         uploaded_by_role TEXT NOT NULL CHECK(uploaded_by_role IN ('customer', 'staff', 'manager')),
-        mime_type TEXT NOT NULL CHECK(mime_type IN ('image/jpeg', 'image/png', 'image/webp')),
-        byte_size INTEGER NOT NULL CHECK(byte_size > 0 AND byte_size <= 10485760),
-        width INTEGER NOT NULL CHECK(width > 0),
-        height INTEGER NOT NULL CHECK(height > 0),
+        mime_type TEXT NOT NULL CONSTRAINT order_action_evidence_mime_v8_check CHECK(
+            mime_type IN ('image/jpeg', 'image/png', 'image/webp', 'application/pdf')
+        ),
+        byte_size INTEGER NOT NULL CONSTRAINT order_action_evidence_byte_size_v8_check CHECK(
+            byte_size > 0
+            AND ((mime_type = 'application/pdf' AND byte_size <= 20971520)
+                 OR (mime_type <> 'application/pdf' AND byte_size <= 10485760))
+        ),
+        width INTEGER CONSTRAINT order_action_evidence_width_v8_check CHECK(width IS NULL OR width > 0),
+        height INTEGER CONSTRAINT order_action_evidence_height_v8_check CHECK(height IS NULL OR height > 0),
+        page_count INTEGER CONSTRAINT order_action_evidence_page_count_v8_check CHECK(
+            page_count IS NULL OR (page_count >= 1 AND page_count <= 20)
+        ),
         sha256 TEXT NOT NULL,
         storage_relpath TEXT NOT NULL,
+        scan_status TEXT CONSTRAINT order_action_evidence_scan_status_v8_check CHECK(
+            scan_status IS NULL OR scan_status IN ('clean', 'not_applicable')
+        ),
+        scan_engine TEXT CONSTRAINT order_action_evidence_scan_engine_v8_check CHECK(
+            scan_engine IS NULL OR char_length(scan_engine) <= 64
+        ),
+        scanned_at DOUBLE PRECISION,
         created_at DOUBLE PRECISION NOT NULL,
         file_purged_at DOUBLE PRECISION)''',
     'CREATE INDEX IF NOT EXISTS idx_order_action_evidence_req ON order_action_evidence(request_id, created_at ASC)',
+    'CREATE INDEX IF NOT EXISTS idx_order_action_evidence_conv ON order_action_evidence(conversation_id, created_at DESC)',
     'CREATE INDEX IF NOT EXISTS idx_order_action_evidence_purge ON order_action_evidence(file_purged_at, request_id)',
     '''CREATE TABLE IF NOT EXISTS integration_outbox (
         event_id TEXT PRIMARY KEY,
@@ -426,9 +447,137 @@ BUSINESS_V7_UPGRADE_DDL = [
     $$''',
 ]
 
+BUSINESS_V8_CASE_ASSIST_DDL = [
+    '''CREATE TABLE IF NOT EXISTS case_assist_turns (
+        turn_id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        principal_id TEXT NOT NULL,
+        actor_role TEXT NOT NULL CHECK(actor_role IN ('staff', 'manager')),
+        case_id TEXT NOT NULL REFERENCES cases(case_id) ON DELETE CASCADE,
+        conversation_id TEXT NOT NULL,
+        request_id TEXT NOT NULL,
+        mode TEXT NOT NULL CHECK(mode IN ('ask', 'summary', 'draft')),
+        question TEXT NOT NULL,
+        answer TEXT NOT NULL,
+        draft_reply TEXT,
+        sources_json TEXT NOT NULL DEFAULT '[]',
+        trace_json TEXT NOT NULL DEFAULT '{}',
+        created_at DOUBLE PRECISION NOT NULL,
+        UNIQUE(tenant_id, principal_id, case_id, request_id))''',
+    '''CREATE INDEX IF NOT EXISTS idx_case_assist_partition
+        ON case_assist_turns(tenant_id, principal_id, case_id, created_at ASC)''',
+    'CREATE INDEX IF NOT EXISTS idx_case_assist_case ON case_assist_turns(case_id, created_at ASC)',
+]
+
+# Business v8 (W4-D4, W4-D6, W4-D9): partitioned case_assist_turns + order_action_evidence PDF/scan shape.
+# No statement contains a percent sign because psycopg treats it as a placeholder.
+BUSINESS_V8_UPGRADE_DDL = [
+    *BUSINESS_V8_CASE_ASSIST_DDL,
+    'ALTER TABLE order_action_evidence ALTER COLUMN request_id DROP NOT NULL',
+    'ALTER TABLE order_action_evidence ALTER COLUMN case_id DROP NOT NULL',
+    'ALTER TABLE order_action_evidence ALTER COLUMN width DROP NOT NULL',
+    'ALTER TABLE order_action_evidence ALTER COLUMN height DROP NOT NULL',
+    'ALTER TABLE order_action_evidence ADD COLUMN IF NOT EXISTS filename TEXT',
+    'ALTER TABLE order_action_evidence ADD COLUMN IF NOT EXISTS page_count INTEGER',
+    'ALTER TABLE order_action_evidence ADD COLUMN IF NOT EXISTS scan_status TEXT',
+    'ALTER TABLE order_action_evidence ADD COLUMN IF NOT EXISTS scan_engine TEXT',
+    'ALTER TABLE order_action_evidence ADD COLUMN IF NOT EXISTS scanned_at DOUBLE PRECISION',
+    'CREATE INDEX IF NOT EXISTS idx_order_action_evidence_conv ON order_action_evidence(conversation_id, created_at DESC)',
+    '''DO $$
+    DECLARE legacy RECORD;
+    BEGIN
+        FOR legacy IN
+            SELECT conname FROM pg_constraint
+            WHERE conrelid = 'order_action_evidence'::regclass
+              AND contype = 'c'
+              AND (
+                  position('mime_type' in pg_get_constraintdef(oid)) > 0
+                  OR position('byte_size' in pg_get_constraintdef(oid)) > 0
+                  OR position('width' in pg_get_constraintdef(oid)) > 0
+                  OR position('height' in pg_get_constraintdef(oid)) > 0
+                  OR position('filename' in pg_get_constraintdef(oid)) > 0
+                  OR position('page_count' in pg_get_constraintdef(oid)) > 0
+                  OR position('scan_status' in pg_get_constraintdef(oid)) > 0
+                  OR position('scan_engine' in pg_get_constraintdef(oid)) > 0
+              )
+              AND conname NOT IN (
+                  'order_action_evidence_filename_v8_check',
+                  'order_action_evidence_mime_v8_check',
+                  'order_action_evidence_byte_size_v8_check',
+                  'order_action_evidence_width_v8_check',
+                  'order_action_evidence_height_v8_check',
+                  'order_action_evidence_page_count_v8_check',
+                  'order_action_evidence_scan_status_v8_check',
+                  'order_action_evidence_scan_engine_v8_check'
+              )
+        LOOP
+            EXECUTE 'ALTER TABLE order_action_evidence DROP CONSTRAINT ' || quote_ident(legacy.conname);
+        END LOOP;
+    END
+    $$''',
+    '''UPDATE order_action_evidence
+       SET scan_status = 'not_applicable'
+       WHERE scan_status IS NULL AND mime_type <> 'application/pdf' ''',
+    '''DO $$
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                       WHERE conrelid = 'order_action_evidence'::regclass
+                         AND conname = 'order_action_evidence_filename_v8_check') THEN
+            ALTER TABLE order_action_evidence ADD CONSTRAINT order_action_evidence_filename_v8_check CHECK (
+                filename IS NULL OR char_length(filename) <= 200);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                       WHERE conrelid = 'order_action_evidence'::regclass
+                         AND conname = 'order_action_evidence_mime_v8_check') THEN
+            ALTER TABLE order_action_evidence ADD CONSTRAINT order_action_evidence_mime_v8_check CHECK (
+                mime_type IN ('image/jpeg', 'image/png', 'image/webp', 'application/pdf'));
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                       WHERE conrelid = 'order_action_evidence'::regclass
+                         AND conname = 'order_action_evidence_byte_size_v8_check') THEN
+            ALTER TABLE order_action_evidence ADD CONSTRAINT order_action_evidence_byte_size_v8_check CHECK (
+                byte_size > 0
+                AND ((mime_type = 'application/pdf' AND byte_size <= 20971520)
+                     OR (mime_type <> 'application/pdf' AND byte_size <= 10485760)));
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                       WHERE conrelid = 'order_action_evidence'::regclass
+                         AND conname = 'order_action_evidence_width_v8_check') THEN
+            ALTER TABLE order_action_evidence ADD CONSTRAINT order_action_evidence_width_v8_check CHECK (
+                width IS NULL OR width > 0);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                       WHERE conrelid = 'order_action_evidence'::regclass
+                         AND conname = 'order_action_evidence_height_v8_check') THEN
+            ALTER TABLE order_action_evidence ADD CONSTRAINT order_action_evidence_height_v8_check CHECK (
+                height IS NULL OR height > 0);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                       WHERE conrelid = 'order_action_evidence'::regclass
+                         AND conname = 'order_action_evidence_page_count_v8_check') THEN
+            ALTER TABLE order_action_evidence ADD CONSTRAINT order_action_evidence_page_count_v8_check CHECK (
+                page_count IS NULL OR (page_count >= 1 AND page_count <= 20));
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                       WHERE conrelid = 'order_action_evidence'::regclass
+                         AND conname = 'order_action_evidence_scan_status_v8_check') THEN
+            ALTER TABLE order_action_evidence ADD CONSTRAINT order_action_evidence_scan_status_v8_check CHECK (
+                scan_status IS NULL OR scan_status IN ('clean', 'not_applicable'));
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                       WHERE conrelid = 'order_action_evidence'::regclass
+                         AND conname = 'order_action_evidence_scan_engine_v8_check') THEN
+            ALTER TABLE order_action_evidence ADD CONSTRAINT order_action_evidence_scan_engine_v8_check CHECK (
+                scan_engine IS NULL OR char_length(scan_engine) <= 64);
+        END IF;
+    END
+    $$''',
+]
+
 BUSINESS_DDL.extend(P5C_BUSINESS_DDL)
 BUSINESS_DDL.extend(BUSINESS_V5_DDL)
 BUSINESS_DDL.extend(BUSINESS_V6_TABLES_DDL)
+BUSINESS_DDL.extend(BUSINESS_V8_CASE_ASSIST_DDL)
 IDENTITY_DDL.extend(P5C_IDENTITY_DDL)
 
 
@@ -473,6 +622,7 @@ def initialize(
     allow_business_v5_upgrade=False,
     allow_business_v6_upgrade=False,
     allow_business_v7_upgrade=False,
+    allow_business_v8_upgrade=False,
 ):
     from psycopg import sql
     valid_schema(schema)
@@ -639,30 +789,41 @@ def initialize(
             for statement in P5C_IDENTITY_DDL:
                 db.raw.execute(statement)
         if component == 'business':
-            if row['version'] not in (1, 2, 3, 4, 5, 6, 7):
+            if row['version'] not in (1, 2, 3, 4, 5, 6, 7, 8):
                 raise ValueError('Unsupported PostgreSQL schema version or component.')
             requested_ver = (
                 BUSINESS_SCHEMA_CURRENT
+                if allow_business_v8_upgrade
+                else BUSINESS_V7_SCHEMA_VERSION
                 if allow_business_v7_upgrade
                 else BUSINESS_V6_SCHEMA_VERSION
                 if allow_business_v6_upgrade
-                else (BUSINESS_V5_SCHEMA_VERSION if allow_business_v5_upgrade and row['version'] <= BUSINESS_V5_SCHEMA_VERSION else BUSINESS_SCHEMA_CURRENT)
+                else (
+                    BUSINESS_V5_SCHEMA_VERSION
+                    if allow_business_v5_upgrade and row['version'] <= BUSINESS_V5_SCHEMA_VERSION
+                    else BUSINESS_SCHEMA_CURRENT
+                )
             )
             target_ver = max(requested_ver, row['version'])  # an older milestone command never downgrades
-            any_business_upgrade = allow_business_v5_upgrade or allow_business_v6_upgrade or allow_business_v7_upgrade
+            any_business_upgrade = (
+                allow_business_v5_upgrade
+                or allow_business_v6_upgrade
+                or allow_business_v7_upgrade
+                or allow_business_v8_upgrade
+            )
             if row['version'] < BUSINESS_V5_SCHEMA_VERSION and not any_business_upgrade:
                 raise ApiError(
                     503,
                     'business_migration_required',
                     f"Kho dữ liệu business PostgreSQL ({schema}) đang ở schema v{row['version']}; khởi động bị chặn fail-closed. "
-                    "Hãy chạy lệnh operator database migrate-v7 với --confirm-preflight --confirm-backup.",
+                    "Hãy chạy lệnh operator database migrate-v8 với --confirm-preflight --confirm-backup.",
                 )
-            if row['version'] < target_ver and target_ver == BUSINESS_SCHEMA_CURRENT and not allow_business_v7_upgrade:
+            if row['version'] < target_ver and target_ver == BUSINESS_SCHEMA_CURRENT and not allow_business_v8_upgrade:
                 raise ApiError(
                     503,
                     'business_migration_required',
                     f"Kho dữ liệu business PostgreSQL ({schema}) đang ở schema v{row['version']}; khởi động bị chặn fail-closed. "
-                    "Hãy chạy lệnh operator database migrate-v7 với --confirm-preflight --confirm-backup.",
+                    "Hãy chạy lệnh operator database migrate-v8 với --confirm-preflight --confirm-backup.",
                 )
             db.raw.execute(sql.SQL('SET LOCAL search_path TO {}, pg_catalog').format(sql.Identifier(schema)))
             if row['version'] == 1:
@@ -723,8 +884,13 @@ def initialize(
                     db.raw.execute(statement)
                 db.execute("UPDATE retailops_schema SET version=? WHERE component='business'", (BUSINESS_V6_SCHEMA_VERSION,))
                 row = {'component': 'business', 'version': BUSINESS_V6_SCHEMA_VERSION}
-            if row['version'] == BUSINESS_V6_SCHEMA_VERSION and target_ver >= BUSINESS_SCHEMA_CURRENT:
+            if row['version'] == BUSINESS_V6_SCHEMA_VERSION and target_ver >= BUSINESS_V7_SCHEMA_VERSION:
                 for statement in BUSINESS_V7_UPGRADE_DDL:
+                    db.raw.execute(statement)
+                db.execute("UPDATE retailops_schema SET version=? WHERE component='business'", (BUSINESS_V7_SCHEMA_VERSION,))
+                row = {'component': 'business', 'version': BUSINESS_V7_SCHEMA_VERSION}
+            if row['version'] == BUSINESS_V7_SCHEMA_VERSION and target_ver >= BUSINESS_SCHEMA_CURRENT:
+                for statement in BUSINESS_V8_UPGRADE_DDL:
                     db.raw.execute(statement)
                 db.execute("UPDATE retailops_schema SET version=? WHERE component='business'", (BUSINESS_SCHEMA_CURRENT,))
                 row = {'component': 'business', 'version': BUSINESS_SCHEMA_CURRENT}
@@ -736,6 +902,9 @@ def initialize(
                 db.raw.execute(statement)
             if target_ver >= BUSINESS_V6_SCHEMA_VERSION:
                 for statement in BUSINESS_V6_DDL:
+                    db.raw.execute(statement)
+            if target_ver >= BUSINESS_SCHEMA_CURRENT:
+                for statement in BUSINESS_V8_CASE_ASSIST_DDL:
                     db.raw.execute(statement)
         assert_schema(db, schema, component)
         return False

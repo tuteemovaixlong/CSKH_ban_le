@@ -28,6 +28,12 @@ class LocalAgent:
         return gateway.request('/api/chat', build_request(self.config.model, messages, allow_tools,
                                                           allowed_tools=allowed_tools))
 
+    def chat_profile(self, messages, allow_tools, timeout, *, system_prompt, tool_schemas):
+        gateway = LocalOllama(replace(self.config, timeout_s=timeout))
+        return gateway.request('/api/chat', build_request(self.config.model, messages, allow_tools,
+                                                          system_override=system_prompt,
+                                                          tool_schemas_override=tool_schemas))
+
 
 class RemoteAgent:
     def __init__(self, config, allowed_host, token):

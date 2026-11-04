@@ -36,6 +36,8 @@ def build_public_app(settings: Settings | None = None) -> PublicWeb:
                                  gateways.custom, gateways.api, settings.api_daily_turn_limit)
     tcfg = settings.case_timer_config
     sessions.case_timer_config = tcfg
+    if settings.customer_ref_key:
+        sessions.customer_ref_key = settings.customer_ref_key
     return PublicWeb(settings.origin, sessions, start_timer_worker=True, timer_scan_seconds=tcfg.scan_seconds)
 
 
@@ -49,6 +51,8 @@ def build_private_app(settings: Settings | None = None) -> Application:
     store.tenant_id = 'default'
     store.data_root = settings.output
     store.case_timer_config = settings.case_timer_config
+    if settings.customer_ref_key:
+        store.customer_ref_key = settings.customer_ref_key
     store.seed()
     token_hash = hashlib.sha256(settings.access_token.encode()).hexdigest()
     return Application(store, {token_hash: 'C-001'}, gateways.custom, gateways.api, settings.api_daily_turn_limit)
@@ -56,10 +60,11 @@ def build_private_app(settings: Settings | None = None) -> Application:
 
 def serve_public():
     from waitress import serve
+    from retailops.core import CHAT_ATTACHMENT_JSON_MAX_BYTES
     app = build_public_app()
     print('RetailOps synthetic HTTPS backend ready; awaiting Caddy.', flush=True)
     serve(app, host='0.0.0.0', port=8000, threads=8, connection_limit=100,
-          channel_timeout=30, max_request_header_size=16384, max_request_body_size=10_485_760,
+          channel_timeout=30, max_request_header_size=16384, max_request_body_size=CHAT_ATTACHMENT_JSON_MAX_BYTES,
           clear_untrusted_proxy_headers=True, expose_tracebacks=False, ident='RetailOps')
 
 

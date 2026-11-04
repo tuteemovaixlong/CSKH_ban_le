@@ -48,6 +48,8 @@ def compose(admin=False):
             '--env-file', 'deployed.env', '--env-file', 'public.env', '-f', 'compose.public.yaml']
     if (ROOT / 'postgres-secrets').is_dir():
         args += ['-f', 'compose.postgres.yaml']
+    if (ROOT / 'compose.clamav.yaml').is_file():
+        args += ['-f', 'compose.clamav.yaml']
     if admin:
         args += ['--env-file', 'admin.env', '-f', 'compose.admin.yaml']
     return args

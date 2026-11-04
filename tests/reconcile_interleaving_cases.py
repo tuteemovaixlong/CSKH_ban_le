@@ -305,7 +305,7 @@ def run(case, sessions, tenant):
     # 2. Cooperative writers during the window are refused/diverted; a raw membership takeover
     #    after the Business commit is caught by the Step 3 re-check (fail-closed, resumable).
     seen = {}
-    web = PublicWeb('https://retailops.example.com', sessions)
+    web = PublicWeb('https://retailops.example.com', sessions, start_timer_worker=False)
 
     # Pre-takeover: intruder has an existing valid session issued before the intrusion
     intruder_token = sessions.control.create_session_for_membership('m-ilv-intruder', 3600, 10)

@@ -40,6 +40,7 @@ def summarize_tool_result(name, args, result):
             arg_map = args if isinstance(args, dict) else {}
             error_labels = {
                 'order_not_found': f"Không tìm thấy đơn hàng {arg_map.get('order_id', '')} trong tài khoản",
+                'order_outside_case_scope': f"Đơn hàng {arg_map.get('order_id', '')} nằm ngoài phạm vi ca hỗ trợ",
                 'tool_not_allowed': f"Công cụ '{name}' ngoài phạm vi worker",
                 'invalid_tool_arguments': 'Tham số truyền vào công cụ không hợp lệ',
                 'product_not_found': f"Chưa tìm thấy sản phẩm {arg_map.get('product_id', '')}",
@@ -92,6 +93,23 @@ def summarize_tool_result(name, args, result):
             orders = result.get('orders')
             count = len(orders) if isinstance(orders, list) else 0
             return f"Tìm thấy {count} đơn hàng trong tài khoản"
+        if name == 'get_case_transcript':
+            turns = result.get('turns')
+            count = len(turns) if isinstance(turns, list) else 0
+            return f"Đọc lịch sử ca hỗ trợ ({count} lượt)"
+        if name == 'list_case_orders':
+            orders = result.get('orders')
+            count = len(orders) if isinstance(orders, list) else 0
+            return f"Đọc {count} đơn hàng của khách trong ca"
+        if name == 'get_case_order':
+            order = result.get('order')
+            if isinstance(order, dict):
+                return f"Đơn {order.get('id', '')} trong ca: trạng thái {order.get('status', '')}"
+            return "Không có thông tin đơn hàng trong ca"
+        if name == 'list_case_order_actions':
+            actions = result.get('order_actions')
+            count = len(actions) if isinstance(actions, list) else 0
+            return f"Đọc {count} yêu cầu đơn hàng trong ca"
         return 'Thực thi thành công'
     except Exception:
         return 'Đã thực thi công cụ'

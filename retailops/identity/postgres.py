@@ -10,11 +10,28 @@ from retailops.inference_gate import InferenceGate
 
 
 class PostgresSessions(PersistentSessions):
-    def __init__(self, dsn, infer=None, api_infer=None, api_daily_limit=20, capacity=50, data_mode=None, default_tenant_id=None, *, maintenance=True, read_only=False, data_root=None):
+    def __init__(
+        self,
+        dsn,
+        infer=None,
+        api_infer=None,
+        api_daily_limit=20,
+        capacity=50,
+        data_mode=None,
+        default_tenant_id=None,
+        *,
+        maintenance=True,
+        read_only=False,
+        data_root=None,
+        malware_scanner=None,
+        customer_ref_key=None,
+    ):
         if maintenance and read_only:
             raise ValueError('Read-only PostgreSQL sessions cannot run startup maintenance.')
         self.dsn = dsn
         self.data_root = data_root
+        self.malware_scanner = malware_scanner
+        self.customer_ref_key = customer_ref_key
         self.maintenance = bool(maintenance)
         self.read_only = bool(read_only)
         if data_mode is not None:
@@ -46,14 +63,14 @@ class PostgresSessions(PersistentSessions):
                     ).fetchone()
                     if not ver_row or ver_row.get('component') != 'business':
                         raise ValueError('Unsupported PostgreSQL schema version or component.')
-                    if ver_row.get('version') not in (2, 3, 4, 5, 6, 7):
+                    if ver_row.get('version') not in (2, 3, 4, 5, 6, 7, 8):
                         raise ValueError('Unsupported PostgreSQL schema version or component.')
                     if ver_row.get('version') < BUSINESS_SCHEMA_CURRENT:
                         raise ApiError(
                             503,
                             'business_migration_required',
                             f"Kho dữ liệu business PostgreSQL ({t_schema}) đang ở schema v{ver_row.get('version')}; "
-                            "khởi động bị chặn fail-closed. Hãy chạy lệnh operator database migrate-v7 với "
+                            "khởi động bị chặn fail-closed. Hãy chạy lệnh operator database migrate-v8 với "
                             "--confirm-preflight --confirm-backup.",
                         )
 

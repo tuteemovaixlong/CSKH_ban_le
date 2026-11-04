@@ -100,6 +100,7 @@ class KnowledgePostgresTests(unittest.TestCase):
                 allow_business_v5_upgrade=True,
                 allow_business_v6_upgrade=True,
                 allow_business_v7_upgrade=True,
+                allow_business_v8_upgrade=True,
             )
         compatible = PostgresBusinessStore(DSN, self.keys[0])
         with compatible.connection() as db:

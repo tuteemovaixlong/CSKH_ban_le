@@ -48,11 +48,21 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
 
     def clear(self):
         from psycopg import sql
-        with transaction(DSN, write=True) as db:
-            names = db.execute("SELECT nspname FROM pg_namespace WHERE nspname=? OR nspname ~ '^tenant_[a-f0-9]{32}$'",
-                               (IDENTITY_SCHEMA,)).fetchall()
-            for row in names:
-                db.raw.execute(sql.SQL('DROP SCHEMA {} CASCADE').format(sql.Identifier(row['nspname'])))
+        prev_web = getattr(self, 'web', None)
+        if prev_web is not None:
+            prev_web.stop_case_timer_worker()
+        for attempt in range(3):
+            try:
+                with transaction(DSN, write=True) as db:
+                    names = db.execute("SELECT nspname FROM pg_namespace WHERE nspname=? OR nspname ~ '^tenant_[a-f0-9]{32}$'",
+                                       (IDENTITY_SCHEMA,)).fetchall()
+                    for row in names:
+                        db.raw.execute(sql.SQL('DROP SCHEMA {} CASCADE').format(sql.Identifier(row['nspname'])))
+                break
+            except ApiError:
+                if attempt == 2:
+                    raise
+                time.sleep(0.1)
 
     def setUp(self):
         self.clear()
@@ -69,8 +79,11 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         self.staff = self.member('staff', 'shop-a', 'C-001', 'staff')
 
     def restart(self):
+        prev_web = getattr(self, 'web', None)
+        if prev_web is not None:
+            prev_web.stop_case_timer_worker()
         self.sessions = PostgresSessions(DSN, api_infer=fixtures.ModelFixture(), api_daily_limit=1)
-        self.web = PublicWeb(fixtures.ORIGIN, self.sessions)
+        self.web = PublicWeb(fixtures.ORIGIN, self.sessions, start_timer_worker=False)
 
     request = fixtures.PersistentTests.request
     login = fixtures.PersistentTests.login
@@ -277,6 +290,7 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
                     allow_business_v5_upgrade=True,
                     allow_business_v6_upgrade=True,
                     allow_business_v7_upgrade=True,
+                    allow_business_v8_upgrade=True,
                 )
         self.assertEqual(self.fresh_store().orders('C-001')[0]['status'], 'pending')
         with store.connection() as db:
@@ -307,7 +321,9 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         env.pop('RETAILOPS_DATABASE_URL', None)
         settings = Settings.from_environment('public', env)
         self.assertNotIn(DSN, repr(settings)+json.dumps(settings.summary()))
-        self.assertIsInstance(build_public_app(settings).sessions, PostgresSessions)
+        built_web = build_public_app(settings)
+        self.addCleanup(built_web.stop_case_timer_worker)
+        self.assertIsInstance(built_web.sessions, PostgresSessions)
         result = subprocess.run([sys.executable, '-m', 'retailops', 'database', 'check'], env=env,
                                 cwd=ROOT, text=True, capture_output=True, timeout=15)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -2427,7 +2443,9 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         from concurrent.futures import ThreadPoolExecutor
 
         out_dir = Path(self.temp.name) / 'w3-outbox-data'
+        test_cref_key = 'test-pg-customer-ref-key-0123456789abcdef'
         self.sessions.data_root = out_dir
+        self.sessions.customer_ref_key = test_cref_key
         store = self.sessions.business_store('shop-a')
         store.data_root = out_dir
         store.create_order_action_request(
@@ -2455,7 +2473,12 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         lines = [ln for ln in jsonl_files[0].read_text(encoding='utf-8').splitlines() if ln.strip()]
         self.assertEqual(len(lines), 2)
 
-        cli_env = {**os.environ, 'RETAILOPS_STORAGE_BACKEND': 'postgresql', 'RETAILOPS_DATABASE_URL': DSN}
+        cli_env = {
+            **os.environ,
+            'RETAILOPS_STORAGE_BACKEND': 'postgresql',
+            'RETAILOPS_DATABASE_URL': DSN,
+            'RETAILOPS_CUSTOMER_REF_KEY': test_cref_key,
+        }
         proc = subprocess.run(
             [sys.executable, '-m', 'retailops', 'database', 'outbox-status'],
             env=cli_env,

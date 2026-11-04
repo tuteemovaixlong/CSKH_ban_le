@@ -44,9 +44,11 @@ def _call_key(name, args):
 
 def run(gateway, text, history, execute, identity, timeout=TURN_TIMEOUT_SECONDS, *, saver=None,
         capture=lambda: {}, restore=lambda state: None, before_model=lambda: None, attachment=None,
-        progress=None):
+        progress=None, profile=None):
     started = time.monotonic()
     deadline = started + timeout
+    tool_validator = profile.validate_tool if profile is not None else validate_tool
+    extra_tool_names = profile.tool_names if profile is not None else ()
 
     def publish(trace, phase):
         """Tell the web layer how far this turn has got; a broken observer never breaks a turn."""
@@ -60,6 +62,8 @@ def run(gateway, text, history, execute, identity, timeout=TURN_TIMEOUT_SECONDS,
 
     def guard(state):
         state = copy.deepcopy(state)
+        if profile is not None and profile.skip_safety_gate:
+            return state
         verdict = safety_gate(state['messages'][-1]['content'])
         if verdict is None:
             return state
@@ -85,7 +89,10 @@ def run(gateway, text, history, execute, identity, timeout=TURN_TIMEOUT_SECONDS,
     def model(state):
         state = copy.deepcopy(state)
         trace = state['trace']
-        mode = request_mode(state['messages'])
+        if profile is not None and profile.force_retail_mode:
+            mode = profile.name
+        else:
+            mode = request_mode(state['messages'])
         trace['request_mode'] = mode
         if time.monotonic() >= deadline:
             raise AgentError('agent_timeout', 'Model đã vượt thời gian xử lý. Chat chưa thay đổi đơn.', trace)
@@ -104,7 +111,13 @@ def run(gateway, text, history, execute, identity, timeout=TURN_TIMEOUT_SECONDS,
         try:
             validate_messages(outgoing)
             trace['model_calls'] += 1
-            response = gateway.chat(outgoing, allow, max(1, min(MODEL_CALL_TIMEOUT, int(deadline - time.monotonic()))))
+            call_timeout = max(1, min(MODEL_CALL_TIMEOUT, int(deadline - time.monotonic())))
+            chat_profile = getattr(gateway, 'chat_profile', None) if profile is not None else None
+            if profile is not None and callable(chat_profile):
+                sys_text = outgoing[0]['content'] if outgoing and outgoing[0].get('role') == 'system' else profile.system_prompt_fn(state['bound'])
+                response = chat_profile(outgoing, allow, call_timeout, system_prompt=sys_text, tool_schemas=profile.tool_schemas)
+            else:
+                response = gateway.chat(outgoing, allow, call_timeout)
             trace['prompt_tokens'] += response.get('prompt_eval_count') or 0
             trace['generated_tokens'] += response.get('eval_count') or 0
             if trace['reported_cost_usd'] is not None:
@@ -114,7 +127,7 @@ def run(gateway, text, history, execute, identity, timeout=TURN_TIMEOUT_SECONDS,
             if thought:
                 thought = str(thought)
                 trace['reasoning'] = f"{trace['reasoning']}\n---\n{thought}" if trace.get('reasoning') else thought
-            message = assistant_message(response)
+            message = assistant_message(response, extra_tool_names=extra_tool_names)
         except AgentError as exc:
             trace['reported_cost_usd'] = None
             entry = record_model_error(trace, exc, code=exc.code)
@@ -177,7 +190,7 @@ def run(gateway, text, history, execute, identity, timeout=TURN_TIMEOUT_SECONDS,
             state['tool_count'] += 1
             key = _call_key(name, args)
             try:
-                validate_tool(name, args)
+                tool_validator(name, args)
             except ProtocolError:
                 result = {'error': 'tool_not_allowed', 'message': 'Tool or arguments are not allowed. No action was performed.'}
             else:
@@ -237,7 +250,8 @@ def run(gateway, text, history, execute, identity, timeout=TURN_TIMEOUT_SECONDS,
             user['attachment'] = attachment
         bound = capture()
         # The loop owns the system turn: the rules plus what the server knows about the conversation focus.
-        messages = [{'role': 'system', 'content': agent_system(bound.get('context'))},
+        sys_prompt = profile.system_prompt_fn(bound) if profile is not None else agent_system(bound.get('context'))
+        messages = [{'role': 'system', 'content': sys_prompt},
                     *fit_history(model_history(list(history) + [user]))]
         initial = {'messages': messages, 'fresh': [user], 'tool_count': 0, 'tool_chars': 0, 'seen_calls': [],
                    'bound': bound, 'complete': False,

@@ -1,0 +1,36 @@
+# Add after compose.public.yaml (and compose.postgres.yaml). ClamAV has no host port mapping.
+services:
+  web:
+    environment:
+      RETAILOPS_CLAMD_HOST: clamav
+      RETAILOPS_CLAMD_PORT: "3310"
+      RETAILOPS_CLAMD_TIMEOUT_SECONDS: "15"
+    depends_on:
+      clamav: {condition: service_healthy}
+  clamav:
+    image: clamav/clamav:1.4.6-debian@sha256:ce80e97855d937e93009bb47eb5ecb410b514b844b03d0ecf00e8eeec92810cc
+    restart: unless-stopped
+    environment:
+      TZ: UTC
+      CLAMAV_NO_FRESHCLAMD: ${CLAMAV_NO_FRESHCLAMD:-false}
+      CLAMD_CONF_StreamMaxLength: 25M
+      CLAMD_CONF_MaxFileSize: 25M
+      CLAMD_CONF_MaxScanSize: 50M
+    volumes:
+      - clamav_data:/var/lib/clamav
+    expose:
+      - "3310"
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    mem_limit: 1536m
+    logging:
+      driver: json-file
+      options: {max-size: "5m", max-file: "2"}
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+volumes:
+  clamav_data:

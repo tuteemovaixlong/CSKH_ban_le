@@ -1,6 +1,7 @@
 """System entrypoint: python -m retailops {check-config,serve-public,serve-private,...}."""
 import argparse
 import json
+import sys
 
 from retailops.bootstrap import serve_private, serve_public
 from retailops.config import Settings
@@ -12,6 +13,12 @@ from retailops.knowledge import cli as knowledge_cli
 
 
 def main():
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, 'reconfigure'):
+            try:
+                stream.reconfigure(encoding='utf-8')
+            except Exception:
+                pass
     parser = argparse.ArgumentParser(description='RetailOps system foundation (synthetic data only).')
     commands = parser.add_subparsers(dest='command', required=True)
     check = commands.add_parser('check-config', help='Validate settings locally; never prints secrets or calls a model.')

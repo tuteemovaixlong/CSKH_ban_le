@@ -18,22 +18,33 @@ from contextlib import contextmanager
 from pathlib import Path
 from retailops.core import (
     ApiError,
+    EVIDENCE_MAX_BYTES,
     EVIDENCE_MAX_COUNT,
     EVIDENCE_RETENTION_SECONDS,
+    PDF_EVIDENCE_MAX_BYTES,
     fields,
     require,
 )
 from retailops.business.variants import fold_attribute
 from retailops.order_reasons import reason_catalog
+from retailops.business.clamav import ClamdScanner
 from retailops.business.evidence import (
     atomic_write_bytes,
+    decode_attachment_data_payload,
+    encode_image_data_url,
     inspect_and_reencode_evidence,
+    inspect_evidence_bytes,
+    project_image_for_model,
+    project_pdf_for_model,
     resolve_protected_subdir,
+    sanitize_attachment_filename,
 )
 from retailops.business.outbox import (
     OUTBOX_MAX_ATTEMPTS,
     append_outbox_jsonl_line,
+    compute_customer_ref,
     compute_next_backoff_seconds,
+    resolve_customer_ref_key,
     seal_closed_integration_days,
     validate_outbox_envelope,
 )
@@ -47,11 +58,14 @@ from retailops.business.schema import (
     BUSINESS_V5_VERSION_MAPPING,
     BUSINESS_V6_VERSION_MAPPING,
     BUSINESS_V7_VERSION_MAPPING,
+    BUSINESS_V8_VERSION_MAPPING,
     EXCHANGE_KINDS,
     SQLITE_BUSINESS_SCHEMA_CURRENT,
     SQLITE_BUSINESS_V5_SCHEMA_VERSION,
     SQLITE_BUSINESS_V6_SCHEMA_VERSION,
+    SQLITE_BUSINESS_V7_SCHEMA_VERSION,
     backfill_business_v5_cases,
+    ensure_case_assist_tables,
     ensure_case_tables,
     ensure_import_tables,
     ensure_order_action_tables,
@@ -60,7 +74,7 @@ from retailops.business.schema import (
 
 ROOT = Path(__file__).resolve().parents[2]
 
-_MIGRATE_HINT = 'Hãy chạy lệnh operator database migrate-v7 với --confirm-preflight --confirm-backup.'
+_MIGRATE_HINT = 'Hãy chạy lệnh operator database migrate-v8 với --confirm-preflight --confirm-backup.'
 
 def _parse_variant_string(v_str):
     delimiter = "·" if "·" in str(v_str) else ("/" if "/" in str(v_str) else None)
@@ -130,7 +144,7 @@ def _inspect_sqlite_business_ready(path, *, target_version=SQLITE_BUSINESS_SCHEM
                 raise ApiError(
                     503,
                     'business_migration_required',
-                    f'Kho dữ liệu cửa hàng thiếu dấu vết schema Business v7; khởi động bị chặn fail-closed. {_MIGRATE_HINT}',
+                    f'Kho dữ liệu cửa hàng thiếu dấu vết schema Business v8; khởi động bị chặn fail-closed. {_MIGRATE_HINT}',
                 )
             ver = rows[0]['version']
             if ver not in range(1, SQLITE_BUSINESS_SCHEMA_CURRENT + 1):
@@ -139,7 +153,7 @@ def _inspect_sqlite_business_ready(path, *, target_version=SQLITE_BUSINESS_SCHEM
                 raise ApiError(
                     503,
                     'business_migration_required',
-                    f'Kho dữ liệu cửa hàng đang ở SQLite schema v{ver} (trước Business v7); khởi động bị chặn fail-closed. '
+                    f'Kho dữ liệu cửa hàng đang ở SQLite schema v{ver} (trước Business v8); khởi động bị chặn fail-closed. '
                     f'{_MIGRATE_HINT}',
                 )
             required_v5_tables = {'cases', 'handoff_episodes', 'case_feedback_events'}
@@ -165,7 +179,7 @@ def _inspect_sqlite_business_ready(path, *, target_version=SQLITE_BUSINESS_SCHEM
                         'business_migration_required',
                         f'Kho dữ liệu cửa hàng chưa đầy đủ các bảng/cột Business v6; khởi động bị chặn fail-closed. {_MIGRATE_HINT}',
                     )
-                if target_version >= SQLITE_BUSINESS_SCHEMA_CURRENT:
+                if target_version >= SQLITE_BUSINESS_V7_SCHEMA_VERSION:
                     request_cols = {row['name'] for row in ro_db.execute('PRAGMA table_info(order_action_requests)')}
                     if not {'target_variant_id', 'target_variant_label'} <= request_cols:
                         raise ApiError(
@@ -174,6 +188,34 @@ def _inspect_sqlite_business_ready(path, *, target_version=SQLITE_BUSINESS_SCHEM
                             f'Kho dữ liệu cửa hàng chưa đầy đủ các cột đổi hàng Business v7; khởi động bị chặn fail-closed. '
                             f'{_MIGRATE_HINT}',
                         )
+                    if target_version >= SQLITE_BUSINESS_SCHEMA_CURRENT:
+                        if 'case_assist_turns' not in tables:
+                            raise ApiError(
+                                503,
+                                'business_migration_required',
+                                f'Kho dữ liệu cửa hàng thiếu bảng lịch sử trợ lý ca Business v8; khởi động bị chặn fail-closed. '
+                                f'{_MIGRATE_HINT}',
+                            )
+                        ev_info = list(ro_db.execute('PRAGMA table_info(order_action_evidence)'))
+                        ev_cols = {row['name'] for row in ev_info}
+                        ev_not_null = {row['name'] for row in ev_info if int(row['notnull']) != 0}
+                        ev_master = ro_db.execute(
+                            "SELECT sql FROM sqlite_master WHERE type='table' AND name='order_action_evidence'"
+                        ).fetchone()
+                        ev_ddl = str(ev_master['sql'] or '') if ev_master else ''
+                        required_v8_ev_cols = {'filename', 'page_count', 'scan_status', 'scan_engine', 'scanned_at'}
+                        if (
+                            not (required_v8_ev_cols <= ev_cols)
+                            or 'application/pdf' not in ev_ddl
+                            or bool({'request_id', 'case_id', 'width', 'height'} & ev_not_null)
+                        ):
+                            raise ApiError(
+                                503,
+                                'business_migration_required',
+                                f'Kho dữ liệu cửa hàng chưa đầy đủ cấu trúc bằng chứng Business v8; khởi động bị chặn fail-closed. '
+                                f'{_MIGRATE_HINT}',
+                            )
+                        return 'v8_ready'
                     return 'v7_ready'
                 return 'v6_ready'
             return 'v5_ready'
@@ -183,7 +225,7 @@ def _inspect_sqlite_business_ready(path, *, target_version=SQLITE_BUSINESS_SCHEM
             raise ApiError(
                 503,
                 'business_migration_required',
-                f'Kho dữ liệu cửa hàng legacy chưa nâng cấp lên Business v7; khởi động bị chặn fail-closed. {_MIGRATE_HINT}',
+                f'Kho dữ liệu cửa hàng legacy chưa nâng cấp lên Business v8; khởi động bị chặn fail-closed. {_MIGRATE_HINT}',
             )
         raise ValueError('Database belongs to another RetailOps component.')
     except sqlite3.Error as exc:
@@ -197,7 +239,176 @@ def _inspect_sqlite_business_ready(path, *, target_version=SQLITE_BUSINESS_SCHEM
             ro_db.close()
 
 
-def _migrate_single_sqlite_business_file(db_path: Path, *, target_version: int = SQLITE_BUSINESS_SCHEMA_CURRENT):
+def backfill_legacy_turn_attachments_v8(
+    db,
+    *,
+    data_root: Path,
+    tenant_id: str,
+    malware_scanner=None,
+    now: float | None = None,
+) -> tuple[dict, list[Path]]:
+    """Business v8 (W4-D6, W4-D9): migrate inline attachments in agent_turns to evidence store or removed markers.
+
+    Works on both SQLite connections and PostgreSQL Queries inside the caller's open transaction.
+    Returns `(stats_dict, written_paths)` so the caller can unlink newly written files on rollback.
+    """
+    active_scanner = malware_scanner if malware_scanner is not None else ClamdScanner.from_environment()
+    now_ts = float(now if now is not None else time.time())
+    safe_tid, _, target_dir = resolve_protected_subdir(Path(data_root), 'evidence', tenant_id or 'default')
+    ext_map = {
+        'image/jpeg': '.jpg',
+        'image/png': '.png',
+        'image/webp': '.webp',
+        'application/pdf': '.pdf',
+    }
+    written_paths: list[Path] = []
+    attachments_migrated = 0
+    attachments_removed = 0
+    turns_updated = 0
+
+    rows = db.execute(
+        'SELECT id, conversation_id, customer_id, messages, created_at FROM agent_turns ORDER BY id ASC'
+    ).fetchall()
+    for row in rows:
+        raw_messages = row['messages']
+        try:
+            messages = json.loads(raw_messages) if isinstance(raw_messages, str) else raw_messages
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(messages, list):
+            continue
+
+        turn_changed = False
+        cid = str(row['conversation_id'] or '')
+        customer_id = str(row['customer_id'] or '')
+        turn_created_at = float(row['created_at'] or now_ts)
+
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            att = msg.get('attachment')
+            if not isinstance(att, dict) or 'data' not in att:
+                continue
+
+            turn_changed = True
+            att_type_hint = str(att.get('type') or 'image').strip()
+            if att_type_hint not in ('image', 'document'):
+                att_type_hint = 'image'
+            orig_name = sanitize_attachment_filename(att.get('name'), default_name='attachment')
+
+            try:
+                cust_exists = db.execute(
+                    'SELECT id FROM customers WHERE id = ?',
+                    (customer_id,),
+                ).fetchone()
+                if cust_exists is None:
+                    raise ApiError(400, 'unknown_customer', 'Khách hàng của lượt hội thoại không tồn tại.')
+                raw_bytes = decode_attachment_data_payload(
+                    att.get('data'),
+                    max_raw_bytes=PDF_EVIDENCE_MAX_BYTES,
+                )
+                clean = inspect_evidence_bytes(raw_bytes, scanner=active_scanner)
+            except ApiError as exc:
+                msg['attachment'] = {
+                    'type': att_type_hint,
+                    'name': orig_name,
+                    'removed': True,
+                    'removed_reason': exc.code,
+                    'removed_at': now_ts,
+                }
+                attachments_removed += 1
+                continue
+            except Exception:
+                msg['attachment'] = {
+                    'type': att_type_hint,
+                    'name': orig_name,
+                    'removed': True,
+                    'removed_reason': 'invalid_attachment',
+                    'removed_at': now_ts,
+                }
+                attachments_removed += 1
+                continue
+
+            default_name = 'attachment' + ext_map.get(clean['mime_type'], '')
+            safe_name = sanitize_attachment_filename(att.get('name'), default_name=default_name)
+            evidence_id = f'ev_{uuid.uuid4().hex}'
+            storage_relpath = f'evidence/{safe_tid}/{evidence_id}'
+
+            case_row = db.execute(
+                'SELECT case_id FROM cases WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 1',
+                (cid,),
+            ).fetchone()
+            case_id = case_row['case_id'] if case_row else None
+
+            written_path = atomic_write_bytes(target_dir, evidence_id, clean['bytes'])
+            written_paths.append(written_path)
+            db.execute(
+                """INSERT INTO order_action_evidence(
+                       evidence_id, request_id, case_id, customer_id, conversation_id, filename,
+                       uploaded_by_principal_id, uploaded_by_role, mime_type, byte_size,
+                       width, height, page_count, sha256, storage_relpath,
+                       scan_status, scan_engine, scanned_at, created_at, file_purged_at
+                   ) VALUES (?, NULL, ?, ?, ?, ?, ?, 'customer', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)""",
+                (
+                    evidence_id,
+                    case_id,
+                    customer_id,
+                    cid,
+                    safe_name,
+                    customer_id,
+                    clean['mime_type'],
+                    clean['byte_size'],
+                    clean.get('width'),
+                    clean.get('height'),
+                    clean.get('page_count'),
+                    clean['sha256'],
+                    storage_relpath,
+                    clean.get('scan_status'),
+                    clean.get('scan_engine'),
+                    clean.get('scanned_at'),
+                    turn_created_at,
+                ),
+            )
+            ref_meta = {
+                'evidence_id': evidence_id,
+                'type': 'document' if clean['mime_type'] == 'application/pdf' else 'image',
+                'mime_type': clean['mime_type'],
+                'name': safe_name,
+                'sha256': clean['sha256'],
+                'download_url': f'/api/conversations/{cid}/evidence/{evidence_id}',
+            }
+            if clean['mime_type'] == 'application/pdf':
+                ref_meta['page_count'] = clean.get('page_count')
+                ref_meta['pdf_mode'] = clean.get('pdf_mode')
+            msg['attachment'] = ref_meta
+            attachments_migrated += 1
+
+        if turn_changed:
+            db.execute(
+                'UPDATE agent_turns SET messages = ? WHERE id = ?',
+                (json.dumps(messages, ensure_ascii=False), row['id']),
+            )
+            turns_updated += 1
+
+    return (
+        {
+            'attachments_migrated': attachments_migrated,
+            'attachments_removed': attachments_removed,
+            'turns_updated': turns_updated,
+        },
+        written_paths,
+    )
+
+
+def _migrate_single_sqlite_business_file(
+    db_path: Path,
+    *,
+    target_version: int = SQLITE_BUSINESS_SCHEMA_CURRENT,
+    backfill_attachments: bool = False,
+    data_root: Path | None = None,
+    tenant_id: str = 'default',
+    malware_scanner=None,
+):
     if not db_path.is_file():
         raise ApiError(404, 'database_not_found', f'Không tìm thấy kho dữ liệu cửa hàng SQLite: {db_path.name}')
     try:
@@ -212,12 +423,12 @@ def _migrate_single_sqlite_business_file(db_path: Path, *, target_version: int =
     uri = db_path.resolve().as_uri() + '?mode=rw'
     db = sqlite3.connect(uri, uri=True, timeout=5)
     db.row_factory = sqlite3.Row
+    written_paths: list[Path] = []
     try:
         db.execute('PRAGMA journal_mode=WAL')
-        # The Business v7 step rebuilds order_action_requests, whose children (decisions, evidence)
-        # must keep their rows: foreign keys are switched off before BEGIN and foreign_key_check
-        # below proves the result is consistent before anything is committed.
-        db.execute('PRAGMA foreign_keys=' + ('OFF' if target_version >= SQLITE_BUSINESS_SCHEMA_CURRENT else 'ON'))
+        # Business v7/v8 steps rebuild order_action_requests / order_action_evidence: foreign keys are
+        # switched off before BEGIN and foreign_key_check below proves consistency before commit.
+        db.execute('PRAGMA foreign_keys=' + ('OFF' if target_version >= SQLITE_BUSINESS_V7_SCHEMA_VERSION else 'ON'))
         db.execute('BEGIN IMMEDIATE')
         ver_before_row = (
             db.execute("SELECT version FROM retailops_schema WHERE component='business'").fetchone()
@@ -250,9 +461,22 @@ def _migrate_single_sqlite_business_file(db_path: Path, *, target_version: int =
             backfill_res = backfill_business_v5_cases(db)
             if target_version >= SQLITE_BUSINESS_V6_SCHEMA_VERSION:
                 ensure_order_action_tables(db)
+            if target_version >= SQLITE_BUSINESS_SCHEMA_CURRENT:
+                ensure_case_assist_tables(db)
         else:
             backfill_res = {'cases_created': 0, 'episodes_created': 0}
             legacy_exchange_rows = 0
+
+        att_stats = {'attachments_migrated': 0, 'attachments_removed': 0, 'turns_updated': 0}
+        if backfill_attachments and target_version >= SQLITE_BUSINESS_SCHEMA_CURRENT:
+            eff_root = Path(data_root) if data_root is not None else db_path.parent
+            att_stats, written_paths = backfill_legacy_turn_attachments_v8(
+                db,
+                data_root=eff_root,
+                tenant_id=tenant_id,
+                malware_scanner=malware_scanner,
+            )
+
         cases_after = (
             db.execute('SELECT COUNT(*) FROM cases').fetchone()[0]
             if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cases'").fetchone()
@@ -276,15 +500,25 @@ def _migrate_single_sqlite_business_file(db_path: Path, *, target_version: int =
                 f'Business migration lost order-action requests ({requests_before} -> {requests_after}).')
         db.commit()
         return {
-            'upgraded': bool(ver_before < target_version or state == 'needs_migration' or backfill_res['cases_created'] > 0),
+            'upgraded': bool(
+                ver_before < target_version
+                or state == 'needs_migration'
+                or backfill_res['cases_created'] > 0
+                or att_stats['turns_updated'] > 0
+            ),
             'cases_created': int(cases_after - cases_before),
             'episodes_created': int(episodes_after - episodes_before),
             'order_action_requests': int(requests_after),
-            'exchange_requests_mapped': int(legacy_exchange_rows) if target_version >= SQLITE_BUSINESS_SCHEMA_CURRENT else 0,
+            'exchange_requests_mapped': int(legacy_exchange_rows) if target_version >= SQLITE_BUSINESS_V7_SCHEMA_VERSION else 0,
+            'attachments_migrated': int(att_stats['attachments_migrated']),
+            'attachments_removed': int(att_stats['attachments_removed']),
+            'turns_updated': int(att_stats['turns_updated']),
         }
     except Exception:
         if db.in_transaction:
             db.rollback()
+        for wp in written_paths:
+            wp.unlink(missing_ok=True)
         raise
     finally:
         db.close()
@@ -441,7 +675,7 @@ def migrate_sqlite_business_v7(path, *, preflight_confirmed=False, backup_confir
     tenant_files = [target] if target.is_file() else _resolve_sqlite_tenant_files(target, milestone_label='Business v7')
     any_upgraded, mapped, requests = False, 0, 0
     for tf in tenant_files:
-        res = _migrate_single_sqlite_business_file(tf, target_version=SQLITE_BUSINESS_SCHEMA_CURRENT)
+        res = _migrate_single_sqlite_business_file(tf, target_version=SQLITE_BUSINESS_V7_SCHEMA_VERSION)
         any_upgraded = any_upgraded or res['upgraded']
         mapped += res['exchange_requests_mapped']
         requests += res['order_action_requests']
@@ -449,12 +683,93 @@ def migrate_sqlite_business_v7(path, *, preflight_confirmed=False, backup_confir
     return {
         'result': 'BUSINESS_V7_MIGRATED',
         'backend': 'sqlite',
-        'schema_version': SQLITE_BUSINESS_SCHEMA_CURRENT,
+        'schema_version': SQLITE_BUSINESS_V7_SCHEMA_VERSION,
         'logical_version': BUSINESS_V7_VERSION_MAPPING['postgresql'],
         'tenants': len(tenant_files),
         'upgraded': any_upgraded,
         'order_action_requests': requests,
         'exchange_requests_mapped': mapped,
+    }
+
+
+def _resolve_sqlite_tenant_id_map(target: Path) -> tuple[Path, dict[str, str]]:
+    if target.is_file():
+        if target.parent.name == 'tenants' and (target.parent.parent / 'identity.sqlite3').is_file():
+            pers_dir = target.parent.parent
+        else:
+            return target.parent, {}
+    else:
+        pers_dir = target / 'persistent' if (target / 'persistent').is_dir() else target
+    eff_root = pers_dir.parent if pers_dir.name == 'persistent' else pers_dir
+    key_map: dict[str, str] = {}
+    id_file = pers_dir / 'identity.sqlite3'
+    if id_file.is_file():
+        ro_uri = id_file.resolve().as_uri() + '?mode=ro'
+        ro_id = sqlite3.connect(ro_uri, uri=True, timeout=5)
+        ro_id.row_factory = sqlite3.Row
+        try:
+            for row in ro_id.execute('SELECT id, storage_key FROM tenants ORDER BY id').fetchall():
+                key_map[str(row['storage_key'])] = str(row['id'])
+        finally:
+            ro_id.close()
+    return eff_root, key_map
+
+
+def migrate_sqlite_business_v8(
+    path,
+    *,
+    preflight_confirmed=False,
+    backup_confirmed=False,
+    data_root: Path | None = None,
+    malware_scanner=None,
+):
+    """Explicit operator migration command for SQLite Business v8 (W4-D4, W4-D6, W4-D9).
+
+    Upgrades every tenant business database to SQLite schema v7 (logical Business v8): adds
+    `case_assist_turns`, expands `order_action_evidence` for `application/pdf` (<=20 MB) and malware
+    scan metadata, and migrates inline `agent_turns` attachments to the evidence store (or replaces
+    invalid/infected payloads with removed markers). Idempotent; never invoked automatically.
+    """
+    require(
+        preflight_confirmed is True and backup_confirmed is True,
+        400,
+        'migration_confirmation_required',
+        'Lệnh nâng cấp Business v8 yêu cầu xác nhận tường minh --confirm-preflight và --confirm-backup theo runbook §11.5.',
+    )
+    target = Path(path)
+    inferred_root, key_to_tid = _resolve_sqlite_tenant_id_map(target)
+    eff_root = Path(data_root) if data_root is not None else inferred_root
+    tenant_files = [target] if target.is_file() else _resolve_sqlite_tenant_files(target, milestone_label='Business v8')
+
+    any_upgraded = False
+    attachments_migrated = 0
+    attachments_removed = 0
+    turns_updated = 0
+    for tf in tenant_files:
+        tid = key_to_tid.get(tf.stem, 'default')
+        res = _migrate_single_sqlite_business_file(
+            tf,
+            target_version=SQLITE_BUSINESS_SCHEMA_CURRENT,
+            backfill_attachments=True,
+            data_root=eff_root,
+            tenant_id=tid,
+            malware_scanner=malware_scanner,
+        )
+        any_upgraded = any_upgraded or res['upgraded']
+        attachments_migrated += res['attachments_migrated']
+        attachments_removed += res['attachments_removed']
+        turns_updated += res['turns_updated']
+
+    return {
+        'result': 'BUSINESS_V8_MIGRATED',
+        'backend': 'sqlite',
+        'schema_version': SQLITE_BUSINESS_SCHEMA_CURRENT,
+        'logical_version': BUSINESS_V8_VERSION_MAPPING['postgresql'],
+        'tenants': len(tenant_files),
+        'upgraded': any_upgraded,
+        'attachments_migrated': attachments_migrated,
+        'attachments_removed': attachments_removed,
+        'turns_updated': turns_updated,
     }
 
 
@@ -2146,8 +2461,18 @@ class BusinessStore:
                     user_entry = {'role': 'user', 'content': content}
                     att = m.get('attachment')
                     if isinstance(att, dict) and att.get('type') in ('image', 'document'):
-                        if att.get('type') == 'image' and att.get('data') and not preserved_recent_image:
-                            user_entry['attachment'] = att
+                        if (
+                            att.get('type') == 'image'
+                            and not att.get('removed')
+                            and (att.get('evidence_id') or att.get('data'))
+                            and not preserved_recent_image
+                        ):
+                            ref_entry = {
+                                k: att[k]
+                                for k in ('evidence_id', 'type', 'mime_type', 'name', 'sha256')
+                                if k in att and att[k] is not None
+                            }
+                            user_entry['attachment'] = ref_entry
                             preserved_recent_image = True
                         else:
                             user_entry['attachment'] = {'type': att.get('type'), 'name': att.get('name', '')}
@@ -2183,6 +2508,8 @@ class BusinessStore:
             prev = normalized[-1]
             if m['role'] == 'user' and prev['role'] == 'user':
                 prev['content'] = (prev['content'] + '\n' + m['content'])[:2000]
+                if 'attachment' in m:
+                    prev['attachment'] = m['attachment']
             elif m['role'] == 'assistant' and prev['role'] == 'assistant' and 'tool_calls' not in m and 'tool_calls' not in prev:
                 prev['content'] = (prev['content'] + '\n' + m['content'])
             else:
@@ -2525,6 +2852,8 @@ class BusinessStore:
                         conversation_id=cand['conversation_id'],
                         leases_released=leases,
                     )
+
+        self.purge_expired_case_assist_turns(now=now_ts)
 
         return {
             'reminded': reminded,
@@ -3636,8 +3965,11 @@ class BusinessStore:
             out['actor_principal_id'] = actor_meta['principal_id']
         return out
 
-    def customer_message(self, customer_id, cid, message):
+    def customer_message(self, customer_id, cid, message, attachment=None):
         require(isinstance(message, str) and message.strip(), 400, 'invalid_message', 'Tin nhắn không được để trống.')
+        sanitized_att = None
+        if attachment is not None:
+            sanitized_att = self.store_chat_attachment(customer_id, cid, attachment)
         clean_comment = message[:200]
         if contains_canary_or_secret(clean_comment):
             _, clean_comment = sanitize_structured_payload(clean_comment, preserve_reasoning=False)
@@ -3647,9 +3979,10 @@ class BusinessStore:
             conv, _ = self._prepare_customer_activity_in_tx(
                 db, customer_id, cid, now, forbidden_on_mismatch=True
             )
-            turn_messages = [
-                {"role": "user", "content": message}
-            ]
+            user_turn_msg = {"role": "user", "content": message}
+            if sanitized_att is not None:
+                user_turn_msg["attachment"] = sanitized_att
+            turn_messages = [user_turn_msg]
             turn_result = {
                 "message": "",
                 "author": "customer",
@@ -3874,10 +4207,13 @@ class BusinessStore:
             return True
         return exc.__class__.__name__ in ("UniqueViolation", "IntegrityError", "CheckViolation", "ForeignKeyViolation")
 
+    def _resolve_customer_ref_key(self) -> tuple[str | None, str | None, str | None]:
+        explicit = getattr(self, "customer_ref_key", None)
+        return resolve_customer_ref_key(explicit_key=explicit)
+
     @staticmethod
-    def _opaque_customer_ref(tenant_id: str, customer_id: str) -> str:
-        digest = hashlib.sha256(f"{tenant_id}:{customer_id}".encode("utf-8")).hexdigest()[:24]
-        return f"custref_{digest}"
+    def _opaque_customer_ref(tenant_id: str, customer_id: str, secret_key: str) -> str:
+        return compute_customer_ref(tenant_id, customer_id, secret_key)
 
     @staticmethod
     def _iso_utc(ts: float) -> str:
@@ -3952,10 +4288,18 @@ class BusinessStore:
         require(source in ("app", "worker", "import"), 400, "invalid_outbox_source", "Nguồn outbox không hợp lệ.")
         now_ts = self._now() if now is None else float(now)
         resolved_tid = str(tenant_id or self._effective_tenant_id(actor)).strip() or "default"
+        ref_key, key_err, key_msg = self._resolve_customer_ref_key()
+        if not ref_key:
+            return {
+                "skipped": True,
+                "error": key_err or "customer_ref_key_missing",
+                "message": key_msg,
+                "event_type": event_type,
+            }
         norm_actor = self._normalize_actor(actor, "system", "system")
         actor_principal = norm_actor["principal_id"]
         if norm_actor["role"] == "customer":
-            actor_principal = self._opaque_customer_ref(resolved_tid, str(customer_id or actor_principal))
+            actor_principal = self._opaque_customer_ref(resolved_tid, str(customer_id or actor_principal), ref_key)
         event_id = str(uuid.uuid4())
         envelope: dict = {
             "schema": "retailops.order_action",
@@ -3970,7 +4314,7 @@ class BusinessStore:
             },
         }
         if customer_id:
-            envelope["customer_ref"] = self._opaque_customer_ref(resolved_tid, str(customer_id))
+            envelope["customer_ref"] = self._opaque_customer_ref(resolved_tid, str(customer_id), ref_key)
         if case_id is not None:
             envelope["case_id"] = case_id
         if order_action_request_id is not None:
@@ -4050,8 +4394,9 @@ class BusinessStore:
             ).fetchall()
         ]
         ev_rows = db.execute(
-            """SELECT evidence_id, request_id, case_id, uploaded_by_role, mime_type,
-                      byte_size, width, height, sha256, created_at, file_purged_at
+            """SELECT evidence_id, request_id, case_id, filename, uploaded_by_role, mime_type,
+                      byte_size, width, height, page_count, sha256, scan_status, scan_engine,
+                      scanned_at, created_at, file_purged_at
                FROM order_action_evidence
                WHERE request_id = ?
                ORDER BY created_at ASC, evidence_id ASC""",
@@ -6142,6 +6487,9 @@ class BusinessStore:
             return Path(env_out)
         return Path(tempfile.gettempdir()) / "retailops_runtime_data"
 
+    def _active_malware_scanner(self):
+        return getattr(self, "malware_scanner", None)
+
     def upload_order_action_evidence(
         self,
         request_id: str,
@@ -6149,6 +6497,7 @@ class BusinessStore:
         *,
         customer_id: str | None = None,
         actor: dict | None = None,
+        filename: str | None = None,
     ) -> dict:
         require(
             isinstance(request_id, str) and bool(re.fullmatch(r"[A-Za-z0-9_-]{1,80}", request_id)),
@@ -6156,14 +6505,15 @@ class BusinessStore:
             "invalid_request_id",
             "Mã yêu cầu đơn hàng không hợp lệ.",
         )
-        clean = inspect_and_reencode_evidence(raw_bytes)
+        clean = inspect_evidence_bytes(raw_bytes, scanner=self._active_malware_scanner())
+        safe_filename = sanitize_attachment_filename(filename, default_name="") if filename else None
         norm_actor = self._normalize_actor(actor, str(customer_id or "customer"), "customer")
         caller_role = norm_actor["role"]
         require(
             caller_role in ("customer", "staff", "manager"),
             403,
             "permission_denied",
-            "Tài khoản không có quyền tải ảnh bằng chứng.",
+            "Tài khoản không có quyền tải tệp bằng chứng.",
         )
 
         safe_tid, _, target_dir = resolve_protected_subdir(
@@ -6193,7 +6543,7 @@ class BusinessStore:
                         req_row["status"] == "requested" and req_row["closed_at"] is None,
                         409,
                         "evidence_upload_closed",
-                        "Khách hàng chỉ được đính kèm ảnh khi yêu cầu còn ở trạng thái requested.",
+                        "Khách hàng chỉ được đính kèm bằng chứng khi yêu cầu còn ở trạng thái requested.",
                     )
                     case_row = db.execute(
                         "SELECT status FROM cases WHERE case_id = ?",
@@ -6203,7 +6553,7 @@ class BusinessStore:
                         case_row is not None and case_row["status"] != "resolved",
                         409,
                         "case_already_resolved",
-                        "Ca hỗ trợ đã đóng, không thể tải thêm ảnh bằng chứng.",
+                        "Ca hỗ trợ đã đóng, không thể tải thêm tệp bằng chứng.",
                     )
                     uploaded_by_principal = norm_actor["principal_id"]
                     uploaded_by_role = "customer"
@@ -6213,7 +6563,7 @@ class BusinessStore:
                         req_row["closed_at"] is None,
                         409,
                         "evidence_upload_closed",
-                        "Yêu cầu đơn hàng đã đóng, không thể tải thêm ảnh bằng chứng.",
+                        "Yêu cầu đơn hàng đã đóng, không thể tải thêm tệp bằng chứng.",
                     )
                     uploaded_by_principal = norm_actor["principal_id"]
                     uploaded_by_role = caller_role
@@ -6227,30 +6577,36 @@ class BusinessStore:
                     existing_count < EVIDENCE_MAX_COUNT,
                     409,
                     "evidence_limit_exceeded",
-                    f"Mỗi yêu cầu đơn hàng chỉ được đính kèm tối đa {EVIDENCE_MAX_COUNT} ảnh bằng chứng.",
+                    f"Mỗi yêu cầu đơn hàng chỉ được đính kèm tối đa {EVIDENCE_MAX_COUNT} tệp bằng chứng.",
                 )
 
                 written_path = atomic_write_bytes(target_dir, evidence_id, clean["bytes"])
                 db.execute(
                     """INSERT INTO order_action_evidence(
-                           evidence_id, request_id, case_id, customer_id, conversation_id,
+                           evidence_id, request_id, case_id, customer_id, conversation_id, filename,
                            uploaded_by_principal_id, uploaded_by_role, mime_type, byte_size,
-                           width, height, sha256, storage_relpath, created_at, file_purged_at
-                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)""",
+                           width, height, page_count, sha256, storage_relpath,
+                           scan_status, scan_engine, scanned_at, created_at, file_purged_at
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)""",
                     (
                         evidence_id,
                         request_id,
                         req_row["case_id"],
                         req_row["customer_id"],
                         req_row["conversation_id"],
+                        safe_filename,
                         uploaded_by_principal,
                         uploaded_by_role,
                         clean["mime_type"],
                         clean["byte_size"],
                         clean["width"],
                         clean["height"],
+                        clean.get("page_count"),
                         clean["sha256"],
                         storage_relpath,
+                        clean.get("scan_status"),
+                        clean.get("scan_engine"),
+                        clean.get("scanned_at"),
                         now_ts,
                     ),
                 )
@@ -6266,6 +6622,8 @@ class BusinessStore:
                     byte_size=clean["byte_size"],
                     width=clean["width"],
                     height=clean["height"],
+                    page_count=clean.get("page_count"),
+                    scan_status=clean.get("scan_status"),
                     sha256=clean["sha256"],
                     actor=actor if actor is not None else norm_actor,
                 )
@@ -6275,16 +6633,22 @@ class BusinessStore:
                 written_path.unlink(missing_ok=True)
             raise
 
+        is_pdf = clean["mime_type"] == "application/pdf"
         return {
             "status": "ok",
             "evidence": {
                 "evidence_id": evidence_id,
                 "request_id": request_id,
                 "case_id": req_row["case_id"],
+                "filename": safe_filename,
                 "mime_type": clean["mime_type"],
                 "byte_size": clean["byte_size"],
                 "width": clean["width"],
                 "height": clean["height"],
+                "page_count": clean.get("page_count"),
+                "scan_status": clean.get("scan_status"),
+                "scan_engine": clean.get("scan_engine"),
+                "scanned_at": clean.get("scanned_at"),
                 "sha256": clean["sha256"],
                 "uploaded_by_role": uploaded_by_role,
                 "created_at": now_ts,
@@ -6292,7 +6656,11 @@ class BusinessStore:
                 "download_url": f"/api/order-actions/{request_id}/evidence/{evidence_id}",
             },
             "order_action": serialized,
-            "message": "Đã lưu ảnh bằng chứng (đã xóa dữ liệu EXIF/GPS).",
+            "message": (
+                "Đã quét sạch và lưu tài liệu PDF bằng chứng."
+                if is_pdf
+                else "Đã lưu ảnh bằng chứng (đã xóa dữ liệu EXIF/GPS)."
+            ),
         }
 
     def get_order_action_evidence_record(self, request_id: str, evidence_id: str) -> tuple[dict, dict]:
@@ -6361,11 +6729,211 @@ class BusinessStore:
         )
         return data, str(evidence_row["mime_type"])
 
+    def store_chat_attachment(
+        self,
+        customer_id: str,
+        cid: str,
+        attachment: dict,
+        *,
+        actor: dict | None = None,
+    ) -> dict:
+        require(
+            isinstance(cid, str) and bool(re.fullmatch(r"[a-f0-9-]{36}", cid)),
+            400,
+            "invalid_conversation",
+            "Mã cuộc trò chuyện không hợp lệ.",
+        )
+        require(isinstance(attachment, dict), 400, "invalid_attachment", "Định dạng tệp đính kèm không hợp lệ.")
+        att_type = attachment.get("type")
+        require(
+            att_type in ("image", "document"),
+            400,
+            "unsupported_attachment_type",
+            "Chỉ hỗ trợ tệp hình ảnh hoặc tài liệu.",
+        )
+        if attachment.get("evidence_id") and "data" not in attachment:
+            ev_row = self.get_chat_evidence_record(cid, str(attachment["evidence_id"]))
+            require(
+                ev_row["customer_id"] == customer_id,
+                404,
+                "evidence_not_found",
+                "Không tìm thấy tệp đính kèm của cuộc trò chuyện này.",
+            )
+            return {
+                "evidence_id": ev_row["evidence_id"],
+                "type": "document" if ev_row["mime_type"] == "application/pdf" else "image",
+                "mime_type": ev_row["mime_type"],
+                "name": sanitize_attachment_filename(attachment.get("name") or ev_row.get("filename")),
+                "sha256": ev_row["sha256"],
+                "download_url": f"/api/conversations/{cid}/evidence/{ev_row['evidence_id']}",
+            }
+
+        require("data" in attachment, 400, "invalid_attachment", "Thiếu nội dung tệp đính kèm.")
+        max_raw = PDF_EVIDENCE_MAX_BYTES if att_type == "document" else EVIDENCE_MAX_BYTES
+        raw_bytes = decode_attachment_data_payload(attachment["data"], max_raw_bytes=max_raw)
+        clean = inspect_evidence_bytes(raw_bytes, scanner=self._active_malware_scanner())
+        ext_map = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "application/pdf": ".pdf"}
+        default_name = "attachment" + ext_map.get(clean["mime_type"], "")
+        safe_name = sanitize_attachment_filename(attachment.get("name"), default_name=default_name)
+
+        norm_actor = self._normalize_actor(actor, str(customer_id or "customer"), "customer")
+        safe_tid, _, target_dir = resolve_protected_subdir(
+            self._effective_data_root(), "evidence", self._effective_tenant_id(actor)
+        )
+        now_ts = self._now()
+        evidence_id = f"ev_{uuid.uuid4().hex}"
+        storage_relpath = f"evidence/{safe_tid}/{evidence_id}"
+        written_path: Path | None = None
+
+        try:
+            with self.connection(write=True) as db:
+                conv = db.execute(
+                    "SELECT id, customer_id, order_id, expires_at FROM conversations WHERE id = ? AND customer_id = ?",
+                    (cid, customer_id),
+                ).fetchone()
+                require(conv is not None, 404, "conversation_not_found", "Không tìm thấy cuộc trò chuyện của bạn.")
+                require(float(conv["expires_at"]) > now_ts, 409, "conversation_expired", "Cuộc trò chuyện đã hết hạn.")
+                case_row = self._ensure_active_case_in_tx(db, cid, customer_id, now_ts)
+                written_path = atomic_write_bytes(target_dir, evidence_id, clean["bytes"])
+                db.execute(
+                    """INSERT INTO order_action_evidence(
+                           evidence_id, request_id, case_id, customer_id, conversation_id, filename,
+                           uploaded_by_principal_id, uploaded_by_role, mime_type, byte_size,
+                           width, height, page_count, sha256, storage_relpath,
+                           scan_status, scan_engine, scanned_at, created_at, file_purged_at
+                       ) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)""",
+                    (
+                        evidence_id,
+                        case_row["case_id"],
+                        customer_id,
+                        cid,
+                        safe_name,
+                        norm_actor["principal_id"],
+                        norm_actor["role"] if norm_actor["role"] in ("customer", "staff", "manager") else "customer",
+                        clean["mime_type"],
+                        clean["byte_size"],
+                        clean.get("width"),
+                        clean.get("height"),
+                        clean.get("page_count"),
+                        clean["sha256"],
+                        storage_relpath,
+                        clean.get("scan_status"),
+                        clean.get("scan_engine"),
+                        clean.get("scanned_at"),
+                        now_ts,
+                    ),
+                )
+                self.log(
+                    db,
+                    customer_id,
+                    "chat_attachment_stored",
+                    conv["order_id"],
+                    case_id=case_row["case_id"],
+                    conversation_id=cid,
+                    evidence_id=evidence_id,
+                    mime_type=clean["mime_type"],
+                    byte_size=clean["byte_size"],
+                    page_count=clean.get("page_count"),
+                    scan_status=clean.get("scan_status"),
+                    sha256=clean["sha256"],
+                    actor=actor if actor is not None else norm_actor,
+                )
+        except Exception:
+            if written_path is not None:
+                written_path.unlink(missing_ok=True)
+            raise
+
+        ref_meta = {
+            "evidence_id": evidence_id,
+            "type": "document" if clean["mime_type"] == "application/pdf" else "image",
+            "mime_type": clean["mime_type"],
+            "name": safe_name,
+            "sha256": clean["sha256"],
+            "download_url": f"/api/conversations/{cid}/evidence/{evidence_id}",
+        }
+        if clean["mime_type"] == "application/pdf":
+            ref_meta["page_count"] = clean.get("page_count")
+            ref_meta["pdf_mode"] = clean.get("pdf_mode")
+        return ref_meta
+
+    def get_chat_evidence_record(self, cid: str, evidence_id: str) -> dict:
+        require(
+            isinstance(cid, str) and bool(re.fullmatch(r"[a-f0-9-]{36}", cid)),
+            400,
+            "invalid_conversation",
+            "Mã cuộc trò chuyện không hợp lệ.",
+        )
+        require(
+            isinstance(evidence_id, str) and bool(re.fullmatch(r"ev_[a-f0-9]{32}", evidence_id)),
+            400,
+            "invalid_evidence_id",
+            "Mã tệp đính kèm không hợp lệ.",
+        )
+        with self.connection() as db:
+            ev_row = db.execute(
+                "SELECT * FROM order_action_evidence WHERE evidence_id = ? AND conversation_id = ?",
+                (evidence_id, cid),
+            ).fetchone()
+            require(ev_row is not None, 404, "evidence_not_found", "Không tìm thấy tệp đính kèm trên cuộc trò chuyện này.")
+        return dict(ev_row)
+
+    def load_attachment_for_model(
+        self,
+        customer_id: str,
+        cid: str,
+        att_meta: dict,
+        *,
+        include_pixels: bool = True,
+    ) -> dict:
+        if not isinstance(att_meta, dict) or att_meta.get("removed"):
+            return {"type": str((att_meta or {}).get("type") or "image"), "name": str((att_meta or {}).get("name") or "")}
+        ev_id = att_meta.get("evidence_id")
+        base_meta = {
+            "type": att_meta.get("type", "image"),
+            "name": sanitize_attachment_filename(att_meta.get("name")),
+        }
+        if att_meta.get("mime_type"):
+            base_meta["mime_type"] = att_meta["mime_type"]
+        if ev_id:
+            base_meta["evidence_id"] = ev_id
+        if att_meta.get("sha256"):
+            base_meta["sha256"] = att_meta["sha256"]
+        if not ev_id:
+            return base_meta
+        is_pdf_hint = att_meta.get("mime_type") == "application/pdf" or att_meta.get("type") == "document"
+        if not include_pixels and not is_pdf_hint:
+            return base_meta
+        try:
+            ev_row = self.get_chat_evidence_record(cid, str(ev_id))
+            if ev_row.get("customer_id") != customer_id:
+                return base_meta
+            raw_bytes, mime_type = self.read_order_action_evidence_bytes(ev_row)
+        except ApiError:
+            return base_meta
+        hydrated = dict(base_meta)
+        hydrated["mime_type"] = mime_type
+        if mime_type == "application/pdf":
+            hydrated["type"] = "document"
+            pdf_proj = project_pdf_for_model(raw_bytes, include_pixels=include_pixels)
+            hydrated["pdf_mode"] = pdf_proj["pdf_mode"]
+            hydrated["page_count"] = pdf_proj["page_count"]
+            if pdf_proj["excerpt"]:
+                hydrated["excerpt"] = pdf_proj["excerpt"]
+            if pdf_proj["images"]:
+                hydrated["images"] = pdf_proj["images"]
+        elif include_pixels:
+            proj = project_image_for_model(raw_bytes)
+            hydrated["mime_type"] = proj["mime_type"]
+            hydrated["data"] = proj["data_url"]
+            hydrated["projected_width"] = proj["width"]
+            hydrated["projected_height"] = proj["height"]
+        return hydrated
+
     def purge_expired_evidence(self, *, now: float | None = None) -> dict:
         now_ts = self._now() if now is None else float(now)
         cutoff = now_ts - float(EVIDENCE_RETENTION_SECONDS)
         with self.connection() as db:
-            due = [
+            due_oar = [
                 dict(r)
                 for r in db.execute(
                     """SELECT e.evidence_id, e.request_id, e.case_id, e.customer_id,
@@ -6379,6 +6947,24 @@ class BusinessStore:
                     (cutoff,),
                 ).fetchall()
             ]
+            due_chat = [
+                dict(r)
+                for r in db.execute(
+                    """SELECT e.evidence_id, e.request_id, e.case_id, e.customer_id,
+                              e.sha256, e.storage_relpath, NULL AS order_id
+                       FROM order_action_evidence e
+                       LEFT JOIN cases c ON c.case_id = e.case_id
+                       WHERE e.file_purged_at IS NULL
+                         AND e.request_id IS NULL
+                         AND (
+                             (c.resolved_at IS NOT NULL AND c.resolved_at <= ?)
+                             OR (e.case_id IS NULL AND e.created_at <= ?)
+                         )
+                       ORDER BY e.created_at ASC, e.evidence_id ASC""",
+                    (cutoff, cutoff),
+                ).fetchall()
+            ]
+            due = [*due_oar, *due_chat]
         purged = 0
         for item in due:
             try:
@@ -6398,7 +6984,7 @@ class BusinessStore:
                     self.log(
                         db,
                         item["customer_id"],
-                        "order_action_evidence_purged",
+                        "order_action_evidence_purged" if item.get("request_id") else "chat_attachment_purged",
                         item["order_id"],
                         evidence_id=item["evidence_id"],
                         request_id=item["request_id"],
@@ -6407,6 +6993,349 @@ class BusinessStore:
                         purged_at=now_ts,
                     )
         return {"purged": purged}
+
+    # ---- Staff/Manager Case Assistant storage & retention (W4-D1, W4-D4, W4-D5) -----------------------
+    def purge_expired_case_assist_turns(self, *, now: float | None = None) -> dict:
+        """Delete Case Assistant history for resolved cases past their retention TTL (W4-D4)."""
+        now_ts = self._now() if now is None else float(now)
+        cutoff = now_ts - float(self.CONVERSATION_TTL)
+        with self.connection(write=True) as db:
+            has_table = True
+            try:
+                deleted = db.execute(
+                    """DELETE FROM case_assist_turns
+                       WHERE case_id IN (
+                           SELECT k.case_id
+                           FROM cases k
+                           LEFT JOIN conversations conv ON conv.id = k.conversation_id
+                           WHERE k.status = 'resolved'
+                             AND (
+                                 conv.id IS NULL
+                                 OR conv.expires_at <= ?
+                                 OR (k.resolved_at IS NOT NULL AND k.resolved_at < ?)
+                             )
+                       )
+                       OR NOT EXISTS (
+                           SELECT 1 FROM cases k2 WHERE k2.case_id = case_assist_turns.case_id
+                       )""",
+                    (now_ts, cutoff),
+                ).rowcount
+            except Exception:
+                has_table = False
+                deleted = 0
+        return {"purged": int(deleted or 0) if has_table else 0}
+
+    def authorize_case_assist(
+        self,
+        case_id: str,
+        *,
+        actor: dict | None,
+        write_attempt: bool = True,
+        mode: str = "ask",
+    ) -> dict:
+        """Verify Case Assistant access on `case_id` (W4-D1, W4-D4, W4-D5).
+
+        For `write_attempt=True` (`POST /api/staff/cases/<case_id>/assist`), the caller MUST either
+        actively hold the case (`status == 'in_progress' and holder == caller_id`) or have role `manager`.
+        Denied write attempts are recorded in `business_events` (`staff_case_assist_denied`).
+        """
+        require(
+            isinstance(case_id, str) and bool(re.fullmatch(r"[A-Za-z0-9_-]{1,80}", case_id)),
+            400,
+            "invalid_case_id",
+            "Mã ca hỗ trợ không hợp lệ.",
+        )
+        norm_actor = self._normalize_actor(actor, "", "")
+        caller_role = norm_actor.get("role")
+        caller_id = norm_actor.get("principal_id")
+        require(
+            caller_role in ("staff", "manager") and bool(caller_id),
+            403,
+            "permission_denied",
+            "Chỉ nhân viên hoặc quản lý mới được sử dụng Trợ lý ca.",
+        )
+        resolved_tid = self._effective_tenant_id(actor)
+        now_ts = self._now()
+
+        denied_err: ApiError | None = None
+        with self.connection(write=True) as db:
+            case_row = db.execute("SELECT * FROM cases WHERE case_id = ?", (case_id,)).fetchone()
+            require(case_row is not None, 404, "case_not_found", "Không tìm thấy ca hỗ trợ.")
+            cid = case_row["conversation_id"]
+            conv = (
+                db.execute(
+                    "SELECT id, customer_id, order_id, product_id, expires_at FROM conversations WHERE id = ?",
+                    (cid,),
+                ).fetchone()
+                if cid
+                else None
+            )
+
+            if case_row["status"] == "resolved":
+                within_retention = (
+                    conv is not None
+                    and float(conv["expires_at"]) > now_ts
+                    and (
+                        case_row["resolved_at"] is None
+                        or (now_ts - float(case_row["resolved_at"])) <= float(self.CONVERSATION_TTL)
+                    )
+                )
+                if not within_retention:
+                    db.execute("DELETE FROM case_assist_turns WHERE case_id = ?", (case_id,))
+                    if write_attempt:
+                        self.log(
+                            db,
+                            case_row["customer_id"],
+                            "staff_case_assist_denied",
+                            conv["order_id"] if conv is not None else None,
+                            case_id=case_id,
+                            conversation_id=cid,
+                            mode=mode,
+                            reason="case_retention_expired",
+                            actor=norm_actor,
+                        )
+                    denied_err = ApiError(
+                        403,
+                        "case_retention_expired",
+                        "Ca hỗ trợ đã đóng và quá thời hạn lưu trữ.",
+                    )
+
+            is_holder = (
+                case_row["status"] == "in_progress"
+                and case_row["holder"] is not None
+                and case_row["holder"] == caller_id
+            )
+            is_manager = caller_role == "manager"
+
+            if denied_err is None and write_attempt and not (is_holder or is_manager):
+                self.log(
+                    db,
+                    case_row["customer_id"],
+                    "staff_case_assist_denied",
+                    conv["order_id"] if conv is not None else None,
+                    case_id=case_id,
+                    conversation_id=cid,
+                    mode=mode,
+                    reason="case_not_held",
+                    case_status=case_row["status"],
+                    actor=norm_actor,
+                )
+                denied_err = ApiError(
+                    403,
+                    "case_not_held",
+                    "Chỉ nhân viên đang trực tiếp giữ ca hoặc Quản lý mới được gọi Trợ lý ca.",
+                )
+
+            if denied_err is None and not write_attempt and not (is_holder or is_manager):
+                open_ep = db.execute(
+                    "SELECT handoff_id FROM handoff_episodes WHERE case_id = ? AND status = 'pending' LIMIT 1",
+                    (case_id,),
+                ).fetchone()
+                can_view_case = (
+                    (case_row["status"] in ("waiting", "in_progress") and (open_ep is not None or case_row["holder"] is not None))
+                    or case_row["status"] == "resolved"
+                )
+                require(
+                    can_view_case,
+                    403,
+                    "case_not_escalated",
+                    "Ca hỗ trợ hiện chưa có yêu cầu chuyển tiếp nhân viên.",
+                )
+
+        if denied_err is not None:
+            raise denied_err
+
+        return {
+            "tenant_id": resolved_tid,
+            "principal_id": caller_id,
+            "actor_role": caller_role,
+            "actor": norm_actor,
+            "case_id": case_row["case_id"],
+            "conversation_id": cid or "",
+            "customer_id": case_row["customer_id"],
+            "order_id": conv["order_id"] if conv is not None else None,
+            "case_status": case_row["status"],
+            "can_assist": bool(is_holder or is_manager),
+        }
+
+    @staticmethod
+    def _serialize_case_assist_turn_row(row) -> dict:
+        d = dict(row)
+        try:
+            sources = json.loads(d.get("sources_json") or "[]")
+        except Exception:
+            sources = []
+        try:
+            trace = json.loads(d.get("trace_json") or "{}")
+        except Exception:
+            trace = {}
+        _, clean_trace = sanitize_structured_payload(trace, preserve_reasoning=True)
+        return {
+            "turn_id": d["turn_id"],
+            "case_id": d["case_id"],
+            "request_id": d["request_id"],
+            "mode": d["mode"],
+            "question": d["question"],
+            "answer": d["answer"],
+            "draft_reply": d.get("draft_reply"),
+            "sources": sources if isinstance(sources, list) else [],
+            "trace": clean_trace if isinstance(clean_trace, dict) else {},
+            "created_at": float(d["created_at"]),
+        }
+
+    def find_case_assist_replay(
+        self,
+        *,
+        tenant_id: str,
+        principal_id: str,
+        case_id: str,
+        request_id: str,
+        mode: str,
+        question: str,
+    ) -> dict | None:
+        with self.connection() as db:
+            row = db.execute(
+                """SELECT * FROM case_assist_turns
+                   WHERE tenant_id = ? AND principal_id = ? AND case_id = ? AND request_id = ?""",
+                (tenant_id, principal_id, case_id, request_id),
+            ).fetchone()
+        if row is None:
+            return None
+        require(
+            row["mode"] == mode and row["question"] == question,
+            409,
+            "request_conflict",
+            "Mã yêu cầu Trợ lý ca đã được dùng cho nội dung khác.",
+        )
+        return self._serialize_case_assist_turn_row(row)
+
+    def case_assist_model_history(
+        self,
+        *,
+        tenant_id: str,
+        principal_id: str,
+        case_id: str,
+        limit: int = 10,
+    ) -> list[dict]:
+        """Load ONLY the caller's own prior Case Assistant turns on this case (W4-D4)."""
+        with self.connection() as db:
+            rows = db.execute(
+                """SELECT mode, question, answer
+                   FROM case_assist_turns
+                   WHERE tenant_id = ? AND principal_id = ? AND case_id = ?
+                   ORDER BY created_at DESC, turn_id DESC
+                   LIMIT ?""",
+                (tenant_id, principal_id, case_id, max(1, min(int(limit), 20))),
+            ).fetchall()
+        history: list[dict] = []
+        for r in reversed(rows):
+            q = f"[Chế độ: {r['mode']}] {r['question']}".strip()[:2000]
+            a = str(r["answer"] or "").strip()[:7500]
+            if q and a:
+                history.append({"role": "user", "content": q})
+                history.append({"role": "assistant", "content": a})
+        return history
+
+    def save_case_assist_turn(
+        self,
+        *,
+        tenant_id: str,
+        actor: dict,
+        case_id: str,
+        conversation_id: str,
+        customer_id: str,
+        order_id: str | None,
+        request_id: str,
+        mode: str,
+        question: str,
+        answer: str,
+        draft_reply: str | None,
+        sources: list,
+        trace: dict,
+    ) -> dict:
+        now_ts = self._now()
+        turn_id = f"cat_{uuid.uuid4().hex}"
+        norm_actor = self._normalize_actor(actor, "", "")
+        sources_json = json.dumps(sources if isinstance(sources, list) else [], ensure_ascii=False)
+        trace_json = json.dumps(trace if isinstance(trace, dict) else {}, ensure_ascii=False)
+        tools_used = [
+            t.get("name")
+            for t in (trace.get("tools") or [])
+            if isinstance(t, dict) and isinstance(t.get("name"), str)
+        ]
+
+        with self.connection(write=True) as db:
+            existing = db.execute(
+                """SELECT * FROM case_assist_turns
+                   WHERE tenant_id = ? AND principal_id = ? AND case_id = ? AND request_id = ?""",
+                (tenant_id, norm_actor["principal_id"], case_id, request_id),
+            ).fetchone()
+            if existing is not None:
+                require(
+                    existing["mode"] == mode and existing["question"] == question,
+                    409,
+                    "request_conflict",
+                    "Mã yêu cầu Trợ lý ca đã được dùng cho nội dung khác.",
+                )
+                return {**self._serialize_case_assist_turn_row(existing), "replayed": True}
+
+            db.execute(
+                """INSERT INTO case_assist_turns(
+                       turn_id, tenant_id, principal_id, actor_role, case_id, conversation_id,
+                       request_id, mode, question, answer, draft_reply, sources_json, trace_json, created_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    turn_id,
+                    tenant_id,
+                    norm_actor["principal_id"],
+                    norm_actor["role"],
+                    case_id,
+                    conversation_id or "",
+                    request_id,
+                    mode,
+                    question,
+                    answer,
+                    draft_reply,
+                    sources_json,
+                    trace_json,
+                    now_ts,
+                ),
+            )
+            self.log(
+                db,
+                customer_id,
+                "staff_case_assist_used",
+                order_id,
+                case_id=case_id,
+                conversation_id=conversation_id or None,
+                turn_id=turn_id,
+                request_id=request_id,
+                mode=mode,
+                has_draft=bool(draft_reply),
+                tool_count=len(tools_used),
+                tools=tools_used,
+                actor=norm_actor,
+            )
+            saved = db.execute("SELECT * FROM case_assist_turns WHERE turn_id = ?", (turn_id,)).fetchone()
+        return {**self._serialize_case_assist_turn_row(saved), "replayed": False}
+
+    def list_case_assist_turns(self, case_id: str, *, actor: dict | None, limit: int = 50) -> dict:
+        """Return ONLY the caller's `(tenant_id, principal_id, case_id)` Case Assistant turns (W4-D4)."""
+        self.purge_expired_case_assist_turns()
+        ctx = self.authorize_case_assist(case_id, actor=actor, write_attempt=False)
+        with self.connection() as db:
+            rows = db.execute(
+                """SELECT * FROM case_assist_turns
+                   WHERE tenant_id = ? AND principal_id = ? AND case_id = ?
+                   ORDER BY created_at ASC, turn_id ASC
+                   LIMIT ?""",
+                (ctx["tenant_id"], ctx["principal_id"], ctx["case_id"], max(1, min(int(limit), 100))),
+            ).fetchall()
+        return {
+            "case_id": ctx["case_id"],
+            "can_assist": ctx["can_assist"],
+            "turns": [self._serialize_case_assist_turn_row(r) for r in rows],
+        }
 
     def _open_outbox_claim_tx(self):
         if getattr(self, "_supports_skip_locked", False):
@@ -6547,33 +7476,46 @@ class BusinessStore:
                     "last_error": dead_row["last_error"],
                     "created_at": float(dead_row["created_at"]),
                 }
-        return {
+        ref_key, key_err, key_msg = self._resolve_customer_ref_key()
+        summary = {
             **counts,
             "oldest_pending_at": oldest_pending_at,
             "latest_dead": latest_dead_error,
         }
+        if not ref_key:
+            summary["error"] = key_err or "customer_ref_key_missing"
+            summary["error_message"] = key_msg
+        return summary
 
 
-def inspect_sqlite_outbox_status(target_path: Path) -> dict:
+def inspect_sqlite_outbox_status(target_path: Path, *, environ=None) -> dict:
     """Strictly read-only operator summary of integration_outbox across SQLite tenant databases."""
     target = Path(target_path)
+    ref_key, key_err, key_msg = resolve_customer_ref_key(environ=environ)
     totals = {"pending": 0, "published": 0, "dead": 0}
     tenant_reports = []
 
     if target.is_file():
         store = BusinessStore(target, create=False, initialize_db=False, read_only=True)
         store.tenant_id = target.stem
+        if environ is not None:
+            store.customer_ref_key = ref_key or ""
         summary = store.outbox_status_summary()
         tenant_reports.append({"tenant_id": target.stem, **summary})
         for k in ("pending", "published", "dead"):
             totals[k] += int(summary[k])
-        return {
+        report = {
             "result": "OUTBOX_STATUS",
             "backend": "sqlite",
             "read_only": True,
+            "customer_ref_key_configured": bool(ref_key),
             "totals": totals,
             "tenants": tenant_reports,
         }
+        if not ref_key:
+            report["error"] = key_err or "customer_ref_key_missing"
+            report["message"] = key_msg
+        return report
 
     pers = target / "persistent" if (target / "persistent").is_dir() else target
     id_file = pers / "identity.sqlite3"
@@ -6596,15 +7538,22 @@ def inspect_sqlite_outbox_status(target_path: Path) -> dict:
             continue
         store = BusinessStore(t_file, create=False, initialize_db=False, read_only=True)
         store.tenant_id = tid
+        if environ is not None:
+            store.customer_ref_key = ref_key or ""
         summary = store.outbox_status_summary()
         tenant_reports.append({"tenant_id": tid, **summary})
         for k in ("pending", "published", "dead"):
             totals[k] += int(summary[k])
 
-    return {
+    report = {
         "result": "OUTBOX_STATUS",
         "backend": "sqlite",
         "read_only": True,
+        "customer_ref_key_configured": bool(ref_key),
         "totals": totals,
         "tenants": tenant_reports,
     }
+    if not ref_key:
+        report["error"] = key_err or "customer_ref_key_missing"
+        report["message"] = key_msg
+    return report

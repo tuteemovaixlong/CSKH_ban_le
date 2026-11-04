@@ -224,6 +224,23 @@
                 <button type="button" class="secondary btn-sm" id="btn-claim-ticket">✋ Nhận ca</button>
                 <button type="button" class="secondary btn-sm" id="btn-resolve-ticket">✓ Hoàn tất ca &amp; Đóng</button>
               </div>
+              <div class="staff-case-assist-box" id="staff-case-assist-box" aria-label="Trợ lý ca">
+                <div class="staff-case-assist-header">
+                  <strong>🤖 Trợ lý ca</strong>
+                  <span class="staff-case-assist-hint" id="staff-case-assist-hint">Chỉ đọc trong phạm vi ca · lịch sử riêng từng người</span>
+                </div>
+                <div class="staff-case-assist-controls">
+                  <button type="button" class="secondary btn-sm" id="btn-case-assist-summary">📋 Tóm tắt</button>
+                  <button type="button" class="secondary btn-sm" id="btn-case-assist-draft">✍️ Soạn nháp</button>
+                  <input type="text" class="case-ops-input staff-case-assist-input" id="staff-case-assist-input" placeholder="Đặt câu hỏi về ca này cho Trợ lý ca..." aria-label="Hỏi Trợ lý ca">
+                  <button type="button" class="primary btn-sm" id="btn-case-assist-ask">Hỏi</button>
+                </div>
+                <div class="staff-case-assist-progress" id="staff-case-assist-progress" role="status" aria-live="polite" hidden></div>
+                <div class="staff-case-assist-output" id="staff-case-assist-output"></div>
+                <div class="staff-case-assist-insert-bar" id="staff-case-assist-insert-bar" hidden>
+                  <button type="button" class="secondary btn-sm" id="btn-case-assist-insert">⤵ Chèn vào ô trả lời</button>
+                </div>
+              </div>
               <div class="staff-order-actions-panel" id="staff-order-actions-panel"></div>
             </div>
           </section>
