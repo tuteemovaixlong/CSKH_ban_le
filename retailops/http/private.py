@@ -119,6 +119,8 @@ class Handler(BaseHTTPRequestHandler):
                 max_json = CHAT_ATTACHMENT_JSON_MAX_BYTES if path in ("/api/chat", "/api/staff/customer-message") else 16384
                 require(0 < size <= max_json, 413, "body_too_large", "Yêu cầu quá lớn hoặc rỗng.")
                 body = json.loads(self.rfile.read(size))
+                if size > 16384 and not (isinstance(body, dict) and body.get("attachment") is not None):
+                    require(False, 413, "body_too_large", "Yêu cầu quá lớn hoặc rỗng.")
         request_context = RequestContext.from_app(
             app,
             customer,

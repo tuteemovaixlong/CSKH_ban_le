@@ -277,8 +277,12 @@ class PublicWeb:
                     max_size=PDF_EVIDENCE_MAX_BYTES,
                 )
             else:
-                max_size = CHAT_ATTACHMENT_JSON_MAX_BYTES if path in ('/api/chat', '/api/staff/customer-message') else 16384
+                is_attachment_route = path in ('/api/chat', '/api/staff/customer-message')
+                max_size = CHAT_ATTACHMENT_JSON_MAX_BYTES if is_attachment_route else 16384
                 body = self.json_body(env, max_size=max_size)
+                if is_attachment_route and int(env.get('CONTENT_LENGTH') or 0) > 16384:
+                    if not (isinstance(body, dict) and body.get('attachment') is not None):
+                        require(False, 413, 'body_too_large', 'Yêu cầu quá lớn hoặc rỗng.')
         if method == 'POST' and path == '/api/login':
             fields(body, {'token'})
             secret = self.sessions.login(body['token'])
