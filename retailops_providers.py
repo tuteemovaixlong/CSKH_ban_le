@@ -11,6 +11,7 @@ import re
 import urllib.error
 import urllib.request
 import uuid
+from pathlib import Path
 
 from agent_protocol import (GENERAL_SYSTEM, PROTOCOL, SYSTEM, TOOLS, ProtocolError, assistant_message, merge_system,
                             request_mode, validate_messages, scoped_tools)
@@ -110,16 +111,39 @@ def filter_system_prompt_for_tools(system_text, allowed_tools):
     return '\n'.join(lines)
 
 
+TUNNEL_TOKEN_HEADER = 'X-RetailOps-Tunnel-Token'
+
+
+def read_provider_secret(name, environ=None):
+    env = os.environ if environ is None else environ
+    file_var = f'{name}_FILE'
+    direct = (env.get(name) or '').strip()
+    filepath = (env.get(file_var) or '').strip()
+    if direct and filepath:
+        raise ValueError(f'Set only one of {name} or {file_var}')
+    if filepath:
+        try:
+            return Path(filepath).read_text(encoding='utf-8').strip()
+        except OSError:
+            raise ValueError(f'Cannot read secret file for {name}') from None
+    return direct
+
+
 class OpenRouterAgent:
     ENDPOINT = OPENROUTER_ENDPOINT
 
-    def __init__(self, key, model=API_MODEL):
+    def __init__(self, key, model=API_MODEL, *, tunnel_token=None, endpoint=None):
         if not isinstance(key, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{32,256}', key):
             raise ValueError('Set a valid API key on the server')
-        custom_endpoint = os.getenv('RETAILOPS_API_ENDPOINT', '').strip()
+        resolved_tunnel = read_provider_secret('RETAILOPS_API_TUNNEL_TOKEN') if tunnel_token is None else str(tunnel_token).strip()
+        if resolved_tunnel and not re.fullmatch(r'[A-Za-z0-9_.-]{32,256}', resolved_tunnel):
+            raise ValueError('Set a valid API tunnel token on the server')
+        custom_endpoint = (os.getenv('RETAILOPS_API_ENDPOINT', '').strip() if endpoint is None else str(endpoint).strip())
         if not custom_endpoint and model not in API_MODELS:
             raise ValueError('API model must be an approved model')
         self.key, self.model = key, model
+        self.tunnel_token = resolved_tunnel
+        self._explicit_endpoint = custom_endpoint
         self.is_custom = bool(custom_endpoint)
         if custom_endpoint:
             self.endpoint = custom_endpoint
@@ -150,7 +174,12 @@ class OpenRouterAgent:
         self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirects())
 
     def for_turn(self):
-        return type(self)(self.key, self.model)
+        return type(self)(
+            self.key,
+            self.model,
+            tunnel_token=self.tunnel_token,
+            endpoint=self._explicit_endpoint if self.is_custom else '',
+        )
 
     def inspect(self):
         if self.is_custom:
@@ -237,6 +266,8 @@ class OpenRouterAgent:
             headers['Authorization'] = 'Bearer ' + self.key
             if self.is_google:
                 headers['x-goog-api-key'] = self.key
+        if self.tunnel_token:
+            headers[TUNNEL_TOKEN_HEADER] = self.tunnel_token
         request = urllib.request.Request(self.endpoint, method='POST',
             headers=headers,
             data=json.dumps(payload, ensure_ascii=False, allow_nan=False).encode())
@@ -258,7 +289,16 @@ class OpenRouterAgent:
             finally:
                 exc.close()
             # The provider message is kept only in the trace, filtered and cut to 300 characters.
-            detail = {'http_status': status, 'provider_message': self._safe_text(provider_error_text(body))}
+            raw_provider_msg = self._safe_text(provider_error_text(body))
+            if not raw_provider_msg and status == 401:
+                raw_provider_msg = 'Endpoint rejected Bearer authentication (HTTP 401; check RETAILOPS_API_KEY / --api-key).'
+            elif not raw_provider_msg and status == 403:
+                raw_provider_msg = 'Endpoint or tunnel policy rejected request (HTTP 403; check RETAILOPS_API_TUNNEL_TOKEN / traffic policy).'
+            detail = {'http_status': status, 'provider_message': raw_provider_msg}
+            if status == 401:
+                detail['auth_layer'] = 'api_key'
+            elif status == 403:
+                detail['auth_layer'] = 'tunnel_policy_or_forbidden'
             error_map = {
                 400: ('api_unavailable', f'Yêu cầu API không hợp lệ (HTTP {status}).', 'bad_request'),
                 401: ('api_auth_failed', 'API chưa xác thực được. Chủ demo cần kiểm tra API key/quyền truy cập.', 'authentication_failed'),
@@ -282,7 +322,7 @@ class OpenRouterAgent:
 
     def _safe_text(self, text):
         """Provider/transport text that may enter a trace: no key, URL, endpoint or opaque token."""
-        return filter_provider_text(text, secrets=(self.key, self.endpoint), keep=(self.model,))
+        return filter_provider_text(text, secrets=(self.key, self.tunnel_token, self.endpoint), keep=(self.model,))
 
     def _chat_anthropic(self, messages, allow_tools, timeout, *, allowed_tools=None):
         validate_messages(messages)
@@ -409,7 +449,7 @@ class OpenRouterAgent:
         tool_choice = 'none' if not tools or not allow_tools else 'auto'
         payload = {'model': self.model, 'messages': self.payload_messages(messages, system_prompt, allowed_tools=allowed_tools),
                    'stream': False, 'max_tokens': 2048, 'temperature': 0.2}
-        custom_endpoint = os.getenv('RETAILOPS_API_ENDPOINT', '').strip()
+        custom_endpoint = self._explicit_endpoint if self.is_custom else os.getenv('RETAILOPS_API_ENDPOINT', '').strip()
         if custom_endpoint:
             if tools and allow_tools:
                 payload['tools'] = tools
@@ -505,14 +545,20 @@ def api_from_environment():
     if os.getenv('RETAILOPS_API_ENABLED', 'false').lower() != 'true':
         return None
     key = (
-        os.getenv('ANTHROPIC_API_KEY')
+        read_provider_secret('RETAILOPS_API_KEY')
+        or os.getenv('ANTHROPIC_API_KEY')
         or os.getenv('GEMINI_API_KEY')
         or os.getenv('OPENROUTER_API_KEY', '')
     )
-    if os.getenv('ANTHROPIC_API_KEY'):
+    tunnel_token = read_provider_secret('RETAILOPS_API_TUNNEL_TOKEN')
+    if os.getenv('ANTHROPIC_API_KEY') and not read_provider_secret('RETAILOPS_API_KEY'):
         default_model = 'claude-3-5-haiku-20241022'
-    elif os.getenv('GEMINI_API_KEY'):
+    elif os.getenv('GEMINI_API_KEY') and not read_provider_secret('RETAILOPS_API_KEY'):
         default_model = 'gemini-2.5-flash'
     else:
         default_model = API_MODEL
-    return OpenRouterAgent(key, os.getenv('RETAILOPS_API_MODEL', default_model))
+    return OpenRouterAgent(
+        key,
+        os.getenv('RETAILOPS_API_MODEL', default_model),
+        tunnel_token=tunnel_token,
+    )

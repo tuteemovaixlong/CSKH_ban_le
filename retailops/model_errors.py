@@ -17,13 +17,14 @@ REDACTED = '[REDACTED]'
 _URL = re.compile(r'(?:https?|wss?)://[^\s"\'<>]+', re.IGNORECASE)
 _BEARER = re.compile(r'(?i)\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}')
 _CREDENTIAL_FIELD = re.compile(
-    r'(?i)\b(?:authorization|x-api-key|x-goog-api-key|api[_-]?key|access[_-]?token|secret|password)\b'
+    r'(?i)\b(?:authorization|x-api-key|x-goog-api-key|x-retailops-tunnel-token|'
+    r'tunnel[_-]?token|api[_-]?key|access[_-]?token|secret|password)\b'
     r'\s*[:=]\s*[^\s,;"\'}]+')
 _JWT = re.compile(r'\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b')
 _KEY_SHAPES = re.compile(r'\b(?:sk-(?:proj-|or-v1-|ant-)?[A-Za-z0-9_-]{12,}|AIza[0-9A-Za-z_-]{20,})\b')
 _OPAQUE = re.compile(r'(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_-])')
 _SPACES = re.compile(r'\s+')
-_DIAGNOSTIC_KEYS = ('finish_reason', 'completion_tokens', 'had_reasoning', 'stage', 'upstream_code')
+_DIAGNOSTIC_KEYS = ('finish_reason', 'completion_tokens', 'had_reasoning', 'stage', 'upstream_code', 'auth_layer')
 
 
 def filter_provider_text(text, *, secrets=(), keep=(), limit=MESSAGE_LIMIT):

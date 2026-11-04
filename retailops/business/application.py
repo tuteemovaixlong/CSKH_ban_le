@@ -547,7 +547,10 @@ class Application:
                     preserve_keys=('reasoning', 'thought', '_reasoning', 'thinking'),
                 )
             http_status = getattr(exc, 'http_status', None) or exc_trace.get('http_status')
-            if not http_status:
+            if http_status in (401, 403) or exc.code == 'api_auth_failed':
+                # Upstream provider/tunnel 401/403 is a server-side model auth failure, not a browser session 401.
+                http_status = 503
+            elif not http_status:
                 if exc.code in ('api_rate_limited', 'model_busy'):
                     http_status = 429
                 elif exc.code == 'agent_timeout':

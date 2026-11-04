@@ -24,5 +24,14 @@ def build_gateways(settings: Settings) -> ModelGateways:
     if settings.custom_enabled:
         custom = RemoteAgent(ModelConfig(model=settings.model, base_url=settings.model_url),
                              allowed_host=settings.allowed_host, token=settings.inference_token)
-    api = OpenRouterAgent(settings.api_key, settings.api_model) if settings.api_enabled else None
+    api = (
+        OpenRouterAgent(
+            settings.api_key,
+            settings.api_model,
+            tunnel_token=settings.api_tunnel_token,
+            endpoint=settings.api_endpoint or None,
+        )
+        if settings.api_enabled
+        else None
+    )
     return ModelGateways(custom, api)

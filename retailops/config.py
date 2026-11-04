@@ -101,6 +101,20 @@ def positive_float(env, name, default, minimum=0.05, maximum=86400.0):
     return value
 
 
+def secret_value(env, name, file_name=None):
+    file_var = file_name or f'{name}_FILE'
+    direct = (env.get(name) or '').strip()
+    filepath = (env.get(file_var) or '').strip()
+    if direct and filepath:
+        raise ValueError(f'Set only one of {name} or {file_var}.')
+    if filepath:
+        try:
+            return Path(filepath).read_text(encoding='utf-8').strip()
+        except OSError:
+            raise ValueError(f'Cannot read secret file for {name}.') from None
+    return direct
+
+
 def database_settings(env):
     backend = env.get('RETAILOPS_STORAGE_BACKEND', 'sqlite')
     if backend not in ('sqlite', 'postgresql'):
@@ -153,6 +167,8 @@ class Settings:
     inference_token: str = field(default='', repr=False)
     api_enabled: bool = False
     api_key: str = field(default='', repr=False)
+    api_tunnel_token: str = field(default='', repr=False)
+    api_endpoint: str = field(default='', repr=False)
     api_model: str = 'meta/muse-spark-1.3-contributor'
     api_daily_turn_limit: int = 20
     agent_mode: str = 'agent'
@@ -190,6 +206,8 @@ class Settings:
             public_origin(self.origin)
         if type(self.api_daily_turn_limit) is not int or not 1 <= self.api_daily_turn_limit <= 10000:
             raise ValueError('RETAILOPS_API_DAILY_TURN_LIMIT must be between 1 and 10000.')
+        if self.api_tunnel_token and not re.fullmatch(r'[A-Za-z0-9_.-]{32,256}', self.api_tunnel_token):
+            raise ValueError('RETAILOPS_API_TUNNEL_TOKEN must be a 32–256 character URL-safe value.')
         if type(self.port) is not int or not 0 <= self.port <= 65535:
             raise ValueError('RETAILOPS_API_PORT must be between 0 and 65535.')
         CaseTimerConfig(
@@ -237,11 +255,13 @@ class Settings:
             inference_token=env.get('RETAILOPS_INFERENCE_TOKEN', ''),
             api_enabled=flag(env, 'RETAILOPS_API_ENABLED'),
             api_key=(
-                env.get('RETAILOPS_API_KEY')
+                secret_value(env, 'RETAILOPS_API_KEY')
                 or env.get('ANTHROPIC_API_KEY')
                 or env.get('GEMINI_API_KEY')
                 or env.get('OPENROUTER_API_KEY', '')
             ),
+            api_tunnel_token=secret_value(env, 'RETAILOPS_API_TUNNEL_TOKEN'),
+            api_endpoint=(env.get('RETAILOPS_API_ENDPOINT') or '').strip(),
             api_model=env.get(
                 'RETAILOPS_API_MODEL',
                 'claude-3-5-haiku-20241022' if env.get('ANTHROPIC_API_KEY')
