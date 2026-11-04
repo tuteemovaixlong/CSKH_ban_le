@@ -121,6 +121,8 @@ class PersistentSessions:
             store.case_timer_config = self.case_timer_config
         if getattr(self, 'malware_scanner', None) is not None:
             store.malware_scanner = self.malware_scanner
+        if getattr(self, 'customer_ref_key', None) is not None:
+            store.customer_ref_key = self.customer_ref_key
         return store
 
     def provision_tenant(self, tenant_id, name, *, seed_demo=False):

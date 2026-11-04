@@ -36,6 +36,8 @@ def build_public_app(settings: Settings | None = None) -> PublicWeb:
                                  gateways.custom, gateways.api, settings.api_daily_turn_limit)
     tcfg = settings.case_timer_config
     sessions.case_timer_config = tcfg
+    if settings.customer_ref_key:
+        sessions.customer_ref_key = settings.customer_ref_key
     return PublicWeb(settings.origin, sessions, start_timer_worker=True, timer_scan_seconds=tcfg.scan_seconds)
 
 
@@ -49,6 +51,8 @@ def build_private_app(settings: Settings | None = None) -> Application:
     store.tenant_id = 'default'
     store.data_root = settings.output
     store.case_timer_config = settings.case_timer_config
+    if settings.customer_ref_key:
+        store.customer_ref_key = settings.customer_ref_key
     store.seed()
     token_hash = hashlib.sha256(settings.access_token.encode()).hexdigest()
     return Application(store, {token_hash: 'C-001'}, gateways.custom, gateways.api, settings.api_daily_turn_limit)

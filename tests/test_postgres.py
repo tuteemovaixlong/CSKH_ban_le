@@ -2427,7 +2427,9 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         from concurrent.futures import ThreadPoolExecutor
 
         out_dir = Path(self.temp.name) / 'w3-outbox-data'
+        test_cref_key = 'test-pg-customer-ref-key-0123456789abcdef'
         self.sessions.data_root = out_dir
+        self.sessions.customer_ref_key = test_cref_key
         store = self.sessions.business_store('shop-a')
         store.data_root = out_dir
         store.create_order_action_request(
@@ -2455,7 +2457,12 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         lines = [ln for ln in jsonl_files[0].read_text(encoding='utf-8').splitlines() if ln.strip()]
         self.assertEqual(len(lines), 2)
 
-        cli_env = {**os.environ, 'RETAILOPS_STORAGE_BACKEND': 'postgresql', 'RETAILOPS_DATABASE_URL': DSN}
+        cli_env = {
+            **os.environ,
+            'RETAILOPS_STORAGE_BACKEND': 'postgresql',
+            'RETAILOPS_DATABASE_URL': DSN,
+            'RETAILOPS_CUSTOMER_REF_KEY': test_cref_key,
+        }
         proc = subprocess.run(
             [sys.executable, '-m', 'retailops', 'database', 'outbox-status'],
             env=cli_env,

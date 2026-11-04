@@ -178,6 +178,7 @@ class Settings:
     api_tunnel_token: str = field(default='', repr=False)
     api_endpoint: str = field(default='', repr=False)
     api_vision: bool = False
+    customer_ref_key: str = field(default='', repr=False)
     api_model: str = 'meta/muse-spark-1.3-contributor'
     api_daily_turn_limit: int = 20
     agent_mode: str = 'agent'
@@ -224,6 +225,8 @@ class Settings:
                 raise ValueError(
                     'RETAILOPS_API_VISION=on requires both RETAILOPS_API_KEY and RETAILOPS_API_TUNNEL_TOKEN.'
                 )
+        if self.customer_ref_key and len(self.customer_ref_key.strip()) < 16:
+            raise ValueError('RETAILOPS_CUSTOMER_REF_KEY must be at least 16 characters.')
         if type(self.port) is not int or not 0 <= self.port <= 65535:
             raise ValueError('RETAILOPS_API_PORT must be between 0 and 65535.')
         CaseTimerConfig(
@@ -258,6 +261,7 @@ class Settings:
         is_prod_env = str(env.get('RETAILOPS_ENV', '')).strip().lower() in ('production', 'prod', 'live')
         explicit_api_key = secret_value(env, 'RETAILOPS_API_KEY')
         api_tunnel_token = secret_value(env, 'RETAILOPS_API_TUNNEL_TOKEN')
+        customer_ref_key = secret_value(env, 'RETAILOPS_CUSTOMER_REF_KEY')
         api_vision = on_off_flag(env, 'RETAILOPS_API_VISION', default='off')
         if api_vision and (not explicit_api_key or not api_tunnel_token):
             raise ValueError(
@@ -286,6 +290,7 @@ class Settings:
             api_tunnel_token=api_tunnel_token,
             api_endpoint=(env.get('RETAILOPS_API_ENDPOINT') or '').strip(),
             api_vision=api_vision,
+            customer_ref_key=customer_ref_key,
             api_model=env.get(
                 'RETAILOPS_API_MODEL',
                 'claude-3-5-haiku-20241022' if env.get('ANTHROPIC_API_KEY')

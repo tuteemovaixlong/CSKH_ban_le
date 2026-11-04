@@ -41,7 +41,9 @@ from retailops.business.evidence import (
 from retailops.business.outbox import (
     OUTBOX_MAX_ATTEMPTS,
     append_outbox_jsonl_line,
+    compute_customer_ref,
     compute_next_backoff_seconds,
+    resolve_customer_ref_key,
     seal_closed_integration_days,
     validate_outbox_envelope,
 )
@@ -3900,10 +3902,13 @@ class BusinessStore:
             return True
         return exc.__class__.__name__ in ("UniqueViolation", "IntegrityError", "CheckViolation", "ForeignKeyViolation")
 
+    def _resolve_customer_ref_key(self) -> tuple[str | None, str | None, str | None]:
+        explicit = getattr(self, "customer_ref_key", None)
+        return resolve_customer_ref_key(explicit_key=explicit)
+
     @staticmethod
-    def _opaque_customer_ref(tenant_id: str, customer_id: str) -> str:
-        digest = hashlib.sha256(f"{tenant_id}:{customer_id}".encode("utf-8")).hexdigest()[:24]
-        return f"custref_{digest}"
+    def _opaque_customer_ref(tenant_id: str, customer_id: str, secret_key: str) -> str:
+        return compute_customer_ref(tenant_id, customer_id, secret_key)
 
     @staticmethod
     def _iso_utc(ts: float) -> str:
@@ -3978,10 +3983,18 @@ class BusinessStore:
         require(source in ("app", "worker", "import"), 400, "invalid_outbox_source", "Nguồn outbox không hợp lệ.")
         now_ts = self._now() if now is None else float(now)
         resolved_tid = str(tenant_id or self._effective_tenant_id(actor)).strip() or "default"
+        ref_key, key_err, key_msg = self._resolve_customer_ref_key()
+        if not ref_key:
+            return {
+                "skipped": True,
+                "error": key_err or "customer_ref_key_missing",
+                "message": key_msg,
+                "event_type": event_type,
+            }
         norm_actor = self._normalize_actor(actor, "system", "system")
         actor_principal = norm_actor["principal_id"]
         if norm_actor["role"] == "customer":
-            actor_principal = self._opaque_customer_ref(resolved_tid, str(customer_id or actor_principal))
+            actor_principal = self._opaque_customer_ref(resolved_tid, str(customer_id or actor_principal), ref_key)
         event_id = str(uuid.uuid4())
         envelope: dict = {
             "schema": "retailops.order_action",
@@ -3996,7 +4009,7 @@ class BusinessStore:
             },
         }
         if customer_id:
-            envelope["customer_ref"] = self._opaque_customer_ref(resolved_tid, str(customer_id))
+            envelope["customer_ref"] = self._opaque_customer_ref(resolved_tid, str(customer_id), ref_key)
         if case_id is not None:
             envelope["case_id"] = case_id
         if order_action_request_id is not None:
@@ -7158,33 +7171,46 @@ class BusinessStore:
                     "last_error": dead_row["last_error"],
                     "created_at": float(dead_row["created_at"]),
                 }
-        return {
+        ref_key, key_err, key_msg = self._resolve_customer_ref_key()
+        summary = {
             **counts,
             "oldest_pending_at": oldest_pending_at,
             "latest_dead": latest_dead_error,
         }
+        if not ref_key:
+            summary["error"] = key_err or "customer_ref_key_missing"
+            summary["error_message"] = key_msg
+        return summary
 
 
-def inspect_sqlite_outbox_status(target_path: Path) -> dict:
+def inspect_sqlite_outbox_status(target_path: Path, *, environ=None) -> dict:
     """Strictly read-only operator summary of integration_outbox across SQLite tenant databases."""
     target = Path(target_path)
+    ref_key, key_err, key_msg = resolve_customer_ref_key(environ=environ)
     totals = {"pending": 0, "published": 0, "dead": 0}
     tenant_reports = []
 
     if target.is_file():
         store = BusinessStore(target, create=False, initialize_db=False, read_only=True)
         store.tenant_id = target.stem
+        if environ is not None:
+            store.customer_ref_key = ref_key or ""
         summary = store.outbox_status_summary()
         tenant_reports.append({"tenant_id": target.stem, **summary})
         for k in ("pending", "published", "dead"):
             totals[k] += int(summary[k])
-        return {
+        report = {
             "result": "OUTBOX_STATUS",
             "backend": "sqlite",
             "read_only": True,
+            "customer_ref_key_configured": bool(ref_key),
             "totals": totals,
             "tenants": tenant_reports,
         }
+        if not ref_key:
+            report["error"] = key_err or "customer_ref_key_missing"
+            report["message"] = key_msg
+        return report
 
     pers = target / "persistent" if (target / "persistent").is_dir() else target
     id_file = pers / "identity.sqlite3"
@@ -7207,15 +7233,22 @@ def inspect_sqlite_outbox_status(target_path: Path) -> dict:
             continue
         store = BusinessStore(t_file, create=False, initialize_db=False, read_only=True)
         store.tenant_id = tid
+        if environ is not None:
+            store.customer_ref_key = ref_key or ""
         summary = store.outbox_status_summary()
         tenant_reports.append({"tenant_id": tid, **summary})
         for k in ("pending", "published", "dead"):
             totals[k] += int(summary[k])
 
-    return {
+    report = {
         "result": "OUTBOX_STATUS",
         "backend": "sqlite",
         "read_only": True,
+        "customer_ref_key_configured": bool(ref_key),
         "totals": totals,
         "tenants": tenant_reports,
     }
+    if not ref_key:
+        report["error"] = key_err or "customer_ref_key_missing"
+        report["message"] = key_msg
+    return report

@@ -749,6 +749,7 @@ class PhaseR1W3OrderActionCreationAndFacadeTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.pers = self.root / "persistent"
         self.sessions = PersistentSessions(self.pers, data_mode="persistent-demo")
+        self.sessions.customer_ref_key = "test-w3-customer-ref-key-0123456789abcdef"
         self.store_a = self.sessions.provision_tenant("shop-a", "Shop A", seed_demo=True)
         self.store_b = self.sessions.provision_tenant("shop-b", "Shop B", seed_demo=True)
         with self.store_a.connection(write=True) as db:
@@ -1015,6 +1016,7 @@ class PhaseR1W3ReviewLifecycleDeliveryFailureRefundAndManagerStatusTests(unittes
         self.root = Path(self.temp.name)
         self.pers = self.root / "persistent"
         self.sessions = PersistentSessions(self.pers, data_mode="persistent-demo")
+        self.sessions.customer_ref_key = "test-w3-customer-ref-key-0123456789abcdef"
         self.store_a = self.sessions.provision_tenant("shop-a", "Shop A", seed_demo=True)
         for cid, cname in (
             ("C-STAFF-1", "Nhân viên 1"),
@@ -1423,6 +1425,7 @@ class PhaseR1W3EvidenceStorageExifStripAuthAndPurgeTests(unittest.TestCase):
         self.root = Path(self.temp.name) / "data"
         self.now = 1_785_000_000.0
         self.sessions = PersistentSessions(self.root / "persistent")
+        self.sessions.customer_ref_key = "test-w3-ev-customer-ref-key-0123456789abcdef"
         self.sessions.store_clock = lambda: self.now
 
         # Tenant A (seed_demo already creates C-001 and C-002)
@@ -1751,7 +1754,9 @@ class PhaseR1W3OutboxWorkerJsonlEnvelopeManifestAndCliTests(unittest.TestCase):
         self.root = Path(self.temp.name) / "data"
         # Fixed UTC timestamp: 2026-11-02T10:00:00Z
         self.now = 1_793_613_600.0
+        self.customer_ref_key = "test-w3-outbox-customer-ref-key-0123456789abcdef"
         self.sessions = PersistentSessions(self.root / "persistent")
+        self.sessions.customer_ref_key = self.customer_ref_key
         self.sessions.store_clock = lambda: self.now
         self.store = self.sessions.provision_tenant("tenant-ob-1", "Outbox Shop", seed_demo=True)
         with self.store.connection(write=True) as db:
@@ -1891,7 +1896,12 @@ class PhaseR1W3OutboxWorkerJsonlEnvelopeManifestAndCliTests(unittest.TestCase):
         self.assertEqual(summary["latest_dead"]["attempts"], 8)
 
         # 6. Read-only CLI: python -m retailops database outbox-status
-        cli_env = {**os.environ, "RETAILOPS_STORAGE_BACKEND": "sqlite", "RETAILOPS_OUTPUT": str(self.root)}
+        cli_env = {
+            **os.environ,
+            "RETAILOPS_STORAGE_BACKEND": "sqlite",
+            "RETAILOPS_OUTPUT": str(self.root),
+            "RETAILOPS_CUSTOMER_REF_KEY": self.customer_ref_key,
+        }
         cli_proc = subprocess.run(
             [sys.executable, "-m", "retailops", "database", "outbox-status"],
             cwd=str(Path(__file__).resolve().parents[1]),

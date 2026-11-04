@@ -1,13 +1,15 @@
-"""Outbound JSONL outbox envelope validator, append-only daily sink, and SHA-256 day manifests (§11.4, W3-D7)."""
+"""Outbound JSONL outbox envelope validator, append-only daily sink, and SHA-256 day manifests (§11.4, W3-D7, W4-D8)."""
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Mapping
 
 from retailops.business.evidence import atomic_write_bytes, resolve_protected_subdir
 from retailops.core import ApiError, require
@@ -16,6 +18,80 @@ OUTBOX_SCHEMA = "retailops.order_action"
 OUTBOX_SCHEMA_VERSION = 1
 OUTBOX_BACKOFF_SECONDS = (60, 300, 1800, 7200, 43200)
 OUTBOX_MAX_ATTEMPTS = 8
+CUSTOMER_REF_KEY_MIN_LENGTH = 16
+
+
+def resolve_customer_ref_key(
+    explicit_key: str | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> tuple[str | None, str | None, str | None]:
+    """Resolve HMAC secret key from explicit override, RETAILOPS_CUSTOMER_REF_KEY, or RETAILOPS_CUSTOMER_REF_KEY_FILE.
+
+    Returns (secret_key, error_code, error_message). Never includes secret material in error_message.
+    """
+    if explicit_key is not None:
+        cleaned = str(explicit_key).strip()
+        if not cleaned:
+            return (
+                None,
+                "customer_ref_key_missing",
+                "Thiếu cấu hình khóa RETAILOPS_CUSTOMER_REF_KEY; outbox không ghi sự kiện mới.",
+            )
+        if len(cleaned) < CUSTOMER_REF_KEY_MIN_LENGTH:
+            return (
+                None,
+                "customer_ref_key_invalid",
+                f"Khóa RETAILOPS_CUSTOMER_REF_KEY phải dài tối thiểu {CUSTOMER_REF_KEY_MIN_LENGTH} ký tự; outbox không ghi sự kiện mới.",
+            )
+        return cleaned, None, None
+
+    env = os.environ if environ is None else environ
+    direct = (env.get("RETAILOPS_CUSTOMER_REF_KEY") or "").strip()
+    filepath = (env.get("RETAILOPS_CUSTOMER_REF_KEY_FILE") or "").strip()
+    if direct and filepath:
+        return (
+            None,
+            "customer_ref_key_conflict",
+            "Chỉ được đặt một trong hai biến RETAILOPS_CUSTOMER_REF_KEY hoặc RETAILOPS_CUSTOMER_REF_KEY_FILE; outbox không ghi sự kiện mới.",
+        )
+    if filepath:
+        try:
+            key = Path(filepath).read_text(encoding="utf-8").strip()
+        except OSError:
+            return (
+                None,
+                "customer_ref_key_unreadable",
+                "Không đọc được tệp khóa RETAILOPS_CUSTOMER_REF_KEY_FILE; outbox không ghi sự kiện mới.",
+            )
+    else:
+        key = direct
+    if not key:
+        return (
+            None,
+            "customer_ref_key_missing",
+            "Thiếu cấu hình khóa RETAILOPS_CUSTOMER_REF_KEY (hoặc RETAILOPS_CUSTOMER_REF_KEY_FILE); outbox không ghi sự kiện mới.",
+        )
+    if len(key) < CUSTOMER_REF_KEY_MIN_LENGTH:
+        return (
+            None,
+            "customer_ref_key_invalid",
+            f"Khóa RETAILOPS_CUSTOMER_REF_KEY phải dài tối thiểu {CUSTOMER_REF_KEY_MIN_LENGTH} ký tự; outbox không ghi sự kiện mới.",
+        )
+    return key, None, None
+
+
+def compute_customer_ref(tenant_id: str, customer_id: str, secret_key: str) -> str:
+    """Compute HMAC-SHA-256 salted customer_ref (`custref_<64hex>`) per W4-D8."""
+    key_clean, err_code, err_msg = resolve_customer_ref_key(explicit_key=secret_key)
+    if not key_clean:
+        raise ValueError(err_msg or err_code or "Invalid customer_ref secret key.")
+    tid = str(tenant_id or "").strip() or "default"
+    cid = str(customer_id or "").strip()
+    if not cid:
+        raise ValueError("customer_id must not be empty.")
+    msg = f"{tid}\x00{cid}".encode("utf-8")
+    digest = hmac.new(key_clean.encode("utf-8"), msg, hashlib.sha256).hexdigest()
+    return f"custref_{digest}"
 
 ALLOWED_OUTBOX_EVENT_TYPES = frozenset({
     "cancel_requested",

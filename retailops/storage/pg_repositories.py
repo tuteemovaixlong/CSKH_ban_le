@@ -339,9 +339,12 @@ def migrate_postgres_business_v7(dsn, *, preflight_confirmed=False, backup_confi
     }
 
 
-def inspect_postgres_outbox_status(dsn) -> dict:
+def inspect_postgres_outbox_status(dsn, *, environ=None) -> dict:
     """Strictly read-only operator summary of integration_outbox across PostgreSQL tenants."""
+    from retailops.business.outbox import resolve_customer_ref_key
+
     validate_dsn(dsn)
+    ref_key, key_err, key_msg = resolve_customer_ref_key(environ=environ)
     identity = PostgresIdentityStore(dsn, create=False, migrate=False, read_only=True)
     with identity.connection(write=False) as id_db:
         tenants = id_db.execute('SELECT id, storage_key FROM tenants ORDER BY id').fetchall() or []
@@ -357,16 +360,23 @@ def inspect_postgres_outbox_status(dsn) -> dict:
             continue
         store = PostgresBusinessStore(dsn, tenant['storage_key'], create=False, migrate=False, read_only=True)
         store.tenant_id = tid
+        if environ is not None:
+            store.customer_ref_key = ref_key or ''
         summary = store.outbox_status_summary()
         tenant_reports.append({'tenant_id': tid, **summary})
         for k in ('pending', 'published', 'dead'):
             totals[k] += int(summary[k])
 
-    return {
+    report = {
         'result': 'OUTBOX_STATUS',
         'backend': 'postgresql',
         'read_only': True,
+        'customer_ref_key_configured': bool(ref_key),
         'totals': totals,
         'tenants': tenant_reports,
     }
+    if not ref_key:
+        report['error'] = key_err or 'customer_ref_key_missing'
+        report['message'] = key_msg
+    return report
 
