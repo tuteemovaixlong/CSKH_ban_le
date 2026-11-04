@@ -88,7 +88,10 @@ class DatasetFormatTests(unittest.TestCase):
         with patch.object(sys, 'argv', ['check_eval_dataset.py']), contextlib.redirect_stdout(out):
             checker.main()
         lines = out.getvalue().splitlines()
-        self.assertEqual([l.split()[1] for l in lines], ['baseline_v1.jsonl', 'agent_scenarios_w3_2.jsonl'])
+        self.assertEqual(
+            [l.split()[1] for l in lines],
+            ['baseline_v1.jsonl', 'agent_scenarios_w3_2.jsonl', 'agent_scenarios_w4.jsonl'],
+        )
         self.assertTrue(all(l.startswith('EVAL_DATASET_OK') for l in lines))
         out = io.StringIO()
         with patch.object(sys, 'argv', ['check_eval_dataset.py', str(DATASET)]), contextlib.redirect_stdout(out):

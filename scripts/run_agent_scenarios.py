@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Run the W3.2 agent scenarios (W3.2-D12) against the customer agent of this repository.
+"""Run the RetailOps agent evaluation scenarios (W3.2-D12, W4 Item 9).
 
-Every scenario is a short tau-bench style conversation of one synthetic customer (C-001 of a fresh demo
-store built in a temporary directory) with the expectations the code can check: which tools were used,
-what must not be said, what the form did and what the store looks like at the end.
+Every scenario is a short tau-bench style conversation in a fresh temporary SQLite store with synthetic
+data, checking tool selection, safety/grounding boundaries, UI actions, media projection bounds, Case
+Assistant isolation, and final database state.
 
 Two modes, and only one of them can reach a model:
 
@@ -12,6 +12,10 @@ Two modes, and only one of them can reach a model:
   --endpoint URL      The OWNER's real model, for example the "Endpoint API OpenAI" printed by
                       notebooks/colab_vllm_l4.py. The scripted replies are ignored and the model plans and
                       calls the tools itself. Without --endpoint nothing runs.
+                      W4 two-layer endpoint headers (Item 0 / W4-D2) are read from environment or secret
+                      files (--api-key-env / --api-key-file for Authorization: Bearer, and
+                      --tunnel-token-env / --tunnel-token-file for X-RetailOps-Tunnel-Token) and never
+                      written to reports or logs.
 
 The run uses its own temporary SQLite store and synthetic data. It never touches a deployed database,
 a real customer or a production setting; the only thing it sends out in real mode is the synthetic
@@ -20,16 +24,19 @@ conversations, to the endpoint you name.
 Report (JSON with --out, summary on stdout):
   success rate        scenarios whose every check holds
   valid tool calls    calls to a known tool with arguments that pass the schema. Business refusals
-                      (order not found, not eligible) are valid calls; tool_not_allowed,
+                      (order not found, order_not_in_case, not eligible) are valid calls; tool_not_allowed,
                       invalid_tool_arguments and invalid_knowledge_query are not. Exact repeats
                       (duplicate_call) are counted on their own.
-  latency p50 / p95   wall time of one customer turn, nearest-rank percentile over all turns
+  latency p50 / p95   wall time of one turn, nearest-rank percentile over all turns
+  image token cost    prompt tokens on image-bearing turns and average prompt tokens per projected image
 """
 import argparse
+import base64
 import contextlib
 import copy
 import hashlib
 import importlib.util
+import io
 import json
 import math
 import os
@@ -44,11 +51,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DATASET = ROOT / 'evals' / 'agent_scenarios_w3_2.jsonl'
+W4_DATASET = ROOT / 'evals' / 'agent_scenarios_w4.jsonl'
 DEFAULT_MODEL = 'yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2'
 PLACEHOLDER_KEY = 'scenario-runner-placeholder-key-0000'   # a vLLM server without --api-key ignores it
 CUSTOMER = 'C-001'
 INVALID_TOOL_CODES = frozenset({'tool_not_allowed', 'invalid_tool_arguments', 'invalid_knowledge_query'})
 LOOPBACK_HOSTS = frozenset({'localhost', '127.0.0.1', '::1'})
+TRUTHY_VISION = frozenset({'1', 'true', 'yes', 'on'})
+FALSY_VISION = frozenset({'0', 'false', 'no', 'off'})
 REFUSAL = ('Chưa có --endpoint nên script không chạy.\n'
            'Chế độ model thật chỉ dành cho owner: truyền --endpoint <URL> (ví dụ "Endpoint API OpenAI" mà '
            'notebooks/colab_vllm_l4.py in ra).\n'
@@ -64,7 +74,9 @@ FIXTURES = {
     ],
 }
 COUNTED_TABLES = ('order_action_requests', 'order_action_decisions', 'proposals', 'integration_outbox', 'handoff_episodes')
+W4_COUNTED_TABLES = COUNTED_TABLES + ('case_assist_turns', 'order_action_evidence')
 _TEMPLATE = re.compile(r'\{\{\s*last_tool\.([A-Za-z0-9_.]+)\s*\}\}')
+_EXIF_CANARY = 'SecretPhoneExif'
 
 
 class ScenarioError(Exception):
@@ -79,7 +91,8 @@ def _modules():
     from retailops.core import ApiError
     from retailops.identity.persistent import PersistentSessions
     from retailops.knowledge.repository import KnowledgeRepository
-    return Application, ApiError, PersistentSessions, KnowledgeRepository
+    from retailops_agent import AgentError
+    return Application, ApiError, PersistentSessions, KnowledgeRepository, AgentError
 
 
 def _checker():
@@ -92,8 +105,11 @@ def _checker():
 def load_dataset(path=DEFAULT_DATASET):
     """The scenarios of a dataset file, validated by the format check; AssertionError when the file is malformed."""
     checker = _checker()
-    scenarios = checker.load_w32_scenarios(path)
-    checker.validate_w32(scenarios)
+    scenarios = checker.load_cases(path)
+    if checker.is_w4_scenario_dataset(path, scenarios):
+        checker.validate_w4(scenarios)
+    else:
+        checker.validate_w32(scenarios)
     return scenarios
 
 
@@ -101,7 +117,125 @@ def dataset_digest(path):
     return hashlib.sha256(Path(path).read_bytes().replace(b'\r\n', b'\n')).hexdigest()
 
 
-# ---------------------------------------------------------------- fake gateway
+# ---------------------------------------------------------------- synthetic media builders (W4 Item 9)
+
+def _build_pdf_from_objects(objs):
+    out = bytearray(b'%PDF-1.4\n')
+    offsets = [0]
+    for idx, body in enumerate(objs, start=1):
+        offsets.append(len(out))
+        out.extend(f'{idx} 0 obj\n'.encode('ascii'))
+        out.extend(body)
+        out.extend(b'\nendobj\n')
+    xref_pos = len(out)
+    out.extend(f'xref\n0 {len(objs) + 1}\n'.encode('ascii'))
+    out.extend(b'0000000000 65535 f \n')
+    for off in offsets[1:]:
+        out.extend(f'{off:010d} 00000 n \n'.encode('ascii'))
+    out.extend(f'trailer\n<< /Size {len(objs) + 1} /Root 1 0 R >>\nstartxref\n{xref_pos}\n%%EOF\n'.encode('ascii'))
+    return bytes(out)
+
+
+def _make_text_pdf_bytes(page_texts):
+    page_nums = [4 + i * 2 for i in range(len(page_texts))]
+    kids = ' '.join(f'{n} 0 R' for n in page_nums)
+    objs = [
+        b'<< /Type /Catalog /Pages 2 0 R >>',
+        f'<< /Type /Pages /Kids [{kids}] /Count {len(page_texts)} >>'.encode('ascii'),
+        b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    ]
+    for idx, txt in enumerate(page_texts):
+        c_num = 5 + idx * 2
+        safe = txt.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
+        stream = f'BT /F1 12 Tf 36 120 Td ({safe}) Tj ET'.encode('latin-1', errors='replace')
+        objs.append(
+            f'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 420 220] '
+            f'/Resources << /Font << /F1 3 0 R >> >> /Contents {c_num} 0 R >>'.encode('ascii')
+        )
+        objs.append(f'<< /Length {len(stream)} >>\nstream\n'.encode('ascii') + stream + b'\nendstream')
+    return _build_pdf_from_objects(objs)
+
+
+def _make_scanned_pdf_bytes(page_count):
+    from PIL import Image
+    img = Image.new('RGB', (160, 120), color=(215, 225, 240))
+    for x in range(20, 140):
+        for y in range(30, 90):
+            if (x + y) % 9 == 0:
+                img.putpixel((x, y), (45, 70, 115))
+    buf = io.BytesIO()
+    img.save(buf, format='JPEG', quality=85)
+    jpg = buf.getvalue()
+
+    page_nums = [4 + i * 2 for i in range(page_count)]
+    kids = ' '.join(f'{n} 0 R' for n in page_nums)
+    img_obj = (
+        f'<< /Type /XObject /Subtype /Image /Width 160 /Height 120 '
+        f'/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length {len(jpg)} >>\nstream\n'.encode('ascii')
+        + jpg
+        + b'\nendstream'
+    )
+    objs = [
+        b'<< /Type /Catalog /Pages 2 0 R >>',
+        f'<< /Type /Pages /Kids [{kids}] /Count {page_count} >>'.encode('ascii'),
+        img_obj,
+    ]
+    draw = b'q 320 0 0 240 20 20 cm /Im0 Do Q'
+    for idx in range(page_count):
+        c_num = 5 + idx * 2
+        objs.append(
+            f'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 360 280] '
+            f'/Resources << /XObject << /Im0 3 0 R >> >> /Contents {c_num} 0 R >>'.encode('ascii')
+        )
+        objs.append(f'<< /Length {len(draw)} >>\nstream\n'.encode('ascii') + draw + b'\nendstream')
+    return _build_pdf_from_objects(objs)
+
+
+def _make_large_exif_jpeg_bytes(width, height):
+    from PIL import Image, ImageDraw
+    img = Image.new('RGB', (width, height), color=(236, 232, 224))
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([width // 8, height // 8, width * 7 // 8, height * 7 // 8], outline=(160, 48, 48), width=8)
+    draw.line([width // 6, height // 2, width * 5 // 6, height // 2], fill=(40, 60, 90), width=6)
+    exif = Image.Exif()
+    exif[271] = _EXIF_CANARY
+    exif[272] = 'ScenarioEvalCamera'
+    buf = io.BytesIO()
+    img.save(buf, format='JPEG', quality=88, exif=exif.tobytes())
+    return buf.getvalue()
+
+
+def build_synthetic_attachment(spec):
+    """Build an in-memory synthetic image or PDF attachment payload from a declarative scenario spec."""
+    kind = spec['kind']
+    if kind == 'large_exif_jpeg':
+        raw = _make_large_exif_jpeg_bytes(int(spec['width']), int(spec['height']))
+        b64 = base64.b64encode(raw).decode('ascii')
+        return {'type': 'image', 'name': spec['name'], 'data': f'data:image/jpeg;base64,{b64}'}
+    if kind == 'text_pdf':
+        raw = _make_text_pdf_bytes(spec['pages'])
+        b64 = base64.b64encode(raw).decode('ascii')
+        return {'type': 'document', 'name': spec['name'], 'mime_type': 'application/pdf', 'data': f'data:application/pdf;base64,{b64}'}
+    if kind == 'scanned_pdf':
+        raw = _make_scanned_pdf_bytes(int(spec['page_count']))
+        b64 = base64.b64encode(raw).decode('ascii')
+        return {'type': 'document', 'name': spec['name'], 'mime_type': 'application/pdf', 'data': f'data:application/pdf;base64,{b64}'}
+    raise ScenarioError(f'unknown synthetic attachment kind: {kind!r}')
+
+
+class _ScenarioCleanScanner:
+    """Offline ClamAV test double for synthetic PDF scenario evaluation."""
+
+    def __init__(self, api_error_cls):
+        self._api_error_cls = api_error_cls
+
+    def scan_bytes(self, payload):
+        if b'EICAR-STANDARD-ANTIVIRUS-TEST-FILE' in payload:
+            raise self._api_error_cls(400, 'malware_detected', 'Phát hiện chuỗi kiểm thử EICAR trong tệp đính kèm.')
+        return {'status': 'clean', 'engine': 'scenario-fake-clamav/1.0', 'scanned_at': 1762200000.0}
+
+
+# ---------------------------------------------------------------- fake gateway & projection observer
 
 def _last_tool_json(messages):
     for message in reversed(messages):
@@ -129,6 +263,8 @@ def fill_templates(text, messages):
 class ScriptedGateway:
     """Stands in for the model in --fake mode: replays the scripted replies of the current turn, in order."""
 
+    is_vision = True
+
     def __init__(self, identity=None):
         self.identity = identity or {'name': 'scenario-scripted-gateway', 'digest': 'scenario', 'provider': 'custom'}
         self.steps, self.used = [], 0
@@ -153,6 +289,140 @@ class ScriptedGateway:
         if step.get('call'):
             message['tool_calls'] = [{'function': {'name': c['name'], 'arguments': c['arguments']}} for c in step['call']]
         return {'message': message, 'prompt_eval_count': 40, 'eval_count': 12}
+
+    def chat_profile(self, messages, allow_tools, timeout, *, system_prompt=None, tool_schemas=None, **kwargs):
+        return self.chat(messages, allow_tools, timeout, system_prompt=system_prompt, tool_schemas=tool_schemas, **kwargs)
+
+
+def _decode_data_url_metrics(url):
+    from PIL import Image
+    comma = url.find(',')
+    raw = base64.b64decode(url[comma + 1:] if comma >= 0 else url)
+    with Image.open(io.BytesIO(raw)) as img:
+        edge = max(img.size)
+        has_exif = len(img.getexif()) > 0 or (_EXIF_CANARY.encode('ascii') in raw)
+    return edge, has_exif
+
+
+class _TurnObservationState:
+    def __init__(self):
+        self.reset()
+
+    def reset(self, *, fault=None):
+        self.fault = fault
+        self.call_image_counts = []
+        self.max_edge = 0
+        self.has_exif = False
+        self.texts_sent = []
+
+    def record_messages(self, target, messages, *, system_prompt=None, extra_tool_names=()):
+        urls = []
+        text_chunks = []
+        if system_prompt:
+            text_chunks.append(str(system_prompt))
+        if hasattr(target, 'translate'):
+            translated = target.translate(messages, extra_tool_names=extra_tool_names)
+            for m in translated:
+                content = m.get('content')
+                if isinstance(content, str):
+                    text_chunks.append(content)
+                elif isinstance(content, list):
+                    for part in content:
+                        if not isinstance(part, dict):
+                            continue
+                        if part.get('type') == 'text':
+                            text_chunks.append(str(part.get('text') or ''))
+                        elif part.get('type') == 'image_url':
+                            u = (part.get('image_url') or {}).get('url')
+                            if isinstance(u, str) and u:
+                                urls.append(u)
+        else:
+            vision_active = bool(getattr(target, 'is_vision', False)) and self.fault != 'vision_disabled'
+            remaining = 3
+            allowed_by_idx = {}
+            if vision_active:
+                for idx in range(len(messages) - 1, -1, -1):
+                    if remaining <= 0:
+                        break
+                    msg = messages[idx]
+                    if isinstance(msg, dict) and msg.get('role') == 'user' and isinstance(msg.get('attachment'), dict):
+                        att = msg['attachment']
+                        cand = []
+                        if att.get('type') == 'image' and isinstance(att.get('data'), str) and att['data']:
+                            cand = [att['data']]
+                        elif isinstance(att.get('images'), list):
+                            cand = [u for u in att['images'] if isinstance(u, str) and u]
+                        if cand:
+                            allowed_by_idx[idx] = cand[:remaining]
+                            remaining -= len(allowed_by_idx[idx])
+            for idx, m in enumerate(messages):
+                if not isinstance(m, dict):
+                    continue
+                if isinstance(m.get('content'), str):
+                    text_chunks.append(m['content'])
+                att = m.get('attachment')
+                if isinstance(att, dict) and att.get('excerpt'):
+                    text_chunks.append(str(att['excerpt']))
+                urls.extend(allowed_by_idx.get(idx, ()))
+
+        self.call_image_counts.append(len(urls))
+        for u in urls:
+            edge, exif_present = _decode_data_url_metrics(u)
+            if edge > self.max_edge:
+                self.max_edge = edge
+            if exif_present:
+                self.has_exif = True
+        self.texts_sent.append('\n'.join(text_chunks))
+
+    def snapshot(self):
+        return {
+            'first_call_images': self.call_image_counts[0] if self.call_image_counts else 0,
+            'max_images_in_call': max(self.call_image_counts) if self.call_image_counts else 0,
+            'max_edge': self.max_edge,
+            'has_exif': self.has_exif,
+            'texts_sent': '\n'.join(self.texts_sent),
+        }
+
+
+class _ObservingGateway:
+    """Transparent gateway wrapper that observes projected media/prompts and injects scenario faults."""
+
+    def __init__(self, target, state: _TurnObservationState, agent_error_cls):
+        self._target = target
+        self._state = state
+        self._agent_error_cls = agent_error_cls
+
+    def __getattr__(self, name):
+        return getattr(self._target, name)
+
+    @property
+    def is_vision(self):
+        if self._state.fault == 'vision_disabled':
+            return False
+        return bool(getattr(self._target, 'is_vision', False))
+
+    def for_turn(self):
+        inner = self._target.for_turn() if hasattr(self._target, 'for_turn') else self._target
+        return _ObservingGateway(inner, self._state, self._agent_error_cls)
+
+    def chat(self, messages, allow_tools, timeout, **kwargs):
+        if self._state.fault == 'endpoint_unavailable':
+            raise self._agent_error_cls('api_unavailable', 'Simulated endpoint outage for media fallback scenario.')
+        self._state.record_messages(self._target, messages)
+        return self._target.chat(messages, allow_tools, timeout, **kwargs)
+
+    def chat_profile(self, messages, allow_tools, timeout, *, system_prompt, tool_schemas):
+        if self._state.fault == 'endpoint_unavailable':
+            raise self._agent_error_cls('api_unavailable', 'Simulated endpoint outage for media fallback scenario.')
+        extra_names = [
+            t['function']['name']
+            for t in (tool_schemas or ())
+            if isinstance(t, dict) and isinstance(t.get('function'), dict) and t['function'].get('name')
+        ]
+        self._state.record_messages(self._target, messages, system_prompt=system_prompt, extra_tool_names=extra_names)
+        if hasattr(self._target, 'chat_profile'):
+            return self._target.chat_profile(messages, allow_tools, timeout, system_prompt=system_prompt, tool_schemas=tool_schemas)
+        return self._target.chat(messages, allow_tools, timeout)
 
 
 # ---------------------------------------------------------------- grading
@@ -201,11 +471,42 @@ def grade_turn(expect, outcome, variant_label=lambda order_id, variant_id: None)
         failures.append(f"request mode is {trace.get('request_mode')!r}, expected {expect['request_mode']!r}")
     if 'human_support' in expect and bool(result.get('human_support')) != expect['human_support']:
         failures.append(f"human support was {'' if result.get('human_support') else 'not '}requested, expected the opposite")
+    if 'has_draft_reply' in expect:
+        has_draft = bool((result.get('draft_reply') or '').strip())
+        if has_draft != expect['has_draft_reply']:
+            failures.append(f"draft_reply presence is {has_draft}, expected {expect['has_draft_reply']}")
+    if 'staff_replies_sent' in expect and outcome.get('staff_replies_sent', 0) != expect['staff_replies_sent']:
+        failures.append(f"staff_replies_sent is {outcome.get('staff_replies_sent', 0)}, expected {expect['staff_replies_sent']}")
+    if 'media_projection' in expect:
+        mp = expect['media_projection']
+        obs = outcome.get('media_obs') or {}
+        img_cnt = obs.get('max_images_in_call', 0)
+        if 'images_min' in mp and img_cnt < mp['images_min']:
+            failures.append(f"projected images is {img_cnt}, expected at least {mp['images_min']} (enable --vision on for multimodal scenarios)")
+        if 'images_max' in mp and img_cnt > mp['images_max']:
+            failures.append(f"projected images is {img_cnt}, at most {mp['images_max']} allowed")
+        if 'max_edge' in mp and img_cnt > 0 and obs.get('max_edge', 0) > mp['max_edge']:
+            failures.append(f"projected image max edge is {obs.get('max_edge')} px, exceeds {mp['max_edge']} px")
+        if mp.get('exif_stripped') and obs.get('has_exif'):
+            failures.append('projected image retained EXIF metadata')
+        if mp.get('no_raw_in_history') and not outcome.get('history_raw_clean', True):
+            failures.append('raw base64/data-URL bytes leaked into agent_turns history')
+        if mp.get('no_pii_in_payload') and not outcome.get('payload_pii_clean', True):
+            failures.append('customer PII leaked into model payload')
+        if 'pdf_excerpt_pages' in mp:
+            sent_text = obs.get('texts_sent') or ''
+            for pnum in mp['pdf_excerpt_pages']:
+                marker = f'[Trang {pnum}]'
+                if marker not in sent_text:
+                    failures.append(f'projected PDF excerpt lacks page marker {marker!r}')
     sources = [s.get('source_key') for s in result.get('sources') or [] if isinstance(s, dict)]
     for key in expect.get('sources', []):
         if key not in sources:
             failures.append(f'source {key} is not among the answer sources ({sources or "none"})')
-    answer = squash(result.get('message'))
+    combined_text = result.get('message') or ''
+    if result.get('draft_reply'):
+        combined_text = f"{combined_text}\n{result['draft_reply']}".strip()
+    answer = squash(combined_text)
     for phrase in expect.get('answer_all', []):
         if squash(phrase) not in answer:
             failures.append(f'the answer lacks {phrase!r}')
@@ -227,7 +528,7 @@ def grade_final_state(expect, store):
             if actual != status:
                 failures.append(f'order {order_id} is {actual!r} at the end, expected {status!r}')
         for table, count in (expect.get('rows') or {}).items():
-            if table not in COUNTED_TABLES:
+            if table not in W4_COUNTED_TABLES:
                 failures.append(f'table {table} cannot be checked')
                 continue
             actual = db.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
@@ -250,20 +551,59 @@ class World:
     """One scenario's own tenant: a temporary SQLite store with the demo seed and the scenario's fixture."""
 
     def __init__(self, scenario, gateway):
-        Application, self.ApiError, PersistentSessions, self.KnowledgeRepository = _modules()
+        Application, self.ApiError, PersistentSessions, self.KnowledgeRepository, AgentError = _modules()
         self.temp = tempfile.TemporaryDirectory(prefix='w32-scenario-', ignore_cleanup_errors=True)
         sessions = PersistentSessions(Path(self.temp.name) / 'persistent', data_mode='persistent-demo')
         self.store = sessions.provision_tenant('shop-scenarios', 'Shop scenarios', seed_demo=True)
+        self.store.tenant_id = 'shop-scenarios'
+        self.store.data_root = Path(self.temp.name) / 'data'
+        self.store.malware_scanner = _ScenarioCleanScanner(self.ApiError)
+        self.store.customer_ref_key = 'scenario-eval-hmac-secret-key-0123456789abcdef'
         with self.store.connection(write=True) as db:
             for order in FIXTURES[scenario['fixture']]:
                 db.execute('INSERT INTO orders(id, customer_id, product_id, name, variant, amount, status, version) '
                            'VALUES (?, ?, ?, ?, ?, ?, ?, 1)',
                            (order['id'], CUSTOMER, order['product_id'], order['name'], order['variant'], 599000, order['status']))
+            cust_row = db.execute('SELECT name FROM customers WHERE id = ?', (CUSTOMER,)).fetchone()
+            self.customer_pii_tokens = [cust_row[0]] if cust_row and cust_row[0] else ['Mai Anh']
+        self._obs_state = _TurnObservationState()
+        self._obs_gateway = _ObservingGateway(gateway, self._obs_state, AgentError)
+        self.actor = scenario.get('actor', 'customer')
         # Tool results are tested through the whole application; "api" has no response cache, so a repeated
         # question in another scenario can never be answered without the model.
-        self.app = Application(self.store, {}, api_infer=gateway, api_daily_limit=10000)
+        self.app = Application(self.store, {}, api_infer=self._obs_gateway, api_daily_limit=10000, tenant_id='shop-scenarios')
         self.conversation = self.store.new_conversation(CUSTOMER, 'api')['conversation_id']
         self.knowledge = scenario.get('knowledge')
+        self.case_id = None
+        self.staff_app = None
+        self.staff_actor = None
+        if self.actor == 'staff_case_assist':
+            setup = scenario['case_setup']
+            for msg in setup['customer_messages']:
+                att = build_synthetic_attachment(msg['attachment']) if 'attachment' in msg else None
+                self.store.customer_message(CUSTOMER, self.conversation, msg['text'], attachment=att)
+            handoff = self.store.request_human_handoff(
+                CUSTOMER,
+                self.conversation,
+                reason_code='customer_requested',
+                comment=setup.get('handoff_comment') or 'Khách yêu cầu nhân viên hỗ trợ',
+            )
+            self.case_id = handoff['case_id']
+            self.staff_actor = {
+                'principal_id': 'staff-eval-1',
+                'role': 'staff',
+                'tenant_id': 'shop-scenarios',
+                'display_name': 'Nhân viên Eval',
+            }
+            self.store.claim_case(self.case_id, staff_name='Nhân viên Eval', actor=self.staff_actor)
+            self.staff_app = Application(
+                self.store,
+                {},
+                api_infer=self._obs_gateway,
+                api_daily_limit=10000,
+                role='staff',
+                tenant_id='shop-scenarios',
+            )
 
     def variant_label(self, order_id, variant_id):
         if not order_id or not variant_id:
@@ -288,12 +628,55 @@ class World:
         finally:
             del self.store.schema
 
-    def say(self, text):
+    def _inspect_turn_storage(self):
+        with self.store.connection() as db:
+            rows = db.execute(
+                'SELECT messages, result FROM agent_turns WHERE conversation_id = ? ORDER BY id ASC',
+                (self.conversation,),
+            ).fetchall()
+        raw_msgs = '\n'.join(str(r[0] or '') for r in rows)
+        history_clean = (
+            'data:image/' not in raw_msgs
+            and 'data:application/pdf' not in raw_msgs
+            and '"data":' not in raw_msgs
+        )
+        staff_replies = 0
+        for r in rows:
+            try:
+                res_obj = json.loads(r[1]) if isinstance(r[1], str) else (r[1] or {})
+            except Exception:
+                res_obj = {}
+            if isinstance(res_obj, dict) and res_obj.get('author') == 'staff':
+                staff_replies += 1
+        return history_clean, staff_replies
+
+    def play_turn(self, turn):
+        self._obs_state.reset(fault=turn.get('gateway_fault'))
         started = time.perf_counter()
         outcome = {'result': None, 'error': None, 'tools': [], 'model_calls': 0}
         try:
-            result = self.app.chat(CUSTOMER, {'conversation_id': self.conversation, 'text': text,
-                                              'request_id': 'req-' + uuid.uuid4().hex})
+            if self.actor == 'staff_case_assist':
+                raw_res = self.staff_app.case_assist(
+                    self.staff_actor,
+                    self.case_id,
+                    {
+                        'mode': turn['mode'],
+                        'question': turn['user'],
+                        'provider_id': 'api',
+                        'request_id': 'req-' + uuid.uuid4().hex,
+                    },
+                )
+                result = dict(raw_res)
+                result.setdefault('message', result.get('answer') or '')
+            else:
+                body = {
+                    'conversation_id': self.conversation,
+                    'text': turn['user'],
+                    'request_id': 'req-' + uuid.uuid4().hex,
+                }
+                if 'attachment' in turn:
+                    body['attachment'] = build_synthetic_attachment(turn['attachment'])
+                result = self.app.chat(CUSTOMER, body)
             outcome['result'] = result
             trace = result.get('trace') or {}
         except self.ApiError as err:
@@ -306,7 +689,17 @@ class World:
         outcome['model_calls'] = trace.get('model_calls') or 0
         outcome['prompt_tokens'] = trace.get('prompt_tokens') or 0
         outcome['generated_tokens'] = trace.get('generated_tokens') or 0
+        obs = self._obs_state.snapshot()
+        history_clean, staff_replies = self._inspect_turn_storage()
+        outcome['media_obs'] = obs
+        outcome['images_sent'] = obs['first_call_images']
+        outcome['history_raw_clean'] = history_clean
+        outcome['payload_pii_clean'] = not any(tok and tok in obs['texts_sent'] for tok in self.customer_pii_tokens)
+        outcome['staff_replies_sent'] = staff_replies
         return outcome
+
+    def say(self, text):
+        return self.play_turn({'user': text})
 
     def close(self):
         self.temp.cleanup()
@@ -323,7 +716,7 @@ def run_scenario(scenario, gateway, mode):
                 if scripted:
                     gateway.load(turn['fake_model'])
                 try:
-                    outcome = world.say(turn['user'])
+                    outcome = world.play_turn(turn)
                 except ScenarioError as err:
                     failures.append(f'turn {number}: script defect: {err}')
                     break
@@ -332,10 +725,24 @@ def run_scenario(scenario, gateway, mode):
                     problems.append(f'{gateway.leftover} scripted reply(ies) were never asked for: the script is out of date')
                 failures.extend(f'turn {number}: {p}' for p in problems)
                 result = outcome['result'] or {}
-                turns.append({'user': turn['user'], 'latency_ms': outcome['latency_ms'], 'model_calls': outcome['model_calls'],
-                              'prompt_tokens': outcome['prompt_tokens'], 'generated_tokens': outcome['generated_tokens'],
-                              'tools': outcome['tools'], 'action': result.get('action'), 'error': outcome['error'],
-                              'answer': str(result.get('message') or '')[:600]})
+                turn_rec = {
+                    'user': turn['user'],
+                    'latency_ms': outcome['latency_ms'],
+                    'model_calls': outcome['model_calls'],
+                    'prompt_tokens': outcome['prompt_tokens'],
+                    'generated_tokens': outcome['generated_tokens'],
+                    'tools': outcome['tools'],
+                    'action': result.get('action'),
+                    'error': outcome['error'],
+                    'answer': str(result.get('message') or '')[:600],
+                }
+                if outcome.get('images_sent'):
+                    turn_rec['images_sent'] = outcome['images_sent']
+                if 'mode' in turn:
+                    turn_rec['assist_mode'] = turn['mode']
+                if result.get('draft_reply'):
+                    turn_rec['draft_reply'] = str(result['draft_reply'])[:600]
+                turns.append(turn_rec)
             failures.extend(f'final state: {p}' for p in grade_final_state(scenario.get('final_state') or {}, world.store))
     finally:
         world.close()
@@ -360,7 +767,7 @@ def summarize(records):
         entry['passed'] += r['passed']
     for entry in by_category.values():
         entry['success_rate'] = round(entry['passed'] / entry['scenarios'], 4)
-    return {
+    summary = {
         'scenarios': len(records), 'passed': passed, 'failed': len(records) - passed,
         'success_rate': round(passed / len(records), 4) if records else None,
         'turns': len(turns), 'tool_calls': len(calls), 'valid_tool_calls': len(calls) - len(invalid),
@@ -372,7 +779,18 @@ def summarize(records):
         'latency_ms': {'p50': percentile(latencies, 50), 'p95': percentile(latencies, 95),
                        'max': round(max(latencies), 2) if latencies else None,
                        'mean': round(sum(latencies) / len(latencies), 2) if latencies else None},
-    }, by_category
+    }
+    img_turns = [t for t in turns if (t.get('images_sent') or 0) > 0]
+    if img_turns:
+        total_imgs = sum(t['images_sent'] for t in img_turns)
+        img_prompt_toks = sum(t['prompt_tokens'] for t in img_turns)
+        summary['media_tokens'] = {
+            'image_turns': len(img_turns),
+            'images_sent': total_imgs,
+            'image_prompt_tokens': img_prompt_toks,
+            'avg_prompt_tokens_per_image': round(img_prompt_toks / total_imgs, 2) if total_imgs else None,
+        }
+    return summary, by_category
 
 
 def run_suite(scenarios, make_gateway, mode, *, progress=None):
@@ -384,7 +802,8 @@ def run_suite(scenarios, make_gateway, mode, *, progress=None):
         if progress:
             progress(index, len(scenarios), record)
     summary, by_category = summarize(records)
-    return {'report': 'agent_scenarios_w3_2', 'mode': mode, 'summary': summary, 'by_category': by_category, 'scenarios': records}
+    report_kind = 'agent_scenarios_w4' if (scenarios and 'actor' in scenarios[0]) else 'agent_scenarios_w3_2'
+    return {'report': report_kind, 'mode': mode, 'summary': summary, 'by_category': by_category, 'scenarios': records}
 
 
 # ---------------------------------------------------------------- command line
@@ -409,15 +828,48 @@ def normalize_endpoint(url):
     return urllib.parse.urlunsplit((parts.scheme, parts.netloc, path, '', ''))
 
 
+def _read_secret(env_name, explicit_file=None):
+    file_path = explicit_file or (os.environ.get(f'{env_name}_FILE', '').strip() if env_name else '')
+    if file_path:
+        p = Path(file_path)
+        if not p.is_file():
+            raise ValueError(f'Secret file not found for {env_name}: {file_path}')
+        val = p.read_text(encoding='utf-8').strip()
+        if not val:
+            raise ValueError(f'Secret file is empty for {env_name}: {file_path}')
+        return val
+    return os.environ.get(env_name, '').strip() if env_name else ''
+
+
+def _resolve_vision_mode(vision_arg, *, is_w4, has_two_layer_auth):
+    choice = (vision_arg or 'auto').strip().lower()
+    if choice == 'on':
+        if not has_two_layer_auth:
+            raise ValueError('--vision on đòi hỏi đủ hai lớp xác thực (RETAILOPS_API_KEY và RETAILOPS_API_TUNNEL_TOKEN)')
+        return True
+    if choice == 'off':
+        return False
+    env_raw = os.environ.get('RETAILOPS_API_VISION', '').strip().lower()
+    if env_raw in TRUTHY_VISION:
+        if not has_two_layer_auth:
+            raise ValueError('RETAILOPS_API_VISION=on đòi hỏi đủ hai lớp xác thực (RETAILOPS_API_KEY và RETAILOPS_API_TUNNEL_TOKEN)')
+        return True
+    if env_raw in FALSY_VISION:
+        return False
+    return bool(is_w4 and has_two_layer_auth)
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog='run_agent_scenarios.py', description=__doc__.split('\n\n')[0],
         epilog='Real-model runs are for the owner. Examples:\n'
                '  python scripts/run_agent_scenarios.py --fake\n'
-               '  python scripts/run_agent_scenarios.py --endpoint https://<id>.ngrok-free.app/v1/chat/completions --out report.json\n\n'
-               'Report: success rate (every check of a scenario holds), valid tool-call rate (a known tool with arguments that pass\n'
-               'the schema; business refusals count as valid) and latency p50/p95 per customer turn. Only synthetic data in a\n'
-               'temporary store is used; the only thing sent out in real mode is the conversations, to the endpoint you name.',
+               '  python scripts/run_agent_scenarios.py --fake --dataset evals/agent_scenarios_w4.jsonl\n'
+               '  python scripts/run_agent_scenarios.py --dataset evals/agent_scenarios_w4.jsonl \\\n'
+               '      --endpoint https://<domain>/v1/chat/completions --vision on --out w4_report.json\n\n'
+               'Report: success rate (every check of a scenario holds), valid tool-call rate, latency p50/p95 per turn,\n'
+               'and prompt token cost per projected image on vision turns. Only synthetic data in a temporary store is used;\n'
+               'secret headers (Authorization Bearer + X-RetailOps-Tunnel-Token) are never written to stdout or reports.',
         formatter_class=argparse.RawDescriptionHelpFormatter)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--endpoint', metavar='URL', help="the owner's model endpoint (OpenAI-compatible chat completions, "
@@ -425,7 +877,15 @@ def build_parser():
     mode.add_argument('--fake', action='store_true', help='scripted fake gateway: no model and no network (what CI runs)')
     parser.add_argument('--model', default=None, help=f'served model name (default: $RETAILOPS_API_MODEL, else {DEFAULT_MODEL})')
     parser.add_argument('--api-key-env', default='RETAILOPS_API_KEY', metavar='NAME',
-                        help='environment variable holding the endpoint key, if it needs one (default: %(default)s)')
+                        help='environment variable holding the Bearer API key (Layer 2 of W4-D2; default: %(default)s)')
+    parser.add_argument('--api-key-file', default=None, metavar='PATH',
+                        help='secret file holding the Bearer API key (fallback: $<API_KEY_ENV>_FILE)')
+    parser.add_argument('--tunnel-token-env', default='RETAILOPS_API_TUNNEL_TOKEN', metavar='NAME',
+                        help='environment variable holding X-RetailOps-Tunnel-Token (Layer 1 of W4-D2; default: %(default)s)')
+    parser.add_argument('--tunnel-token-file', default=None, metavar='PATH',
+                        help='secret file holding X-RetailOps-Tunnel-Token (fallback: $<TUNNEL_TOKEN_ENV>_FILE)')
+    parser.add_argument('--vision', choices=('auto', 'on', 'off'), default='auto',
+                        help='send projected images on --endpoint runs: on, off, or auto (W4-D7; default: %(default)s)')
     parser.add_argument('--dataset', default=str(DEFAULT_DATASET), metavar='PATH',
                         help='scenario file (default: evals/agent_scenarios_w3_2.jsonl)')
     parser.add_argument('--only', nargs='+', metavar='ID', help='run only these scenario ids')
@@ -446,10 +906,14 @@ def _print_summary(report, out):
           f"  (repeated calls: {s['duplicate_tool_calls']})", file=out)
     lat = s['latency_ms']
     print(f"latency per turn:     p50 {lat['p50']} ms  p95 {lat['p95']} ms  max {lat['max']} ms", file=out)
+    mt = s.get('media_tokens')
+    if mt:
+        print(f"image token cost:     {mt['images_sent']} image(s) across {mt['image_turns']} turn(s), "
+              f"{mt['image_prompt_tokens']} prompt tokens (avg {mt['avg_prompt_tokens_per_image']} tokens/image)", file=out)
     if s['model_error_turns']:
         print(f"turns that ended in an error: {s['model_error_turns']} {s['model_error_codes']}", file=out)
     for category, entry in sorted(report['by_category'].items()):
-        print(f"  {category:<16} {entry['passed']}/{entry['scenarios']}", file=out)
+        print(f"  {category:<20} {entry['passed']}/{entry['scenarios']}", file=out)
     for record in report['scenarios']:
         if not record['passed']:
             print(f"FAIL {record['id']}", file=out)
@@ -467,6 +931,15 @@ def main(argv=None, *, out=None):
     try:
         endpoint = None if args.fake else normalize_endpoint(args.endpoint)
         scenarios = load_dataset(args.dataset)
+        is_w4 = bool(scenarios and 'actor' in scenarios[0])
+        if not args.fake:
+            explicit_key = _read_secret(args.api_key_env, args.api_key_file)
+            tunnel_token = _read_secret(args.tunnel_token_env, args.tunnel_token_file)
+            vision_on = _resolve_vision_mode(
+                args.vision,
+                is_w4=is_w4,
+                has_two_layer_auth=bool(explicit_key and tunnel_token),
+            )
     except (ValueError, AssertionError, OSError) as err:
         print(f'Không chạy được: {err}', file=sys.stderr)
         return 2
@@ -496,7 +969,7 @@ def main(argv=None, *, out=None):
     else:
         mode = 'real'
         name = args.model or os.environ.get('RETAILOPS_API_MODEL') or DEFAULT_MODEL
-        key = os.environ.get(args.api_key_env) or PLACEHOLDER_KEY
+        key = explicit_key or PLACEHOLDER_KEY
         environment['RETAILOPS_API_ENDPOINT'] = endpoint
         model = {'name': name, 'endpoint_host': urllib.parse.urlsplit(endpoint).netloc}
 
@@ -504,7 +977,7 @@ def main(argv=None, *, out=None):
             if str(ROOT) not in sys.path:
                 sys.path.insert(0, str(ROOT))
             from retailops_providers import OpenRouterAgent
-            return OpenRouterAgent(key, name)
+            return OpenRouterAgent(key, name, tunnel_token=tunnel_token, vision=vision_on)
     previous = {k: os.environ.get(k) for k in environment}
     os.environ.update(environment)
     try:

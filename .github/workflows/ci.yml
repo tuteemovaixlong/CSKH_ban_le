@@ -95,6 +95,8 @@ jobs:
           rm -f "${{ runner.temp }}/headroom_p99_artifact.json"
           python3 -m pip install --only-binary=:all: --require-hashes -r requirements-web.txt -r requirements-postgres.txt -r requirements-graph.txt
           python3 scripts/prepare_test_pgvector.py
+          python3 scripts/run_agent_scenarios.py --fake
+          python3 scripts/run_agent_scenarios.py --fake --dataset evals/agent_scenarios_w4.jsonl
           python3 -m unittest discover -s tests -v
       - name: Validate headroom P99 measurement artifact integrity
         env:
