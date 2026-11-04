@@ -30,6 +30,7 @@ from retailops.business.evidence import (
     decode_attachment_data_payload,
     encode_image_data_url,
     inspect_and_reencode_evidence,
+    project_image_for_model,
     resolve_protected_subdir,
     sanitize_attachment_filename,
 )
@@ -6549,7 +6550,11 @@ class BusinessStore:
         hydrated = dict(base_meta)
         hydrated["mime_type"] = mime_type
         if mime_type != "application/pdf":
-            hydrated["data"] = encode_image_data_url(raw_bytes, mime_type)
+            proj = project_image_for_model(raw_bytes)
+            hydrated["mime_type"] = proj["mime_type"]
+            hydrated["data"] = proj["data_url"]
+            hydrated["projected_width"] = proj["width"]
+            hydrated["projected_height"] = proj["height"]
         return hydrated
 
     def purge_expired_evidence(self, *, now: float | None = None) -> dict:

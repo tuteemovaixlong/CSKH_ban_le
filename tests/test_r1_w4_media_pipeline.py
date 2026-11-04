@@ -360,5 +360,238 @@ class PhaseR1W4Item2NoRawHistoryTests(unittest.TestCase):
         self.assertEqual(st_sb, 404)
 
 
+class PhaseR1W4Item3ImageProjectionAndHumanFallbackTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.data_root = Path(self.temp.name) / "data_root"
+        self.env = patch.dict(
+            os.environ,
+            {
+                "RETAILOPS_OUTPUT": str(self.data_root),
+                "RETAILOPS_API_ENDPOINT": "https://retailops-w4.ngrok.app/v1/chat/completions",
+                "RETAILOPS_API_KEY": API_KEY,
+                "RETAILOPS_API_TUNNEL_TOKEN": TUNNEL_TOKEN,
+                "RETAILOPS_API_VISION": "on",
+            },
+            clear=False,
+        )
+        self.env.start()
+        self.addCleanup(self.env.stop)
+
+    def test_item3_projection_caps_3_images_resizes_to_1024_strips_exif_and_excludes_pii(self):
+        store = BusinessStore(Path(self.temp.name) / "business_proj.sqlite3", create=True)
+        store.seed()
+        with store.connection(write=True) as db:
+            db.execute("UPDATE customers SET name = ? WHERE id = 'C-001'", ("Trần Thị Bí Mật 0909123456 123 Nguyễn Huệ Q1",))
+
+        adapter = OpenRouterAgent(API_KEY, MODEL_ID, tunnel_token=TUNNEL_TOKEN, vision=True)
+        app = Application(store, {}, api_infer=adapter, role="customer")
+        cid = app.new_conversation("C-001", {"provider_id": "api"})["conversation_id"]
+        app.focus("C-001", cid, {"order_id": "O-101"})
+
+        # Upload 2400x1600 JPEG with EXIF tags
+        huge_exif_jpg = _make_exif_jpeg_bytes((2400, 1600), color=(35, 110, 210))
+        responses = [
+            _provider_reply("", calls=[("get_order", {"order_id": "O-101"})]),
+            _provider_reply("Đơn O-101 đang ở trạng thái chờ xử lý."),
+        ]
+        with patch.object(OpenRouterAgent, "request", side_effect=responses) as mock_req:
+            res = app.chat(
+                "C-001",
+                {
+                    "conversation_id": cid,
+                    "text": "Xem ảnh này với đơn O-101 giúp mình",
+                    "request_id": "req_proj_" + uuid.uuid4().hex[:16],
+                    "attachment": {
+                        "type": "image",
+                        "name": "highres_photo.jpg",
+                        "data": base64.b64encode(huge_exif_jpg).decode("ascii"),
+                    },
+                },
+            )
+        self.assertEqual(res["trace"]["model_calls"], 2)
+
+        # Full-res sanitized evidence remains 2400x1600 on disk, while model receives <=1024 px EXIF-free projection
+        with store.connection() as db:
+            ev_row = db.execute("SELECT width, height FROM order_action_evidence WHERE conversation_id = ?", (cid,)).fetchone()
+            self.assertEqual((ev_row["width"], ev_row["height"]), (2400, 1600))
+
+        step2_payload = mock_req.call_args_list[1].args[0]
+        payload_json = json.dumps(step2_payload, ensure_ascii=False)
+        self.assertNotIn("Trần Thị Bí Mật", payload_json)
+        self.assertNotIn("0909123456", payload_json)
+        self.assertNotIn("123 Nguyễn Huệ", payload_json)
+        self.assertNotIn("C-001", payload_json)
+
+        user_msg = next(m for m in step2_payload["messages"] if m["role"] == "user")
+        img_parts = [p for p in user_msg["content"] if p.get("type") == "image_url"]
+        self.assertEqual(len(img_parts), 1)
+        proj_bytes = base64.b64decode(img_parts[0]["image_url"]["url"].split(",", 1)[1])
+        self.assertNotIn(b"ConfidentialPhoneMaker", proj_bytes)
+        with Image.open(io.BytesIO(proj_bytes)) as proj_img:
+            self.assertLessEqual(max(proj_img.size), 1024)
+            self.assertEqual(proj_img.size, (1024, 683))
+            self.assertEqual(len(proj_img.getexif()), 0)
+
+        # Verify OpenRouterAgent.translate() strictly caps total images per request to <=3
+        small_b64 = base64.b64encode(_make_exif_jpeg_bytes((32, 32))).decode("ascii")
+        multi_msgs = [
+            {
+                "role": "user",
+                "content": "Lượt cũ 2 ảnh",
+                "attachment": {"type": "image", "name": "old.jpg", "images": [small_b64, small_b64]},
+            },
+            {"role": "assistant", "content": "Đã xem."},
+            {
+                "role": "user",
+                "content": "Lượt mới 4 ảnh",
+                "attachment": {"type": "image", "name": "new.jpg", "images": [small_b64, small_b64, small_b64, small_b64]},
+            },
+        ]
+        translated = adapter.translate(multi_msgs)
+        all_emitted_imgs = [
+            part
+            for m in translated
+            if isinstance(m.get("content"), list)
+            for part in m["content"]
+            if part.get("type") == "image_url"
+        ]
+        self.assertEqual(len(all_emitted_imgs), 3)
+
+    def test_item3_vision_off_or_endpoint_error_falls_back_to_human_without_5xx_and_order_actions_stay_model_independent(self):
+        import urllib.error
+
+        vision_adapter = OpenRouterAgent(API_KEY, MODEL_ID, tunnel_token=TUNNEL_TOKEN, vision=True)
+        sessions = PersistentSessions(self.data_root / "persistent_fallback", api_infer=vision_adapter)
+        store = sessions.provision_tenant("shop-fb", "Shop Fallback", seed_demo=True)
+        store.add_customer("C-STAFFFB", "Staff Fallback")
+        with store.connection(write=True) as db:
+            db.execute("UPDATE orders SET status = 'delivered', delivered_at = ? WHERE id = 'O-102'", (1_785_000_000.0,))
+
+        def issue_cookie(pid: str, name: str, cust_id: str, role: str) -> str:
+            mid = sessions.create_member("shop-fb", pid, name, cust_id, role)
+            tok = secrets.token_urlsafe(32)
+            sessions.control.register_credential(mid, tok)
+            return f"{sessions.cookie_name}={sessions.login(tok)}"
+
+        c1_cookie = issue_cookie("p-c1-fb", "Cust 1", "C-001", "customer")
+        staff_cookie = issue_cookie("p-s1-fb", "Staff 1", "C-STAFFFB", "staff")
+
+        # 1. Vision OFF -> returns 200 with "không phân tích được ảnh, chuyển nhân viên" and opens human handoff
+        text_only_adapter = OpenRouterAgent(API_KEY, MODEL_ID, tunnel_token=TUNNEL_TOKEN, vision=False)
+        app_off = Application(store, {}, api_infer=text_only_adapter, role="customer")
+        cid1 = app_off.new_conversation("C-001", {"provider_id": "api"})["conversation_id"]
+        jpg_b64 = base64.b64encode(_make_exif_jpeg_bytes((48, 48))).decode("ascii")
+
+        res_off = app_off.chat(
+            "C-001",
+            {
+                "conversation_id": cid1,
+                "text": "Kiểm tra ảnh lỗi này cho đơn O-102",
+                "request_id": "req_fb_off_" + uuid.uuid4().hex[:16],
+                "attachment": {"type": "image", "name": "fault.jpg", "data": jpg_b64},
+            },
+        )
+        self.assertIn("không phân tích được ảnh, chuyển nhân viên", res_off["message"])
+        self.assertEqual(res_off["human_support"]["status"], "escalated_to_human")
+        self.assertEqual(res_off["case"]["status"], "waiting")
+
+        # 2. Vision ON, but upstream endpoint fails with HTTP 503 -> returns 200 human fallback (no 5xx!) and case continues with staff
+        web = PublicWeb("https://retailops.example.com", sessions, start_timer_worker=False)
+
+        def http_json(method: str, path: str, cookie: str, body: dict | None = None):
+            raw = json.dumps(body).encode("utf-8") if body is not None else b""
+            env = {
+                "REQUEST_METHOD": method,
+                "PATH_INFO": path,
+                "HTTP_HOST": "retailops.example.com",
+                "QUERY_STRING": "",
+                "HTTP_COOKIE": cookie,
+                "CONTENT_LENGTH": str(len(raw)),
+                "CONTENT_TYPE": "application/json",
+                "wsgi.input": io.BytesIO(raw),
+            }
+            if method != "GET":
+                env["HTTP_ORIGIN"] = "https://retailops.example.com"
+            captured = {}
+
+            def start_response(status, headers):
+                captured["status"] = int(status.split()[0])
+
+            out = b"".join(web(env, start_response))
+            return captured["status"], json.loads(out)
+
+        st_c, conv_data = http_json("POST", "/api/conversations", c1_cookie, {"provider_id": "api"})
+        self.assertEqual(st_c, 201)
+        cid2 = conv_data["conversation_id"]
+
+        err_503 = urllib.error.HTTPError(
+            "https://retailops-w4.ngrok.app/v1/chat/completions",
+            503,
+            "Service Unavailable",
+            {},
+            io.BytesIO(b'{"error":"GPU worker restarting"}'),
+        )
+        with patch("urllib.request.OpenerDirector.open", side_effect=err_503):
+            st_chat, chat_res = http_json(
+                "POST",
+                "/api/chat",
+                c1_cookie,
+                {
+                    "conversation_id": cid2,
+                    "text": "Nhờ xem giúp vết rách trong ảnh",
+                    "request_id": "req_fb_503_" + uuid.uuid4().hex[:16],
+                    "attachment": {"type": "image", "name": "tear.jpg", "data": jpg_b64},
+                },
+            )
+        self.assertEqual(st_chat, 200)
+        self.assertIn("không phân tích được ảnh, chuyển nhân viên", chat_res["message"])
+        self.assertEqual(chat_res["human_support"]["status"], "escalated_to_human")
+        self.assertEqual(chat_res["trace"]["model_errors"][0]["http_status"], 503)
+
+        # Staff claims the escalated case and replies -> case continues smoothly with human!
+        case_id_2 = chat_res["case"]["case_id"]
+        st_claim, _ = http_json("POST", f"/api/staff/cases/{case_id_2}/claim", staff_cookie, {})
+        self.assertEqual(st_claim, 200)
+        st_rep, _ = http_json(
+            "POST",
+            "/api/staff/reply",
+            staff_cookie,
+            {"conversation_id": cid2, "message": "Chào bạn, mình đã xem ảnh vết rách và hỗ trợ đổi hàng ngay nhé."},
+        )
+        self.assertEqual(st_rep, 200)
+
+        # 3. Order-action submission never calls or depends on any model (all gateways offline)
+        sessions_no_model = PersistentSessions(self.data_root / "persistent_fallback", infer=None, api_infer=None, maintenance=False)
+        web_no_model = PublicWeb("https://retailops.example.com", sessions_no_model, start_timer_worker=False)
+
+        def http_no_model(method: str, path: str, cookie: str, body: dict):
+            raw = json.dumps(body).encode("utf-8")
+            env = {
+                "REQUEST_METHOD": method,
+                "PATH_INFO": path,
+                "HTTP_HOST": "retailops.example.com",
+                "QUERY_STRING": "",
+                "HTTP_COOKIE": cookie,
+                "HTTP_ORIGIN": "https://retailops.example.com",
+                "CONTENT_LENGTH": str(len(raw)),
+                "CONTENT_TYPE": "application/json",
+                "wsgi.input": io.BytesIO(raw),
+            }
+            captured = {}
+            out = b"".join(web_no_model(env, lambda s, h: captured.setdefault("status", int(s.split()[0]))))
+            return captured["status"], json.loads(out)
+
+        st_oa, oa_res = http_no_model(
+            "POST",
+            "/api/order-actions",
+            c1_cookie,
+            {"order_id": "O-102", "type": "return", "expected_order_version": 1, "reason_code": "defective_item"},
+        )
+        self.assertEqual(st_oa, 201)
+        self.assertTrue(oa_res["order_action_request_id"].startswith("oar_"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -16,6 +16,8 @@ from retailops.core import EVIDENCE_MAX_BYTES, ROOT, ApiError, require
 
 MAX_EVIDENCE_PIXELS = 25_000_000
 MAX_EVIDENCE_DIMENSION = 12_000
+MAX_MODEL_IMAGE_EDGE = 1024
+MAX_MODEL_IMAGES = 3
 SAFE_SEGMENT_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 UNSAFE_FILENAME_CHARS_RE = re.compile(r"[\x00-\x1f\x7f/\\]+")
 
@@ -65,6 +67,83 @@ def decode_attachment_data_payload(data_str: str, *, max_raw_bytes: int = EVIDEN
 def encode_image_data_url(raw_bytes: bytes, mime_type: str = "image/jpeg") -> str:
     b64 = base64.b64encode(raw_bytes).decode("ascii")
     return f"data:{mime_type};base64,{b64}"
+
+
+def _is_already_clean_small_image(src: Image.Image, src_fmt: str, max_edge: int) -> bool:
+    w0, h0 = src.size
+    if w0 <= 0 or h0 <= 0 or max(w0, h0) > max_edge:
+        return False
+    if len(src.getexif()) > 0:
+        return False
+    info_keys = set((src.info or {}).keys())
+    if src_fmt == "JPEG":
+        allowed = {"jfif", "jfif_version", "jfif_unit", "jfif_density", "progression"}
+    elif src_fmt == "PNG":
+        allowed = {"transparency", "interlace"}
+    elif src_fmt == "WEBP":
+        allowed = set()
+    else:
+        return False
+    return info_keys.issubset(allowed)
+
+
+def project_image_for_model(raw_bytes: bytes, *, max_edge: int = MAX_MODEL_IMAGE_EDGE) -> dict:
+    """Project sanitized image bytes for model input: long edge <=1024 px and zero EXIF/metadata (W4-D3, W4-D7)."""
+    require(type(max_edge) is int and 64 <= max_edge <= MAX_MODEL_IMAGE_EDGE, 500, "invalid_projection_bound", "Giới hạn cạnh ảnh gửi model không hợp lệ.")
+    prev_max = Image.MAX_IMAGE_PIXELS
+    Image.MAX_IMAGE_PIXELS = MAX_EVIDENCE_PIXELS
+    try:
+        with Image.open(io.BytesIO(raw_bytes)) as src:
+            src_fmt = (src.format or "JPEG").upper()
+            src.load()
+            if _is_already_clean_small_image(src, src_fmt, max_edge):
+                w0, h0 = src.size
+                mime_map = {"JPEG": "image/jpeg", "PNG": "image/png", "WEBP": "image/webp"}
+                out_mime = mime_map[src_fmt]
+                return {
+                    "bytes": bytes(raw_bytes),
+                    "mime_type": out_mime,
+                    "width": int(w0),
+                    "height": int(h0),
+                    "data_url": encode_image_data_url(bytes(raw_bytes), out_mime),
+                }
+            oriented = ImageOps.exif_transpose(src)
+            has_alpha = oriented.mode in ("RGBA", "LA") or ("transparency" in oriented.info or oriented.mode in ("P", "PA"))
+            target_mode = "RGBA" if (has_alpha and src_fmt in ("PNG", "WEBP")) else "RGB"
+            converted = oriented if oriented.mode == target_mode else oriented.convert(target_mode)
+            w, h = converted.size
+            if max(w, h) > max_edge:
+                scale = max_edge / float(max(w, h))
+                new_w = max(1, min(max_edge, int(round(w * scale))))
+                new_h = max(1, min(max_edge, int(round(h * scale))))
+                converted = converted.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                w, h = converted.size
+            raw_pixels = converted.tobytes()
+    finally:
+        Image.MAX_IMAGE_PIXELS = prev_max
+
+    clean = Image.frombytes(target_mode, (w, h), raw_pixels)
+    out = io.BytesIO()
+    if target_mode == "RGBA" and src_fmt == "PNG":
+        out_mime = "image/png"
+        clean.save(out, format="PNG", optimize=True)
+    elif src_fmt == "PNG":
+        out_mime = "image/png"
+        clean.save(out, format="PNG", optimize=True)
+    elif src_fmt == "WEBP":
+        out_mime = "image/webp"
+        clean.save(out, format="WEBP", quality=85)
+    else:
+        out_mime = "image/jpeg"
+        clean.save(out, format="JPEG", quality=85, optimize=True)
+    projected_bytes = out.getvalue()
+    return {
+        "bytes": projected_bytes,
+        "mime_type": out_mime,
+        "width": int(w),
+        "height": int(h),
+        "data_url": encode_image_data_url(projected_bytes, out_mime),
+    }
 
 
 def detect_evidence_magic(raw: bytes) -> tuple[str, str]:

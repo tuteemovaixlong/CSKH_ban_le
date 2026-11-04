@@ -55,8 +55,9 @@ class BoundTools:
         product = self.catalog.for_order(order)
         if focus:
             self.context = {'order_id': oid, 'product_id': product['id'] if product else None}
-        # Customer identity is never model-controlled or needed in the transcript.
-        return {k: v for k, v in order.items() if k != 'customer_id'} | {
+        # Customer PII (name, phone, address, email, customer_id) is never sent to the model.
+        _PII_KEYS = ('customer_id', 'customer_name', 'phone', 'customer_phone', 'shipping_address', 'address', 'email')
+        return {k: v for k, v in order.items() if k not in _PII_KEYS} | {
             'product_id': product['id'] if product else None, 'currency': 'VND',
             'payment': None, 'delivery': None, 'address': None, 'refund': None,
             'source': 'synthetic-demo/orders'}

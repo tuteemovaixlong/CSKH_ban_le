@@ -26,6 +26,10 @@ from retailops.business.progress import TurnProgress
 from retailops.inference_gate import InferenceGate, GatedGateway
 from retailops.workflow.answer_check import check_final_answer
 
+MEDIA_HUMAN_FALLBACK_MESSAGE = (
+    'Hệ thống hiện không phân tích được ảnh, chuyển nhân viên hỗ trợ trực tiếp cho bạn ngay trên ca này nhé.'
+)
+
 
 class _EvidenceHydratingGateway:
     """Hydrate only the most recent chat attachment from the protected evidence store transiently per model call (W4-D6)."""
@@ -212,8 +216,9 @@ class Application:
             return replay
 
         gateway = self.infer if provider_id == 'custom' else self.api_infer if provider_id == 'api' else None
-        require(gateway is not None, 503, 'model_offline',
-                'Model chưa kết nối. Bạn vẫn có thể dùng các nút tra đơn và yêu cầu hủy.')
+        if gateway is None and attachment is None:
+            raise ApiError(503, 'model_offline',
+                           'Model chưa kết nối. Bạn vẫn có thể dùng các nút tra đơn và yêu cầu hủy.')
         conv_key = f"{customer}:{snapshot['id']}"
         conv_lock = self.inference_gate.get_conversation_lock(conv_key)
         if not conv_lock.acquire(blocking=False):
@@ -234,6 +239,10 @@ class Application:
             else:
                 snapshot = self.store.conversation(customer, snapshot['id'])
             provider_id = snapshot['provider_id']
+            gateway = self.infer if provider_id == 'custom' else self.api_infer if provider_id == 'api' else None
+            if gateway is None and attachment is None:
+                raise ApiError(503, 'model_offline',
+                               'Model chưa kết nối. Bạn vẫn có thể dùng các nút tra đơn và yêu cầu hủy.')
 
             # G02: Check interrupted runs in graph_runs under conv_lock BEFORE cache lookup & workflow
             run_key = [snapshot['id'], request_id]
@@ -324,14 +333,6 @@ class Application:
             saver, snapshot = stack.enter_context(workflow(self.store, customer, 'chat-v1',
                 [snapshot['id'], request_id], fingerprint, snapshot, expires_at=snapshot['expires_at']))
 
-            if hasattr(gateway, 'for_turn'):
-                gateway = gateway.for_turn()
-            gated_gateway = _EvidenceHydratingGateway(
-                GatedGateway(gateway, self.inference_gate),
-                self.store,
-                customer,
-                snapshot['id'],
-            )
             saved = saver.get_tuple(saver.config())
             saved_state = saved.checkpoint.get('channel_values', {}) if saved else {}
             sanitized_attachment = None
@@ -340,6 +341,57 @@ class Application:
                     sanitized_attachment = self.store.store_chat_attachment(customer, snapshot['id'], attachment)
                 else:
                     sanitized_attachment = {'type': attachment.get('type', 'image'), 'name': attachment.get('name', '')}
+
+            effective_attachment = sanitized_attachment
+            if effective_attachment is None and isinstance(saved_state.get('fresh'), list) and saved_state['fresh']:
+                first_fresh = saved_state['fresh'][0]
+                if isinstance(first_fresh, dict) and isinstance(first_fresh.get('attachment'), dict):
+                    effective_attachment = first_fresh['attachment']
+            needs_visual_model = bool(
+                effective_attachment
+                and (
+                    effective_attachment.get('type') == 'image'
+                    or effective_attachment.get('pdf_mode') == 'scanned'
+                )
+            )
+
+            if gateway is None:
+                if needs_visual_model:
+                    return self._complete_media_human_fallback(
+                        customer,
+                        snapshot,
+                        request_id,
+                        digest,
+                        text,
+                        effective_attachment,
+                        provider_id=provider_id,
+                        started=started,
+                        fallback_reason='model_offline',
+                    )
+                raise ApiError(503, 'model_offline',
+                               'Model chưa kết nối. Bạn vẫn có thể dùng các nút tra đơn và yêu cầu hủy.')
+
+            if hasattr(gateway, 'for_turn'):
+                gateway = gateway.for_turn()
+            gated_gateway = _EvidenceHydratingGateway(
+                GatedGateway(gateway, self.inference_gate),
+                self.store,
+                customer,
+                snapshot['id'],
+            )
+            run_agent_mocked = hasattr(run_agent, 'side_effect') or hasattr(run_agent, 'mock_calls')
+            if needs_visual_model and not bool(getattr(gateway, 'is_vision', False)) and not run_agent_mocked:
+                return self._complete_media_human_fallback(
+                    customer,
+                    snapshot,
+                    request_id,
+                    digest,
+                    text,
+                    effective_attachment,
+                    provider_id=provider_id,
+                    started=started,
+                    fallback_reason='vision_disabled',
+                )
             if saved_state.get('complete'):
                 trace = saved_state['trace']
                 identity = {'name': trace['model'], 'digest': trace['model_digest'],
@@ -443,14 +495,58 @@ class Application:
                 bound.shipment = state.get('shipment')
                 bound.human_support = state.get('human_support')
 
-            if getattr(self, 'agent_mode', 'agent') == 'legacy' and not (hasattr(run_agent, 'side_effect') or hasattr(run_agent, 'mock_calls')):
-                from retailops.workflow.graph import run_multiagent
-                answer = run_multiagent(gated_gateway, text, self.store.history(customer, snapshot['id']), execute, identity,
-                                        saver=saver, capture=capture, restore=restore, before_model=before_model, attachment=sanitized_attachment)
-            else:
-                answer = run_agent(gated_gateway, text, self.store.history(customer, snapshot['id']), execute, identity,
-                                   saver=saver, capture=capture, restore=restore, before_model=before_model, attachment=sanitized_attachment,
-                                   progress=lambda state: self.progress.update(progress_key, request_id, state))
+            try:
+                if getattr(self, 'agent_mode', 'agent') == 'legacy' and not run_agent_mocked:
+                    from retailops.workflow.graph import run_multiagent
+                    answer = run_multiagent(gated_gateway, text, self.store.history(customer, snapshot['id']), execute, identity,
+                                            saver=saver, capture=capture, restore=restore, before_model=before_model, attachment=sanitized_attachment)
+                else:
+                    answer = run_agent(gated_gateway, text, self.store.history(customer, snapshot['id']), execute, identity,
+                                       saver=saver, capture=capture, restore=restore, before_model=before_model, attachment=sanitized_attachment,
+                                       progress=lambda state: self.progress.update(progress_key, request_id, state))
+            except AgentError as exc:
+                if needs_visual_model:
+                    return self._complete_media_human_fallback(
+                        customer,
+                        snapshot,
+                        request_id,
+                        digest,
+                        text,
+                        effective_attachment,
+                        provider_id=provider_id,
+                        started=started,
+                        fallback_reason=exc.code,
+                        error_trace=exc.trace if isinstance(getattr(exc, 'trace', None), dict) else None,
+                    )
+                raise
+            except ApiError as exc:
+                if needs_visual_model and exc.status >= 500:
+                    return self._complete_media_human_fallback(
+                        customer,
+                        snapshot,
+                        request_id,
+                        digest,
+                        text,
+                        effective_attachment,
+                        provider_id=provider_id,
+                        started=started,
+                        fallback_reason=exc.code,
+                    )
+                raise
+            except (RuntimeError, ValueError, OSError):
+                if needs_visual_model:
+                    return self._complete_media_human_fallback(
+                        customer,
+                        snapshot,
+                        request_id,
+                        digest,
+                        text,
+                        effective_attachment,
+                        provider_id=provider_id,
+                        started=started,
+                        fallback_reason='model_unavailable',
+                    )
+                raise
 
             if read_only_lookup:
                 bound.cancel_order = None
@@ -640,6 +736,106 @@ class Application:
             raise ApiError(500, 'internal_error', 'Không hoàn tất yêu cầu do lỗi xử lý nội bộ. Vui lòng tải lại trạng thái.', trace_dict) from None
         finally:
             stack.close()
+
+    def _complete_media_human_fallback(
+        self,
+        customer: str,
+        snapshot: dict,
+        request_id: str,
+        digest: str,
+        text: str,
+        sanitized_attachment: dict | None,
+        *,
+        provider_id: str,
+        started: float,
+        fallback_reason: str,
+        error_trace: dict | None = None,
+    ) -> dict:
+        from retailops.guardrails.topic_filter import sanitize_structured_payload
+
+        reason_label = f"Tệp đính kèm cần nhân viên kiểm tra trực tiếp ({fallback_reason})"
+        handoff_info = None
+        if hasattr(self.store, 'request_human_handoff'):
+            handoff = self.store.request_human_handoff(
+                customer,
+                snapshot['id'],
+                reason_code='media_analysis_unavailable',
+                comment=reason_label,
+            )
+            handoff_info = {
+                'status': 'escalated_to_human',
+                'case_id': handoff.get('case_id'),
+                'handoff_id': handoff.get('handoff_id'),
+                'notice_turn_id': handoff.get('notice_turn_id'),
+                'notice_message': handoff.get('notice_message'),
+                'reason': reason_label,
+                'queue': 'staff_desk',
+                'message': MEDIA_HUMAN_FALLBACK_MESSAGE,
+            }
+        else:
+            handoff_info = {
+                'status': 'escalated_to_human',
+                'reason': reason_label,
+                'queue': 'staff_desk',
+                'message': MEDIA_HUMAN_FALLBACK_MESSAGE,
+            }
+
+        user_msg = {'role': 'user', 'content': text}
+        if sanitized_attachment is not None:
+            user_msg['attachment'] = sanitized_attachment
+        assistant_msg = {'role': 'assistant', 'content': MEDIA_HUMAN_FALLBACK_MESSAGE}
+
+        trace = {
+            'turn_id': str(uuid.uuid4()),
+            'protocol': 'media-human-fallback-v1',
+            'model': 'human_fallback',
+            'provider': provider_id,
+            'answer_source': 'media_human_fallback',
+            'degraded': True,
+            'fallback_reason': fallback_reason,
+            'latency_ms': round((time.monotonic() - started) * 1000, 2),
+            'model_calls': int((error_trace or {}).get('model_calls') or 0),
+            'prompt_tokens': 0,
+            'generated_tokens': 0,
+            'reported_cost_usd': None,
+            'tools': [],
+            'tool_count': 0,
+            'steps': [{'step': 1, 'worker': 'media_guard', 'action': 'human_handoff', 'summary': reason_label}],
+            'agent_mode': getattr(self, 'agent_mode', 'agent'),
+            'queue_wait_ms': 0.0,
+            'provider_inference_ms': 0.0,
+            'graph_retrieval_ms': 0.0,
+            'rag_retrieval_ms': 0.0,
+            'db_ms': 0.0,
+            'in_flight_inferences': getattr(self.inference_gate, 'in_flight', 0),
+        }
+        if isinstance(error_trace, dict) and error_trace.get('model_errors'):
+            _, clean_errs = sanitize_structured_payload(error_trace['model_errors'], user_text=text)
+            trace['model_errors'] = clean_errs
+
+        ctx_dict = {'order_id': snapshot.get('order_id'), 'product_id': snapshot.get('product_id')}
+        result = {
+            'action': 'reply',
+            'message': MEDIA_HUMAN_FALLBACK_MESSAGE,
+            'source': 'media_human_fallback',
+            'model_used': False,
+            'context': ctx_dict,
+            'trace': trace,
+            'provider_id': provider_id,
+            'replayed': False,
+            'sources': [],
+            'human_support': handoff_info,
+        }
+        self.store.finish_turn(
+            customer,
+            snapshot,
+            request_id,
+            digest,
+            [user_msg, assistant_msg],
+            result,
+            {},
+        )
+        return result
 
     def focus(self, customer, cid, body):
         self.require_permission(READ)

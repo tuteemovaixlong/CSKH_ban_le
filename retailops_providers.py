@@ -103,6 +103,33 @@ def filter_system_prompt_for_tools(system_text, allowed_tools):
 
 
 TUNNEL_TOKEN_HEADER = 'X-RetailOps-Tunnel-Token'
+MAX_MODEL_IMAGES = 3
+
+
+def _normalize_model_image_urls(att):
+    """Extract at most MAX_MODEL_IMAGES EXIF-free, <=1024 px data URLs from an attachment dict (W4-D3, W4-D7)."""
+    from retailops.business.evidence import decode_attachment_data_payload, project_image_for_model
+
+    raw_items = []
+    if isinstance(att.get('images'), list) and att['images']:
+        for item in att['images'][:MAX_MODEL_IMAGES]:
+            if isinstance(item, str) and item.strip():
+                raw_items.append((item.strip(), att.get('mime_type', 'image/jpeg')))
+            elif isinstance(item, dict) and isinstance(item.get('data'), str) and item['data'].strip():
+                raw_items.append((item['data'].strip(), item.get('mime_type') or att.get('mime_type') or 'image/jpeg'))
+    elif isinstance(att.get('data'), str) and att['data'].strip():
+        raw_items.append((att['data'].strip(), att.get('mime_type', 'image/jpeg')))
+
+    urls = []
+    for raw_data, fallback_mime in raw_items[:MAX_MODEL_IMAGES]:
+        try:
+            raw_bytes = decode_attachment_data_payload(raw_data)
+            proj = project_image_for_model(raw_bytes)
+            urls.append(proj['data_url'])
+        except Exception:
+            data_url = raw_data if raw_data.startswith('data:') else f"data:{fallback_mime};base64,{raw_data}"
+            urls.append(data_url)
+    return urls
 
 
 def read_provider_secret(name, environ=None):
@@ -191,6 +218,19 @@ class OpenRouterAgent:
 
     def translate(self, messages):
         validate_messages(messages)
+        # Pre-allocate image budget from newest user turn backwards so total images never exceed MAX_MODEL_IMAGES (3).
+        allowed_urls_by_index = {}
+        if self.is_vision:
+            remaining_images = MAX_MODEL_IMAGES
+            for idx in range(len(messages) - 1, -1, -1):
+                m = messages[idx]
+                if m.get('role') == 'user' and isinstance(m.get('attachment'), dict) and remaining_images > 0:
+                    urls = _normalize_model_image_urls(m['attachment'])
+                    if urls:
+                        take = urls[:remaining_images]
+                        allowed_urls_by_index[idx] = take
+                        remaining_images -= len(take)
+
         translated, pending = [], []
         for index, message in enumerate(messages):
             if message['role'] == 'assistant':
@@ -215,17 +255,17 @@ class OpenRouterAgent:
             elif message['role'] == 'user' and message.get('attachment'):
                 att = message['attachment']
                 text_content = message.get('content') or ''
-                if att.get('type') == 'image' and att.get('data'):
-                    if self.is_vision:
-                        data_url = att['data']
-                        if not data_url.startswith('data:'):
-                            mime = att.get('mime_type', 'image/jpeg')
-                            data_url = f"data:{mime};base64,{data_url}"
+                img_urls = allowed_urls_by_index.get(index) or []
+                if att.get('type') == 'image' and (att.get('data') or att.get('images')):
+                    if self.is_vision and img_urls:
                         entry = {
                             'role': 'user',
                             'content': [
                                 {'type': 'text', 'text': text_content},
-                                {'type': 'image_url', 'image_url': {'url': data_url}}
+                                *[
+                                    {'type': 'image_url', 'image_url': {'url': url}}
+                                    for url in img_urls
+                                ],
                             ]
                         }
                     else:
@@ -234,7 +274,23 @@ class OpenRouterAgent:
                         entry = {'role': 'user', 'content': f"{text_content}\n\n{notice}".strip()}
                 elif att.get('type') == 'document':
                     doc_name = att.get('name', 'tài liệu')
-                    entry = {'role': 'user', 'content': f"{text_content}\n\n[Tệp đính kèm: {doc_name}]".strip()}
+                    excerpt = (att.get('excerpt') or '').strip()
+                    doc_text = f"{text_content}\n\n[Tệp đính kèm: {doc_name}]".strip()
+                    if excerpt:
+                        doc_text = f"{doc_text}\n{excerpt}"
+                    if self.is_vision and img_urls:
+                        entry = {
+                            'role': 'user',
+                            'content': [
+                                {'type': 'text', 'text': doc_text},
+                                *[
+                                    {'type': 'image_url', 'image_url': {'url': url}}
+                                    for url in img_urls
+                                ],
+                            ]
+                        }
+                    else:
+                        entry = {'role': 'user', 'content': doc_text}
                 else:
                     entry = {'role': 'user', 'content': text_content}
             else:
