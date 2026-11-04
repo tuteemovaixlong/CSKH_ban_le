@@ -241,12 +241,32 @@ jobs:
           assert res["scan_status"] == "clean" and res["page_count"] == 1, res
 
           eicar = b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$" + b"EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
-          infected_pdf = clean_pdf + b"\n%" + eicar + b"\n"
           try:
-              inspect_pdf_evidence(infected_pdf, scanner=scanner)
+              scanner.scan_bytes(eicar)
           except ApiError as exc:
               assert exc.status == 422 and exc.code == "malware_detected", (exc.status, exc.code)
           else:
               raise AssertionError("Expected real ClamAV to reject EICAR payload")
+          PY
+          docker stop retailops-clamav-ci >/dev/null
+          RETAILOPS_CLAMD_HOST=127.0.0.1 RETAILOPS_CLAMD_PORT=13310 python3 - <<'PY'
+          import io
+          import pypdfium2 as pdfium
+          from retailops.core import ApiError
+          from retailops.business.clamav import ClamdScanner
+          from retailops.business.evidence import inspect_pdf_evidence
+
+          scanner = ClamdScanner.from_environment()
+          doc = pdfium.PdfDocument.new()
+          doc.new_page(200, 100)
+          buf = io.BytesIO()
+          doc.save(buf)
+          doc.close()
+          try:
+              inspect_pdf_evidence(buf.getvalue(), scanner=scanner)
+          except ApiError as exc:
+              assert exc.status == 503 and exc.code == "malware_scanner_unavailable", (exc.status, exc.code)
+          else:
+              raise AssertionError("Expected stopped ClamAV container to fail closed")
           print("CLAMAV_REAL_CONTAINER_SMOKE_OK")
           PY

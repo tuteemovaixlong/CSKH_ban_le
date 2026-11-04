@@ -48,11 +48,21 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
 
     def clear(self):
         from psycopg import sql
-        with transaction(DSN, write=True) as db:
-            names = db.execute("SELECT nspname FROM pg_namespace WHERE nspname=? OR nspname ~ '^tenant_[a-f0-9]{32}$'",
-                               (IDENTITY_SCHEMA,)).fetchall()
-            for row in names:
-                db.raw.execute(sql.SQL('DROP SCHEMA {} CASCADE').format(sql.Identifier(row['nspname'])))
+        prev_web = getattr(self, 'web', None)
+        if prev_web is not None:
+            prev_web.stop_case_timer_worker()
+        for attempt in range(3):
+            try:
+                with transaction(DSN, write=True) as db:
+                    names = db.execute("SELECT nspname FROM pg_namespace WHERE nspname=? OR nspname ~ '^tenant_[a-f0-9]{32}$'",
+                                       (IDENTITY_SCHEMA,)).fetchall()
+                    for row in names:
+                        db.raw.execute(sql.SQL('DROP SCHEMA {} CASCADE').format(sql.Identifier(row['nspname'])))
+                break
+            except ApiError:
+                if attempt == 2:
+                    raise
+                time.sleep(0.1)
 
     def setUp(self):
         self.clear()
@@ -69,8 +79,11 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         self.staff = self.member('staff', 'shop-a', 'C-001', 'staff')
 
     def restart(self):
+        prev_web = getattr(self, 'web', None)
+        if prev_web is not None:
+            prev_web.stop_case_timer_worker()
         self.sessions = PostgresSessions(DSN, api_infer=fixtures.ModelFixture(), api_daily_limit=1)
-        self.web = PublicWeb(fixtures.ORIGIN, self.sessions)
+        self.web = PublicWeb(fixtures.ORIGIN, self.sessions, start_timer_worker=False)
 
     request = fixtures.PersistentTests.request
     login = fixtures.PersistentTests.login
@@ -308,7 +321,9 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         env.pop('RETAILOPS_DATABASE_URL', None)
         settings = Settings.from_environment('public', env)
         self.assertNotIn(DSN, repr(settings)+json.dumps(settings.summary()))
-        self.assertIsInstance(build_public_app(settings).sessions, PostgresSessions)
+        built_web = build_public_app(settings)
+        self.addCleanup(built_web.stop_case_timer_worker)
+        self.assertIsInstance(built_web.sessions, PostgresSessions)
         result = subprocess.run([sys.executable, '-m', 'retailops', 'database', 'check'], env=env,
                                 cwd=ROOT, text=True, capture_output=True, timeout=15)
         self.assertEqual(result.returncode, 0, result.stderr)
