@@ -431,22 +431,24 @@ def ensure_order_action_tables(db):
 
     db.execute("""CREATE TABLE IF NOT EXISTS order_action_evidence (
                   evidence_id TEXT PRIMARY KEY,
-                  request_id TEXT NOT NULL REFERENCES order_action_requests(request_id),
-                  case_id TEXT NOT NULL REFERENCES cases(case_id),
+                  request_id TEXT REFERENCES order_action_requests(request_id),
+                  case_id TEXT REFERENCES cases(case_id),
                   customer_id TEXT NOT NULL REFERENCES customers(id),
                   conversation_id TEXT NOT NULL,
+                  filename TEXT CHECK(filename IS NULL OR length(filename) <= 200),
                   uploaded_by_principal_id TEXT NOT NULL,
                   uploaded_by_role TEXT NOT NULL CHECK(uploaded_by_role IN ('customer', 'staff', 'manager')),
                   mime_type TEXT NOT NULL CHECK(mime_type IN ('image/jpeg', 'image/png', 'image/webp')),
                   byte_size INTEGER NOT NULL CHECK(byte_size > 0 AND byte_size <= 10485760),
-                  width INTEGER NOT NULL CHECK(width > 0),
-                  height INTEGER NOT NULL CHECK(height > 0),
+                  width INTEGER CHECK(width IS NULL OR width > 0),
+                  height INTEGER CHECK(height IS NULL OR height > 0),
                   sha256 TEXT NOT NULL,
                   storage_relpath TEXT NOT NULL,
                   created_at REAL NOT NULL,
                   file_purged_at REAL
                 )""")
     db.execute('CREATE INDEX IF NOT EXISTS idx_order_action_evidence_req ON order_action_evidence(request_id, created_at ASC)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_order_action_evidence_conv ON order_action_evidence(conversation_id, created_at DESC)')
     db.execute('CREATE INDEX IF NOT EXISTS idx_order_action_evidence_purge ON order_action_evidence(file_purged_at, request_id)')
 
     db.execute("""CREATE TABLE IF NOT EXISTS integration_outbox (

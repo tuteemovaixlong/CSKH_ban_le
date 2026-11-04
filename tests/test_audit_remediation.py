@@ -5,12 +5,17 @@ Covers:
 - [F06] Human handoff automatic escalation record creation in conversation_feedback
 - [P0.3] Catalog.save() graceful handling of filesystem errors
 """
+import base64
 import hashlib
+import io
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+
+from PIL import Image
 
 from retailops.business.application import Application
 from retailops.business.store import BusinessStore
@@ -20,9 +25,10 @@ from retailops_conversation import Catalog
 
 
 class FakeAgent:
-    def __init__(self, name="fake_agent"):
+    def __init__(self, name="fake_agent", *, is_vision=True):
         self.name = name
         self.model = name
+        self.is_vision = is_vision
         self.call_count = 0
 
     def inspect(self):
@@ -41,6 +47,11 @@ class FakeAgent:
 
 class TestAuditRemediation(unittest.TestCase):
     def setUp(self):
+        self.data_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.data_dir.cleanup)
+        self.env_patch = patch.dict(os.environ, {"RETAILOPS_OUTPUT": self.data_dir.name})
+        self.env_patch.start()
+        self.addCleanup(self.env_patch.stop)
         self.tmp = tempfile.NamedTemporaryFile(suffix='.sqlite3', delete=False)
         self.tmp.close()
         self.store = BusinessStore(self.tmp.name, create=True)
@@ -53,10 +64,18 @@ class TestAuditRemediation(unittest.TestCase):
     def tearDown(self):
         Path(self.tmp.name).unlink(missing_ok=True)
 
+    @staticmethod
+    def _jpeg_data_url(color):
+        buf = io.BytesIO()
+        Image.new("RGB", (8, 8), color=color).save(buf, format="JPEG", quality=90)
+        return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+
     def test_f11_attachment_digest_prevents_mismatched_replay(self):
         """F11: Changing attachment data under the same filename must generate a different digest."""
         cid = self.store.new_conversation("C-001", "custom")["conversation_id"]
         req_id = "req_audit_" + "a" * 20
+        img_a = self._jpeg_data_url((220, 40, 40))
+        img_b = self._jpeg_data_url((40, 60, 220))
 
         # Turn 1: attachment with image data A
         payload1 = {
@@ -66,7 +85,7 @@ class TestAuditRemediation(unittest.TestCase):
             "attachment": {
                 "type": "image",
                 "name": "product.jpg",
-                "data": "data:image/jpeg;base64,AAAA1111"
+                "data": img_a,
             }
         }
         res1 = self.app.chat("C-001", payload1)
@@ -81,7 +100,7 @@ class TestAuditRemediation(unittest.TestCase):
             "attachment": {
                 "type": "image",
                 "name": "product.jpg",
-                "data": "data:image/jpeg;base64,BBBB2222"
+                "data": img_b,
             }
         }
         with self.assertRaises(ApiError) as ctx:

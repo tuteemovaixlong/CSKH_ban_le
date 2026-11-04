@@ -23,6 +23,7 @@ CUSTOMER_SAFE_EVENT_KINDS = frozenset({
     'order_action_status_changed',
     'order_action_refund_updated',
     'order_action_evidence_uploaded',
+    'chat_attachment_stored',
     'proposal_dismissed',
     'order_status_updated_by_manager',
     'customer_messaged_staff',
@@ -544,6 +545,29 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 )
             data, mime_type = app.store.read_order_action_evidence_bytes(ev_row)
             return (200, BinaryPayload(data, mime_type, headers=[("Content-Disposition", "inline")]))
+        m_chat_ev_get = re.fullmatch(r"/api/conversations/([a-f0-9-]{36})/evidence/(ev_[a-f0-9]{32})", path)
+        if m_chat_ev_get:
+            cid, ev_id = m_chat_ev_get[1], m_chat_ev_get[2]
+            ev_row = app.store.get_chat_evidence_record(cid, ev_id)
+            if STAFF in ctx.permissions:
+                actor = _extract_actor(app, customer, binding=binding, context=ctx)
+                _authorize_staff_transcript_view(
+                    app,
+                    ctx,
+                    actor,
+                    cid=cid,
+                    case_id=ev_row.get("case_id"),
+                    audit_resolved=True,
+                )
+            else:
+                require(
+                    ev_row["customer_id"] == customer,
+                    404,
+                    "evidence_not_found",
+                    "Không tìm thấy tệp đính kèm trên cuộc trò chuyện này.",
+                )
+            data, mime_type = app.store.read_order_action_evidence_bytes(ev_row)
+            return (200, BinaryPayload(data, mime_type, headers=[("Content-Disposition", "inline")]))
         if path == '/api/cancellation-proposals':
             _require_ctx_permission(ctx, CANCEL)
             with app.store.connection() as db:
@@ -749,9 +773,16 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             res = app.store.record_feedback(customer, body)
             return (200, res)
         if path == "/api/staff/customer-message":
-            require(isinstance(body, dict) and {"conversation_id", "message"}.issubset(set(body)) and set(body).issubset({"conversation_id", "message"}), 400, "invalid_fields", "Các trường của yêu cầu không hợp lệ.")
+            require(
+                isinstance(body, dict)
+                and {"conversation_id", "message"}.issubset(set(body))
+                and set(body).issubset({"conversation_id", "message", "attachment"}),
+                400,
+                "invalid_fields",
+                "Các trường của yêu cầu không hợp lệ.",
+            )
             cid, msg = body["conversation_id"], body["message"]
-            res = app.store.customer_message(customer, cid, msg)
+            res = app.store.customer_message(customer, cid, msg, attachment=body.get("attachment"))
             return (200, res)
         m_case_act = re.fullmatch(r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/(claim|release)", path)
         if m_case_act:

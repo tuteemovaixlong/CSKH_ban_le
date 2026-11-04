@@ -1,5 +1,7 @@
 """Regression tests for 2026-09-20 order lookup failures; no GPU/live data."""
+import base64
 import copy
+import io
 import json
 import os
 import tempfile
@@ -7,6 +9,8 @@ import unittest
 import uuid
 from pathlib import Path
 from unittest.mock import patch
+
+from PIL import Image
 
 from agent_protocol import ProtocolError, validate_messages
 from retailops.core import ApiError
@@ -22,6 +26,13 @@ from retailops_tools import BoundTools
 
 MODEL = 'fixture-retailops-tool-model'
 KEY = 'fixture_not_a_secret_' + 'a' * 40
+TUNNEL_KEY = 'fixture_tunnel_not_a_secret_' + 'b' * 32
+
+
+def _fixture_image_b64(fmt='PNG', color=(30, 90, 180)):
+    buf = io.BytesIO()
+    Image.new('RGB', (8, 8), color=color).save(buf, format=fmt)
+    return base64.b64encode(buf.getvalue()).decode('ascii')
 
 
 def api_response(content='Done', calls=()):
@@ -48,7 +59,9 @@ class OrderToolRecoveryTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.environment = patch.dict(os.environ, {
-            'RETAILOPS_API_ENDPOINT': 'https://fixture.example/v1/chat/completions'}, clear=True)
+            'RETAILOPS_API_ENDPOINT': 'https://fixture.example/v1/chat/completions',
+            'RETAILOPS_OUTPUT': str(Path(self.temp.name) / 'runtime_data'),
+        }, clear=True)
         self.environment.start()
         self.addCleanup(self.environment.stop)
         self.store = BusinessStore(Path(self.temp.name) / 'business.sqlite3')
@@ -59,7 +72,7 @@ class OrderToolRecoveryTests(unittest.TestCase):
                                         ('O-819126', 'C-001', 'delivered')]:
                 db.execute('INSERT INTO orders(id,customer_id,name,variant,amount,status) VALUES (?,?,?,?,?,?)',
                            (oid, owner, 'Fixture shirt', 'White / M', 450000, status))
-        self.adapter = OpenRouterAgent(KEY, MODEL)
+        self.adapter = OpenRouterAgent(KEY, MODEL, tunnel_token=TUNNEL_KEY, vision=True)
         self.app = Application(self.store, {}, api_infer=self.adapter, orchestrator='multi_agent')
         self.cid = self.app.new_conversation('C-001', {'provider_id': 'api'})['conversation_id']
 
@@ -150,11 +163,11 @@ class OrderToolRecoveryTests(unittest.TestCase):
         self.assertNotIn('fixture.example', json.dumps(self.adapter.inspect()))
 
     def test_image_reaches_actual_adapter_and_is_counted(self):
-        attachment = {'type': 'image', 'data': 'aW1hZ2U=', 'mime_type': 'image/png', 'name': 'fixture.png'}
+        attachment = {'type': 'image', 'data': _fixture_image_b64('PNG'), 'mime_type': 'image/png', 'name': 'fixture.png'}
         with patch.object(OpenRouterAgent, 'request', return_value=api_response('Visible fixture')) as req:
             result = self.app.chat('C-001', self.body('Gi\u1ea3i th\u00edch \u1ea3nh', attachment))
         user = next(m for m in req.call_args.args[0]['messages'] if m['role'] == 'user')
-        self.assertEqual(user['content'][1]['image_url']['url'], 'data:image/png;base64,aW1hZ2U=')
+        self.assertTrue(user['content'][1]['image_url']['url'].startswith('data:image/png;base64,'))
         self.assertEqual(result['trace']['model_calls'], 1)
         self.assertEqual(result['message'], 'Visible fixture')
 
@@ -404,7 +417,7 @@ class OrderToolRecoveryTests(unittest.TestCase):
 
     def test_t08_image_with_purchase_query_reaches_model_payload_and_routes_to_order_agent(self):
         """T08: Image query about purchasing routes to order_agent, includes image_url in payload, no canned greeting."""
-        att = {'type': 'image', 'data': 'aW1hZ2U=', 'mime_type': 'image/jpeg', 'name': 'pant.jpg'}
+        att = {'type': 'image', 'data': _fixture_image_b64('JPEG'), 'mime_type': 'image/jpeg', 'name': 'pant.jpg'}
         st = state('Có đơn nào mua món này không?')
         st['messages'][-1]['attachment'] = att
         routed = run_supervisor(st)
@@ -418,13 +431,13 @@ class OrderToolRecoveryTests(unittest.TestCase):
             result = self.app.chat('C-001', self.body('Có đơn nào mua món này không?', attachment=att))
         first_call_msgs = req.call_args_list[0].args[0]['messages']
         user_entry = next(m for m in first_call_msgs if m['role'] == 'user')
-        self.assertEqual(user_entry['content'][1]['image_url']['url'], 'data:image/jpeg;base64,aW1hZ2U=')
+        self.assertTrue(user_entry['content'][1]['image_url']['url'].startswith('data:image/jpeg;base64,'))
         self.assertNotIn('Dạ em là trợ lý bán lẻ', result['message'])
         self.assertIn(result['source'], ('llm_agent', 'model'))
 
     def test_t09_image_multiturn_followup_without_reupload_restores_image_from_history(self):
         """T09: Follow-up turn referencing image restores attachment from conversation history without re-upload."""
-        att = {'type': 'image', 'data': 'aW1hZ2U=', 'mime_type': 'image/jpeg', 'name': 'pant.jpg'}
+        att = {'type': 'image', 'data': _fixture_image_b64('JPEG'), 'mime_type': 'image/jpeg', 'name': 'pant.jpg'}
         # Turn 1 with image
         with patch.object(OpenRouterAgent, 'request', return_value=api_response('Tôi thấy bạn gửi ảnh quần tây.')):
             self.app.chat('C-001', self.body('Món này tôi từng mua chưa?', attachment=att))
@@ -439,7 +452,7 @@ class OrderToolRecoveryTests(unittest.TestCase):
 
     def test_t10_attachment_isolation_across_conversations_and_customers(self):
         """T10: Attachments do not leak to other conversations or other customers."""
-        att = {'type': 'image', 'data': 'aW1hZ2U=', 'mime_type': 'image/jpeg', 'name': 'pant.jpg'}
+        att = {'type': 'image', 'data': _fixture_image_b64('JPEG'), 'mime_type': 'image/jpeg', 'name': 'pant.jpg'}
         # Turn 1 with image in cid (C-001)
         with patch.object(OpenRouterAgent, 'request', return_value=api_response('Nhận được ảnh')):
             self.app.chat('C-001', self.body('Ảnh sản phẩm', attachment=att))

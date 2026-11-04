@@ -11,7 +11,7 @@ import uuid
 
 logger = logging.getLogger("retailops.application")
 from retailops.agent_mode import resolve_agent_mode
-from retailops.core import ApiError, STATUSES, fields, require
+from retailops.core import ApiError, EVIDENCE_MAX_BYTES, STATUSES, fields, require
 from retailops.order_reasons import reason_catalog
 from retailops.identity.bearer import authenticate_bearer
 from retailops.business.permissions import CANCEL, READ, ROLE_PERMISSIONS
@@ -25,6 +25,64 @@ from retailops.business.cache import SemanticCache, ToolCache, is_cacheable_quer
 from retailops.business.progress import TurnProgress
 from retailops.inference_gate import InferenceGate, GatedGateway
 from retailops.workflow.answer_check import check_final_answer
+
+
+class _EvidenceHydratingGateway:
+    """Hydrate only the most recent chat attachment from the protected evidence store transiently per model call (W4-D6)."""
+
+    def __init__(self, target, store, customer_id: str, conversation_id: str):
+        self._target = target
+        self._store = store
+        self._customer_id = customer_id
+        self._conversation_id = conversation_id
+
+    def __getattr__(self, name):
+        return getattr(self._target, name)
+
+    def _project_messages(self, messages):
+        if not isinstance(messages, list):
+            return messages
+        recent_att_idx = None
+        for idx in range(len(messages) - 1, -1, -1):
+            msg = messages[idx]
+            if not isinstance(msg, dict) or msg.get('role') != 'user':
+                continue
+            att = msg.get('attachment')
+            if isinstance(att, dict) and not att.get('removed') and (att.get('evidence_id') or att.get('data')):
+                recent_att_idx = idx
+                break
+        if recent_att_idx is None:
+            return messages
+        include_pixels = bool(getattr(self._target, 'is_vision', False))
+        projected = []
+        for idx, msg in enumerate(messages):
+            if not isinstance(msg, dict) or msg.get('role') != 'user' or not isinstance(msg.get('attachment'), dict):
+                projected.append(msg)
+                continue
+            att = msg['attachment']
+            cloned = dict(msg)
+            if idx == recent_att_idx:
+                if att.get('evidence_id') and hasattr(self._store, 'load_attachment_for_model'):
+                    cloned['attachment'] = self._store.load_attachment_for_model(
+                        self._customer_id,
+                        self._conversation_id,
+                        att,
+                        include_pixels=include_pixels,
+                    )
+                elif not include_pixels and 'data' in att:
+                    cloned['attachment'] = {'type': att.get('type', 'image'), 'name': att.get('name', '')}
+                else:
+                    cloned['attachment'] = dict(att)
+            else:
+                cloned['attachment'] = {'type': att.get('type', 'image'), 'name': att.get('name', '')}
+            projected.append(cloned)
+        return projected
+
+    def chat(self, messages, allow_tools: bool, timeout: float):
+        return self._target.chat(self._project_messages(messages), allow_tools, timeout)
+
+    def chat_scoped(self, messages, allow_tools: bool, timeout: float, allowed_tools):
+        return self._target.chat_scoped(self._project_messages(messages), allow_tools, timeout, allowed_tools)
 
 class Application:
     def __init__(self, store, tokens, infer=None, api_infer=None, api_daily_limit=20, *, role='customer', orchestrator=None,
@@ -138,8 +196,9 @@ class Application:
                     400, 'invalid_attachment', 'Định dạng tệp đính kèm không hợp lệ.')
             require(attachment.get('type') in ('image', 'document'),
                     400, 'unsupported_attachment_type', 'Chỉ hỗ trợ tệp hình ảnh hoặc tài liệu.')
-            require(isinstance(attachment.get('data'), str) and len(attachment['data']) <= 6_000_000,
-                    400, 'attachment_too_large', 'Kích thước tệp đính kèm vượt quá 4MB.')
+            max_b64_chars = ((EVIDENCE_MAX_BYTES + 2) // 3) * 4 + 128
+            require(isinstance(attachment.get('data'), str) and 0 < len(attachment['data']) <= max_b64_chars,
+                    413, 'attachment_too_large', 'Kích thước tệp đính kèm vượt quá giới hạn cho phép.')
         if hasattr(self.store, 'peek_conversation_for_chat'):
             snapshot = self.store.peek_conversation_for_chat(customer, body['conversation_id'])
         else:
@@ -267,9 +326,20 @@ class Application:
 
             if hasattr(gateway, 'for_turn'):
                 gateway = gateway.for_turn()
-            gated_gateway = GatedGateway(gateway, self.inference_gate)
+            gated_gateway = _EvidenceHydratingGateway(
+                GatedGateway(gateway, self.inference_gate),
+                self.store,
+                customer,
+                snapshot['id'],
+            )
             saved = saver.get_tuple(saver.config())
             saved_state = saved.checkpoint.get('channel_values', {}) if saved else {}
+            sanitized_attachment = None
+            if not saved_state and attachment is not None:
+                if hasattr(self.store, 'store_chat_attachment'):
+                    sanitized_attachment = self.store.store_chat_attachment(customer, snapshot['id'], attachment)
+                else:
+                    sanitized_attachment = {'type': attachment.get('type', 'image'), 'name': attachment.get('name', '')}
             if saved_state.get('complete'):
                 trace = saved_state['trace']
                 identity = {'name': trace['model'], 'digest': trace['model_digest'],
@@ -376,10 +446,10 @@ class Application:
             if getattr(self, 'agent_mode', 'agent') == 'legacy' and not (hasattr(run_agent, 'side_effect') or hasattr(run_agent, 'mock_calls')):
                 from retailops.workflow.graph import run_multiagent
                 answer = run_multiagent(gated_gateway, text, self.store.history(customer, snapshot['id']), execute, identity,
-                                        saver=saver, capture=capture, restore=restore, before_model=before_model, attachment=attachment)
+                                        saver=saver, capture=capture, restore=restore, before_model=before_model, attachment=sanitized_attachment)
             else:
                 answer = run_agent(gated_gateway, text, self.store.history(customer, snapshot['id']), execute, identity,
-                                   saver=saver, capture=capture, restore=restore, before_model=before_model, attachment=attachment,
+                                   saver=saver, capture=capture, restore=restore, before_model=before_model, attachment=sanitized_attachment,
                                    progress=lambda state: self.progress.update(progress_key, request_id, state))
 
             if read_only_lookup:

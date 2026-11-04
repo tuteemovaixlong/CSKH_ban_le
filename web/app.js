@@ -299,26 +299,63 @@ function showErrorDetails(row, error) {
   row.append(details);
 }
 
+function resolveAttachmentUrl(attachment, cid = null) {
+  if (!attachment || attachment.removed || attachment.purged) return null;
+  if (typeof attachment.data === 'string' && attachment.data.length > 0) {
+    return attachment.data.startsWith('data:')
+      ? attachment.data
+      : `data:${attachment.mime_type || 'image/jpeg'};base64,${attachment.data}`;
+  }
+  if (typeof attachment.download_url === 'string' && attachment.download_url.startsWith('/')) {
+    return attachment.download_url;
+  }
+  const convId = cid || conversationId;
+  if (convId && typeof attachment.evidence_id === 'string' && attachment.evidence_id.startsWith('ev_')) {
+    return `/api/conversations/${encodeURIComponent(convId)}/evidence/${encodeURIComponent(attachment.evidence_id)}`;
+  }
+  return null;
+}
+
+function buildChatAttachmentCard(attachment, cid = null) {
+  const card = el('div', 'chat-attachment-card');
+  if (attachment.removed || attachment.purged) {
+    const notice = el('div', 'chat-attachment-doc', '📎 Tệp đính kèm đã hết hạn hoặc đã gỡ');
+    card.append(notice);
+    card.append(el('div', 'chat-attachment-caption', attachment.name || 'Tệp đính kèm'));
+    return card;
+  }
+  const srcUrl = resolveAttachmentUrl(attachment, cid);
+  if (attachment.type === 'image' && srcUrl) {
+    const img = el('img', 'chat-attachment-img');
+    img.src = srcUrl;
+    img.alt = attachment.name || 'Ảnh đính kèm';
+    img.onclick = (e) => { e.stopPropagation(); openLightbox(img.src, attachment.name); };
+    card.append(img);
+  } else {
+    const doc = el('div', 'chat-attachment-doc');
+    doc.append(document.createTextNode(attachment.type === 'image' ? '🖼️ ' : '📄 '));
+    if (srcUrl) {
+      const link = el('a', 'chat-attachment-link', attachment.name || 'Tài liệu');
+      link.href = srcUrl;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      doc.append(link);
+    } else {
+      doc.append(el('strong', '', attachment.name || 'Tài liệu'));
+    }
+    card.append(doc);
+  }
+  card.append(el('div', 'chat-attachment-caption', attachment.name || 'Tệp đính kèm'));
+  return card;
+}
+
 function message(text, role = 'assistant', source = null, model = null, attachment = null) {
   const row = el('div', 'message ' + role), label = el('div', 'message-label');
   label.append(el('span', role === 'assistant' ? 'mini-r' : '', role === 'assistant' ? 'R' : ''));
   label.append(document.createTextNode(role === 'user' ? 'Bạn' : 'RetailOps' + (source ? ' · ' + (sourceLabels[source] || source) : '') + (model ? ' · ' + model : '')));
   const bubble = el('div', 'bubble');
   if (attachment) {
-    const card = el('div', 'chat-attachment-card');
-    if (attachment.type === 'image') {
-      const img = el('img', 'chat-attachment-img');
-      img.src = attachment.data.startsWith('data:') ? attachment.data : `data:${attachment.mime_type || 'image/jpeg'};base64,${attachment.data}`;
-      img.alt = attachment.name || 'Ảnh đính kèm';
-      img.onclick = (e) => { e.stopPropagation(); openLightbox(img.src, attachment.name); };
-      card.append(img);
-    } else {
-      const doc = el('div', 'chat-attachment-doc');
-      doc.append(document.createTextNode('📄 '), el('strong', '', attachment.name || 'Tài liệu'));
-      card.append(doc);
-    }
-    card.append(el('div', 'chat-attachment-caption', attachment.name || 'Tệp đính kèm'));
-    bubble.append(card);
+    bubble.append(buildChatAttachmentCard(attachment, conversationId));
   }
   if (text) {
     bubble.append(document.createTextNode(text));
@@ -3418,20 +3455,7 @@ async function refreshStaffTranscript(cid, forceScroll = false, caseId = null) {
           const row = el('div', 'message user');
           const bubble = el('div', 'bubble bubble-user');
           if (m.attachment) {
-            const card = el('div', 'chat-attachment-card');
-            if (m.attachment.type === 'image') {
-              const img = el('img', 'chat-attachment-img');
-              img.src = m.attachment.data.startsWith('data:') ? m.attachment.data : `data:${m.attachment.mime_type || 'image/jpeg'};base64,${m.attachment.data}`;
-              img.alt = m.attachment.name || 'Ảnh đính kèm';
-              img.onclick = (e) => { e.stopPropagation(); openLightbox(img.src, m.attachment.name); };
-              card.append(img);
-            } else {
-              const doc = el('div', 'chat-attachment-doc');
-              doc.append(document.createTextNode('📄 '), el('strong', '', m.attachment.name || 'Tài liệu'));
-              card.append(doc);
-            }
-            card.append(el('div', 'chat-attachment-caption', m.attachment.name || 'Tệp đính kèm'));
-            bubble.append(card);
+            bubble.append(buildChatAttachmentCard(m.attachment, cid));
           }
           if (m.content) bubble.append(document.createTextNode(m.content));
           row.append(

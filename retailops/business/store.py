@@ -27,8 +27,11 @@ from retailops.business.variants import fold_attribute
 from retailops.order_reasons import reason_catalog
 from retailops.business.evidence import (
     atomic_write_bytes,
+    decode_attachment_data_payload,
+    encode_image_data_url,
     inspect_and_reencode_evidence,
     resolve_protected_subdir,
+    sanitize_attachment_filename,
 )
 from retailops.business.outbox import (
     OUTBOX_MAX_ATTEMPTS,
@@ -2146,8 +2149,18 @@ class BusinessStore:
                     user_entry = {'role': 'user', 'content': content}
                     att = m.get('attachment')
                     if isinstance(att, dict) and att.get('type') in ('image', 'document'):
-                        if att.get('type') == 'image' and att.get('data') and not preserved_recent_image:
-                            user_entry['attachment'] = att
+                        if (
+                            att.get('type') == 'image'
+                            and not att.get('removed')
+                            and (att.get('evidence_id') or att.get('data'))
+                            and not preserved_recent_image
+                        ):
+                            ref_entry = {
+                                k: att[k]
+                                for k in ('evidence_id', 'type', 'mime_type', 'name', 'sha256')
+                                if k in att and att[k] is not None
+                            }
+                            user_entry['attachment'] = ref_entry
                             preserved_recent_image = True
                         else:
                             user_entry['attachment'] = {'type': att.get('type'), 'name': att.get('name', '')}
@@ -2183,6 +2196,8 @@ class BusinessStore:
             prev = normalized[-1]
             if m['role'] == 'user' and prev['role'] == 'user':
                 prev['content'] = (prev['content'] + '\n' + m['content'])[:2000]
+                if 'attachment' in m:
+                    prev['attachment'] = m['attachment']
             elif m['role'] == 'assistant' and prev['role'] == 'assistant' and 'tool_calls' not in m and 'tool_calls' not in prev:
                 prev['content'] = (prev['content'] + '\n' + m['content'])
             else:
@@ -3636,8 +3651,11 @@ class BusinessStore:
             out['actor_principal_id'] = actor_meta['principal_id']
         return out
 
-    def customer_message(self, customer_id, cid, message):
+    def customer_message(self, customer_id, cid, message, attachment=None):
         require(isinstance(message, str) and message.strip(), 400, 'invalid_message', 'Tin nhắn không được để trống.')
+        sanitized_att = None
+        if attachment is not None:
+            sanitized_att = self.store_chat_attachment(customer_id, cid, attachment)
         clean_comment = message[:200]
         if contains_canary_or_secret(clean_comment):
             _, clean_comment = sanitize_structured_payload(clean_comment, preserve_reasoning=False)
@@ -3647,9 +3665,10 @@ class BusinessStore:
             conv, _ = self._prepare_customer_activity_in_tx(
                 db, customer_id, cid, now, forbidden_on_mismatch=True
             )
-            turn_messages = [
-                {"role": "user", "content": message}
-            ]
+            user_turn_msg = {"role": "user", "content": message}
+            if sanitized_att is not None:
+                user_turn_msg["attachment"] = sanitized_att
+            turn_messages = [user_turn_msg]
             turn_result = {
                 "message": "",
                 "author": "customer",
@@ -6361,11 +6380,183 @@ class BusinessStore:
         )
         return data, str(evidence_row["mime_type"])
 
+    def store_chat_attachment(
+        self,
+        customer_id: str,
+        cid: str,
+        attachment: dict,
+        *,
+        actor: dict | None = None,
+    ) -> dict:
+        require(
+            isinstance(cid, str) and bool(re.fullmatch(r"[a-f0-9-]{36}", cid)),
+            400,
+            "invalid_conversation",
+            "Mã cuộc trò chuyện không hợp lệ.",
+        )
+        require(isinstance(attachment, dict), 400, "invalid_attachment", "Định dạng tệp đính kèm không hợp lệ.")
+        att_type = attachment.get("type")
+        require(
+            att_type in ("image", "document"),
+            400,
+            "unsupported_attachment_type",
+            "Chỉ hỗ trợ tệp hình ảnh hoặc tài liệu.",
+        )
+        if attachment.get("evidence_id") and "data" not in attachment:
+            ev_row = self.get_chat_evidence_record(cid, str(attachment["evidence_id"]))
+            require(
+                ev_row["customer_id"] == customer_id,
+                404,
+                "evidence_not_found",
+                "Không tìm thấy tệp đính kèm của cuộc trò chuyện này.",
+            )
+            return {
+                "evidence_id": ev_row["evidence_id"],
+                "type": "document" if ev_row["mime_type"] == "application/pdf" else "image",
+                "mime_type": ev_row["mime_type"],
+                "name": sanitize_attachment_filename(attachment.get("name") or ev_row.get("filename")),
+                "sha256": ev_row["sha256"],
+                "download_url": f"/api/conversations/{cid}/evidence/{ev_row['evidence_id']}",
+            }
+
+        require("data" in attachment, 400, "invalid_attachment", "Thiếu nội dung tệp đính kèm.")
+        raw_bytes = decode_attachment_data_payload(attachment["data"])
+        clean = inspect_and_reencode_evidence(raw_bytes)
+        ext_map = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "application/pdf": ".pdf"}
+        default_name = "attachment" + ext_map.get(clean["mime_type"], "")
+        safe_name = sanitize_attachment_filename(attachment.get("name"), default_name=default_name)
+
+        norm_actor = self._normalize_actor(actor, str(customer_id or "customer"), "customer")
+        safe_tid, _, target_dir = resolve_protected_subdir(
+            self._effective_data_root(), "evidence", self._effective_tenant_id(actor)
+        )
+        now_ts = self._now()
+        evidence_id = f"ev_{uuid.uuid4().hex}"
+        storage_relpath = f"evidence/{safe_tid}/{evidence_id}"
+        written_path: Path | None = None
+
+        try:
+            with self.connection(write=True) as db:
+                conv = db.execute(
+                    "SELECT id, customer_id, order_id, expires_at FROM conversations WHERE id = ? AND customer_id = ?",
+                    (cid, customer_id),
+                ).fetchone()
+                require(conv is not None, 404, "conversation_not_found", "Không tìm thấy cuộc trò chuyện của bạn.")
+                require(float(conv["expires_at"]) > now_ts, 409, "conversation_expired", "Cuộc trò chuyện đã hết hạn.")
+                case_row = self._ensure_active_case_in_tx(db, cid, customer_id, now_ts)
+                written_path = atomic_write_bytes(target_dir, evidence_id, clean["bytes"])
+                db.execute(
+                    """INSERT INTO order_action_evidence(
+                           evidence_id, request_id, case_id, customer_id, conversation_id, filename,
+                           uploaded_by_principal_id, uploaded_by_role, mime_type, byte_size,
+                           width, height, sha256, storage_relpath, created_at, file_purged_at
+                       ) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)""",
+                    (
+                        evidence_id,
+                        case_row["case_id"],
+                        customer_id,
+                        cid,
+                        safe_name,
+                        norm_actor["principal_id"],
+                        norm_actor["role"] if norm_actor["role"] in ("customer", "staff", "manager") else "customer",
+                        clean["mime_type"],
+                        clean["byte_size"],
+                        clean.get("width"),
+                        clean.get("height"),
+                        clean["sha256"],
+                        storage_relpath,
+                        now_ts,
+                    ),
+                )
+                self.log(
+                    db,
+                    customer_id,
+                    "chat_attachment_stored",
+                    conv["order_id"],
+                    case_id=case_row["case_id"],
+                    conversation_id=cid,
+                    evidence_id=evidence_id,
+                    mime_type=clean["mime_type"],
+                    byte_size=clean["byte_size"],
+                    sha256=clean["sha256"],
+                    actor=actor if actor is not None else norm_actor,
+                )
+        except Exception:
+            if written_path is not None:
+                written_path.unlink(missing_ok=True)
+            raise
+
+        return {
+            "evidence_id": evidence_id,
+            "type": "document" if clean["mime_type"] == "application/pdf" else "image",
+            "mime_type": clean["mime_type"],
+            "name": safe_name,
+            "sha256": clean["sha256"],
+            "download_url": f"/api/conversations/{cid}/evidence/{evidence_id}",
+        }
+
+    def get_chat_evidence_record(self, cid: str, evidence_id: str) -> dict:
+        require(
+            isinstance(cid, str) and bool(re.fullmatch(r"[a-f0-9-]{36}", cid)),
+            400,
+            "invalid_conversation",
+            "Mã cuộc trò chuyện không hợp lệ.",
+        )
+        require(
+            isinstance(evidence_id, str) and bool(re.fullmatch(r"ev_[a-f0-9]{32}", evidence_id)),
+            400,
+            "invalid_evidence_id",
+            "Mã tệp đính kèm không hợp lệ.",
+        )
+        with self.connection() as db:
+            ev_row = db.execute(
+                "SELECT * FROM order_action_evidence WHERE evidence_id = ? AND conversation_id = ?",
+                (evidence_id, cid),
+            ).fetchone()
+            require(ev_row is not None, 404, "evidence_not_found", "Không tìm thấy tệp đính kèm trên cuộc trò chuyện này.")
+        return dict(ev_row)
+
+    def load_attachment_for_model(
+        self,
+        customer_id: str,
+        cid: str,
+        att_meta: dict,
+        *,
+        include_pixels: bool = True,
+    ) -> dict:
+        if not isinstance(att_meta, dict) or att_meta.get("removed"):
+            return {"type": str((att_meta or {}).get("type") or "image"), "name": str((att_meta or {}).get("name") or "")}
+        ev_id = att_meta.get("evidence_id")
+        base_meta = {
+            "type": att_meta.get("type", "image"),
+            "name": sanitize_attachment_filename(att_meta.get("name")),
+        }
+        if att_meta.get("mime_type"):
+            base_meta["mime_type"] = att_meta["mime_type"]
+        if ev_id:
+            base_meta["evidence_id"] = ev_id
+        if att_meta.get("sha256"):
+            base_meta["sha256"] = att_meta["sha256"]
+        if not include_pixels or not ev_id:
+            return base_meta
+        try:
+            ev_row = self.get_chat_evidence_record(cid, str(ev_id))
+            if ev_row.get("customer_id") != customer_id:
+                return base_meta
+            raw_bytes, mime_type = self.read_order_action_evidence_bytes(ev_row)
+        except ApiError:
+            return base_meta
+        hydrated = dict(base_meta)
+        hydrated["mime_type"] = mime_type
+        if mime_type != "application/pdf":
+            hydrated["data"] = encode_image_data_url(raw_bytes, mime_type)
+        return hydrated
+
     def purge_expired_evidence(self, *, now: float | None = None) -> dict:
         now_ts = self._now() if now is None else float(now)
         cutoff = now_ts - float(EVIDENCE_RETENTION_SECONDS)
         with self.connection() as db:
-            due = [
+            due_oar = [
                 dict(r)
                 for r in db.execute(
                     """SELECT e.evidence_id, e.request_id, e.case_id, e.customer_id,
@@ -6379,6 +6570,24 @@ class BusinessStore:
                     (cutoff,),
                 ).fetchall()
             ]
+            due_chat = [
+                dict(r)
+                for r in db.execute(
+                    """SELECT e.evidence_id, e.request_id, e.case_id, e.customer_id,
+                              e.sha256, e.storage_relpath, NULL AS order_id
+                       FROM order_action_evidence e
+                       LEFT JOIN cases c ON c.case_id = e.case_id
+                       WHERE e.file_purged_at IS NULL
+                         AND e.request_id IS NULL
+                         AND (
+                             (c.resolved_at IS NOT NULL AND c.resolved_at <= ?)
+                             OR (e.case_id IS NULL AND e.created_at <= ?)
+                         )
+                       ORDER BY e.created_at ASC, e.evidence_id ASC""",
+                    (cutoff, cutoff),
+                ).fetchall()
+            ]
+            due = [*due_oar, *due_chat]
         purged = 0
         for item in due:
             try:
@@ -6398,7 +6607,7 @@ class BusinessStore:
                     self.log(
                         db,
                         item["customer_id"],
-                        "order_action_evidence_purged",
+                        "order_action_evidence_purged" if item.get("request_id") else "chat_attachment_purged",
                         item["order_id"],
                         evidence_id=item["evidence_id"],
                         request_id=item["request_id"],

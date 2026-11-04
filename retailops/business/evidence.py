@@ -1,6 +1,8 @@
-"""Image evidence validation, EXIF/GPS-free pixel re-encoding, and protected storage paths (W3-D4)."""
+"""Image evidence validation, EXIF/GPS-free pixel re-encoding, and protected storage paths (W3-D4, W4-D6)."""
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import io
 import os
@@ -15,6 +17,54 @@ from retailops.core import EVIDENCE_MAX_BYTES, ROOT, ApiError, require
 MAX_EVIDENCE_PIXELS = 25_000_000
 MAX_EVIDENCE_DIMENSION = 12_000
 SAFE_SEGMENT_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+UNSAFE_FILENAME_CHARS_RE = re.compile(r"[\x00-\x1f\x7f/\\]+")
+
+
+def sanitize_attachment_filename(name: str | None, *, default_name: str = "attachment") -> str:
+    """Return a clean display filename without path traversal or control characters."""
+    raw = str(name or "").strip()
+    if raw:
+        raw = raw.replace("\\", "/").split("/")[-1]
+        raw = UNSAFE_FILENAME_CHARS_RE.sub("_", raw).strip(" .")
+    if not raw or raw in (".", ".."):
+        return default_name
+    return raw[:120]
+
+
+def decode_attachment_data_payload(data_str: str, *, max_raw_bytes: int = EVIDENCE_MAX_BYTES) -> bytes:
+    """Decode a base64 or data-URL attachment string and enforce raw byte bounds."""
+    require(isinstance(data_str, str) and len(data_str.strip()) > 0, 400, "empty_evidence", "Tệp đính kèm rỗng.")
+    payload = data_str.strip()
+    if payload.startswith("data:"):
+        comma = payload.find(",")
+        require(comma > 4, 400, "invalid_attachment", "Chuỗi data URL của tệp đính kèm không hợp lệ.")
+        payload = payload[comma + 1 :]
+    compact = re.sub(r"\s+", "", payload)
+    # Reject obviously oversized base64 before allocating full decoded buffer
+    max_b64_len = ((int(max_raw_bytes) + 2) // 3) * 4 + 64
+    require(
+        len(compact) <= max_b64_len,
+        413,
+        "evidence_too_large",
+        "Kích thước tệp đính kèm vượt quá giới hạn cho phép.",
+    )
+    try:
+        raw = base64.b64decode(compact, validate=True)
+    except (binascii.Error, ValueError):
+        raise ApiError(400, "invalid_attachment", "Dữ liệu base64 của tệp đính kèm không hợp lệ.") from None
+    require(len(raw) > 0, 400, "empty_evidence", "Tệp đính kèm rỗng.")
+    require(
+        len(raw) <= max_raw_bytes,
+        413,
+        "evidence_too_large",
+        "Kích thước tệp đính kèm vượt quá giới hạn cho phép.",
+    )
+    return raw
+
+
+def encode_image_data_url(raw_bytes: bytes, mime_type: str = "image/jpeg") -> str:
+    b64 = base64.b64encode(raw_bytes).decode("ascii")
+    return f"data:{mime_type};base64,{b64}"
 
 
 def detect_evidence_magic(raw: bytes) -> tuple[str, str]:
