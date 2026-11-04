@@ -30,6 +30,7 @@ def build_gateways(settings: Settings) -> ModelGateways:
             settings.api_model,
             tunnel_token=settings.api_tunnel_token,
             endpoint=settings.api_endpoint or None,
+            vision=settings.api_vision,
         )
         if settings.api_enabled
         else None

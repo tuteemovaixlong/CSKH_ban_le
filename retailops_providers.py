@@ -65,27 +65,18 @@ API_MODELS = {
     'vllm/qwen2.5-vl',
 }
 
-TEXT_ONLY_MODELS = frozenset((
-    'yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2',
-    'yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2-GGUF',
-    'google/gemma-4-26b-a4b-it:free',
-    'google/gemma-4-26b-a4b-it',
-    'google/gemma-4-31b-it:free',
-    'google/gemma-2-9b-it:free',
-    'meta/muse-spark-1.3-contributor',
-    'meta/muse-spark-1.2-contributor',
-))
 
-
-def is_vision_model(model_name: str) -> bool:
-    if not isinstance(model_name, str) or not model_name:
-        return True
-    lower = model_name.lower()
-    if model_name in TEXT_ONLY_MODELS:
-        return False
-    if 'gemma' in lower and '-vl' not in lower and 'vision' not in lower:
-        return False
-    return True
+def resolve_api_vision_flag(vision=None, *, environ=None):
+    """W4-D7: model image capability is controlled strictly by explicit config (default off), never model-name guessing."""
+    if isinstance(vision, bool):
+        return vision
+    raw = os.getenv('RETAILOPS_API_VISION') if (vision is None and environ is None) else (
+        environ.get('RETAILOPS_API_VISION') if (vision is None and environ is not None) else vision
+    )
+    val = 'off' if raw is None or str(raw).strip() == '' else str(raw).strip().lower()
+    if val not in ('on', 'off'):
+        raise ValueError('RETAILOPS_API_VISION must be on or off')
+    return val == 'on'
 
 
 def filter_system_prompt_for_tools(system_text, allowed_tools):
@@ -132,12 +123,15 @@ def read_provider_secret(name, environ=None):
 class OpenRouterAgent:
     ENDPOINT = OPENROUTER_ENDPOINT
 
-    def __init__(self, key, model=API_MODEL, *, tunnel_token=None, endpoint=None):
+    def __init__(self, key, model=API_MODEL, *, tunnel_token=None, endpoint=None, vision=None):
         if not isinstance(key, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{32,256}', key):
             raise ValueError('Set a valid API key on the server')
         resolved_tunnel = read_provider_secret('RETAILOPS_API_TUNNEL_TOKEN') if tunnel_token is None else str(tunnel_token).strip()
         if resolved_tunnel and not re.fullmatch(r'[A-Za-z0-9_.-]{32,256}', resolved_tunnel):
             raise ValueError('Set a valid API tunnel token on the server')
+        resolved_vision = resolve_api_vision_flag(vision)
+        if resolved_vision and not resolved_tunnel:
+            raise ValueError('RETAILOPS_API_VISION=on requires both RETAILOPS_API_KEY and RETAILOPS_API_TUNNEL_TOKEN')
         custom_endpoint = (os.getenv('RETAILOPS_API_ENDPOINT', '').strip() if endpoint is None else str(endpoint).strip())
         if not custom_endpoint and model not in API_MODELS:
             raise ValueError('API model must be an approved model')
@@ -169,7 +163,7 @@ class OpenRouterAgent:
             else:
                 self.endpoint = OPENROUTER_ENDPOINT
             self.ENDPOINT = self.endpoint
-        self.is_vision = self.is_anthropic or self.is_google or is_vision_model(self.model)
+        self.is_vision = resolved_vision
         self._messages = {}
         self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirects())
 
@@ -179,6 +173,7 @@ class OpenRouterAgent:
             self.model,
             tunnel_token=self.tunnel_token,
             endpoint=self._explicit_endpoint if self.is_custom else '',
+            vision=self.is_vision,
         )
 
     def inspect(self):
@@ -349,7 +344,7 @@ class OpenRouterAgent:
                 system_prompt = merge_system(system_prompt, m['content'])
                 i += 1
             elif m['role'] == 'user':
-                if m.get('attachment') and m['attachment'].get('type') == 'image' and m['attachment'].get('data'):
+                if self.is_vision and m.get('attachment') and m['attachment'].get('type') == 'image' and m['attachment'].get('data'):
                     att = m['attachment']
                     data = att.get('data', '')
                     if ',' in data:
@@ -542,18 +537,22 @@ class OpenRouterAgent:
 
 
 def api_from_environment():
+    vision_enabled = resolve_api_vision_flag()
+    explicit_api_key = read_provider_secret('RETAILOPS_API_KEY')
+    tunnel_token = read_provider_secret('RETAILOPS_API_TUNNEL_TOKEN')
+    if vision_enabled and (not explicit_api_key or not tunnel_token):
+        raise ValueError('RETAILOPS_API_VISION=on requires both RETAILOPS_API_KEY and RETAILOPS_API_TUNNEL_TOKEN')
     if os.getenv('RETAILOPS_API_ENABLED', 'false').lower() != 'true':
         return None
     key = (
-        read_provider_secret('RETAILOPS_API_KEY')
+        explicit_api_key
         or os.getenv('ANTHROPIC_API_KEY')
         or os.getenv('GEMINI_API_KEY')
         or os.getenv('OPENROUTER_API_KEY', '')
     )
-    tunnel_token = read_provider_secret('RETAILOPS_API_TUNNEL_TOKEN')
-    if os.getenv('ANTHROPIC_API_KEY') and not read_provider_secret('RETAILOPS_API_KEY'):
+    if os.getenv('ANTHROPIC_API_KEY') and not explicit_api_key:
         default_model = 'claude-3-5-haiku-20241022'
-    elif os.getenv('GEMINI_API_KEY') and not read_provider_secret('RETAILOPS_API_KEY'):
+    elif os.getenv('GEMINI_API_KEY') and not explicit_api_key:
         default_model = 'gemini-2.5-flash'
     else:
         default_model = API_MODEL
@@ -561,4 +560,5 @@ def api_from_environment():
         key,
         os.getenv('RETAILOPS_API_MODEL', default_model),
         tunnel_token=tunnel_token,
+        vision=vision_enabled,
     )

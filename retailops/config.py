@@ -78,6 +78,14 @@ def flag(env, name):
     return value == 'true'
 
 
+def on_off_flag(env, name, default='off'):
+    raw = env.get(name)
+    value = default if raw is None or str(raw).strip() == '' else str(raw).strip().lower()
+    if value not in ('on', 'off'):
+        raise ValueError(name + ' must be on or off.')
+    return value == 'on'
+
+
 def integer(env, name, default, minimum, maximum):
     try:
         value = int(env.get(name, str(default)))
@@ -169,6 +177,7 @@ class Settings:
     api_key: str = field(default='', repr=False)
     api_tunnel_token: str = field(default='', repr=False)
     api_endpoint: str = field(default='', repr=False)
+    api_vision: bool = False
     api_model: str = 'meta/muse-spark-1.3-contributor'
     api_daily_turn_limit: int = 20
     agent_mode: str = 'agent'
@@ -208,6 +217,13 @@ class Settings:
             raise ValueError('RETAILOPS_API_DAILY_TURN_LIMIT must be between 1 and 10000.')
         if self.api_tunnel_token and not re.fullmatch(r'[A-Za-z0-9_.-]{32,256}', self.api_tunnel_token):
             raise ValueError('RETAILOPS_API_TUNNEL_TOKEN must be a 32–256 character URL-safe value.')
+        if type(self.api_vision) is not bool:
+            raise ValueError('RETAILOPS_API_VISION must be on or off.')
+        if self.api_vision:
+            if not re.fullmatch(r'[A-Za-z0-9_.-]{32,256}', self.api_key or '') or not self.api_tunnel_token:
+                raise ValueError(
+                    'RETAILOPS_API_VISION=on requires both RETAILOPS_API_KEY and RETAILOPS_API_TUNNEL_TOKEN.'
+                )
         if type(self.port) is not int or not 0 <= self.port <= 65535:
             raise ValueError('RETAILOPS_API_PORT must be between 0 and 65535.')
         CaseTimerConfig(
@@ -240,6 +256,13 @@ class Settings:
         public = interface == 'public'
         backend, database_url = database_settings(env)
         is_prod_env = str(env.get('RETAILOPS_ENV', '')).strip().lower() in ('production', 'prod', 'live')
+        explicit_api_key = secret_value(env, 'RETAILOPS_API_KEY')
+        api_tunnel_token = secret_value(env, 'RETAILOPS_API_TUNNEL_TOKEN')
+        api_vision = on_off_flag(env, 'RETAILOPS_API_VISION', default='off')
+        if api_vision and (not explicit_api_key or not api_tunnel_token):
+            raise ValueError(
+                'RETAILOPS_API_VISION=on requires both RETAILOPS_API_KEY and RETAILOPS_API_TUNNEL_TOKEN.'
+            )
         return cls(
             interface=interface,
             output=Path(env.get('RETAILOPS_OUTPUT', '/data' if public else str(ROOT/'artifacts'))),
@@ -255,13 +278,14 @@ class Settings:
             inference_token=env.get('RETAILOPS_INFERENCE_TOKEN', ''),
             api_enabled=flag(env, 'RETAILOPS_API_ENABLED'),
             api_key=(
-                secret_value(env, 'RETAILOPS_API_KEY')
+                explicit_api_key
                 or env.get('ANTHROPIC_API_KEY')
                 or env.get('GEMINI_API_KEY')
                 or env.get('OPENROUTER_API_KEY', '')
             ),
-            api_tunnel_token=secret_value(env, 'RETAILOPS_API_TUNNEL_TOKEN'),
+            api_tunnel_token=api_tunnel_token,
             api_endpoint=(env.get('RETAILOPS_API_ENDPOINT') or '').strip(),
+            api_vision=api_vision,
             api_model=env.get(
                 'RETAILOPS_API_MODEL',
                 'claude-3-5-haiku-20241022' if env.get('ANTHROPIC_API_KEY')
@@ -293,4 +317,5 @@ class Settings:
         return {'version': VERSION, 'interface': self.interface, 'data_mode': self.data_mode,
                 'storage_backend': self.storage_backend,
                 'custom_enabled': self.custom_enabled, 'api_enabled': self.api_enabled,
+                'api_vision': self.api_vision,
                 'api_daily_turn_limit': self.api_daily_turn_limit, 'agent_mode': self.agent_mode}

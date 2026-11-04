@@ -237,5 +237,100 @@ class W4Item0EndpointAndPinnedRuntimeTests(unittest.TestCase):
                 self.assertEqual(env_agent.key, FIXTURE_KEY)
 
 
+class W4Item1VisionCapabilityConfigTests(unittest.TestCase):
+    SAMPLE_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+
+    def test_text_only_models_heuristic_removed_and_vision_defaults_off(self):
+        import retailops_providers
+
+        self.assertFalse(hasattr(retailops_providers, "TEXT_ONLY_MODELS"))
+        self.assertFalse(hasattr(retailops_providers, "is_vision_model"))
+
+        msg = [
+            {
+                "role": "user",
+                "content": "Xem giúp ảnh này",
+                "attachment": {
+                    "type": "image",
+                    "name": "tag.png",
+                    "mime_type": "image/png",
+                    "data": self.SAMPLE_B64,
+                },
+            }
+        ]
+        with patch.dict(os.environ, {}, clear=True):
+            for model_name in (FIXTURE_MODEL, "Qwen/Qwen2.5-VL-7B-Instruct", "gemini-2.5-flash"):
+                agent = OpenRouterAgent(FIXTURE_KEY, model_name, endpoint=FIXTURE_ENDPOINT)
+                self.assertFalse(agent.is_vision, model_name)
+                translated = agent.translate(msg)
+                self.assertIsInstance(translated[0]["content"], str)
+                self.assertNotIn(self.SAMPLE_B64, json.dumps(translated))
+                self.assertNotIn("image_url", json.dumps(translated))
+
+    def test_vision_on_with_two_layer_secrets_sends_image_url(self):
+        env = {
+            "RETAILOPS_PUBLIC_ORIGIN": "https://retailops.example.com",
+            "RETAILOPS_PUBLIC_INVITE_TOKEN": "invite_" + "x" * 36,
+            "RETAILOPS_API_ENABLED": "true",
+            "RETAILOPS_API_ENDPOINT": FIXTURE_ENDPOINT,
+            "RETAILOPS_API_MODEL": FIXTURE_MODEL,
+            "RETAILOPS_API_KEY": FIXTURE_KEY,
+            "RETAILOPS_API_TUNNEL_TOKEN": TUNNEL_TOKEN,
+            "RETAILOPS_API_VISION": "on",
+        }
+        settings = Settings.from_environment("public", environ=env)
+        self.assertTrue(settings.api_vision)
+        self.assertTrue(settings.summary()["api_vision"])
+        agent = build_gateways(settings).api.for_turn()
+        self.assertTrue(agent.is_vision)
+
+        msg = [
+            {
+                "role": "user",
+                "content": "Kiểm tra ảnh lỗi sản phẩm",
+                "attachment": {
+                    "type": "image",
+                    "name": "defect.png",
+                    "mime_type": "image/png",
+                    "data": self.SAMPLE_B64,
+                },
+            }
+        ]
+        translated = agent.translate(msg)
+        self.assertIsInstance(translated[0]["content"], list)
+        self.assertEqual(translated[0]["content"][0], {"type": "text", "text": "Kiểm tra ảnh lỗi sản phẩm"})
+        self.assertEqual(translated[0]["content"][1]["type"], "image_url")
+        self.assertTrue(translated[0]["content"][1]["image_url"]["url"].startswith("data:image/png;base64,"))
+
+    def test_vision_on_without_both_layer_secrets_fails_startup_clearly(self):
+        base = {
+            "RETAILOPS_PUBLIC_ORIGIN": "https://retailops.example.com",
+            "RETAILOPS_PUBLIC_INVITE_TOKEN": "invite_" + "x" * 36,
+            "RETAILOPS_API_ENABLED": "true",
+            "RETAILOPS_API_ENDPOINT": FIXTURE_ENDPOINT,
+            "RETAILOPS_API_MODEL": FIXTURE_MODEL,
+            "RETAILOPS_API_VISION": "on",
+        }
+        # Missing tunnel token
+        with self.assertRaises(ValueError) as err1:
+            Settings.from_environment("public", environ={**base, "RETAILOPS_API_KEY": FIXTURE_KEY})
+        self.assertIn("RETAILOPS_API_TUNNEL_TOKEN", str(err1.exception))
+
+        # Missing RETAILOPS_API_KEY (even if OPENROUTER_API_KEY is present)
+        with self.assertRaises(ValueError) as err2:
+            Settings.from_environment(
+                "public",
+                environ={**base, "OPENROUTER_API_KEY": FIXTURE_KEY, "RETAILOPS_API_TUNNEL_TOKEN": TUNNEL_TOKEN},
+            )
+        self.assertIn("RETAILOPS_API_KEY", str(err2.exception))
+
+        # Direct OpenRouterAgent / api_from_environment also rejects vision=True without tunnel_token
+        with self.assertRaises(ValueError):
+            OpenRouterAgent(FIXTURE_KEY, FIXTURE_MODEL, endpoint=FIXTURE_ENDPOINT, vision=True)
+        with patch.dict(os.environ, {**base, "RETAILOPS_API_KEY": FIXTURE_KEY}, clear=True):
+            with self.assertRaises(ValueError):
+                api_from_environment()
+
+
 if __name__ == "__main__":
     unittest.main()

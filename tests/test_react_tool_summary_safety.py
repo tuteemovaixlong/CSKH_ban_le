@@ -175,8 +175,13 @@ class ReActEndToEndIntegrationTests(unittest.TestCase):
         self.assertIn('tôi đã mua cái nào chưa ?', trans_text[0]['content'])
         self.assertIn('[Tệp đính kèm: Screenshot.png]', trans_text[0]['content'])
 
-        # Vision model: should retain image_url
-        vision_agent = OpenRouterAgent('x' * 32, 'Qwen/Qwen2.5-VL-7B-Instruct')
+        # Vision capability enabled explicitly (W4-D7): retains image_url only with two-layer auth configured
+        vision_agent = OpenRouterAgent(
+            'x' * 32,
+            'Qwen/Qwen2.5-VL-7B-Instruct',
+            tunnel_token='t' * 32,
+            vision=True,
+        )
         self.assertTrue(vision_agent.is_vision)
 
         trans_vision = vision_agent.translate(msg)
