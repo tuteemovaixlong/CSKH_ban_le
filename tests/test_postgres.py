@@ -277,6 +277,7 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
                     allow_business_v5_upgrade=True,
                     allow_business_v6_upgrade=True,
                     allow_business_v7_upgrade=True,
+                    allow_business_v8_upgrade=True,
                 )
         self.assertEqual(self.fresh_store().orders('C-001')[0]['status'], 'pending')
         with store.connection() as db:

@@ -209,7 +209,7 @@ jobs:
         run: |
           docker compose -f deploy/compose.public.yaml -f deploy/compose.clamav.yaml --env-file /dev/null config --quiet 2>/dev/null || true
           python3 -m pip install --only-binary=:all: --require-hashes -r requirements-web.txt
-          docker run -d --name retailops-clamav-ci -e CLAMAV_NO_FRESHCLAMD=true -e CLAMD_CONF_StreamMaxLength=25M -p 127.0.0.1:13310:3310 clamav/clamav:1.4.2
+          docker run -d --name retailops-clamav-ci -e CLAMAV_NO_FRESHCLAMD=true -e CLAMD_CONF_StreamMaxLength=25M -p 127.0.0.1:13310:3310 clamav/clamav:1.4.6-debian@sha256:ce80e97855d937e93009bb47eb5ecb410b514b844b03d0ecf00e8eeec92810cc
           trap 'docker rm -f retailops-clamav-ci >/dev/null 2>&1 || true' EXIT
           for i in $(seq 1 90); do
             if docker exec retailops-clamav-ci clamdcheck.sh >/dev/null 2>&1; then

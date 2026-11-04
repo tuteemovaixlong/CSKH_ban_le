@@ -8,7 +8,7 @@ services:
     depends_on:
       clamav: {condition: service_healthy}
   clamav:
-    image: clamav/clamav:1.4.2
+    image: clamav/clamav:1.4.6-debian@sha256:ce80e97855d937e93009bb47eb5ecb410b514b844b03d0ecf00e8eeec92810cc
     restart: unless-stopped
     environment:
       TZ: UTC
