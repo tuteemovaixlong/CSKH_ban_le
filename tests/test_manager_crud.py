@@ -247,18 +247,12 @@ class TestManagerCRUD(unittest.TestCase):
         self.assertEqual(ctx.exception.status, 403)
         self.assertEqual(ctx.exception.code, 'permission_denied')
 
-        staff_app = Application(self.store, {}, role='staff')
-        # Unbound direct call must fail closed
-        with self.assertRaises(ApiError) as unbound_ctx:
-            api_result(staff_app, 'C-001', 'POST', '/api/tools/execute', {'tool_name': 'get_order', 'arguments': {'order_id': 'O-101'}})
-        self.assertEqual(unbound_ctx.exception.status, 403)
-        self.assertEqual(unbound_ctx.exception.code, 'missing_session_binding')
-
         conv_id = self.store.new_conversation('C-001', 'custom')['conversation_id']
         self.store.record_feedback(
             'C-001',
             {'conversation_id': conv_id, 'feedback_type': 'human_handoff', 'reason_code': 'customer_requested_human'},
         )
+        staff_app = Application(self.store, {}, role='staff')
         staff_binding = SessionBinding(
             staff_app,
             'C-002',
@@ -268,27 +262,66 @@ class TestManagerCRUD(unittest.TestCase):
             display_name='Staff Test',
             membership_id='mem_staff_01',
         )
+        # W5-D4: Staff is forbidden from direct Tool Inspector execution (Manager only)
+        with self.assertRaises(ApiError) as staff_ctx:
+            api_result(
+                staff_app,
+                'C-002',
+                'POST',
+                '/api/tools/execute',
+                {'conversation_id': conv_id, 'tool_name': 'get_order', 'arguments': {'order_id': 'O-101'}},
+                binding=staff_binding,
+            )
+        self.assertEqual(staff_ctx.exception.status, 403)
+        self.assertEqual(staff_ctx.exception.code, 'permission_denied')
+
+        # Unbound direct call by Manager must fail closed
+        with self.assertRaises(ApiError) as unbound_ctx:
+            api_result(self.app, 'C-001', 'POST', '/api/tools/execute', {'tool_name': 'get_order', 'arguments': {'order_id': 'O-101'}})
+        self.assertEqual(unbound_ctx.exception.status, 403)
+        self.assertEqual(unbound_ctx.exception.code, 'missing_session_binding')
+
+        mgr_binding = SessionBinding(
+            self.app,
+            'C-003',
+            'ws-mgr',
+            tenant_id='tenant-demo',
+            principal_id='usr_manager_01',
+            display_name='Manager Test',
+            membership_id='mem_manager_01',
+        )
         status, res = api_result(
-            staff_app,
-            'C-002',
+            self.app,
+            'C-003',
             'POST',
             '/api/tools/execute',
             {'conversation_id': conv_id, 'tool_name': 'get_order', 'arguments': {'order_id': 'O-101'}},
-            binding=staff_binding,
+            binding=mgr_binding,
         )
         self.assertEqual(status, 200)
         self.assertEqual(res['result']['order']['id'], 'O-101')
 
-        # Disallowed or mutating direct tools are rejected
-        for bad_tool in ('list_orders', 'prepare_cancellation', 'request_human_support'):
+        status_list, res_list = api_result(
+            self.app,
+            'C-003',
+            'POST',
+            '/api/tools/execute',
+            {'conversation_id': conv_id, 'tool_name': 'list_orders', 'arguments': {}},
+            binding=mgr_binding,
+        )
+        self.assertEqual(status_list, 200)
+        self.assertTrue(any(o['id'] == 'O-101' for o in res_list['result']['orders']))
+
+        # Disallowed or mutating direct tools are rejected (W5-D4)
+        for bad_tool in ('get_product', 'prepare_cancellation', 'request_human_support'):
             with self.assertRaises(ApiError) as bad_ctx:
                 api_result(
-                    staff_app,
-                    'C-002',
+                    self.app,
+                    'C-003',
                     'POST',
                     '/api/tools/execute',
                     {'conversation_id': conv_id, 'tool_name': bad_tool, 'arguments': {'order_id': 'O-101'}},
-                    binding=staff_binding,
+                    binding=mgr_binding,
                 )
             self.assertEqual(bad_ctx.exception.status, 403)
             self.assertEqual(bad_ctx.exception.code, 'tool_not_allowed')

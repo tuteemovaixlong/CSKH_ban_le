@@ -1,6 +1,7 @@
 """Business route dispatch for both HTTP adapters; identity comes from the server."""
 from email.parser import BytesParser
 from email.policy import HTTP as EMAIL_HTTP_POLICY
+import inspect
 import json
 import math
 from pathlib import Path
@@ -34,13 +35,12 @@ CUSTOMER_SAFE_EVENT_KINDS = frozenset({
 })
 
 ALLOWED_DIRECT_TOOLS = frozenset({
-    'get_context',
     'get_order',
+    'list_orders',
     'track_shipment',
-    'get_product',
-    'check_variant_stock',
-    'search_products',
+    'check_inventory',
     'search_knowledge',
+    'get_context',
 })
 
 
@@ -105,8 +105,12 @@ def parse_evidence_request_body(
     }
 
 
+def _identity_control_optional(app):
+    return getattr(app, 'identity_store', None) or getattr(getattr(app, 'quota_store', None), 'control', None)
+
+
 def _admin_control(app):
-    control = getattr(app, 'identity_store', None) or getattr(getattr(app, 'quota_store', None), 'control', None)
+    control = _identity_control_optional(app)
     if control is None or not hasattr(control, 'admin_list_accounts'):
         raise ApiError(404, 'admin_governance_unavailable', 'Quản trị tài khoản chỉ có trên phiên đăng nhập persistent.')
     return control
@@ -595,6 +599,22 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
         if path == "/api/manager/events":
             _require_ctx_permission(ctx, MANAGER)
             return (200, {"events": app.store.manager_events(limit=100)})
+        if path == "/api/manager/order-actions":
+            _require_ctx_permission(ctx, MANAGER)
+            _check_staff_tenant_scope(app, ctx)
+            qparams = _parse_query_dict(query, {"status_group", "group", "limit", "offset"}) if query else {}
+            status_group = qparams.get("status_group") or qparams.get("group") or "all"
+            lim = 50
+            if "limit" in qparams and qparams["limit"] != "":
+                ok_lim, lim_val = _parse_non_negative_int(qparams["limit"])
+                require(ok_lim and 1 <= lim_val <= 50, 400, "invalid_limit", "Giới hạn mỗi trang phải từ 1 đến 50.")
+                lim = lim_val
+            off = 0
+            if "offset" in qparams and qparams["offset"] != "":
+                ok_off, off_val = _parse_non_negative_int(qparams["offset"])
+                require(ok_off and off_val >= 0, 400, "invalid_offset", "Vị trí phân trang không hợp lệ.")
+                off = off_val
+            return (200, app.store.list_manager_order_actions(status_group=status_group, limit=lim, offset=off))
         m_exchange_options = re.fullmatch(r"/api/orders/([A-Z]{1,6}-[0-9]{1,8})/exchange-options", path)
         if m_exchange_options:
             # Variants of the order's own product with stock status; another customer's order is a 404.
@@ -606,6 +626,17 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             _require_ctx_permission(ctx, STAFF)
             _check_staff_tenant_scope(app, ctx)
             return (200, app.store.staff_desk_cases())
+        if path == "/api/staff/members":
+            _require_ctx_permission(ctx, STAFF)
+            _check_staff_tenant_scope(app, ctx)
+            control = _identity_control_optional(app)
+            tid = ctx.tenant_id or getattr(app, "tenant_id", None)
+            members = (
+                control.list_active_staff_members(tid)
+                if (control is not None and tid and hasattr(control, "list_active_staff_members"))
+                else []
+            )
+            return (200, {"members": members})
         if path == "/api/staff/escalations":
             _require_ctx_permission(ctx, STAFF)
             _check_staff_tenant_scope(app, ctx)
@@ -794,13 +825,26 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 expected_tenant_id=expected_tid,
             ))
         if path == "/api/chat":
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
+            chat_params = inspect.signature(app.chat).parameters
+            chat_kwargs = (
+                {"actor": actor}
+                if (
+                    "actor" in chat_params
+                    or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in chat_params.values())
+                )
+                else {}
+            )
             try:
-                result = app.chat(customer, body)
+                result = app.chat(customer, body, **chat_kwargs)
             except ApiError as exc:
                 _record_chat_usage(app, customer, body, {'trace': exc.trace}, False)
                 raise
             _record_chat_usage(app, customer, body, result, True)
             return (200, result)
+        if path == "/api/chat/cancel":
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
+            return (200, app.cancel_chat(customer, body, actor=actor))
         if path == "/api/feedback":
             res = app.store.record_feedback(customer, body)
             return (200, res)
@@ -834,6 +878,43 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             if m_case_act[2] == "claim":
                 return (200, app.store.claim_case(m_case_act[1], staff_name=staff_label, actor=actor, expected_version=exp_ver))
             return (200, app.store.release_case(m_case_act[1], staff_name=staff_label, actor=actor, expected_version=exp_ver))
+        m_case_transfer = re.fullmatch(r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/transfer", path)
+        if m_case_transfer:
+            _require_ctx_permission(ctx, STAFF)
+            _check_staff_tenant_scope(app, ctx)
+            require(
+                isinstance(body, dict) and set(body) == {"to_principal_id", "version"},
+                400,
+                "invalid_fields",
+                "Các trường của yêu cầu chuyển ca không hợp lệ.",
+            )
+            to_pid = body["to_principal_id"]
+            exp_ver = body["version"]
+            require(
+                isinstance(to_pid, str) and bool(to_pid.strip()) and len(to_pid.strip()) <= 64,
+                400,
+                "invalid_transfer_target",
+                "Người nhận ca không hợp lệ.",
+            )
+            require(type(exp_ver) is int and exp_ver >= 1, 400, "invalid_version", "Phiên bản ca không hợp lệ.")
+            control = _identity_control_optional(app)
+            tid = ctx.tenant_id or getattr(app, "tenant_id", None)
+            target_member = (
+                control.active_staff_member(tid, to_pid.strip())
+                if (control is not None and tid and hasattr(control, "active_staff_member"))
+                else None
+            )
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
+            return (
+                200,
+                app.store.transfer_case(
+                    m_case_transfer[1],
+                    to_principal_id=to_pid.strip(),
+                    target_member=target_member,
+                    expected_version=exp_ver,
+                    actor=actor,
+                ),
+            )
         if path in ("/api/staff/claim", "/api/staff/release"):
             _require_ctx_permission(ctx, STAFF)
             _check_staff_tenant_scope(app, ctx)
@@ -900,6 +981,12 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             staff_label = _actor_display_name(ctx)
             res = app.store.resolve_escalation(cid, staff_label, actor=actor, case_id=case_id, handoff_id=handoff_id)
             return (200, res)
+        m_staff_case_assist_cancel = re.fullmatch(r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/assist/cancel", path)
+        if m_staff_case_assist_cancel:
+            _require_ctx_permission(ctx, STAFF)
+            _check_staff_tenant_scope(app, ctx)
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
+            return (200, app.cancel_case_assist(actor, m_staff_case_assist_cancel[1], body))
         m_staff_case_assist = re.fullmatch(r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/assist", path)
         if m_staff_case_assist:
             _require_ctx_permission(ctx, STAFF)
@@ -1030,7 +1117,7 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             approval.drive(app, customer, result['proposal_id'])
             return (201, {**result, 'workflow_status': 'awaiting_confirmation'})
         if path == "/api/tools/execute":
-            _require_ctx_permission(ctx, STAFF)
+            _require_ctx_permission(ctx, MANAGER)
             has_session_binding = (
                 (context is not None or binding is not None)
                 and bool(ctx.principal_id)
@@ -1076,7 +1163,7 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                     'invalid_case_id',
                     'Mã ca hỗ trợ không hợp lệ.',
                 )
-            from agent_protocol import validate_tool
+            from agent_protocol import ProtocolError, validate_tool
             from retailops_tools import BoundTools
             tool_name, arguments = body['tool_name'], body['arguments']
             require(
@@ -1085,7 +1172,11 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 'tool_not_allowed',
                 'Công cụ này không được phép gọi trực tiếp qua đường vận hành.',
             )
-            validate_tool(tool_name, arguments)
+            try:
+                validate_tool(tool_name, arguments)
+            except ProtocolError as exc:
+                raise ApiError(400, 'invalid_tool_arguments', str(exc)) from None
+            now_ts = app.store._now() if hasattr(app.store, '_now') else time.time()
             with app.store.connection() as db:
                 if tool_case_id is not None:
                     case_row = db.execute('SELECT * FROM cases WHERE case_id = ?', (tool_case_id,)).fetchone()
@@ -1108,12 +1199,38 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                     if case_row is not None and case_row['status'] in ('waiting', 'in_progress')
                     else None
                 )
-                require(
-                    open_ep is not None,
-                    403,
-                    'case_not_escalated',
-                    'Chỉ được tra cứu công cụ trực tiếp trên ca hỗ trợ đang có yêu cầu chuyển tiếp chưa đóng.',
+                any_ep = (
+                    db.execute(
+                        'SELECT handoff_id FROM handoff_episodes WHERE case_id = ? LIMIT 1',
+                        (case_row['case_id'],),
+                    ).fetchone()
+                    if case_row is not None
+                    else None
                 )
+                if case_row is not None and case_row['status'] in ('waiting', 'in_progress') and (
+                    open_ep is not None or case_row['holder'] is not None
+                ):
+                    pass
+                elif case_row is not None and case_row['status'] == 'resolved' and any_ep is not None:
+                    within_retention = (
+                        float(conv['expires_at']) > now_ts
+                        and (
+                            case_row['resolved_at'] is None
+                            or (now_ts - float(case_row['resolved_at'])) <= app.store.CONVERSATION_TTL
+                        )
+                    )
+                    require(
+                        within_retention,
+                        403,
+                        'case_retention_expired',
+                        'Ca hỗ trợ đã đóng và quá thời hạn lưu trữ.',
+                    )
+                else:
+                    raise ApiError(
+                        403,
+                        'case_not_escalated',
+                        'Chỉ được tra cứu công cụ trực tiếp trên ca hỗ trợ trong phạm vi Staff Desk.',
+                    )
                 if isinstance(arguments, dict) and arguments.get('order_id'):
                     ord_row = db.execute(
                         'SELECT customer_id FROM orders WHERE id=?',
@@ -1142,10 +1259,11 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 'staff_tool_executed',
                 conv['order_id'],
                 tool_name=tool_name,
+                case_id=case_row['case_id'],
                 conversation_id=cid,
                 actor=actor,
             )
-            return (200, {'tool_name': tool_name, 'arguments': arguments, 'conversation_id': cid, 'result': res})
+            return (200, {'tool_name': tool_name, 'arguments': arguments, 'case_id': case_row['case_id'], 'conversation_id': cid, 'result': res})
         if path in ("/api/manager/products", "/api/manager/products/create"):
             _require_ctx_permission(ctx, MANAGER)
             require(isinstance(body, dict), 400, "invalid_body", "Dữ liệu sản phẩm không hợp lệ.")

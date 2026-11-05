@@ -236,10 +236,10 @@
       <div class="ro-msg ro-msg-bot">Xin chào! Em là trợ lý AI của shop. Em có thể hỗ trợ anh/chị tra cứu đơn hàng, kiểm tra hành trình vận chuyển hoặc giải đáp chính sách ạ.</div>
     </div>
     <div class="ro-quick-bar">
-      <button class="ro-chip" data-text="Tra cứu đơn hàng O-101">📦 Đơn O-101</button>
-      <button class="ro-chip" data-text="Hành trình vận chuyển đơn O-101">🚚 Vận đơn GHTK</button>
-      <button class="ro-chip" data-text="Chính sách đổi trả hàng">🔄 Đổi trả 7 ngày</button>
-      <button class="ro-chip" data-text="Tôi muốn gặp nhân viên tư vấn">🙋 Gặp nhân viên</button>
+      <button class="ro-chip" data-text="Kiểm tra đơn hàng gần nhất của tôi">📦 Đơn gần nhất</button>
+      <button class="ro-chip" data-text="Đơn gần nhất của tôi đang giao tới đâu?">🚚 Hành trình giao hàng</button>
+      <button class="ro-chip" data-text="Chính sách đổi trả của shop thế nào?">🔄 Chính sách đổi trả</button>
+      <button class="ro-chip" data-text="Tôi muốn gặp nhân viên">🙋 Gặp nhân viên</button>
     </div>
     <form class="ro-input-area" id="ro-form">
       <input class="ro-input" id="ro-input" type="text" placeholder="Nhập tin nhắn..." autocomplete="off" required>
@@ -298,8 +298,8 @@
         resText = res.message || resText;
       } else {
         // Standalone widget demo simulation
-        if (/đơn|o-101|o-102/i.test(text)) {
-          resText = 'Đơn hàng O-101 của bạn hiện đang trên xe trung chuyển GHTK tới bưu cục Tân Bình. Dự kiến giao ngày mai trước 17:00 ạ.';
+        if (/đơn|giao|vận chuyển/i.test(text)) {
+          resText = 'Đơn hàng gần nhất của bạn hiện đang trên xe trung chuyển GHTK tới bưu cục Tân Bình. Dự kiến giao ngày mai trước 17:00 ạ.';
         } else if (/đổi trả|chính sách/i.test(text)) {
           resText = '⚡ (Cache Hit 0ms): Quý khách được đổi trả hàng trong vòng 7 ngày kể từ ngày nhận hàng với sản phẩm còn nguyên tem mác ạ.';
         } else if (/nhân viên|gặp người|hỗ trợ viên/i.test(text)) {

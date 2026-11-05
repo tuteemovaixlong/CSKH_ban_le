@@ -17,6 +17,7 @@ from agent_protocol import (MAX_CHARACTERS, MAX_MODEL_CALLS, MAX_TOOL_CALLS, PRO
                             ProtocolError, agent_system, assistant_message, model_history, request_mode, sanitize_general_answer,
                             validate_messages, validate_tool)
 from retailops_agent import AgentError
+from retailops.business.progress import CANCELLED_MESSAGE
 from retailops.knowledge.citations import CitationError, cited_sources
 from retailops.model_errors import record_model_error
 from retailops.workflow.compaction import compact_tool_result, fit_history, fit_transcript, result_limit
@@ -44,11 +45,20 @@ def _call_key(name, args):
 
 def run(gateway, text, history, execute, identity, timeout=TURN_TIMEOUT_SECONDS, *, saver=None,
         capture=lambda: {}, restore=lambda state: None, before_model=lambda: None, attachment=None,
-        progress=None, profile=None):
+        progress=None, profile=None, is_cancelled=None):
     started = time.monotonic()
     deadline = started + timeout
     tool_validator = profile.validate_tool if profile is not None else validate_tool
     extra_tool_names = profile.tool_names if profile is not None else ()
+    initial_bound_snapshot = copy.deepcopy(capture())
+
+    def check_cancelled():
+        if is_cancelled is None:
+            return False
+        try:
+            return bool(is_cancelled())
+        except Exception:
+            return False
 
     def publish(trace, phase):
         """Tell the web layer how far this turn has got; a broken observer never breaks a turn."""
@@ -60,8 +70,34 @@ def run(gateway, text, history, execute, identity, timeout=TURN_TIMEOUT_SECONDS,
         except Exception:
             pass
 
+    def finish_cancelled(state, trace, stopped_at):
+        reply = {'role': 'assistant', 'content': CANCELLED_MESSAGE}
+        user_msg = state['fresh'][0] if state.get('fresh') else {'role': 'user', 'content': text}
+        prior_len = max(0, len(state['messages']) - len(state['fresh']))
+        state['messages'] = state['messages'][:prior_len] + [user_msg, reply]
+        state['fresh'] = [user_msg, reply]
+        state['bound'] = copy.deepcopy(initial_bound_snapshot)
+        restore(state['bound'])
+        state['complete'] = True
+        trace['cancelled'] = True
+        trace['stopped_at'] = stopped_at
+        trace['answer_source'] = 'user_cancelled'
+        trace['steps'].append({
+            'step': trace['model_calls'],
+            'worker': 'agent',
+            'action': 'cancelled',
+            'stopped_at': stopped_at,
+            'summary': f'Người dùng dừng câu trả lời tại {stopped_at}.',
+        })
+        trace['latency_ms'] = round((time.monotonic() - started) * 1000, 2)
+        trace['orchestrator'] = 'langgraph'
+        publish(trace, 'cancelled')
+        return state
+
     def guard(state):
         state = copy.deepcopy(state)
+        if check_cancelled():
+            return finish_cancelled(state, state['trace'], 'before_model')
         if profile is not None and profile.skip_safety_gate:
             return state
         verdict = safety_gate(state['messages'][-1]['content'])
@@ -94,6 +130,8 @@ def run(gateway, text, history, execute, identity, timeout=TURN_TIMEOUT_SECONDS,
         else:
             mode = request_mode(state['messages'])
         trace['request_mode'] = mode
+        if check_cancelled():
+            return finish_cancelled(state, trace, 'before_model')
         if time.monotonic() >= deadline:
             raise AgentError('agent_timeout', 'Model đã vượt thời gian xử lý. Chat chưa thay đổi đơn.', trace)
         if trace['model_calls'] >= MAX_MODEL_CALLS:
@@ -123,6 +161,8 @@ def run(gateway, text, history, execute, identity, timeout=TURN_TIMEOUT_SECONDS,
             if trace['reported_cost_usd'] is not None:
                 cost = response.get('reported_cost_usd')
                 trace['reported_cost_usd'] = round(trace['reported_cost_usd'] + cost, 8) if cost is not None else None
+            if check_cancelled():
+                return finish_cancelled(state, trace, 'after_model')
             thought = response.get('reasoning')
             if thought:
                 thought = str(thought)
@@ -187,6 +227,9 @@ def run(gateway, text, history, execute, identity, timeout=TURN_TIMEOUT_SECONDS,
         step['tools'] = []
         for call in state['messages'][-1]['tool_calls']:
             name, args = call['function']['name'], call['function']['arguments']
+            if check_cancelled():
+                step['evaluation'] = f'Đã dừng trước khi thực thi công cụ {name}.'
+                return finish_cancelled(state, trace, f'before_tool:{name}')
             state['tool_count'] += 1
             key = _call_key(name, args)
             try:
@@ -233,7 +276,7 @@ def run(gateway, text, history, execute, identity, timeout=TURN_TIMEOUT_SECONDS,
     builder.add_edge(START, 'guard')
     builder.add_conditional_edges('guard', lambda s: END if s['complete'] else 'model')
     builder.add_conditional_edges('model', lambda s: END if s['complete'] else 'tools')
-    builder.add_edge('tools', 'model')
+    builder.add_conditional_edges('tools', lambda s: END if s['complete'] else 'model')
     graph = builder.compile(checkpointer=saver)
     config = saver.config() if saver else {'recursion_limit': 32, 'callbacks': []}
     checkpoint = graph.get_state(config) if saver else None

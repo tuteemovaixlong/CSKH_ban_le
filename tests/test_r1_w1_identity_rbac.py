@@ -282,14 +282,15 @@ class PhaseR1W1IdentityRbacTests(unittest.TestCase):
         self.assertEqual(code_rep, 200)
         self.assertEqual(rep_body["staff_name"], "Trần Thị Nhân Viên")
 
-        code_tool, _, _ = _wsgi(
+        # W5-D4: Staff cannot invoke /api/tools/execute directly (Manager only)
+        code_tool_staff, body_tool_staff, _ = _wsgi(
             self.web,
             "POST",
             "/api/tools/execute",
             {"conversation_id": conv_id, "tool_name": "get_order", "arguments": {"order_id": "O-101"}},
             cookie=cookie_staff,
         )
-        self.assertEqual(code_tool, 200)
+        self.assertEqual((code_tool_staff, body_tool_staff["error"]), (403, "permission_denied"))
 
         code_res, _, _ = _wsgi(
             self.web,
@@ -344,13 +345,23 @@ class PhaseR1W1IdentityRbacTests(unittest.TestCase):
             cookie=cookie_cust_b1,
         )
 
+        # W5-D4: Staff is forbidden from /api/tools/execute (403 permission_denied)
+        code_staff_denied, body_staff_denied, _ = _wsgi(
+            self.web,
+            "POST",
+            "/api/tools/execute",
+            {"conversation_id": conv_a_escalated, "tool_name": "get_order", "arguments": {"order_id": "O-101"}},
+            cookie=cookie_staff_a,
+        )
+        self.assertEqual((code_staff_denied, body_staff_denied["error"]), (403, "permission_denied"))
+
         # Missing conversation_id -> 403 missing_object_binding; malformed conversation_id -> 400 invalid_conversation
         code_no_conv, body_no_conv, _ = _wsgi(
             self.web,
             "POST",
             "/api/tools/execute",
             {"tool_name": "get_order", "arguments": {"order_id": "O-101"}},
-            cookie=cookie_staff_a,
+            cookie=cookie_mgr_a,
         )
         self.assertEqual((code_no_conv, body_no_conv["error"]), (403, "missing_object_binding"))
         code_bad_conv, body_bad_conv, _ = _wsgi(
@@ -358,18 +369,10 @@ class PhaseR1W1IdentityRbacTests(unittest.TestCase):
             "POST",
             "/api/tools/execute",
             {"conversation_id": "not-a-uuid", "tool_name": "get_order", "arguments": {"order_id": "O-101"}},
-            cookie=cookie_staff_a,
+            cookie=cookie_mgr_a,
         )
         self.assertEqual((code_bad_conv, body_bad_conv["error"]), (400, "invalid_conversation"))
-        # Unescalated conversation rejected for BOTH staff AND manager (403 case_not_escalated) — W1-RB-02
-        code_unesc, body_unesc, _ = _wsgi(
-            self.web,
-            "POST",
-            "/api/tools/execute",
-            {"conversation_id": conv_a_unescalated, "tool_name": "get_order", "arguments": {"order_id": "O-101"}},
-            cookie=cookie_staff_a,
-        )
-        self.assertEqual((code_unesc, body_unesc["error"]), (403, "case_not_escalated"))
+        # Unescalated conversation rejected for Manager (403 case_not_escalated) — W1-RB-02
         code_mgr_unesc, body_mgr_unesc, _ = _wsgi(
             self.web,
             "POST",
@@ -378,17 +381,7 @@ class PhaseR1W1IdentityRbacTests(unittest.TestCase):
             cookie=cookie_mgr_a,
         )
         self.assertEqual((code_mgr_unesc, body_mgr_unesc["error"]), (403, "case_not_escalated"))
-        # Cross-tenant conversation -> 404 for both staff and manager
-        self.assertEqual(
-            _wsgi(
-                self.web,
-                "POST",
-                "/api/tools/execute",
-                {"conversation_id": conv_b, "tool_name": "get_order", "arguments": {"order_id": "O-101"}},
-                cookie=cookie_staff_a,
-            )[0],
-            404,
-        )
+        # Cross-tenant conversation -> 404 for Manager
         self.assertEqual(
             _wsgi(
                 self.web,
@@ -405,20 +398,11 @@ class PhaseR1W1IdentityRbacTests(unittest.TestCase):
             "POST",
             "/api/tools/execute",
             {"conversation_id": conv_a_escalated, "tool_name": "get_order", "arguments": {"order_id": "O-202"}},
-            cookie=cookie_staff_a,
+            cookie=cookie_mgr_a,
         )
         self.assertEqual((code_other_ord, body_other_ord["error"]), (403, "object_scope_denied"))
 
-        # Valid escalated case + matching order -> 200 + staff_tool_executed audit event for both Staff and Manager
-        code_ok, body_ok, _ = _wsgi(
-            self.web,
-            "POST",
-            "/api/tools/execute",
-            {"conversation_id": conv_a_escalated, "tool_name": "get_order", "arguments": {"order_id": "O-101"}},
-            cookie=cookie_staff_a,
-        )
-        self.assertEqual(code_ok, 200)
-        self.assertEqual(body_ok["result"]["order"]["id"], "O-101")
+        # Valid escalated case + matching order -> 200 + staff_tool_executed audit event for Manager
         code_mgr_ok, body_mgr_ok, _ = _wsgi(
             self.web,
             "POST",
@@ -429,7 +413,7 @@ class PhaseR1W1IdentityRbacTests(unittest.TestCase):
         self.assertEqual(code_mgr_ok, 200)
         self.assertEqual(body_mgr_ok["result"]["order"]["id"], "O-101")
         tool_evs = [e for e in self.store_a.events("C-001") if e["kind"] == "staff_tool_executed"]
-        self.assertEqual({e["payload"]["actor"]["principal_id"] for e in tool_evs}, {"prin_sa1", "prin_ma1"})
+        self.assertEqual({e["payload"]["actor"]["principal_id"] for e in tool_evs}, {"prin_ma1"})
         for e in tool_evs:
             self.assertEqual(e["payload"]["conversation_id"], conv_a_escalated)
 
@@ -519,7 +503,7 @@ class PhaseR1W1IdentityRbacTests(unittest.TestCase):
                     self.assertEqual((s4, b4["error"]), (exp_resolve_status, exp_code))
                     self.assertNotEqual(b4.get("resolved"), True)
 
-            # W2-D2: Resolved cases in the same tenant Remain strictly blocked on reply (403) and resolve (409)
+            # W2-D2 + W5-D6: Resolved cases remain blocked on reply (403); second resolve returns 200 already_resolved with zero DB writes
             s_rep_res, b_rep_res, _ = _wsgi(
                 self.web,
                 "POST",
@@ -535,16 +519,20 @@ class PhaseR1W1IdentityRbacTests(unittest.TestCase):
                 {"conversation_id": conv_resolved},
                 cookie=actor_cookie,
             )
-            self.assertEqual((s_res_res, b_res_res["error"]), (409, "case_not_escalated"))
+            self.assertEqual(s_res_res, 200)
+            self.assertIs(b_res_res.get("already_resolved"), True)
 
         # Direct store calls also fail closed without writing turns or events
         for bad_cid in (conv_no_handoff, conv_resolved, conv_unescalated_b):
             with self.assertRaises(ApiError) as rep_err:
                 self.store_a.staff_reply("C-001", bad_cid, "Staff", "Blocked")
             self.assertEqual((rep_err.exception.status, rep_err.exception.code), (403, "case_not_escalated"))
+        for bad_cid in (conv_no_handoff, conv_unescalated_b):
             with self.assertRaises(ApiError) as res_err:
                 self.store_a.resolve_escalation(bad_cid, "Staff")
             self.assertEqual((res_err.exception.status, res_err.exception.code), (409, "case_not_escalated"))
+        dup_direct = self.store_a.resolve_escalation(conv_resolved, "Staff")
+        self.assertIs(dup_direct.get("already_resolved"), True)
 
         self.assertEqual(_counts(self.store_a), baseline_a)
         self.assertEqual(_counts(self.store_b), baseline_b)
@@ -578,7 +566,8 @@ class PhaseR1W1IdentityRbacTests(unittest.TestCase):
         self.assertEqual(res_ok_status, 200)
         self.assertIs(res_ok_body["resolved"], True)
 
-        # Once resolved, a second resolve attempt on the same conversation is denied with 409 (never resolved: True)
+        # W5-D6: Once resolved, a second resolve attempt by authorized Staff/Manager returns 200 already_resolved with zero new audit/notice writes
+        before_dup = _counts(self.store_a)
         res_dup_status, res_dup_body, _ = _wsgi(
             self.web,
             "POST",
@@ -586,8 +575,10 @@ class PhaseR1W1IdentityRbacTests(unittest.TestCase):
             {"conversation_id": conv_open_a},
             cookie=cookie_mgr_a,
         )
-        self.assertEqual((res_dup_status, res_dup_body["error"]), (409, "case_not_escalated"))
-        self.assertNotEqual(res_dup_body.get("resolved"), True)
+        self.assertEqual(res_dup_status, 200)
+        self.assertIs(res_dup_body.get("resolved"), True)
+        self.assertIs(res_dup_body.get("already_resolved"), True)
+        self.assertEqual(_counts(self.store_a), before_dup)
 
     def test_google_login_never_overwrites_existing_role_and_enforces_email_verified(self):
         for default_ok in ("customer", ""):

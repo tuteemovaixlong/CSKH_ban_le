@@ -3490,6 +3490,8 @@ body[data-role="customer"] #btn-panel-manager-banner,
 body[data-role="viewer"] #btn-open-manager-console,
 body[data-role="viewer"] #btn-sidebar-manager-nav,
 body[data-role="viewer"] #btn-panel-manager-banner,
+body[data-role="staff"] #toggle-inspector,
+body[data-role="platform_admin"] #toggle-inspector,
 body[data-role="staff"] #btn-open-manager-console,
 body[data-role="staff"] #btn-sidebar-manager-nav,
 body[data-role="staff"] #btn-panel-manager-banner {
@@ -4739,4 +4741,202 @@ body [hidden] {
 .ticket-silent-badge[hidden] {
   display: none !important;
 }
-
+
+/* ==========================================================================
+   Phase R1 W5 — Stop Bot, Case Transfer, Manager Order Actions, Resume & Polish
+   ========================================================================== */
+
+#chat-form .send.is-stop {
+  width: auto;
+  min-width: 78px;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 8px;
+  background: #dc2626;
+  color: #ffffff;
+  border: 1px solid #b91c1c;
+  font-size: 12.5px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  cursor: pointer;
+}
+
+#chat-form .send.is-stop:hover:not(:disabled) {
+  background: #b91c1c;
+}
+
+.staff-case-assist-progress-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.staff-case-assist-progress-row[hidden] {
+  display: none !important;
+}
+
+.staff-case-assist-progress-row .staff-case-assist-progress {
+  flex: 1 1 auto;
+  margin: 0;
+}
+
+.staff-case-assist-stop-btn {
+  background: #dc2626 !important;
+  color: #ffffff !important;
+  border-color: #b91c1c !important;
+  font-weight: 700;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.staff-case-assist-stop-btn:hover:not(:disabled) {
+  background: #b91c1c !important;
+}
+
+.staff-case-assist-hint.is-locked {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-weight: 600;
+  color: #92400e;
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+}
+
+.staff-case-transfer-box {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border-radius: 8px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  font-size: 12.5px;
+}
+
+.staff-case-transfer-box[hidden] {
+  display: none !important;
+}
+
+.staff-case-transfer-box label {
+  font-weight: 600;
+  color: #1e3a8a;
+}
+
+.case-milestone-notice[data-milestone="case_transferred"] .system-milestone-pill {
+  color: #1e40af;
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+
+.resume-case-btn {
+  margin-top: 6px;
+  margin-left: 8px;
+  font-weight: 600;
+  border-color: #0284c7;
+  color: #0369a1;
+  background: #f0f9ff;
+}
+
+.resume-case-btn:hover:not(:disabled) {
+  background: #e0f2fe;
+}
+
+.manager-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  margin-left: 6px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 700;
+  background: #dc2626;
+  color: #ffffff;
+}
+
+.manager-tab-badge[hidden] {
+  display: none !important;
+}
+
+.manager-oa-toolbar {
+  flex-wrap: wrap;
+}
+
+.manager-oa-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.manager-oa-filter-btn.active {
+  background: #0284c7;
+  color: #ffffff;
+  border-color: #0284c7;
+  font-weight: 600;
+}
+
+.manager-oa-hint {
+  margin: 0;
+  font-size: 12.5px;
+  color: #475569;
+}
+
+.manager-oa-row {
+  cursor: pointer;
+}
+
+.manager-oa-row.is-needs-manager td {
+  background: #fffbeb;
+}
+
+.manager-oa-row.is-needs-manager:hover td {
+  background: #fef3c7;
+}
+
+.manager-oa-needs-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fecaca;
+}
+
+.manager-oa-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.manager-oa-page-info {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #475569;
+}
+
+#inspector-case-select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 13px;
+  background: #ffffff;
+  color: #0f172a;
+}
