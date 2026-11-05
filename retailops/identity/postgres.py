@@ -3,6 +3,7 @@ import threading
 from collections import OrderedDict
 
 from retailops.identity.persistent import PersistentSessions, _clean_tenant_id, _env_tenant_id
+from retailops.business.progress import TurnCancelRegistry
 from retailops.storage.pg_repositories import PostgresBusinessStore, PostgresIdentityStore
 from retailops.storage.postgres import BUSINESS_SCHEMA_CURRENT, IDENTITY_SCHEMA, check_schema, tenant_schema, transaction
 from retailops.core import ApiError
@@ -41,6 +42,7 @@ class PostgresSessions(PersistentSessions):
         self.infer, self.api_infer = infer, api_infer
         self.api_daily_limit, self.capacity = api_daily_limit, capacity
         self.inference_gate = InferenceGate()
+        self.cancel_registry = TurnCancelRegistry()
         self.lock = threading.RLock()
         self.tool_caches = {}
         self.apps = OrderedDict()

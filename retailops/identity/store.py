@@ -999,6 +999,65 @@ class IdentityStore:
             self.event(db, 'login', row['tenant_id'], row['id'])
         return secret
 
+    def list_active_staff_members(self, tenant_id: str) -> list[dict]:
+        """Return active Staff and Manager members of `tenant_id` without email (W5-D2)."""
+        tid = str(tenant_id or '').strip()
+        if not tid:
+            return []
+        with self.connection() as db:
+            rows = db.execute(
+                '''SELECT m.principal_id, p.name AS display_name, m.role
+                   FROM memberships m
+                   JOIN tenants t ON t.id = m.tenant_id
+                   JOIN principals p ON p.id = m.principal_id
+                   WHERE m.tenant_id = ? AND m.active = 1 AND t.active = 1
+                     AND m.role IN ('staff', 'manager')
+                   ORDER BY p.name ASC, m.principal_id ASC''',
+                (tid,),
+            ).fetchall() or []
+        members = []
+        for r in rows:
+            raw_name = str(r['display_name'] or '').strip()
+            if '@' in raw_name:
+                raw_name = raw_name.split('@', 1)[0].strip()
+            if not raw_name:
+                raw_name = 'Quản lý cửa hàng' if r['role'] == 'manager' else 'Nhân viên hỗ trợ'
+            members.append({
+                'principal_id': r['principal_id'],
+                'display_name': raw_name,
+                'role': r['role'],
+            })
+        return members
+
+    def active_staff_member(self, tenant_id: str, principal_id: str) -> dict | None:
+        """Look up one active Staff or Manager member of `tenant_id` without email (W5-D2)."""
+        tid = str(tenant_id or '').strip()
+        pid = str(principal_id or '').strip()
+        if not tid or not pid:
+            return None
+        with self.connection() as db:
+            r = db.execute(
+                '''SELECT m.principal_id, p.name AS display_name, m.role
+                   FROM memberships m
+                   JOIN tenants t ON t.id = m.tenant_id
+                   JOIN principals p ON p.id = m.principal_id
+                   WHERE m.tenant_id = ? AND m.principal_id = ? AND m.active = 1 AND t.active = 1
+                     AND m.role IN ('staff', 'manager')''',
+                (tid, pid),
+            ).fetchone()
+        if r is None:
+            return None
+        raw_name = str(r['display_name'] or '').strip()
+        if '@' in raw_name:
+            raw_name = raw_name.split('@', 1)[0].strip()
+        if not raw_name:
+            raw_name = 'Quản lý cửa hàng' if r['role'] == 'manager' else 'Nhân viên hỗ trợ'
+        return {
+            'principal_id': r['principal_id'],
+            'display_name': raw_name,
+            'role': r['role'],
+        }
+
     def create_session_for_membership(self, membership_id, lifetime, capacity):
         with self.connection(write=True) as db:
             row = db.execute('''SELECT m.* FROM memberships m

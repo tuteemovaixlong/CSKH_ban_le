@@ -3834,6 +3834,140 @@ class BusinessStore:
             'notice_message': notice_message,
         }
 
+    def transfer_case(
+        self,
+        case_id: str,
+        *,
+        to_principal_id: str,
+        target_member: dict | None,
+        expected_version: int,
+        actor: dict | None = None,
+    ) -> dict:
+        """Atomically transfer an `in_progress` case directly to another active Staff/Manager in the same store (W5-D2)."""
+        require(isinstance(case_id, str) and bool(case_id.strip()), 400, 'invalid_case_id', 'Mã ca hỗ trợ không hợp lệ.')
+        require(
+            isinstance(to_principal_id, str) and bool(to_principal_id.strip()),
+            400,
+            'invalid_transfer_target',
+            'Thiếu mã nhân sự nhận ca.',
+        )
+        require(
+            type(expected_version) is int and expected_version >= 1,
+            400,
+            'invalid_version',
+            'Phiên bản ca hỗ trợ không hợp lệ.',
+        )
+        clean_to = to_principal_id.strip()
+        actor_meta = None
+        if isinstance(actor, dict):
+            actor_meta = {
+                'principal_id': actor.get('principal_id'),
+                'role': actor.get('role'),
+                'tenant_id': actor.get('tenant_id'),
+                'membership_id': actor.get('membership_id'),
+                'display_name': actor.get('display_name'),
+                'actor_type': actor.get('actor_type', 'principal'),
+            }
+        caller_id = (actor_meta.get('principal_id') if actor_meta else None) or ''
+        caller_role = (actor_meta.get('role') if actor_meta else None) or 'staff'
+        now = self._now()
+
+        with self.connection(write=True) as db:
+            case_row = db.execute('SELECT * FROM cases WHERE case_id = ?', (case_id,)).fetchone()
+            require(case_row is not None, 404, 'case_not_found', 'Không tìm thấy ca hỗ trợ.')
+            if case_row['status'] == 'resolved':
+                require(False, 409, 'case_already_resolved', 'Ca hỗ trợ đã đóng; không thể chuyển ca.')
+            require(
+                case_row['status'] == 'in_progress' and case_row['holder'] is not None,
+                409,
+                'case_not_claimed',
+                'Chỉ chuyển được ca đang có người giữ (in_progress).',
+            )
+            require(
+                case_row['holder'] == caller_id or caller_role == 'manager',
+                403,
+                'case_held_by_other',
+                'Chỉ nhân viên đang giữ ca hoặc Quản lý mới được chuyển ca.',
+            )
+            require(
+                int(case_row['version']) == int(expected_version),
+                409,
+                'case_version_conflict',
+                'Phiên bản ca hỗ trợ đã thay đổi; vui lòng tải lại.',
+            )
+            require(
+                clean_to != case_row['holder'],
+                400,
+                'invalid_transfer_target',
+                'Người nhận ca mới phải khác người đang giữ ca hiện tại.',
+            )
+            require(
+                isinstance(target_member, dict)
+                and target_member.get('principal_id') == clean_to
+                and target_member.get('role') in ('staff', 'manager'),
+                400,
+                'invalid_transfer_target',
+                'Người nhận phải là Nhân viên hoặc Quản lý đang hoạt động trong cùng cửa hàng.',
+            )
+            target_name = str(target_member.get('display_name') or '').strip()
+            if '@' in target_name:
+                target_name = target_name.split('@', 1)[0].strip()
+            if not target_name:
+                target_name = 'Quản lý cửa hàng' if target_member.get('role') == 'manager' else 'Nhân viên hỗ trợ'
+
+            prev_holder = case_row['holder']
+            prev_holder_name = case_row['holder_name']
+            new_ver = int(case_row['version']) + 1
+            won = db.execute(
+                """UPDATE cases
+                   SET holder = ?,
+                       holder_name = ?,
+                       version = ?,
+                       updated_at = ?
+                   WHERE case_id = ? AND version = ? AND status = 'in_progress' AND holder = ?""",
+                (clean_to, target_name, new_ver, now, case_id, int(case_row['version']), prev_holder),
+            ).rowcount
+            require(won == 1, 409, 'case_version_conflict', 'Trạng thái ca hỗ trợ vừa thay đổi; hãy tải lại.')
+
+            conv = db.execute('SELECT order_id FROM conversations WHERE id = ?', (case_row['conversation_id'],)).fetchone()
+            log_kwargs = {
+                'case_id': case_id,
+                'from_principal_id': prev_holder,
+                'from_holder_name': prev_holder_name,
+                'to_principal_id': clean_to,
+                'to_holder_name': target_name,
+                'version': new_ver,
+            }
+            if actor_meta is not None:
+                log_kwargs['actor'] = actor_meta
+            self.log(db, case_row['customer_id'], 'case_transferred', conv['order_id'] if conv else None, **log_kwargs)
+
+            notice_turn_id, notice_message = self._append_case_system_notice_in_tx(
+                db,
+                conversation_id=case_row['conversation_id'],
+                customer_id=case_row['customer_id'],
+                case_id=case_id,
+                request_id=f'sys-notice-transfer-{case_id}-v{new_ver}',
+                milestone='case_transferred',
+                notice_text=f'Ca của bạn đã được chuyển cho {target_name}',
+                staff_name=target_name,
+                now=now,
+            )
+            updated = db.execute('SELECT * FROM cases WHERE case_id = ?', (case_id,)).fetchone()
+            silent_secs = self._compute_customer_silent_seconds_in_tx(db, updated, now=now)
+
+        return {
+            'status': 'ok',
+            'transferred': True,
+            'case_id': case_id,
+            'case': self._case_public_dict(updated, customer_silent_seconds=silent_secs),
+            'from_principal_id': prev_holder,
+            'to_principal_id': clean_to,
+            'to_holder_name': target_name,
+            'notice_turn_id': notice_turn_id,
+            'notice_message': notice_message,
+        }
+
     def staff_reply(self, customer_id, cid, staff_name, message, *, actor=None, case_id=None):
         require(isinstance(message, str) and message.strip(), 400, 'invalid_message', 'Tin nhắn không được để trống.')
         staff_name = staff_name.strip() if (staff_name and isinstance(staff_name, str) and staff_name.strip()) else "Nhân viên hỗ trợ"
@@ -4065,7 +4199,11 @@ class BusinessStore:
             else:
                 case_row = self._latest_case_in_tx(db, cid) if cid else None
 
-            conv = db.execute('SELECT customer_id, order_id FROM conversations WHERE id=?', (cid,)).fetchone() if cid else None
+            conv = (
+                db.execute('SELECT customer_id, order_id, expires_at FROM conversations WHERE id=?', (cid,)).fetchone()
+                if cid
+                else None
+            )
             require(
                 conv is not None or case_row is not None,
                 404,
@@ -4078,6 +4216,54 @@ class BusinessStore:
                 'case_not_escalated',
                 'Cuộc trò chuyện không có phiên hỗ trợ đang mở để hoàn tất.',
             )
+
+            if case_row['status'] == 'resolved':
+                if actor_meta is not None and actor_meta.get('role') not in ('staff', 'manager'):
+                    require(False, 403, 'permission_denied', 'Tài khoản này không có quyền thực hiện thao tác.')
+                latest_ep = db.execute(
+                    'SELECT * FROM handoff_episodes WHERE case_id = ? ORDER BY created_at DESC LIMIT 1',
+                    (case_row['case_id'],),
+                ).fetchone()
+                require(
+                    latest_ep is not None,
+                    409,
+                    'case_not_escalated',
+                    'Cuộc trò chuyện không có phiên hỗ trợ đang mở để hoàn tất.',
+                )
+                within_retention = (
+                    conv is not None
+                    and float(conv['expires_at']) > now
+                    and (case_row['resolved_at'] is None or (now - float(case_row['resolved_at'])) <= self.CONVERSATION_TTL)
+                )
+                require(
+                    within_retention,
+                    403,
+                    'case_retention_expired',
+                    'Ca hỗ trợ đã đóng và quá thời hạn lưu trữ.',
+                )
+                if handoff_id is not None:
+                    require(
+                        latest_ep['handoff_id'] == handoff_id,
+                        409,
+                        'stale_handoff_episode',
+                        'Phiên chuyển tiếp đã cũ hoặc không khớp với ca đã đóng.',
+                    )
+                out = {
+                    'status': 'ok',
+                    'resolved': True,
+                    'already_resolved': True,
+                    'case_id': case_row['case_id'],
+                    'handoff_id': latest_ep['handoff_id'],
+                    'leases_released': 0,
+                    'case': self._case_public_dict(case_row),
+                    'staff_name': staff_name,
+                    'notice_turn_id': None,
+                    'notice_message': None,
+                }
+                if actor_meta is not None:
+                    out['actor_role'] = actor_meta['role']
+                    out['actor_principal_id'] = actor_meta['principal_id']
+                return out
 
             if handoff_id is not None:
                 ep_target = db.execute('SELECT * FROM handoff_episodes WHERE handoff_id = ?', (handoff_id,)).fetchone()
@@ -4185,6 +4371,7 @@ class BusinessStore:
         out = {
             'status': 'ok',
             'resolved': True,
+            'already_resolved': False,
             'case_id': case_row['case_id'],
             'handoff_id': open_ep['handoff_id'],
             'leases_released': leases_released,
@@ -6366,6 +6553,119 @@ class BusinessStore:
             "order": serialized["order"],
         }
 
+    def list_manager_order_actions(
+        self,
+        *,
+        status_group: str = "all",
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict:
+        """Paginated store-wide `order_action_requests` queue for Manager Console without customer PII (W5-D1)."""
+        group = str(status_group or "all").strip().lower()
+        if group == "done":
+            group = "completed"
+        require(
+            group in ("needs_manager", "in_progress", "completed", "all"),
+            400,
+            "invalid_status_group",
+            "Nhóm lọc yêu cầu đơn hàng không hợp lệ.",
+        )
+        require(type(limit) is int and 1 <= limit <= 50, 400, "invalid_limit", "Giới hạn phân trang phải từ 1 đến 50.")
+        require(type(offset) is int and offset >= 0, 400, "invalid_offset", "Vị trí phân trang không hợp lệ.")
+
+        where_map = {
+            "needs_manager": "WHERE r.refund_status = 'pending' AND r.refund_decision IS NULL",
+            "in_progress": "WHERE (r.closed_at IS NULL OR r.refund_status = 'pending') AND NOT (r.refund_status = 'pending' AND r.refund_decision IS NULL)",
+            "completed": "WHERE r.closed_at IS NOT NULL AND r.refund_status <> 'pending'",
+            "all": "",
+        }
+        where_sql = where_map[group]
+
+        with self.connection() as db:
+            cnt_all = int(db.execute("SELECT COUNT(*) AS cnt FROM order_action_requests").fetchone()["cnt"])
+            cnt_needs = int(
+                db.execute(
+                    "SELECT COUNT(*) AS cnt FROM order_action_requests WHERE refund_status = 'pending' AND refund_decision IS NULL"
+                ).fetchone()["cnt"]
+            )
+            cnt_in_progress = int(
+                db.execute(
+                    """SELECT COUNT(*) AS cnt FROM order_action_requests
+                       WHERE (closed_at IS NULL OR refund_status = 'pending')
+                         AND NOT (refund_status = 'pending' AND refund_decision IS NULL)"""
+                ).fetchone()["cnt"]
+            )
+            cnt_completed = int(
+                db.execute(
+                    "SELECT COUNT(*) AS cnt FROM order_action_requests WHERE closed_at IS NOT NULL AND refund_status <> 'pending'"
+                ).fetchone()["cnt"]
+            )
+            totals_by_group = {
+                "needs_manager": cnt_needs,
+                "in_progress": cnt_in_progress,
+                "completed": cnt_completed,
+                "all": cnt_all,
+            }
+            total_matching = totals_by_group[group]
+
+            rows = db.execute(
+                f"""SELECT r.request_id, r.order_id, r.case_id, r.type, r.exchange_kind,
+                           r.status, r.refund_status, r.refund_decision,
+                           r.created_at, r.updated_at, r.closed_at,
+                           c.name AS customer_name
+                    FROM order_action_requests r
+                    LEFT JOIN customers c ON r.customer_id = c.id
+                    {where_sql}
+                    ORDER BY r.created_at DESC, r.request_id DESC
+                    LIMIT ? OFFSET ?""",
+                (limit, offset),
+            ).fetchall()
+
+        items = []
+        for r in rows:
+            raw_cname = str(r["customer_name"] or "").strip()
+            if "@" in raw_cname:
+                raw_cname = raw_cname.split("@", 1)[0].strip()
+            if " - " in raw_cname:
+                raw_cname = raw_cname.split(" - ", 1)[0].strip()
+            raw_cname = re.sub(r"(?:\+?84|0)\d[\d\s.\-]{7,12}\d", "", raw_cname).strip(" -|,;·")
+            cname = raw_cname or "Khách hàng"
+            needs_mgr = bool(r["refund_status"] == "pending" and r["refund_decision"] is None)
+            if needs_mgr:
+                item_group = "needs_manager"
+            elif r["closed_at"] is None or r["refund_status"] == "pending":
+                item_group = "in_progress"
+            else:
+                item_group = "completed"
+            items.append({
+                "request_id": r["request_id"],
+                "order_id": r["order_id"],
+                "case_id": r["case_id"],
+                "customer_display_name": cname,
+                "customer_name": cname,
+                "type": r["type"],
+                "exchange_kind": r["exchange_kind"],
+                "status": r["status"],
+                "refund_status": r["refund_status"],
+                "refund_decision": r["refund_decision"],
+                "status_group": item_group,
+                "needs_manager": needs_mgr,
+                "created_at": float(r["created_at"]),
+                "updated_at": float(r["updated_at"]),
+                "closed_at": float(r["closed_at"]) if r["closed_at"] is not None else None,
+            })
+
+        return {
+            "items": items,
+            "order_actions": items,
+            "status_group": group,
+            "total": total_matching,
+            "limit": limit,
+            "offset": offset,
+            "has_more": (offset + len(items)) < total_matching,
+            "counts": totals_by_group,
+        }
+
     def manager_update_order_status(
         self,
         order_id: str,
@@ -7170,6 +7470,7 @@ class BusinessStore:
         except Exception:
             trace = {}
         _, clean_trace = sanitize_structured_payload(trace, preserve_reasoning=True)
+        clean_trace_dict = clean_trace if isinstance(clean_trace, dict) else {}
         return {
             "turn_id": d["turn_id"],
             "case_id": d["case_id"],
@@ -7178,10 +7479,36 @@ class BusinessStore:
             "question": d["question"],
             "answer": d["answer"],
             "draft_reply": d.get("draft_reply"),
+            "cancelled": bool(clean_trace_dict.get("cancelled")),
             "sources": sources if isinstance(sources, list) else [],
-            "trace": clean_trace if isinstance(clean_trace, dict) else {},
+            "trace": clean_trace_dict,
             "created_at": float(d["created_at"]),
         }
+
+    def has_chat_turn_for_request(self, customer: str, cid: str, request_id: str) -> bool:
+        with self.connection() as db:
+            row = db.execute(
+                "SELECT 1 FROM agent_turns WHERE conversation_id = ? AND customer_id = ? AND request_id = ? LIMIT 1",
+                (cid, customer, request_id),
+            ).fetchone()
+        return row is not None
+
+    def has_case_assist_turn(
+        self,
+        *,
+        tenant_id: str,
+        principal_id: str,
+        case_id: str,
+        request_id: str,
+    ) -> bool:
+        with self.connection() as db:
+            row = db.execute(
+                """SELECT 1 FROM case_assist_turns
+                   WHERE tenant_id = ? AND principal_id = ? AND case_id = ? AND request_id = ?
+                   LIMIT 1""",
+                (tenant_id, principal_id, case_id, request_id),
+            ).fetchone()
+        return row is not None
 
     def find_case_assist_replay(
         self,

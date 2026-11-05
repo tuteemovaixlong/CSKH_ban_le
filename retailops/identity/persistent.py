@@ -11,6 +11,7 @@ from pathlib import Path
 from retailops.account_usage import AccountQuotaStore
 from retailops.business.application import Application
 from retailops.business.cache import ToolCache
+from retailops.business.progress import TurnCancelRegistry
 from retailops.business.store import BusinessStore, _inspect_sqlite_business_ready
 from retailops.core import require
 from retailops.identity.contracts import SessionBinding
@@ -77,6 +78,7 @@ class PersistentSessions:
         self.infer, self.api_infer = infer, api_infer
         self.api_daily_limit, self.capacity = api_daily_limit, capacity
         self.inference_gate = InferenceGate()
+        self.cancel_registry = TurnCancelRegistry()
         self.lock = threading.RLock()
         self.tool_caches = {}
         self.apps = OrderedDict()
@@ -285,7 +287,8 @@ class PersistentSessions:
             if key not in self.apps:
                 app = Application(self.business_store(tenant_id), {}, self.infer, self.api_infer,
                                   self.api_daily_limit, role=member['role'],
-                                  tenant_id=tenant_id, tool_cache=tool_cache)
+                                  tenant_id=tenant_id, tool_cache=tool_cache,
+                                  cancel_registry=getattr(self, 'cancel_registry', None))
                 app.quota_store = AccountQuotaStore(self.control, member['id'])
                 app.identity_store = self.control
                 app.data_mode = getattr(self, 'data_mode', 'persistent-demo')

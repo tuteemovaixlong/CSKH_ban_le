@@ -15,6 +15,7 @@ from http.cookies import SimpleCookie
 from pathlib import Path
 from retailops.core import require
 from retailops.business.application import Application
+from retailops.business.progress import TurnCancelRegistry
 from retailops.business.store import BusinessStore
 from retailops.identity.contracts import SessionBinding
 from retailops.inference_gate import InferenceGate
@@ -39,6 +40,7 @@ class GuestSessions:
         self.capacity = capacity
         self.lock = threading.RLock()
         self.inference_gate = InferenceGate()
+        self.cancel_registry = TurnCancelRegistry()
         self.apps, self.active = {}, {}
         # All guests share this persistent quota. Owner business.sqlite3 is untouched.
         self.control = BusinessStore(self.directory / 'control.sqlite3')
@@ -151,7 +153,8 @@ class GuestSessions:
                 if getattr(self, 'case_timer_config', None) is not None:
                     store.case_timer_config = self.case_timer_config
                 store.seed()
-                app = Application(store, {}, self.infer, self.api_infer, self.api_daily_limit)
+                app = Application(store, {}, self.infer, self.api_infer, self.api_daily_limit,
+                                  cancel_registry=self.cancel_registry)
                 app.quota_store = self.control
                 app.inference_gate = self.inference_gate
                 app.default_provider = 'api' if self.api_infer is not None else 'custom'

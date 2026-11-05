@@ -9,9 +9,74 @@ import re
 import threading
 import time
 
-_PHASES = ('start', 'model', 'tool', 'done')
+_PHASES = ('start', 'model', 'tool', 'done', 'cancelled')
 _NAME = re.compile(r'[a-z_]{1,40}')
 _MAX_TOOLS = 12
+_CANCEL_TTL = 900.0
+CANCELLED_MESSAGE = 'Bạn đã dừng câu trả lời.'
+
+
+class TurnCancelRegistry:
+    """Thread-safe, TTL-bounded in-memory cooperative cancellation registry (W5-D3).
+
+    Keyed by `(tenant_id, owner_id, request_id)` so a caller can only stop or query
+    their own turn within their own tenant.
+    """
+
+    def __init__(self, ttl=_CANCEL_TTL, clock=time.monotonic):
+        self._lock = threading.Lock()
+        self._items = {}
+        self._ttl = float(ttl)
+        self._clock = clock
+
+    def _norm_key(self, tenant_id, owner_id, request_id):
+        return (str(tenant_id or 'default'), str(owner_id or ''), str(request_id or ''))
+
+    def start(self, tenant_id, owner_id, request_id, *, kind: str, target_id: str):
+        key = self._norm_key(tenant_id, owner_id, request_id)
+        with self._lock:
+            self._expire()
+            self._items[key] = {
+                'status': 'running',
+                'cancel_requested': False,
+                'kind': str(kind),
+                'target_id': str(target_id),
+                'updated': self._clock(),
+            }
+
+    def is_cancelled(self, tenant_id, owner_id, request_id) -> bool:
+        key = self._norm_key(tenant_id, owner_id, request_id)
+        with self._lock:
+            item = self._items.get(key)
+            return bool(item and item.get('cancel_requested'))
+
+    def finish(self, tenant_id, owner_id, request_id):
+        key = self._norm_key(tenant_id, owner_id, request_id)
+        with self._lock:
+            self._expire()
+            item = self._items.get(key)
+            if item is not None:
+                item['status'] = 'finished'
+                item['updated'] = self._clock()
+
+    def request_cancel(self, tenant_id, owner_id, request_id, *, kind: str, target_id: str) -> str:
+        """Return `'cancelled'`, `'already_finished'`, or `'not_found'`."""
+        key = self._norm_key(tenant_id, owner_id, request_id)
+        with self._lock:
+            self._expire()
+            item = self._items.get(key)
+            if item is None or item.get('kind') != str(kind) or item.get('target_id') != str(target_id):
+                return 'not_found'
+            if item.get('status') == 'running':
+                item['cancel_requested'] = True
+                item['updated'] = self._clock()
+                return 'cancelled'
+            return 'already_finished'
+
+    def _expire(self):
+        limit = self._clock() - self._ttl
+        for key in [k for k, v in self._items.items() if v['updated'] < limit]:
+            del self._items[key]
 
 
 class TurnProgress:

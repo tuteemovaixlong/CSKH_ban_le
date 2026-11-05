@@ -1,5 +1,6 @@
 """Application use cases: conversation, provider selection and focused order lookup."""
 import hashlib
+import inspect
 import json
 import logging
 import os
@@ -22,9 +23,22 @@ from retailops.knowledge.embedding import MODEL_ID as KNOWLEDGE_EMBEDDING_MODEL
 from retailops_providers import API_MODEL
 from retailops_conversation import Catalog, describe_order
 from retailops.business.cache import SemanticCache, ToolCache, is_cacheable_query, is_cache_eligible_for_lookup
-from retailops.business.progress import TurnProgress
+from retailops.business.progress import CANCELLED_MESSAGE, TurnCancelRegistry, TurnProgress
 from retailops.inference_gate import InferenceGate, GatedGateway
 from retailops.workflow.answer_check import check_final_answer
+
+
+def _call_run_agent(*args, is_cancelled=None, **kwargs):
+    if is_cancelled is not None:
+        try:
+            params = inspect.signature(run_agent).parameters
+            if 'is_cancelled' in params or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+            ):
+                kwargs['is_cancelled'] = is_cancelled
+        except (TypeError, ValueError):
+            kwargs['is_cancelled'] = is_cancelled
+    return run_agent(*args, **kwargs)
 
 MEDIA_HUMAN_FALLBACK_MESSAGE = (
     'Hệ thống hiện không phân tích được ảnh, chuyển nhân viên hỗ trợ trực tiếp cho bạn ngay trên ca này nhé.'
@@ -90,7 +104,7 @@ class _EvidenceHydratingGateway:
 
 class Application:
     def __init__(self, store, tokens, infer=None, api_infer=None, api_daily_limit=20, *, role='customer', orchestrator=None,
-                 tenant_id=None, tool_cache=None):
+                 tenant_id=None, tool_cache=None, cancel_registry=None):
         if role not in ROLE_PERMISSIONS:
             raise ValueError('Unknown application role.')
         reason_catalog()  # fail closed at startup when the shared reason catalog is missing or invalid
@@ -110,6 +124,7 @@ class Application:
         if getattr(self.store, 'tenant_id', None) in (None, 'default') and self.tenant_id != 'default':
             self.store.tenant_id = self.tenant_id
         self.tool_cache = tool_cache if tool_cache is not None else ToolCache(default_ttl=180.0)
+        self.cancel_registry = cancel_registry if cancel_registry is not None else TurnCancelRegistry()
         self.internal_events = []
         self.progress = TurnProgress()  # what a running turn has done so far, for the chat's progress line
         self.agent_mode = resolve_agent_mode(orchestrator)
@@ -183,7 +198,75 @@ class Application:
     def require_permission(self, permission):
         require(permission in self.permissions, 403, 'permission_denied', 'Tài khoản này không có quyền thực hiện thao tác.')
 
-    def chat(self, customer, body):
+    def _chat_owner_key(self, customer: str, actor: dict | None = None) -> tuple[str, str]:
+        tid = (
+            (actor.get('tenant_id') if isinstance(actor, dict) else None)
+            or getattr(self, 'tenant_id', None)
+            or getattr(self.store, 'tenant_id', None)
+            or 'default'
+        )
+        pid = (
+            (actor.get('principal_id') if isinstance(actor, dict) else None)
+            or getattr(self, 'principal_id', None)
+            or customer
+        )
+        return str(tid), str(pid)
+
+    def cancel_chat(self, customer: str, body: dict | None, *, actor: dict | None = None) -> dict:
+        self.require_permission(READ)
+        require(
+            isinstance(body, dict) and set(body) == {'conversation_id', 'request_id'},
+            400,
+            'invalid_fields',
+            'Các trường của yêu cầu hủy không hợp lệ.',
+        )
+        cid, request_id = body['conversation_id'], body['request_id']
+        require(
+            isinstance(cid, str) and bool(re.fullmatch(r'[a-f0-9-]{36}', cid)),
+            400,
+            'invalid_conversation',
+            'Mã cuộc trò chuyện không hợp lệ.',
+        )
+        require(
+            isinstance(request_id, str) and bool(re.fullmatch(r'[A-Za-z0-9_-]{16,128}', request_id)),
+            400,
+            'invalid_request_id',
+            'Thiếu mã yêu cầu hội thoại.',
+        )
+        with self.store.connection() as db:
+            conv_row = db.execute('SELECT customer_id FROM conversations WHERE id = ?', (cid,)).fetchone()
+        if conv_row is None or conv_row['customer_id'] != customer:
+            raise ApiError(404, 'turn_not_found', 'Không tìm thấy lượt trả lời đang chạy của bạn.')
+        cancel_tid, cancel_owner = self._chat_owner_key(customer, actor=actor)
+        outcome = self.cancel_registry.request_cancel(
+            cancel_tid,
+            cancel_owner,
+            request_id,
+            kind='chat',
+            target_id=cid,
+        )
+        if outcome == 'cancelled':
+            return {
+                'status': 'ok',
+                'conversation_id': cid,
+                'request_id': request_id,
+                'cancelled': True,
+                'already_finished': False,
+            }
+        if outcome == 'already_finished' or (
+            hasattr(self.store, 'has_chat_turn_for_request')
+            and self.store.has_chat_turn_for_request(customer, cid, request_id)
+        ):
+            return {
+                'status': 'ok',
+                'conversation_id': cid,
+                'request_id': request_id,
+                'cancelled': False,
+                'already_finished': True,
+            }
+        raise ApiError(404, 'turn_not_found', 'Không tìm thấy lượt trả lời đang chạy của bạn.')
+
+    def chat(self, customer, body, *, actor: dict | None = None):
         self.require_permission(READ)
         started = time.monotonic()
         require(isinstance(body, dict) and {'text', 'conversation_id', 'request_id'}.issubset(set(body))
@@ -326,6 +409,9 @@ class Application:
                 self.store.finish_turn(customer, snapshot, request_id, digest, [user_msg, assistant_msg], cached_result, {})
                 return cached_result
 
+            cancel_tid, cancel_owner = self._chat_owner_key(customer, actor=actor)
+            self.cancel_registry.start(cancel_tid, cancel_owner, request_id, kind='chat', target_id=snapshot['id'])
+            stack.callback(self.cancel_registry.finish, cancel_tid, cancel_owner, request_id)
             progress_key = (customer, snapshot['id'])
             self.progress.start(progress_key, request_id)
             stack.callback(self.progress.finish, progress_key, request_id)
@@ -502,9 +588,20 @@ class Application:
                     answer = run_multiagent(gated_gateway, text, self.store.history(customer, snapshot['id']), execute, identity,
                                             saver=saver, capture=capture, restore=restore, before_model=before_model, attachment=sanitized_attachment)
                 else:
-                    answer = run_agent(gated_gateway, text, self.store.history(customer, snapshot['id']), execute, identity,
-                                       saver=saver, capture=capture, restore=restore, before_model=before_model, attachment=sanitized_attachment,
-                                       progress=lambda state: self.progress.update(progress_key, request_id, state))
+                    answer = _call_run_agent(
+                        gated_gateway,
+                        text,
+                        self.store.history(customer, snapshot['id']),
+                        execute,
+                        identity,
+                        saver=saver,
+                        capture=capture,
+                        restore=restore,
+                        before_model=before_model,
+                        attachment=sanitized_attachment,
+                        progress=lambda state: self.progress.update(progress_key, request_id, state),
+                        is_cancelled=lambda: self.cancel_registry.is_cancelled(cancel_tid, cancel_owner, request_id),
+                    )
             except AgentError as exc:
                 if has_media_attachment:
                     return self._complete_media_human_fallback(
@@ -548,6 +645,51 @@ class Application:
                         fallback_reason='model_unavailable',
                     )
                 raise
+
+            is_turn_cancelled = bool(isinstance(answer.get('trace'), dict) and answer['trace'].get('cancelled'))
+            if is_turn_cancelled:
+                answer['message'] = CANCELLED_MESSAGE
+                bound.cancel_order = None
+                bound.prepared_order_action = None
+                bound.shipment = None
+                bound.human_support = None
+                bound.versions = {}
+                bound.context = {'order_id': snapshot.get('order_id'), 'product_id': snapshot.get('product_id')}
+                answer.pop('requires_human', None)
+                if isinstance(answer.get('messages'), list):
+                    _, sanitized_msgs = sanitize_structured_payload(answer['messages'], user_text=text)
+                    answer['messages'] = sanitized_msgs
+                    if answer['messages'] and isinstance(answer['messages'][-1], dict) and answer['messages'][-1].get('role') == 'assistant':
+                        answer['messages'][-1]['content'] = CANCELLED_MESSAGE
+                if isinstance(answer.get('trace'), dict):
+                    _, sanitized_trace = sanitize_structured_payload(
+                        answer['trace'],
+                        user_text=text,
+                        preserve_keys=('reasoning', 'thought', '_reasoning', 'thinking'),
+                    )
+                    sanitized_trace['cancelled'] = True
+                    answer['trace'] = sanitized_trace
+                result = {
+                    'action': 'reply',
+                    'cancelled': True,
+                    'message': CANCELLED_MESSAGE,
+                    'source': answer['trace'].get('answer_source', 'user_cancelled'),
+                    'model_used': answer['trace'].get('model_responses', answer['trace'].get('model_calls', 0)) > 0,
+                    'context': bound.context,
+                    'trace': answer['trace'],
+                    'provider_id': provider_id,
+                    'replayed': False,
+                    'sources': [],
+                }
+                result['trace']['agent_mode'] = getattr(self, 'agent_mode', 'agent')
+                result['trace']['queue_wait_ms'] = getattr(gated_gateway, 'total_queue_wait_ms', 0.0)
+                result['trace']['provider_inference_ms'] = getattr(gated_gateway, 'total_provider_inference_ms', 0.0)
+                result['trace'].setdefault('graph_retrieval_ms', 0.0)
+                result['trace'].setdefault('rag_retrieval_ms', 0.0)
+                result['trace'].setdefault('db_ms', 0.0)
+                result['trace']['in_flight_inferences'] = getattr(self.inference_gate, 'in_flight', 0)
+                self.store.finish_turn(customer, snapshot, request_id, digest, answer['messages'], result, {})
+                return result
 
             if read_only_lookup:
                 bound.cancel_order = None
@@ -855,6 +997,55 @@ class Application:
         ctx = self.store.authorize_case_assist(case_id, actor=actor, write_attempt=False)
         return self.progress.read(("case_assist", ctx["tenant_id"], ctx["principal_id"], ctx["case_id"]))
 
+    def cancel_case_assist(self, actor: dict, case_id: str, body: dict | None) -> dict:
+        """Cooperatively stop the caller's own running Case Assistant turn (W5-D3)."""
+        case_ctx = self.store.authorize_case_assist(case_id, actor=actor, write_attempt=False)
+        require(
+            isinstance(body, dict) and set(body) == {"request_id"},
+            400,
+            "invalid_fields",
+            "Các trường của yêu cầu dừng Trợ lý ca không hợp lệ.",
+        )
+        request_id = body.get("request_id")
+        require(
+            isinstance(request_id, str) and bool(re.fullmatch(r"[A-Za-z0-9_-]{8,128}", request_id)),
+            400,
+            "invalid_request_id",
+            "Mã yêu cầu Trợ lý ca không hợp lệ.",
+        )
+        outcome = self.cancel_registry.request_cancel(
+            case_ctx["tenant_id"],
+            case_ctx["principal_id"],
+            request_id,
+            kind="case_assist",
+            target_id=case_ctx["case_id"],
+        )
+        if outcome == "cancelled":
+            return {
+                "status": "ok",
+                "case_id": case_ctx["case_id"],
+                "request_id": request_id,
+                "cancelled": True,
+                "already_finished": False,
+            }
+        if outcome == "already_finished" or (
+            hasattr(self.store, "has_case_assist_turn")
+            and self.store.has_case_assist_turn(
+                tenant_id=case_ctx["tenant_id"],
+                principal_id=case_ctx["principal_id"],
+                case_id=case_ctx["case_id"],
+                request_id=request_id,
+            )
+        ):
+            return {
+                "status": "ok",
+                "case_id": case_ctx["case_id"],
+                "request_id": request_id,
+                "cancelled": False,
+                "already_finished": True,
+            }
+        raise ApiError(404, "turn_not_found", "Không tìm thấy lượt Trợ lý ca đang chạy của bạn.")
+
     def case_assist_history(self, actor: dict, case_id: str, *, limit: int = 50) -> dict:
         """Partitioned Case Assistant history for `(tenant_id, principal_id, case_id)` (W4-D4)."""
         return self.store.list_case_assist_turns(case_id, actor=actor, limit=limit)
@@ -992,6 +1183,19 @@ class Application:
             if replay is not None:
                 return {**replay, "replayed": True}
 
+            self.cancel_registry.start(
+                case_ctx["tenant_id"],
+                case_ctx["principal_id"],
+                request_id,
+                kind="case_assist",
+                target_id=case_ctx["case_id"],
+            )
+            stack.callback(
+                self.cancel_registry.finish,
+                case_ctx["tenant_id"],
+                case_ctx["principal_id"],
+                request_id,
+            )
             self.progress.start(progress_key, request_id)
             stack.callback(self.progress.finish, progress_key, request_id)
 
@@ -1047,7 +1251,7 @@ class Application:
                 case_id=case_ctx["case_id"],
             )
             user_prompt = format_case_assist_user_prompt(mode, clean_question)
-            answer = run_agent(
+            answer = _call_run_agent(
                 gated_gateway,
                 user_prompt,
                 prior_history,
@@ -1058,7 +1262,58 @@ class Application:
                 before_model=before_model,
                 progress=lambda state: self.progress.update(progress_key, request_id, state),
                 profile=profile,
+                is_cancelled=lambda: self.cancel_registry.is_cancelled(
+                    case_ctx["tenant_id"],
+                    case_ctx["principal_id"],
+                    request_id,
+                ),
             )
+
+            is_assist_cancelled = bool(
+                isinstance(answer.get("trace"), dict) and answer["trace"].get("cancelled")
+            )
+            if is_assist_cancelled:
+                clean_answer = CANCELLED_MESSAGE
+                draft_reply = None
+                sources = []
+                trace_obj = dict(answer.get("trace") or {})
+                trace_obj["cancelled"] = True
+                trace_obj["agent_mode"] = "case_assist"
+                trace_obj["case_assist_mode"] = mode
+                trace_obj["cache_bypassed"] = True
+                trace_obj["queue_wait_ms"] = getattr(gated_gateway, "total_queue_wait_ms", 0.0)
+                trace_obj["provider_inference_ms"] = getattr(gated_gateway, "total_provider_inference_ms", 0.0)
+                trace_obj["in_flight_inferences"] = getattr(self.inference_gate, "in_flight", 0)
+                _, sanitized_trace = sanitize_structured_payload(
+                    trace_obj,
+                    user_text=clean_question,
+                    preserve_keys=("reasoning", "thought", "_reasoning", "thinking"),
+                )
+                sanitized_trace["cancelled"] = True
+                saved = self.store.save_case_assist_turn(
+                    tenant_id=case_ctx["tenant_id"],
+                    actor=case_ctx["actor"],
+                    case_id=case_ctx["case_id"],
+                    conversation_id=case_ctx["conversation_id"],
+                    customer_id=case_ctx["customer_id"],
+                    order_id=case_ctx["order_id"],
+                    request_id=request_id,
+                    mode=mode,
+                    question=clean_question,
+                    answer=clean_answer,
+                    draft_reply=draft_reply,
+                    sources=sources,
+                    trace=sanitized_trace,
+                )
+                return {
+                    **saved,
+                    "cancelled": True,
+                    "provider_id": provider_id,
+                    "model_used": sanitized_trace.get(
+                        "model_responses", sanitized_trace.get("model_calls", 0)
+                    )
+                    > 0,
+                }
 
             raw_answer_text = answer.get("message", "")
             try:
