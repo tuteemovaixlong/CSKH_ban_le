@@ -414,3 +414,27 @@ Ghi chú không chặn: rollout không tạo lại `web` khi image giữ nguyên
 **Mục không cần owner quyết (mặc định trong §18):** endpoint `resume` đã có nhưng UI chưa có nút "Tiếp tục" (W5-D5); đóng ca lần hai trả `409 case_not_escalated` (W5-D6); nút Trợ lý ca bị khóa không nói lý do (W5-D7); nút yêu cầu mẫu dùng `O-101` (W5-D8). `web/` không còn `style="..."`, nên mục này rời khỏi W5; gộp polling hoãn sau R1 (W5-D9).
 
 **Kết luận:** W5 **READY** để thực thi theo [W5 execution handoff](W5_EXECUTION_HANDOFF_2026-11-05.md). W5 không có migration. Readiness tổng thể vẫn `BLOCKED` cho `W6`.
+
+### 2026-11-05 W5 production deploy record
+
+**Kiểm chứng (một lượt).** PR #66 tại `1f98088` đạt cả 7 mục 0–6 so với [W5 handoff](W5_EXECUTION_HANDOFF_2026-11-05.md):
+- full suite 997 test OK (72 skip chỉ dành cho PostgreSQL), CI 6/6;
+- cờ hủy theo `(tenant, người dùng, request_id)`, được kiểm trước model, sau model và trước mỗi tool;
+- chuyển ca có kiểm người giữ ca hoặc Manager, khóa `version` và kiểm người nhận cùng cửa hàng; danh sách nhân viên không trả email;
+- hàng đợi yêu cầu đơn hàng chỉ dành cho Manager;
+- Tool Inspector chỉ dành cho Manager, đúng 6 tool đọc.
+
+Ghi chú không chặn: Tool Inspector bỏ 3 tool đọc trước đây được phép (`get_product`, `check_variant_stock`, `search_products`), đúng theo allowlist của handoff.
+
+**Merged:** PR #65 (readiness, §18, handoff, `d847857`) và PR #66 (W5, `0a2ba38`).
+
+**Deploy:** không có migration.
+- EC2 được bật lại; host mới là `retailops.35-172-227-184.sslip.io`. Rollout và admin chạy lại với image cũ để cập nhật host, smoke `LIVE_SMOKE_20261105T131620Z`.
+- Workflow `42034603388` thành công với image `sha256:8992bac609469b1d1febe8afa9fdf034cf3cc2bbf45bdbb93c833ae86e5d0a11`: `PUBLIC_WEB_ROLLOUT_OK`, `ADMIN_CONSOLE_READY` và 2 lần `LIVE_E2E_SMOKE_OK`.
+- `RETAILOPS_DEPLOY_ENABLED` để `false`.
+- Model vẫn tạm dùng DeepSeek `deepseek-flash`, như ghi ở biên bản W4.
+
+**Còn mở:**
+- Owner kiểm trên trình duyệt: dừng bot, "Tiếp tục", chuyển ca (cần 2 tài khoản Staff/Manager), tab "Yêu cầu đơn hàng", Tool Inspector theo vai trò.
+- Cập nhật Google OAuth theo host mới.
+- Các mục còn mở của W4 chuyển sang W6: quay lại Colab và đổi khóa, bật vision, đo với model thật, kho tri thức thiếu tài liệu chính sách đổi trả.
