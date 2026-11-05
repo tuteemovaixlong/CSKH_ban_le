@@ -1,5 +1,6 @@
 """HTML UI assets must load through the real adapters, before login."""
 import io
+import re
 import threading
 import unittest
 from html.parser import HTMLParser
@@ -86,6 +87,15 @@ class UiAssetsTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             worker.join(timeout=5)
+
+    def test_disabled_button_rule_uses_not_allowed_cursor_instead_of_wait(self):
+        css = (ROOT / 'web' / 'styles.css').read_text(encoding='utf-8')
+        rules = [m.group(1) for m in re.finditer(r'(?:^|\n)\s*button:disabled\s*\{([^}]*)\}', css)]
+        self.assertGreaterEqual(len(rules), 1)
+        for rule_body in rules:
+            self.assertNotRegex(rule_body, r'cursor\s*:\s*wait\b')
+        self.assertRegex(rules[-1], r'cursor\s*:\s*not-allowed\b')
+        self.assertRegex(rules[-1], r'opacity\s*:\s*\.6\b')
 
 
 if __name__ == '__main__':

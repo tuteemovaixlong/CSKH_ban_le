@@ -1449,6 +1449,16 @@ function collectText(node) {
     delete context.clearInterval;
   }
 
+  // R1-W4.1 Item 2: button:disabled rules in web/styles.css must never use cursor: wait, and active rule uses cursor: not-allowed + opacity: .6
+  const disabledButtonRules = [...stylesCss.matchAll(/(?:^|\n)\s*button:disabled\s*\{([^}]*)\}/g)].map(m => m[1]);
+  assert.ok(disabledButtonRules.length >= 1, 'web/styles.css must define button:disabled');
+  for (const ruleBody of disabledButtonRules) {
+    assert.ok(!/cursor\s*:\s*wait\b/i.test(ruleBody), 'web/styles.css must not use cursor: wait inside button:disabled');
+  }
+  const activeDisabledRule = disabledButtonRules.at(-1);
+  assert.ok(/cursor\s*:\s*not-allowed\b/i.test(activeDisabledRule), 'button:disabled must set cursor: not-allowed');
+  assert.ok(/opacity\s*:\s*\.6\b/i.test(activeDisabledRule), 'button:disabled must retain opacity: .6');
+
   mockSessionRole = 'customer';
   await run('openSession()');
   await get('logout').onclick();
