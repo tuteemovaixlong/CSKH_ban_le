@@ -2045,6 +2045,7 @@ document.querySelectorAll('#csat-stars .star').forEach(star => {
 // Staff Live Chat Console (Human-in-the-loop Desk)
 const STAFF_CASE_OPS_COLLAPSED_KEY = 'retailops.staff.caseOpsCollapsed';
 const STAFF_DESK_MAXIMIZED_KEY = 'retailops.staff.deskMaximized';
+const STAFF_DESK_POLL_MS = 5000;
 const STAFF_OA_STATUS_VI = {
   requested: 'Chờ tiếp nhận',
   under_review: 'Đang xem xét',
@@ -2298,7 +2299,7 @@ function closeStaffDeskDialog() {
 
 function startStaffDeskPolling() {
   if (staffDeskTimer || typeof setInterval !== 'function') return;
-  staffDeskTimer = setInterval(pollStaffDesk, 2500);
+  staffDeskTimer = setInterval(pollStaffDesk, STAFF_DESK_POLL_MS);
 }
 
 function stopStaffDeskPolling() {

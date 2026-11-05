@@ -19,6 +19,10 @@ from retailops.inference_gate import InferenceGate
 
 
 SMOKE_TENANT_PREFIXES = ('e2e-', 'smoke-', 'synthetic-')
+# A single logged-in session concurrently runs Staff Desk polling (transcript,
+# order-actions, queue), case/bot timer polling, and chat/Case Assistant progress
+# polling alongside interactive actions; login throttle stays separate at 15/min.
+SESSION_RATE_LIMIT_PER_MINUTE = 120
 
 
 def _clean_tenant_id(value):
@@ -270,7 +274,7 @@ class PersistentSessions:
     def resolve(self, header):
         sid = self.cookie_id(header)
         member = self.control.resolve(sid)
-        self.control.rate('session:'+sid, 60)
+        self.control.rate('session:'+sid, SESSION_RATE_LIMIT_PER_MINUTE)
         self.check_storage(member)
         key = (member['id'], member['auth_version'])
         tenant_id = member['tenant_id']

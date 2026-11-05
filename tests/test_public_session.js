@@ -1421,6 +1421,44 @@ function collectText(node) {
   assert.equal(localStorage.getItem('retailops.staff.deskMaximized'), '0');
   await run('closeStaffDeskDialog()');
 
+  // R1-W4.1 Item 0: Staff Desk polling interval must be 5000 ms via named constant STAFF_DESK_POLL_MS
+  assert.equal(run('STAFF_DESK_POLL_MS'), 5000, 'STAFF_DESK_POLL_MS must equal 5000');
+  const registeredIntervals = [];
+  const clearedIntervals = [];
+  context.setInterval = (fn, ms) => {
+    const handle = { id: registeredIntervals.length + 1, fn, ms };
+    registeredIntervals.push(handle);
+    return handle;
+  };
+  context.clearInterval = handle => { clearedIntervals.push(handle); };
+  try {
+    await run('stopStaffDeskPolling()');
+    registeredIntervals.length = 0;
+    clearedIntervals.length = 0;
+    await run('startStaffDeskPolling()');
+    assert.equal(registeredIntervals.length, 1, 'startStaffDeskPolling() must register exactly one setInterval');
+    assert.equal(registeredIntervals[0].fn, run('pollStaffDesk'), 'startStaffDeskPolling() must schedule pollStaffDesk');
+    assert.equal(registeredIntervals[0].ms, 5000, 'startStaffDeskPolling() must register setInterval with exactly 5000 ms');
+    await run('startStaffDeskPolling()');
+    assert.equal(registeredIntervals.length, 1, 'startStaffDeskPolling() must not duplicate active timer');
+    await run('stopStaffDeskPolling()');
+    assert.equal(clearedIntervals.length, 1, 'stopStaffDeskPolling() must clear active timer');
+    assert.equal(clearedIntervals[0], registeredIntervals[0]);
+  } finally {
+    delete context.setInterval;
+    delete context.clearInterval;
+  }
+
+  // R1-W4.1 Item 2: button:disabled rules in web/styles.css must never use cursor: wait, and active rule uses cursor: not-allowed + opacity: .6
+  const disabledButtonRules = [...stylesCss.matchAll(/(?:^|\n)\s*button:disabled\s*\{([^}]*)\}/g)].map(m => m[1]);
+  assert.ok(disabledButtonRules.length >= 1, 'web/styles.css must define button:disabled');
+  for (const ruleBody of disabledButtonRules) {
+    assert.ok(!/cursor\s*:\s*wait\b/i.test(ruleBody), 'web/styles.css must not use cursor: wait inside button:disabled');
+  }
+  const activeDisabledRule = disabledButtonRules.at(-1);
+  assert.ok(/cursor\s*:\s*not-allowed\b/i.test(activeDisabledRule), 'button:disabled must set cursor: not-allowed');
+  assert.ok(/opacity\s*:\s*\.6\b/i.test(activeDisabledRule), 'button:disabled must retain opacity: .6');
+
   mockSessionRole = 'customer';
   await run('openSession()');
   await get('logout').onclick();
