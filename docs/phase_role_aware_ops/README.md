@@ -391,6 +391,7 @@ W3 được chia thành W3 (yêu cầu hủy/trả/đổi), W3.1 (nhân viên t�
 | Gói | Phạm vi còn lại |
 |---|---|
 | `W4` | Theo [W4 handoff](W4_EXECUTION_HANDOFF_2026-11-03.md) và [§17](W0_OWNER_DECISION_DELTA_2026-10-29.md#17-w4-owner-decisions-2026-11-03): endpoint Colab có bảo vệ hai lớp, ghim phiên bản vLLM/template; khai báo năng lực model thay cho danh sách text-only; ảnh đính kèm không còn lưu thô trong lịch sử; ảnh tới model qua bản chiếu đã làm sạch; PDF có quét mã độc (ClamAV) và trích đoạn có số trang; trợ lý ca cho Staff/Manager (tóm tắt, trả lời câu hỏi, soạn nháp); salt cho `customer_ref`; business v8. |
+| `W4.1` | Hotfix sau kiểm thử W4 trên production, theo [W4.1 hotfix handoff](W4_1_HOTFIX_HANDOFF_2026-11-05.md): giảm nhịp polling Staff Desk, nâng giới hạn request mỗi phiên, sửa con trỏ của nút bị khóa. Không migration. |
 | `W5` | Nút dừng bot (W2-D6), nút "Tiếp tục", chuyển ca, Manager Console, sửa Tool Inspector, resolve lần hai trả `ok`, các `style="..."` còn lại ngoài phạm vi đã sửa, phần thiết kế lại Staff Desk còn lại. |
 | `W6` | Live E2E full cho hủy/trả/đổi và duyệt; đo lại agent và ảnh/PDF với model thật trên Colab; dọn các tenant `e2e-smoke-*`/`diag-*`; xác nhận log SSM/CloudTrail; review độc lập và checklist release. |
 
