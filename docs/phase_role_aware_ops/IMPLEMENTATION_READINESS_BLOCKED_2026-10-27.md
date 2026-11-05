@@ -339,3 +339,61 @@ Cả hai quyết định dùng đúng hành vi code đã được kiểm chứng
 | `W4-RR-06` | MAJOR | `customer_ref` trong JSONL là SHA-256 không salt, đoán ngược được với mã khách dạng `C-001` | W4-D8 |
 
 **Kết luận:** W4 **READY** để thực thi theo [W4 execution handoff](W4_EXECUTION_HANDOFF_2026-11-03.md). Readiness tổng thể vẫn `BLOCKED` cho `W5–W6`. Migration business v8, cài ClamAV và deploy W4 cần owner duyệt riêng, theo runbook như W3.2. W4 không bật dữ liệu khách thật.
+
+### 2026-11-05 W4 production deploy record and W4.1 hotfix
+
+**Kiểm chứng (một lượt, 2026-11-04).** PR #60 tại `83d7181`:
+- CI 6/6. Chạy trên máy, 37/37 test W4 pass sau khi cài `pypdfium2` đúng bản đã ghim.
+- `vllm==0.32.0` có trên PyPI. Chat template ở tag `v0.32.0` khớp đúng SHA-256 đã ghim. Các cờ `--api-key`, `--disable-uvicorn-access-log` và `--default-chat-template-kwargs` đều có trong bản 0.32.
+
+Lượt kiểm chứng tìm ra hai lỗ hổng phía deploy. Argon đã sửa cả hai trong `f55d1bc`:
+1. `rollout-public-web.sh` (gồm cả mảng rollback), `admin-console.py` và `live-e2e.py` không nạp `compose.clamav.yaml`.
+2. Hướng dẫn dùng `*_FILE` không chạy được, vì container `web` không mount `/opt/retailops/secrets` và `api.env` đã có sẵn dòng `RETAILOPS_API_KEY`.
+
+Ghi chú không chặn: rollout không tạo lại `web` khi image giữ nguyên. Vì vậy, sau khi chỉ sửa `api.env`, phải tạo lại `web` bằng compose với đủ overlay (public, postgres, clamav).
+
+**Merged:** PR #60 (W4, merge `f46a22b`), PR #61 (dọn docs trạng thái cũ, `1327530`), PR #62 (W4.1 handoff) và PR #63 (W4.1 hotfix, `c293edf`).
+
+**Kiểm tra EC2 trước deploy:** t3.large, 8 GB RAM, không swap, còn trống 43 GB đĩa. `freshclam` tải được bộ nhận diện virus từ EC2. Không còn mount `/opt/retailops/patches`.
+
+**Migration business v8 trên DB production**, cùng mô hình W3.2:
+- Preflight chỉ đọc: identity v5; 46 tenant ở business v7; 584 đơn; 82 case; 0 yêu cầu đơn hàng; 0 bằng chứng; 0 tệp đính kèm nằm trong lịch sử chat.
+- Backup: `pre-w4-20261105T035147.dump` và `final-pre-w4-20261105T041755.dump`. File sau được chụp khi `web` đã dừng và là **bản dùng để khôi phục về trước W4**.
+- Khóa trong `api.env` (ghi giá trị trực tiếp, không dùng `*_FILE`): đổi `RETAILOPS_API_KEY`; thêm `RETAILOPS_API_TUNNEL_TOKEN`, `RETAILOPS_CUSTOMER_REF_KEY` và `RETAILOPS_API_VISION=off`.
+- Workflow `41964343814` đỏ có chủ đích: đưa image `sha256:6ef79afe…` lên EC2 rồi tự `PUBLIC_WEB_ROLLBACK_OK`.
+- ClamAV `clamav/clamav:1.4.6-debian@sha256:ce80e978…` healthy. Từ container `web`, lệnh `zPING` nhận được `PONG`.
+- Diễn tập trên DB tạm: lần đầu `upgraded: True`, chạy lại `False`; có 46 bảng `case_assist_turns`; W4 khởi động được trên v8.
+- `database migrate-v8` trên DB thật: 46 tenant lên v8; số đơn và case không đổi; tệp đính kèm cũ chuyển 0, gỡ 0.
+- Rollout W4 xong với `PUBLIC_WEB_ROLLOUT_OK`. Caddyfile mới lấy từ image: 20 MiB cho bằng chứng, 27 MiB cho chat, 10 MB cho phần còn lại; bản cũ lưu ở `Caddyfile.bak-w4-20261105T044133`. `admin-console.py install` thêm lại dòng import admin: `ADMIN_CONSOLE_READY`. Live smoke: `LIVE_SMOKE_20261105T044859Z`.
+- Trạng thái sau deploy: `web` có `RETAILOPS_CLAMD_HOST=clamav:3310` và `VISION=off`; outbox báo `customer_ref_key_configured: true` và 0 sự kiện `dead`.
+
+**Sự cố vận hành: phiên SSM rớt giữa giai đoạn migrate.**
+- *Diễn biến.* Phiên cũ đã chạy xong các bước dừng `web`, backup cuối và migrate. Phiên mới chạy lại cả ba bước. Lần migrate thứ hai ra `upgraded: false`, đúng như mong đợi. Nhưng bản backup thứ hai được chụp **sau** khi migrate.
+- *Xác minh.* Kiểm tra mục `case_assist_turns` trong danh mục của từng file backup: `final-pre-w4-20261105T041755` có 0 mục, còn bản chụp lúc `044133` có 230 mục.
+- *Xử lý.* Đổi tên bản chụp lúc `044133` thành `post-w4-20261105T044133.dump`.
+- *Bài học.* Gửi runbook theo từng giai đoạn. Khi phiên rớt, kiểm tra trạng thái trước rồi mới chạy tiếp: `chk`, `docker ps`, số file backup.
+
+**Endpoint model:**
+- Colab hết quota tính toán, nên endpoint hai lớp của W4 chưa kiểm được trên thực tế. Lần thử trả 404 vì tunnel đang offline (`ERR_NGROK_3200`).
+- Cặp API key và tunnel token đầu tiên đã bị dán vào chat, nên coi như đã lộ. Phải đổi cặp mới trước khi cấu hình Colab.
+- Trong thời gian chờ, production tạm dùng DeepSeek `deepseek-flash` qua `RETAILOPS_API_ENDPOINT=https://api.deepseek.com/chat/completions`:
+  - Tunnel token được comment trong `api.env`, để không gửi sang nhà cung cấp bên ngoài.
+  - Cấu hình Colab được lưu ở `api.env.bak-deepseek-20261105T054717`.
+  - `deepseek-chat` chỉ là tên gọi tắt, phản hồi trả về tên `deepseek-flash`. Vì vậy phải đặt đúng tên này, nếu không app báo `api_model_mismatch`.
+- Dữ liệu demo đi qua nhà cung cấp bên ngoài. Đây là phương án tạm thời; không dùng số liệu chạy bằng DeepSeek để đánh giá Gemma.
+
+**W4.1 hotfix (2026-11-05):**
+- *Phát hiện.* Khi owner kiểm thử, Staff Desk đang mở làm chính phiên đó nhận `429 rate_limited`: khoảng 72 request mỗi phút trong khi giới hạn là 60 mỗi phiên. Nút bị khóa hiện con trỏ `wait`.
+- *Thực hiện.* PR #63 do Argon làm theo [W4.1 handoff](W4_1_HOTFIX_HANDOFF_2026-11-05.md): polling Staff Desk 5 giây một lần, `SESSION_RATE_LIMIT_PER_MINUTE = 120`, con trỏ `not-allowed`. CI 6/6.
+- *Deploy.* Workflow `41983541442` thành công với image `sha256:8e83ac32ca558aab082a47ceb95128946f82887f56cb0d42202aaceb5937270f`: `PUBLIC_WEB_ROLLOUT_OK`, `ADMIN_CONSOLE_READY` và 2 lần `LIVE_E2E_SMOKE_OK`.
+- *Kiểm tra.* Owner thử trên trình duyệt: Trợ lý ca dùng được sau khi nhân viên nhận ca.
+
+`RETAILOPS_DEPLOY_ENABLED` để `false`.
+
+**Còn mở:**
+- Quay lại Colab: khôi phục file backup, đổi khóa, đặt Colab Secrets, kiểm 403/401/200. Sau đó đo token mỗi ảnh trên L4 và chạy kịch bản W3.2 và W4 với model thật.
+- Bật `RETAILOPS_API_VISION=on` sau khi đã kiểm endpoint.
+- Cập nhật Google OAuth theo host mới.
+- W5: tooltip "Nhận ca trước" cho nút Trợ lý ca, gộp các request polling.
+- Kiểm tra kho tri thức: `search_knowledge` trả 0 tài liệu khi hỏi chính sách đổi size.
+- Các mục còn mở từ W3.2.
