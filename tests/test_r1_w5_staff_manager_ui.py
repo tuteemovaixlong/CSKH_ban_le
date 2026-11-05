@@ -1224,6 +1224,30 @@ class TestR1W5StaffManagerOperations(unittest.TestCase):
             q_wrap.execute(q, ("x",) * q.count("?"))
             self.assertEqual(captured[0].count("%s"), q.count("?"))
 
+    def test_chat_route_supports_legacy_two_arg_app_stub(self):
+        class _FakeStore:
+            @staticmethod
+            def conversation(_customer, _cid):
+                return {"provider_id": "custom"}
+
+        class _TwoArgChatApp:
+            store = _FakeStore()
+            quota_store = None
+
+            @staticmethod
+            def chat(_customer, _body):
+                return {"provider_id": "custom", "replayed": False, "trace": {}}
+
+        status, res = api_result(
+            _TwoArgChatApp(),
+            "C-001",
+            "POST",
+            "/api/chat",
+            {"conversation_id": "00000000-0000-0000-0000-000000000000", "request_id": "req_stub_12345678", "text": "demo"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(res["provider_id"], "custom")
+
 
 if __name__ == "__main__":
     unittest.main()

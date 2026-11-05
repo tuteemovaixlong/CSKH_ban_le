@@ -1,6 +1,7 @@
 """Business route dispatch for both HTTP adapters; identity comes from the server."""
 from email.parser import BytesParser
 from email.policy import HTTP as EMAIL_HTTP_POLICY
+import inspect
 import json
 import math
 from pathlib import Path
@@ -825,8 +826,17 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             ))
         if path == "/api/chat":
             actor = _extract_actor(app, customer, binding=binding, context=ctx)
+            chat_params = inspect.signature(app.chat).parameters
+            chat_kwargs = (
+                {"actor": actor}
+                if (
+                    "actor" in chat_params
+                    or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in chat_params.values())
+                )
+                else {}
+            )
             try:
-                result = app.chat(customer, body, actor=actor)
+                result = app.chat(customer, body, **chat_kwargs)
             except ApiError as exc:
                 _record_chat_usage(app, customer, body, {'trace': exc.trace}, False)
                 raise
