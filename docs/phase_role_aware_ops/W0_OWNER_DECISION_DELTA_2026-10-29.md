@@ -415,3 +415,19 @@ Owner chốt trước khi phát hành W4. Các quyết định dưới đây **b
 | W4-D8 | **`customer_ref` có salt:** HMAC-SHA-256 với khóa bí mật của deploy; áp dụng cho sự kiện mới; chưa có hệ thống ngoài đọc JSONL nên không cần ánh xạ ngược. | Bổ sung §11.4 |
 | W4-D9 | **Business v8 và ClamAV theo runbook:** migration có kiểm soát như v5–v7 (bảng lịch sử trợ lý ca, mở rộng loại bằng chứng, chuyển tệp đính kèm cũ). Dịch vụ ClamAV là compose mới; vì deploy thường không làm mới file compose trên EC2, runbook phải cài tay có kiểm tra. | Mới |
 | W4-D10 | **Ghim runtime Colab:** ghim phiên bản `vllm` và digest chat template; tắt log request; giới hạn số ảnh mỗi request phía server. | Thực thi §11.6 |
+
+## 18. W5 owner decisions (2026-11-05)
+
+Owner chốt trước khi phát hành W5. Các quyết định dưới đây **bổ sung** §10–§17; phần còn lại giữ nguyên. W5-D1 đến W5-D4 do owner chọn trực tiếp. W5-D5 đến W5-D9 là mặc định do review đề xuất, owner chấp nhận khi merge bản ghi này. W5 không có migration và không bật dữ liệu khách thật. Không cho phép `W6`.
+
+| ID | Quyết định | Thay thế |
+|---|---|---|
+| W5-D1 | **Manager Console thêm hàng đợi yêu cầu đơn hàng:** tab liệt kê mọi yêu cầu hủy/trả/đổi của cửa hàng theo trạng thái, nổi bật yêu cầu hoàn tiền đang chờ Manager quyết; bấm một dòng thì mở đúng ca trong Staff Desk. Thao tác duyệt vẫn ở panel của ca, không nhân đôi nút. Tổng quan ca và KPI R1 không thuộc W5. | Chốt phạm vi "Manager Console" của W5 |
+| W5-D2 | **Chuyển ca thẳng:** người đang giữ ca hoặc Manager chọn một nhân viên đang hoạt động cùng cửa hàng; ca chuyển ngay, không cần người nhận bấm nhận. Ghi audit `case_transferred` và một mốc ca cho khách. Lịch sử Trợ lý ca vẫn riêng từng người. | Mới |
+| W5-D3 | **Nút dừng bot:** áp dụng cho chat của khách và Trợ lý ca. Khi dừng, tin của người gửi vẫn lưu, câu trả lời dở bị bỏ, hội thoại có dòng "Bạn đã dừng câu trả lời." để lượt sau hiểu ngữ cảnh. Không cần cắt ngang request tới model đang chạy; kết quả của nó bị bỏ. | Thực thi W2-D6 |
+| W5-D4 | **Tool Inspector chỉ cho Manager và chỉ đọc:** chỉ các tool đọc dữ liệu; bỏ `request_human_support`; bắt buộc chọn ca và chạy trong phạm vi khách của ca; tham số mẫu lấy từ dữ liệu của ca. | Mới |
+| W5-D5 | **Nút "Tiếp tục"** cho ca đã đóng gọi endpoint `resume` đã có; giữ hành vi gửi tin mới cũng mở lại ca. | Hoàn tất UI của §11.2 |
+| W5-D6 | **Đóng ca lần hai trả `ok`:** trên ca đã đóng trả `200 already_resolved`, không ghi thêm audit hay thông báo. | Mới |
+| W5-D7 | **Nút Trợ lý ca bị khóa nói rõ lý do** qua `title` và dòng gợi ý dễ thấy (ví dụ "Bấm Nhận ca trước"). | Mới, từ kiểm thử W4 |
+| W5-D8 | **Nút yêu cầu mẫu không dùng mã cố định** như `O-101`; dùng câu chung áp dụng cho đơn của chính khách. | Thực thi "đổi nhãn nút mẫu" từ W2 |
+| W5-D9 | **Hoãn sau R1:** gộp request polling Staff Desk thành một endpoint (W4.1 đã đủ cho tải hiện tại). Các `style="..."` đã được gỡ hết ở W3.1, nên mục này rời khỏi W5. | Cập nhật lộ trình |

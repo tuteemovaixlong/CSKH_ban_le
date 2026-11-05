@@ -397,3 +397,20 @@ Ghi chú không chặn: rollout không tạo lại `web` khi image giữ nguyên
 - W5: tooltip "Nhận ca trước" cho nút Trợ lý ca, gộp các request polling.
 - Kiểm tra kho tri thức: `search_knowledge` trả 0 tài liệu khi hỏi chính sách đổi size.
 - Các mục còn mở từ W3.2.
+
+### 2026-11-05 W5 readiness review
+
+> **Phạm vi:** một lượt readiness review cho W5, chỉ BLOCKER/MAJOR. Đối chiếu các mục W5 trong lộ trình (README, handoff W2/W3, ghi chú sau W4) với code trên `main` (`4f86e9f`).
+
+**Finding đã được owner đóng bằng [§18](W0_OWNER_DECISION_DELTA_2026-10-29.md#18-w5-owner-decisions-2026-11-05):**
+
+| ID | Mức | Vấn đề | Đóng bằng |
+|---|---|---|---|
+| `W5-RR-01` | MAJOR | Nút dừng bot (W2-D6) chưa có: backend không có cơ chế hủy một lượt agent đang chạy; chưa chốt lượt bị dừng được lưu thế nào | W5-D3 |
+| `W5-RR-02` | MAJOR | Chưa có chuyển ca: không có API, không có danh sách nhân viên cùng cửa hàng; chưa chốt người nhận có phải bấm nhận không | W5-D2 |
+| `W5-RR-03` | MAJOR | Manager Console có 6 tab nhưng không có màn hình nào cho R1; Manager muốn quyết hoàn tiền phải mở từng ca trong Staff Desk | W5-D1 |
+| `W5-RR-04` | MAJOR | Tool Inspector cho Staff dùng, có `request_human_support` là thao tác có tác dụng thật, tham số mẫu `O-101`/`P-101` không tồn tại trên dữ liệu persistent, danh sách tool đã cũ | W5-D4 |
+
+**Mục không cần owner quyết (mặc định trong §18):** endpoint `resume` đã có nhưng UI chưa có nút "Tiếp tục" (W5-D5); đóng ca lần hai trả `409 case_not_escalated` (W5-D6); nút Trợ lý ca bị khóa không nói lý do (W5-D7); nút yêu cầu mẫu dùng `O-101` (W5-D8). `web/` không còn `style="..."`, nên mục này rời khỏi W5; gộp polling hoãn sau R1 (W5-D9).
+
+**Kết luận:** W5 **READY** để thực thi theo [W5 execution handoff](W5_EXECUTION_HANDOFF_2026-11-05.md). W5 không có migration. Readiness tổng thể vẫn `BLOCKED` cho `W6`.
