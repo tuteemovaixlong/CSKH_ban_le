@@ -20,7 +20,7 @@ from retailops.config import Settings
 from retailops.core import ApiError, ROOT
 from retailops.http.public import PublicWeb
 from retailops.identity.cli import issue_credential
-from retailops.identity.persistent import PersistentSessions
+from retailops.identity.persistent import PersistentSessions, SESSION_RATE_LIMIT_PER_MINUTE
 from retailops.identity.store import IdentityStore
 
 ORIGIN = 'https://retailops.example.com'
@@ -308,6 +308,33 @@ class PersistentTests(unittest.TestCase):
         self.assertIsInstance(web.sessions, PersistentSessions)
         with self.assertRaises(ApiError):
             web.sessions.login(self.alice[1])  # No implicit account/tenant seed.
+
+    def test_session_rate_limit_allows_120_per_minute_blocks_121st_and_resets_next_minute(self):
+        self.assertEqual(SESSION_RATE_LIMIT_PER_MINUTE, 120)
+        try:
+            from retailops.identity.postgres import PostgresSessions
+        except ImportError:
+            PostgresSessions = None
+        if PostgresSessions is not None:
+            self.assertIs(PostgresSessions.resolve, PersistentSessions.resolve)
+
+        t0 = 1800000000  # Exact minute boundary: t0 // 60 == 30000000
+        with patch('retailops.identity.store.time.time', return_value=t0):
+            staff_cookie = self.login(self.staff)
+            alice_cookie = self.login(self.alice)
+            for idx in range(120):
+                status, body, _ = self.request('/api/session', cookie=staff_cookie)
+                self.assertEqual(status, 200, f'Request #{idx + 1} within minute window must succeed: {body}')
+            status_121, body_121, _ = self.request('/api/session', cookie=staff_cookie)
+            self.assertEqual(status_121, 429)
+            self.assertEqual(body_121['error'], 'rate_limited')
+            # Rate limit is scoped per session ('session:' + sid), so another session is unaffected.
+            self.assertEqual(self.request('/api/session', cookie=alice_cookie)[0], 200)
+
+        # Next minute window: the throttled session can call again.
+        with patch('retailops.identity.store.time.time', return_value=t0 + 60):
+            status_next, body_next, _ = self.request('/api/session', cookie=staff_cookie)
+            self.assertEqual(status_next, 200, body_next)
 
 
 if __name__ == '__main__':
