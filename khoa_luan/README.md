@@ -24,6 +24,7 @@ Cập nhật: 2026-11-06. Người dùng tạm dừng để làm việc khác.
 | Thiết kế bộ đánh giá 250 ca | `05_thiet_ke_bo_danh_gia.md` | Bản thiết kế, chưa viết dữ liệu |
 | Thực trạng và bộ dữ liệu công khai | `06_nghien_cuu_thuc_trang_va_du_lieu.md` | Xong; dùng cho mục 1.1 và nguồn gốc bộ test |
 | Bộ tài liệu cho model độc lập sinh 210 ca | `eval_pack/` | Xong; 4 ca mẫu đã chạy đạt bằng gateway giả; chưa giao cho model nào |
+| Cơ sở dữ liệu: hiện trạng v8 và thiết kế v9 | `07_co_so_du_lieu.md` | Xong hiện trạng; thiết kế v9 chờ owner duyệt |
 | Chương 1 | | **Việc tiếp theo** |
 | Chương 2, 3, mục 4.1 | | Viết được ngay |
 | Mục 4.2–4.9, Kết luận | | Chờ W6 chạy trên Colab |

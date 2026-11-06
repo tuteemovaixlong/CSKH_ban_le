@@ -431,3 +431,20 @@ Owner chốt trước khi phát hành W5. Các quyết định dưới đây **b
 | W5-D7 | **Nút Trợ lý ca bị khóa nói rõ lý do** qua `title` và dòng gợi ý dễ thấy (ví dụ "Bấm Nhận ca trước"). | Mới, từ kiểm thử W4 |
 | W5-D8 | **Nút yêu cầu mẫu không dùng mã cố định** như `O-101`; dùng câu chung áp dụng cho đơn của chính khách. | Thực thi "đổi nhãn nút mẫu" từ W2 |
 | W5-D9 | **Hoãn sau R1:** gộp request polling Staff Desk thành một endpoint (W4.1 đã đủ cho tải hiện tại). Các `style="..."` đã được gỡ hết ở W3.1, nên mục này rời khỏi W5. | Cập nhật lộ trình |
+
+## 19. W6.1a owner decisions (2026-11-06)
+
+Owner chốt hướng W6 ngày 2026-11-06 theo [W6 backlog](W6_BACKLOG_2026-11-06.md) và [tài liệu database mục B](../../khoa_luan/07_co_so_du_lieu.md). Các quyết định dưới đây áp dụng cho **W6.1a**: sàn ảo cùng hợp đồng sự kiện, chưa đụng RetailOps. W6.1a-D1 đến D4 do owner chọn trực tiếp; D5 đến D10 là mặc định đề xuất kèm handoff, owner chấp nhận khi merge bản ghi này. Không cho phép W6.1b trở đi.
+
+| ID | Quyết định | Thay thế |
+|---|---|---|
+| W6.1a-D1 | **Sàn ảo là package `marketplace_sim/` trong cùng repo**, kho dữ liệu SQLite riêng, chỉ dùng thư viện chuẩn của Python. Không vào image production. RetailOps và sàn ảo không import nhau theo cả hai chiều. | Mới |
+| W6.1a-D2 | **Mô hình chuẩn cộng connector:** sàn ảo chỉ phát dữ liệu theo hợp đồng sự kiện v2; việc ánh xạ sang mô hình chuẩn của RetailOps thuộc connector ở W6.1b. | Thay cho dữ liệu vận chuyển nạp cứng trong tool |
+| W6.1a-D3 | **Không chạm vào tiền:** cổng thanh toán giả lập chỉ phát trạng thái thanh toán, hoàn tiền; không có số thẻ, số tài khoản, OTP. Thanh toán thật chỉ qua cổng có giấy phép của Ngân hàng Nhà nước. | Mới |
+| W6.1a-D4 | **Connector trong R1:** chỉ sàn ảo và cổng thanh toán giả lập. Connector CSV và connector của nền tảng thật để sau R1. | Mới |
+| W6.1a-D5 | **Hợp đồng sự kiện v2** như mục 3 của [W6.1a handoff](W6_1A_EXECUTION_HANDOFF_2026-11-06.md): một phong bì chung, 7 loại sự kiện, chữ ký HMAC-SHA256 ở header. | Bổ sung cho hợp đồng sự kiện đơn hàng của Phase 5 |
+| W6.1a-D6 | **Sàn ảo phát mã trạng thái gốc**, không phát trạng thái chuẩn. Hãng mô phỏng theo GHN dùng bộ mã công khai của GHN; các hãng khác dùng bộ mã giả lập, ghi rõ là giả lập, không gán là mã thật của hãng đó. | Mới |
+| W6.1a-D7 | **Cổng thanh toán giả lập dạng chung**, chưa mô phỏng định dạng riêng của cổng thật nào. Việc chọn cổng làm mẫu để sau, không chặn W6.1a. | Hoãn quyết định chọn cổng |
+| W6.1a-D8 | **Hai chế độ:** tất định, với cùng seed và cấu hình thì file xuất giống hệt từng byte; và chạy dần bằng lệnh tua đồng hồ. Có 12 kịch bản có tên cho các tình huống cần đánh giá. | Mới |
+| W6.1a-D9 | **Không có dữ liệu cá nhân:** tên khách lấy từ danh sách giả lập; không số điện thoại, email, địa chỉ của khách; khu vực giao chỉ quận và tỉnh; số điện thoại shipper đã che. Các tỉ lệ như COD, hãng, giao thất bại, mùa sale, thời gian hoàn tiền là **giả định**, ghi rõ trong file cấu hình. | Mới |
+| W6.1a-D10 | **Nội dung bổ sung cho 3 sản phẩm** P-101, P-102, P-202 trong catalog của sàn ảo, đúng như mục 2 của handoff. Đây là dữ liệu giả lập cho F10. | Thực thi F10 |
