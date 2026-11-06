@@ -1,6 +1,6 @@
 # Cơ sở dữ liệu RetailOps
 
-Tài liệu để nắm vững database: dùng khi bảo vệ khóa luận và làm căn cứ chốt migration business v9 của W6.1. Kiểm trên code ngày 2026-11-06, `main` tại `d524373`. Phần A là hiện trạng v8 đang chạy production; phần B là thiết kế v9 đề xuất, **chưa được duyệt**.
+Tài liệu để nắm vững database: dùng khi bảo vệ khóa luận và làm căn cứ chốt migration business v9 của W6.1. Kiểm trên code ngày 2026-11-06, `main` tại `d524373`. Phần A là hiện trạng v8 đang chạy production; phần B là thiết kế v9 đã được owner chốt hướng ngày 2026-11-06.
 
 Nguồn chính: `retailops/storage/pg_schema.py` chứa DDL và các bước migration; `retailops/storage/postgres.py` chứa kết nối, giao dịch và số phiên bản; `retailops/business/store.py` chứa mọi thao tác đọc ghi nghiệp vụ; `retailops/workflow/schema.py` chứa bảng LangGraph.
 
@@ -188,46 +188,65 @@ Thay `tenant_xxx` bằng tên schema lấy ở câu thứ hai. Không dán kết
 
 ---
 
-# B. Thiết kế business v9 đề xuất cho W6.1
+# B. Thiết kế business v9 cho W6.1, đã chốt hướng ngày 2026-11-06
+
+Owner đã đồng ý hướng thiết kế dưới đây. Chi tiết cột và kiểu dữ liệu vẫn được rà lại khi viết handoff W6.1b.
 
 ## B1. Nguyên tắc
 
-1. **Dữ liệu nghiệp vụ chỉ vào DB qua cổng tích hợp.** Đơn, thanh toán, vận chuyển, hoàn tiền, catalog do hệ thống nguồn phát sự kiện; RetailOps nhận, kiểm chữ ký, chống trùng, rồi ghi. Hệ thống nguồn trong demo là **sàn ảo** `marketplace_sim/` có kho dữ liệu riêng.
-2. **RetailOps không chạm vào tiền.** Thu tiền và hoàn tiền do cổng thanh toán có giấy phép của Ngân hàng Nhà nước thực hiện, theo Nghị định 52/2024/NĐ-CP. RetailOps chỉ lưu tên cổng, mã tham chiếu, số tiền, trạng thái và mốc thời gian. **Không bao giờ lưu** số thẻ, số tài khoản, OTP.
-3. **Không lưu địa chỉ đầy đủ.** Chỉ lưu quận, huyện và tỉnh, thành; số điện thoại shipper lưu dạng đã che.
-4. **Trạng thái không đi lùi.** Sự kiện cũ đến muộn không được ghi đè trạng thái mới hơn.
-5. **Điều kiện do server tính.** Còn bảo hành, đủ điều kiện đổi, giao lại được không là giá trị tính khi đọc, không lưu sẵn.
+1. **Mô hình dữ liệu chuẩn cộng connector.** RetailOps không bắt cửa hàng đổi hệ thống. Mỗi nguồn dữ liệu, như sàn, phần mềm bán hàng, hãng vận chuyển, cổng thanh toán, có một connector ánh xạ dữ liệu của nó vào mô hình chuẩn. Bán cho cửa hàng mới thì chọn và cấu hình connector, không sửa code. Trong R1 chỉ có khung connector, **sàn ảo** `marketplace_sim/` và cổng thanh toán giả lập. Connector thật cho Shopee, Haravan và các nền tảng khác để sau R1; connector nhập CSV là tùy chọn, chưa đưa vào R1.
+2. **Dữ liệu nghiệp vụ chỉ vào DB qua cổng tích hợp:** kiểm chữ ký, chống nhận trùng, không cho trạng thái đi lùi. Thiếu khóa ký thì từ chối, không có khóa mặc định.
+3. **RetailOps không chạm vào tiền.** Thu tiền và hoàn tiền do cổng thanh toán có giấy phép của Ngân hàng Nhà nước thực hiện, theo Nghị định 52/2024/NĐ-CP; hóa đơn và thuế thuộc sàn và nhà cung cấp hóa đơn. RetailOps chỉ lưu tên cổng, mã tham chiếu, số tiền, trạng thái, mốc thời gian. **Không bao giờ lưu** số thẻ, số tài khoản, OTP.
+4. **Không lưu địa chỉ đầy đủ.** Chỉ quận, huyện và tỉnh, thành; số điện thoại shipper lưu dạng đã che.
+5. **Trường nào nguồn không cung cấp thì để trống**, và trợ lý nói là chưa có thông tin.
+6. **Điều kiện do server tính:** còn bảo hành, đủ điều kiện đổi, giao lại được không là giá trị tính khi đọc, không lưu sẵn.
 
 ## B2. Thay đổi bảng `orders`
 
 | Cột | Kiểu | Ràng buộc | Nguồn |
 |---|---|---|---|
-| `status` | text | thêm giá trị `shipping`; tập mới `pending`, `shipping`, `delivered`, `cancelled` | sự kiện đơn và vận chuyển |
-| `ordered_at` | double | not null sau backfill | `order.created` |
-| `payment_method` | text | `cod`, `bank_transfer`, `e_wallet`, `card` hoặc null | `order.created` |
+| `id` | text | khóa chính, **RetailOps tự sinh** cho đơn mới; đơn cũ giữ nguyên mã | |
+| `source_system` | text | not null sau backfill | connector |
+| `external_order_id` | text | duy nhất theo cặp `source_system`, `external_order_id` | mã đơn của nguồn |
+| `status` | text | thêm `shipping`; tập mới `pending`, `shipping`, `delivered`, `cancelled` | sự kiện đơn và vận chuyển |
+| `ordered_at` | double | not null sau backfill | sự kiện tạo đơn |
+| `payment_method` | text | `cod`, `bank_transfer`, `e_wallet`, `card` hoặc trống | sự kiện tạo đơn |
 | `payment_status` | text | `unpaid`, `paid`, `partially_refunded`, `refunded` | tính từ `payment_transactions` và `refunds` |
-| `shipping_fee` | bigint | ≥ 0 | `order.created` |
-| `ship_to_area` | text | tối đa 120 ký tự, chỉ quận và tỉnh | `order.created` |
+| `shipping_fee` | bigint | ≥ 0 hoặc trống | sự kiện tạo đơn |
+| `ship_to_area` | text | tối đa 120 ký tự, chỉ quận và tỉnh | sự kiện tạo đơn |
 | `delivered_at` | double | đã có, nay được điền | sự kiện vận chuyển `delivered` |
 
-**Luật mới:** đơn `shipping` không mở được yêu cầu hủy tự phục vụ; trợ lý giải thích và chuyển nhân viên. Trả, đổi vẫn chỉ cho `delivered`. Sửa ánh xạ `shipping → delivered` trong `retailops/sales/events.py` thành `shipping → shipping`.
+**Luật mới:** đơn `shipping` không mở được yêu cầu hủy tự phục vụ; trợ lý giải thích và chuyển nhân viên. Trả, đổi vẫn chỉ cho `delivered`.
+
+**Sửa hai lỗi của adapter hiện tại:** ánh xạ `shipping → delivered` trong `retailops/sales/events.py` thành `shipping → shipping`; adapter đang dùng mã đơn của nguồn làm luôn `orders.id`, nên hai nguồn trong một cửa hàng có cùng mã đơn sẽ bị từ chối hoặc ghi đè nhau.
+
+`product_variants.sku` trở thành khóa ánh xạ biến thể với nguồn: duy nhất trong một cửa hàng khi khác trống.
 
 ## B3. Bảng mới
+
+**`integration_connectors`**, cấu hình nguồn của một cửa hàng
+
+| Cột | Ghi chú |
+|---|---|
+| `connector_id` | khóa chính |
+| `source_system` | duy nhất, ví dụ `marketplace_sim`, `payment_sim` |
+| `kind` | `marketplace`, `carrier`, `payment` |
+| `secret_ref` | **tên** khóa ký trong kho secret; bản thân khóa không nằm trong DB |
+| `status_mapping_json` | bảng ánh xạ mã trạng thái gốc sang trạng thái chuẩn |
+| `enabled`, `created_at`, `updated_at` | |
 
 **`shipments`**, một dòng cho mỗi vận đơn
 
 | Cột | Ghi chú |
 |---|---|
-| `shipment_id` | khóa chính |
+| `shipment_id` | khóa chính, RetailOps sinh |
 | `order_id` | FK `orders` |
-| `carrier` | ví dụ GHN, GHTK, SPX, Viettel Post, J&T |
-| `tracking_code` | duy nhất theo `carrier` |
-| `status` | theo bộ trạng thái công khai của GHN: `ready_to_pick`, `picking`, `picked`, `storing`, `transporting`, `sorting`, `delivering`, `delivered`, `delivery_fail`, `waiting_to_return`, `returned`, `cancel`; đối chiếu tài liệu GHN khi viết handoff |
-| `current_area` | khu vực hiện tại |
-| `shipper_name`, `shipper_phone_masked` | ví dụ `0903.xxx.334` |
-| `estimated_delivery_at`, `delivered_at` | mốc thời gian tuyệt đối |
-| `delivery_attempts` | số lần giao |
-| `updated_at` | thời điểm của sự kiện mới nhất đã áp dụng |
+| `source_system`, `external_shipment_id` | duy nhất theo cặp |
+| `carrier`, `tracking_code` | ví dụ GHN, GHTK, SPX, Viettel Post, J&T |
+| `status` | **trạng thái chuẩn:** `created`, `picked_up`, `in_transit`, `out_for_delivery`, `delivered`, `delivery_failed`, `returning`, `returned`, `cancelled` |
+| `carrier_status_raw` | mã gốc của hãng, ví dụ `transporting` của GHN |
+| `current_area`, `shipper_name`, `shipper_phone_masked` | có thể trống |
+| `estimated_delivery_at`, `delivered_at`, `delivery_attempts`, `updated_at` | |
 
 **`shipment_events`**, nhật ký hành trình, chỉ ghi thêm
 
@@ -235,22 +254,19 @@ Thay `tenant_xxx` bằng tên schema lấy ở câu thứ hai. Không dán kết
 |---|---|
 | `shipment_event_id` | khóa chính |
 | `shipment_id` | FK |
-| `occurred_at` | thời điểm sự kiện tại hãng |
-| `status`, `location`, `description` | |
-| `fail_reason` | khi giao thất bại, ví dụ không liên lạc được |
+| `occurred_at` | thời điểm tại hãng |
+| `status`, `carrier_status_raw`, `location`, `description`, `fail_reason` | |
 | `source_event_id` | duy nhất, nối với `imported_events` |
 
-**`payment_transactions`**, mỗi lần thanh toán một dòng vì một đơn có thể thanh toán thất bại rồi trả lại
+**`payment_transactions`**, mỗi lần thanh toán một dòng
 
 | Cột | Ghi chú |
 |---|---|
 | `payment_id` | khóa chính |
 | `order_id` | FK |
-| `provider` | tên cổng, hoặc hãng vận chuyển khi thu hộ COD |
-| `provider_txn_ref` | mã giao dịch phía cổng, duy nhất theo `provider` |
-| `method` | như `orders.payment_method` |
-| `amount` | bigint, VND |
-| `status` | `pending`, `succeeded`, `failed`, `cancelled` |
+| `provider`, `provider_txn_ref` | duy nhất theo cặp; với COD, `provider` là hãng thu hộ |
+| `method`, `amount` | |
+| `status` | chuẩn: `pending`, `succeeded`, `failed`, `cancelled`; kèm `provider_status_raw` |
 | `created_at`, `settled_at` | |
 
 **`refunds`**, hoàn tiền do cổng thực hiện
@@ -259,20 +275,21 @@ Thay `tenant_xxx` bằng tên schema lấy ở câu thứ hai. Không dán kết
 |---|---|
 | `refund_id` | khóa chính |
 | `order_id` | FK |
-| `request_id` | FK `order_action_requests`, có thể null khi hoàn vì lý do khác |
-| `payment_id` | FK `payment_transactions`, null với đơn COD |
-| `provider`, `provider_refund_ref` | |
+| `request_id` | FK `order_action_requests`, có thể trống |
+| `payment_id` | FK `payment_transactions`, trống với đơn COD |
+| `provider`, `provider_refund_ref` | duy nhất theo cặp |
 | `amount` | > 0, không vượt số đã thu |
 | `channel` | `original_method`, `bank_transfer`, `e_wallet` |
-| `status` | `pending`, `processing`, `completed`, `failed` |
+| `status` | chuẩn: `pending`, `processing`, `completed`, `failed`; kèm `provider_status_raw` |
 | `initiated_at`, `completed_at`, `failure_reason` | |
 
-Cột `order_action_requests.refund_status` giữ nguyên để tương thích, nhưng được cập nhật từ `refunds` thay vì nhân viên ghi tay.
+Cột `order_action_requests.refund_status` giữ để tương thích, nhưng được cập nhật từ `refunds` thay vì nhân viên ghi tay.
 
 ## B4. Sơ đồ quan hệ v9
 
 ```mermaid
 erDiagram
+  integration_connectors ||--o{ imported_events : "nhận qua"
   customers ||--o{ orders : "đặt"
   orders ||--o{ order_items : "gồm"
   orders ||--o{ shipments : "giao bằng"
@@ -282,24 +299,28 @@ erDiagram
   payment_transactions ||--o{ refunds : "hoàn từ"
   order_action_requests ||--o{ refunds : "theo yêu cầu"
   orders ||--o{ order_action_requests : "hủy trả đổi"
-  imported_events ||--o{ shipment_events : "nguồn"
+  integration_connectors {
+    text connector_id PK
+    text source_system
+    text kind
+    text secret_ref
+  }
   orders {
     text id PK
-    text status "pending shipping delivered cancelled"
+    text source_system
+    text external_order_id
+    text status
     double ordered_at
     text payment_method
     text payment_status
-    bigint shipping_fee
-    text ship_to_area
     double delivered_at
   }
   shipments {
     text shipment_id PK
     text order_id FK
     text carrier
-    text tracking_code
     text status
-    int delivery_attempts
+    text carrier_status_raw
   }
   shipment_events {
     text shipment_event_id PK
@@ -313,7 +334,6 @@ erDiagram
     text order_id FK
     text provider
     text provider_txn_ref
-    bigint amount
     text status
   }
   refunds {
@@ -321,7 +341,6 @@ erDiagram
     text order_id FK
     text request_id FK
     text payment_id FK
-    bigint amount
     text status
   }
 ```
@@ -331,25 +350,28 @@ erDiagram
 ```mermaid
 flowchart LR
   SIM["Sàn ảo marketplace_sim<br/>kho dữ liệu riêng"] -- "sự kiện ký HMAC" --> IN["Endpoint nhận sự kiện<br/>chỉ trong mạng nội bộ"]
-  PAY["Cổng thanh toán giả lập<br/>định dạng webhook của cổng thật"] -- "payment.* refund.*" --> IN
-  IN --> AD["Adapter<br/>kiểm chữ ký, chống trùng, không đi lùi"]
-  AD --> DB[("Schema của cửa hàng<br/>orders, shipments, payment_transactions, refunds")]
-  DB --> TOOL["Tool chỉ đọc<br/>get_order, track_shipment"]
+  PAY["Cổng thanh toán giả lập<br/>định dạng webhook của cổng thật"] -- "payment, refund" --> IN
+  IN --> CON["Connector theo cửa hàng<br/>khóa ký, ánh xạ trạng thái"]
+  CON --> AD["Adapter<br/>chống trùng, không đi lùi"]
+  AD --> DB[("Schema của cửa hàng<br/>mô hình chuẩn")]
+  DB --> TOOL["Tool chỉ đọc"]
   TOOL --> AGENT["Trợ lý CSKH"]
 ```
 
 ## B6. Migration v9
 
-1. Thêm cột vào `orders`, thay `CHECK` của `status`; backfill `ordered_at` cho đơn cũ bằng thời điểm migrate, ghi rõ là giá trị điền bù.
-2. Tạo 4 bảng mới cùng chỉ mục và ràng buộc duy nhất.
-3. Thêm trigger chỉ ghi thêm cho `shipment_events`, như `order_action_decisions`.
+1. Thêm cột vào `orders`, thay `CHECK` của `status`. Backfill đơn cũ: `source_system` là `retailops_seed`, `external_order_id` bằng `id`, `ordered_at` bằng thời điểm migrate, ghi rõ là giá trị điền bù.
+2. Tạo 5 bảng mới cùng chỉ mục và ràng buộc duy nhất; chỉ mục duy nhất từng phần cho `product_variants.sku`.
+3. Trigger chỉ ghi thêm cho `shipment_events`, như `order_action_decisions`.
 4. Một giao dịch, chạy lại an toàn, theo runbook như v8.
-5. Seed demo được thay bằng kịch bản sự kiện của sàn ảo phát qua adapter. Gỡ dict vận chuyển trong `retailops_tools.py` và `data/mock_shipments.json`.
+5. Seed demo được thay bằng kịch bản sự kiện của sàn ảo phát qua connector. Gỡ dict vận chuyển trong `retailops_tools.py` và `data/mock_shipments.json`.
 
-## B7. Quyết định owner cần chốt
+## B7. Quyết định đã chốt ngày 2026-11-06
 
-- Thêm trạng thái `shipping` và luật đơn đang giao không tự hủy.
-- Danh sách cột của `orders` và 4 bảng mới ở B2, B3.
-- Bộ trạng thái vận chuyển theo GHN.
-- Cổng thanh toán nào làm mẫu cho định dạng webhook giả lập.
-- Có tách sàn ảo thành module W6.1a riêng, làm trước W6.1b phía RetailOps không.
+- Thêm trạng thái `shipping`; đơn đang giao không tự hủy, chuyển nhân viên.
+- Mô hình chuẩn: tách mã nội bộ và mã nguồn; vận chuyển, thanh toán, hoàn tiền dùng trạng thái chuẩn kèm mã gốc.
+- 4 bảng nghiệp vụ mới cùng `integration_connectors`.
+- Connector trong R1: sàn ảo và cổng thanh toán giả lập. Connector CSV chưa làm.
+- W6.1 tách thành **W6.1a** sàn ảo cùng khung connector, và **W6.1b** migration v9 cùng phía RetailOps.
+
+Còn chốt khi viết handoff: cổng thanh toán nào làm mẫu cho định dạng webhook giả lập; danh sách kiểu dữ liệu và chỉ mục chi tiết.

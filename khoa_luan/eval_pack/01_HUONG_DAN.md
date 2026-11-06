@@ -29,7 +29,7 @@ Viết **210 ca test mô phỏng** cho trợ lý ảo CSKH của RetailOps Shop,
 
 ## 4. Quy trình làm việc
 
-Làm **từng bộ một**, theo thứ tự S01 → S12. Với mỗi bộ:
+Làm **từng bộ một**. **Đợt 1, làm ngay:** S07, S09, S10, vì ít phụ thuộc dữ liệu mẫu. **Đợt 2, chờ thông báo:** S01–S06, S08, S11, S12. Dữ liệu mẫu ở `03` sẽ được cập nhật trước đợt 2: sản phẩm có thêm chất liệu, đơn có ngày giao và thanh toán, nhiều đơn có hành trình vận chuyển; khi đó `03` mới thay cho bản hiện tại. Với mỗi bộ:
 
 1. Đọc danh sách tình huống con của bộ ở `05_PHAN_BO_CA.md`; lập bảng nháp: mã ca, tình huống, dữ liệu dùng, `style`, `split`, `vn_context`.
 2. Kiểm hạn mức của bộ: số ca, tỉ lệ `style`, 30% `held_out`, mỗi tình huống con ít nhất một ca.
