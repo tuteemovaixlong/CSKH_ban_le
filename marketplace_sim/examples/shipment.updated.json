@@ -1,0 +1,25 @@
+{
+  "contract": "retailops-integration-v2",
+  "event_id": "evt:shipment:SIM-SHP-00001:3",
+  "event_type": "shipment.updated",
+  "source_system": "marketplace_sim",
+  "merchant_id": "MERCHANT-SIM-001",
+  "occurred_at": "2026-10-02T10:00:00+07:00",
+  "sequence": 3,
+  "data": {
+    "external_shipment_id": "SIM-SHP-00001",
+    "external_order_id": "SIM-O-00001",
+    "carrier": "GHN",
+    "tracking_code": "GHNSIM00001",
+    "carrier_status_raw": "delivering",
+    "hub_name": "Bưu cục Quận 1",
+    "district": "Quận 1",
+    "province": "TP. Hồ Chí Minh",
+    "description": "Nhân viên giao hàng đang phát kiện hàng tới người nhận.",
+    "fail_reason": null,
+    "shipper_name": "Lê Quốc Bảo",
+    "shipper_phone_masked": "0903.xxx.418",
+    "estimated_delivery_at": "2026-10-02T17:00:00+07:00",
+    "delivery_attempts": 0
+  }
+}

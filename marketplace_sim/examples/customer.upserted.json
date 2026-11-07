@@ -1,0 +1,13 @@
+{
+  "contract": "retailops-integration-v2",
+  "event_id": "evt:customer:SIM-C-0001:1",
+  "event_type": "customer.upserted",
+  "source_system": "marketplace_sim",
+  "merchant_id": "MERCHANT-SIM-001",
+  "occurred_at": "2026-10-01T09:00:00+07:00",
+  "sequence": 1,
+  "data": {
+    "external_customer_id": "SIM-C-0001",
+    "display_name": "Nguyễn Minh Châu"
+  }
+}

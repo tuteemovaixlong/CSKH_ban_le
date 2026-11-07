@@ -1,0 +1,18 @@
+{
+  "contract": "retailops-integration-v2",
+  "event_id": "evt:payment:PAYSIM-TXN-00001:2",
+  "event_type": "payment.updated",
+  "source_system": "payment_sim",
+  "merchant_id": "MERCHANT-SIM-001",
+  "occurred_at": "2026-10-01T09:16:00+07:00",
+  "sequence": 2,
+  "data": {
+    "provider": "PAYSIM_GATEWAY",
+    "provider_txn_ref": "PAYSIM-TXN-00001",
+    "external_order_id": "SIM-O-00001",
+    "method": "bank_transfer",
+    "amount": 324000,
+    "provider_status_raw": "PAY_SUCCEEDED",
+    "settled_at": "2026-10-01T09:16:00+07:00"
+  }
+}

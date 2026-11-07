@@ -50,7 +50,11 @@ def build():
         "notebooks/agent_smoke.py",
         "notebooks/colab_runtime.py",
     ]
-    names += [p.relative_to(ROOT).as_posix() for p in sorted((ROOT / "tests").glob("*.py"))]
+    names += [
+        p.relative_to(ROOT).as_posix()
+        for p in sorted((ROOT / "tests").glob("*.py"))
+        if not p.name.startswith("test_marketplace_sim_")
+    ]
     names += [p.relative_to(ROOT).as_posix() for p in sorted((ROOT / "retailops").rglob("*.py"))]
     names += [
         p.relative_to(ROOT).as_posix()

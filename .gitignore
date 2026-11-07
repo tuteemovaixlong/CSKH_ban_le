@@ -238,3 +238,4 @@ postgres-secrets/
 /console-data/
 /eval-output/
 /scratch/
+.marketplace_sim/

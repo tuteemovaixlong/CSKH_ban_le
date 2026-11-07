@@ -1,0 +1,14 @@
+{
+  "contract": "retailops-integration-v2",
+  "event_id": "evt:order:SIM-O-00001:2",
+  "event_type": "order.status_changed",
+  "source_system": "marketplace_sim",
+  "merchant_id": "MERCHANT-SIM-001",
+  "occurred_at": "2026-10-01T09:30:00+07:00",
+  "sequence": 2,
+  "data": {
+    "external_order_id": "SIM-O-00001",
+    "status": "confirmed",
+    "reason": null
+  }
+}
