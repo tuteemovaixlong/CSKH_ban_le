@@ -853,7 +853,7 @@ def _story_nghen_kho_mega_sale(
             "district": "TP. Từ Sơn",
             "province": "Bắc Ninh",
         },
-        sorting_desc="Kiện hàng đợt Mega Sale 11.11 đang chờ phân loại tại tổng kho Mega SOC quá tải.",
+        sorting_desc="Kiện hàng đợt Mega Sale đang chờ phân loại tại tổng kho Mega SOC quá tải.",
     )
     return {"story": "nghen_kho_mega_sale", "external_order_id": ctx["order_id"]}
 
