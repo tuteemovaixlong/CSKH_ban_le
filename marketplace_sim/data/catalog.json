@@ -1,0 +1,304 @@
+{
+  "products": [
+    {
+      "external_product_id": "P-101",
+      "title": "Áo thun Essential",
+      "category": "Áo thun",
+      "price": 299000,
+      "description": "Áo thun cổ tròn, form regular, vải dày vừa, mặc hằng ngày.",
+      "material": "100% cotton, định lượng 220 g/m²",
+      "care": "Giặt máy nước lạnh dưới 30°C, lộn trái khi giặt, không dùng chất tẩy, phơi nơi thoáng mát, ủi nhiệt độ thấp.",
+      "warranty_days": 90,
+      "variants": [
+        {"sku": "SKU-P101-TRANG-S", "variant_name": "Trắng · Size S", "size": "S", "color": "Trắng", "price": 299000, "stock": 5},
+        {"sku": "SKU-P101-TRANG-M", "variant_name": "Trắng · Size M", "size": "M", "color": "Trắng", "price": 299000, "stock": 12},
+        {"sku": "SKU-P101-TRANG-L", "variant_name": "Trắng · Size L", "size": "L", "color": "Trắng", "price": 299000, "stock": 8},
+        {"sku": "SKU-P101-TRANG-XL", "variant_name": "Trắng · Size XL", "size": "XL", "color": "Trắng", "price": 299000, "stock": 0}
+      ]
+    },
+    {
+      "external_product_id": "P-102",
+      "title": "Áo khoác Everyday",
+      "category": "Áo khoác",
+      "price": 799000,
+      "description": "Áo khoác dáng suông có mũ, khóa kéo YKK, hai túi khóa kéo, chống gió và chống nước nhẹ.",
+      "material": "Vải dù polyester 2 lớp, lót lưới",
+      "care": "Giặt tay hoặc giặt máy chế độ nhẹ, kéo khóa trước khi giặt, không sấy nhiệt cao, không ủi trực tiếp lên lớp phủ.",
+      "warranty_days": 90,
+      "variants": [
+        {"sku": "SKU-P102-DEN-S", "variant_name": "Đen · Size S", "size": "S", "color": "Đen", "price": 799000, "stock": 0},
+        {"sku": "SKU-P102-DEN-M", "variant_name": "Đen · Size M", "size": "M", "color": "Đen", "price": 799000, "stock": 4},
+        {"sku": "SKU-P102-DEN-L", "variant_name": "Đen · Size L", "size": "L", "color": "Đen", "price": 799000, "stock": 15},
+        {"sku": "SKU-P102-DEN-XL", "variant_name": "Đen · Size XL", "size": "XL", "color": "Đen", "price": 799000, "stock": 3}
+      ]
+    },
+    {
+      "external_product_id": "P-202",
+      "title": "Áo polo",
+      "category": "Áo polo",
+      "price": 399000,
+      "description": "Áo polo cổ bẻ, tay ngắn, vải cá sấu thoáng khí.",
+      "material": "Vải cá sấu 65% cotton, 35% polyester",
+      "care": "Giặt máy nước lạnh, không vắt mạnh, phơi ngang để giữ form cổ.",
+      "warranty_days": 90,
+      "variants": [
+        {"sku": "SKU-P202-XANH-S", "variant_name": "Xanh · Size S", "size": "S", "color": "Xanh", "price": 399000, "stock": 20},
+        {"sku": "SKU-P202-XANH-M", "variant_name": "Xanh · Size M", "size": "M", "color": "Xanh", "price": 399000, "stock": 18},
+        {"sku": "SKU-P202-XANH-L", "variant_name": "Xanh · Size L", "size": "L", "color": "Xanh", "price": 399000, "stock": 25},
+        {"sku": "SKU-P202-XANH-XL", "variant_name": "Xanh · Size XL", "size": "XL", "color": "Xanh", "price": 399000, "stock": 10}
+      ]
+    },
+    {
+      "external_product_id": "P-103",
+      "title": "Áo Sơ Mi Oxford Dài Tay",
+      "category": "Áo sơ mi",
+      "price": 350000,
+      "description": "Áo sơ mi Oxford chất liệu 100% cotton cao cấp, phom dáng slim-fit trẻ trung, chống nhăn nhẹ.",
+      "material": "100% Cotton Oxford",
+      "care": "Giặt máy chế độ nhẹ, nhiệt độ dưới 30 độ C, ủi ở nhiệt độ trung bình.",
+      "warranty_days": 90,
+      "variants": [
+        {"sku": "SKU-P103-TRANG-M", "variant_name": "Trắng · Size M", "size": "M", "color": "Trắng", "price": 350000, "stock": 14},
+        {"sku": "SKU-P103-TRANG-L", "variant_name": "Trắng · Size L", "size": "L", "color": "Trắng", "price": 350000, "stock": 10},
+        {"sku": "SKU-P103-XANHNHAT-M", "variant_name": "Xanh Nhạt · Size M", "size": "M", "color": "Xanh Nhạt", "price": 350000, "stock": 14},
+        {"sku": "SKU-P103-XANHNHAT-L", "variant_name": "Xanh Nhạt · Size L", "size": "L", "color": "Xanh Nhạt", "price": 350000, "stock": 10}
+      ]
+    },
+    {
+      "external_product_id": "P-104",
+      "title": "Áo Khoác Gió Bomber 2 Lớp",
+      "category": "Áo khoác",
+      "price": 550000,
+      "description": "Áo khoác gió bomber 2 lớp chống nước và cản gió chuyên dụng, khóa kéo YKK kim loại cao cấp.",
+      "material": "Polyeste tráng PU chống thấm nước, lót lụa mềm thoáng khí",
+      "care": "Không giặt sấy nhiệt cao, giặt tay hoặc giặt máy túi giặt.",
+      "warranty_days": 90,
+      "variants": [
+        {"sku": "SKU-P104-DEN-S", "variant_name": "Đen · Size S", "size": "S", "color": "Đen", "price": 550000, "stock": 10},
+        {"sku": "SKU-P104-DEN-M", "variant_name": "Đen · Size M", "size": "M", "color": "Đen", "price": 550000, "stock": 15},
+        {"sku": "SKU-P104-DEN-L", "variant_name": "Đen · Size L", "size": "L", "color": "Đen", "price": 550000, "stock": 0},
+        {"sku": "SKU-P104-DEN-XL", "variant_name": "Đen · Size XL", "size": "XL", "color": "Đen", "price": 550000, "stock": 8}
+      ]
+    },
+    {
+      "external_product_id": "P-203",
+      "title": "Áo Polo Nam Phối Bo Cổ Co Giãn",
+      "category": "Áo polo",
+      "price": 399000,
+      "description": "Áo polo nam chất cá sấu CVC co giãn 4 chiều, thấm hút mồ hôi, cổ dệt bo viền chống bai dão.",
+      "material": "95% Cotton CVC, 5% Spandex",
+      "care": "Lộn trái khi phơi, giặt chung với quần áo cùng màu.",
+      "warranty_days": 90,
+      "variants": [
+        {"sku": "SKU-P203-XANHNAVY-S", "variant_name": "Xanh Navy · Size S", "size": "S", "color": "Xanh Navy", "price": 399000, "stock": 12},
+        {"sku": "SKU-P203-XANHNAVY-M", "variant_name": "Xanh Navy · Size M", "size": "M", "color": "Xanh Navy", "price": 399000, "stock": 0},
+        {"sku": "SKU-P203-XANHNAVY-L", "variant_name": "Xanh Navy · Size L", "size": "L", "color": "Xanh Navy", "price": 399000, "stock": 18},
+        {"sku": "SKU-P203-XANHNAVY-XL", "variant_name": "Xanh Navy · Size XL", "size": "XL", "color": "Xanh Navy", "price": 399000, "stock": 5}
+      ]
+    },
+    {
+      "external_product_id": "P-301",
+      "title": "Giày Sneaker Running Ultra Light",
+      "category": "Giày dép",
+      "price": 650000,
+      "description": "Giày chạy bộ đế đệm khí siêu êm, thân dệt flyknit thông thoáng chân, trợ lực chạy bộ.",
+      "material": "Đế EVA bọc cao su non, vải dệt Flyknit kháng khuẩn",
+      "care": "Lau bằng khăn ẩm, không phơi trực tiếp dưới nắng gắt.",
+      "warranty_days": 90,
+      "variants": [
+        {"sku": "SKU-P301-TC-39", "variant_name": "Tiêu chuẩn · Size 39", "size": "39", "color": "Tiêu chuẩn", "price": 650000, "stock": 4},
+        {"sku": "SKU-P301-TC-40", "variant_name": "Tiêu chuẩn · Size 40", "size": "40", "color": "Tiêu chuẩn", "price": 650000, "stock": 8},
+        {"sku": "SKU-P301-TC-41", "variant_name": "Tiêu chuẩn · Size 41", "size": "41", "color": "Tiêu chuẩn", "price": 650000, "stock": 0},
+        {"sku": "SKU-P301-TC-42", "variant_name": "Tiêu chuẩn · Size 42", "size": "42", "color": "Tiêu chuẩn", "price": 650000, "stock": 6},
+        {"sku": "SKU-P301-TC-43", "variant_name": "Tiêu chuẩn · Size 43", "size": "43", "color": "Tiêu chuẩn", "price": 650000, "stock": 2}
+      ]
+    },
+    {
+      "external_product_id": "P-401",
+      "title": "Bộ Nồi Inox 3 Đáy Cao Cấp",
+      "category": "Gia dụng",
+      "price": 1250000,
+      "description": "Bộ nồi inox 3 đáy liền khối truyền nhiệt đều, sử dụng được trên mọi loại bếp kể cả bếp từ.",
+      "material": "Inox 304 tiêu chuẩn an toàn thực phẩm",
+      "care": "Vệ sinh bằng giẻ mềm, không dùng búi sắt cọ xát mạnh.",
+      "warranty_days": 365,
+      "variants": [
+        {"sku": "SKU-P401-BAC-BO3", "variant_name": "Bạc · Bộ 3 món (16cm-20cm-24cm)", "size": "Bộ 3 món (16cm-20cm-24cm)", "color": "Bạc", "price": 1250000, "stock": 15}
+      ]
+    },
+    {
+      "external_product_id": "P-501",
+      "title": "Áo Polo Nam Oversize Form Rộng Cotton Compact",
+      "category": "Thời trang Nam",
+      "price": 350000,
+      "description": "Áo Polo nam phong cách Hàn Quốc, chất liệu Cotton Compact 100% co giãn 4 chiều, thấm hút mồ hôi tốt. Form rộng Oversize thoải mái, phù hợp mặc hàng ngày và đi làm. Đường may tỉ mỉ, cổ áo dệt kim không bai dão sau nhiều lần giặt.",
+      "material": null,
+      "care": null,
+      "warranty_days": 90,
+      "variants": [
+        {"sku": "SKU-P501-DEN-M", "variant_name": "Đen · Size M", "size": "M", "color": "Đen", "price": 350000, "stock": 12},
+        {"sku": "SKU-P501-DEN-L", "variant_name": "Đen · Size L", "size": "L", "color": "Đen", "price": 350000, "stock": 12},
+        {"sku": "SKU-P501-TRANG-M", "variant_name": "Trắng · Size M", "size": "M", "color": "Trắng", "price": 350000, "stock": 12},
+        {"sku": "SKU-P501-TRANG-L", "variant_name": "Trắng · Size L", "size": "L", "color": "Trắng", "price": 350000, "stock": 12}
+      ]
+    },
+    {
+      "external_product_id": "P-502",
+      "title": "Quần Cargo Nam Kaki Túi Hộp Phong Cách Streetwear",
+      "category": "Thời trang Nam",
+      "price": 420000,
+      "description": "Quần cargo nam chất liệu kaki dày dặn, túi hộp hai bên tiện dụng. Phong cách streetwear trẻ trung, dây rút gấu quần linh hoạt. Phù hợp phối với áo thun, sơ mi và giày sneaker. Được ưa chuộng bởi giới trẻ TP.HCM với mức tăng trưởng 300% trong phân khúc oversized工装裤.",
+      "material": null,
+      "care": null,
+      "warranty_days": 60,
+      "variants": [
+        {"sku": "SKU-P502-KAKI-29", "variant_name": "Kaki · Size 29", "size": "29", "color": "Kaki", "price": 420000, "stock": 10},
+        {"sku": "SKU-P502-KAKI-30", "variant_name": "Kaki · Size 30", "size": "30", "color": "Kaki", "price": 420000, "stock": 10},
+        {"sku": "SKU-P502-KAKI-31", "variant_name": "Kaki · Size 31", "size": "31", "color": "Kaki", "price": 420000, "stock": 10},
+        {"sku": "SKU-P502-KAKI-32", "variant_name": "Kaki · Size 32", "size": "32", "color": "Kaki", "price": 420000, "stock": 10}
+      ]
+    },
+    {
+      "external_product_id": "P-503",
+      "title": "Đầm Nữ Tay Bồng Phong Cách Hàn Quốc Dáng Suông",
+      "category": "Thời trang Nữ",
+      "price": 385000,
+      "description": "Đầm nữ tay bồng nhẹ nhàng, chất liệu voan lụa cao cấp mát mẻ. Thiết kế dáng suông che khuyết điểm tốt, phù hợp đi làm và dạo phố. Họa tiết chấm bi thanh lịch theo xu hướng thịnh hành tại thị trường Việt Nam 2026.",
+      "material": null,
+      "care": null,
+      "warranty_days": 30,
+      "variants": [
+        {"sku": "SKU-P503-BE-S", "variant_name": "Be · Size S", "size": "S", "color": "Be", "price": 385000, "stock": 11},
+        {"sku": "SKU-P503-BE-M", "variant_name": "Be · Size M", "size": "M", "color": "Be", "price": 385000, "stock": 11},
+        {"sku": "SKU-P503-BE-L", "variant_name": "Be · Size L", "size": "L", "color": "Be", "price": 385000, "stock": 11}
+      ]
+    },
+    {
+      "external_product_id": "P-504",
+      "title": "Áo Thun Nữ Cotton Basic Cổ Tròn Form Vừa",
+      "category": "Thời trang Nữ",
+      "price": 180000,
+      "description": "Áo thun nữ cotton basic, form vừa vặn tôn dáng. Chất liệu cotton 100% mềm mại, thoáng mát. Có sẵn 8 màu cơ bản dễ phối đồ. Sản phẩm bán chạy hàng đầu trong phân khúc thời trang nữ giá rẻ trên Shopee Mall với hơn 50.000 lượt bán mỗi tháng.",
+      "material": null,
+      "care": null,
+      "warranty_days": 30,
+      "variants": [
+        {"sku": "SKU-P504-TRANG-S", "variant_name": "Trắng · Size S", "size": "S", "color": "Trắng", "price": 180000, "stock": 15},
+        {"sku": "SKU-P504-TRANG-M", "variant_name": "Trắng · Size M", "size": "M", "color": "Trắng", "price": 180000, "stock": 15},
+        {"sku": "SKU-P504-TRANG-L", "variant_name": "Trắng · Size L", "size": "L", "color": "Trắng", "price": 180000, "stock": 15},
+        {"sku": "SKU-P504-DEN-M", "variant_name": "Đen · Size M", "size": "M", "color": "Đen", "price": 180000, "stock": 15}
+      ]
+    },
+    {
+      "external_product_id": "P-505",
+      "title": "Túi Đeo Chéo Nam Nữ Da PU Chống Nước",
+      "category": "Phụ kiện",
+      "price": 290000,
+      "description": "Túi đeo chéo unisex chất liệu da PU cao cấp chống nước nhẹ. Nhiều ngăn tiện dụng, khóa kéo kim loại bền bỉ. Kích thước 22x15x7cm phù hợp đựng điện thoại, ví và vật dụng cá nhân. Thiết kế tối giản phong cách Hàn Quốc.",
+      "material": null,
+      "care": null,
+      "warranty_days": 90,
+      "variants": [
+        {"sku": "SKU-P505-DEN-TC", "variant_name": "Đen · Tiêu chuẩn", "size": "Tiêu chuẩn", "color": "Đen", "price": 290000, "stock": 15},
+        {"sku": "SKU-P505-NAU-TC", "variant_name": "Nâu · Tiêu chuẩn", "size": "Tiêu chuẩn", "color": "Nâu", "price": 290000, "stock": 15}
+      ]
+    },
+    {
+      "external_product_id": "P-506",
+      "title": "Máy Hút Bụi Cầm Tay Không Dây Thông Minh 3in1",
+      "category": "Đồ gia dụng thông minh",
+      "price": 1290000,
+      "description": "Máy hút bụi cầm tay không dây 3in1 thông minh, lực hút mạnh mẽ 15.000Pa. Pin sạc lithium 2500mAh, thời gian hoạt động liên tục 30 phút. Trang bị bộ lọc HEPA 3 lớp, hộp chứa bụi 0.4L dễ vệ sinh. Thiết kế đa năng: hút bụi sàn, hút giường nệm và hút khe hẹp.",
+      "material": null,
+      "care": null,
+      "warranty_days": 365,
+      "variants": [
+        {"sku": "SKU-P506-TRANGBAC-TC", "variant_name": "Trắng Bạc · Tiêu chuẩn", "size": "Tiêu chuẩn", "color": "Trắng Bạc", "price": 1290000, "stock": 25}
+      ]
+    },
+    {
+      "external_product_id": "P-507",
+      "title": "Nồi Chiên Không Dầu Thông Minh 6L Điều Khiển Cảm Ứng",
+      "category": "Đồ gia dụng thông minh",
+      "price": 1890000,
+      "description": "Nồi chiên không dầu thông minh dung tích 6 lít, công suất 1700W. Màn hình cảm ứng LED với 8 chế độ nấu tự động. Công nghệ Rapid Air giảm 80% dầu mỡ, khay chiên chống dính có thể tháo rời. Hẹn giờ 60 phút, nhiệt độ điều chỉnh 80-200°C.",
+      "material": null,
+      "care": null,
+      "warranty_days": 365,
+      "variants": [
+        {"sku": "SKU-P507-DENNHAM-TC", "variant_name": "Đen Nhám · Tiêu chuẩn", "size": "Tiêu chuẩn", "color": "Đen Nhám", "price": 1890000, "stock": 18}
+      ]
+    },
+    {
+      "external_product_id": "P-508",
+      "title": "Đèn LED Thông Minh Cảm Biến Chuyển Động Sạc USB",
+      "category": "Đồ gia dụng thông minh",
+      "price": 159000,
+      "description": "Đèn LED thông minh cảm biến chuyển động hồng ngoại, tự động bật khi phát hiện chuyển động trong phạm vi 3m. Sạc USB tiện lợi, pin 1200mAh dùng liên tục 6-8 giờ. Đèn ấm 3000K không chói mắt, dán tường hoặc gắn nam châm. Phù hợp tủ quần áo, cầu thang, nhà vệ sinh.",
+      "material": null,
+      "care": null,
+      "warranty_days": 180,
+      "variants": [
+        {"sku": "SKU-P508-TRANGAM-TC", "variant_name": "Trắng Ấm · Tiêu chuẩn", "size": "Tiêu chuẩn", "color": "Trắng Ấm", "price": 159000, "stock": 40},
+        {"sku": "SKU-P508-TRANGTN-TC", "variant_name": "Trắng Tự Nhiên · Tiêu chuẩn", "size": "Tiêu chuẩn", "color": "Trắng Tự Nhiên", "price": 159000, "stock": 40}
+      ]
+    },
+    {
+      "external_product_id": "P-601",
+      "title": "Áo sơ mi lụa công sở",
+      "category": "Áo sơ mi",
+      "price": 450000,
+      "description": "Áo sơ mi lụa công sở cao cấp, thiết kế thanh lịch, chất vải lụa mềm mại, chống nhăn, thoáng mát.",
+      "material": "Lụa tơ tằm nhân tạo",
+      "care": "Giặt tay hoặc giặt máy chế độ nhẹ, tránh phơi trực tiếp dưới nắng gắt",
+      "warranty_days": 90,
+      "variants": [
+        {"sku": "SKU-P601-TRANG-S", "variant_name": "Trắng · Size S", "size": "S", "color": "Trắng", "price": 450000, "stock": 10},
+        {"sku": "SKU-P601-TRANG-M", "variant_name": "Trắng · Size M", "size": "M", "color": "Trắng", "price": 450000, "stock": 15},
+        {"sku": "SKU-P601-TRANG-L", "variant_name": "Trắng · Size L", "size": "L", "color": "Trắng", "price": 450000, "stock": 10}
+      ]
+    },
+    {
+      "external_product_id": "P-602",
+      "title": "Quần tây đen hàn quốc",
+      "category": "Quần tây",
+      "price": 520000,
+      "description": "Quần tây đen hàn quốc công sở, chất vải tuyết mưa đứng form, co giãn nhẹ thoải mái khi vận động.",
+      "material": "Vải tuyết mưa cao cấp",
+      "care": "Giặt bằng nước lạnh, ủi ở nhiệt độ trung bình",
+      "warranty_days": 90,
+      "variants": [
+        {"sku": "SKU-P602-DEN-S", "variant_name": "Đen · Size S", "size": "S", "color": "Đen", "price": 520000, "stock": 12},
+        {"sku": "SKU-P602-DEN-M", "variant_name": "Đen · Size M", "size": "M", "color": "Đen", "price": 520000, "stock": 18},
+        {"sku": "SKU-P602-DEN-L", "variant_name": "Đen · Size L", "size": "L", "color": "Đen", "price": 520000, "stock": 10}
+      ]
+    },
+    {
+      "external_product_id": "P-603",
+      "title": "Giày lười da bò cao cấp",
+      "category": "Giày lười",
+      "price": 890000,
+      "description": "Giày lười nam da bò nguyên tấm cao cấp, lót da êm chân khử mùi, đế cao su đúc nguyên khối chống trơn trượt.",
+      "material": "Da bò thật 100%",
+      "care": "Lau sạch bụi bằng khăn ẩm, đánh xi định kỳ, tránh ngâm nước",
+      "warranty_days": 180,
+      "variants": [
+        {"sku": "SKU-P603-NAU-40", "variant_name": "Nâu · Size 40", "size": "40", "color": "Nâu", "price": 890000, "stock": 6},
+        {"sku": "SKU-P603-NAU-41", "variant_name": "Nâu · Size 41", "size": "41", "color": "Nâu", "price": 890000, "stock": 10},
+        {"sku": "SKU-P603-NAU-42", "variant_name": "Nâu · Size 42", "size": "42", "color": "Nâu", "price": 890000, "stock": 9},
+        {"sku": "SKU-P603-DEN-41", "variant_name": "Đen · Size 41", "size": "41", "color": "Đen", "price": 890000, "stock": 10}
+      ]
+    },
+    {
+      "external_product_id": "P-604",
+      "title": "Bộ xếp hình gỗ cho bé",
+      "category": "Đồ chơi trẻ em",
+      "price": null,
+      "description": "Bộ xếp hình gỗ cho bé. Chưa có thông tin về độ tuổi khuyến nghị, cảnh báo an toàn hoặc chứng nhận.",
+      "material": "Gỗ",
+      "care": null,
+      "warranty_days": null,
+      "variants": []
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "contract": "retailops-integration-v2",
+  "event_id": "evt:retailops:vreq:00001",
+  "event_type": "voucher.requested",
+  "source_system": "retailops",
+  "merchant_id": "MERCHANT-SIM-001",
+  "occurred_at": "2026-10-08T09:55:00+07:00",
+  "sequence": 1,
+  "data": {
+    "request_id": "req-late-00001",
+    "external_order_id": "SIM-O-00001",
+    "external_customer_id": "SIM-C-0001",
+    "voucher_type": "amount",
+    "value": 50000,
+    "reason": "late_delivery",
+    "approved_by_role": "staff"
+  }
+}

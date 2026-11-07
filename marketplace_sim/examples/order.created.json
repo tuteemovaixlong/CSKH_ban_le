@@ -1,0 +1,37 @@
+{
+  "contract": "retailops-integration-v2",
+  "event_id": "evt:order:SIM-O-00001:1",
+  "event_type": "order.created",
+  "source_system": "marketplace_sim",
+  "merchant_id": "MERCHANT-SIM-001",
+  "occurred_at": "2026-10-01T09:15:00+07:00",
+  "sequence": 1,
+  "data": {
+    "external_order_id": "SIM-O-00001",
+    "external_customer_id": "SIM-C-0001",
+    "ordered_at": "2026-10-01T09:15:00+07:00",
+    "items": [
+      {
+        "sku": "SKU-P101-TRANG-M",
+        "external_product_id": "P-101",
+        "title": "Áo thun Essential",
+        "variant_name": "Trắng · Size M",
+        "quantity": 1,
+        "unit_price": 299000
+      }
+    ],
+    "shipping_fee": 25000,
+    "total": 324000,
+    "currency": "VND",
+    "payment_method": "bank_transfer",
+    "promised_delivery_by": "2026-10-04T09:15:00+07:00",
+    "recipient": {
+      "name": "Nguyễn Minh Châu",
+      "phone": "0123456789",
+      "address_line": "Số 18 Đường Nguyễn Trãi",
+      "ward": "Phường Bến Thành",
+      "district": "Quận 1",
+      "province": "TP. Hồ Chí Minh"
+    }
+  }
+}

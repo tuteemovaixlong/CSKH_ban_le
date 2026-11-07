@@ -1,0 +1,83 @@
+{
+  "phone_prefix": {
+    "value": "0123",
+    "note": "giả định — tiền tố 4 chữ số cố định cho số điện thoại người nhận giả lập theo W6.1a-D11"
+  },
+  "orders_per_day_range": {
+    "value": [2, 5],
+    "note": "giả định — khoảng số đơn phát sinh mỗi ngày thường của một gian hàng mẫu"
+  },
+  "mega_sale_multiplier": {
+    "value": 2.5,
+    "note": "giả định — hệ số tăng lượng đơn vào ngày siêu sale (10.10, 11.11, 12.12)"
+  },
+  "repeat_customer_rate": {
+    "value": 0.3,
+    "note": "giả định — tỉ lệ đơn đặt bởi khách hàng đã từng mua trước đó"
+  },
+  "payment_method_weights": {
+    "value": {
+      "cod": 0.45,
+      "bank_transfer": 0.25,
+      "e_wallet": 0.2,
+      "card": 0.1
+    },
+    "note": "giả định — phân phối phương thức thanh toán trên sàn thương mại điện tử"
+  },
+  "carrier_weights": {
+    "value": {
+      "GHN": 0.5,
+      "FASTSHIP_SIM": 0.3,
+      "VIETEXPRESS_SIM": 0.2
+    },
+    "note": "giả định — tỉ trọng phân bổ vận đơn giữa ba hãng vận chuyển mô phỏng"
+  },
+  "shipping_fee_by_zone": {
+    "value": {
+      "intra_city": 20000,
+      "same_region": 30000,
+      "inter_region": 40000
+    },
+    "note": "giả định — phí vận chuyển VND theo vùng giao nhận"
+  },
+  "cancel_before_ship_rate": {
+    "value": 0.08,
+    "note": "giả định — tỉ lệ khách hủy đơn trước khi bàn giao vận chuyển"
+  },
+  "prepaid_retry_rate": {
+    "value": 0.1,
+    "note": "giả định — tỉ lệ đơn trả trước gặp lỗi ở giao dịch đầu rồi thanh toán lại thành công"
+  },
+  "delivery_fail_once_rate": {
+    "value": 0.12,
+    "note": "giả định — tỉ lệ vận đơn giao thất bại 1 lần rồi giao lại thành công"
+  },
+  "delivery_return_rate": {
+    "value": 0.05,
+    "note": "giả định — tỉ lệ vận đơn giao thất bại đủ 3 lần rồi chuyển hoàn về kho"
+  },
+  "max_delivery_attempts": {
+    "value": 3,
+    "note": "giả định — số lần giao tối đa trước khi bắt buộc chuyển hoàn"
+  },
+  "late_delivery_rate": {
+    "value": 0.1,
+    "note": "giả định — tỉ lệ đơn giao trễ hơn thời hạn cam kết"
+  },
+  "refund_after_delivery_rate": {
+    "value": 0.12,
+    "note": "giả định — tỉ lệ đơn đã giao phát sinh hoàn tiền qua cổng thanh toán giả lập"
+  },
+  "refund_fail_rate": {
+    "value": 0.15,
+    "note": "giả định — tỉ lệ giao dịch hoàn tiền gặp lỗi tại kênh nhận hoàn"
+  },
+  "refund_completion_hours_range": {
+    "value": [12, 72],
+    "note": "giả định — thời gian xử lý hoàn tiền thành công tính bằng giờ"
+  },
+  "voucher_validity_days": {
+    "value": 30,
+    "note": "giả định — thời hạn hiệu lực mặc định (ngày) của mã voucher bồi thường"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "contract": "retailops-integration-v2",
+  "event_id": "evt:refund:PAYSIM-RFD-00001:2",
+  "event_type": "refund.updated",
+  "source_system": "payment_sim",
+  "merchant_id": "MERCHANT-SIM-001",
+  "occurred_at": "2026-10-06T14:00:00+07:00",
+  "sequence": 2,
+  "data": {
+    "provider": "PAYSIM_GATEWAY",
+    "provider_refund_ref": "PAYSIM-RFD-00001",
+    "provider_txn_ref": "PAYSIM-TXN-00001",
+    "external_order_id": "SIM-O-00001",
+    "amount": 299000,
+    "channel": "original_method",
+    "provider_status_raw": "REFUND_COMPLETED",
+    "failure_reason": null,
+    "initiated_at": "2026-10-05T10:00:00+07:00",
+    "completed_at": "2026-10-06T14:00:00+07:00"
+  }
+}

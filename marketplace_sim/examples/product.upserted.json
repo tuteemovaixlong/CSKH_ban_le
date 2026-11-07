@@ -1,0 +1,37 @@
+{
+  "contract": "retailops-integration-v2",
+  "event_id": "evt:product:P-101:1",
+  "event_type": "product.upserted",
+  "source_system": "marketplace_sim",
+  "merchant_id": "MERCHANT-SIM-001",
+  "occurred_at": "2026-10-01T08:00:00+07:00",
+  "sequence": 1,
+  "data": {
+    "external_product_id": "P-101",
+    "title": "Áo thun Essential",
+    "category": "Áo thun",
+    "price": 299000,
+    "description": "Áo thun cổ tròn, form regular, vải dày vừa, mặc hằng ngày.",
+    "material": "100% cotton, định lượng 220 g/m²",
+    "care": "Giặt máy nước lạnh dưới 30°C, lộn trái khi giặt, không dùng chất tẩy, phơi nơi thoáng mát, ủi nhiệt độ thấp.",
+    "warranty_days": 90,
+    "variants": [
+      {
+        "sku": "SKU-P101-TRANG-S",
+        "variant_name": "Trắng · Size S",
+        "size": "S",
+        "color": "Trắng",
+        "price": 299000,
+        "stock": 5
+      },
+      {
+        "sku": "SKU-P101-TRANG-M",
+        "variant_name": "Trắng · Size M",
+        "size": "M",
+        "color": "Trắng",
+        "price": 299000,
+        "stock": 12
+      }
+    ]
+  }
+}

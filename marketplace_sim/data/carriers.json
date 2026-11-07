@@ -1,0 +1,89 @@
+{
+  "note": "Cấu hình ba hãng vận chuyển mô phỏng cho sàn ảo W6.1a (W6.1a-D6). Hãng mô phỏng theo GHN dùng bộ mã trạng thái công khai của GHN; hai hãng còn lại dùng bộ mã trạng thái giả lập riêng, không gán là mã thật của hãng nào.",
+  "carriers": [
+    {
+      "code": "GHN",
+      "display_name": "Hãng mô phỏng theo GHN",
+      "tracking_prefix": "GHNSIM",
+      "code_scheme": "public_ghn",
+      "is_synthetic_codes": false,
+      "note": "Dùng bộ 13 mã trạng thái công khai của GHN theo mục 2.5 W6.1a handoff.",
+      "promised_hours_by_zone": {
+        "intra_city": 48,
+        "same_region": 72,
+        "inter_region": 96
+      },
+      "status_codes": {
+        "ready_to_pick": "ready_to_pick",
+        "picking": "picking",
+        "picked": "picked",
+        "storing": "storing",
+        "transporting": "transporting",
+        "sorting": "sorting",
+        "delivering": "delivering",
+        "delivered": "delivered",
+        "delivery_fail": "delivery_fail",
+        "waiting_to_return": "waiting_to_return",
+        "return": "return",
+        "returned": "returned",
+        "cancel": "cancel"
+      }
+    },
+    {
+      "code": "FASTSHIP_SIM",
+      "display_name": "FastShip Nội Địa (mô phỏng)",
+      "tracking_prefix": "FSSIM",
+      "code_scheme": "synthetic",
+      "is_synthetic_codes": true,
+      "note": "Bộ mã trạng thái giả lập phục vụ mô phỏng W6.1a, hoàn toàn không phải mã thật của bất kỳ hãng vận chuyển thương mại nào.",
+      "promised_hours_by_zone": {
+        "intra_city": 48,
+        "same_region": 84,
+        "inter_region": 108
+      },
+      "status_codes": {
+        "ready_to_pick": "SIM_FS_CREATED",
+        "picking": "SIM_FS_PICKUP_ASSIGNED",
+        "picked": "SIM_FS_PICKED_UP",
+        "storing": "SIM_FS_WAREHOUSE_IN",
+        "transporting": "SIM_FS_LINEHAUL",
+        "sorting": "SIM_FS_HUB_SORTING",
+        "delivering": "SIM_FS_OUT_FOR_DELIVERY",
+        "delivered": "SIM_FS_DELIVERED",
+        "delivery_fail": "SIM_FS_ATTEMPT_FAILED",
+        "waiting_to_return": "SIM_FS_RETURN_QUEUED",
+        "return": "SIM_FS_RETURNING",
+        "returned": "SIM_FS_RETURNED",
+        "cancel": "SIM_FS_CANCELLED"
+      }
+    },
+    {
+      "code": "VIETEXPRESS_SIM",
+      "display_name": "VietExpress Liên Tỉnh (mô phỏng)",
+      "tracking_prefix": "VXSIM",
+      "code_scheme": "synthetic",
+      "is_synthetic_codes": true,
+      "note": "Bộ mã trạng thái giả lập phục vụ mô phỏng W6.1a, hoàn toàn không phải mã thật của bất kỳ hãng vận chuyển thương mại nào.",
+      "promised_hours_by_zone": {
+        "intra_city": 60,
+        "same_region": 96,
+        "inter_region": 120
+      },
+      "status_codes": {
+        "ready_to_pick": "SIM_VX_BOOKED",
+        "picking": "SIM_VX_COLLECTING",
+        "picked": "SIM_VX_COLLECTED",
+        "storing": "SIM_VX_DEPOT_STORED",
+        "transporting": "SIM_VX_IN_TRANSIT",
+        "sorting": "SIM_VX_SOC_SORTING",
+        "delivering": "SIM_VX_LAST_MILE",
+        "delivered": "SIM_VX_POD_SUCCESS",
+        "delivery_fail": "SIM_VX_POD_FAILED",
+        "waiting_to_return": "SIM_VX_AWAIT_RTO",
+        "return": "SIM_VX_RTO_TRANSIT",
+        "returned": "SIM_VX_RTO_DONE",
+        "cancel": "SIM_VX_VOIDED"
+      }
+    }
+  ]
+}
