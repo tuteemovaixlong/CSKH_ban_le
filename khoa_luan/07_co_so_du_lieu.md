@@ -197,9 +197,10 @@ Owner đã đồng ý hướng thiết kế dưới đây. Chi tiết cột và 
 1. **Mô hình dữ liệu chuẩn cộng connector.** RetailOps không bắt cửa hàng đổi hệ thống. Mỗi nguồn dữ liệu, như sàn, phần mềm bán hàng, hãng vận chuyển, cổng thanh toán, có một connector ánh xạ dữ liệu của nó vào mô hình chuẩn. Bán cho cửa hàng mới thì chọn và cấu hình connector, không sửa code. Trong R1 chỉ có khung connector, **sàn ảo** `marketplace_sim/` và cổng thanh toán giả lập. Connector thật cho Shopee, Haravan và các nền tảng khác để sau R1; connector nhập CSV là tùy chọn, chưa đưa vào R1.
 2. **Dữ liệu nghiệp vụ chỉ vào DB qua cổng tích hợp:** kiểm chữ ký, chống nhận trùng, không cho trạng thái đi lùi. Thiếu khóa ký thì từ chối, không có khóa mặc định.
 3. **RetailOps không chạm vào tiền.** Thu tiền và hoàn tiền do cổng thanh toán có giấy phép của Ngân hàng Nhà nước thực hiện, theo Nghị định 52/2024/NĐ-CP; hóa đơn và thuế thuộc sàn và nhà cung cấp hóa đơn. RetailOps chỉ lưu tên cổng, mã tham chiếu, số tiền, trạng thái, mốc thời gian. **Không bao giờ lưu** số thẻ, số tài khoản, OTP.
-4. **Không lưu địa chỉ đầy đủ.** Chỉ quận, huyện và tỉnh, thành; số điện thoại shipper lưu dạng đã che.
+4. **Thông tin người nhận lưu đầy đủ nhưng có rào chắn**, theo W6.1a-D11: tên, số điện thoại, địa chỉ đầy đủ ở bảng riêng `order_recipients`, các cột cá nhân được mã hóa; model AI chỉ nhận bản đã che; khách xem của chính mình; nhân viên giữ ca xem bản đầy đủ và mỗi lần xem đều ghi nhật ký. Số điện thoại shipper lưu dạng đã che. R1 chỉ dùng dữ liệu giả lập; chạy với khách thật cần danh sách tuân thủ Luật Bảo vệ dữ liệu cá nhân 91/2025/QH15 được duyệt riêng.
 5. **Trường nào nguồn không cung cấp thì để trống**, và trợ lý nói là chưa có thông tin.
-6. **Điều kiện do server tính:** còn bảo hành, đủ điều kiện đổi, giao lại được không là giá trị tính khi đọc, không lưu sẵn.
+6. **Điều kiện do server tính:** còn bảo hành, đủ điều kiện đổi, giao lại được không, thời gian giao còn lại, đã trễ hạn cam kết chưa, là giá trị tính khi đọc, không lưu sẵn.
+7. **Bồi thường do hệ thống và con người, không do AI.** Server phát hiện trễ hạn, tạo đề xuất; nhân viên duyệt; sàn phát mã voucher và báo lại. AI chỉ nói về voucher khi mã đã có trong dữ liệu.
 
 ## B2. Thay đổi bảng `orders`
 
@@ -213,7 +214,8 @@ Owner đã đồng ý hướng thiết kế dưới đây. Chi tiết cột và 
 | `payment_method` | text | `cod`, `bank_transfer`, `e_wallet`, `card` hoặc trống | sự kiện tạo đơn |
 | `payment_status` | text | `unpaid`, `paid`, `partially_refunded`, `refunded` | tính từ `payment_transactions` và `refunds` |
 | `shipping_fee` | bigint | ≥ 0 hoặc trống | sự kiện tạo đơn |
-| `ship_to_area` | text | tối đa 120 ký tự, chỉ quận và tỉnh | sự kiện tạo đơn |
+| `ship_to_area` | text | tối đa 120 ký tự, quận và tỉnh; bản tóm tắt an toàn để đưa cho model | sự kiện tạo đơn |
+| `promised_delivery_by` | double | thời hạn giao đã cam kết lúc đặt | sự kiện tạo đơn |
 | `delivered_at` | double | đã có, nay được điền | sự kiện vận chuyển `delivered` |
 
 **Luật mới:** đơn `shipping` không mở được yêu cầu hủy tự phục vụ; trợ lý giải thích và chuyển nhân viên. Trả, đổi vẫn chỉ cho `delivered`.
@@ -223,6 +225,42 @@ Owner đã đồng ý hướng thiết kế dưới đây. Chi tiết cột và 
 `product_variants.sku` trở thành khóa ánh xạ biến thể với nguồn: duy nhất trong một cửa hàng khi khác trống.
 
 ## B3. Bảng mới
+
+**`order_recipients`**, người nhận của đơn, theo W6.1a-D11
+
+| Cột | Ghi chú |
+|---|---|
+| `order_id` | khóa chính, FK `orders` |
+| `name_enc`, `phone_enc`, `address_line_enc` | đã mã hóa; khóa nằm trong kho secret, không nằm trong DB |
+| `phone_lookup_hmac` | HMAC của số điện thoại đã chuẩn hóa, để nhân viên tìm đơn theo số mà không giải mã toàn bảng |
+| `ward`, `district`, `province` | không mã hóa, dùng cho thống kê và cho bản đã che |
+| `phone_masked` | ví dụ `0123.xxx.456`, dùng cho model và giao diện mặc định |
+| `created_at`, `retention_until` | hết hạn lưu thì xóa phần đã mã hóa |
+
+Mọi lần nhân viên mở bản đầy đủ đều ghi một dòng vào nhật ký truy cập dữ liệu cá nhân, gồm người xem, vai trò, ca, thời điểm. Cách mã hóa, bằng `pgcrypto` hay thư viện mã hóa ở tầng ứng dụng, chốt khi viết handoff W6.1b; hiện repo chưa có thư viện mã hóa nào.
+
+**`delivery_compensations`**, đề xuất bồi thường giao trễ, theo W6.1a-D13
+
+| Cột | Ghi chú |
+|---|---|
+| `compensation_id` | khóa chính |
+| `order_id`, `shipment_id` | FK |
+| `reason` | `late_delivery` |
+| `late_by_hours` | số giờ trễ so với `promised_delivery_by` lúc phát hiện |
+| `voucher_type`, `value` | theo cấu hình của quản lý; mặc định voucher 50.000 VNĐ khi trễ quá 48 giờ |
+| `status` | `proposed`, `approved`, `rejected`, `requested`, `issued`, `failed` |
+| `decided_by_principal_id`, `decided_at`, `note` | người duyệt |
+| `request_id` | mã yêu cầu `voucher.requested` gửi sàn qua outbox |
+
+**`vouchers`**, voucher do sàn phát
+
+| Cột | Ghi chú |
+|---|---|
+| `voucher_id` | khóa chính |
+| `source_system`, `external_voucher_id` | duy nhất theo cặp |
+| `customer_id`, `order_id` | FK |
+| `compensation_id` | FK, có thể trống khi sàn tự phát |
+| `code`, `voucher_type`, `value`, `valid_until`, `issued_at` | AI được đọc để báo cho đúng khách sở hữu |
 
 **`integration_connectors`**, cấu hình nguồn của một cửa hàng
 
@@ -255,7 +293,9 @@ Owner đã đồng ý hướng thiết kế dưới đây. Chi tiết cột và 
 | `shipment_event_id` | khóa chính |
 | `shipment_id` | FK |
 | `occurred_at` | thời điểm tại hãng |
-| `status`, `carrier_status_raw`, `location`, `description`, `fail_reason` | |
+| `status`, `carrier_status_raw`, `description`, `fail_reason` | |
+| `hub_name`, `district`, `province` | bưu cục hoặc kho, quận, tỉnh của mốc, để trả lời "hàng đang ở đâu" |
+| `estimated_delivery_at` | dự kiến giao mới nhất do hãng báo tại mốc này |
 | `source_event_id` | duy nhất, nối với `imported_events` |
 
 **`payment_transactions`**, mỗi lần thanh toán một dòng
@@ -299,6 +339,9 @@ erDiagram
   payment_transactions ||--o{ refunds : "hoàn từ"
   order_action_requests ||--o{ refunds : "theo yêu cầu"
   orders ||--o{ order_action_requests : "hủy trả đổi"
+  orders ||--|| order_recipients : "người nhận"
+  orders ||--o{ delivery_compensations : "bồi thường"
+  delivery_compensations ||--o| vouchers : "phát mã"
   integration_connectors {
     text connector_id PK
     text source_system
@@ -361,7 +404,7 @@ flowchart LR
 ## B6. Migration v9
 
 1. Thêm cột vào `orders`, thay `CHECK` của `status`. Backfill đơn cũ: `source_system` là `retailops_seed`, `external_order_id` bằng `id`, `ordered_at` bằng thời điểm migrate, ghi rõ là giá trị điền bù.
-2. Tạo 5 bảng mới cùng chỉ mục và ràng buộc duy nhất; chỉ mục duy nhất từng phần cho `product_variants.sku`.
+2. Tạo 8 bảng mới: `integration_connectors`, `shipments`, `shipment_events`, `payment_transactions`, `refunds`, `order_recipients`, `delivery_compensations`, `vouchers`, cùng chỉ mục và ràng buộc duy nhất; chỉ mục duy nhất từng phần cho `product_variants.sku`.
 3. Trigger chỉ ghi thêm cho `shipment_events`, như `order_action_decisions`.
 4. Một giao dịch, chạy lại an toàn, theo runbook như v8.
 5. Seed demo được thay bằng kịch bản sự kiện của sàn ảo phát qua connector. Gỡ dict vận chuyển trong `retailops_tools.py` và `data/mock_shipments.json`.
@@ -373,5 +416,6 @@ flowchart LR
 - 4 bảng nghiệp vụ mới cùng `integration_connectors`.
 - Connector trong R1: sàn ảo và cổng thanh toán giả lập. Connector CSV chưa làm.
 - W6.1 tách thành **W6.1a** sàn ảo cùng khung connector, và **W6.1b** migration v9 cùng phía RetailOps.
+- Ngày 2026-11-07, W6.1a-D11 đến D14: lưu đầy đủ người nhận trong bảng riêng có mã hóa, model chỉ thấy bản đã che; thời hạn giao cam kết và vị trí theo từng mốc hành trình; bồi thường giao trễ do nhân viên duyệt, sàn phát mã; thông báo chủ động cho khách ở các mốc chính.
 
-Còn chốt khi viết handoff: cổng thanh toán nào làm mẫu cho định dạng webhook giả lập; danh sách kiểu dữ liệu và chỉ mục chi tiết.
+Còn chốt khi viết handoff: cổng thanh toán nào làm mẫu cho định dạng webhook giả lập; mã hóa bằng `pgcrypto` hay thư viện ở tầng ứng dụng; danh sách kiểu dữ liệu và chỉ mục chi tiết.
