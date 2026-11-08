@@ -105,8 +105,8 @@ class TestR1W4CaseAssistant(unittest.TestCase):
         with self.store.connection(write=True) as db:
             db.execute("INSERT OR IGNORE INTO customers(id, name) VALUES ('C-002', 'Trần Văn B - 0909999888')")
             db.execute(
-                """INSERT OR IGNORE INTO orders(id, customer_id, product_id, name, variant, amount, status, version)
-                   VALUES ('O-201', 'C-002', 'P-101', 'Áo thun người khác', 'Đen · Size L', 250000, 'pending', 1)"""
+                """INSERT OR IGNORE INTO orders(id, customer_id, product_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version)
+                   VALUES ('O-201', 'C-002', 'P-101', 'retailops_seed', 'O-201', 1762100000.0, 'Áo thun người khác', 'Đen · Size L', 250000, 'pending', 1)"""
             )
 
         # Open a customer conversation and escalate to human support so we have an active case

@@ -1,7 +1,7 @@
 import time
 import uuid
 
-# Phase R1 W2/W3/W3.2/W4 backend schema version mappings (SQLite and PostgreSQL number them differently):
+# Phase R1 W2/W3/W3.2/W4/W6.1b-1 backend schema version mappings (SQLite and PostgreSQL number them differently):
 #   - Business v5 (W2-D3): SQLite 4, PostgreSQL 5 (cases, handoff_episodes, case_feedback_events)
 #   - Business v6 (W3-D1..W3-D4, W3-D6): SQLite 5, PostgreSQL 6
 #     (orders.delivered_at, order_action_requests, order_action_decisions,
@@ -10,6 +10,8 @@ import uuid
 #     exchange_kind other_variant/same_variant, target_variant_id, target_variant_label).
 #   - Business v8 (W4-D4, W4-D6, W4-D9): SQLite 7, PostgreSQL 8 (case_assist_turns,
 #     order_action_evidence PDF up to 20 MB + malware scan fields, legacy turn attachment backfill).
+#   - Business v9 (W6.1b-D1, W6.1b-D5, W6.1b-D7): SQLite 8, PostgreSQL 9 (canonical orders v9,
+#     imported_events v2 shape, product_variants SKU partial unique index, and 8 v9 integration tables).
 SQLITE_BUSINESS_V5_SCHEMA_VERSION = 4
 POSTGRES_BUSINESS_V5_SCHEMA_VERSION = 5
 BUSINESS_V5_VERSION_MAPPING = {
@@ -31,13 +33,48 @@ BUSINESS_V7_VERSION_MAPPING = {
     'sqlite': SQLITE_BUSINESS_V7_SCHEMA_VERSION,
     'postgresql': POSTGRES_BUSINESS_V7_SCHEMA_VERSION,
 }
-SQLITE_BUSINESS_SCHEMA_CURRENT = 7
-POSTGRES_BUSINESS_SCHEMA_CURRENT = 8
+SQLITE_BUSINESS_V8_SCHEMA_VERSION = 7
+POSTGRES_BUSINESS_V8_SCHEMA_VERSION = 8
 BUSINESS_V8_VERSION_MAPPING = {
     'logical_milestone': 'business_v8',
+    'sqlite': SQLITE_BUSINESS_V8_SCHEMA_VERSION,
+    'postgresql': POSTGRES_BUSINESS_V8_SCHEMA_VERSION,
+}
+SQLITE_BUSINESS_SCHEMA_CURRENT = 8
+POSTGRES_BUSINESS_SCHEMA_CURRENT = 9
+BUSINESS_V9_VERSION_MAPPING = {
+    'logical_milestone': 'business_v9',
     'sqlite': SQLITE_BUSINESS_SCHEMA_CURRENT,
     'postgresql': POSTGRES_BUSINESS_SCHEMA_CURRENT,
 }
+
+ORDER_STATUSES_V9 = ('pending', 'shipping', 'delivered', 'cancelled')
+PAYMENT_METHODS_V9 = ('cod', 'bank_transfer', 'e_wallet', 'card')
+ORDER_PAYMENT_STATUSES_V9 = ('unpaid', 'paid', 'partially_refunded', 'refunded')
+SHIPMENT_STATUSES_V9 = (
+    'created',
+    'picked_up',
+    'in_transit',
+    'out_for_delivery',
+    'delivered',
+    'delivery_failed',
+    'returning',
+    'returned',
+    'cancelled',
+)
+PAYMENT_TXN_STATUSES_V9 = ('pending', 'succeeded', 'failed', 'cancelled')
+REFUND_STATUSES_V9 = ('pending', 'processing', 'completed', 'failed')
+REFUND_CHANNELS_V9 = ('original_method', 'bank_transfer', 'e_wallet')
+REQUIRED_V9_TABLES = (
+    'integration_connectors',
+    'shipments',
+    'shipment_events',
+    'payment_transactions',
+    'refunds',
+    'order_recipients',
+    'delivery_compensations',
+    'vouchers',
+)
 
 # W3.2-D1: exchange is "swap to another variant of the same product" or "same variant again" (defective item).
 EXCHANGE_KINDS = ('other_variant', 'same_variant')
@@ -84,6 +121,82 @@ def migrate_v3(db):
             db.execute('CREATE INDEX IF NOT EXISTS idx_orders_product_id ON orders(product_id)')
 
 
+ORDERS_V9_DDL = """CREATE TABLE IF NOT EXISTS {table} (
+                  id TEXT PRIMARY KEY,
+                  customer_id TEXT NOT NULL,
+                  product_id TEXT REFERENCES products(id),
+                  source_system TEXT NOT NULL,
+                  external_order_id TEXT,
+                  name TEXT NOT NULL,
+                  variant TEXT NOT NULL,
+                  amount INTEGER NOT NULL,
+                  status TEXT NOT NULL CONSTRAINT orders_status_v9_check CHECK(
+                      status IN ('pending', 'shipping', 'delivered', 'cancelled')
+                  ),
+                  ordered_at REAL NOT NULL,
+                  ordered_at_backfilled INTEGER NOT NULL DEFAULT 0 CONSTRAINT orders_ordered_at_backfilled_v9_check CHECK(
+                      ordered_at_backfilled IN (0, 1)
+                  ),
+                  payment_method TEXT CONSTRAINT orders_payment_method_v9_check CHECK(
+                      payment_method IS NULL OR payment_method IN ('cod', 'bank_transfer', 'e_wallet', 'card')
+                  ),
+                  payment_status TEXT NOT NULL DEFAULT 'unpaid' CONSTRAINT orders_payment_status_v9_check CHECK(
+                      payment_status IN ('unpaid', 'paid', 'partially_refunded', 'refunded')
+                  ),
+                  shipping_fee INTEGER CONSTRAINT orders_shipping_fee_v9_check CHECK(
+                      shipping_fee IS NULL OR shipping_fee >= 0
+                  ),
+                  ship_to_area TEXT CONSTRAINT orders_ship_to_area_v9_check CHECK(
+                      ship_to_area IS NULL OR length(ship_to_area) <= 120
+                  ),
+                  promised_delivery_by REAL,
+                  version INTEGER NOT NULL DEFAULT 1,
+                  cancel_reason TEXT,
+                  delivered_at REAL,
+                  CONSTRAINT orders_source_external_v9_unique UNIQUE(source_system, external_order_id)
+                )"""
+
+
+IMPORTED_EVENTS_V9_DDL = """CREATE TABLE IF NOT EXISTS {table} (
+                  id TEXT PRIMARY KEY,
+                  source_system TEXT NOT NULL,
+                  event_id TEXT NOT NULL,
+                  tenant_id TEXT NOT NULL,
+                  event_type TEXT,
+                  sequence INTEGER,
+                  received_via TEXT CONSTRAINT imported_events_received_via_v9_check CHECK(
+                      received_via IS NULL OR received_via IN ('http', 'import')
+                  ),
+                  payload_digest TEXT,
+                  redacted_fields TEXT,
+                  external_customer_id TEXT,
+                  customer_id TEXT,
+                  order_id TEXT,
+                  status TEXT,
+                  total INTEGER,
+                  currency TEXT,
+                  payload_json TEXT NOT NULL,
+                  signature TEXT,
+                  created_at REAL NOT NULL,
+                  UNIQUE(source_system, event_id)
+                )"""
+
+
+def _ensure_order_customer_triggers(db):
+    db.execute("""CREATE TRIGGER IF NOT EXISTS order_customer_insert BEFORE INSERT ON orders
+        WHEN NOT EXISTS (SELECT 1 FROM customers WHERE id=NEW.customer_id)
+        BEGIN SELECT RAISE(ABORT,'Unknown customer'); END""")
+    db.execute("""CREATE TRIGGER IF NOT EXISTS order_customer_update BEFORE UPDATE OF customer_id ON orders
+        WHEN NOT EXISTS (SELECT 1 FROM customers WHERE id=NEW.customer_id)
+        BEGIN SELECT RAISE(ABORT,'Unknown customer'); END""")
+    db.execute("""CREATE TRIGGER IF NOT EXISTS customer_delete BEFORE DELETE ON customers
+        WHEN EXISTS (SELECT 1 FROM orders WHERE customer_id=OLD.id)
+        BEGIN SELECT RAISE(ABORT,'Customer owns orders'); END""")
+    db.execute("""CREATE TRIGGER IF NOT EXISTS customer_id_update BEFORE UPDATE OF id ON customers
+        WHEN NEW.id<>OLD.id AND EXISTS (SELECT 1 FROM orders WHERE customer_id=OLD.id)
+        BEGIN SELECT RAISE(ABORT,'Customer owns orders'); END""")
+
+
 def ensure_import_tables(db):
     db.execute("""CREATE TABLE IF NOT EXISTS order_items (
                   id TEXT PRIMARY KEY,
@@ -99,25 +212,13 @@ def ensure_import_tables(db):
                   created_at REAL NOT NULL
                 )""")
     db.execute('CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id)')
-    db.execute("""CREATE TABLE IF NOT EXISTS imported_events (
-                  id TEXT PRIMARY KEY,
-                  source_system TEXT NOT NULL,
-                  event_id TEXT NOT NULL,
-                  tenant_id TEXT NOT NULL,
-                  external_customer_id TEXT NOT NULL,
-                  customer_id TEXT NOT NULL,
-                  order_id TEXT NOT NULL,
-                  status TEXT NOT NULL,
-                  total INTEGER NOT NULL,
-                  currency TEXT NOT NULL,
-                  payload_json TEXT NOT NULL,
-                  signature TEXT NOT NULL,
-                  created_at REAL NOT NULL,
-                  UNIQUE(source_system, event_id)
-                )""")
+    db.execute(IMPORTED_EVENTS_V9_DDL.format(table='imported_events'))
     db.execute('CREATE INDEX IF NOT EXISTS idx_imported_events_tenant_order ON imported_events(tenant_id, order_id)')
     db.execute('CREATE INDEX IF NOT EXISTS idx_imported_events_external '
                'ON imported_events(tenant_id, source_system, external_customer_id)')
+    ie_cols = {row['name'] for row in db.execute('PRAGMA table_info(imported_events)')}
+    if 'event_type' in ie_cols:
+        db.execute('CREATE INDEX IF NOT EXISTS idx_imported_events_tenant_type ON imported_events(tenant_id, event_type)')
     db.execute("""CREATE TABLE IF NOT EXISTS order_purge_tombstones (
                   order_id TEXT PRIMARY KEY,
                   tenant_id TEXT NOT NULL,
@@ -138,14 +239,7 @@ def ensure_import_tables(db):
 
 def initialize(db):
     migrate_v3(db)
-    db.execute("""CREATE TABLE IF NOT EXISTS orders (
-                  id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, name TEXT NOT NULL,
-                  variant TEXT NOT NULL, amount INTEGER NOT NULL,
-                  status TEXT NOT NULL CHECK(status IN ('pending','delivered','cancelled')),
-                  version INTEGER NOT NULL DEFAULT 1, cancel_reason TEXT,
-                  product_id TEXT REFERENCES products(id),
-                  delivered_at REAL
-                )""")
+    db.execute(ORDERS_V9_DDL.format(table='orders'))
     db.execute('CREATE INDEX IF NOT EXISTS idx_orders_customer_id ON orders(customer_id)')
     db.execute('CREATE INDEX IF NOT EXISTS idx_orders_product_id ON orders(product_id)')
     ensure_import_tables(db)
@@ -196,18 +290,7 @@ def initialize(db):
         db.execute("ALTER TABLE conversations ADD COLUMN provider_id TEXT NOT NULL DEFAULT 'custom'")
     db.execute('CREATE TABLE IF NOT EXISTS customers (id TEXT PRIMARY KEY, name TEXT NOT NULL)')
     db.execute("INSERT OR IGNORE INTO customers SELECT DISTINCT customer_id, 'Khách hàng' FROM orders")
-    db.execute("""CREATE TRIGGER IF NOT EXISTS order_customer_insert BEFORE INSERT ON orders
-        WHEN NOT EXISTS (SELECT 1 FROM customers WHERE id=NEW.customer_id)
-        BEGIN SELECT RAISE(ABORT,'Unknown customer'); END""")
-    db.execute("""CREATE TRIGGER IF NOT EXISTS order_customer_update BEFORE UPDATE OF customer_id ON orders
-        WHEN NOT EXISTS (SELECT 1 FROM customers WHERE id=NEW.customer_id)
-        BEGIN SELECT RAISE(ABORT,'Unknown customer'); END""")
-    db.execute("""CREATE TRIGGER IF NOT EXISTS customer_delete BEFORE DELETE ON customers
-        WHEN EXISTS (SELECT 1 FROM orders WHERE customer_id=OLD.id)
-        BEGIN SELECT RAISE(ABORT,'Customer owns orders'); END""")
-    db.execute("""CREATE TRIGGER IF NOT EXISTS customer_id_update BEFORE UPDATE OF id ON customers
-        WHEN NEW.id<>OLD.id AND EXISTS (SELECT 1 FROM orders WHERE customer_id=OLD.id)
-        BEGIN SELECT RAISE(ABORT,'Customer owns orders'); END""")
+    _ensure_order_customer_triggers(db)
     ensure_case_tables(db)
     ensure_order_action_tables(db)
     ensure_case_assist_tables(db)
@@ -570,6 +653,321 @@ def ensure_case_assist_tables(db):
         'ON case_assist_turns(tenant_id, principal_id, case_id, created_at ASC)'
     )
     db.execute('CREATE INDEX IF NOT EXISTS idx_case_assist_case ON case_assist_turns(case_id, created_at ASC)')
+
+
+def migrate_orders_v9(db, *, now=None):
+    """Business v9 step (W6.1b-D1, B2, B6): rebuild pre-v9 orders table on SQLite with canonical v9 columns,
+    'shipping' status CHECK, UNIQUE(source_system, external_order_id), and backfill of legacy orders.
+    """
+    master = db.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='orders'"
+    ).fetchone()
+    if not master:
+        return {'rebuilt': False, 'orders_backfilled': 0}
+    info_rows = list(db.execute('PRAGMA table_info(orders)'))
+    cols = {row['name'] for row in info_rows}
+    not_null_cols = {row['name'] for row in info_rows if int(row['notnull']) != 0}
+    ddl_sql = str(master['sql'] or '')
+    required_v9_cols = {
+        'source_system',
+        'external_order_id',
+        'ordered_at',
+        'ordered_at_backfilled',
+        'payment_method',
+        'payment_status',
+        'shipping_fee',
+        'ship_to_area',
+        'promised_delivery_by',
+        'delivered_at',
+    }
+    if (
+        required_v9_cols <= cols
+        and "'shipping'" in ddl_sql
+        and 'orders_source_external_v9_unique' in ddl_sql
+        and ({'source_system', 'ordered_at', 'ordered_at_backfilled', 'payment_status'} <= not_null_cols)
+    ):
+        return {'rebuilt': False, 'orders_backfilled': 0}
+    if db.execute('PRAGMA foreign_keys').fetchone()[0]:
+        raise ValueError('The Business v9 orders rebuild needs PRAGMA foreign_keys=OFF before the transaction starts.')
+
+    now_ts = float(time.time() if now is None else now)
+    before = int(db.execute('SELECT COUNT(*) FROM orders').fetchone()[0])
+    if 'source_system' in cols and 'ordered_at' in cols:
+        backfilled = int(
+            db.execute(
+                'SELECT COUNT(*) FROM orders WHERE source_system IS NULL OR ordered_at IS NULL'
+            ).fetchone()[0]
+        )
+    else:
+        backfilled = before
+
+    db.execute("INSERT OR IGNORE INTO customers SELECT DISTINCT customer_id, 'Khách hàng' FROM orders")
+    db.execute(ORDERS_V9_DDL.format(table='orders_v9_new'))
+
+    pid_expr = 'product_id' if 'product_id' in cols else 'NULL'
+    deliv_expr = 'delivered_at' if 'delivered_at' in cols else 'NULL'
+    src_expr = "COALESCE(source_system, 'retailops_seed')" if 'source_system' in cols else "'retailops_seed'"
+    ext_expr = 'COALESCE(external_order_id, id)' if 'external_order_id' in cols else 'id'
+    ord_at_expr = 'COALESCE(ordered_at, ?)' if 'ordered_at' in cols else '?'
+    if 'ordered_at' in cols and 'ordered_at_backfilled' in cols:
+        bf_expr = 'CASE WHEN ordered_at IS NULL THEN 1 ELSE COALESCE(ordered_at_backfilled, 0) END'
+    elif 'ordered_at' in cols:
+        bf_expr = 'CASE WHEN ordered_at IS NULL THEN 1 ELSE 0 END'
+    else:
+        bf_expr = '1'
+    pm_expr = 'payment_method' if 'payment_method' in cols else 'NULL'
+    ps_expr = "COALESCE(payment_status, 'unpaid')" if 'payment_status' in cols else "'unpaid'"
+    sf_expr = 'shipping_fee' if 'shipping_fee' in cols else 'NULL'
+    area_expr = 'ship_to_area' if 'ship_to_area' in cols else 'NULL'
+    prom_expr = 'promised_delivery_by' if 'promised_delivery_by' in cols else 'NULL'
+
+    db.execute(
+        f"""INSERT INTO orders_v9_new(
+                id, customer_id, product_id, source_system, external_order_id,
+                name, variant, amount, status,
+                ordered_at, ordered_at_backfilled,
+                payment_method, payment_status, shipping_fee, ship_to_area, promised_delivery_by,
+                version, cancel_reason, delivered_at
+            )
+            SELECT id, customer_id, {pid_expr}, {src_expr}, {ext_expr},
+                   name, variant, amount, status,
+                   {ord_at_expr}, {bf_expr},
+                   {pm_expr}, {ps_expr}, {sf_expr}, {area_expr}, {prom_expr},
+                   version, cancel_reason, {deliv_expr}
+            FROM orders""",
+        (now_ts,),
+    )
+    after = int(db.execute('SELECT COUNT(*) FROM orders_v9_new').fetchone()[0])
+    if after != before:
+        raise ValueError(f'Business v9 orders rebuild lost rows ({before} -> {after}); migration aborted.')
+    db.execute('DROP TRIGGER IF EXISTS order_customer_insert')
+    db.execute('DROP TRIGGER IF EXISTS order_customer_update')
+    db.execute('DROP TRIGGER IF EXISTS customer_delete')
+    db.execute('DROP TRIGGER IF EXISTS customer_id_update')
+    db.execute('DROP TABLE orders')
+    db.execute('ALTER TABLE orders_v9_new RENAME TO orders')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_orders_customer_id ON orders(customer_id)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_orders_product_id ON orders(product_id)')
+    _ensure_order_customer_triggers(db)
+    return {'rebuilt': True, 'orders_backfilled': backfilled}
+
+
+def migrate_imported_events_v9(db):
+    """Business v9 step (W6.1b-D1, W6.1b-D7): rebuild pre-v9 imported_events on SQLite so v1 columns are
+    nullable and v2 metadata/digest/redaction columns exist while preserving UNIQUE(source_system, event_id).
+    """
+    master = db.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='imported_events'"
+    ).fetchone()
+    if not master:
+        db.execute(IMPORTED_EVENTS_V9_DDL.format(table='imported_events'))
+        db.execute('CREATE INDEX IF NOT EXISTS idx_imported_events_tenant_order ON imported_events(tenant_id, order_id)')
+        db.execute('CREATE INDEX IF NOT EXISTS idx_imported_events_external '
+                   'ON imported_events(tenant_id, source_system, external_customer_id)')
+        db.execute('CREATE INDEX IF NOT EXISTS idx_imported_events_tenant_type ON imported_events(tenant_id, event_type)')
+        return {'rebuilt': False, 'events_rows': 0}
+
+    info_rows = list(db.execute('PRAGMA table_info(imported_events)'))
+    cols = {row['name'] for row in info_rows}
+    not_null_cols = {row['name'] for row in info_rows if int(row['notnull']) != 0}
+    ddl_sql = str(master['sql'] or '')
+    required_v9_cols = {'event_type', 'sequence', 'received_via', 'payload_digest', 'redacted_fields'}
+    legacy_nullable = {'external_customer_id', 'customer_id', 'order_id', 'status', 'total', 'currency', 'signature'}
+    if (
+        required_v9_cols <= cols
+        and not (legacy_nullable & not_null_cols)
+        and 'imported_events_received_via_v9_check' in ddl_sql
+    ):
+        cnt = int(db.execute('SELECT COUNT(*) FROM imported_events').fetchone()[0])
+        db.execute('CREATE INDEX IF NOT EXISTS idx_imported_events_tenant_order ON imported_events(tenant_id, order_id)')
+        db.execute('CREATE INDEX IF NOT EXISTS idx_imported_events_external '
+                   'ON imported_events(tenant_id, source_system, external_customer_id)')
+        db.execute('CREATE INDEX IF NOT EXISTS idx_imported_events_tenant_type ON imported_events(tenant_id, event_type)')
+        return {'rebuilt': False, 'events_rows': cnt}
+
+    if db.execute('PRAGMA foreign_keys').fetchone()[0]:
+        raise ValueError('The Business v9 imported_events rebuild needs PRAGMA foreign_keys=OFF before the transaction starts.')
+
+    before = int(db.execute('SELECT COUNT(*) FROM imported_events').fetchone()[0])
+    db.execute(IMPORTED_EVENTS_V9_DDL.format(table='imported_events_v9_new'))
+    et_expr = 'event_type' if 'event_type' in cols else 'NULL'
+    seq_expr = 'sequence' if 'sequence' in cols else 'NULL'
+    rv_expr = 'received_via' if 'received_via' in cols else 'NULL'
+    pd_expr = 'payload_digest' if 'payload_digest' in cols else 'NULL'
+    rf_expr = 'redacted_fields' if 'redacted_fields' in cols else 'NULL'
+    db.execute(
+        f"""INSERT INTO imported_events_v9_new(
+                id, source_system, event_id, tenant_id,
+                event_type, sequence, received_via, payload_digest, redacted_fields,
+                external_customer_id, customer_id, order_id, status, total, currency,
+                payload_json, signature, created_at
+            )
+            SELECT id, source_system, event_id, tenant_id,
+                   {et_expr}, {seq_expr}, {rv_expr}, {pd_expr}, {rf_expr},
+                   external_customer_id, customer_id, order_id, status, total, currency,
+                   payload_json, signature, created_at
+            FROM imported_events"""
+    )
+    after = int(db.execute('SELECT COUNT(*) FROM imported_events_v9_new').fetchone()[0])
+    if after != before:
+        raise ValueError(f'Business v9 imported_events rebuild lost rows ({before} -> {after}); migration aborted.')
+    db.execute('DROP TABLE imported_events')
+    db.execute('ALTER TABLE imported_events_v9_new RENAME TO imported_events')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_imported_events_tenant_order ON imported_events(tenant_id, order_id)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_imported_events_external '
+               'ON imported_events(tenant_id, source_system, external_customer_id)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_imported_events_tenant_type ON imported_events(tenant_id, event_type)')
+    return {'rebuilt': True, 'events_rows': after}
+
+
+def ensure_v9_tables(db):
+    """Create Business v9 SKU partial unique index, 8 new integration/canonical tables, and append-only triggers."""
+    migrate_v3(db)
+    db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_product_variants_sku_unique "
+        "ON product_variants(sku) WHERE sku IS NOT NULL AND trim(sku) <> ''"
+    )
+    db.execute("""CREATE TABLE IF NOT EXISTS integration_connectors (
+                  connector_id TEXT PRIMARY KEY,
+                  source_system TEXT NOT NULL UNIQUE,
+                  kind TEXT NOT NULL CHECK(kind IN ('marketplace', 'carrier', 'payment')),
+                  merchant_id TEXT NOT NULL,
+                  secret_ref TEXT NOT NULL,
+                  status_mapping_json TEXT NOT NULL,
+                  enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0, 1)),
+                  created_at REAL NOT NULL,
+                  updated_at REAL NOT NULL
+                )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS shipments (
+                  shipment_id TEXT PRIMARY KEY,
+                  order_id TEXT NOT NULL REFERENCES orders(id),
+                  source_system TEXT NOT NULL,
+                  external_shipment_id TEXT NOT NULL,
+                  carrier TEXT NOT NULL,
+                  tracking_code TEXT NOT NULL,
+                  status TEXT NOT NULL CHECK(status IN (
+                      'created', 'picked_up', 'in_transit', 'out_for_delivery',
+                      'delivered', 'delivery_failed', 'returning', 'returned', 'cancelled'
+                  )),
+                  carrier_status_raw TEXT NOT NULL,
+                  current_area TEXT,
+                  shipper_name TEXT,
+                  shipper_phone_masked TEXT,
+                  estimated_delivery_at REAL,
+                  delivered_at REAL,
+                  delivery_attempts INTEGER NOT NULL DEFAULT 0 CHECK(delivery_attempts >= 0),
+                  updated_at REAL NOT NULL,
+                  UNIQUE(source_system, external_shipment_id)
+                )""")
+    db.execute('CREATE INDEX IF NOT EXISTS idx_shipments_order ON shipments(order_id)')
+
+    db.execute("""CREATE TABLE IF NOT EXISTS shipment_events (
+                  shipment_event_id TEXT PRIMARY KEY,
+                  shipment_id TEXT NOT NULL REFERENCES shipments(shipment_id),
+                  occurred_at REAL NOT NULL,
+                  status TEXT NOT NULL CHECK(status IN (
+                      'created', 'picked_up', 'in_transit', 'out_for_delivery',
+                      'delivered', 'delivery_failed', 'returning', 'returned', 'cancelled'
+                  )),
+                  carrier_status_raw TEXT NOT NULL,
+                  description TEXT,
+                  fail_reason TEXT,
+                  hub_name TEXT,
+                  district TEXT,
+                  province TEXT,
+                  estimated_delivery_at REAL,
+                  source_event_id TEXT NOT NULL UNIQUE
+                )""")
+    db.execute('CREATE INDEX IF NOT EXISTS idx_shipment_events_shipment ON shipment_events(shipment_id, occurred_at ASC)')
+    db.execute("""CREATE TRIGGER IF NOT EXISTS shipment_events_no_update
+                  BEFORE UPDATE ON shipment_events
+                  BEGIN SELECT RAISE(ABORT, 'shipment_events is append-only'); END""")
+    db.execute("""CREATE TRIGGER IF NOT EXISTS shipment_events_no_delete
+                  BEFORE DELETE ON shipment_events
+                  BEGIN SELECT RAISE(ABORT, 'shipment_events is append-only'); END""")
+
+    db.execute("""CREATE TABLE IF NOT EXISTS payment_transactions (
+                  payment_id TEXT PRIMARY KEY,
+                  order_id TEXT NOT NULL REFERENCES orders(id),
+                  provider TEXT NOT NULL,
+                  provider_txn_ref TEXT NOT NULL,
+                  method TEXT NOT NULL CHECK(method IN ('cod', 'bank_transfer', 'e_wallet', 'card')),
+                  amount INTEGER NOT NULL CHECK(amount >= 0),
+                  status TEXT NOT NULL CHECK(status IN ('pending', 'succeeded', 'failed', 'cancelled')),
+                  provider_status_raw TEXT NOT NULL,
+                  created_at REAL NOT NULL,
+                  settled_at REAL,
+                  UNIQUE(provider, provider_txn_ref)
+                )""")
+    db.execute('CREATE INDEX IF NOT EXISTS idx_payment_transactions_order ON payment_transactions(order_id)')
+
+    db.execute("""CREATE TABLE IF NOT EXISTS refunds (
+                  refund_id TEXT PRIMARY KEY,
+                  order_id TEXT NOT NULL REFERENCES orders(id),
+                  request_id TEXT REFERENCES order_action_requests(request_id),
+                  payment_id TEXT REFERENCES payment_transactions(payment_id),
+                  provider TEXT NOT NULL,
+                  provider_refund_ref TEXT NOT NULL,
+                  amount INTEGER NOT NULL CHECK(amount > 0),
+                  channel TEXT NOT NULL CHECK(channel IN ('original_method', 'bank_transfer', 'e_wallet')),
+                  status TEXT NOT NULL CHECK(status IN ('pending', 'processing', 'completed', 'failed')),
+                  provider_status_raw TEXT NOT NULL,
+                  initiated_at REAL NOT NULL,
+                  completed_at REAL,
+                  failure_reason TEXT,
+                  UNIQUE(provider, provider_refund_ref)
+                )""")
+    db.execute('CREATE INDEX IF NOT EXISTS idx_refunds_order ON refunds(order_id)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_refunds_request ON refunds(request_id)')
+
+    # W6.1b-2 tables created in v9 and left empty in W6.1b-1 (W6.1b-D1):
+    db.execute("""CREATE TABLE IF NOT EXISTS order_recipients (
+                  order_id TEXT PRIMARY KEY REFERENCES orders(id),
+                  name_enc TEXT,
+                  phone_enc TEXT,
+                  address_line_enc TEXT,
+                  phone_lookup_hmac TEXT,
+                  ward TEXT,
+                  district TEXT,
+                  province TEXT,
+                  phone_masked TEXT,
+                  created_at REAL NOT NULL,
+                  retention_until REAL
+                )""")
+    db.execute('CREATE INDEX IF NOT EXISTS idx_order_recipients_phone_hmac ON order_recipients(phone_lookup_hmac)')
+
+    db.execute("""CREATE TABLE IF NOT EXISTS delivery_compensations (
+                  compensation_id TEXT PRIMARY KEY,
+                  order_id TEXT NOT NULL REFERENCES orders(id),
+                  shipment_id TEXT REFERENCES shipments(shipment_id),
+                  reason TEXT NOT NULL CHECK(reason IN ('late_delivery')),
+                  late_by_hours REAL NOT NULL CHECK(late_by_hours >= 0),
+                  voucher_type TEXT NOT NULL CHECK(voucher_type IN ('amount', 'free_shipping')),
+                  value INTEGER NOT NULL CHECK(value >= 0),
+                  status TEXT NOT NULL CHECK(status IN ('proposed', 'approved', 'rejected', 'requested', 'issued', 'failed')),
+                  decided_by_principal_id TEXT,
+                  decided_at REAL,
+                  note TEXT,
+                  request_id TEXT
+                )""")
+    db.execute('CREATE INDEX IF NOT EXISTS idx_delivery_compensations_order ON delivery_compensations(order_id)')
+
+    db.execute("""CREATE TABLE IF NOT EXISTS vouchers (
+                  voucher_id TEXT PRIMARY KEY,
+                  source_system TEXT NOT NULL,
+                  external_voucher_id TEXT NOT NULL,
+                  customer_id TEXT NOT NULL REFERENCES customers(id),
+                  order_id TEXT REFERENCES orders(id),
+                  compensation_id TEXT REFERENCES delivery_compensations(compensation_id),
+                  code TEXT NOT NULL,
+                  voucher_type TEXT NOT NULL CHECK(voucher_type IN ('amount', 'free_shipping')),
+                  value INTEGER NOT NULL CHECK(value >= 0),
+                  valid_until REAL,
+                  issued_at REAL NOT NULL,
+                  UNIQUE(source_system, external_voucher_id)
+                )""")
+    db.execute('CREATE INDEX IF NOT EXISTS idx_vouchers_customer ON vouchers(customer_id)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_vouchers_order ON vouchers(order_id)')
 
 
 def backfill_business_v5_cases(db, *, now=None):

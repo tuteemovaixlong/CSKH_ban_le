@@ -567,10 +567,10 @@ class Phase5FixATests(unittest.TestCase):
             db.execute("INSERT INTO customers(id, name) VALUES ('CG-d9b82ffe', 'Demo Customer') ON CONFLICT DO NOTHING")
             db.execute("INSERT INTO customers(id, name) VALUES ('mgr_demo', 'Store Manager') ON CONFLICT DO NOTHING")
             db.execute(
-                """INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id)
-                   VALUES ('O-819125', 'CG-d9b82ffe', 'Áo sơ mi lụa công sở', 'Trắng / M', 450000, 'pending', 1, NULL, 'P-601'),
-                          ('O-819126', 'CG-d9b82ffe', 'Quần tây ống đứng tôn dáng', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602'),
-                          ('O-819127', 'CG-d9b82ffe', 'Giày lười da bò cao cấp', 'Nâu / 41', 890000, 'delivered', 1, NULL, 'P-603')"""
+                """INSERT INTO orders(id, customer_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version, cancel_reason, product_id)
+                   VALUES ('O-819125', 'CG-d9b82ffe', 'retailops_seed', 'O-819125', 1700000000.0, 'Áo sơ mi lụa công sở', 'Trắng / M', 450000, 'pending', 1, NULL, 'P-601'),
+                          ('O-819126', 'CG-d9b82ffe', 'retailops_seed', 'O-819126', 1700000000.0, 'Quần tây ống đứng tôn dáng', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602'),
+                          ('O-819127', 'CG-d9b82ffe', 'retailops_seed', 'O-819127', 1700000000.0, 'Giày lười da bò cao cấp', 'Nâu / 41', 890000, 'delivered', 1, NULL, 'P-603')"""
             )
             db.execute(
                 """INSERT INTO order_items(id, tenant_id, order_id, product_id, variant_id, product_title, variant_name, quantity, unit_price, subtotal, created_at)
@@ -991,8 +991,8 @@ class Phase5FixATests(unittest.TestCase):
         with bstore_rw.connection(write=True) as db:
             db.execute("INSERT INTO customers(id, name) VALUES ('CG-d9b82ffe', 'Demo Customer') ON CONFLICT DO NOTHING")
             db.execute(
-                "INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id) "
-                "VALUES ('O-819126', 'CG-d9b82ffe', 'Quần tây ống đứng tôn dáng', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602')"
+                "INSERT INTO orders(id, customer_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version, cancel_reason, product_id) "
+                "VALUES ('O-819126', 'CG-d9b82ffe', 'retailops_seed', 'O-819126', 1700000000.0, 'Quần tây ống đứng tôn dáng', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602')"
             )
             db.execute("DROP TABLE IF EXISTS order_purge_tombstones")
             self.assertFalse(bstore_rw._tombstone_table_exists(db))

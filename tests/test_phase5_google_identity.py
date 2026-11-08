@@ -436,8 +436,8 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
             bstore.seed_catalog(bdb)
             bdb.execute("INSERT INTO customers VALUES (?,?)", (legacy_cid, "Target Legacy"))
             bdb.execute(
-                "INSERT INTO orders (id, customer_id, name, variant, amount, status, version, product_id) "
-                "VALUES ('O-TARGET-01', ?, 'Váy Dạ Hội Đỏ', 'Đỏ / S', 950000, 'delivered', 1, 'P-601')",
+                "INSERT INTO orders (id, customer_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version, product_id) "
+                "VALUES ('O-TARGET-01', ?, 'retailops_seed', 'O-TARGET-01', 1700000000.0, 'Váy Dạ Hội Đỏ', 'Đỏ / S', 950000, 'delivered', 1, 'P-601')",
                 (legacy_cid,),
             )
 
@@ -559,8 +559,8 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
         with bstore_a.connection(write=True) as bdb:
             bstore_a.seed_catalog(bdb)
             bdb.execute(
-                "INSERT INTO orders (id, customer_id, name, variant, amount, status, version, product_id) "
-                "VALUES ('O-A1-001', ?, 'Áo sơ mi lụa công sở', 'Trắng / M', 450000, 'pending', 1, 'P-601')",
+                "INSERT INTO orders (id, customer_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version, product_id) "
+                "VALUES ('O-A1-001', ?, 'retailops_seed', 'O-A1-001', 1700000000.0, 'Áo sơ mi lụa công sở', 'Trắng / M', 450000, 'pending', 1, 'P-601')",
                 (mem_a1["customer_id"],),
             )
 
@@ -569,8 +569,8 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
         with bstore_b.connection(write=True) as bdb:
             bstore_b.seed_catalog(bdb)
             bdb.execute(
-                "INSERT INTO orders (id, customer_id, name, variant, amount, status, version, product_id) "
-                "VALUES ('O-B1-001', ?, 'Quần tây ống đứng tôn dáng', 'Đen / L', 520000, 'pending', 1, 'P-602')",
+                "INSERT INTO orders (id, customer_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version, product_id) "
+                "VALUES ('O-B1-001', ?, 'retailops_seed', 'O-B1-001', 1700000000.0, 'Quần tây ống đứng tôn dáng', 'Đen / L', 520000, 'pending', 1, 'P-602')",
                 (mem_b1["customer_id"],),
             )
 

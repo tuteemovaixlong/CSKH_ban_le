@@ -371,8 +371,11 @@ class SalesImportAdapter:
 
                 # Upsert into orders table (customer_id is intentionally NOT updated)
                 db.execute(
-                    """INSERT INTO orders (id, customer_id, name, variant, amount, status, version, cancel_reason, product_id)
-                       VALUES (?, ?, ?, ?, ?, ?, 1, NULL, ?)
+                    """INSERT INTO orders (
+                           id, customer_id, name, variant, amount, status, version, cancel_reason, product_id,
+                           source_system, external_order_id, ordered_at
+                       )
+                       VALUES (?, ?, ?, ?, ?, ?, 1, NULL, ?, ?, ?, ?)
                        ON CONFLICT(id) DO UPDATE SET
                            name=excluded.name,
                            variant=excluded.variant,
@@ -380,7 +383,18 @@ class SalesImportAdapter:
                            status=excluded.status,
                            version=orders.version+1,
                            product_id=excluded.product_id""",
-                    (order_id, customer_id, order_name, order_variant, total, db_status, primary_product_id),
+                    (
+                        order_id,
+                        customer_id,
+                        order_name,
+                        order_variant,
+                        total,
+                        db_status,
+                        primary_product_id,
+                        source_system,
+                        order_id,
+                        now,
+                    ),
                 )
 
                 # Insert line items into order_items

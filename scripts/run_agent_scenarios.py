@@ -561,9 +561,12 @@ class World:
         self.store.customer_ref_key = 'scenario-eval-hmac-secret-key-0123456789abcdef'
         with self.store.connection(write=True) as db:
             for order in FIXTURES[scenario['fixture']]:
-                db.execute('INSERT INTO orders(id, customer_id, product_id, name, variant, amount, status, version) '
-                           'VALUES (?, ?, ?, ?, ?, ?, ?, 1)',
-                           (order['id'], CUSTOMER, order['product_id'], order['name'], order['variant'], 599000, order['status']))
+                db.execute(
+                    'INSERT INTO orders(id, customer_id, product_id, name, variant, amount, status, version, '
+                    'source_system, external_order_id, ordered_at, ordered_at_backfilled) '
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'retailops_seed', ?, 1700000000.0, 1)",
+                    (order['id'], CUSTOMER, order['product_id'], order['name'], order['variant'], 599000, order['status'], order['id']),
+                )
             cust_row = db.execute('SELECT name FROM customers WHERE id = ?', (CUSTOMER,)).fetchone()
             self.customer_pii_tokens = [cust_row[0]] if cust_row and cust_row[0] else ['Mai Anh']
         self._obs_state = _TurnObservationState()

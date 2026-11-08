@@ -644,10 +644,10 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
         with self.store.connection(write=True) as db:
             for idx in range(1, 12):
                 db.execute(
-                    "INSERT INTO orders(id, customer_id, name, variant, amount, status, version, product_id) "
-                    "VALUES (?, 'C-001', 'Áo thun Essential', 'Trắng / M', 299000, 'pending', 1, 'P-101') "
+                    "INSERT INTO orders(id, customer_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version, product_id) "
+                    "VALUES (?, 'C-001', 'retailops_seed', ?, 1700000000.0, 'Áo thun Essential', 'Trắng / M', 299000, 'pending', 1, 'P-101') "
                     "ON CONFLICT DO NOTHING",
-                    (f"O-101{idx:02d}",),
+                    (f"O-101{idx:02d}", f"O-101{idx:02d}"),
                 )
         listed = bound("list_orders", {})
         self.assertTrue(listed["truncated"])
@@ -1617,10 +1617,10 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
         with bstore.connection(write=True) as db:
             db.execute("INSERT INTO customers VALUES ('legacy_demo_cust', 'Legacy Demo Customer') ON CONFLICT DO NOTHING")
             db.execute(
-                """INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id)
-                   VALUES ('O-899990', 'legacy_demo_cust', 'Áo sơ mi lụa công sở', 'Trắng / M', 450000, 'pending', 1, NULL, 'P-601'),
-                          ('O-899991', 'legacy_demo_cust', 'Quần tây đen hàn quốc', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602'),
-                          ('O-899992', 'legacy_demo_cust', 'Giày lười da bò cao cấp', 'Nâu / 41', 890000, 'delivered', 1, NULL, 'P-603')"""
+                """INSERT INTO orders(id, customer_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version, cancel_reason, product_id)
+                   VALUES ('O-899990', 'legacy_demo_cust', 'retailops_seed', 'O-899990', 1700000000.0, 'Áo sơ mi lụa công sở', 'Trắng / M', 450000, 'pending', 1, NULL, 'P-601'),
+                          ('O-899991', 'legacy_demo_cust', 'retailops_seed', 'O-899991', 1700000000.0, 'Quần tây đen hàn quốc', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602'),
+                          ('O-899992', 'legacy_demo_cust', 'retailops_seed', 'O-899992', 1700000000.0, 'Giày lười da bò cao cấp', 'Nâu / 41', 890000, 'delivered', 1, NULL, 'P-603')"""
             )
         self.assertFalse(bstore.is_demo_sample_order("legacy_demo_cust", "O-899991"))
         bstore.seed_demo_sample_orders("legacy_demo_cust")
@@ -1631,10 +1631,10 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
         with bstore.connection(write=True) as db:
             db.execute("INSERT INTO customers VALUES ('legacy_mixed_cust', 'Legacy Mixed Provenance') ON CONFLICT DO NOTHING")
             db.execute(
-                """INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id)
-                   VALUES ('O-888881', 'legacy_mixed_cust', 'Áo sơ mi lụa công sở', 'Trắng / M', 450000, 'pending', 1, NULL, 'P-601'),
-                          ('O-888882', 'legacy_mixed_cust', 'Quần tây ống đứng tôn dáng', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602'),
-                          ('O-888883', 'legacy_mixed_cust', 'Giày lười da bò cao cấp', 'Nâu / 41', 890000, 'delivered', 1, NULL, 'P-603')"""
+                """INSERT INTO orders(id, customer_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version, cancel_reason, product_id)
+                   VALUES ('O-888881', 'legacy_mixed_cust', 'retailops_seed', 'O-888881', 1700000000.0, 'Áo sơ mi lụa công sở', 'Trắng / M', 450000, 'pending', 1, NULL, 'P-601'),
+                          ('O-888882', 'legacy_mixed_cust', 'retailops_seed', 'O-888882', 1700000000.0, 'Quần tây ống đứng tôn dáng', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602'),
+                          ('O-888883', 'legacy_mixed_cust', 'retailops_seed', 'O-888883', 1700000000.0, 'Giày lười da bò cao cấp', 'Nâu / 41', 890000, 'delivered', 1, NULL, 'P-603')"""
             )
             db.execute(
                 """INSERT INTO imported_events(id, source_system, event_id, tenant_id, external_customer_id, customer_id, order_id, status, total, currency, payload_json, signature, created_at)
@@ -1661,10 +1661,10 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
         with bstore.connection(write=True) as db:
             db.execute("INSERT INTO customers VALUES ('legacy_mod_cust', 'Legacy Modified Fixture') ON CONFLICT DO NOTHING")
             db.execute(
-                """INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id)
-                   VALUES ('O-877771', 'legacy_mod_cust', 'Áo sơ mi lụa công sở', 'Trắng / M', 490000, 'pending', 1, NULL, 'P-601'),
-                          ('O-877772', 'legacy_mod_cust', 'Quần tây ống đứng tôn dáng', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602'),
-                          ('O-877773', 'legacy_mod_cust', 'Giày lười da bò cao cấp', 'Nâu / 41', 890000, 'delivered', 1, NULL, 'P-603')"""
+                """INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id, source_system, external_order_id, ordered_at)
+                   VALUES ('O-877771', 'legacy_mod_cust', 'Áo sơ mi lụa công sở', 'Trắng / M', 490000, 'pending', 1, NULL, 'P-601', 'retailops_seed', 'O-877771', 1700000000.0),
+                          ('O-877772', 'legacy_mod_cust', 'Quần tây ống đứng tôn dáng', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602', 'retailops_seed', 'O-877772', 1700000000.0),
+                          ('O-877773', 'legacy_mod_cust', 'Giày lười da bò cao cấp', 'Nâu / 41', 890000, 'delivered', 1, NULL, 'P-603', 'retailops_seed', 'O-877773', 1700000000.0)"""
             )
         bstore.seed_demo_sample_orders("legacy_mod_cust")
         self.assertFalse(bstore.is_demo_sample_order("legacy_mod_cust", "O-877772"))
@@ -1674,12 +1674,12 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
         with bstore.connection(write=True) as db:
             db.execute("INSERT INTO customers VALUES (?, ?) ON CONFLICT DO NOTHING", ("non_demo_customer", "Non Demo Customer"))
             db.execute(
-                """INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id)
-                   VALUES ('O-123456', 'non_demo_customer', 'Quần tây ống đứng tôn dáng', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602')"""
+                """INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id, source_system, external_order_id, ordered_at)
+                   VALUES ('O-123456', 'non_demo_customer', 'Quần tây ống đứng tôn dáng', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602', 'retailops_seed', 'O-123456', 1700000000.0)"""
             )
             db.execute(
-                """INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id)
-                   VALUES ('O-754321', 'non_demo_customer', 'Quần tây ống đứng tôn dáng', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602')"""
+                """INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id, source_system, external_order_id, ordered_at)
+                   VALUES ('O-754321', 'non_demo_customer', 'Quần tây ống đứng tôn dáng', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602', 'retailops_seed', 'O-754321', 1700000000.0)"""
             )
         bstore.seed_demo_sample_orders("non_demo_customer")
         self.assertFalse(bstore.is_demo_sample_order("non_demo_customer", "O-754321"))
@@ -1699,6 +1699,15 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
             "cancel_reason": None,
             "product_id": "P-602",
             "delivered_at": None,
+            "source_system": "retailops_seed",
+            "external_order_id": "O-123456",
+            "ordered_at": 1700000000.0,
+            "ordered_at_backfilled": 0,
+            "promised_delivery_by": None,
+            "shipping_fee": None,
+            "payment_method": None,
+            "payment_status": "unpaid",
+            "ship_to_area": None,
         }
         code_nd_list, nd_list_res, _ = _wsgi_call(web, "GET", "/api/orders", cookie=cookie_non_demo)
         self.assertEqual(code_nd_list, 200)

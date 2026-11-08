@@ -70,8 +70,8 @@ class OrderToolRecoveryTests(unittest.TestCase):
         with self.store.connection(write=True) as db:
             for oid, owner, status in [('O-819125', 'C-001', 'pending'),
                                         ('O-819126', 'C-001', 'delivered')]:
-                db.execute('INSERT INTO orders(id,customer_id,name,variant,amount,status) VALUES (?,?,?,?,?,?)',
-                           (oid, owner, 'Fixture shirt', 'White / M', 450000, status))
+                db.execute('INSERT INTO orders(id,customer_id,source_system,external_order_id,ordered_at,name,variant,amount,status) VALUES (?,?,?,?,?,?,?,?,?)',
+                           (oid, owner, 'retailops_seed', oid, 1700000000.0, 'Fixture shirt', 'White / M', 450000, status))
         self.adapter = OpenRouterAgent(KEY, MODEL, tunnel_token=TUNNEL_KEY, vision=True)
         self.app = Application(self.store, {}, api_infer=self.adapter, orchestrator='multi_agent')
         self.cid = self.app.new_conversation('C-001', {'provider_id': 'api'})['conversation_id']
@@ -101,8 +101,8 @@ class OrderToolRecoveryTests(unittest.TestCase):
 
     def test_other_customer_order_is_not_disclosed(self):
         with self.store.connection(write=True) as db:
-            db.execute('INSERT INTO orders(id,customer_id,name,variant,amount,status) VALUES (?,?,?,?,?,?)',
-                       ('O-1002', 'C-002', 'PRIVATE ITEM', 'SECRET VARIANT', 999, 'delivered'))
+            db.execute('INSERT INTO orders(id,customer_id,name,variant,amount,status,source_system,external_order_id,ordered_at) VALUES (?,?,?,?,?,?,?,?,?)',
+                       ('O-1002', 'C-002', 'PRIVATE ITEM', 'SECRET VARIANT', 999, 'delivered', 'retailops_seed', 'O-1002', 1700000000.0))
         with patch.object(OpenRouterAgent, 'request', return_value=api_response(None, [('get_order', {'order_id': 'O-1002'})])):
             result = self.app.chat('C-001', self.body('Ki\u1ec3m tra \u0111\u01a1n O-1002'))
         serialized = json.dumps(result)

@@ -70,6 +70,6 @@ class RoleHarness(unittest.TestCase):
                   customer='C-001', amount=599000, store=None):
         with (store or self.store_a).connection(write=True) as db:
             db.execute(
-                'INSERT INTO orders(id, customer_id, product_id, name, variant, amount, status, version) '
-                'VALUES (?, ?, ?, ?, ?, ?, ?, 1)',
-                (order_id, customer, product_id, name, variant, amount, status))
+                'INSERT INTO orders(id, customer_id, product_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version) '
+                'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)',
+                (order_id, customer, product_id, 'retailops_seed', order_id, 1700000000.0, name, variant, amount, status))

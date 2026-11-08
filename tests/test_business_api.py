@@ -97,7 +97,7 @@ class BusinessTests(unittest.TestCase):
 
     def test_idempotency_key_cannot_be_reused_for_another_order(self):
         with self.store.connection(write=True) as db:
-            db.execute("INSERT INTO orders(id,customer_id,name,variant,amount,status) VALUES ('O-103','C-001','Test','M',100,'pending')")
+            db.execute("INSERT INTO orders(id,customer_id,source_system,external_order_id,ordered_at,name,variant,amount,status) VALUES ('O-103','C-001','retailops_seed','O-103',1700000000.0,'Test','M',100,'pending')")
         first, second = self.proposal(), self.proposal(oid='O-103')
         self.store.confirm('C-001', first['proposal_id'], {'confirmed': True}, 'a'*32)
         self.assert_error('idempotency_conflict', lambda: self.store.confirm('C-001', second['proposal_id'], {'confirmed': True}, 'a'*32))

@@ -34,8 +34,8 @@ def seed(sessions, tenant):
             b.execute('INSERT INTO customers (id, name) VALUES (?, ?)', (cid, name))
         for oid, cid in (('O-TGT-X1', COLLIDING), ('O-TGT-VICTIM', VICTIM_CUSTOMER),
                          ('O-TGT-ORPHAN', ORPHAN_CUSTOMER), ('O-TGT-X1-OWN', OWN_CUSTOMER)):
-            b.execute("INSERT INTO orders (id, customer_id, name, variant, amount, status, version) "
-                      "VALUES (?, ?, 'Item', 'M', 1000, 'pending', 1)", (oid, cid))
+            b.execute("INSERT INTO orders (id, customer_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version) "
+                      "VALUES (?, ?, 'retailops_seed', ?, ?, 'Item', 'M', 1000, 'pending', 1)", (oid, cid, oid, now))
         b.execute('INSERT INTO conversations (id, customer_id, order_id, product_id, revision, expires_at) '
                   'VALUES (?, ?, ?, NULL, 1, ?)', ('conv-tgt-x1', COLLIDING, 'O-TGT-X1', now + 3600))
 

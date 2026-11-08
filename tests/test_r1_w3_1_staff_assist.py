@@ -31,12 +31,12 @@ class PhaseR1W31BaseTestCase(unittest.TestCase):
         self.store_b = self.sessions.provision_tenant("shop-b", "Shop B", seed_demo=True)
         with self.store_a.connection(write=True) as db:
             db.execute(
-                "INSERT INTO orders(id, customer_id, product_id, name, variant, amount, status, version, delivered_at) "
-                "VALUES ('O-103', 'C-001', 'P-102', 'Áo khoác Everyday', 'Xanh navy / L', 599000, 'delivered', 1, 1760000000.0)"
+                "INSERT INTO orders(id, customer_id, product_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version, delivered_at) "
+                "VALUES ('O-103', 'C-001', 'P-102', 'retailops_seed', 'O-103', 1759900000.0, 'Áo khoác Everyday', 'Xanh navy / L', 599000, 'delivered', 1, 1760000000.0)"
             )
             db.execute(
-                "INSERT INTO orders(id, customer_id, product_id, name, variant, amount, status, version) "
-                "VALUES ('O-104', 'C-001', 'P-101', 'Áo thun Essential', 'Trắng / S', 299000, 'pending', 1)"
+                "INSERT INTO orders(id, customer_id, product_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version) "
+                "VALUES ('O-104', 'C-001', 'P-101', 'retailops_seed', 'O-104', 1759900000.0, 'Áo thun Essential', 'Trắng / S', 299000, 'pending', 1)"
             )
         self.store_a.add_customer("C-STAFF-A1", "Nhân viên Lan")
         self.store_a.add_customer("C-STAFF-A2", "Nhân viên Hùng")
@@ -490,12 +490,12 @@ class PhaseR1W31Item3StaffConsentedOrderActionsTests(PhaseR1W31BaseTestCase):
 
         with self.store_a.connection(write=True) as db:
             db.execute(
-                "INSERT INTO orders(id, customer_id, product_id, name, variant, amount, status, version) "
-                "VALUES ('O-105', 'C-001', 'P-101', 'Áo thun Essential', 'Đen / M', 299000, 'cancelled', 1)"
+                "INSERT INTO orders(id, customer_id, product_id, name, variant, amount, status, version, source_system, external_order_id, ordered_at) "
+                "VALUES ('O-105', 'C-001', 'P-101', 'Áo thun Essential', 'Đen / M', 299000, 'cancelled', 1, 'retailops_seed', 'O-105', 1760000000.0)"
             )
             db.execute(
-                "INSERT INTO orders(id, customer_id, product_id, name, variant, amount, status, version, delivered_at) "
-                "VALUES ('O-106', 'C-001', 'P-102', 'Áo khoác Everyday', 'Đen / XL', 599000, 'delivered', 1, 1760050000.0)"
+                "INSERT INTO orders(id, customer_id, product_id, name, variant, amount, status, version, delivered_at, source_system, external_order_id, ordered_at) "
+                "VALUES ('O-106', 'C-001', 'P-102', 'Áo khoác Everyday', 'Đen / XL', 599000, 'delivered', 1, 1760050000.0, 'retailops_seed', 'O-106', 1760000000.0)"
             )
 
         # Open conversation 1 for cust1 and seed a bot turn
@@ -738,8 +738,8 @@ class PhaseR1W31Item3StaffConsentedOrderActionsTests(PhaseR1W31BaseTestCase):
 
         with self.store_a.connection(write=True) as db:
             db.execute(
-                "INSERT INTO orders(id, customer_id, product_id, name, variant, amount, status, version, delivered_at) "
-                "VALUES ('O-106', 'C-001', 'P-102', 'Áo khoác Everyday', 'Đen / XL', 599000, 'delivered', 1, 1760150000.0)"
+                "INSERT INTO orders(id, customer_id, product_id, name, variant, amount, status, version, delivered_at, source_system, external_order_id, ordered_at) "
+                "VALUES ('O-106', 'C-001', 'P-102', 'Áo khoác Everyday', 'Đen / XL', 599000, 'delivered', 1, 1760150000.0, 'retailops_seed', 'O-106', 1760000000.0)"
             )
 
         st, conv = self._req("POST", "/api/conversations", {}, cookie=self.cust1)

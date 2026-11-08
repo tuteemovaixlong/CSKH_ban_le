@@ -3,6 +3,7 @@ import hashlib
 import json
 from pathlib import Path
 import sqlite3
+import time
 from contextlib import closing
 
 from retailops.business.schema import LEGACY_EXCHANGE_KIND_MAP
@@ -30,9 +31,9 @@ def read_database(path, component, tables):
             db.row_factory = sqlite3.Row
             db.execute('BEGIN')
             marker = [dict(row) for row in db.execute('SELECT component,version FROM retailops_schema')]
-            allowed_versions = (1, 2, 3, 4, 5, 6, 7) if component == 'business' else (1, 2, 3, 4, 5)
+            allowed_versions = (1, 2, 3, 4, 5, 6, 7, 8) if component == 'business' else (1, 2, 3, 4, 5)
             if len(marker) != 1 or marker[0]['component'] != component or marker[0]['version'] not in allowed_versions:
-                raise ValueError('Import requires identity v1/v2/v3/v4/v5 and business v1/v2/v3/v4/v5/v6/v7 in a stopped persistent SQLite snapshot.')
+                raise ValueError('Import requires identity v1/v2/v3/v4/v5 and business v1/v2/v3/v4/v5/v6/v7/v8 in a stopped persistent SQLite snapshot.')
             if db.execute('PRAGMA integrity_check').fetchone()[0] != 'ok' or db.execute('PRAGMA foreign_key_check').fetchall():
                 raise ValueError('SQLite snapshot failed integrity checks.')
             if component == 'business':
@@ -56,12 +57,50 @@ def read_database(path, component, tables):
                     ])
                 if marker[0]['version'] >= 7:
                     ordered.append('case_assist_turns')
+                if marker[0]['version'] >= 8:
+                    ordered.extend([
+                        'integration_connectors',
+                        'order_items',
+                        'imported_events',
+                        'order_purge_tombstones',
+                        'shipments',
+                        'shipment_events',
+                        'payment_transactions',
+                        'refunds',
+                        'order_recipients',
+                        'delivery_compensations',
+                        'vouchers',
+                    ])
                 tables = tuple(ordered)
             existing_tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             result = {table: [dict(row) for row in db.execute('SELECT * FROM "'+table+'"')] for table in tables if table in existing_tables}
             if component == 'business':
+                import_ts = round(time.time(), 3)
                 for row in result.get('orders', ()):
                     row.setdefault('delivered_at', None)
+                    if row.get('source_system') is None:
+                        row['source_system'] = 'retailops_seed'
+                    if 'external_order_id' not in row or (
+                        row['external_order_id'] is None and row['source_system'] == 'retailops_seed'
+                    ):
+                        row['external_order_id'] = row['id']
+                    if row.get('ordered_at') is None:
+                        row['ordered_at'] = import_ts
+                        row['ordered_at_backfilled'] = 1
+                    else:
+                        row.setdefault('ordered_at_backfilled', 0)
+                    row.setdefault('payment_method', None)
+                    if row.get('payment_status') is None:
+                        row['payment_status'] = 'unpaid'
+                    row.setdefault('shipping_fee', None)
+                    row.setdefault('ship_to_area', None)
+                    row.setdefault('promised_delivery_by', None)
+                for row in result.get('imported_events', ()):
+                    row.setdefault('event_type', None)
+                    row.setdefault('sequence', None)
+                    row.setdefault('received_via', None)
+                    row.setdefault('payload_digest', None)
+                    row.setdefault('redacted_fields', None)
                 # A W3 snapshot (SQLite 5) predates general exchange: carry its requests over the same way
                 # `migrate-v7` does, so the PostgreSQL target (always the current shape) accepts them.
                 for row in result.get('order_action_requests', ()):

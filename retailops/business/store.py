@@ -59,22 +59,26 @@ from retailops.business.schema import (
     BUSINESS_V6_VERSION_MAPPING,
     BUSINESS_V7_VERSION_MAPPING,
     BUSINESS_V8_VERSION_MAPPING,
+    BUSINESS_V9_VERSION_MAPPING,
     EXCHANGE_KINDS,
+    REQUIRED_V9_TABLES,
     SQLITE_BUSINESS_SCHEMA_CURRENT,
     SQLITE_BUSINESS_V5_SCHEMA_VERSION,
     SQLITE_BUSINESS_V6_SCHEMA_VERSION,
     SQLITE_BUSINESS_V7_SCHEMA_VERSION,
+    SQLITE_BUSINESS_V8_SCHEMA_VERSION,
     backfill_business_v5_cases,
     ensure_case_assist_tables,
     ensure_case_tables,
     ensure_import_tables,
     ensure_order_action_tables,
+    ensure_v9_tables,
     initialize as initialize_schema,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
 
-_MIGRATE_HINT = 'Hãy chạy lệnh operator database migrate-v8 với --confirm-preflight --confirm-backup.'
+_MIGRATE_HINT = 'Hãy chạy lệnh operator database migrate-v9 với --confirm-preflight --confirm-backup.'
 
 def _parse_variant_string(v_str):
     delimiter = "·" if "·" in str(v_str) else ("/" if "/" in str(v_str) else None)
@@ -144,7 +148,7 @@ def _inspect_sqlite_business_ready(path, *, target_version=SQLITE_BUSINESS_SCHEM
                 raise ApiError(
                     503,
                     'business_migration_required',
-                    f'Kho dữ liệu cửa hàng thiếu dấu vết schema Business v8; khởi động bị chặn fail-closed. {_MIGRATE_HINT}',
+                    f'Kho dữ liệu cửa hàng thiếu dấu vết schema Business v9; khởi động bị chặn fail-closed. {_MIGRATE_HINT}',
                 )
             ver = rows[0]['version']
             if ver not in range(1, SQLITE_BUSINESS_SCHEMA_CURRENT + 1):
@@ -153,7 +157,7 @@ def _inspect_sqlite_business_ready(path, *, target_version=SQLITE_BUSINESS_SCHEM
                 raise ApiError(
                     503,
                     'business_migration_required',
-                    f'Kho dữ liệu cửa hàng đang ở SQLite schema v{ver} (trước Business v8); khởi động bị chặn fail-closed. '
+                    f'Kho dữ liệu cửa hàng đang ở SQLite schema v{ver} (trước Business v9); khởi động bị chặn fail-closed. '
                     f'{_MIGRATE_HINT}',
                 )
             required_v5_tables = {'cases', 'handoff_episodes', 'case_feedback_events'}
@@ -188,7 +192,7 @@ def _inspect_sqlite_business_ready(path, *, target_version=SQLITE_BUSINESS_SCHEM
                             f'Kho dữ liệu cửa hàng chưa đầy đủ các cột đổi hàng Business v7; khởi động bị chặn fail-closed. '
                             f'{_MIGRATE_HINT}',
                         )
-                    if target_version >= SQLITE_BUSINESS_SCHEMA_CURRENT:
+                    if target_version >= SQLITE_BUSINESS_V8_SCHEMA_VERSION:
                         if 'case_assist_turns' not in tables:
                             raise ApiError(
                                 503,
@@ -215,6 +219,83 @@ def _inspect_sqlite_business_ready(path, *, target_version=SQLITE_BUSINESS_SCHEM
                                 f'Kho dữ liệu cửa hàng chưa đầy đủ cấu trúc bằng chứng Business v8; khởi động bị chặn fail-closed. '
                                 f'{_MIGRATE_HINT}',
                             )
+                        if target_version >= SQLITE_BUSINESS_SCHEMA_CURRENT:
+                            if not set(REQUIRED_V9_TABLES).issubset(tables) or 'imported_events' not in tables:
+                                raise ApiError(
+                                    503,
+                                    'business_migration_required',
+                                    f'Kho dữ liệu cửa hàng thiếu các bảng tích hợp Business v9; khởi động bị chặn fail-closed. '
+                                    f'{_MIGRATE_HINT}',
+                                )
+                            ord_info = list(ro_db.execute('PRAGMA table_info(orders)'))
+                            ord_cols = {row['name'] for row in ord_info}
+                            ord_not_null = {row['name'] for row in ord_info if int(row['notnull']) != 0}
+                            ord_master = ro_db.execute(
+                                "SELECT sql FROM sqlite_master WHERE type='table' AND name='orders'"
+                            ).fetchone()
+                            ord_ddl = str(ord_master['sql'] or '') if ord_master else ''
+                            required_v9_ord_cols = {
+                                'source_system',
+                                'external_order_id',
+                                'ordered_at',
+                                'ordered_at_backfilled',
+                                'payment_method',
+                                'payment_status',
+                                'shipping_fee',
+                                'ship_to_area',
+                                'promised_delivery_by',
+                            }
+                            if (
+                                not (required_v9_ord_cols <= ord_cols)
+                                or "'shipping'" not in ord_ddl
+                                or 'orders_source_external_v9_unique' not in ord_ddl
+                                or not ({'source_system', 'ordered_at', 'ordered_at_backfilled', 'payment_status'} <= ord_not_null)
+                            ):
+                                raise ApiError(
+                                    503,
+                                    'business_migration_required',
+                                    f'Kho dữ liệu cửa hàng chưa đầy đủ bảng orders Business v9; khởi động bị chặn fail-closed. '
+                                    f'{_MIGRATE_HINT}',
+                                )
+                            ie_info = list(ro_db.execute('PRAGMA table_info(imported_events)'))
+                            ie_cols = {row['name'] for row in ie_info}
+                            ie_not_null = {row['name'] for row in ie_info if int(row['notnull']) != 0}
+                            required_v9_ie_cols = {'event_type', 'sequence', 'received_via', 'payload_digest', 'redacted_fields'}
+                            legacy_ie_nullable = {
+                                'external_customer_id',
+                                'customer_id',
+                                'order_id',
+                                'status',
+                                'total',
+                                'currency',
+                                'signature',
+                            }
+                            if not (required_v9_ie_cols <= ie_cols) or bool(legacy_ie_nullable & ie_not_null):
+                                raise ApiError(
+                                    503,
+                                    'business_migration_required',
+                                    f'Kho dữ liệu cửa hàng chưa cập nhật imported_events Business v9; khởi động bị chặn fail-closed. '
+                                    f'{_MIGRATE_HINT}',
+                                )
+                            idx_names = {
+                                r[0]
+                                for r in ro_db.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
+                            }
+                            trg_names = {
+                                r[0]
+                                for r in ro_db.execute("SELECT name FROM sqlite_master WHERE type='trigger'").fetchall()
+                            }
+                            if (
+                                'idx_product_variants_sku_unique' not in idx_names
+                                or not {'shipment_events_no_update', 'shipment_events_no_delete'} <= trg_names
+                            ):
+                                raise ApiError(
+                                    503,
+                                    'business_migration_required',
+                                    f'Kho dữ liệu cửa hàng thiếu chỉ mục hoặc trigger Business v9; khởi động bị chặn fail-closed. '
+                                    f'{_MIGRATE_HINT}',
+                                )
+                            return 'v9_ready'
                         return 'v8_ready'
                     return 'v7_ready'
                 return 'v6_ready'
@@ -225,7 +306,7 @@ def _inspect_sqlite_business_ready(path, *, target_version=SQLITE_BUSINESS_SCHEM
             raise ApiError(
                 503,
                 'business_migration_required',
-                f'Kho dữ liệu cửa hàng legacy chưa nâng cấp lên Business v8; khởi động bị chặn fail-closed. {_MIGRATE_HINT}',
+                f'Kho dữ liệu cửa hàng legacy chưa nâng cấp lên Business v9; khởi động bị chặn fail-closed. {_MIGRATE_HINT}',
             )
         raise ValueError('Database belongs to another RetailOps component.')
     except sqlite3.Error as exc:
@@ -454,6 +535,19 @@ def _migrate_single_sqlite_business_file(
             if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='handoff_episodes'").fetchone()
             else 0
         )
+        orders_backfilled = 0
+        if target_version >= SQLITE_BUSINESS_SCHEMA_CURRENT and (ver_before < target_version or state == 'needs_migration'):
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='orders'").fetchone():
+                ord_cols_pre = {row['name'] for row in db.execute('PRAGMA table_info(orders)')}
+                if 'source_system' in ord_cols_pre and 'ordered_at' in ord_cols_pre:
+                    orders_backfilled = int(
+                        db.execute(
+                            'SELECT COUNT(*) FROM orders WHERE source_system IS NULL OR ordered_at IS NULL'
+                        ).fetchone()[0]
+                    )
+                else:
+                    orders_backfilled = int(db.execute('SELECT COUNT(*) FROM orders').fetchone()[0])
+
         if ver_before < target_version or state == 'needs_migration':
             migrate(db, 'business', initialize_schema, target_version=target_version)
             ensure_import_tables(db)
@@ -461,14 +555,16 @@ def _migrate_single_sqlite_business_file(
             backfill_res = backfill_business_v5_cases(db)
             if target_version >= SQLITE_BUSINESS_V6_SCHEMA_VERSION:
                 ensure_order_action_tables(db)
-            if target_version >= SQLITE_BUSINESS_SCHEMA_CURRENT:
+            if target_version >= SQLITE_BUSINESS_V8_SCHEMA_VERSION:
                 ensure_case_assist_tables(db)
+            if target_version >= SQLITE_BUSINESS_SCHEMA_CURRENT:
+                ensure_v9_tables(db)
         else:
             backfill_res = {'cases_created': 0, 'episodes_created': 0}
             legacy_exchange_rows = 0
 
         att_stats = {'attachments_migrated': 0, 'attachments_removed': 0, 'turns_updated': 0}
-        if backfill_attachments and target_version >= SQLITE_BUSINESS_SCHEMA_CURRENT:
+        if backfill_attachments and target_version >= SQLITE_BUSINESS_V8_SCHEMA_VERSION:
             eff_root = Path(data_root) if data_root is not None else db_path.parent
             att_stats, written_paths = backfill_legacy_turn_attachments_v8(
                 db,
@@ -513,6 +609,7 @@ def _migrate_single_sqlite_business_file(
             'attachments_migrated': int(att_stats['attachments_migrated']),
             'attachments_removed': int(att_stats['attachments_removed']),
             'turns_updated': int(att_stats['turns_updated']),
+            'orders_backfilled': int(orders_backfilled),
         }
     except Exception:
         if db.in_transaction:
@@ -749,7 +846,7 @@ def migrate_sqlite_business_v8(
         tid = key_to_tid.get(tf.stem, 'default')
         res = _migrate_single_sqlite_business_file(
             tf,
-            target_version=SQLITE_BUSINESS_SCHEMA_CURRENT,
+            target_version=SQLITE_BUSINESS_V8_SCHEMA_VERSION,
             backfill_attachments=True,
             data_root=eff_root,
             tenant_id=tid,
@@ -763,13 +860,67 @@ def migrate_sqlite_business_v8(
     return {
         'result': 'BUSINESS_V8_MIGRATED',
         'backend': 'sqlite',
-        'schema_version': SQLITE_BUSINESS_SCHEMA_CURRENT,
+        'schema_version': SQLITE_BUSINESS_V8_SCHEMA_VERSION,
         'logical_version': BUSINESS_V8_VERSION_MAPPING['postgresql'],
         'tenants': len(tenant_files),
         'upgraded': any_upgraded,
         'attachments_migrated': attachments_migrated,
         'attachments_removed': attachments_removed,
         'turns_updated': turns_updated,
+    }
+
+
+def migrate_sqlite_business_v9(
+    path,
+    *,
+    preflight_confirmed=False,
+    backup_confirmed=False,
+    data_root: Path | None = None,
+    malware_scanner=None,
+):
+    """Explicit operator migration command for SQLite Business v9 (W6.1b-D1, B2, B3, B6).
+
+    Upgrades every tenant business database to SQLite schema v8 (logical Business v9) in one
+    transaction per tenant: adds canonical v9 columns and 'shipping' status to `orders` (backfilling
+    legacy rows with `source_system='retailops_seed'`, `external_order_id=id`, `ordered_at=<migrate_ts>`,
+    `ordered_at_backfilled=1`), updates `imported_events` to v2 shape, adds partial unique index on
+    `product_variants.sku`, and creates all 8 Business v9 tables plus append-only `shipment_events`
+    triggers. Idempotent; never invoked automatically.
+    """
+    require(
+        preflight_confirmed is True and backup_confirmed is True,
+        400,
+        'migration_confirmation_required',
+        'Lệnh nâng cấp Business v9 yêu cầu xác nhận tường minh --confirm-preflight và --confirm-backup theo runbook.',
+    )
+    target = Path(path)
+    inferred_root, key_to_tid = _resolve_sqlite_tenant_id_map(target)
+    eff_root = Path(data_root) if data_root is not None else inferred_root
+    tenant_files = [target] if target.is_file() else _resolve_sqlite_tenant_files(target, milestone_label='Business v9')
+
+    any_upgraded = False
+    orders_backfilled = 0
+    for tf in tenant_files:
+        tid = key_to_tid.get(tf.stem, 'default')
+        res = _migrate_single_sqlite_business_file(
+            tf,
+            target_version=SQLITE_BUSINESS_SCHEMA_CURRENT,
+            backfill_attachments=True,
+            data_root=eff_root,
+            tenant_id=tid,
+            malware_scanner=malware_scanner,
+        )
+        any_upgraded = any_upgraded or res['upgraded']
+        orders_backfilled += res['orders_backfilled']
+
+    return {
+        'result': 'BUSINESS_V9_MIGRATED',
+        'backend': 'sqlite',
+        'schema_version': SQLITE_BUSINESS_SCHEMA_CURRENT,
+        'logical_version': BUSINESS_V9_VERSION_MAPPING['postgresql'],
+        'tenants': len(tenant_files),
+        'upgraded': any_upgraded,
+        'orders_backfilled': orders_backfilled,
     }
 
 
@@ -1048,8 +1199,18 @@ class BusinessStore:
             tombstoned_oids = {
                 str(r["order_id"]) for r in db.execute("SELECT order_id FROM order_purge_tombstones").fetchall()
             }
-            orders_to_seed = [o for o in orders if o[0] not in tombstoned_oids]
-            db.executemany("INSERT INTO orders(id, customer_id, name, variant, amount, status, product_id) VALUES (?,?,?,?,?,?,?) ON CONFLICT DO NOTHING", orders_to_seed)
+            seed_ts = self._now()
+            orders_to_seed = [
+                (o[0], o[1], o[2], o[3], o[4], o[5], o[6], 'retailops_seed', o[0], seed_ts, 1)
+                for o in orders
+                if o[0] not in tombstoned_oids
+            ]
+            db.executemany(
+                "INSERT INTO orders(id, customer_id, name, variant, amount, status, product_id, "
+                "source_system, external_order_id, ordered_at, ordered_at_backfilled) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING",
+                orders_to_seed,
+            )
             order_to_product = {
                 'O-101': 'P-101', 'O-102': 'P-102', 'O-202': 'P-202',
                 'O-301': 'P-103', 'O-302': 'P-104', 'O-303': 'P-203', 'O-304': 'P-401',
@@ -1367,14 +1528,18 @@ class BusinessStore:
                     (sample_orders[0][0], sample_orders[1][0], sample_orders[2][0]),
                 ).fetchall()
             }
+            sample_ts = self._now()
             inserted_oids = []
             for ord_row in sample_orders:
                 if ord_row[0] in tombstoned_oids:
                     continue
                 conn.execute(
-                    """INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id)
-                       VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING""",
-                    ord_row,
+                    """INSERT INTO orders(
+                           id, customer_id, name, variant, amount, status, version, cancel_reason, product_id,
+                           source_system, external_order_id, ordered_at, ordered_at_backfilled
+                       )
+                       VALUES (?,?,?,?,?,?,?,?,?,'retailops_seed',?,?,1) ON CONFLICT DO NOTHING""",
+                    (*ord_row, ord_row[0], sample_ts),
                 )
                 inserted_oids.append(ord_row[0])
             if p602_oid in inserted_oids:

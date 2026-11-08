@@ -9,7 +9,8 @@ from unittest.mock import patch
 
 from retailops.core import ApiError
 from retailops.business.store import (BusinessStore, migrate_sqlite_business_v5, migrate_sqlite_business_v6,
-                                      migrate_sqlite_business_v7, migrate_sqlite_business_v8)
+                                      migrate_sqlite_business_v7, migrate_sqlite_business_v8,
+                                      migrate_sqlite_business_v9)
 from retailops.identity.store import IdentityStore
 
 
@@ -57,6 +58,10 @@ class MigrationTests(unittest.TestCase):
             BusinessStore(self.path)
         self.assertEqual((mig_v8_err.exception.status, mig_v8_err.exception.code), (503, 'business_migration_required'))
         migrate_sqlite_business_v8(self.path, preflight_confirmed=True, backup_confirmed=True)
+        with self.assertRaises(ApiError) as mig_v9_err:  # Business v8 is no longer current since W6.1b-1
+            BusinessStore(self.path)
+        self.assertEqual((mig_v9_err.exception.status, mig_v9_err.exception.code), (503, 'business_migration_required'))
+        migrate_sqlite_business_v9(self.path, preflight_confirmed=True, backup_confirmed=True)
         for _ in range(2):  # Reopening must not rerun migrations or seed records.
             store = BusinessStore(self.path)
             self.assertEqual(store.orders('C-901')[0]['version'], 2)
@@ -65,7 +70,7 @@ class MigrationTests(unittest.TestCase):
             self.assertEqual(len(store.events('C-901')), 1)
             self.assertTrue(store.confirm('C-901', 'old-proposal', {'confirmed': True}, 'legacy-confirm-key')['replayed'])
             with store.connection() as db:
-                self.assertEqual(tuple(db.execute('SELECT * FROM retailops_schema').fetchone()), ('business', 7))
+                self.assertEqual(tuple(db.execute('SELECT * FROM retailops_schema').fetchone()), ('business', 8))
                 row = db.execute('SELECT revision,provider_id FROM conversations').fetchone()
                 self.assertEqual(tuple(row), (3, 'custom'))
                 self.assertEqual(db.execute('PRAGMA integrity_check').fetchone()[0], 'ok')
@@ -81,12 +86,12 @@ class MigrationTests(unittest.TestCase):
         with self.assertRaises(ApiError) as mig_err:
             BusinessStore(self.path)
         self.assertEqual((mig_err.exception.status, mig_err.exception.code), (503, 'business_migration_required'))
-        migrate_sqlite_business_v8(self.path, preflight_confirmed=True, backup_confirmed=True)
+        migrate_sqlite_business_v9(self.path, preflight_confirmed=True, backup_confirmed=True)
         for _ in range(2):
             reopened = BusinessStore(self.path)
             self.assertEqual(reopened.orders('C-001')[0]['status'], 'pending')
             with reopened.connection() as db:
-                self.assertEqual(db.execute('SELECT version FROM retailops_schema').fetchone()[0], 7)
+                self.assertEqual(db.execute('SELECT version FROM retailops_schema').fetchone()[0], 8)
                 self.assertEqual(db.execute('SELECT count(*) FROM graph_runs').fetchone()[0], 0)
 
     def test_import_rejects_missing_identity_version_marker(self):
@@ -129,7 +134,7 @@ class MigrationTests(unittest.TestCase):
         store = BusinessStore(self.path)
         store.seed()
         for sql in (
-            "INSERT INTO orders(id,customer_id,name,variant,amount,status) VALUES('O-999','MISSING','x','x',1,'pending')",
+            "INSERT INTO orders(id,customer_id,source_system,external_order_id,ordered_at,name,variant,amount,status) VALUES('O-999','MISSING','retailops_seed','O-999',1.0,'x','x',1,'pending')",
             "UPDATE orders SET customer_id='MISSING' WHERE id='O-101'",
             "DELETE FROM customers WHERE id='C-001'",
             "UPDATE customers SET id='MISSING' WHERE id='C-001'",

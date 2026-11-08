@@ -108,8 +108,8 @@ def seed(sessions, tenant):
         for cid, name in ((COLLIDING, 'ILV Shared'), (INTRUDER_OWN, 'ILV Intruder')):
             b.execute('INSERT INTO customers (id, name) VALUES (?, ?)', (cid, name))
         for oid, cid in (('O-ILV-A', COLLIDING), ('O-ILV-B', COLLIDING), ('O-ILV-INTRUDER', INTRUDER_OWN)):
-            b.execute("INSERT INTO orders (id, customer_id, name, variant, amount, status, version) "
-                      "VALUES (?, ?, 'Item', 'M', 1000, 'pending', 1)", (oid, cid))
+            b.execute("INSERT INTO orders (id, customer_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version) "
+                      "VALUES (?, ?, 'retailops_seed', ?, ?, 'Item', 'M', 1000, 'pending', 1)", (oid, cid, oid, now))
         for conv, cid, oid in (('conv-ilv-a', COLLIDING, 'O-ILV-A'), ('conv-ilv-intruder', INTRUDER_OWN, 'O-ILV-INTRUDER')):
             b.execute('INSERT INTO conversations (id, customer_id, order_id, product_id, revision, expires_at) '
                       'VALUES (?, ?, ?, NULL, 1, ?)', (conv, cid, oid, now + 3600))
@@ -416,8 +416,8 @@ def run(case, sessions, tenant):
         )
     with sessions.business_store(tenant).connection(write=True) as b:
         b.execute('INSERT INTO customers (id, name) VALUES (?, ?)', (link_test_cid, 'ILV Link Clean'))
-        b.execute("INSERT INTO orders (id, customer_id, name, variant, amount, status, version) "
-                  "VALUES (?, ?, 'Link Order', 'M', 2000, 'pending', 1)", ('O-ILV-LINK', link_test_cid))
+        b.execute("INSERT INTO orders (id, customer_id, name, variant, amount, status, version, source_system, external_order_id, ordered_at) "
+                  "VALUES (?, ?, 'Link Order', 'M', 2000, 'pending', 1, 'retailops_seed', 'O-ILV-LINK', 1700000000.0)", ('O-ILV-LINK', link_test_cid))
 
     link_token = sessions.control.create_session_for_membership(link_test_mid, 3600, 10)
     link_cookie = f'{sessions.cookie_name}={link_token}'
