@@ -438,3 +438,26 @@ Ghi chú không chặn: Tool Inspector bỏ 3 tool đọc trước đây đượ
 - Owner kiểm trên trình duyệt: dừng bot, "Tiếp tục", chuyển ca (cần 2 tài khoản Staff/Manager), tab "Yêu cầu đơn hàng", Tool Inspector theo vai trò.
 - Cập nhật Google OAuth theo host mới.
 - Các mục còn mở của W4 chuyển sang W6: quay lại Colab và đổi khóa, bật vision, đo với model thật, kho tri thức thiếu tài liệu chính sách đổi trả.
+
+### 2026-11-08 W6.1b readiness review
+
+> **Phạm vi:** một lượt readiness review cho W6.1b, chỉ BLOCKER/MAJOR. Đối chiếu [W6 backlog](W6_BACKLOG_2026-11-06.md) mục 4, [tài liệu database mục B](../../khoa_luan/07_co_so_du_lieu.md) và §19 với code trên `main` (`b6b941c`), sau khi W6.1a đã merge.
+
+**Finding đã được owner đóng bằng [§20](W0_OWNER_DECISION_DELTA_2026-10-29.md#20-w61b-owner-decisions-2026-11-08):**
+
+| ID | Mức | Vấn đề | Đóng bằng |
+|---|---|---|---|
+| `W61B-RR-01` | BLOCKER | RetailOps chỉ có đường nhận hợp đồng v1 của Phase 5: chữ ký nằm trong thân, phong bì khác; sàn ảo W6.1a phát hợp đồng v2 ký ở header, nên không sự kiện nào của sàn ảo vào được RetailOps | W6.1b-D3, D4 |
+| `W61B-RR-02` | BLOCKER | F18: adapter rơi về khóa mặc định `dev_secret_key_retailops_2026` nằm trong repo; mở endpoint là ai đọc repo cũng giả được sự kiện | W6.1b-D3, D5 |
+| `W61B-RR-03` | BLOCKER | Caddy chuyển mọi đường dẫn tới `web:8000`; "endpoint chỉ trong mạng nội bộ" trong backlog chưa có cơ chế nào bảo đảm | W6.1b-D4 |
+| `W61B-RR-04` | MAJOR | `imported_events.payload_json` lưu nguyên thân sự kiện; `order.created` v2 mang tên, số điện thoại, địa chỉ người nhận, nên dữ liệu cá nhân sẽ nằm dạng thô trong DB, trái W6.1a-D11 | W6.1b-D7 |
+| `W61B-RR-05` | MAJOR | F16 ánh xạ `shipping → delivered`; F17 dùng mã đơn của nguồn làm `orders.id`; chưa chốt khách nhìn thấy mã nào | W6.1b-D8, mục 4 của handoff |
+| `W61B-RR-06` | MAJOR | Dữ liệu nghiệp vụ viết trong code ở 5 chỗ: `seed()`, `data/deepseek_seed_data.json`, đơn mẫu theo tài khoản, dict hành trình trong `track_shipment`, `data/mock_shipments.json`; 24 trên 41 kịch bản hồi quy W3.2, W4 tham chiếu mã đơn của seed này | W6.1b-D2, D11, D12 |
+| `W61B-RR-07` | MAJOR | Dữ liệu demo sinh một lần có mốc tháng 10/2026; vài tháng sau mọi đơn quá hạn đổi trả 7 ngày, đổi size 15 ngày, bảo hành 90 ngày, khiến demo và đánh giá lệch theo ngày chạy | W6.1b-D11 |
+| `W61B-RR-08` | MAJOR | `refunds.request_id` ở mục B3 giả định biết yêu cầu nào được hoàn, nhưng sàn và cổng không biết mã yêu cầu của RetailOps; chưa có luật nối | W6.1b-D10 |
+| `W61B-RR-09` | MAJOR | `integration_connectors` ở mục B3 không có `merchant_id`, và bảng nằm trong schema của từng cửa hàng nên route phải biết cửa hàng trước khi tra connector | W6.1b-D4, D5 |
+| `W61B-RR-10` | MAJOR | Phạm vi W6.1b trong backlog gồm migration, cổng nhận, 4 nhóm dữ liệu, mã hóa, bồi thường, outbox, thông báo: quá lớn cho một handoff và một lượt kiểm chứng | W6.1b-D1 |
+| `W61B-RR-11` | MAJOR | `imported_events` mang hình hợp đồng v1, bắt buộc `customer_id`, `order_id`, `status`, `total`, `currency`, `signature`; sự kiện v2 không gắn đơn như `product.upserted` không ghi vào được. Mục B6 không nhắc bảng này | mục 0 của handoff |
+| `W61B-RR-12` | MAJOR | Bằng chứng toàn vẹn bằng SHA-256 trần trên thân sự kiện cho phép xác nhận dữ liệu người nhận: các trường còn lại đã nằm trong DB, chỉ cần thử tên và số điện thoại | W6.1b-D7 |
+
+**Kết luận:** W6.1b-1 **READY** để thực thi theo [W6.1b-1 execution handoff](W6_1B_1_EXECUTION_HANDOFF_2026-11-08.md) khi owner merge bản ghi này. W6.1b-2 chưa READY vì còn chốt cách mã hóa người nhận. Migration business v9 và deploy cần owner duyệt riêng, theo runbook ở mục 6 của handoff. Readiness tổng thể vẫn `BLOCKED` cho W6.2 trở đi.
