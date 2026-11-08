@@ -1,14 +1,14 @@
 # Phase R1 — W6.1a Execution Handoff: sàn ảo và hợp đồng sự kiện
 
 > **Trạng thái:** prompt thực thi do owner phát hành ngày 2026-11-06. Đây là module đầu tiên của W6 theo [W6 backlog](W6_BACKLOG_2026-11-06.md) mục 4. Không mở W6.1b trở đi.
-> **Quyết định áp dụng:** [§19](W0_OWNER_DECISION_DELTA_2026-10-29.md#19-w61a-owner-decisions-2026-11-06), gồm W6.1a-D11 đến D14 bổ sung ngày 2026-11-07 về người nhận, thời hạn giao, voucher bồi thường giao trễ. Thiết kế dữ liệu phía RetailOps để nhận các sự kiện này nằm ở [tài liệu database mục B](../../khoa_luan/07_co_so_du_lieu.md); W6.1a **không** làm phần đó.
+> **Quyết định áp dụng:** [§19](W0_OWNER_DECISION_DELTA_2026-10-29.md#19-w61a-owner-decisions-2026-11-06), gồm W6.1a-D11 đến D14 bổ sung ngày 2026-11-07 về người nhận, thời hạn giao, voucher bồi thường giao trễ, và W6.1a-D15, D16 bổ sung cùng ngày sau lượt kiểm chứng PR #72. Thiết kế dữ liệu phía RetailOps để nhận các sự kiện này nằm ở [tài liệu database mục B](../../khoa_luan/07_co_so_du_lieu.md); W6.1a **không** làm phần đó.
 > **Readiness:** W6.1a chỉ thêm một package độc lập, không đổi code, schema hay cấu hình của RetailOps, không deploy, nên không cần review readiness riêng; lượt kiểm chứng sau báo cáo là đủ.
 > **Nguyên tắc:** sàn ảo là **hệ thống nguồn** đóng vai sàn thương mại điện tử, hãng vận chuyển và cổng thanh toán. Nó không chạm vào tiền, không chứa dữ liệu cá nhân thật, và chỉ nói chuyện với RetailOps qua sự kiện. Gặp quyết định chính sách chưa có trong tài liệu thì **dừng và hỏi owner**.
 
 ## 1. Mục tiêu làm việc
 
 - Nhánh mới từ `origin/main`; không commit thẳng vào `main`.
-- Chỉ thêm package `marketplace_sim/`, test trong `tests/test_marketplace_sim_*.py`, và một dòng `.marketplace_sim/` trong `.gitignore`. **Không sửa** file nào trong `retailops/`, `scripts/`, `web/`, `deploy/`, `data/`, `notebooks/`, `agent_protocol.py`, `retailops_*.py`.
+- Chỉ thêm package `marketplace_sim/`, test trong `tests/test_marketplace_sim_*.py`, và một dòng `.marketplace_sim/` trong `.gitignore`. **Không sửa** file nào trong `retailops/`, `scripts/`, `web/`, `deploy/`, `data/`, `notebooks/`, `agent_protocol.py`, `retailops_*.py`. Ngoại lệ duy nhất theo W6.1a-D15: sửa `scripts/build_agent_notebook.py` để không nhúng `tests/test_marketplace_sim_*.py` vào notebook Colab; `notebooks/colab_agent.ipynb` giữ nguyên.
 - Chỉ dùng thư viện chuẩn của Python 3.10 trở lên. Không thêm dependency.
 - `marketplace_sim/` không được import bất kỳ module nào của RetailOps, và ngược lại.
 
@@ -45,7 +45,7 @@
 | `dang_trung_chuyen` | đơn trả trước đang trên xe liên tỉnh | đơn `shipping`, vận đơn `transporting` |
 | `cap_nhat_ao_giao_lai` | shipper báo không liên lạc được, giao lại thành công trong ngày | 1 lần `delivery_fail`, cuối cùng `delivered` |
 | `giao_that_bai_hoan_ve` | 3 lần giao thất bại rồi chuyển hoàn | vận đơn `returned`, đơn `cancelled` |
-| `nghen_kho_mega_sale` | đặt ngày 11.11, kẹt ở kho phân loại hơn 48 giờ | vận đơn `sorting` quá 48 giờ |
+| `nghen_kho_mega_sale` | đơn đợt Mega Sale, kẹt ở kho phân loại hơn 48 giờ; mốc tương đối theo W6.1a-D16, "11.11" chỉ là nhãn tình huống | vận đơn `sorting` quá 48 giờ |
 | `hoan_tien_cham` | trả hàng được duyệt, hoàn tiền còn `processing` sau 10 ngày | hoàn tiền chưa xong |
 | `hoan_tien_that_bai` | hoàn về ví bị lỗi | hoàn tiền thất bại có lý do |
 | `thanh_toan_that_bai_roi_thanh_cong` | chuyển khoản lần đầu lỗi, lần hai thành công | 2 giao dịch, giao dịch sau thành công |
