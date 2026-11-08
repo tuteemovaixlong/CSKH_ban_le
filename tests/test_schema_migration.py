@@ -77,8 +77,8 @@ class MigrationTests(unittest.TestCase):
                 self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(), [])
 
     def test_v1_business_upgrades_once_preserving_existing_orders(self):
-        store = BusinessStore(self.path)
-        store.seed()
+        from legacy_seed_fixture import seed_legacy_unit_fixture
+        store = seed_legacy_unit_fixture(BusinessStore(self.path))
         with store.connection(write=True) as db:
             for name in ('graph_writes', 'graph_checkpoints', 'graph_runs'):
                 db.execute('DROP TABLE '+name)
@@ -131,8 +131,8 @@ class MigrationTests(unittest.TestCase):
             IdentityStore(self.path)
 
     def test_customer_constraints_prevent_dangling_order_ownership(self):
-        store = BusinessStore(self.path)
-        store.seed()
+        from legacy_seed_fixture import seed_legacy_unit_fixture
+        store = seed_legacy_unit_fixture(BusinessStore(self.path))
         for sql in (
             "INSERT INTO orders(id,customer_id,source_system,external_order_id,ordered_at,name,variant,amount,status) VALUES('O-999','MISSING','retailops_seed','O-999',1.0,'x','x',1,'pending')",
             "UPDATE orders SET customer_id='MISSING' WHERE id='O-101'",

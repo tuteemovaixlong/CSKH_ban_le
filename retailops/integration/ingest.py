@@ -295,6 +295,43 @@ class IntegrationIngestService:
             "gửi lại cùng event_id để hoàn tất.",
         ) from error
 
+    def _ensure_mappings_batch(
+        self,
+        tenant_id: str,
+        source_system: str,
+        pairs: list[tuple[str, str]],
+    ) -> None:
+        if not pairs:
+            return
+        id_store = self.identity_store
+        if (
+            "link_external_customer" not in getattr(id_store, "__dict__", {})
+            and hasattr(id_store, "bulk_link_external_customers")
+        ):
+            try:
+                id_store.bulk_link_external_customers(tenant_id, source_system, pairs)
+                return
+            except ApiError as exc:
+                if exc.status < 500:
+                    raise
+                error: Exception = exc
+            except Exception as exc:
+                error = exc
+            logger.error(
+                "Batch identity mapping write failed after business commit tenant=%s source=%s: %s",
+                tenant_id,
+                source_system,
+                error.__class__.__name__,
+            )
+            raise ApiError(
+                503,
+                "identity_mapping_pending",
+                "Sự kiện đã được ghi nhận nhưng ánh xạ khách hàng chưa lưu được; "
+                "gửi lại cùng event_id để hoàn tất.",
+            ) from error
+        for ext_cid, cid in pairs:
+            self._ensure_mapping(tenant_id, source_system, ext_cid, cid)
+
     def _invalidate_cache(
         self, tenant_id: str, customer_id: str | None, order_id: str | None = None
     ) -> None:
@@ -348,19 +385,33 @@ class IntegrationIngestService:
         connector_source: str,
         external_customer_id: str,
         display_name: Optional[str] = None,
+        batch_state: dict[str, Any] | None = None,
     ) -> str:
-        prior = db.execute(
-            "SELECT customer_id FROM imported_events "
-            "WHERE tenant_id=? AND source_system=? AND external_customer_id=? "
-            "AND customer_id IS NOT NULL "
-            "ORDER BY created_at LIMIT 1",
-            (tenant_id, connector_source, external_customer_id),
-        ).fetchone()
-        mapped_cid = self.identity_store.get_external_customer_mapping(
-            tenant_id, connector_source, external_customer_id
+        id_store = self.identity_store
+        can_use_batch_map = (
+            batch_state is not None
+            and "prior_cust_map" in batch_state
+            and "ext_customer_map" in batch_state
+            and "get_external_customer_mapping" not in getattr(id_store, "__dict__", {})
         )
-        if prior:
-            customer_id = str(prior["customer_id"])
+        if can_use_batch_map:
+            assert batch_state is not None
+            prior_cid = batch_state["prior_cust_map"].get(external_customer_id)
+            mapped_cid = batch_state["ext_customer_map"].get(external_customer_id)
+        else:
+            prior = db.execute(
+                "SELECT customer_id FROM imported_events "
+                "WHERE tenant_id=? AND source_system=? AND external_customer_id=? "
+                "AND customer_id IS NOT NULL "
+                "ORDER BY created_at LIMIT 1",
+                (tenant_id, connector_source, external_customer_id),
+            ).fetchone()
+            prior_cid = str(prior["customer_id"]) if prior else None
+            mapped_cid = id_store.get_external_customer_mapping(
+                tenant_id, connector_source, external_customer_id
+            )
+        if prior_cid:
+            customer_id = str(prior_cid)
             if mapped_cid and mapped_cid != customer_id:
                 raise ApiError(
                     409,
@@ -385,6 +436,9 @@ class IntegrationIngestService:
                 "INSERT INTO customers (id, name) VALUES (?, ?) ON CONFLICT DO NOTHING",
                 (customer_id, cust_label),
             )
+        if can_use_batch_map:
+            assert batch_state is not None
+            batch_state["prior_cust_map"].setdefault(external_customer_id, customer_id)
         return customer_id
 
     @staticmethod
@@ -396,8 +450,13 @@ class IntegrationIngestService:
         connector_source: str = "",
         order_id: str = "",
         entity_key: str = "",
+        batch_state: dict[str, Any] | None = None,
     ) -> int | None:
         """Return max recorded sequence for the same entity in imported_events (portable SQLite/PG SQL)."""
+        if batch_state is not None and "entity_max_seq" in batch_state:
+            seq_map: dict[tuple[str, str, str], int] = batch_state["entity_max_seq"]
+            return seq_map.get((entity_kind, order_id or connector_source, entity_key))
+
         if entity_kind == "order":
             row = db.execute(
                 "SELECT MAX(sequence) AS max_seq FROM imported_events "
@@ -523,6 +582,9 @@ class IntegrationIngestService:
         _validated_status_mapping: dict[str, Any] | None = None,
         _skip_tenant_check: bool = False,
         _pending_mappings: list[tuple[str, str]] | None = None,
+        _prevalidated: dict[str, Any] | None = None,
+        _prevalidated_json: str | None = None,
+        _batch_state: dict[str, Any] | None = None,
     ) -> ImportResult:
         """Validate and atomically ingest a single retailops-integration-v2 event."""
         require(
@@ -549,37 +611,41 @@ class IntegrationIngestService:
         # Resolve digest key BEFORE mutating anything (fail closed 503 if missing/short)
         resolved_digest_key = self._resolve_digest_key(digest_key)
 
-        if isinstance(event_or_raw, bytes):
+        if _prevalidated is not None and isinstance(event_or_raw, bytes):
             raw_bytes = event_or_raw
-            try:
-                parsed = json.loads(raw_bytes.decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                raise ApiError(
-                    422, "invalid_event_json", "Thân sự kiện không phải JSON UTF-8 hợp lệ."
-                ) from exc
-        elif isinstance(event_or_raw, str):
-            raw_bytes = event_or_raw.encode("utf-8")
-            try:
-                parsed = json.loads(event_or_raw)
-            except json.JSONDecodeError as exc:
-                raise ApiError(
-                    422, "invalid_event_json", "Thân sự kiện không phải JSON hợp lệ."
-                ) from exc
-        elif isinstance(event_or_raw, dict):
-            parsed = copy.deepcopy(event_or_raw)
-            raw_bytes = json.dumps(
-                parsed, ensure_ascii=False, separators=(",", ":"), sort_keys=True
-            ).encode("utf-8")
+            validated = _prevalidated
         else:
-            raise ApiError(422, "invalid_event_object", "Sự kiện phải là JSON object.")
+            if isinstance(event_or_raw, bytes):
+                raw_bytes = event_or_raw
+                try:
+                    parsed = json.loads(raw_bytes.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise ApiError(
+                        422, "invalid_event_json", "Thân sự kiện không phải JSON UTF-8 hợp lệ."
+                    ) from exc
+            elif isinstance(event_or_raw, str):
+                raw_bytes = event_or_raw.encode("utf-8")
+                try:
+                    parsed = json.loads(event_or_raw)
+                except json.JSONDecodeError as exc:
+                    raise ApiError(
+                        422, "invalid_event_json", "Thân sự kiện không phải JSON hợp lệ."
+                    ) from exc
+            elif isinstance(event_or_raw, dict):
+                parsed = copy.deepcopy(event_or_raw)
+                raw_bytes = json.dumps(
+                    parsed, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+                ).encode("utf-8")
+            else:
+                raise ApiError(422, "invalid_event_object", "Sự kiện phải là JSON object.")
+
+            validated = validate_event_v2(
+                parsed,
+                allow_requests=False,
+                allowed_marketplace_sources=frozenset({connector_source}),
+            )
 
         payload_digest = compute_payload_hmac_digest(raw_bytes, resolved_digest_key)
-
-        validated = validate_event_v2(
-            parsed,
-            allow_requests=False,
-            allowed_marketplace_sources=frozenset({connector_source}),
-        )
         event_type = validated["event_type"]
         ensure_w6_1b_1_supported_event(event_type)
 
@@ -670,21 +736,34 @@ class IntegrationIngestService:
             # Check order purge tombstone before deduplication so purged orders stay blocked
             if "external_order_id" in data and data["external_order_id"] is not None:
                 ext_oid_check = str(data["external_order_id"])
-                tomb = db.execute(
-                    "SELECT 1 FROM order_purge_tombstones WHERE order_id=? LIMIT 1",
-                    (ext_oid_check,),
-                ).fetchone()
-                if tomb is not None:
+                if _batch_state is not None and "tombstones" in _batch_state:
+                    has_tomb = ext_oid_check in _batch_state["tombstones"]
+                else:
+                    has_tomb = (
+                        db.execute(
+                            "SELECT 1 FROM order_purge_tombstones WHERE order_id=? LIMIT 1",
+                            (ext_oid_check,),
+                        ).fetchone()
+                        is not None
+                    )
+                if has_tomb:
                     raise ApiError(
                         409,
                         "order_purged_tombstone",
                         f"Đơn hàng {ext_oid_check} đã được quản trị viên xóa khỏi hệ thống (tombstone); không được phép tái tạo.",
                     )
 
-            existing_event = db.execute(
-                "SELECT * FROM imported_events WHERE source_system=? AND event_id=?",
-                (envelope_source, event_id),
-            ).fetchone()
+            if (
+                _batch_state is not None
+                and _batch_state.get("fresh_imported_events")
+                and (envelope_source, event_id) not in _batch_state["seen_events"]
+            ):
+                existing_event = None
+            else:
+                existing_event = db.execute(
+                    "SELECT * FROM imported_events WHERE source_system=? AND event_id=?",
+                    (envelope_source, event_id),
+                ).fetchone()
             if existing_event is not None:
                 if (
                     existing_event["tenant_id"] != tenant_clean
@@ -700,13 +779,19 @@ class IntegrationIngestService:
                 from retailops.integration.connectors import map_raw_status
 
                 imp_event_id = str(uuid.uuid4())
-                stored_event = copy.deepcopy(validated)
+                stored_event = validated
                 redacted_fields: list[str] = []
                 imp_status_val: str | None = None
                 imp_total_val: int | None = None
                 imp_currency_val: str | None = None
+                seq_track_key: tuple[str, str, str] | None = None
 
                 def _insert_imported_event_row() -> None:
+                    payload_json_str = (
+                        _prevalidated_json
+                        if (_prevalidated_json is not None and not redacted_fields and stored_event is validated)
+                        else json.dumps(stored_event, ensure_ascii=False)
+                    )
                     db.execute(
                         """INSERT INTO imported_events (
                                id, source_system, event_id, tenant_id,
@@ -732,19 +817,28 @@ class IntegrationIngestService:
                             imp_status_val,
                             imp_total_val,
                             imp_currency_val,
-                            json.dumps(stored_event, ensure_ascii=False),
+                            payload_json_str,
                             now,
                         ),
                     )
+                    if _batch_state is not None:
+                        if "seen_events" in _batch_state:
+                            _batch_state["seen_events"].add((envelope_source, event_id))
+                        if seq_track_key is not None and "entity_max_seq" in _batch_state:
+                            prev_s = _batch_state["entity_max_seq"].get(seq_track_key)
+                            if prev_s is None or sequence > prev_s:
+                                _batch_state["entity_max_seq"][seq_track_key] = sequence
 
                 if event_type == "product.upserted":
                     ext_pid = data["external_product_id"]
+                    seq_track_key = ("product", connector_source, ext_pid)
                     max_seq = self._max_entity_sequence_in_tx(
                         db,
                         tenant_id=tenant_clean,
                         entity_kind="product",
                         connector_source=connector_source,
                         entity_key=ext_pid,
+                        batch_state=_batch_state,
                     )
                     _insert_imported_event_row()
                     if max_seq is not None and sequence <= max_seq:
@@ -850,12 +944,14 @@ class IntegrationIngestService:
 
                 elif event_type == "customer.upserted":
                     mapped_ext_customer_id = data["external_customer_id"]
+                    seq_track_key = ("customer", connector_source, mapped_ext_customer_id)
                     max_seq = self._max_entity_sequence_in_tx(
                         db,
                         tenant_id=tenant_clean,
                         entity_kind="customer",
                         connector_source=connector_source,
                         entity_key=mapped_ext_customer_id,
+                        batch_state=_batch_state,
                     )
                     if max_seq is not None and sequence <= max_seq:
                         sequence_ignored = True
@@ -865,6 +961,7 @@ class IntegrationIngestService:
                             connector_source=connector_source,
                             external_customer_id=mapped_ext_customer_id,
                             display_name=None,
+                            batch_state=_batch_state,
                         )
                     else:
                         mapped_customer_id = self._resolve_customer_in_tx(
@@ -873,6 +970,7 @@ class IntegrationIngestService:
                             connector_source=connector_source,
                             external_customer_id=mapped_ext_customer_id,
                             display_name=data["display_name"],
+                            batch_state=_batch_state,
                         )
                     _insert_imported_event_row()
 
@@ -888,6 +986,7 @@ class IntegrationIngestService:
                         tenant_id=tenant_clean,
                         connector_source=connector_source,
                         external_customer_id=mapped_ext_customer_id,
+                        batch_state=_batch_state,
                     )
 
                     existing_order = db.execute(
@@ -918,10 +1017,12 @@ class IntegrationIngestService:
                             tenant_id=tenant_clean,
                             entity_kind="order",
                             order_id=result_order_id,
+                            batch_state=_batch_state,
                         )
                     else:
                         result_order_id = f"ord_{uuid.uuid4().hex}"
                         max_seq = None
+                    seq_track_key = ("order", result_order_id, "")
 
                     items = data["items"]
                     result_items_count = len(items)
@@ -1107,11 +1208,13 @@ class IntegrationIngestService:
                     )
                     imp_status_val = raw_status
 
+                    seq_track_key = ("order", result_order_id, "")
                     max_seq = self._max_entity_sequence_in_tx(
                         db,
                         tenant_id=tenant_clean,
                         entity_kind="order",
                         order_id=result_order_id,
+                        batch_state=_batch_state,
                     )
                     _insert_imported_event_row()
 
@@ -1182,12 +1285,14 @@ class IntegrationIngestService:
                             "Vận đơn nguồn đã gắn với đơn hàng khác.",
                         )
 
+                    seq_track_key = ("shipment", result_order_id, ext_shp_id)
                     max_seq = self._max_entity_sequence_in_tx(
                         db,
                         tenant_id=tenant_clean,
                         entity_kind="shipment",
                         order_id=result_order_id,
                         entity_key=ext_shp_id,
+                        batch_state=_batch_state,
                     )
                     _insert_imported_event_row()
 
@@ -1349,12 +1454,14 @@ class IntegrationIngestService:
                             "Giao dịch thanh toán nguồn đã gắn với đơn hàng khác.",
                         )
 
+                    seq_track_key = ("payment", result_order_id, f"{provider}::{txn_ref}")
                     max_seq = self._max_entity_sequence_in_tx(
                         db,
                         tenant_id=tenant_clean,
                         entity_kind="payment",
                         order_id=result_order_id,
                         entity_key=f"{provider}::{txn_ref}",
+                        batch_state=_batch_state,
                     )
                     _insert_imported_event_row()
 
@@ -1472,12 +1579,14 @@ class IntegrationIngestService:
                             )
                         payment_id_val = str(pay_row["payment_id"])
 
+                    seq_track_key = ("refund", result_order_id, f"{provider}::{refund_ref}")
                     max_seq = self._max_entity_sequence_in_tx(
                         db,
                         tenant_id=tenant_clean,
                         entity_kind="refund",
                         order_id=result_order_id,
                         entity_key=f"{provider}::{refund_ref}",
+                        batch_state=_batch_state,
                     )
                     will_ignore = (max_seq is not None and sequence <= max_seq) or (
                         existing_ref is not None

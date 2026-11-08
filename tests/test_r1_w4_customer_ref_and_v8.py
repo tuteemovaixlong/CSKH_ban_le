@@ -44,6 +44,7 @@ from retailops.core import ApiError
 from retailops.identity.persistent import PersistentSessions
 from retailops.identity.postgres import PostgresSessions
 from retailops.identity.store import IdentityStore
+from legacy_seed_fixture import provision_legacy_unit_tenant, seed_legacy_unit_fixture
 from retailops.storage import cli as database_cli
 from retailops.storage import pg_schema
 from retailops.storage.pg_repositories import (
@@ -116,7 +117,7 @@ class PhaseR1W4SaltedCustomerRefTests(unittest.TestCase):
             self.assertEqual((resolved_key, err_code), (key_a, None))
 
             sessions = PersistentSessions(self.pers, data_mode="persistent-demo")
-            store = sessions.provision_tenant("shop-a", "Shop A", seed_demo=True)
+            store = provision_legacy_unit_tenant(sessions, "shop-a", "Shop A")
             store.create_order_action_request(
                 "C-001",
                 {
@@ -162,7 +163,7 @@ class PhaseR1W4SaltedCustomerRefTests(unittest.TestCase):
         }
         with patch.dict(os.environ, clean_env, clear=True):
             sessions = PersistentSessions(self.pers, data_mode="persistent-demo")
-            store = sessions.provision_tenant("shop-a", "Shop A", seed_demo=True)
+            store = provision_legacy_unit_tenant(sessions, "shop-a", "Shop A")
 
             # Business operations succeed, but zero new rows are written to integration_outbox
             created = store.create_order_action_request(
@@ -398,7 +399,7 @@ class PhaseR1W4BusinessV8SqliteMigrationTests(unittest.TestCase):
 
         fresh_path = self.root / "fresh_v8.sqlite3"
         store = BusinessStore(fresh_path)
-        store.seed()
+        seed_legacy_unit_fixture(store)
         self.assertEqual(_inspect_sqlite_business_ready(fresh_path), "v9_ready")
 
         with store.connection(write=True) as db:
@@ -787,7 +788,7 @@ class RealPostgresBusinessV8Tests(unittest.TestCase):
         self.addCleanup(self.clear)
         PostgresIdentityStore(DSN, create=True)
         self.sessions = PostgresSessions(DSN, api_daily_limit=1, data_root=Path(self.temp.name))
-        self.sessions.provision_tenant("shop-a", "Cửa hàng A", seed_demo=True)
+        provision_legacy_unit_tenant(self.sessions, "shop-a", "Cửa hàng A")
         self.key = self.sessions.control.tenant("shop-a")["storage_key"]
         self.schema = tenant_schema(self.key)
 

@@ -1193,73 +1193,19 @@ class BusinessStore:
                 db.close()
 
     def seed(self):
-        # Conflict handling preserves cancelled orders across process/container restarts.
+        # Populate system actors, base product catalog, and fixed simulator demo events (W6.1b-D2, D11).
+        from retailops.integration.demo_seed import seed_demo_store_events
+
         with self.connection(write=True) as db:
-            customers = [
-                ('C-001', 'Mai Anh'),
-                ('C-002', 'Khách mẫu'),
-                ('C-003', 'Trần Thị Mai'),
-                ('C-004', 'Lê Hoàng Nam'),
-                ('manager', 'Quản lý cửa hàng'),
-                ('system', 'Hệ thống')
-            ]
-            orders = [
-                ("O-101", "C-001", "Áo thun Essential", "Trắng · Size M · Số lượng 1", 299000, "pending", "P-101"),
-                ("O-102", "C-001", "Áo khoác Everyday", "Đen · Size L · Số lượng 1", 799000, "delivered", "P-102"),
-                ("O-202", "C-002", "Áo polo", "Xanh · Size M · Số lượng 1", 399000, "pending", "P-202"),
-                ("O-301", "C-003", "Áo Sơ Mi Oxford Dài Tay", "Trắng · Size M · Số lượng 1", 350000, "pending", "P-103"),
-                ("O-302", "C-003", "Áo Khoác Gió Bomber 2 Lớp", "Đen · Size L · Số lượng 1", 550000, "delivered", "P-104"),
-                ("O-303", "C-004", "Áo Polo Nam Phối Bo Cổ Co Giãn", "Xanh Navy · Size M · Số lượng 1", 399000, "delivered", "P-203"),
-                ("O-304", "C-004", "Bộ Nồi Inox 3 Đáy Cao Cấp", "Bạc · Bộ 3 món · Số lượng 1", 1250000, "pending", "P-401"),
-            ]
-            seed_file = ROOT / "data" / "deepseek_seed_data.json"
-            if seed_file.exists():
-                try:
-                    with open(seed_file, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                    known_cids = {x[0] for x in customers}
-                    for c in data.get("customers", []):
-                        if c["id"] not in known_cids:
-                            customers.append((c["id"], c["name"]))
-                            known_cids.add(c["id"])
-                    known_oids = {x[0] for x in orders}
-                    for o in data.get("orders", []):
-                        if o["id"] not in known_oids:
-                            orders.append((o["id"], o["customer_id"], o["name"], o["variant"], o["amount"], o["status"], o.get("product_id")))
-                            known_oids.add(o["id"])
-                except Exception:
-                    pass
-            db.executemany("INSERT INTO customers VALUES (?,?) ON CONFLICT DO NOTHING", customers)
-            self.seed_catalog(db)
-            self._ensure_purge_tombstone_table(db)
-            tombstoned_oids = {
-                str(r["order_id"]) for r in db.execute("SELECT order_id FROM order_purge_tombstones").fetchall()
-            }
-            seed_ts = self._now()
-            orders_to_seed = [
-                (o[0], o[1], o[2], o[3], o[4], o[5], o[6], 'retailops_seed', o[0], seed_ts, 1)
-                for o in orders
-                if o[0] not in tombstoned_oids
-            ]
             db.executemany(
-                "INSERT INTO orders(id, customer_id, name, variant, amount, status, product_id, "
-                "source_system, external_order_id, ordered_at, ordered_at_backfilled) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING",
-                orders_to_seed,
+                "INSERT INTO customers (id, name) VALUES (?, ?) ON CONFLICT DO NOTHING",
+                [
+                    ('manager', 'Quản lý cửa hàng'),
+                    ('system', 'Hệ thống'),
+                ],
             )
-            order_to_product = {
-                'O-101': 'P-101', 'O-102': 'P-102', 'O-202': 'P-202',
-                'O-301': 'P-103', 'O-302': 'P-104', 'O-303': 'P-203', 'O-304': 'P-401',
-                'O-305': 'P-501', 'O-306': 'P-503', 'O-307': 'P-506', 'O-308': 'P-502',
-                'O-309': 'P-504', 'O-310': 'P-507', 'O-311': 'P-505', 'O-312': 'P-508',
-            }
-            for oid, pid in order_to_product.items():
-                db.execute("UPDATE orders SET product_id=? WHERE id=? AND product_id IS NULL", (pid, oid))
-            db.execute("""
-                UPDATE orders 
-                SET product_id = (SELECT p.id FROM products p WHERE p.name = orders.name LIMIT 1)
-                WHERE product_id IS NULL AND EXISTS (SELECT 1 FROM products p WHERE p.name = orders.name)
-            """)
+            self.seed_catalog(db)
+        seed_demo_store_events(self)
 
     def seed_catalog(self, db=None):
         def _do_seed(conn):
@@ -1344,36 +1290,6 @@ class BusinessStore:
             with self.connection(write=True) as conn:
                 _do_seed(conn)
 
-    _DEMO_SAMPLE_FIXTURE_SPEC = {
-        "P-601": {
-            "offset": 1,
-            "name": "Áo sơ mi lụa công sở",
-            "variant": "Trắng / M",
-            "amount": 450000,
-            "status": "pending",
-            "version": 1,
-            "cancel_reason": None,
-        },
-        "P-602": {
-            "offset": 2,
-            "name": "Quần tây đen hàn quốc",
-            "variant": "Đen / L",
-            "amount": 520000,
-            "status": "delivered",
-            "version": 1,
-            "cancel_reason": None,
-        },
-        "P-603": {
-            "offset": 3,
-            "name": "Giày lười da bò cao cấp",
-            "variant": "Nâu / 41",
-            "amount": 890000,
-            "status": "delivered",
-            "version": 1,
-            "cancel_reason": None,
-        },
-    }
-
     @staticmethod
     def _ensure_purge_tombstone_table(conn):
         conn.execute(
@@ -1452,149 +1368,103 @@ class BusinessStore:
         with self.connection() as conn:
             return _fetch(conn)
 
-    @classmethod
-    def _row_matches_demo_fixture_spec(cls, row: dict, pid: str) -> bool:
-        spec = cls._DEMO_SAMPLE_FIXTURE_SPEC.get(pid)
-        if not spec or not isinstance(row, dict):
-            return False
-        try:
-            amt = int(row.get("amount")) if row.get("amount") is not None else -1
-            ver = int(row.get("version")) if row.get("version") is not None else -1
-        except (TypeError, ValueError):
-            return False
-        return (
-            str(row.get("product_id")) == pid
-            and row.get("name") == spec["name"]
-            and row.get("variant") == spec["variant"]
-            and amt == spec["amount"]
-            and row.get("status") == spec["status"]
-            and ver == spec["version"]
-            and row.get("cancel_reason") is None
-        )
-
-    @staticmethod
-    def _has_import_or_item_provenance(conn, customer_id: str, order_ids: tuple[str, str, str]) -> bool:
-        oid1, oid2, oid3 = order_ids
-        imp = conn.execute(
-            "SELECT 1 FROM imported_events WHERE customer_id=? OR order_id IN (?, ?, ?) LIMIT 1",
-            (customer_id, oid1, oid2, oid3),
-        ).fetchone()
-        if imp is not None:
-            return True
-        items = conn.execute(
-            "SELECT 1 FROM order_items WHERE order_id IN (?, ?, ?) LIMIT 1",
-            (oid1, oid2, oid3),
-        ).fetchone()
-        if items is not None:
-            return True
-        sales_ev = conn.execute(
-            "SELECT 1 FROM business_events WHERE (customer_id=? OR order_id IN (?, ?, ?)) AND kind='sales_event_imported' LIMIT 1",
-            (customer_id, oid1, oid2, oid3),
-        ).fetchone()
-        return sales_ev is not None
-
-    def seed_demo_sample_orders(self, customer_id, db=None):
-        def _do_seed_orders(conn):
-            self._ensure_purge_tombstone_table(conn)
-            cust_tombstones = conn.execute(
-                "SELECT order_id, product_id FROM order_purge_tombstones WHERE customer_id=?",
-                (customer_id,),
-            ).fetchall()
-            if cust_tombstones:
-                return []
-            existing_rows = conn.execute(
-                "SELECT id, customer_id, name, variant, amount, status, version, cancel_reason, product_id "
-                "FROM orders WHERE customer_id=? ORDER BY id ASC",
-                (customer_id,),
-            ).fetchall()
-            if existing_rows:
-                if len(existing_rows) == 3:
-                    by_pid = {str(r["product_id"]): dict(r) for r in existing_rows}
-                    p601 = by_pid.get("P-601")
-                    p602 = by_pid.get("P-602")
-                    p603 = by_pid.get("P-603")
-                    if (
-                        p601
-                        and p602
-                        and p603
-                        and re.fullmatch(r"O-[78]\d{5}", str(p601["id"]))
-                        and re.fullmatch(r"O-[78]\d{5}", str(p602["id"]))
-                        and re.fullmatch(r"O-[78]\d{5}", str(p603["id"]))
-                    ):
-                        n1 = int(str(p601["id"])[2:])
-                        n2 = int(str(p602["id"])[2:])
-                        n3 = int(str(p603["id"])[2:])
-                        if (
-                            700001 <= n1 <= 899990
-                            and n2 == n1 + 1
-                            and n3 == n1 + 2
-                            and self._row_matches_demo_fixture_spec(p601, "P-601")
-                            and self._row_matches_demo_fixture_spec(p602, "P-602")
-                            and self._row_matches_demo_fixture_spec(p603, "P-603")
-                        ):
-                            oid_triplet = (str(p601["id"]), str(p602["id"]), str(p603["id"]))
-                            p602_oid = oid_triplet[1]
-                            has_prov = conn.execute(
-                                "SELECT 1 FROM business_events WHERE customer_id=? AND order_id=? AND kind='demo_sample_fixture_seeded' LIMIT 1",
-                                (customer_id, p602_oid),
-                            ).fetchone()
-                            if has_prov is None and not self._has_import_or_item_provenance(conn, customer_id, oid_triplet):
-                                self.log(
-                                    conn,
-                                    customer_id,
-                                    "demo_sample_fixture_seeded",
-                                    p602_oid,
-                                    fixture="google_demo_sample_v1",
-                                    product_id="P-602",
-                                    canonical_name="Quần tây đen hàn quốc",
-                                    display_name="Bộ xếp hình gỗ cho bé",
-                                )
-                return []
-            seed_base = 700000 + (abs(hash(customer_id)) % 199990)
-            p602_oid = f"O-{seed_base + 2}"
-            sample_orders = [
-                (f"O-{seed_base + 1}", customer_id, "Áo sơ mi lụa công sở", "Trắng / M", 450000, "pending", 1, None, "P-601"),
-                (p602_oid, customer_id, "Quần tây đen hàn quốc", "Đen / L", 520000, "delivered", 1, None, "P-602"),
-                (f"O-{seed_base + 3}", customer_id, "Giày lười da bò cao cấp", "Nâu / 41", 890000, "delivered", 1, None, "P-603"),
-            ]
-            tombstoned_oids = {
-                str(r["order_id"])
-                for r in conn.execute(
-                    "SELECT order_id FROM order_purge_tombstones WHERE order_id IN (?, ?, ?)",
-                    (sample_orders[0][0], sample_orders[1][0], sample_orders[2][0]),
-                ).fetchall()
-            }
-            sample_ts = self._now()
-            inserted_oids = []
-            for ord_row in sample_orders:
-                if ord_row[0] in tombstoned_oids:
-                    continue
-                conn.execute(
-                    """INSERT INTO orders(
-                           id, customer_id, name, variant, amount, status, version, cancel_reason, product_id,
-                           source_system, external_order_id, ordered_at, ordered_at_backfilled
-                       )
-                       VALUES (?,?,?,?,?,?,?,?,?,'retailops_seed',?,?,1) ON CONFLICT DO NOTHING""",
-                    (*ord_row, ord_row[0], sample_ts),
-                )
-                inserted_oids.append(ord_row[0])
-            if p602_oid in inserted_oids:
-                self.log(
-                    conn,
-                    customer_id,
-                    "demo_sample_fixture_seeded",
-                    p602_oid,
-                    fixture="google_demo_sample_v1",
-                    product_id="P-602",
-                    canonical_name="Quần tây đen hàn quốc",
-                    display_name="Bộ xếp hình gỗ cho bé",
-                )
-            return inserted_oids
+    def has_demo_store_seed(self, db=None) -> bool:
+        """Return True when this tenant has loaded the marketplace_sim demo store seed."""
+        def _check(conn) -> bool:
+            row = conn.execute(
+                "SELECT 1 FROM imported_events "
+                "WHERE source_system = 'marketplace_sim' AND event_id = 'evt:customer:SIM-C-0088:1' "
+                "LIMIT 1"
+            ).fetchone()
+            return row is not None
 
         if db is not None:
-            return _do_seed_orders(db)
-        with self.connection(write=True) as conn:
-            return _do_seed_orders(conn)
+            return _check(db)
+        with self.connection() as conn:
+            return _check(conn)
+
+    def seed_demo_sample_orders(self, customer_id, db=None, *, sessions=None):
+        """Instantiate the 3-order simulator account template for a new demo customer (W6.1b-D2, D11)."""
+        from retailops.integration.demo_seed import seed_demo_account_orders
+
+        return seed_demo_account_orders(self, customer_id, sessions=sessions, db=db)
+
+    def purge_legacy_demo_orders(self, *, dry_run: bool = False) -> dict:
+        """Remove legacy ``retailops_seed`` orders that have no linked cancel/return/exchange requests (W6.1b-D2).
+
+        Any ``retailops_seed`` order with >= 1 row in ``order_action_requests`` is retained and listed.
+        When ``dry_run=True``, mutates nothing and returns exact counts and order lists.
+        """
+        tenant_clean = str(getattr(self, "tenant_id", None) or "default")
+        with self.connection(write=not bool(dry_run)) as conn:
+            rows = conn.execute(
+                """SELECT id, customer_id, status, name, amount
+                   FROM orders
+                   WHERE source_system = 'retailops_seed'
+                   ORDER BY id ASC"""
+            ).fetchall()
+            removable: list[dict] = []
+            retained: list[dict] = []
+            for row in rows:
+                oid = str(row["id"])
+                req_rows = conn.execute(
+                    """SELECT request_id, type, status
+                       FROM order_action_requests
+                       WHERE order_id = ?
+                       ORDER BY created_at ASC, request_id ASC""",
+                    (oid,),
+                ).fetchall()
+                entry = {
+                    "order_id": oid,
+                    "customer_id": str(row["customer_id"]),
+                    "status": str(row["status"]),
+                    "name": str(row["name"]),
+                    "amount": int(row["amount"]),
+                }
+                if req_rows:
+                    retained.append(
+                        {
+                            **entry,
+                            "request_ids": [str(r["request_id"]) for r in req_rows],
+                        }
+                    )
+                else:
+                    removable.append(entry)
+
+            removed_count = 0
+            if not dry_run and removable:
+                for entry in removable:
+                    oid = entry["order_id"]
+                    conn.execute("UPDATE conversations SET order_id = NULL WHERE order_id = ?", (oid,))
+                    conn.execute("DELETE FROM proposals WHERE order_id = ?", (oid,))
+                    conn.execute("DELETE FROM order_items WHERE order_id = ?", (oid,))
+                    deleted = conn.execute(
+                        "DELETE FROM orders WHERE id = ? AND source_system = 'retailops_seed'",
+                        (oid,),
+                    ).rowcount
+                    removed_count += int(deleted or 0)
+                self.log(
+                    conn,
+                    "system",
+                    "legacy_demo_orders_purged",
+                    None,
+                    tenant_id=tenant_clean,
+                    removed_count=removed_count,
+                    retained_count=len(retained),
+                    removed_order_ids=[e["order_id"] for e in removable],
+                    retained_order_ids=[e["order_id"] for e in retained],
+                )
+
+            return {
+                "result": "PURGE_LEGACY_DEMO_DRY_RUN" if dry_run else "PURGE_LEGACY_DEMO_OK",
+                "tenant_id": tenant_clean,
+                "dry_run": bool(dry_run),
+                "would_remove_count": len(removable),
+                "removed_count": 0 if dry_run else removed_count,
+                "removable_orders": removable,
+                "retained_count": len(retained),
+                "retained_orders": retained,
+            }
 
     def _collect_purge_reference_counts(
         self, conn, *, order_id: str, customer_id: str, product_id: str
@@ -1953,41 +1823,6 @@ class BusinessStore:
                 },
                 "catalog_product": post_counts["product_snapshot"],
             }
-
-    def is_demo_sample_order(self, customer_id, order_id) -> bool:
-        if not isinstance(customer_id, str) or not customer_id or not isinstance(order_id, str) or not order_id:
-            return False
-        if not re.fullmatch(r"O-[78]\d{5}", order_id):
-            return False
-        n2 = int(order_id[2:])
-        if not (700002 <= n2 <= 899991):
-            return False
-        oid_triplet = (f"O-{n2 - 1}", order_id, f"O-{n2 + 1}")
-        with self.connection() as db:
-            p602_row = db.execute(
-                "SELECT id, customer_id, name, variant, amount, status, version, cancel_reason, product_id "
-                "FROM orders WHERE id=? AND customer_id=? LIMIT 1",
-                (order_id, customer_id),
-            ).fetchone()
-            if p602_row is None or not self._row_matches_demo_fixture_spec(dict(p602_row), "P-602"):
-                return False
-            if self._has_import_or_item_provenance(db, customer_id, oid_triplet):
-                return False
-            prov = db.execute(
-                "SELECT payload FROM business_events WHERE customer_id=? AND order_id=? AND kind='demo_sample_fixture_seeded' ORDER BY id ASC LIMIT 1",
-                (customer_id, order_id),
-            ).fetchone()
-            if prov is None:
-                return False
-            try:
-                payload = json.loads(prov["payload"]) if isinstance(prov["payload"], str) else (prov["payload"] or {})
-            except Exception:
-                payload = {}
-            return (
-                payload.get("fixture") == "google_demo_sample_v1"
-                and payload.get("product_id") == "P-602"
-                and payload.get("display_name") == "Bộ xếp hình gỗ cho bé"
-            )
 
     @staticmethod
     def _row_to_product(row):

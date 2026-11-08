@@ -56,6 +56,7 @@ def build_private_app(settings: Settings | None = None) -> Application:
     if settings.customer_ref_key:
         store.customer_ref_key = settings.customer_ref_key
     store.seed()
+    store.seed_demo_sample_orders('C-001')
     token_hash = hashlib.sha256(settings.access_token.encode()).hexdigest()
     return Application(store, {token_hash: 'C-001'}, gateways.custom, gateways.api, settings.api_daily_turn_limit)
 

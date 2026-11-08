@@ -541,7 +541,8 @@ class Phase5FixATests(unittest.TestCase):
 
     def test_fixa_data2_to_data5_targeted_purge_guards_retention_and_tombstone(self):
         sessions = PersistentSessions(self.tmp_path / "purge_suite", data_mode="persistent-demo")
-        bstore = sessions.provision_tenant("demo-store", "Demo Store", seed_demo=True)
+        bstore = sessions.provision_tenant("demo-store", "Demo Store", seed_demo=False)
+        bstore.seed_catalog()
         web = PublicWeb("https://shop.example.com", sessions)
 
         now = time.time()

@@ -104,8 +104,8 @@ class TestPrACorrectness(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.NamedTemporaryFile(suffix=".sqlite3", delete=False)
         self.tmp.close()
-        self.store = BusinessStore(self.tmp.name, create=True)
-        self.store.seed()
+        from legacy_seed_fixture import seed_legacy_unit_fixture
+        self.store = seed_legacy_unit_fixture(BusinessStore(self.tmp.name, create=True))
         self.agent = MockAgent()
         self.tokens = {hashlib.sha256(b"test_token").hexdigest(): "C-001"}
         self.app = Application(self.store, self.tokens, infer=self.agent, role="customer")

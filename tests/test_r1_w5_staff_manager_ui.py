@@ -19,6 +19,7 @@ from retailops.http.routes import ALLOWED_DIRECT_TOOLS, api_result
 from retailops.identity.contracts import RequestContext
 from retailops.identity.persistent import PersistentSessions
 from retailops.storage.postgres import Queries
+from legacy_seed_fixture import provision_legacy_unit_tenant, seed_legacy_unit_fixture
 
 
 def _ctx(
@@ -131,7 +132,7 @@ class TestR1W5CooperativeCancel(unittest.TestCase):
         self.store = BusinessStore(self.db_path)
         self.store.tenant_id = "shop_a"
         self.store.data_root = Path(self.tmp.name) / "data"
-        self.store.seed()
+        seed_legacy_unit_fixture(self.store)
         self.cancel_registry = TurnCancelRegistry()
 
     def tearDown(self):
@@ -523,8 +524,8 @@ class TestR1W5StaffManagerOperations(unittest.TestCase):
             api_daily_limit=50,
             default_tenant_id="shop_a",
         )
-        self.store_a = self.sessions.provision_tenant("shop_a", "Shop A", seed_demo=True)
-        self.store_b = self.sessions.provision_tenant("shop_b", "Shop B", seed_demo=True)
+        self.store_a = provision_legacy_unit_tenant(self.sessions, "shop_a", "Shop A")
+        self.store_b = provision_legacy_unit_tenant(self.sessions, "shop_b", "Shop B")
         self.id_store = self.sessions.control
 
         # Seed a second customer C-002 with order O-202 in shop_a (and PII in customers.name)

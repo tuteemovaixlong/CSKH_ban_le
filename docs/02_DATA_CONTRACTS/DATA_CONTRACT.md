@@ -44,6 +44,6 @@ Mỗi JSONL result phải có common envelope gồm run/case/logical_request, sy
 ## 5. Unknown / Unverified
 
 - [UNVERIFIED] Creator và creation time của benchmarks/qrels/fixtures: source metadata không cung cấp; không suy từ ngày commit hay tên seed file. [DATA §7](../_digest/code/DATA.digest#7-unknown--unverified) + [benchmark:1](../../evals/scenarios/benchmark_250.jsonl#L1), [qrels:1](../../evals/qrels/policy_qrels_v1.json#L1), [sidecar:1](../../evals/fixtures/sidecar_250.json#L1).
-- [UNVERIFIED] Actual deployed DB/index/corpus snapshot và train-set provenance. [DATA §7](../_digest/code/DATA.digest#7-unknown--unverified) + [seed:1](../../data/deepseek_seed_data.json#L1), [infra:64](../phase4/PHASE_4_INFRASTRUCTURE_SPEC.md#L64).
+- [UNVERIFIED] Actual deployed DB/index/corpus snapshot và train-set provenance. [DATA §7](../_digest/code/DATA.digest#7-unknown--unverified) + [demo_events:1](../../data/demo_events/manifest.json#L1), [infra:64](../phase4/PHASE_4_INFRASTRUCTURE_SPEC.md#L64).
 
 Đọc tiếp: [metric dictionary](METRICS_DICTIONARY.md), [contamination](../01_AI_SYSTEM/AI_CONTAMINATION_ANALYSIS.md), [evaluation protocol](../03_EVALUATION/EVALUATION_PROTOCOL.md).

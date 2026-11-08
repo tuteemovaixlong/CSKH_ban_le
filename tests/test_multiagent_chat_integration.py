@@ -142,8 +142,8 @@ class MultiAgentChatIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.store = BusinessStore(Path(self.temp.name) / "business.sqlite3")
-        self.store.seed()
+        from legacy_seed_fixture import seed_legacy_unit_fixture
+        self.store = seed_legacy_unit_fixture(BusinessStore(Path(self.temp.name) / "business.sqlite3"))
         self.gateway = MockMultiAgentChatGateway()
         self.app = Application(self.store, {}, infer=self.gateway, orchestrator="multi_agent")
         self.cid = self.store.new_conversation("C-001")["conversation_id"]

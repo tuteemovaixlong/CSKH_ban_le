@@ -197,8 +197,8 @@ class PhaseR1W2BusinessV5MigrationTests(unittest.TestCase):
 
         # 1. Fresh SQLite BusinessStore creates SQLite v8 (logical Business v9) directly with Business v5..v9 tables
         fresh_sqlite = self.root / "fresh_business.sqlite3"
-        store = BusinessStore(fresh_sqlite)
-        store.seed()
+        from legacy_seed_fixture import seed_legacy_unit_fixture
+        store = seed_legacy_unit_fixture(BusinessStore(fresh_sqlite))
         with store.connection() as db:
             ver_row = db.execute("SELECT component, version FROM retailops_schema").fetchone()
             self.assertEqual((ver_row["component"], ver_row["version"]), ("business", 8))
@@ -266,8 +266,8 @@ class PhaseR1W2BusinessV5MigrationTests(unittest.TestCase):
         t2_path = tenants_dir / f"{t2['storage_key']}.sqlite3"
 
         def _seed_pre_v5_sqlite(p: Path, *, with_open_handoff: bool):
-            b = BusinessStore(p)
-            b.seed()
+            from legacy_seed_fixture import seed_legacy_unit_fixture
+            b = seed_legacy_unit_fixture(BusinessStore(p))
             with closing(sqlite3.connect(p)) as db, db:
                 db.execute("DROP TABLE case_feedback_events")
                 db.execute("DROP TABLE handoff_episodes")
@@ -735,8 +735,9 @@ class PhaseR1W2CaseHandoffResumeFeedbackTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.now = 1_762_100_000.0
         self.store = BusinessStore(Path(self.tmp.name) / "biz.sqlite3")
+        from legacy_seed_fixture import seed_legacy_unit_fixture
         self.store.clock = lambda: self.now
-        self.store.seed()
+        seed_legacy_unit_fixture(self.store)
         self.agent = _SimpleAgent()
         from retailops.business.application import Application
 
@@ -1030,9 +1031,10 @@ class PhaseR1W2StaffDeskClaimResolveReadOnlyTests(unittest.TestCase):
             st.clock = lambda: self.now
             return st
 
+        from legacy_seed_fixture import provision_legacy_unit_tenant
         self.sessions.business_store = _clocked_bstore
-        self.store_a = self.sessions.provision_tenant("store-alpha", "Alpha", seed_demo=True)
-        self.store_b = self.sessions.provision_tenant("store-beta", "Beta", seed_demo=True)
+        self.store_a = provision_legacy_unit_tenant(self.sessions, "store-alpha", "Alpha")
+        self.store_b = provision_legacy_unit_tenant(self.sessions, "store-beta", "Beta")
         self.store_a.clock = lambda: self.now
         self.store_b.clock = lambda: self.now
         self.web = PublicWeb(ORIGIN, self.sessions, start_timer_worker=False)
@@ -1271,8 +1273,9 @@ class PhaseR1W2CaseTimersTests(unittest.TestCase):
             api_daily_limit=20,
             default_tenant_id="store-alpha",
         )
+        from legacy_seed_fixture import provision_legacy_unit_tenant
         self.sessions.store_clock = lambda: self.now
-        self.store = self.sessions.provision_tenant("store-alpha", "Alpha", seed_demo=True)
+        self.store = provision_legacy_unit_tenant(self.sessions, "store-alpha", "Alpha")
         self.web = PublicWeb(ORIGIN, self.sessions, start_timer_worker=False)
         self._wsgi = _wsgi
 

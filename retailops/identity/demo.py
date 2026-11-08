@@ -153,6 +153,7 @@ class GuestSessions:
                 if getattr(self, 'case_timer_config', None) is not None:
                     store.case_timer_config = self.case_timer_config
                 store.seed()
+                store.seed_demo_sample_orders('C-001')
                 app = Application(store, {}, self.infer, self.api_infer, self.api_daily_limit,
                                   cancel_registry=self.cancel_registry)
                 app.quota_store = self.control

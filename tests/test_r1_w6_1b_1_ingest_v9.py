@@ -2983,5 +2983,207 @@ class Item7ProviderRefundLinkingTests(unittest.TestCase):
             self.assertEqual(int(cnt), 1)
 
 
+class Item8DemoEventsAndPurgeLegacyTests(unittest.TestCase):
+    """Item 8 (W6.1b-D2, D11): Simulator demo datasets, clock rebasing, distinct account orders & purge-legacy-demo."""
+
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory(prefix="r1-w61b1-item8-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.out_dir = self.root / "out"
+
+    def test_demo_tenant_provisioning_account_template_isolation_and_180d_clock_rebasing(self) -> None:
+        base_future_clock = 1_762_600_000.0 + 180.0 * 86400.0
+        sessions = PersistentSessions(self.out_dir / "persistent", data_mode="persistent-demo")
+        sessions.store_clock = lambda: base_future_clock
+
+        bstore = sessions.provision_tenant("shop-demo", "Shop Demo", seed_demo=True)
+        self.assertTrue(bstore.has_demo_store_seed())
+
+        with bstore.connection() as db:
+            legacy_cnt = db.execute(
+                "SELECT COUNT(*) AS c FROM orders WHERE source_system='retailops_seed'"
+            ).fetchone()["c"]
+            sim_orders_cnt = db.execute(
+                "SELECT COUNT(*) AS c FROM orders WHERE source_system='marketplace_sim'"
+            ).fetchone()["c"]
+            ship_cnt = db.execute("SELECT COUNT(*) AS c FROM shipments").fetchone()["c"]
+            ship_ev_cnt = db.execute("SELECT COUNT(*) AS c FROM shipment_events").fetchone()["c"]
+            pay_cnt = db.execute("SELECT COUNT(*) AS c FROM payment_transactions").fetchone()["c"]
+            ref_cnt = db.execute("SELECT COUNT(*) AS c FROM refunds").fetchone()["c"]
+            imp_cnt = db.execute("SELECT COUNT(*) AS c FROM imported_events").fetchone()["c"]
+
+        self.assertEqual(legacy_cnt, 0)
+        self.assertGreater(sim_orders_cnt, 100)
+        self.assertGreater(ship_cnt, 50)
+        self.assertGreater(ship_ev_cnt, 100)
+        self.assertGreater(pay_cnt, 50)
+        self.assertGreater(ref_cnt, 0)
+        self.assertEqual(imp_cnt, 2003)
+
+        # Two new demo customers log in via Google +180 days later -> distinct internal & external order IDs
+        secret_a = sessions.login_google(
+            "cust_a@example.com",
+            "Nguyễn Thị A",
+            sub="google-sub-item8-a",
+            email_verified=True,
+            tenant_id="shop-demo",
+        )
+        secret_b = sessions.login_google(
+            "cust_b@example.com",
+            "Trần Văn B",
+            sub="google-sub-item8-b",
+            email_verified=True,
+            tenant_id="shop-demo",
+        )
+        cid_a = sessions.control.resolve(
+            sessions.cookie_id(f"{sessions.cookie_name}={secret_a}")
+        )["customer_id"]
+        cid_b = sessions.control.resolve(
+            sessions.cookie_id(f"{sessions.cookie_name}={secret_b}")
+        )["customer_id"]
+        self.assertNotEqual(cid_a, cid_b)
+
+        orders_a = bstore.orders(cid_a)
+        orders_b = bstore.orders(cid_b)
+        self.assertEqual(len(orders_a), 3)
+        self.assertEqual(len(orders_b), 3)
+
+        ids_a = {o["id"] for o in orders_a}
+        ids_b = {o["id"] for o in orders_b}
+        ext_a = {o["external_order_id"] for o in orders_a}
+        ext_b = {o["external_order_id"] for o in orders_b}
+        self.assertTrue(ids_a.isdisjoint(ids_b))
+        self.assertTrue(ext_a.isdisjoint(ext_b))
+        for ext_id in ext_a | ext_b:
+            self.assertTrue(ext_id.startswith("SIM-O-"), ext_id)
+
+        pids_a = {o["product_id"] for o in orders_a}
+        self.assertEqual(pids_a, {"P-101", "P-102", "P-202"})
+        self.assertNotIn("P-604", pids_a)
+
+        # Verify +180 days clock rebasing keeps size-exchange order (P-101) within 15-day size-exchange window
+        size_order_a = next(o for o in orders_a if o["product_id"] == "P-101")
+        elig_a = bstore.order_eligibility(size_order_a["id"], now=base_future_clock)
+        self.assertTrue(elig_a["within_size_exchange_window"], elig_a)
+        self.assertTrue(elig_a["within_warranty"], elig_a)
+
+        late_order_a = next(o for o in orders_a if o["product_id"] == "P-202")
+        elig_late = bstore.order_eligibility(late_order_a["id"], now=base_future_clock)
+        self.assertTrue(elig_late["is_late_vs_promised"], elig_late)
+
+    def test_purge_legacy_demo_cli_dry_run_retains_referenced_orders_and_preserves_sim_orders(self) -> None:
+        import subprocess
+
+        sessions = PersistentSessions(self.out_dir / "persistent", data_mode="persistent-demo")
+        bstore = sessions.provision_tenant("shop-purge", "Shop Purge", seed_demo=True)
+
+        with bstore.connection(write=True) as db:
+            sim_count_before = db.execute(
+                "SELECT COUNT(*) AS c FROM orders WHERE source_system='marketplace_sim'"
+            ).fetchone()["c"]
+            db.execute("INSERT OR IGNORE INTO customers(id, name) VALUES ('C-001', 'Khách Cũ')")
+            db.execute(
+                """INSERT INTO orders(
+                       id, customer_id, product_id, source_system, external_order_id,
+                       ordered_at, name, variant, amount, status, version
+                   ) VALUES
+                   ('O-101', 'C-001', 'P-101', 'retailops_seed', 'O-101', 1700000000.0, 'Áo thun cũ 1', 'Trắng / M', 299000, 'pending', 1),
+                   ('O-102', 'C-001', 'P-102', 'retailops_seed', 'O-102', 1700000000.0, 'Áo khoác cũ 2', 'Đen / L', 799000, 'pending', 1)"""
+            )
+
+        # Create a real cancel request referencing O-101 so O-101 must be retained
+        req = bstore.create_order_action_request(
+            "C-001",
+            {
+                "order_id": "O-101",
+                "type": "cancel",
+                "expected_order_version": 1,
+                "reason_code": "ordered_by_mistake",
+            },
+        )
+        req_id = req["order_action"]["request_id"]
+
+        cli_env = {
+            **os.environ,
+            "PYTHONIOENCODING": "utf-8",
+            "RETAILOPS_OUTPUT": str(self.out_dir),
+            "RETAILOPS_STORAGE_BACKEND": "sqlite",
+        }
+        repo_root = Path(__file__).resolve().parents[1]
+
+        def run_purge(*extra: str) -> dict:
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "retailops",
+                    "database",
+                    "--output",
+                    str(self.out_dir),
+                    "purge-legacy-demo",
+                    "--tenant",
+                    "shop-purge",
+                    *extra,
+                ],
+                cwd=str(repo_root),
+                env=cli_env,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            return json.loads(proc.stdout)
+
+        dry = run_purge("--dry-run")
+        self.assertEqual(dry["result"], "PURGE_LEGACY_DEMO_DRY_RUN")
+        self.assertTrue(dry["dry_run"])
+        self.assertEqual(dry["would_remove_count"], 1)
+        self.assertEqual(dry["removed_count"], 0)
+        self.assertEqual([r["order_id"] for r in dry["removable_orders"]], ["O-102"])
+        self.assertEqual(dry["retained_count"], 1)
+        self.assertEqual(dry["retained_orders"][0]["order_id"], "O-101")
+        self.assertEqual(dry["retained_orders"][0]["request_ids"], [req_id])
+
+        # Confirm --dry-run left both O-101 and O-102 intact
+        with bstore.connection() as db:
+            legacy_ids_after_dry = [
+                r["id"]
+                for r in db.execute(
+                    "SELECT id FROM orders WHERE source_system='retailops_seed' ORDER BY id ASC"
+                ).fetchall()
+            ]
+        self.assertEqual(legacy_ids_after_dry, ["O-101", "O-102"])
+
+        # Live execution removes O-102, retains O-101, leaves all marketplace_sim orders untouched
+        live = run_purge()
+        self.assertEqual(live["result"], "PURGE_LEGACY_DEMO_OK")
+        self.assertFalse(live["dry_run"])
+        self.assertEqual(live["removed_count"], 1)
+        self.assertEqual(live["retained_count"], 1)
+        self.assertEqual(live["retained_orders"][0]["order_id"], "O-101")
+
+        with bstore.connection() as db:
+            legacy_ids_after_live = [
+                r["id"]
+                for r in db.execute(
+                    "SELECT id FROM orders WHERE source_system='retailops_seed' ORDER BY id ASC"
+                ).fetchall()
+            ]
+            sim_count_after = db.execute(
+                "SELECT COUNT(*) AS c FROM orders WHERE source_system='marketplace_sim'"
+            ).fetchone()["c"]
+        self.assertEqual(legacy_ids_after_live, ["O-101"])
+        self.assertEqual(sim_count_after, sim_count_before)
+
+        with sessions.control.connection() as id_db:
+            audit_rows = id_db.execute(
+                "SELECT action, after_json FROM admin_audit_log WHERE action='database.purge_legacy_demo'"
+            ).fetchall()
+        self.assertEqual(len(audit_rows), 1)
+        self.assertEqual(json.loads(audit_rows[0]["after_json"])["removed_count"], 1)
+        self.assertEqual(json.loads(audit_rows[0]["after_json"])["retained_order_ids"], ["O-101"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -347,8 +347,8 @@ class SqliteBusinessV7MigrationTests(unittest.TestCase):
             self.assertNotIn('target_variant_id', {r[1] for r in db.execute('PRAGMA table_info(order_action_requests)')})
 
     def test_fresh_database_is_v7_and_enforces_the_exchange_shape(self):
-        store = BusinessStore(self.root / 'fresh.sqlite3')
-        store.seed()
+        from legacy_seed_fixture import seed_legacy_unit_fixture
+        store = seed_legacy_unit_fixture(BusinessStore(self.root / 'fresh.sqlite3'))
         with store.connection(write=True) as db:
             self.assertEqual(db.execute('SELECT version FROM retailops_schema').fetchone()[0], 8)
             db.execute("INSERT INTO conversations(id, customer_id, expires_at, provider_id) VALUES ('c1', 'C-001', 9e9, 'custom')")

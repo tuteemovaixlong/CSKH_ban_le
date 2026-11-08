@@ -79,11 +79,11 @@ def check_integration_secrets_contract():
         "RETAILOPS_EVENT_DIGEST_KEY_FILE: /run/secrets/retailops_event_digest_key",
     )
 
-    # 5. Dockerfile copies data/connectors, never copies integration-secrets; .dockerignore forbids integration-secrets/
-    require("Dockerfile", "data/connectors")
+    # 5. Dockerfile copies data/connectors and data/demo_events, never copies integration-secrets; .dockerignore forbids integration-secrets/
+    require("Dockerfile", "data/connectors", "data/demo_events")
     if "integration-secrets" in dockerfile:
         raise SystemExit("Dockerfile must never reference or COPY integration-secrets")
-    require(".dockerignore", "!data/connectors/")
+    require(".dockerignore", "!data/connectors/", "!data/demo_events/")
     for line in dockerignore.splitlines():
         stripped = line.strip()
         if stripped.startswith("!") and "integration-secrets" in stripped:

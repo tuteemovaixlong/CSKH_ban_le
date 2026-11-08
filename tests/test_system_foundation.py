@@ -65,9 +65,12 @@ with tempfile.TemporaryDirectory() as directory:
     store = BusinessStore(pathlib.Path(directory)/'business.sqlite3')
     assert store.orders('C-001') == []
     store.seed()
-    proposal = store.propose('C-001', {'order_id':'O-101', 'order_version':1, 'cancel_reason':'ordered_by_mistake'})
-    assert store.lookup('C-001','O-101')['status'] == 'pending'
-    conf = store.confirm('C-001',proposal['proposal_id'],{'confirmed':True},'x'*32)
+    with store.connection() as db:
+        pend = db.execute("SELECT id, customer_id, version FROM orders WHERE status='pending' ORDER BY id ASC LIMIT 1").fetchone()
+    cid, oid, ver = pend['customer_id'], pend['id'], pend['version']
+    proposal = store.propose(cid, {'order_id': oid, 'order_version': ver, 'cancel_reason': 'ordered_by_mistake'})
+    assert store.lookup(cid, oid)['status'] == 'pending'
+    conf = store.confirm(cid, proposal['proposal_id'], {'confirmed': True}, 'x'*32)
     assert conf['status'] == 'requested' and conf['order']['status'] == 'pending'
 print('BUSINESS_BOUNDARY_OK')
 '''
@@ -131,7 +134,8 @@ print('BUSINESS_BOUNDARY_OK')
 
     def test_transport_uses_session_identity_instead_of_fixed_demo_customer(self):
         from retailops.business.application import Application
-        store = BusinessStore(self.output/'binding.sqlite3'); store.seed()
+        from legacy_seed_fixture import seed_legacy_unit_fixture
+        store = seed_legacy_unit_fixture(BusinessStore(self.output/'binding.sqlite3'))
         application = Application(store, {})
         class CustomerTwoSessions:
             @contextmanager
@@ -150,21 +154,25 @@ print('BUSINESS_BOUNDARY_OK')
         private_settings = Settings.from_environment('private', self.env)
         app = build_private_app(private_settings)
         self.assertEqual(app.authenticate('Bearer '+INVITE), 'C-001')
-        proposal = app.store.propose('C-001', {'order_id':'O-101', 'order_version':1, 'cancel_reason':'ordered_by_mistake'})
-        app.store.confirm('C-001', proposal['proposal_id'], {'confirmed':True}, 'z'*32)
+        with app.store.connection() as db:
+            pend = db.execute("SELECT id, customer_id, version FROM orders WHERE status='pending' ORDER BY id ASC LIMIT 1").fetchone()
+        pend_cid, pend_oid, pend_ver = pend['customer_id'], pend['id'], pend['version']
+        proposal = app.store.propose(pend_cid, {'order_id': pend_oid, 'order_version': pend_ver, 'cancel_reason': 'ordered_by_mistake'})
+        app.store.confirm(pend_cid, proposal['proposal_id'], {'confirmed': True}, 'z'*32)
         public = build_public_app(Settings.from_environment('public', self.env))
         secret = public.sessions.login(INVITE)
         cookie = public.sessions.cookie_name+'='+secret
         with public.sessions.resolve(cookie) as binding:
             self.assertEqual(binding.customer_id, 'C-001')
             self.assertEqual(binding.workspace_id, hashlib.sha256(secret.encode()).hexdigest())
-            self.assertEqual(binding.application.store.lookup('C-001','O-101')['status'], 'pending')
+            self.assertEqual(len(binding.application.store.orders('C-001')), 3)
+            self.assertEqual(binding.application.store.list_customer_order_actions('C-001'), [])
         public.sessions.logout(cookie)
         self.assertTrue((self.output/'business.sqlite3').exists())
         reopened = build_private_app(private_settings)
-        self.assertEqual(reopened.store.lookup('C-001','O-101')['status'], 'pending')
-        self.assertEqual(reopened.store.list_customer_order_actions('C-001')[0]['status'], 'requested')
-        self.assertTrue(reopened.store.confirm('C-001',proposal['proposal_id'],{'confirmed':True},'z'*32)['replayed'])
+        self.assertEqual(reopened.store.lookup(pend_cid, pend_oid)['status'], 'pending')
+        self.assertEqual(reopened.store.list_customer_order_actions(pend_cid)[0]['status'], 'requested')
+        self.assertTrue(reopened.store.confirm(pend_cid, proposal['proposal_id'], {'confirmed': True}, 'z'*32)['replayed'])
 
     def test_wrong_interface_cannot_reuse_other_interfaces_auth_configuration(self):
         public = Settings.from_environment('public', self.env)

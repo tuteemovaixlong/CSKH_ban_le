@@ -16,6 +16,7 @@ from retailops.http.routes import api_result
 from retailops.identity.contracts import RequestContext
 from retailops.workflow.case_assist import STAFF_CASE_ASSIST_TOOLS
 from retailops_providers import OpenRouterAgent
+from legacy_seed_fixture import seed_legacy_unit_fixture
 
 
 class _ScriptedFakeGateway:
@@ -99,7 +100,7 @@ class TestR1W4CaseAssistant(unittest.TestCase):
         self.store._now = lambda: self.now
         self.store.tenant_id = "tenant_w4"
         self.store.data_root = Path(self.tmp.name) / "data"
-        self.store.seed()
+        seed_legacy_unit_fixture(self.store)
 
         # Seed a second customer & order O-201 to test out-of-case scope isolation
         with self.store.connection(write=True) as db:

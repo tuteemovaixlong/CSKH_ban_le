@@ -39,6 +39,7 @@ from retailops.http.public import PublicWeb
 from retailops.identity.persistent import PersistentSessions
 from retailops.identity.postgres import PostgresSessions
 from retailops.identity.store import IdentityStore
+from legacy_seed_fixture import provision_legacy_unit_tenant, seed_legacy_unit_fixture
 from retailops.storage import cli as database_cli
 from retailops.storage.pg_repositories import (
     PostgresBusinessStore,
@@ -426,7 +427,7 @@ class PhaseR1W3BusinessV6SchemaAndMigrationTests(unittest.TestCase):
 
         db_path = self.root / "fresh_v6.sqlite3"
         store = BusinessStore(db_path)
-        store.seed()
+        seed_legacy_unit_fixture(store)
         now = time.time()
 
         with store.connection(write=True) as db:
@@ -858,8 +859,8 @@ class PhaseR1W3OrderActionCreationAndFacadeTests(unittest.TestCase):
         self.pers = self.root / "persistent"
         self.sessions = PersistentSessions(self.pers, data_mode="persistent-demo")
         self.sessions.customer_ref_key = "test-w3-customer-ref-key-0123456789abcdef"
-        self.store_a = self.sessions.provision_tenant("shop-a", "Shop A", seed_demo=True)
-        self.store_b = self.sessions.provision_tenant("shop-b", "Shop B", seed_demo=True)
+        self.store_a = provision_legacy_unit_tenant(self.sessions, "shop-a", "Shop A")
+        self.store_b = provision_legacy_unit_tenant(self.sessions, "shop-b", "Shop B")
         with self.store_a.connection(write=True) as db:
             db.execute(
                 "INSERT INTO orders(id, customer_id, product_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version) "
@@ -1125,7 +1126,7 @@ class PhaseR1W3ReviewLifecycleDeliveryFailureRefundAndManagerStatusTests(unittes
         self.pers = self.root / "persistent"
         self.sessions = PersistentSessions(self.pers, data_mode="persistent-demo")
         self.sessions.customer_ref_key = "test-w3-customer-ref-key-0123456789abcdef"
-        self.store_a = self.sessions.provision_tenant("shop-a", "Shop A", seed_demo=True)
+        self.store_a = provision_legacy_unit_tenant(self.sessions, "shop-a", "Shop A")
         for cid, cname in (
             ("C-STAFF-1", "Nhân viên 1"),
             ("C-STAFF-2", "Nhân viên 2"),
@@ -1536,8 +1537,8 @@ class PhaseR1W3EvidenceStorageExifStripAuthAndPurgeTests(unittest.TestCase):
         self.sessions.customer_ref_key = "test-w3-ev-customer-ref-key-0123456789abcdef"
         self.sessions.store_clock = lambda: self.now
 
-        # Tenant A (seed_demo already creates C-001 and C-002)
-        self.store_a = self.sessions.provision_tenant("tenant-ev-a", "Store Evidence A", seed_demo=True)
+        # Tenant A (legacy unit fixture creates C-001 and C-002)
+        self.store_a = provision_legacy_unit_tenant(self.sessions, "tenant-ev-a", "Store Evidence A")
         self.store_a.add_customer("C-STAFF1", "Staff Một")
         self.store_a.add_customer("C-MGR1", "Manager Một")
         with self.store_a.connection(write=True) as db:
@@ -1546,7 +1547,7 @@ class PhaseR1W3EvidenceStorageExifStripAuthAndPurgeTests(unittest.TestCase):
                 (self.now - 2 * 86400,),
             )
         # Tenant B (isolated tenant)
-        self.store_b = self.sessions.provision_tenant("tenant-ev-b", "Store Evidence B", seed_demo=True)
+        self.store_b = provision_legacy_unit_tenant(self.sessions, "tenant-ev-b", "Store Evidence B")
         self.store_b.add_customer("C-MGRB", "Manager B")
 
         self.origin = "https://retailops.example.com"
@@ -1866,7 +1867,7 @@ class PhaseR1W3OutboxWorkerJsonlEnvelopeManifestAndCliTests(unittest.TestCase):
         self.sessions = PersistentSessions(self.root / "persistent")
         self.sessions.customer_ref_key = self.customer_ref_key
         self.sessions.store_clock = lambda: self.now
-        self.store = self.sessions.provision_tenant("tenant-ob-1", "Outbox Shop", seed_demo=True)
+        self.store = provision_legacy_unit_tenant(self.sessions, "tenant-ob-1", "Outbox Shop")
         with self.store.connection(write=True) as db:
             db.execute("UPDATE customers SET name = ? WHERE id = 'C-001'", ("Nguyễn Văn Bí Mật",))
         self.web = PublicWeb("https://retailops.example.com", self.sessions, start_timer_worker=False)
@@ -2032,7 +2033,7 @@ class PhaseR1W3AgentPrepareOrderActionTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="r1-w3-item11-")
         self.addCleanup(self.tmp.cleanup)
         self.store = BusinessStore(Path(self.tmp.name) / "business.sqlite3")
-        self.store.seed()
+        seed_legacy_unit_fixture(self.store)
 
         class ScriptedAgent:
             def __init__(self):

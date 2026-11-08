@@ -262,8 +262,15 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
             self.sessions.cookie_id(f"__Host-retailops_account={sec2}")
         )
         cid2 = mem2["customer_id"]
-        seeded_oids = bstore.seed_demo_sample_orders(cid2)
-        self.assertEqual(len(seeded_oids), 3)
+        seeded_oids = ["O-819201", "O-819202", "O-819203"]
+        with bstore.connection(write=True) as db:
+            db.execute(
+                """INSERT INTO orders(id, customer_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version, cancel_reason, product_id)
+                   VALUES ('O-819201', ?, 'retailops_seed', 'O-819201', 1700000000.0, 'Áo sơ mi lụa công sở', 'Trắng / M', 450000, 'pending', 1, NULL, 'P-601'),
+                          ('O-819202', ?, 'retailops_seed', 'O-819202', 1700000000.0, 'Quần tây đen hàn quốc', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602'),
+                          ('O-819203', ?, 'retailops_seed', 'O-819203', 1700000000.0, 'Giày lười da bò cao cấp', 'Nâu / 41', 890000, 'delivered', 1, NULL, 'P-603')""",
+                (cid2, cid2, cid2),
+            )
         p602_oid = seeded_oids[1]
         purge_res = self.sessions.purge_demo_order(
             tenant_id=tenant_id,
@@ -279,6 +286,7 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
         )
         self.assertTrue(purge_res["executed"])
         self.assertTrue(bstore.is_order_purged(p602_oid))
+        self.assertEqual(bstore.seed_demo_sample_orders(cid2, sessions=self.sessions), [])
 
         sec2_relogin = self.sessions.login_google(
             email="purged.buyer@example.com",

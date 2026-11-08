@@ -241,8 +241,9 @@ class ApiAdapterTests(unittest.TestCase):
 
 class SelectionTests(unittest.TestCase):
     def setUp(self):
+        from legacy_seed_fixture import seed_legacy_unit_fixture
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
-        self.store = BusinessStore(Path(self.temp.name)/'business.sqlite3'); self.store.seed()
+        self.store = seed_legacy_unit_fixture(BusinessStore(Path(self.temp.name)/'business.sqlite3'))
         self.custom, self.api = FakeAgent('custom'), FakeAgent('api')
         self.app = Application(self.store, {}, self.custom, api_infer=self.api, api_daily_limit=2)
 
@@ -336,8 +337,9 @@ class SelectionTests(unittest.TestCase):
 
 class SelectorHttpTests(unittest.TestCase):
     def test_authenticated_options_and_selection_reach_correct_gateway(self):
+        from legacy_seed_fixture import seed_legacy_unit_fixture
         with tempfile.TemporaryDirectory() as folder:
-            store = BusinessStore(Path(folder)/'business.sqlite3'); store.seed()
+            store = seed_legacy_unit_fixture(BusinessStore(Path(folder)/'business.sqlite3'))
             custom, external = FakeAgent('custom'), FakeAgent('api')
             token = 't'*40
             app = Application(store, {hashlib.sha256(token.encode()).hexdigest(): 'C-001'}, custom, external)

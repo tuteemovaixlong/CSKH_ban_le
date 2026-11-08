@@ -9,6 +9,7 @@ import uuid
 from retailops.business.application import Application
 from retailops.business.store import BusinessStore
 from retailops.workflow.subagents.read_worker import _summarize_tool_result
+from legacy_seed_fixture import seed_legacy_unit_fixture
 
 
 class ToolSummarySafetyUnitTests(unittest.TestCase):
@@ -119,7 +120,7 @@ class ReActEndToEndIntegrationTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.store = BusinessStore(Path(self.temp.name) / 'business.sqlite3')
-        self.store.seed()
+        seed_legacy_unit_fixture(self.store)
         self.gateway = MockReActGateway()
         self.app = Application(self.store, {}, infer=self.gateway, orchestrator='multi_agent')
         self.cid = self.store.new_conversation('C-001')['conversation_id']

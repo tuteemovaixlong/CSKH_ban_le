@@ -14,12 +14,13 @@ from pathlib import Path
 from retailops.core import ApiError
 from retailops.http.public import PublicWeb
 from retailops.identity.persistent import PersistentSessions
+from legacy_seed_fixture import provision_legacy_unit_tenant
 
 ORIGIN = 'https://retailops.example.com'
 
 
 class RoleHarness(unittest.TestCase):
-    """Tenant `shop-a` (seeded demo data + extra orders) and `shop-b`, each with role sessions."""
+    """Tenant `shop-a` (seeded unit fixture + extra orders) and `shop-b`, each with role sessions."""
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -27,8 +28,8 @@ class RoleHarness(unittest.TestCase):
         self.pers = Path(self.temp.name) / 'persistent'
         self.sessions = PersistentSessions(self.pers, data_mode='persistent-demo')
         self.sessions.customer_ref_key = 'test-w32-customer-ref-key-0123456789abcdef'
-        self.store_a = self.sessions.provision_tenant('shop-a', 'Shop A', seed_demo=True)
-        self.store_b = self.sessions.provision_tenant('shop-b', 'Shop B', seed_demo=True)
+        self.store_a = provision_legacy_unit_tenant(self.sessions, 'shop-a', 'Shop A')
+        self.store_b = provision_legacy_unit_tenant(self.sessions, 'shop-b', 'Shop B')
         self.store_a.add_customer('C-STAFF-A', 'Nhân viên A')
         self.store_a.add_customer('C-MGR-A', 'Quản lý A')
         self.store_b.add_customer('C-STAFF-B', 'Nhân viên B')

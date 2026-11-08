@@ -13,6 +13,7 @@ from unittest.mock import patch
 from retailops.core import ApiError
 from retailops.http.public import PublicWeb
 from retailops.identity.persistent import PersistentSessions
+from legacy_seed_fixture import provision_legacy_unit_tenant
 
 
 class PhaseR1W31BaseTestCase(unittest.TestCase):
@@ -27,8 +28,8 @@ class PhaseR1W31BaseTestCase(unittest.TestCase):
         self.pers = self.root / "persistent"
         self.sessions = PersistentSessions(self.pers, data_mode="persistent-demo")
         self.sessions.customer_ref_key = "test-w31-customer-ref-key-0123456789abcdef"
-        self.store_a = self.sessions.provision_tenant("shop-a", "Shop A", seed_demo=True)
-        self.store_b = self.sessions.provision_tenant("shop-b", "Shop B", seed_demo=True)
+        self.store_a = provision_legacy_unit_tenant(self.sessions, "shop-a", "Shop A")
+        self.store_b = provision_legacy_unit_tenant(self.sessions, "shop-b", "Shop B")
         with self.store_a.connection(write=True) as db:
             db.execute(
                 "INSERT INTO orders(id, customer_id, product_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version, delivered_at) "

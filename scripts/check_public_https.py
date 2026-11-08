@@ -76,7 +76,8 @@ def main():
             assert request('/api/login',{'token':INVITE})[0] == 200
             headers = (temp/'headers.txt').read_text().lower()
             assert 'httponly' in headers and 'secure' in headers and 'samesite=strict' in headers
-            assert request('/api/orders')[1]['orders'][0]['id'] == 'O-101'
+            guest_orders = request('/api/orders')[1]['orders']
+            assert len(guest_orders) == 3 and all(o['external_order_id'].startswith('SIM-O-') for o in guest_orders), guest_orders
             assert request('/api/orders/O-202')[0] == 404
             assert request('/api/logout',{})[0] == 200
             assert request('/api/orders')[0] == 401
@@ -162,8 +163,19 @@ def main():
             # Provision through the packaged operator CLI, then switch the same HTTPS stack.
             admin = base+['exec','-T','web','python','-m','retailops','identity']
             run(admin+['init-tenant','--tenant','ci-shop','--name','CI shop','--seed-demo'])
+            seed_meta = json.loads(run(base+['exec','-T','web','python','-c',
+                "import json; from pathlib import Path; from retailops.identity.persistent import PersistentSessions; "
+                "s=PersistentSessions(Path('/data/persistent')); b=s.business_store('ci-shop'); "
+                "cid=s.control.get_external_customer_mapping('ci-shop','marketplace_sim','SIM-C-0070'); "
+                "ords=b.orders(cid); pend=[o for o in ords if o['external_order_id']=='SIM-O-00115'][0]; "
+                "with b.connection() as db: other=db.execute('SELECT id FROM orders WHERE customer_id<>? LIMIT 1',(cid,)).fetchone()['id']; "
+                "print(json.dumps({'cid':cid,'oid':pend['id'],'ver':pend['version'],'other':other}))"]).strip())
+            ci_cid = seed_meta['cid']
+            ci_oid = seed_meta['oid']
+            ci_ver = seed_meta['ver']
+            other_oid = seed_meta['other']
             member = json.loads(run(admin+['create-member','--tenant','ci-shop','--principal','ci-staff',
-                '--name','CI staff','--customer','C-002','--role','staff']))['membership_id']
+                '--name','CI staff','--customer',ci_cid,'--role','staff']))['membership_id']
             run(admin+['issue-credential','--membership',member,'--credential-file','/tmp/ci-account-code'])
             code = run(base+['exec','-T','web','cat','/tmp/ci-account-code']).strip()
             with (temp/'public.env').open('a') as config:
@@ -173,8 +185,8 @@ def main():
             assert request('/api/login',{'token':INVITE})[0] == 401
             assert request('/api/login',{'token':code},jar='account')[0] == 200
             assert request('/api/session',jar='account')[1]['role'] == 'staff'
-            assert request('/api/orders',jar='account')[1]['orders'][0]['id'] == 'O-202'
-            assert request('/api/orders/O-101',jar='account')[0] == 404
+            assert any(o['id'] == ci_oid for o in request('/api/orders',jar='account')[1]['orders'])
+            assert request('/api/orders/'+other_oid,jar='account')[0] == 404
             # R1 W1 retired 'viewer'; role isolation is now proven by a manager-only endpoint denying staff.
             assert request('/api/manager/events',jar='account')[0] == 403
             assert request('/api/logout',{},jar='account')[0] == 200
@@ -182,12 +194,12 @@ def main():
             # Compose --wait handles readiness after the restart, without contacting a model.
             run(base+['up','-d','--no-build','--pull','never','--wait','--wait-timeout','60','web'])
             assert request('/api/login',{'token':code},jar='account')[0] == 200
-            assert request('/api/orders',jar='account')[1]['orders'][0]['id'] == 'O-202'
+            assert any(o['id'] == ci_oid for o in request('/api/orders',jar='account')[1]['orders'])
             print('PERSISTENT_HTTPS_ACCOUNT_FLOW_OK (packaged CLI, isolation, roles, restart)')
             # Cancel an order before moving the stopped SQLite workspace to PostgreSQL.
             run(admin+['set-role','--membership',member,'--role','customer'])
             assert request('/api/login',{'token':code},jar='account')[0] == 200
-            proposal = request('/api/cancellation-proposals',{'order_id':'O-202','order_version':1,
+            proposal = request('/api/cancellation-proposals',{'order_id':ci_oid,'order_version':ci_ver,
                 'cancel_reason':'ordered_by_mistake'},jar='account')[1]
             assert request('/api/cancellation-proposals/'+proposal['proposal_id']+'/confirm',{'confirmed':True},
                 jar='account',headers=['Idempotency-Key: ci-postgres-migration'])[0] == 200
@@ -209,9 +221,9 @@ def main():
             assert request('/healthz')[1]['storage_backend'] == 'postgresql'
             assert request('/api/orders',jar='account')[0] == 401
             assert request('/api/login',{'token':code},jar='account')[0] == 200
-            assert request('/api/orders',jar='account')[1]['orders'][0]['status'] == 'pending'
+            assert any(o['id'] == ci_oid and o['status'] == 'pending' for o in request('/api/orders',jar='account')[1]['orders'])
             assert request('/api/order-actions',jar='account')[1]['order_actions'][0]['status'] == 'requested'
-            assert request('/api/orders/O-101',jar='account')[0] == 404
+            assert request('/api/orders/'+other_oid,jar='account')[0] == 404
             # Runtime credentials must be the limited application role, never the bootstrap superuser.
             flags = run(pgbase+['exec','-T','postgres','psql','-U','postgres','-d','retailops','-Atc',
                 "SELECT rolsuper OR rolcreatedb OR rolcreaterole FROM pg_roles WHERE rolname='retailops'"]).strip()
@@ -238,7 +250,7 @@ CREATE EXTENSION vector WITH SCHEMA retailops_extensions;
                 "from retailops.config import database_settings; import os; from psycopg.conninfo import make_conninfo; "
                 "from retailops.identity.postgres import PostgresSessions; "
                 "s=PostgresSessions(make_conninfo(database_settings(os.environ)[1],dbname='retailops_restore')); "
-                "st=s.business_store('ci-shop'); assert st.orders('C-002')[0]['status']=='pending' and st.list_customer_order_actions('C-002')[0]['status']=='requested'; print('RESTORE_OK')"])
+                f"st=s.business_store('ci-shop'); assert any(o['id']=={ci_oid!r} and o['status']=='pending' for o in st.orders({ci_cid!r})) and st.list_customer_order_actions({ci_cid!r})[0]['status']=='requested'; print('RESTORE_OK')"])
             assert 'RESTORE_OK' in restored
             print('POSTGRES_HTTPS_IMPORT_RESTORE_OK (limited DB role; pgvector prebootstrapped; no external inference)')
         except Exception:

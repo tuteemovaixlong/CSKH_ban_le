@@ -283,13 +283,15 @@ def import_events_jsonl(
                     {"line": idx, "code": exc.code, "message": exc.message}
                 )
 
+    unique_pairs: list[tuple[str, str]] = []
     seen_pairs: set[tuple[str, str]] = set()
     for ext_cid, cid in pending_mappings:
         pair = (ext_cid, cid)
         if pair in seen_pairs:
             continue
         seen_pairs.add(pair)
-        svc._ensure_mapping(tenant_clean, clean_source, ext_cid, cid)
+        unique_pairs.append(pair)
+    svc._ensure_mappings_batch(tenant_clean, clean_source, unique_pairs)
 
     summary = {
         "result": "EVENTS_IMPORTED",

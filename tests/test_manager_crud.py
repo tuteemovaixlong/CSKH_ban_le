@@ -7,6 +7,7 @@ from retailops.business.application import Application
 from retailops.business.store import BusinessStore
 from retailops.http.routes import api_result
 from retailops.core import ApiError
+from legacy_seed_fixture import seed_legacy_unit_fixture
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -16,7 +17,7 @@ class TestManagerCRUD(unittest.TestCase):
         self.tmp = tempfile.NamedTemporaryFile(suffix='.sqlite3', delete=False)
         self.tmp.close()
         self.store = BusinessStore(self.tmp.name, create=True)
-        self.store.seed()
+        seed_legacy_unit_fixture(self.store)
         self.app = Application(self.store, {}, role='manager')
 
     def tearDown(self):
@@ -550,18 +551,23 @@ class TestManagerCRUD(unittest.TestCase):
         self.assertIn('phát sinh', ctx.exception.message)
 
     def test_seed_backfill_deepseek_orders(self):
-        with self.store.connection() as db:
-            o305 = db.execute("SELECT product_id FROM orders WHERE id='O-305'").fetchone()
-            self.assertIsNotNone(o305)
-            self.assertEqual(o305['product_id'], 'P-501')
-
-            o306 = db.execute("SELECT product_id FROM orders WHERE id='O-306'").fetchone()
-            self.assertIsNotNone(o306)
-            self.assertEqual(o306['product_id'], 'P-503')
-
-            o307 = db.execute("SELECT product_id FROM orders WHERE id='O-307'").fetchone()
-            self.assertIsNotNone(o307)
-            self.assertEqual(o307['product_id'], 'P-506')
+        demo_tmp = tempfile.NamedTemporaryFile(suffix='.sqlite3', delete=False)
+        demo_tmp.close()
+        self.addCleanup(lambda: Path(demo_tmp.name).unlink(missing_ok=True))
+        demo_store = BusinessStore(demo_tmp.name, create=True)
+        demo_store.seed()
+        with demo_store.connection() as db:
+            total = db.execute("SELECT COUNT(*) AS cnt FROM orders").fetchone()['cnt']
+            self.assertGreater(total, 0)
+            legacy_cnt = db.execute(
+                "SELECT COUNT(*) AS cnt FROM orders WHERE source_system='retailops_seed'"
+            ).fetchone()['cnt']
+            self.assertEqual(legacy_cnt, 0)
+            unlinked = db.execute(
+                "SELECT COUNT(*) AS cnt FROM orders o "
+                "WHERE o.product_id IS NULL OR NOT EXISTS (SELECT 1 FROM products p WHERE p.id = o.product_id)"
+            ).fetchone()['cnt']
+            self.assertEqual(unlinked, 0)
 
     def test_sqlite_to_postgres_import_table_order(self):
         from retailops.storage.import_sqlite import read_database, BUSINESS_TABLES

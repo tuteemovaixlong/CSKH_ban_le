@@ -83,6 +83,13 @@ def add_parser(commands):
     imp_ev.add_argument('--file', type=Path, required=True, help='Path to JSONL events file.')
     imp_ev.add_argument('--rebase-clock', choices=('now',), default=None,
                         help="Shift event timestamps by (import_now - latest_occurred_at).")
+    purge_leg = sub.add_parser(
+        'purge-legacy-demo',
+        help='Remove legacy retailops_seed orders that have no linked order_action_requests.',
+    )
+    purge_leg.add_argument('--tenant', required=True, help='Target tenant ID.')
+    purge_leg.add_argument('--dry-run', action='store_true',
+                           help='Inspect and report removable vs retained legacy orders without mutating.')
 
 
 def run(args):
@@ -140,6 +147,46 @@ def run(args):
             jsonl_path=args.file,
             rebase_clock=args.rebase_clock,
         )
+
+    if action == 'purge-legacy-demo':
+        import time
+
+        if backend == 'postgresql':
+            from retailops.identity.postgres import PostgresSessions
+
+            sessions = PostgresSessions(dsn, data_root=Path(resolved_output))
+        else:
+            from retailops.identity.persistent import PersistentSessions
+
+            out_root = Path(resolved_output)
+            pers_dir = out_root / 'persistent' if (out_root / 'persistent').is_dir() or not (out_root / 'identity.sqlite3').is_file() else out_root
+            sessions = PersistentSessions(pers_dir)
+        tenant_clean = str(args.tenant or '').strip()
+        bstore = sessions.business_store(tenant_clean)
+        report = bstore.purge_legacy_demo_orders(dry_run=bool(args.dry_run))
+        if not args.dry_run:
+            cache = getattr(sessions, 'tool_caches', {}).get(tenant_clean)
+            if cache is not None and hasattr(cache, 'clear'):
+                cache.clear()
+            with sessions.control.connection(write=True) as id_db:
+                sessions.control.record_admin_audit(
+                    id_db,
+                    actor_principal_id='cli-operator',
+                    actor_role='operator',
+                    tenant_id=tenant_clean,
+                    target_membership_id=f'tenant:{tenant_clean}',
+                    action='database.purge_legacy_demo',
+                    outcome='allowed',
+                    before_state={'would_remove_count': report['would_remove_count']},
+                    after_state={
+                        'removed_count': report['removed_count'],
+                        'retained_count': report['retained_count'],
+                        'retained_order_ids': [r['order_id'] for r in report['retained_orders']],
+                    },
+                    reason='Operator purge-legacy-demo execution',
+                    now=time.time(),
+                )
+        return report
 
     if action == 'migrate-v5':
         if backend == 'sqlite':

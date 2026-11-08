@@ -418,6 +418,59 @@ class MarketplaceSimContractBridgeTests(unittest.TestCase):
                         for addr in raw_addresses:
                             self.assertNotIn(addr, txt, f"Address leak in {tbl}")
 
+    def test_demo_events_manifest_reproduces_exact_sha256(self) -> None:
+        import hashlib
+        import subprocess
+        import sys
+
+        demo_dir = ROOT / "data" / "demo_events"
+        manifest = json.loads((demo_dir / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["contract"], "retailops-integration-v2")
+        self.assertEqual(set(manifest["datasets"].keys()), {"store_events", "account_template"})
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_root = Path(tmp)
+            for ds_name, spec in manifest["datasets"].items():
+                checked_in_file = demo_dir / spec["file"]
+                self.assertTrue(checked_in_file.is_file(), spec["file"])
+                checked_in_bytes = checked_in_file.read_bytes()
+                self.assertEqual(
+                    hashlib.sha256(checked_in_bytes).hexdigest(),
+                    spec["sha256"],
+                    f"Checked-in {spec['file']} SHA-256 mismatch vs manifest.json",
+                )
+
+                sim_data_dir = tmp_root / f"sim_{ds_name}"
+                repro_jsonl = tmp_root / f"repro_{spec['file']}"
+                for cmd_template in spec["commands"]:
+                    cmd = [
+                        sys.executable
+                        if tok == "python"
+                        else str(sim_data_dir)
+                        if tok == "<data_dir>"
+                        else str(repro_jsonl)
+                        if tok == "<out_jsonl>"
+                        else tok
+                        for tok in cmd_template
+                    ]
+                    proc = subprocess.run(
+                        cmd,
+                        cwd=str(ROOT),
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                    )
+                    self.assertEqual(proc.returncode, 0, f"{ds_name} failed: {proc.stderr}")
+
+                repro_bytes = repro_jsonl.read_bytes()
+                repro_lines = [ln for ln in repro_bytes.splitlines() if ln.strip()]
+                self.assertEqual(len(repro_lines), spec["event_count"], ds_name)
+                self.assertEqual(
+                    hashlib.sha256(repro_bytes).hexdigest(),
+                    spec["sha256"],
+                    f"Reproduced {ds_name} SHA-256 mismatch vs manifest.json",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3,6 +3,7 @@ import hashlib
 import os
 import re
 import threading
+import weakref
 from collections import OrderedDict
 from contextlib import contextmanager
 from http.cookies import SimpleCookie
@@ -118,6 +119,7 @@ class PersistentSessions:
         return Path(tempfile.gettempdir()) / 'retailops_runtime_data'
 
     def _configure_business_store(self, store, *, tenant_id=None):
+        store._sessions_ref = weakref.ref(self)
         store.data_mode = getattr(self, 'data_mode', 'persistent-demo')
         store.tenant_id = _clean_tenant_id(tenant_id) or getattr(store, 'tenant_id', None) or 'default'
         store.data_root = self._resolve_data_root()
@@ -241,15 +243,20 @@ class PersistentSessions:
     def login_google(self, email, name, role='customer', sub=None, issuer='https://accounts.google.com', email_verified=False, live=False, tenant_id=None):
         tenant_id = self.resolve_google_tenant(sub=sub, issuer=issuer, tenant_id=tenant_id, email=email, email_verified=email_verified)
         is_live = live or getattr(self, 'data_mode', None) in ('production', 'live')
-        mid, cid = self.control.get_or_create_google_member(
-            tenant_id, email, name, role=role, sub=sub, issuer=issuer, email_verified=email_verified, live=is_live
+        mid, cid, is_new_member = self.control.get_or_create_google_member(
+            tenant_id, email, name, role=role, sub=sub, issuer=issuer, email_verified=email_verified, live=is_live, return_created=True
         )
         try:
             bstore = self.business_store(tenant_id)
+            should_seed_account_demo = False
             with bstore.connection(write=True) as bdb:
                 if not is_live:
                     bstore.seed_catalog(bdb)
                 bdb.execute("INSERT INTO customers VALUES (?,?) ON CONFLICT DO NOTHING", (cid, name or email))
+                if not is_live and is_new_member and role == 'customer' and bstore.has_demo_store_seed(bdb):
+                    should_seed_account_demo = True
+            if should_seed_account_demo:
+                bstore.seed_demo_sample_orders(cid, sessions=self)
         except Exception as ex:
             import logging
             logging.getLogger("retailops_identity").error("Failed to provision customer in business store: %s", ex)

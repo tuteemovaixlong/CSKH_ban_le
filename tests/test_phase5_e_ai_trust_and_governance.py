@@ -33,6 +33,7 @@ from retailops.identity.store import (
 from retailops_agent import AgentError
 from retailops_conversation import Catalog
 from retailops_tools import BoundTools
+from legacy_seed_fixture import provision_legacy_unit_tenant, seed_legacy_unit_fixture
 
 
 # Frozen, deterministic adversarial manifest for P5-E-AI6
@@ -166,7 +167,7 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.store_path = self.root / "business.sqlite3"
         self.store = BusinessStore(self.store_path)
-        self.store.seed()
+        seed_legacy_unit_fixture(self.store)
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -892,8 +893,8 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
             api_daily_limit=3,
             default_tenant_id="store-a",
         )
-        sessions.provision_tenant("store-a", "Store Alpha", seed_demo=True)
-        sessions.provision_tenant("store-b", "Store Beta", seed_demo=True)
+        provision_legacy_unit_tenant(sessions, "store-a", "Store Alpha")
+        provision_legacy_unit_tenant(sessions, "store-b", "Store Beta")
 
         def _make_member(tid: str, pid: str, name: str, cid: str, role: str) -> str:
             mid = sessions.create_member(tid, pid, name, cid, role=role)
@@ -1562,42 +1563,28 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
         )
         cookie = f"{sessions.cookie_name}={secret}"
         web = PublicWeb("https://shop.example.com", sessions)
+        bstore = sessions.business_store("demo-store")
 
-        # Google login itself never implicitly seeds sample orders for zero-order customers
-        code_init, init_orders_res, _ = _wsgi_call(web, "GET", "/api/orders", cookie=cookie)
-        self.assertEqual(code_init, 200)
-        self.assertEqual(init_orders_res["orders"], [])
-        demo_member = sessions.control.resolve(sessions.cookie_id(cookie))
-        sessions.business_store("demo-store").seed_demo_sample_orders(demo_member["customer_id"])
-
-        # 1. Positive control: Explicitly seeded demo sample order has server-side demo fixture provenance across list, detail, and focus
+        # 1. First-time Google login on a demo-seeded tenant instantiates the 3 canonical account_template orders
+        # via Item 4's integration write path with zero synthetic display_name overrides (W6.1b-D2, D11).
         code_o, orders_res, _ = _wsgi_call(web, "GET", "/api/orders", cookie=cookie)
         self.assertEqual(code_o, 200)
-        p602_orders = [o for o in orders_res["orders"] if o.get("product_id") == "P-602"]
-        self.assertEqual(len(p602_orders), 1)
-        sample_ord = p602_orders[0]
+        self.assertEqual(len(orders_res["orders"]), 3)
+        self.assertEqual({o["product_id"] for o in orders_res["orders"]}, {"P-101", "P-102", "P-202"})
+        for ord_row in orders_res["orders"]:
+            self.assertNotIn("display_name", ord_row)
+            self.assertEqual(ord_row["source_system"], "marketplace_sim")
+            self.assertTrue(str(ord_row["external_order_id"]).startswith("SIM-O-"))
+
+        sample_ord = next(o for o in orders_res["orders"] if o.get("product_id") == "P-101")
         sample_oid = sample_ord["id"]
-        sample_cid = sample_ord["customer_id"]
-        expected_canonical = {
-            "id": sample_oid,
-            "customer_id": sample_cid,
-            "name": "Quần tây đen hàn quốc",
-            "variant": "Đen / L",
-            "amount": 520000,
-            "status": "delivered",
-            "version": 1,
-            "cancel_reason": None,
-            "product_id": "P-602",
-        }
-        for k, v in expected_canonical.items():
-            self.assertEqual(sample_ord[k], v)
-        self.assertEqual(sample_ord["display_name"], "Bộ xếp hình gỗ cho bé")
+        self.assertEqual(sample_ord["name"], "Áo thun Essential")
+        self.assertEqual(sample_ord["status"], "delivered")
 
         code_det, det_res, _ = _wsgi_call(web, "GET", f"/api/orders/{sample_oid}", cookie=cookie)
         self.assertEqual(code_det, 200)
-        for k, v in expected_canonical.items():
-            self.assertEqual(det_res["order"][k], v)
-        self.assertEqual(det_res["order"]["display_name"], "Bộ xếp hình gỗ cho bé")
+        self.assertNotIn("display_name", det_res["order"])
+        self.assertEqual(det_res["order"]["name"], "Áo thun Essential")
 
         _, conv_demo, _ = _wsgi_call(web, "POST", "/api/conversations", body={"provider_id": "custom"}, cookie=cookie)
         code_foc, foc_res, _ = _wsgi_call(
@@ -1608,69 +1595,15 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
             cookie=cookie,
         )
         self.assertEqual(code_foc, 200)
-        for k, v in expected_canonical.items():
-            self.assertEqual(foc_res["order"][k], v)
-        self.assertEqual(foc_res["order"]["display_name"], "Bộ xếp hình gỗ cho bé")
+        self.assertNotIn("display_name", foc_res["order"])
+        self.assertEqual(foc_res["order"]["name"], "Áo thun Essential")
 
-        # 1b. Returning pre-provenance demo customer with 3 consecutive P-601/P-602/P-603 orders gets idempotently backfilled (R3)
-        bstore = sessions.business_store("demo-store")
-        with bstore.connection(write=True) as db:
-            db.execute("INSERT INTO customers VALUES ('legacy_demo_cust', 'Legacy Demo Customer') ON CONFLICT DO NOTHING")
-            db.execute(
-                """INSERT INTO orders(id, customer_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version, cancel_reason, product_id)
-                   VALUES ('O-899990', 'legacy_demo_cust', 'retailops_seed', 'O-899990', 1700000000.0, 'Áo sơ mi lụa công sở', 'Trắng / M', 450000, 'pending', 1, NULL, 'P-601'),
-                          ('O-899991', 'legacy_demo_cust', 'retailops_seed', 'O-899991', 1700000000.0, 'Quần tây đen hàn quốc', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602'),
-                          ('O-899992', 'legacy_demo_cust', 'retailops_seed', 'O-899992', 1700000000.0, 'Giày lười da bò cao cấp', 'Nâu / 41', 890000, 'delivered', 1, NULL, 'P-603')"""
-            )
-        self.assertFalse(bstore.is_demo_sample_order("legacy_demo_cust", "O-899991"))
-        bstore.seed_demo_sample_orders("legacy_demo_cust")
-        self.assertTrue(bstore.is_demo_sample_order("legacy_demo_cust", "O-899991"))
+        # Re-calling seed_demo_sample_orders on an already populated customer is idempotent
+        demo_member = sessions.control.resolve(sessions.cookie_id(cookie))
+        self.assertEqual(bstore.seed_demo_sample_orders(demo_member["customer_id"], sessions=sessions), [])
 
-        # 1c. Legacy 3-order fixture with mixed import provenance (imported_events on P-601 while P-602 is unimported)
-        # MUST NOT backfill demo_sample_fixture_seeded and MUST preserve canonical label (DATA1)
-        with bstore.connection(write=True) as db:
-            db.execute("INSERT INTO customers VALUES ('legacy_mixed_cust', 'Legacy Mixed Provenance') ON CONFLICT DO NOTHING")
-            db.execute(
-                """INSERT INTO orders(id, customer_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version, cancel_reason, product_id)
-                   VALUES ('O-888881', 'legacy_mixed_cust', 'retailops_seed', 'O-888881', 1700000000.0, 'Áo sơ mi lụa công sở', 'Trắng / M', 450000, 'pending', 1, NULL, 'P-601'),
-                          ('O-888882', 'legacy_mixed_cust', 'retailops_seed', 'O-888882', 1700000000.0, 'Quần tây đen hàn quốc', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602'),
-                          ('O-888883', 'legacy_mixed_cust', 'retailops_seed', 'O-888883', 1700000000.0, 'Giày lười da bò cao cấp', 'Nâu / 41', 890000, 'delivered', 1, NULL, 'P-603')"""
-            )
-            db.execute(
-                """INSERT INTO imported_events(id, source_system, event_id, tenant_id, external_customer_id, customer_id, order_id, status, total, currency, payload_json, signature, created_at)
-                   VALUES ('imp-mix-01', 'pos_sync', 'evt-mix-01', 'demo-store', 'ext-mix-01', 'legacy_mixed_cust', 'O-888881', 'pending', 450000, 'VND', '{}', 'sig-01', ?)""",
-                (time.time(),),
-            )
-        bstore.seed_demo_sample_orders("legacy_mixed_cust")
-        self.assertFalse(bstore.is_demo_sample_order("legacy_mixed_cust", "O-888882"))
-        mid_mixed = sessions.create_member("demo-store", "prin_mixed_cust", "Legacy Mixed Provenance", "legacy_mixed_cust", role="customer")
-        tok_mixed = secrets.token_urlsafe(32)
-        sessions.control.register_credential(mid_mixed, tok_mixed)
-        cookie_mixed = self._login_cookie(sessions, tok_mixed)
-        code_mix_list, mix_list_res, _ = _wsgi_call(web, "GET", "/api/orders", cookie=cookie_mixed)
-        self.assertEqual(code_mix_list, 200)
-        mix_by_id = {o["id"]: o for o in mix_list_res["orders"]}
-        self.assertEqual(mix_by_id["O-888882"]["name"], "Quần tây đen hàn quốc")
-        self.assertNotIn("display_name", mix_by_id["O-888882"])
-        code_mix_det, mix_det_res, _ = _wsgi_call(web, "GET", "/api/orders/O-888882", cookie=cookie_mixed)
-        self.assertEqual(code_mix_det, 200)
-        self.assertEqual(mix_det_res["order"]["name"], "Quần tây đen hàn quốc")
-        self.assertNotIn("display_name", mix_det_res["order"])
-
-        # 1d. Legacy 3-order fixture with modified attribute on any of the 3 orders MUST NOT backfill (DATA1)
-        with bstore.connection(write=True) as db:
-            db.execute("INSERT INTO customers VALUES ('legacy_mod_cust', 'Legacy Modified Fixture') ON CONFLICT DO NOTHING")
-            db.execute(
-                """INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id, source_system, external_order_id, ordered_at)
-                   VALUES ('O-877771', 'legacy_mod_cust', 'Áo sơ mi lụa công sở', 'Trắng / M', 490000, 'pending', 1, NULL, 'P-601', 'retailops_seed', 'O-877771', 1700000000.0),
-                          ('O-877772', 'legacy_mod_cust', 'Quần tây đen hàn quốc', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602', 'retailops_seed', 'O-877772', 1700000000.0),
-                          ('O-877773', 'legacy_mod_cust', 'Giày lười da bò cao cấp', 'Nâu / 41', 890000, 'delivered', 1, NULL, 'P-603', 'retailops_seed', 'O-877773', 1700000000.0)"""
-            )
-        bstore.seed_demo_sample_orders("legacy_mod_cust")
-        self.assertFalse(bstore.is_demo_sample_order("legacy_mod_cust", "O-877772"))
-
-        # 2. Negative control (R3): Non-demo / manual / imported orders with 6-digit IDs (including O-123456 and O-754321)
-        # MUST NOT receive display_name="Bộ xếp hình gỗ cho bé" on list, detail, or focus!
+        # 2. Negative control: Non-demo / legacy / imported orders with 6-digit IDs (including O-123456 and O-754321)
+        # preserve canonical P-602 label ("Quần tây đen hàn quốc") and never receive display_name on list, detail, or focus.
         with bstore.connection(write=True) as db:
             db.execute("INSERT INTO customers VALUES (?, ?) ON CONFLICT DO NOTHING", ("non_demo_customer", "Non Demo Customer"))
             db.execute(
@@ -1681,8 +1614,7 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
                 """INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id, source_system, external_order_id, ordered_at)
                    VALUES ('O-754321', 'non_demo_customer', 'Quần tây đen hàn quốc', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602', 'retailops_seed', 'O-754321', 1700000000.0)"""
             )
-        bstore.seed_demo_sample_orders("non_demo_customer")
-        self.assertFalse(bstore.is_demo_sample_order("non_demo_customer", "O-754321"))
+        self.assertEqual(bstore.seed_demo_sample_orders("non_demo_customer", sessions=sessions), [])
         mid_non_demo = sessions.create_member("demo-store", "prin_non_demo", "Non Demo Customer", "non_demo_customer", role="customer")
         tok_non_demo = secrets.token_urlsafe(32)
         sessions.control.register_credential(mid_non_demo, tok_non_demo)

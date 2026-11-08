@@ -328,50 +328,44 @@ class OrderToolRecoveryTests(unittest.TestCase):
         self.assertIn('không có quyền thực hiện tra cứu này', forbidden_res)
 
     def test_t06_google_login_seeds_product_id_and_backfill_is_idempotent(self):
-        """T06: Google login seeds valid product_ids from catalog, and backfill script is idempotent."""
+        """T06: Google login on a demo tenant seeds 3 canonical account_template orders, and backfill is idempotent."""
         from retailops.identity.persistent import PersistentSessions
         from retailops.storage.backfill import backfill_sqlite
         temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(temp_dir.cleanup)
         sessions = PersistentSessions(Path(temp_dir.name))
         sessions.provision_tenant('test-tenant', 'Test Shop', seed_demo=True)
-        sessions.login_google('customer1@example.com', 'Customer One')
+        sessions.login_google('customer1@example.com', 'Customer One', sub='sub-t06-001', email_verified=True)
         bstore = sessions.business_store('test-tenant')
 
-        # Google login creates customer record and seeds catalog, without implicitly seeding orders
+        # First-time Google login on a demo-seeded tenant instantiates 3 canonical orders (excluding orderless P-604)
         with bstore.connection() as conn:
             cust = conn.execute("SELECT id FROM customers WHERE name='Customer One'").fetchone()
             self.assertIsNotNone(cust)
-            initial_orders = conn.execute("SELECT id FROM orders WHERE customer_id=?", (cust['id'],)).fetchall()
-            self.assertEqual(initial_orders, [])
-
-        # Explicit demo fixture provisioning seeds valid product_ids (excluding orderless P-604)
-        bstore.seed_demo_sample_orders(cust['id'])
-        with bstore.connection() as conn:
-            orders = conn.execute("SELECT id, name, product_id FROM orders WHERE customer_id=?", (cust['id'],)).fetchall()
+            orders = conn.execute(
+                "SELECT id, external_order_id, name, product_id, source_system FROM orders WHERE customer_id=?",
+                (cust['id'],),
+            ).fetchall()
             self.assertEqual(len(orders), 3)
             pids = {o['product_id'] for o in orders}
-            self.assertEqual(pids, {'P-601', 'P-602', 'P-603'})
+            self.assertEqual(pids, {'P-101', 'P-102', 'P-202'})
+            self.assertTrue(all(o['source_system'] == 'marketplace_sim' for o in orders))
+            self.assertTrue(all(str(o['external_order_id']).startswith('SIM-O-') for o in orders))
 
             # P-604 is an orderless synthetic red-team catalog fixture. Its missing
-            # commercial/safety attributes must remain unknown, and adding it must
-            # not rewrite the pre-existing delivered P-602 order.
+            # commercial/safety attributes must remain unknown, and catalog P-602 remains canonical.
             toy_order = conn.execute(
                 "SELECT id FROM orders WHERE customer_id=? AND product_id='P-604'",
                 (cust['id'],),
             ).fetchone()
             self.assertIsNone(toy_order)
-            legacy_order = conn.execute(
-                "SELECT name, amount, status, product_id FROM orders "
-                "WHERE customer_id=? AND product_id='P-602'",
-                (cust['id'],),
-            ).fetchone()
-            self.assertEqual(dict(legacy_order), {
-                'name': 'Quần tây đen hàn quốc',
-                'amount': 520000,
-                'status': 'delivered',
-                'product_id': 'P-602',
-            })
+
+        # Calling seed_demo_sample_orders again is idempotent (creates 0 new orders)
+        self.assertEqual(bstore.seed_demo_sample_orders(cust['id'], sessions=sessions), [])
+
+        p602 = bstore.get_product('P-602')
+        self.assertEqual(p602['name'], 'Quần tây đen hàn quốc')
+        self.assertEqual(p602['price'], 520000)
 
         p604 = bstore.get_product('P-604')
         self.assertEqual(p604['name'], 'Bộ xếp hình gỗ cho bé')
@@ -383,12 +377,12 @@ class OrderToolRecoveryTests(unittest.TestCase):
         self.assertIsNone(p604['safety_certifications'])
         self.assertEqual(p604['variants'], [])
 
-        # The source catalog is seeded additively/idempotently into the persistent
-        # tenant; re-seeding must preserve both P-604 and the legacy P-602 order.
+        # The source catalog is seeded additively/idempotently into the persistent tenant.
         bstore.seed_catalog()
         self.assertEqual(bstore.get_product('P-604'), p604)
+        self.assertEqual(bstore.get_product('P-602')['name'], 'Quần tây đen hàn quốc')
 
-        # Run backfill: first run should find 0 to update because they're already linked
+        # Run backfill: first run should find 0 to update because all orders are already linked
         tenant_file = sessions.tenant_path(sessions.control.ensure_tenant('test-tenant', 'Test Shop'))
         run1 = backfill_sqlite(tenant_file, dry_run=False)
         self.assertEqual(run1['to_update'], 0)

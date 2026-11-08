@@ -99,9 +99,9 @@ class SalesReviewBase(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp_dir.cleanup)
         self.sessions = PersistentSessions(Path(self.temp_dir.name), data_mode="persistent-demo")
-        self.sessions.provision_tenant(TENANT, "Shop Alpha", seed_demo=True)
+        self.bstore = self.sessions.provision_tenant(TENANT, "Shop Alpha", seed_demo=False)
+        self.bstore.seed_catalog()
         self.service = IntegrationIngestService(self.sessions, digest_key=TEST_DIGEST_KEY)
-        self.bstore = self.sessions.business_store(TENANT)
         self.control = self.sessions.control
 
     def rows(self, sql, params=()):

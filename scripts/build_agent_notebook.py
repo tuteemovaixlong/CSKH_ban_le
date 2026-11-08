@@ -65,6 +65,16 @@ def build():
         p.relative_to(ROOT).as_posix()
         for p in sorted((ROOT / "data/knowledge").glob("*.md"))
     ]
+    names += [
+        p.relative_to(ROOT).as_posix()
+        for p in sorted((ROOT / "data/connectors").glob("*.json"))
+        if p.is_file()
+    ]
+    names += [
+        p.relative_to(ROOT).as_posix()
+        for p in sorted((ROOT / "data/demo_events").glob("*"))
+        if p.is_file()
+    ]
 
     files = {name: (ROOT / name).read_text(encoding="utf-8") for name in names}
     raw = json.dumps(

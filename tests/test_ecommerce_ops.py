@@ -31,8 +31,8 @@ class TestEcommerceOps(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.store = BusinessStore(Path(self.temp.name) / "business.sqlite3")
-        self.store.seed()
+        from legacy_seed_fixture import seed_legacy_unit_fixture
+        self.store = seed_legacy_unit_fixture(BusinessStore(Path(self.temp.name) / "business.sqlite3"))
         now_ts = self.store._now()
         with self.store.connection() as db:
             db.execute(

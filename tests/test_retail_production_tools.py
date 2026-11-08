@@ -8,6 +8,7 @@ from retailops.business.application import Application
 from retailops.business.store import BusinessStore
 from retailops_tools import BoundTools
 from retailops_conversation import Catalog
+from legacy_seed_fixture import seed_legacy_unit_fixture
 
 
 class FakeAgent:
@@ -37,7 +38,7 @@ class RetailProductionToolsTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.store = BusinessStore(Path(self.temp.name) / 'business.sqlite3')
-        self.store.seed()
+        seed_legacy_unit_fixture(self.store)
         with self.store.connection() as db:
             db.execute(
                 """INSERT INTO shipments (
