@@ -5028,6 +5028,77 @@ class BusinessStore:
         )
         return envelope
 
+    def _has_enabled_connector_in_tx(self, db, source_system: str | None) -> bool:
+        if not source_system:
+            return False
+        row = db.execute(
+            "SELECT 1 FROM integration_connectors WHERE source_system = ? AND enabled = 1 LIMIT 1",
+            (str(source_system),),
+        ).fetchone()
+        return row is not None
+
+    def list_case_unlinked_refunds(self, case_id: str) -> list[dict]:
+        """Return unlinked provider refunds (`refunds.request_id IS NULL`) on orders of a case's customer (W6.1b-D10)."""
+        require(
+            isinstance(case_id, str) and bool(re.fullmatch(r"[A-Za-z0-9_-]{1,80}", case_id)),
+            400,
+            "invalid_case_id",
+            "Mã ca hỗ trợ không hợp lệ.",
+        )
+        with self.connection() as db:
+            case_row = db.execute("SELECT customer_id FROM cases WHERE case_id = ?", (case_id,)).fetchone()
+            require(case_row is not None, 404, "case_not_found", "Không tìm thấy ca hỗ trợ.")
+            rows = db.execute(
+                """SELECT r.refund_id, r.order_id, r.provider, r.provider_refund_ref,
+                          r.amount, r.channel, r.status, r.provider_status_raw,
+                          r.initiated_at, r.completed_at, r.failure_reason,
+                          o.external_order_id, o.source_system,
+                          (SELECT COUNT(*) FROM order_action_requests oar
+                           WHERE oar.order_id = r.order_id AND oar.refund_status = 'pending') AS waiting_request_count
+                   FROM refunds r
+                   JOIN orders o ON r.order_id = o.id
+                   WHERE o.customer_id = ? AND r.request_id IS NULL
+                   ORDER BY r.initiated_at DESC, r.refund_id DESC""",
+                (case_row["customer_id"],),
+            ).fetchall()
+        out: list[dict] = []
+        for r in rows:
+            oid = str(r["order_id"])
+            ext_id = str(r["external_order_id"] or oid)
+            waiting_cnt = int(r["waiting_request_count"] or 0)
+            dual_lbl = f"{ext_id} ({oid})" if ext_id != oid else oid
+            if waiting_cnt > 1:
+                warn_msg = (
+                    f"Cảnh báo hoàn tiền: Đơn {dual_lbl} có giao dịch hoàn tiền {r['provider_refund_ref']} "
+                    f"({r['status']}) chưa nối được yêu cầu vì có {waiting_cnt} yêu cầu đang cùng chờ hoàn tiền."
+                )
+            else:
+                warn_msg = (
+                    f"Cảnh báo hoàn tiền: Đơn {dual_lbl} có giao dịch hoàn tiền {r['provider_refund_ref']} "
+                    f"({r['status']}) từ cổng thanh toán chưa xác định được yêu cầu hủy/trả/đổi tương ứng."
+                )
+            out.append(
+                {
+                    "refund_id": r["refund_id"],
+                    "order_id": oid,
+                    "internal_order_id": oid,
+                    "external_order_id": ext_id,
+                    "source_system": r["source_system"],
+                    "provider": r["provider"],
+                    "provider_refund_ref": r["provider_refund_ref"],
+                    "amount": int(r["amount"]),
+                    "channel": r["channel"],
+                    "status": r["status"],
+                    "provider_status_raw": r["provider_status_raw"],
+                    "initiated_at": format_vn_iso(r["initiated_at"]),
+                    "completed_at": format_vn_iso(r["completed_at"]),
+                    "failure_reason": r["failure_reason"],
+                    "waiting_request_count": waiting_cnt,
+                    "warning": warn_msg,
+                }
+            )
+        return out
+
     def _serialize_order_action_in_tx(self, db, row, *, now: float | None = None) -> dict:
         now_ts = self._now() if now is None else float(now)
         d = dict(row)
@@ -5087,11 +5158,13 @@ class BusinessStore:
             if order_dict is not None
             else None
         )
+        src_sys = order_dict.get("source_system") if order_dict is not None else None
         return {
             **d,
             **exchange_view,
             "external_order_id": order_dict.get("external_order_id") if order_dict is not None else d.get("order_id"),
-            "source_system": order_dict.get("source_system") if order_dict is not None else None,
+            "source_system": src_sys,
+            "refund_managed_by_provider": self._has_enabled_connector_in_tx(db, src_sys),
             "expected_order_version": int(d["expected_order_version"]),
             "version": int(d["version"]),
             "reason_label": reason_catalog().label(d["reason_code"]),
@@ -6954,6 +7027,16 @@ class BusinessStore:
         with self.connection(write=True) as db:
             req_row = db.execute("SELECT * FROM order_action_requests WHERE request_id = ?", (request_id,)).fetchone()
             require(req_row is not None, 404, "order_action_not_found", "Không tìm thấy yêu cầu đơn hàng.")
+            ord_row = db.execute(
+                "SELECT source_system FROM orders WHERE id = ?",
+                (req_row["order_id"],),
+            ).fetchone()
+            if ord_row is not None and self._has_enabled_connector_in_tx(db, ord_row["source_system"]):
+                raise ApiError(
+                    409,
+                    "refund_managed_by_provider",
+                    "Đơn hàng thuộc nguồn tích hợp có connector; kết quả hoàn tiền do cổng thanh toán cập nhật tự động.",
+                )
             cur_ver = int(req_row["version"])
             require(cur_ver == expected_ver, 409, "order_action_version_conflict", "Phiên bản yêu cầu đã thay đổi.")
             require(

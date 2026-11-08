@@ -2427,5 +2427,561 @@ class Item6DbBackedToolsAndDualOrderIdTests(unittest.TestCase):
                 self.assertNotIn(tok, txt, f"Found retired token {tok!r} in {path.relative_to(repo_root)}")
 
 
+class Item7ProviderRefundLinkingTests(unittest.TestCase):
+    """W6.1b-1 Item 7 (W6.1b-D10): Provider-driven refunds, single-request linking, unlinked warning, and manual 409 guard."""
+
+    def setUp(self) -> None:
+        from retailops.business.permissions import MANAGER, READ, STAFF
+        from retailops.identity.contracts import RequestContext
+        from retailops.integration.connectors import ConnectorManager
+        from retailops.integration.ingest import IntegrationIngestService
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.secrets_dir = self.root / "secrets"
+        self.secrets_dir.mkdir(parents=True, exist_ok=True)
+        self.conn_secret = b"k" * 32
+        self.digest_key = b"d" * 32
+        (self.secrets_dir / "retailops_connector_marketplace_sim").write_bytes(self.conn_secret)
+        self.digest_file = self.root / "digest_key"
+        self.digest_file.write_bytes(self.digest_key)
+        self.env_patcher = patch.dict(
+            os.environ,
+            {
+                "RETAILOPS_CONNECTOR_SECRETS_DIR": str(self.secrets_dir),
+                "RETAILOPS_EVENT_DIGEST_KEY_FILE": str(self.digest_file),
+            },
+            clear=False,
+        )
+        self.env_patcher.start()
+        self.sessions = PersistentSessions(self.root / "tenants")
+        self.store = self.sessions.provision_tenant("shop-demo", "Shop Demo", seed_demo=False)
+        self.mgr = ConnectorManager(self.sessions)
+        self.mgr.add_connector(
+            "shop-demo",
+            source_system="marketplace_sim",
+            kind="marketplace",
+            merchant_id="MERCHANT-SIM-001",
+            secret_ref="retailops_connector_marketplace_sim",
+        )
+        self.store.seed_catalog()
+        self.svc = IntegrationIngestService(self.sessions, digest_key=self.digest_key)
+        self.manager_actor = {
+            "principal_id": "p_mgr_ref",
+            "role": "manager",
+            "tenant_id": "shop-demo",
+        }
+        self.mgr_ctx = RequestContext(
+            customer_id="C-MGR-REF",
+            role="manager",
+            permissions=frozenset({READ, STAFF, MANAGER}),
+            tenant_id="shop-demo",
+            principal_id="p_mgr_ref",
+            membership_id="m_mgr_ref",
+            display_name="Manager Refund",
+            authenticated_session=True,
+        )
+
+    def tearDown(self) -> None:
+        self.env_patcher.stop()
+        self.tmp.cleanup()
+
+    def _ingest_raw(self, ev: dict):
+        raw = json.dumps(ev, ensure_ascii=False).encode("utf-8")
+        return self.svc.ingest_event(raw, tenant_id="shop-demo", received_via="import")
+
+    def _seed_delivered_paid_connector_order(self, ext_oid: str, ext_cid: str, *, amount_subtotal: int = 239000, shipping_fee: int = 20000) -> tuple[str, str]:
+        total = amount_subtotal + shipping_fee
+        self._ingest_raw(
+            {
+                "contract": "retailops-integration-v2",
+                "event_id": f"ev-cust-{ext_oid}",
+                "event_type": "customer.upserted",
+                "occurred_at": "2026-11-08T08:00:00+07:00",
+                "source_system": "marketplace_sim",
+                "merchant_id": "MERCHANT-SIM-001",
+                "sequence": 1,
+                "data": {"external_customer_id": ext_cid, "display_name": "Khách Hoàn Tiền"},
+            }
+        )
+        res_ord = self._ingest_raw(
+            {
+                "contract": "retailops-integration-v2",
+                "event_id": f"ev-ord-{ext_oid}",
+                "event_type": "order.created",
+                "occurred_at": "2026-11-08T08:05:00+07:00",
+                "source_system": "marketplace_sim",
+                "merchant_id": "MERCHANT-SIM-001",
+                "sequence": 1,
+                "data": {
+                    "external_order_id": ext_oid,
+                    "external_customer_id": ext_cid,
+                    "ordered_at": "2026-11-08T08:05:00+07:00",
+                    "promised_delivery_by": "2026-11-10T18:00:00+07:00",
+                    "currency": "VND",
+                    "payment_method": "bank_transfer",
+                    "items": [
+                        {
+                            "sku": "SKU-P101-TRANG-M",
+                            "external_product_id": "P-101",
+                            "title": "Áo sơ mi lụa công sở",
+                            "variant_name": "Trắng · Size M",
+                            "quantity": 1,
+                            "unit_price": amount_subtotal,
+                        }
+                    ],
+                    "shipping_fee": shipping_fee,
+                    "total": total,
+                    "recipient": {
+                        "name": "Người Nhận Ẩn",
+                        "phone": "0999000111",
+                        "address_line": "123 Đường Ẩn",
+                        "ward": "Phường Bến Nghé",
+                        "district": "Quận 1",
+                        "province": "TP. Hồ Chí Minh",
+                    },
+                },
+            }
+        )
+        self._ingest_raw(
+            {
+                "contract": "retailops-integration-v2",
+                "event_id": f"ev-pay-{ext_oid}",
+                "event_type": "payment.updated",
+                "occurred_at": "2026-11-08T08:06:00+07:00",
+                "source_system": "payment_sim",
+                "merchant_id": "MERCHANT-SIM-001",
+                "sequence": 1,
+                "data": {
+                    "provider": "PAYSIM_GATEWAY",
+                    "provider_txn_ref": f"TXN-{ext_oid}",
+                    "external_order_id": ext_oid,
+                    "method": "bank_transfer",
+                    "amount": total,
+                    "provider_status_raw": "PAY_SUCCEEDED",
+                    "settled_at": "2026-11-08T08:06:00+07:00",
+                },
+            }
+        )
+        self._ingest_raw(
+            {
+                "contract": "retailops-integration-v2",
+                "event_id": f"ev-deliv-{ext_oid}",
+                "event_type": "order.status_changed",
+                "occurred_at": "2026-11-08T12:00:00+07:00",
+                "source_system": "marketplace_sim",
+                "merchant_id": "MERCHANT-SIM-001",
+                "sequence": 2,
+                "data": {
+                    "external_order_id": ext_oid,
+                    "status": "delivered",
+                    "reason": None,
+                },
+            }
+        )
+        return str(res_ord.order_id), str(res_ord.customer_id)
+
+    def test_single_waiting_request_links_updates_status_and_records_system_decision(self) -> None:
+        oid, cid = self._seed_delivered_paid_connector_order("SIM-O-REF-1", "SIM-C-REF-1")
+        created = self.store.create_order_action_request(
+            cid,
+            {
+                "order_id": oid,
+                "type": "return",
+                "expected_order_version": 2,
+                "reason_code": "defective_item",
+                "reason_text": "Đường may bị bung chỉ",
+            },
+        )
+        req_id = created["order_action"]["request_id"]
+        ver = created["order_action"]["version"]
+        approved = self.store.transition_order_action_request(
+            req_id, "approve", {"version": ver}, actor=self.manager_actor
+        )
+        ref_req = self.store.request_order_action_refund(
+            req_id, {"version": approved["order_action"]["version"]}, actor=self.manager_actor
+        )
+        decided = self.store.decide_order_action_refund(
+            req_id,
+            {"version": ref_req["order_action"]["version"], "decision": "approved"},
+            actor=self.manager_actor,
+        )
+        self.assertEqual(decided["refund_status"], "pending")
+        self.assertEqual(decided["refund_decision"], "approved")
+
+        # Provider sends REFUND_INITIATED (seq 1) -> links request_id, keeps pending, logs system decision
+        self._ingest_raw(
+            {
+                "contract": "retailops-integration-v2",
+                "event_id": "ev-ref-1-pending",
+                "event_type": "refund.updated",
+                "occurred_at": "2026-11-08T14:00:00+07:00",
+                "source_system": "payment_sim",
+                "merchant_id": "MERCHANT-SIM-001",
+                "sequence": 1,
+                "data": {
+                    "provider": "PAYSIM_GATEWAY",
+                    "provider_refund_ref": "REF-SIM-001",
+                    "provider_txn_ref": "TXN-SIM-O-REF-1",
+                    "external_order_id": "SIM-O-REF-1",
+                    "amount": 259000,
+                    "channel": "bank_transfer",
+                    "provider_status_raw": "REFUND_INITIATED",
+                    "initiated_at": "2026-11-08T14:00:00+07:00",
+                    "completed_at": None,
+                    "failure_reason": None,
+                },
+            }
+        )
+        with self.store.connection() as db:
+            ref_row = db.execute("SELECT * FROM refunds WHERE provider_refund_ref='REF-SIM-001'").fetchone()
+            self.assertEqual(ref_row["request_id"], req_id)
+            self.assertEqual(ref_row["status"], "pending")
+
+        # Provider sends REFUND_COMPLETED (seq 2) -> updates order_action_requests.refund_status='refunded' & orders.payment_status='refunded'
+        self._ingest_raw(
+            {
+                "contract": "retailops-integration-v2",
+                "event_id": "ev-ref-1-completed",
+                "event_type": "refund.updated",
+                "occurred_at": "2026-11-08T15:00:00+07:00",
+                "source_system": "payment_sim",
+                "merchant_id": "MERCHANT-SIM-001",
+                "sequence": 2,
+                "data": {
+                    "provider": "PAYSIM_GATEWAY",
+                    "provider_refund_ref": "REF-SIM-001",
+                    "provider_txn_ref": "TXN-SIM-O-REF-1",
+                    "external_order_id": "SIM-O-REF-1",
+                    "amount": 259000,
+                    "channel": "bank_transfer",
+                    "provider_status_raw": "REFUND_COMPLETED",
+                    "initiated_at": "2026-11-08T14:00:00+07:00",
+                    "completed_at": "2026-11-08T15:00:00+07:00",
+                    "failure_reason": None,
+                },
+            }
+        )
+        with self.store.connection() as db:
+            oar = db.execute("SELECT * FROM order_action_requests WHERE request_id=?", (req_id,)).fetchone()
+            self.assertEqual(oar["refund_status"], "refunded")
+            ord_row = db.execute("SELECT payment_status FROM orders WHERE id=?", (oid,)).fetchone()
+            self.assertEqual(ord_row["payment_status"], "refunded")
+            sys_decs = db.execute(
+                "SELECT * FROM order_action_decisions WHERE request_id=? AND actor_role='system' ORDER BY created_at ASC",
+                (req_id,),
+            ).fetchall()
+            self.assertEqual(len(sys_decs), 2)
+            self.assertEqual(sys_decs[-1]["actor_principal_id"], "system")
+            self.assertEqual(sys_decs[-1]["action"], "refund_provider_update")
+            self.assertEqual(sys_decs[-1]["from_refund_status"], "pending")
+            self.assertEqual(sys_decs[-1]["to_refund_status"], "refunded")
+
+        self.assertEqual(self.store.list_case_unlinked_refunds(created["case_id"]), [])
+
+        # Also verify REFUND_FAILED updates waiting request to 'failed' with system decision
+        oid_fail, cid_fail = self._seed_delivered_paid_connector_order("SIM-O-REF-FAIL", "SIM-C-REF-FAIL")
+        c_fail = self.store.create_order_action_request(
+            cid_fail,
+            {
+                "order_id": oid_fail,
+                "type": "return",
+                "expected_order_version": 2,
+                "reason_code": "defective_item",
+                "reason_text": "Lỗi khóa kéo",
+            },
+        )
+        rid_fail = c_fail["order_action"]["request_id"]
+        ap_fail = self.store.transition_order_action_request(
+            rid_fail, "approve", {"version": c_fail["order_action"]["version"]}, actor=self.manager_actor
+        )
+        self.store.request_order_action_refund(
+            rid_fail, {"version": ap_fail["order_action"]["version"]}, actor=self.manager_actor
+        )
+        self._ingest_raw(
+            {
+                "contract": "retailops-integration-v2",
+                "event_id": "ev-ref-fail-1",
+                "event_type": "refund.updated",
+                "occurred_at": "2026-11-08T16:00:00+07:00",
+                "source_system": "payment_sim",
+                "merchant_id": "MERCHANT-SIM-001",
+                "sequence": 1,
+                "data": {
+                    "provider": "PAYSIM_GATEWAY",
+                    "provider_refund_ref": "REF-SIM-FAIL-001",
+                    "provider_txn_ref": "TXN-SIM-O-REF-FAIL",
+                    "external_order_id": "SIM-O-REF-FAIL",
+                    "amount": 259000,
+                    "channel": "bank_transfer",
+                    "provider_status_raw": "REFUND_FAILED",
+                    "initiated_at": "2026-11-08T15:50:00+07:00",
+                    "completed_at": None,
+                    "failure_reason": "Tài khoản ngân hàng nhận tạm khóa",
+                },
+            }
+        )
+        with self.store.connection() as db:
+            oar_f = db.execute("SELECT refund_status FROM order_action_requests WHERE request_id=?", (rid_fail,)).fetchone()
+            self.assertEqual(oar_f["refund_status"], "failed")
+
+    def test_two_waiting_requests_do_not_link_and_staff_desk_surfaces_warning(self) -> None:
+        oid, cid = self._seed_delivered_paid_connector_order("SIM-O-REF-2", "SIM-C-REF-2")
+        # Request 1: return -> approve -> mark_received -> mark_inspected -> complete (closes request) -> request refund (pending)
+        r1 = self.store.create_order_action_request(
+            cid,
+            {
+                "order_id": oid,
+                "type": "return",
+                "expected_order_version": 2,
+                "reason_code": "wrong_item",
+                "reason_text": "Giao nhầm mẫu 1",
+            },
+        )
+        r1_id = r1["order_action"]["request_id"]
+        s1 = self.store.transition_order_action_request(r1_id, "approve", {"version": r1["order_action"]["version"]}, actor=self.manager_actor)
+        s2 = self.store.transition_order_action_request(r1_id, "mark_received", {"version": s1["order_action"]["version"]}, actor=self.manager_actor)
+        s3 = self.store.transition_order_action_request(
+            r1_id,
+            "mark_inspected",
+            {"version": s2["order_action"]["version"], "inspection_outcome": "refund"},
+            actor=self.manager_actor,
+        )
+        s4 = self.store.transition_order_action_request(r1_id, "complete", {"version": s3["order_action"]["version"]}, actor=self.manager_actor)
+        self.store.request_order_action_refund(r1_id, {"version": s4["order_action"]["version"]}, actor=self.manager_actor)
+
+        # Request 2 on the SAME order: return -> approve -> request refund (pending) -> now 2 requests wait for refund!
+        r2 = self.store.create_order_action_request(
+            cid,
+            {
+                "order_id": oid,
+                "type": "return",
+                "expected_order_version": 2,
+                "reason_code": "defective_item",
+                "reason_text": "Lỗi phụ kiện đi kèm",
+            },
+        )
+        r2_id = r2["order_action"]["request_id"]
+        t1 = self.store.transition_order_action_request(r2_id, "approve", {"version": r2["order_action"]["version"]}, actor=self.manager_actor)
+        self.store.request_order_action_refund(r2_id, {"version": t1["order_action"]["version"]}, actor=self.manager_actor)
+
+        # Provider sends refund.updated -> ambiguous (2 waiting requests), so request_id stays NULL!
+        self._ingest_raw(
+            {
+                "contract": "retailops-integration-v2",
+                "event_id": "ev-ref-2-ambig",
+                "event_type": "refund.updated",
+                "occurred_at": "2026-11-08T17:00:00+07:00",
+                "source_system": "payment_sim",
+                "merchant_id": "MERCHANT-SIM-001",
+                "sequence": 1,
+                "data": {
+                    "provider": "PAYSIM_GATEWAY",
+                    "provider_refund_ref": "REF-SIM-AMBIG-002",
+                    "provider_txn_ref": "TXN-SIM-O-REF-2",
+                    "external_order_id": "SIM-O-REF-2",
+                    "amount": 259000,
+                    "channel": "bank_transfer",
+                    "provider_status_raw": "REFUND_COMPLETED",
+                    "initiated_at": "2026-11-08T16:50:00+07:00",
+                    "completed_at": "2026-11-08T17:00:00+07:00",
+                    "failure_reason": None,
+                },
+            }
+        )
+        with self.store.connection() as db:
+            ref_row = db.execute("SELECT * FROM refunds WHERE provider_refund_ref='REF-SIM-AMBIG-002'").fetchone()
+            self.assertIsNone(ref_row["request_id"])
+            for rid in (r1_id, r2_id):
+                oar = db.execute("SELECT refund_status FROM order_action_requests WHERE request_id=?", (rid,)).fetchone()
+                self.assertEqual(oar["refund_status"], "pending")
+                sys_cnt = db.execute(
+                    "SELECT COUNT(*) AS cnt FROM order_action_decisions WHERE request_id=? AND actor_role='system'",
+                    (rid,),
+                ).fetchone()["cnt"]
+                self.assertEqual(int(sys_cnt), 0)
+
+        from retailops.business.application import Application
+        from retailops.http.routes import api_result
+
+        app = Application(self.store, {}, None)
+        app.tenant_id = "shop-demo"
+        st, body = api_result(
+            app,
+            cid,
+            "GET",
+            f"/api/staff/cases/{r2['case_id']}/order-actions",
+            context=self.mgr_ctx,
+        )
+        self.assertEqual(st, 200)
+        self.assertEqual(len(body["unlinked_refunds"]), 1)
+        self.assertEqual(body["unlinked_refunds"][0]["provider_refund_ref"], "REF-SIM-AMBIG-002")
+        self.assertEqual(body["unlinked_refunds"][0]["waiting_request_count"], 2)
+        self.assertEqual(len(body["warnings"]), 1)
+        self.assertIn("SIM-O-REF-2", body["warnings"][0])
+        self.assertIn("2 yêu cầu", body["warnings"][0])
+
+    def test_manual_refund_outcome_blocked_409_for_connector_order_and_allowed_for_non_connector(self) -> None:
+        oid_conn, cid_conn = self._seed_delivered_paid_connector_order("SIM-O-REF-GUARD", "SIM-C-REF-GUARD")
+        c_conn = self.store.create_order_action_request(
+            cid_conn,
+            {
+                "order_id": oid_conn,
+                "type": "return",
+                "expected_order_version": 2,
+                "reason_code": "defective_item",
+                "reason_text": "Lỗi cúc áo",
+            },
+        )
+        c_conn_id = c_conn["order_action"]["request_id"]
+        ap_conn = self.store.transition_order_action_request(
+            c_conn_id, "approve", {"version": c_conn["order_action"]["version"]}, actor=self.manager_actor
+        )
+        rr_conn = self.store.request_order_action_refund(
+            c_conn_id, {"version": ap_conn["order_action"]["version"]}, actor=self.manager_actor
+        )
+        dr_conn = self.store.decide_order_action_refund(
+            c_conn_id,
+            {"version": rr_conn["order_action"]["version"], "decision": "approved"},
+            actor=self.manager_actor,
+        )
+        self.assertTrue(dr_conn["order_action"]["refund_managed_by_provider"])
+        with self.assertRaises(ApiError) as blocked:
+            self.store.record_order_action_refund_outcome(
+                c_conn_id,
+                {"version": dr_conn["order_action"]["version"], "outcome": "refunded"},
+                actor=self.manager_actor,
+            )
+        self.assertEqual((blocked.exception.status, blocked.exception.code), (409, "refund_managed_by_provider"))
+
+        # Non-connector order (source_system='retailops_seed') still allows manual record_order_action_refund_outcome
+        with self.store.connection(write=True) as db:
+            db.execute("INSERT INTO customers(id, name) VALUES ('C-MANUAL-1', 'Khách Thủ Công')")
+            db.execute(
+                """INSERT INTO orders(
+                       id, customer_id, product_id, source_system, external_order_id,
+                       name, variant, amount, status, ordered_at, ordered_at_backfilled,
+                       payment_method, payment_status, shipping_fee, version, delivered_at
+                   ) VALUES (
+                       'O-MANUAL-1', 'C-MANUAL-1', 'P-101', 'retailops_seed', 'O-MANUAL-1',
+                       'Áo sơ mi lụa công sở', 'Trắng · Size M', 259000, 'delivered',
+                       1762500000.0, 1, 'bank_transfer', 'paid', 0, 1, 1762580000.0
+                   )"""
+            )
+        c_man = self.store.create_order_action_request(
+            "C-MANUAL-1",
+            {
+                "order_id": "O-MANUAL-1",
+                "type": "return",
+                "expected_order_version": 1,
+                "reason_code": "defective_item",
+                "reason_text": "Hàng seed cũ không có connector",
+            },
+        )
+        c_man_id = c_man["order_action"]["request_id"]
+        ap_man = self.store.transition_order_action_request(
+            c_man_id, "approve", {"version": c_man["order_action"]["version"]}, actor=self.manager_actor
+        )
+        rr_man = self.store.request_order_action_refund(
+            c_man_id, {"version": ap_man["order_action"]["version"]}, actor=self.manager_actor
+        )
+        dr_man = self.store.decide_order_action_refund(
+            c_man_id,
+            {"version": rr_man["order_action"]["version"], "decision": "approved"},
+            actor=self.manager_actor,
+        )
+        self.assertFalse(dr_man["order_action"]["refund_managed_by_provider"])
+        done_man = self.store.record_order_action_refund_outcome(
+            c_man_id,
+            {"version": dr_man["order_action"]["version"], "outcome": "refunded", "note": "Chuyển khoản tay"},
+            actor=self.manager_actor,
+        )
+        self.assertEqual(done_man["refund_status"], "refunded")
+
+    def test_refund_exceeding_paid_amount_rejected_422(self) -> None:
+        oid, _ = self._seed_delivered_paid_connector_order("SIM-O-REF-OVER", "SIM-C-REF-OVER")
+        # Paid total is 259000 VND -> single refund of 300000 VND rejected
+        with self.assertRaises(ApiError) as over1:
+            self._ingest_raw(
+                {
+                    "contract": "retailops-integration-v2",
+                    "event_id": "ev-ref-over-1",
+                    "event_type": "refund.updated",
+                    "occurred_at": "2026-11-08T18:00:00+07:00",
+                    "source_system": "payment_sim",
+                    "merchant_id": "MERCHANT-SIM-001",
+                    "sequence": 1,
+                    "data": {
+                        "provider": "PAYSIM_GATEWAY",
+                        "provider_refund_ref": "REF-OVER-001",
+                        "provider_txn_ref": "TXN-SIM-O-REF-OVER",
+                        "external_order_id": "SIM-O-REF-OVER",
+                        "amount": 300000,
+                        "channel": "bank_transfer",
+                        "provider_status_raw": "REFUND_COMPLETED",
+                        "initiated_at": "2026-11-08T17:55:00+07:00",
+                        "completed_at": "2026-11-08T18:00:00+07:00",
+                        "failure_reason": None,
+                    },
+                }
+            )
+        self.assertEqual((over1.exception.status, over1.exception.code), (422, "refund_exceeds_paid_amount"))
+
+        # Partial refund 150000 succeeds -> cumulative 150000 + 120000 = 270000 > 259000 rejected
+        self._ingest_raw(
+            {
+                "contract": "retailops-integration-v2",
+                "event_id": "ev-ref-part-1",
+                "event_type": "refund.updated",
+                "occurred_at": "2026-11-08T18:05:00+07:00",
+                "source_system": "payment_sim",
+                "merchant_id": "MERCHANT-SIM-001",
+                "sequence": 1,
+                "data": {
+                    "provider": "PAYSIM_GATEWAY",
+                    "provider_refund_ref": "REF-PART-001",
+                    "provider_txn_ref": "TXN-SIM-O-REF-OVER",
+                    "external_order_id": "SIM-O-REF-OVER",
+                    "amount": 150000,
+                    "channel": "bank_transfer",
+                    "provider_status_raw": "REFUND_COMPLETED",
+                    "initiated_at": "2026-11-08T18:01:00+07:00",
+                    "completed_at": "2026-11-08T18:05:00+07:00",
+                    "failure_reason": None,
+                },
+            }
+        )
+        with self.assertRaises(ApiError) as over2:
+            self._ingest_raw(
+                {
+                    "contract": "retailops-integration-v2",
+                    "event_id": "ev-ref-part-2",
+                    "event_type": "refund.updated",
+                    "occurred_at": "2026-11-08T18:10:00+07:00",
+                    "source_system": "payment_sim",
+                    "merchant_id": "MERCHANT-SIM-001",
+                    "sequence": 1,
+                    "data": {
+                        "provider": "PAYSIM_GATEWAY",
+                        "provider_refund_ref": "REF-PART-002",
+                        "provider_txn_ref": "TXN-SIM-O-REF-OVER",
+                        "external_order_id": "SIM-O-REF-OVER",
+                        "amount": 120000,
+                        "channel": "bank_transfer",
+                        "provider_status_raw": "REFUND_INITIATED",
+                        "initiated_at": "2026-11-08T18:10:00+07:00",
+                        "completed_at": None,
+                        "failure_reason": None,
+                    },
+                }
+            )
+        self.assertEqual((over2.exception.status, over2.exception.code), (422, "refund_exceeds_paid_amount"))
+        with self.store.connection() as db:
+            ord_row = db.execute("SELECT payment_status FROM orders WHERE id=?", (oid,)).fetchone()
+            self.assertEqual(ord_row["payment_status"], "partially_refunded")
+            cnt = db.execute("SELECT COUNT(*) AS cnt FROM refunds WHERE order_id=?", (oid,)).fetchone()["cnt"]
+            self.assertEqual(int(cnt), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

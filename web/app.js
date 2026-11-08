@@ -2410,7 +2410,8 @@ const STAFF_OA_OUTCOME_VI = {
 const STAFF_OA_ROLE_VI = {
   customer: 'Khách hàng',
   staff: 'Nhân viên',
-  manager: 'Quản lý'
+  manager: 'Quản lý',
+  system: 'Hệ thống'
 };
 const STAFF_OA_DECISION_VI = {
   submit: 'Gửi yêu cầu',
@@ -2424,7 +2425,8 @@ const STAFF_OA_DECISION_VI = {
   refund_request: 'Gửi yêu cầu hoàn tiền',
   refund_approve: 'Duyệt hoàn tiền',
   refund_reject: 'Từ chối hoàn tiền',
-  refund_outcome: 'Ghi nhận kết quả hoàn tiền'
+  refund_outcome: 'Ghi nhận kết quả hoàn tiền',
+  refund_provider_update: 'Cổng thanh toán cập nhật hoàn tiền'
 };
 
 let activeStaffTicket = null;
@@ -2435,6 +2437,7 @@ let staffDeskData = { waiting: [], in_progress: [], resolved: [], open_count: 0 
 let staffCaseOpsCollapsed = false;
 let staffDeskMaximized = false;
 let staffCaseOrderActions = [];
+let staffCaseUnlinkedRefunds = [];
 let staffCaseCustomerOrders = [];
 let staffCaseOrders = [];
 let staffCaseConsentTurns = [];
@@ -2816,7 +2819,11 @@ function formatStaffOrderActionType(req) {
 function formatStaffRefundStatus(req) {
   if (!req) return '';
   if (req.refund_status === 'pending' && !req.refund_decision) return 'Hoàn tiền: Chờ Quản lý duyệt';
-  if (req.refund_status === 'pending' && req.refund_decision === 'approved') return 'Hoàn tiền: Đã duyệt · Chờ ghi kết quả';
+  if (req.refund_status === 'pending' && req.refund_decision === 'approved') {
+    return req.refund_managed_by_provider
+      ? 'Hoàn tiền: Đã duyệt · Chờ cổng thanh toán'
+      : 'Hoàn tiền: Đã duyệt · Chờ ghi kết quả';
+  }
   if (req.refund_status === 'refunded') return 'Hoàn tiền: Đã hoàn tiền';
   if (req.refund_status === 'failed') return 'Hoàn tiền: Hoàn tiền thất bại';
   if (req.refund_status === 'not_applicable' && req.refund_decision === 'rejected') return 'Hoàn tiền: Đã từ chối';
@@ -2831,7 +2838,9 @@ function renderStaffCaseOrderActions() {
     if (!activeStaffTicket) {
       summaryEl.textContent = 'Chưa chọn ca hỗ trợ';
     } else if (!staffCaseOrderActions.length) {
-      summaryEl.textContent = 'Chưa có yêu cầu đơn hàng';
+      summaryEl.textContent = staffCaseUnlinkedRefunds.length
+        ? `Cảnh báo ${staffCaseUnlinkedRefunds.length} hoàn tiền chưa nối yêu cầu`
+        : 'Chưa có yêu cầu đơn hàng';
     } else if (openCount > 0) {
       summaryEl.textContent = `${openCount} yêu cầu đang mở / tổng ${staffCaseOrderActions.length}`;
     } else {
@@ -2853,6 +2862,18 @@ function renderStaffCaseOrderActions() {
     && caseObj.holder === currentSessionPrincipalId
   );
   const canReview = Boolean(!isClosed && (isManager || isHolder));
+
+  if (staffCaseUnlinkedRefunds.length > 0) {
+    const warnBox = el('div', 'case-ops-unlinked-refund-warning');
+    warnBox.dataset.role = 'unlinked-refund-warning';
+    warnBox.append(el('strong', '', `⚠ Cảnh báo hoàn tiền chưa nối yêu cầu (${staffCaseUnlinkedRefunds.length}):`));
+    staffCaseUnlinkedRefunds.forEach(item => {
+      const lbl = item.warning
+        || `Đơn ${formatDualOrderId(item.order_id, item.external_order_id)} · ${item.provider_refund_ref || ''} · ${money(item.amount || 0)} (${item.status || ''})`;
+      warnBox.append(el('div', 'case-ops-unlinked-refund-item', lbl));
+    });
+    panelEl.append(warnBox);
+  }
 
   if (!staffCaseOrderActions.length) {
     panelEl.append(
@@ -3054,7 +3075,9 @@ function renderStaffCaseOrderActions() {
           gateNotes.push('Chờ Quản lý duyệt hoàn tiền');
         }
       } else if (req.refund_status === 'pending' && req.refund_decision === 'approved') {
-        if (isManager) {
+        if (req.refund_managed_by_provider) {
+          gateNotes.push('Hoàn tiền do cổng thanh toán cập nhật tự động (connector)');
+        } else if (isManager) {
           mkActionBtn('primary', '💰 Ghi nhận Đã hoàn tiền', 'refund-outcome-refunded', () => submitStaffOrderActionStep(req, 'refund-outcome', { outcome: 'refunded', note: noteInput.value }));
           mkActionBtn('secondary', '⚠ Ghi nhận Hoàn thất bại', 'refund-outcome-failed', () => submitStaffOrderActionStep(req, 'refund-outcome', { outcome: 'failed', note: noteInput.value }));
         } else {
@@ -3425,6 +3448,7 @@ function renderStaffCaseOrderActions() {
 async function loadStaffCaseOrderActions(caseId, isCaseSelection = false) {
   if (!caseId) {
     staffCaseOrderActions = [];
+    staffCaseUnlinkedRefunds = [];
     staffCaseCustomerOrders = [];
     staffCaseOrders = [];
     staffCaseConsentTurns = [];
@@ -3445,6 +3469,7 @@ async function loadStaffCaseOrderActions(caseId, isCaseSelection = false) {
     ]);
     if (!activeStaffTicket || activeStaffTicket.case_id !== caseId) return;
     staffCaseOrderActions = Array.isArray(res?.order_actions) ? res.order_actions : [];
+    staffCaseUnlinkedRefunds = Array.isArray(res?.unlinked_refunds) ? res.unlinked_refunds : [];
     staffCaseCustomerOrders = Array.isArray(res?.customer_orders) ? res.customer_orders : [];
     const openByOid = new Map();
     staffCaseOrderActions.filter(isOrderActionOpen).forEach(r => {
@@ -3483,6 +3508,7 @@ async function loadStaffCaseOrderActions(caseId, isCaseSelection = false) {
   } catch (err) {
     if (!activeStaffTicket || activeStaffTicket.case_id !== caseId) return;
     staffCaseOrderActions = [];
+    staffCaseUnlinkedRefunds = [];
     staffCaseCustomerOrders = [];
     staffCaseOrders = [];
     staffCaseConsentTurns = [];

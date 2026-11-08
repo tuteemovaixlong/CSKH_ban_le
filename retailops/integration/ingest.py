@@ -1486,7 +1486,7 @@ class IntegrationIngestService:
                         )
                     )
 
-                    if not will_ignore and canonical_status != "failed":
+                    if not will_ignore:
                         paid_row = db.execute(
                             "SELECT COALESCE(SUM(amount), 0) AS paid_sum FROM payment_transactions "
                             "WHERE order_id=? AND status='succeeded'",
@@ -1502,7 +1502,12 @@ class IntegrationIngestService:
                         other_ref_sum = (
                             int(other_ref_row["ref_sum"] or 0) if other_ref_row else 0
                         )
-                        if other_ref_sum + amount > paid_sum:
+                        effective_total = (
+                            amount
+                            if canonical_status == "failed"
+                            else (other_ref_sum + amount)
+                        )
+                        if effective_total > paid_sum:
                             raise ApiError(
                                 422,
                                 "refund_exceeds_paid_amount",
@@ -1526,6 +1531,26 @@ class IntegrationIngestService:
                             if data["completed_at"] is not None
                             else (occurred_ts if canonical_status == "completed" else None)
                         )
+                        target_req: dict[str, Any] | None = None
+                        if existing_ref is not None and existing_ref["request_id"]:
+                            linked_row = db.execute(
+                                "SELECT * FROM order_action_requests WHERE request_id = ?",
+                                (existing_ref["request_id"],),
+                            ).fetchone()
+                            if linked_row is not None:
+                                target_req = dict(linked_row)
+                        else:
+                            waiting_rows = db.execute(
+                                """SELECT * FROM order_action_requests
+                                   WHERE order_id = ? AND refund_status = 'pending'
+                                   ORDER BY created_at ASC, request_id ASC""",
+                                (result_order_id,),
+                            ).fetchall()
+                            if len(waiting_rows) == 1:
+                                target_req = dict(waiting_rows[0])
+                        linked_request_id = (
+                            str(target_req["request_id"]) if target_req is not None else None
+                        )
                         if existing_ref is None:
                             db.execute(
                                 """INSERT INTO refunds (
@@ -1533,10 +1558,11 @@ class IntegrationIngestService:
                                        provider, provider_refund_ref, amount, channel,
                                        status, provider_status_raw, initiated_at,
                                        completed_at, failure_reason
-                                   ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                                 (
                                     f"rfd_{uuid.uuid4().hex}",
                                     result_order_id,
+                                    linked_request_id,
                                     payment_id_val,
                                     provider,
                                     refund_ref,
@@ -1552,7 +1578,8 @@ class IntegrationIngestService:
                         else:
                             db.execute(
                                 """UPDATE refunds
-                                   SET payment_id=COALESCE(?, payment_id),
+                                   SET request_id=COALESCE(request_id, ?),
+                                       payment_id=COALESCE(?, payment_id),
                                        amount=?,
                                        channel=?,
                                        status=?,
@@ -1562,6 +1589,7 @@ class IntegrationIngestService:
                                        failure_reason=?
                                    WHERE refund_id=?""",
                                 (
+                                    linked_request_id,
                                     payment_id_val,
                                     amount,
                                     data["channel"],
@@ -1571,6 +1599,78 @@ class IntegrationIngestService:
                                     comp_ts,
                                     data["failure_reason"],
                                     existing_ref["refund_id"],
+                                ),
+                            )
+                        if target_req is not None and linked_request_id is not None:
+                            oar_refund_map = {
+                                "pending": "pending",
+                                "processing": "pending",
+                                "completed": "refunded",
+                                "failed": "failed",
+                            }
+                            next_oar_refund_status = oar_refund_map[canonical_status]
+                            new_req_ver = int(target_req["version"]) + 1
+                            db.execute(
+                                """UPDATE order_action_requests
+                                   SET refund_status = ?,
+                                       version = ?,
+                                       updated_at = ?
+                                   WHERE request_id = ?""",
+                                (
+                                    next_oar_refund_status,
+                                    new_req_ver,
+                                    occurred_ts,
+                                    linked_request_id,
+                                ),
+                            )
+                            dec_note = (
+                                f"provider={provider} ref={refund_ref} "
+                                f"status={canonical_status} ({raw_status})"
+                            )[:500]
+                            db.execute(
+                                """INSERT INTO order_action_decisions (
+                                       decision_id, request_id, case_id, order_id, conversation_id,
+                                       action, from_status, to_status, from_refund_status, to_refund_status,
+                                       refund_decision, inspection_outcome, actor_principal_id, actor_role,
+                                       note, created_at
+                                   ) VALUES (?, ?, ?, ?, ?, 'refund_provider_update', ?, ?, ?, ?, ?, ?, 'system', 'system', ?, ?)""",
+                                (
+                                    f"oad_{uuid.uuid4().hex}",
+                                    linked_request_id,
+                                    target_req["case_id"],
+                                    target_req["order_id"],
+                                    target_req["conversation_id"],
+                                    target_req["status"],
+                                    target_req["status"],
+                                    target_req["refund_status"],
+                                    next_oar_refund_status,
+                                    target_req["refund_decision"],
+                                    target_req["inspection_outcome"],
+                                    dec_note,
+                                    occurred_ts,
+                                ),
+                            )
+                            audit_detail = json.dumps(
+                                {
+                                    "request_id": linked_request_id,
+                                    "case_id": target_req["case_id"],
+                                    "action": "refund_provider_update",
+                                    "from_refund_status": target_req["refund_status"],
+                                    "to_refund_status": next_oar_refund_status,
+                                    "version": new_req_ver,
+                                    "note": dec_note,
+                                    "actor": {"principal_id": "system", "role": "system"},
+                                },
+                                ensure_ascii=False,
+                            )
+                            db.execute(
+                                "INSERT INTO business_events(customer_id, created_at, kind, order_id, payload) VALUES (?, ?, ?, ?, ?)",
+                                (
+                                    target_req["customer_id"],
+                                    occurred_ts,
+                                    "order_action_refund_updated",
+                                    target_req["order_id"],
+                                    audit_detail,
                                 ),
                             )
                         self._recompute_order_payment_status_in_tx(db, result_order_id)

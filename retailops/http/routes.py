@@ -663,11 +663,13 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 base_ord["days_since_delivery"] = o.get("days_since_delivery")
                 base_ord["delivery_age_label"] = o.get("delivery_age_label")
                 formatted_orders.append(base_ord)
+            unlinked_refunds = app.store.list_case_unlinked_refunds(resolved_case_id)
             return (200, {
                 "case_id": resolved_case_id,
                 "read_only": ro,
                 "orders": formatted_orders,
                 "consent_turns": info["consent_turns"],
+                "unlinked_refunds": unlinked_refunds,
                 "order_action_reasons": {
                     action: {e["code"]: e["label"] for e in reason_catalog().options(action, role=ctx.role)}
                     for action in ACTION_TYPES
@@ -701,11 +703,14 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 _format_order_for_api(o, app)
                 for o in (app.store.orders(case_row['customer_id']) if case_row else [])
             ]
+            unlinked_refunds = app.store.list_case_unlinked_refunds(resolved_case_id)
             return (200, {
                 "case_id": resolved_case_id,
                 "read_only": ro,
                 "order_actions": items,
                 "customer_orders": customer_orders,
+                "unlinked_refunds": unlinked_refunds,
+                "warnings": [u["warning"] for u in unlinked_refunds],
             })
         m_case_trans = re.fullmatch(r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/messages", path)
         if m_case_trans:
