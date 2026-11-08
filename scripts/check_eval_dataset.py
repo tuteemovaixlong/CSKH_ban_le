@@ -95,7 +95,7 @@ W32_MODES = {'general', 'retail'}
 W32_ACTIONS = {'reply', 'choose_cancel_reason', 'choose_order_action_reason'}
 W32_TABLES = {'order_action_requests', 'order_action_decisions', 'proposals', 'integration_outbox', 'handoff_episodes'}
 W32_ORDER_ACTION_KEYS = {'order_id', 'action_type', 'exchange_kind', 'target_variant_id', 'target_variant_label'}
-W32_SCENARIO_KEYS = {'id', 'category', 'title', 'fixture', 'turns', 'final_state', 'knowledge'}
+W32_SCENARIO_KEYS = {'id', 'category', 'title', 'fixture', 'customer', 'turns', 'final_state', 'knowledge'}
 W32_REQUIRED_KEYS = {'id', 'category', 'title', 'fixture', 'turns', 'final_state'}
 W32_EXPECT_KEYS = {
     'tools_called', 'tools_any', 'tools_not_called', 'max_tool_calls', 'max_model_calls', 'action', 'order_action',
@@ -103,7 +103,9 @@ W32_EXPECT_KEYS = {
 }
 W32_TOOL_EXPECTATIONS = {'tools_called', 'tools_any', 'tools_not_called', 'max_tool_calls', 'safety_rail'}
 W32_ID = re.compile(r'[a-z0-9_]{3,60}')
-W32_ORDER_ID = re.compile(r'O-[0-9]{3,6}')
+W32_CUSTOMER_ID = re.compile(r'SIM-C-[0-9]{4}')
+W32_ORDER_ID = re.compile(r'SIM-O-(?:ST-[0-9]{3}|[0-9]{5})')
+LEGACY_SEED_ORDER_ID = re.compile(r'\bO-[1237][0-9]{2}\b')
 W32_STATUS = re.compile(r'[a-z_]{3,20}')
 W32_TEMPLATE = re.compile(r'\{\{\s*([^{}]*?)\s*\}\}')
 W32_TEMPLATE_PATH = re.compile(r'last_tool\.[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)*')
@@ -217,6 +219,11 @@ def validate_w32(cases):
         counts[case['category']] += 1
         _text(case['title'], f'{name}.title', 140)
         assert case['fixture'] in W32_FIXTURES, f'{name}: unknown fixture {case["fixture"]!r}'
+        if 'customer' in case:
+            assert isinstance(case['customer'], str) and W32_CUSTOMER_ID.fullmatch(case['customer']), \
+                f'{name}.customer: expected SIM-C-NNNN'
+        assert not LEGACY_SEED_ORDER_ID.search(json.dumps(case, ensure_ascii=False)), \
+            f'{name}: legacy seed order ID (O-1xx/O-2xx/O-3xx/O-7xx) is retired in W6.1b-1'
         turns = case['turns']
         assert isinstance(turns, list) and 1 <= len(turns) <= 4, f'{name}: 1-4 turns'
         multi_turn += len(turns) > 1
@@ -279,7 +286,7 @@ W4_ALL_TOOLS = W32_TOOLS | W4_CASE_ASSIST_TOOLS
 W4_TABLES = W32_TABLES | {'case_assist_turns', 'order_action_evidence'}
 W4_GATEWAY_FAULTS = {'endpoint_unavailable', 'vision_disabled'}
 W4_ATTACHMENT_KINDS = {'large_exif_jpeg', 'text_pdf', 'scanned_pdf'}
-W4_SCENARIO_KEYS = {'id', 'category', 'title', 'fixture', 'actor', 'case_setup', 'turns', 'final_state', 'knowledge'}
+W4_SCENARIO_KEYS = {'id', 'category', 'title', 'fixture', 'customer', 'actor', 'case_setup', 'turns', 'final_state', 'knowledge'}
 W4_REQUIRED_KEYS = {'id', 'category', 'title', 'fixture', 'actor', 'turns', 'final_state'}
 W4_TURN_KEYS = {'user', 'mode', 'attachment', 'gateway_fault', 'fake_model', 'expect'}
 W4_MEDIA_PROJECTION_KEYS = {
@@ -382,6 +389,11 @@ def validate_w4(cases):
         counts[case['category']] += 1
         _text(case['title'], f'{name}.title', 140)
         assert case['fixture'] in W32_FIXTURES, f'{name}: unknown fixture {case["fixture"]!r}'
+        if 'customer' in case:
+            assert isinstance(case['customer'], str) and W32_CUSTOMER_ID.fullmatch(case['customer']), \
+                f'{name}.customer: expected SIM-C-NNNN'
+        assert not LEGACY_SEED_ORDER_ID.search(json.dumps(case, ensure_ascii=False)), \
+            f'{name}: legacy seed order ID (O-1xx/O-2xx/O-3xx/O-7xx) is retired in W6.1b-1'
         actor = case['actor']
         assert actor in W4_ACTORS, f'{name}: unknown actor {actor!r}'
         allowed_tools = W4_CASE_ASSIST_TOOLS if actor == 'staff_case_assist' else W32_TOOLS

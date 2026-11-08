@@ -351,12 +351,22 @@ class CaseAssistBoundTools:
     ) -> dict:
         clean = _strip_pii(order_dict)
         det = _strip_pii(details) if isinstance(details, dict) else {}
-        delivered_at = det.get("delivered_at", clean.get("delivered_at"))
-        if delivered_at is None:
+        raw_delivered_at = clean.get("delivered_at")
+        delivered_at = det.get("delivered_at", raw_delivered_at)
+        delivered_epoch = None
+        if isinstance(raw_delivered_at, (int, float)):
+            delivered_epoch = float(raw_delivered_at)
+        elif isinstance(raw_delivered_at, str) and raw_delivered_at.strip():
+            try:
+                delivered_epoch = float(raw_delivered_at)
+            except ValueError:
+                from datetime import datetime
+                delivered_epoch = datetime.fromisoformat(raw_delivered_at).timestamp()
+        if delivered_epoch is None:
             days_since = None
             age_label = "chưa có ngày giao"
         else:
-            days_since = max(0, int((now_ts - float(delivered_at)) // 86400))
+            days_since = max(0, int((now_ts - delivered_epoch) // 86400))
             age_label = f"{days_since} ngày kể từ khi giao"
         product = self.catalog.for_order(order_dict) if self.catalog is not None else None
         status = clean.get("status")

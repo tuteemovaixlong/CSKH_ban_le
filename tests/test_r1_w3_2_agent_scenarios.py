@@ -67,8 +67,10 @@ def all_steps(selected):
 class DatasetFormatTests(unittest.TestCase):
     def test_the_shipped_dataset_passes_the_format_check(self):
         cases = scenarios()
-        self.assertTrue(20 <= len(cases) <= 30, len(cases))
+        self.assertEqual(len(cases), 29)
         self.assertEqual({c['category'] for c in cases}, set(checker.W32_CATEGORIES))
+        raw = DATASET.read_text(encoding='utf-8')
+        self.assertIsNone(checker.LEGACY_SEED_ORDER_ID.search(raw))
 
     def test_the_handoff_situations_are_all_covered(self):
         ids = {c['id'] for c in scenarios()}
@@ -129,7 +131,9 @@ class DatasetFormatTests(unittest.TestCase):
             'no statement about tools': lambda c: first_turn(c, 'cancel_without_order_id_asks_which')['expect'].pop('tools_not_called'),
             'no final state': lambda c: c[0].pop('final_state'),
             'a final state with a table that cannot be counted': lambda c: c[0].update(final_state={'rows': {'sqlite_master': 0}}),
-            'an order status that is not a word': lambda c: c[0].update(final_state={'orders': {'O-102': 'Delivered!'}}),
+            'an order status that is not a word': lambda c: c[0].update(final_state={'orders': {'SIM-O-00105': 'Delivered!'}}),
+            'a legacy seed order id': lambda c: c[0].update(final_state={'orders': {'O-102': 'delivered'}}),
+            'an invalid customer id': lambda c: c[0].update(customer='C-001'),
             'too few scenarios': lambda c: c.__delitem__(slice(5, None)),
             'a category left out': lambda c: [c.remove(x) for x in [y for y in c if y['category'] == 'policy']],
             'more than four turns': lambda c: c[0].update(turns=c[0]['turns'] * 5),
@@ -143,7 +147,7 @@ class DatasetFormatTests(unittest.TestCase):
     def test_secret_like_text_is_refused(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'agent_scenarios_x.jsonl'
-            path.write_text(DATASET.read_text(encoding='utf-8').replace('Đơn O-102', 'AKIA Đơn O-102', 1), encoding='utf-8')
+            path.write_text(DATASET.read_text(encoding='utf-8').replace('Đơn SIM-O-00105', 'AKIA Đơn SIM-O-00105', 1), encoding='utf-8')
             with self.assertRaises(AssertionError):
                 checker.load_w32_scenarios(path)
 
@@ -248,8 +252,8 @@ class RunnerNotesFailuresTests(unittest.TestCase):
 
     def test_a_forbidden_phrase_and_a_missing_one(self):
         text = self.failures('lookup_delivered_order_status', lambda s: s['turns'][0]['expect'].update(
-            answer_not=['ĐÃ ĐƯỢC   GIAO'], answer_all=['O-999'], answer_any=[['không có từ này']]))
-        for part in ('must not say', "lacks 'O-999'", 'has none of'):
+            answer_not=['ĐÃ ĐƯỢC   GIAO'], answer_all=['SIM-O-99999'], answer_any=[['không có từ này']]))
+        for part in ('must not say', "lacks 'SIM-O-99999'", 'has none of'):
             self.assertIn(part, text)
 
     def test_the_wrong_action_form_or_target(self):
@@ -266,8 +270,8 @@ class RunnerNotesFailuresTests(unittest.TestCase):
 
     def test_a_final_state_that_changed(self):
         text = self.failures('cancel_pending_order_opens_form', lambda s: s.update(
-            final_state={'orders': {'O-101': 'cancelled', 'O-999': 'pending'}, 'rows': {'order_action_requests': 3}}))
-        for part in ('order O-101 is', 'order O-999 is None', 'order_action_requests has 0 rows'):
+            final_state={'orders': {'SIM-O-00115': 'cancelled', 'SIM-O-99999': 'pending'}, 'rows': {'order_action_requests': 3}}))
+        for part in ('order SIM-O-00115 is', 'order SIM-O-99999 is None', 'order_action_requests has 0 rows'):
             self.assertIn(part, text)
 
     def test_a_script_that_is_out_of_date(self):
@@ -406,7 +410,7 @@ class RealModeThroughTheHttpAdapterTests(unittest.TestCase):
         self.assertEqual(code, 1)
 
     def test_a_model_that_breaks_the_protocol_is_counted_not_hidden(self):
-        replies = deque([chat_reply('', [('get_order', {'order': 'O-102'})]),     # arguments the schema does not allow
+        replies = deque([chat_reply('', [('get_order', {'order': 'SIM-O-00105'})]),  # arguments the schema does not allow
                          chat_reply('', [('delete_everything', {'now': True})]),  # a tool that does not exist
                          chat_reply('Dạ em chưa tra được đơn ạ.')])
         code, output, _ = self.run_main(FakeVllm(lambda payload: replies.popleft()), '--only', 'lookup_delivered_order_status')

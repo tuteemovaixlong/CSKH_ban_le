@@ -78,8 +78,9 @@ def replay_w4(selected):
 class W4DatasetFormatTests(unittest.TestCase):
     def test_w4_dataset_passes_format_check_and_matches_code_contracts(self):
         cases = w4_scenarios()
-        self.assertTrue(10 <= len(cases) <= 20, len(cases))
+        self.assertEqual(len(cases), 12)
         self.assertEqual({c['category'] for c in cases}, set(checker.W4_CATEGORIES))
+        self.assertIsNone(checker.LEGACY_SEED_ORDER_ID.search(W4_DATASET.read_text(encoding='utf-8')))
         self.assertEqual(
             checker.W4_CASE_ASSIST_TOOLS,
             {t['function']['name'] for t in STAFF_CASE_ASSIST_TOOLS},
@@ -139,6 +140,10 @@ class W4DatasetFormatTests(unittest.TestCase):
                 'turns'
             ][0]['attachment'].update(kind='exe_payload'),
             'unsupported synthetic attachment kind',
+        )
+        check_bad(
+            lambda c: c[0].update(final_state={'orders': {'O-102': 'delivered'}}),
+            'legacy seed order ID rejected',
         )
 
 
@@ -270,9 +275,9 @@ class W4RealHttpAdapterTwoLayerAuthTests(unittest.TestCase):
     def test_rogue_mutating_tool_call_in_case_assist_is_blocked_and_counted_invalid(self):
         replies = deque(
             [
-                chat_reply('', [('prepare_order_action', {'order_id': 'O-101', 'action_type': 'cancel'})]),
-                chat_reply('', [('get_case_order', {'order_id': 'O-101'})]),
-                chat_reply('Trợ lý ca chỉ có quyền đọc, không thể hủy đơn O-101 trên hệ thống.'),
+                chat_reply('', [('prepare_order_action', {'order_id': 'SIM-O-00115', 'action_type': 'cancel'})]),
+                chat_reply('', [('get_case_order', {'order_id': 'SIM-O-00115'})]),
+                chat_reply('Trợ lý ca chỉ có quyền đọc, không thể hủy đơn SIM-O-00115 trên hệ thống.'),
             ]
         )
         vllm = RecordingTwoLayerVllm(lambda _payload: replies.popleft(), strict=True)
