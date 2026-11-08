@@ -2016,5 +2016,172 @@ class Item4CanonicalModelAndPiiTests(unittest.TestCase):
         self.assertEqual(ie_cnt, 7)
 
 
+class Item5BusinessRulesAndComputedEligibilityTests(unittest.TestCase):
+    """W6.1b-D9: Shipping cancel rule and server-computed read-time eligibility with fixed clock."""
+
+    def test_shipping_order_blocks_self_service_cancel_and_recommends_handoff(self):
+        from retailops_conversation import Catalog
+        from retailops_tools import BoundTools
+
+        fixed_now = 1762600000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            bstore = BusinessStore(Path(tmp) / "shop.sqlite3")
+            bstore.seed_catalog()
+            bstore.clock = lambda: fixed_now
+            with bstore.connection(write=True) as db:
+                db.execute("INSERT INTO customers(id, name) VALUES ('C-501', 'Khách Test')")
+                db.execute(
+                    """INSERT INTO orders(
+                           id, customer_id, source_system, external_order_id, ordered_at,
+                           name, variant, amount, status, version, product_id, promised_delivery_by
+                       ) VALUES (
+                           'ord_50100000000000000000000000000001', 'C-501', 'marketplace_sim',
+                           'SIM-O-SHIP-501', ?, 'Áo thun Essential', 'Trắng / Size M', 299000,
+                           'shipping', 1, 'P-101', ?
+                       )""",
+                    (fixed_now - 20 * 3600.0, fixed_now - 5 * 3600.0),
+                )
+
+            catalog = Catalog(store=bstore)
+            tools = BoundTools(
+                bstore,
+                catalog,
+                "C-501",
+                {"id": "00000000-0000-0000-0000-000000000501", "order_id": "ord_50100000000000000000000000000001"},
+                {"name": "fake"},
+            )
+            res = tools(
+                "prepare_order_action",
+                {"order_id": "ord_50100000000000000000000000000001", "action_type": "cancel"},
+            )
+            self.assertFalse(res["eligible"])
+            self.assertEqual(res["ineligible_reason"]["code"], "order_already_shipping")
+            self.assertTrue(res["handoff_recommended"])
+            self.assertIsNone(tools.prepared_order_action)
+            self.assertIsNotNone(res["as_of"])
+            self.assertFalse(res["eligibility"]["can_self_service_cancel"])
+            self.assertTrue(res["eligibility"]["is_late_vs_promised"])
+            self.assertEqual(res["eligibility"]["late_by_hours"], 5.0)
+
+            # Direct write APIs also reject shipping self-service cancellation
+            with self.assertRaises(ApiError) as ctx_prop:
+                bstore.propose(
+                    "C-501",
+                    {
+                        "order_id": "ord_50100000000000000000000000000001",
+                        "order_version": 1,
+                        "cancel_reason": "change_of_mind",
+                    },
+                )
+            self.assertEqual(ctx_prop.exception.status, 409)
+            self.assertEqual(ctx_prop.exception.code, "not_cancellable")
+
+            with self.assertRaises(ApiError) as ctx_oar:
+                bstore.create_order_action_request(
+                    "C-501",
+                    {
+                        "order_id": "ord_50100000000000000000000000000001",
+                        "type": "cancel",
+                        "expected_order_version": 1,
+                        "reason_code": "change_of_mind",
+                        "reason_text": "Đổi ý",
+                    },
+                    idempotency_key="idem_501_cancel_test_0001",
+                )
+            self.assertEqual(ctx_oar.exception.status, 409)
+            self.assertEqual(ctx_oar.exception.code, "not_cancellable")
+
+            # Return & exchange still require 'delivered'
+            for act in ("return", "exchange"):
+                r_act = tools(
+                    "prepare_order_action",
+                    {"order_id": "ord_50100000000000000000000000000001", "action_type": act},
+                )
+                self.assertFalse(r_act["eligible"])
+                self.assertEqual(r_act["ineligible_reason"]["code"], "order_not_delivered")
+
+    def test_fixed_clock_7_15_90_and_override_boundaries_plus_no_stored_eligibility_columns(self):
+        delivered_ts = 1760000000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            bstore = BusinessStore(Path(tmp) / "shop.sqlite3")
+            bstore.seed_catalog()
+            oid = "ord_50200000000000000000000000000002"
+            eta_ts = delivered_ts - 3600.0
+            with bstore.connection(write=True) as db:
+                db.execute("INSERT INTO customers(id, name) VALUES ('C-502', 'Khách Biên')")
+                db.execute(
+                    """INSERT INTO orders(
+                           id, customer_id, source_system, external_order_id, ordered_at,
+                           name, variant, amount, status, version, product_id,
+                           promised_delivery_by, delivered_at
+                       ) VALUES (
+                           ?, 'C-502', 'marketplace_sim', 'SIM-O-BND-502', ?,
+                           'Áo thun Essential', 'Trắng / Size M', 299000, 'delivered', 1, 'P-101',
+                           ?, ?
+                       )""",
+                    (oid, delivered_ts - 3 * 86400.0, delivered_ts - 72 * 3600.0, delivered_ts),
+                )
+                db.execute(
+                    """INSERT INTO shipments(
+                           shipment_id, order_id, source_system, external_shipment_id,
+                           carrier, tracking_code, status, carrier_status_raw,
+                           estimated_delivery_at, delivered_at, delivery_attempts, updated_at
+                       ) VALUES (
+                           'shp_502', ?, 'marketplace_sim', 'SHP-502',
+                           'GHN', 'GHN502', 'delivered', 'delivered', ?, ?, 1, ?
+                       )""",
+                    (oid, eta_ts, delivered_ts, delivered_ts),
+                )
+
+                # Verify no pre-computed eligibility columns exist in DB tables
+                forbidden_cols = {
+                    "warranty_eligible",
+                    "exchange_eligible",
+                    "return_eligible",
+                    "size_exchange_eligible",
+                    "can_reassign_today",
+                    "is_late_vs_promised",
+                }
+                for tbl_r in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall():
+                    cols = {
+                        c["name"]
+                        for c in db.execute(f"PRAGMA table_info({tbl_r['name']})").fetchall()
+                    }
+                    self.assertTrue(cols.isdisjoint(forbidden_cols), tbl_r["name"])
+
+            # 1) Return boundary: 7 days
+            e_7_in = bstore.order_eligibility(oid, now=delivered_ts + 7 * 86400.0)
+            e_7_out = bstore.order_eligibility(oid, now=delivered_ts + 7 * 86400.0 + 1.0)
+            self.assertTrue(e_7_in["within_return_window"])
+            self.assertFalse(e_7_out["within_return_window"])
+            self.assertTrue(e_7_out["within_size_exchange_window"])
+            self.assertTrue(e_7_out["within_warranty"])
+            self.assertIsNotNone(e_7_in["latest_estimated_delivery_at"])
+            self.assertTrue(e_7_in["is_late_vs_promised"])
+            self.assertEqual(e_7_in["late_by_hours"], 72.0)
+
+            # 2) Size exchange boundary: 15 days
+            e_15_in = bstore.order_eligibility(oid, now=delivered_ts + 15 * 86400.0)
+            e_15_out = bstore.order_eligibility(oid, now=delivered_ts + 15 * 86400.0 + 1.0)
+            self.assertTrue(e_15_in["within_size_exchange_window"])
+            self.assertFalse(e_15_out["within_size_exchange_window"])
+            self.assertTrue(e_15_out["within_warranty"])
+
+            # 3) Default 90-day warranty boundary (P-101 warranty_days=90)
+            e_90_in = bstore.order_eligibility(oid, now=delivered_ts + 90 * 86400.0)
+            e_90_out = bstore.order_eligibility(oid, now=delivered_ts + 90 * 86400.0 + 1.0)
+            self.assertTrue(e_90_in["within_warranty"])
+            self.assertFalse(e_90_out["within_warranty"])
+
+            # 4) Product-specific override (P-603 warranty_days=180)
+            with bstore.connection(write=True) as db:
+                db.execute("UPDATE orders SET product_id='P-603' WHERE id=?", (oid,))
+            e_180_in = bstore.order_eligibility(oid, now=delivered_ts + 180 * 86400.0)
+            e_180_out = bstore.order_eligibility(oid, now=delivered_ts + 180 * 86400.0 + 1.0)
+            self.assertEqual(e_180_in["warranty_window_days"], 180)
+            self.assertTrue(e_180_in["within_warranty"])
+            self.assertFalse(e_180_out["within_warranty"])
+
+
 if __name__ == "__main__":
     unittest.main()

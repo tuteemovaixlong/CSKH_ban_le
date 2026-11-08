@@ -25,6 +25,7 @@ from retailops.core import (
     fields,
     require,
 )
+from retailops.business.eligibility import compute_order_eligibility
 from retailops.business.variants import fold_attribute
 from retailops.order_reasons import reason_catalog
 from retailops.business.clamav import ClamdScanner
@@ -2309,6 +2310,62 @@ class BusinessStore:
             order = self.owned(db, customer, oid)
             self.log(db, customer, "order_viewed", oid)
             return order
+
+    def _order_eligibility_in_tx(self, db, order_dict: dict, *, now: float | None = None) -> dict:
+        now_ts = self._now() if now is None else float(now)
+        product_dict = None
+        pid = order_dict.get("product_id")
+        if isinstance(pid, str) and pid.strip():
+            prod_row = db.execute("SELECT * FROM products WHERE id = ?", (pid.strip(),)).fetchone()
+            if prod_row is not None:
+                product_dict = self._row_to_product(prod_row)
+        oid = str(order_dict["id"])
+        ship_row = db.execute(
+            "SELECT * FROM shipments WHERE order_id = ? ORDER BY updated_at DESC, shipment_id DESC LIMIT 1",
+            (oid,),
+        ).fetchone()
+        ship_dict = dict(ship_row) if ship_row is not None else None
+        latest_evt_eta = None
+        if ship_dict is not None and ship_dict.get("estimated_delivery_at") is None:
+            eta_row = db.execute(
+                "SELECT estimated_delivery_at FROM shipment_events "
+                "WHERE shipment_id = ? AND estimated_delivery_at IS NOT NULL "
+                "ORDER BY occurred_at DESC, shipment_event_id DESC LIMIT 1",
+                (ship_dict["shipment_id"],),
+            ).fetchone()
+            if eta_row is not None:
+                latest_evt_eta = eta_row["estimated_delivery_at"]
+        return compute_order_eligibility(
+            order_dict,
+            product=product_dict,
+            shipment=ship_dict,
+            latest_event_estimated_delivery_at=latest_evt_eta,
+            as_of=now_ts,
+        )
+
+    def order_eligibility(
+        self,
+        order_or_id,
+        *,
+        customer_id: str | None = None,
+        now: float | None = None,
+        db=None,
+    ) -> dict:
+        def _run(conn):
+            if isinstance(order_or_id, dict):
+                ord_dict = order_or_id
+            elif customer_id is not None:
+                ord_dict = self.owned(conn, customer_id, str(order_or_id))
+            else:
+                row = conn.execute("SELECT * FROM orders WHERE id = ?", (str(order_or_id),)).fetchone()
+                require(row is not None, 404, "order_not_found", "Không tìm thấy đơn hàng.")
+                ord_dict = dict(row)
+            return self._order_eligibility_in_tx(conn, ord_dict, now=now)
+
+        if db is not None:
+            return _run(db)
+        with self.connection() as conn:
+            return _run(conn)
 
     def order_items(self, order_id):
         with self.connection() as db:
@@ -4774,6 +4831,11 @@ class BusinessStore:
                 stock = target_row["stock"] if target_row is not None else None
                 exchange_view["target_stock_status"] = self._stock_status(stock)
                 exchange_view["target_stock"] = int(stock) if stock is not None else None
+        order_eligibility = (
+            self._order_eligibility_in_tx(db, order_dict, now=now_ts)
+            if order_dict is not None
+            else None
+        )
         return {
             **d,
             **exchange_view,
@@ -4781,6 +4843,7 @@ class BusinessStore:
             "version": int(d["version"]),
             "reason_label": reason_catalog().label(d["reason_code"]),
             "order": order_dict,
+            "order_eligibility": order_eligibility,
             "delivered_at": delivered_at,
             "days_since_delivery": days_since_delivery,
             "delivery_age_label": delivery_age_label,
@@ -5095,6 +5158,12 @@ class BusinessStore:
             "Đơn đã thay đổi; vui lòng tải lại thông tin trước khi gửi yêu cầu.",
         )
         if action_type == "cancel":
+            if order["status"] == "shipping":
+                raise ApiError(
+                    409,
+                    "not_cancellable",
+                    "Đơn đang được vận chuyển (shipping) nên không thể mở yêu cầu hủy tự phục vụ; vui lòng liên hệ nhân viên CSKH hỗ trợ.",
+                )
             require(
                 order["status"] == "pending",
                 409,
@@ -5721,6 +5790,12 @@ class BusinessStore:
         now_ts = self._now()
         with self.connection(write=True) as db:
             order = self.owned(db, customer, oid)
+            if order["status"] == "shipping":
+                raise ApiError(
+                    409,
+                    "not_cancellable",
+                    "Đơn đang được vận chuyển (shipping) nên không thể mở yêu cầu hủy tự phục vụ; vui lòng liên hệ nhân viên CSKH hỗ trợ.",
+                )
             require(order["status"] == "pending", 409, "not_cancellable", "Đơn không còn ở trạng thái cho phép hủy.")
             require(order["version"] == version, 409, "stale_order", "Đơn đã thay đổi. Vui lòng tải lại thông tin.")
             pid, expires = str(uuid.uuid4()), now_ts + 600

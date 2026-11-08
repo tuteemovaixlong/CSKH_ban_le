@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import re
 
+from retailops.business.eligibility import compute_order_eligibility
 from retailops.business.variants import match_variants
 from retailops.order_reasons import reason_catalog
 from retailops_conversation import normalize
@@ -73,8 +74,13 @@ class BoundTools:
     def read_order(self, oid, focus=True):
         with self.store.connection() as db:
             order = self.store.owned(db, self.customer, oid)
+            product = self.catalog.for_order(order)
+            if hasattr(self.store, 'order_eligibility'):
+                eligibility = self.store.order_eligibility(order, db=db)
+            else:
+                now_ts = self.store._now() if hasattr(self.store, '_now') else None
+                eligibility = compute_order_eligibility(order, product=product, as_of=now_ts)
         self.versions[oid] = order['version']
-        product = self.catalog.for_order(order)
         if focus:
             self.context = {'order_id': oid, 'product_id': product['id'] if product else None}
         # Customer PII (name, phone, address, email, customer_id) is never sent to the model.
@@ -82,6 +88,7 @@ class BoundTools:
         return {k: v for k, v in order.items() if k not in _PII_KEYS} | {
             'product_id': product['id'] if product else None, 'currency': 'VND',
             'payment': None, 'delivery': None, 'address': None, 'refund': None,
+            'eligibility': eligibility, 'as_of': eligibility['as_of'],
             'source': 'synthetic-demo/orders'}
 
     def __call__(self, name, args):
@@ -181,9 +188,19 @@ class BoundTools:
             except Exception:
                 has_open_request = False
             ineligible = None
+            handoff_recommended = False
             if has_open_request:
                 ineligible = {'code': 'open_request_exists',
                               'message': 'This order already has an open order-action request.'}
+            elif action_type == 'cancel' and order['status'] == 'shipping':
+                handoff_recommended = True
+                ineligible = {
+                    'code': 'order_already_shipping',
+                    'message': (
+                        'Đơn hàng đang trong quá trình vận chuyển (shipping) nên không thể mở yêu cầu hủy tự phục vụ; '
+                        'cần chuyển nhân viên CSKH hỗ trợ.'
+                    ),
+                }
             elif action_type == 'cancel' and order['status'] != 'pending':
                 ineligible = {'code': 'order_not_pending',
                               'message': f"Only a pending order can be cancelled; this order is {order['status']}."}
@@ -227,6 +244,12 @@ class BoundTools:
                 self.cancel_order = None
             if eligible:
                 next_step = 'A request form is open on the customer\'s screen: they pick a reason and press the separate confirmation button.'
+            elif handoff_recommended:
+                next_step = (
+                    'Explain clearly that an order already in shipping status cannot open a self-service cancellation '
+                    'request, and offer to transfer the conversation to a human support staff member '
+                    '(call request_human_support if the customer wants human assistance).'
+                )
             else:
                 next_step = ineligible['message']
             result = {
@@ -235,6 +258,9 @@ class BoundTools:
                 'exchange_kind': exchange_kind,
                 'eligible': eligible,
                 'ineligible_reason': ineligible,
+                'handoff_recommended': handoff_recommended,
+                'eligibility': order.get('eligibility'),
+                'as_of': order.get('as_of'),
                 'has_open_request': has_open_request,
                 'reasons': reason_options,
                 'transaction_performed': False,
@@ -250,7 +276,12 @@ class BoundTools:
         if name == 'get_runtime_info':
             return {k: self.identity.get(k) for k in ('name', 'digest', 'details', 'ollama_version', 'agent_protocol', 'provider', 'identity_source')}
         if name == 'get_current_time':
-            now = datetime.now(timezone(timedelta(hours=7)))
+            vn_tz = timezone(timedelta(hours=7))
+            now = (
+                datetime.fromtimestamp(float(self.store._now()), tz=vn_tz)
+                if hasattr(self.store, '_now')
+                else datetime.now(vn_tz)
+            )
             return {'date': now.date().isoformat(), 'time': now.isoformat(timespec='seconds'),
                     'timezone': 'Asia/Ho_Chi_Minh (UTC+07:00)', 'source': 'backend_clock'}
         if name == 'track_shipment':

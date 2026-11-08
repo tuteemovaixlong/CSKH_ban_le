@@ -371,6 +371,24 @@ class MarketplaceSimContractBridgeTests(unittest.TestCase):
                     72.0,
                     places=3,
                 )
+                s13_elig = bstore.order_eligibility(s13["order"], db=db)
+                self.assertTrue(s13_elig["is_late_vs_promised"])
+                self.assertEqual(s13_elig["late_by_hours"], 72.0)
+                self.assertIsNotNone(s13_elig["as_of"])
+
+                # Also verify doi_size_trong_han, qua_han_doi_tra, het_bao_hanh computed windows at sim clock
+                sim_now_ts = max(
+                    r["occurred_at"]
+                    for r in db.execute("SELECT occurred_at FROM shipment_events").fetchall()
+                )
+                s_size = bstore.order_eligibility(_story_state("doi_size_trong_han")["order"], now=sim_now_ts, db=db)
+                self.assertTrue(s_size["within_size_exchange_window"])
+                s_exp = bstore.order_eligibility(_story_state("qua_han_doi_tra")["order"], now=sim_now_ts, db=db)
+                self.assertFalse(s_exp["within_return_window"])
+                self.assertFalse(s_exp["within_size_exchange_window"])
+                self.assertTrue(s_exp["within_warranty"])
+                s_warr = bstore.order_eligibility(_story_state("het_bao_hanh")["order"], now=sim_now_ts, db=db)
+                self.assertFalse(s_warr["within_warranty"])
 
                 # Verify HMAC digest over raw bytes and PII redaction across entire DB
                 for r in db.execute(
