@@ -154,9 +154,9 @@ def seed_demo_store_events(
         bstore.seed_catalog(db)
         bstore._ensure_purge_tombstone_table(db)
         existing_eids = {
-            str(r["event_id"])
+            (str(r["source_system"]), str(r["event_id"]))
             for r in db.execute(
-                "SELECT event_id FROM imported_events WHERE source_system='marketplace_sim'"
+                "SELECT source_system, event_id FROM imported_events"
             ).fetchall()
         }
         tombstone_ids = {
@@ -176,7 +176,10 @@ def seed_demo_store_events(
             else None
         )
         for raw_line, prevalidated, prevalidated_json in prevalidated_entries:
-            if existing_eids and prevalidated["event_id"] in existing_eids:
+            if (
+                existing_eids
+                and (str(prevalidated["source_system"]), str(prevalidated["event_id"])) in existing_eids
+            ):
                 duplicates += 1
                 continue
             res = svc.ingest_event(

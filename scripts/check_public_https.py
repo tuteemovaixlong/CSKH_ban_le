@@ -164,12 +164,17 @@ def main():
             admin = base+['exec','-T','web','python','-m','retailops','identity']
             run(admin+['init-tenant','--tenant','ci-shop','--name','CI shop','--seed-demo'])
             seed_meta = json.loads(run(base+['exec','-T','web','python','-c',
-                "import json; from pathlib import Path; from retailops.identity.persistent import PersistentSessions; "
-                "s=PersistentSessions(Path('/data/persistent')); b=s.business_store('ci-shop'); "
-                "cid=s.control.get_external_customer_mapping('ci-shop','marketplace_sim','SIM-C-0070'); "
-                "ords=b.orders(cid); pend=[o for o in ords if o['external_order_id']=='SIM-O-00115'][0]; "
-                "with b.connection() as db: other=db.execute('SELECT id FROM orders WHERE customer_id<>? LIMIT 1',(cid,)).fetchone()['id']; "
-                "print(json.dumps({'cid':cid,'oid':pend['id'],'ver':pend['version'],'other':other}))"]).strip())
+                "import json\n"
+                "from pathlib import Path\n"
+                "from retailops.identity.persistent import PersistentSessions\n"
+                "s = PersistentSessions(Path('/data/persistent'))\n"
+                "b = s.business_store('ci-shop')\n"
+                "cid = s.control.get_external_customer_mapping('ci-shop', 'marketplace_sim', 'SIM-C-0070')\n"
+                "ords = b.orders(cid)\n"
+                "pend = [o for o in ords if o['external_order_id'] == 'SIM-O-00115'][0]\n"
+                "with b.connection() as db:\n"
+                "    other = db.execute('SELECT id FROM orders WHERE customer_id<>? LIMIT 1', (cid,)).fetchone()['id']\n"
+                "print(json.dumps({'cid': cid, 'oid': pend['id'], 'ver': pend['version'], 'other': other}))\n"]).strip())
             ci_cid = seed_meta['cid']
             ci_oid = seed_meta['oid']
             ci_ver = seed_meta['ver']

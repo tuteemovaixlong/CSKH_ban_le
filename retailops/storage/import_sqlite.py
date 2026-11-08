@@ -11,7 +11,8 @@ from retailops.storage.pg_schema import initialize
 from retailops.storage.postgres import IDENTITY_SCHEMA, tenant_schema, transaction
 
 IDENTITY_TABLES = ('tenants', 'principals', 'memberships', 'credentials', 'identity_rate',
-                   'provider_daily_usage', 'identity_events', 'external_identities', 'customer_links', 'unresolved_collisions')
+                   'provider_daily_usage', 'identity_events', 'external_identities', 'customer_links',
+                   'unresolved_collisions', 'external_customer_mappings')
 BUSINESS_TABLES = ('customers', 'products', 'product_variants', 'orders', 'proposals',
                    'business_events', 'conversations', 'agent_turns', 'provider_daily_usage')
 SEQUENCES = {'identity': ('identity_events',), 'business': ('business_events', 'agent_turns')}
