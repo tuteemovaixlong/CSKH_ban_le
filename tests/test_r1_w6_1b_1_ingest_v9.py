@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import closing, contextmanager
+import copy
 import json
 import os
 from pathlib import Path
@@ -40,6 +41,7 @@ from retailops.bootstrap import build_public_app
 from retailops.identity.persistent import PersistentSessions
 from retailops.identity.postgres import PostgresSessions
 from retailops.identity.store import IdentityStore
+from retailops.integration.ingest import IntegrationIngestService
 from retailops.storage import cli as database_cli
 from retailops.storage import pg_schema
 from retailops.storage.pg_repositories import PostgresBusinessStore, migrate_postgres_business_v9
@@ -1819,6 +1821,199 @@ class Item3InternalRouteAndImportEventsCliTests(unittest.TestCase):
         self.assertEqual(len(audits), 2)
         self.assertEqual((audits[0]["received"], audits[0]["duplicates"]), (2, 0))
         self.assertEqual((audits[1]["received"], audits[1]["duplicates"]), (0, 2))
+
+
+class Item4CanonicalModelAndPiiTests(unittest.TestCase):
+    """W6.1b-1 Item 4: canonical writes, sequence monotonicity, non-regression, HMAC digest & PII redaction."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.digest_key = b"item4-hmac-digest-secret-32-bytes!!"
+        self.sessions = PersistentSessions(self.root / "persistent")
+        self.sessions.provision_tenant("shop-demo", "Shop Demo", seed_demo=False)
+        self.service = IntegrationIngestService(self.sessions, digest_key=self.digest_key)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_hmac_digest_pii_redaction_and_missing_digest_key_rejection(self) -> None:
+        import hashlib
+        import hmac
+
+        ev = _sample_v2_events()["order.created"]
+        ev["data"]["recipient"] = {
+            "name": "Phạm Thị Thu Hương",
+            "phone": "0123987654",
+            "address_line": "Số 88 Đường Nguyễn Huệ, Tầng 5",
+            "ward": "Phường Bến Nghé",
+            "district": "Quận 1",
+            "province": "TP. Hồ Chí Minh",
+        }
+        raw_line = json.dumps(ev, ensure_ascii=False, separators=(",", ":"))
+        raw_bytes = raw_line.encode("utf-8")
+
+        # Missing digest key must fail closed with 503 and leave DB untouched
+        no_key_service = IntegrationIngestService(self.sessions, digest_key=None)
+        with patch.dict(os.environ, {"RETAILOPS_EVENT_DIGEST_KEY_FILE": ""}, clear=False):
+            with self.assertRaises(ApiError) as missing_err:
+                no_key_service.ingest_event(raw_bytes, tenant_id="shop-demo")
+        self.assertEqual((missing_err.exception.status, missing_err.exception.code), (503, "connector_unavailable"))
+
+        res = self.service.ingest_event(
+            raw_bytes,
+            tenant_id="shop-demo",
+            rebase_offset_seconds=3600.0,
+        )
+        self.assertTrue(res.success)
+        self.assertTrue(res.order_id.startswith("ord_"))
+
+        expected_hmac = hmac.new(self.digest_key, raw_bytes, hashlib.sha256).hexdigest()
+        plain_sha256 = hashlib.sha256(raw_bytes).hexdigest()
+        self.assertNotEqual(expected_hmac, plain_sha256)
+
+        bstore = self.sessions.business_store("shop-demo")
+        with bstore.connection() as db:
+            imp = dict(
+                db.execute(
+                    "SELECT * FROM imported_events WHERE event_id=?", (ev["event_id"],)
+                ).fetchone()
+            )
+            self.assertEqual(imp["payload_digest"], expected_hmac)
+            self.assertNotEqual(imp["payload_digest"], plain_sha256)
+            self.assertEqual(
+                json.loads(imp["redacted_fields"]),
+                [
+                    "data.recipient.name",
+                    "data.recipient.phone",
+                    "data.recipient.address_line",
+                ],
+            )
+            stored_payload = json.loads(imp["payload_json"])
+            rec = stored_payload["data"]["recipient"]
+            self.assertEqual(
+                set(rec.keys()),
+                {"name", "phone", "address_line", "ward", "district", "province"},
+            )
+            self.assertIsNone(rec["name"])
+            self.assertIsNone(rec["phone"])
+            self.assertIsNone(rec["address_line"])
+            self.assertEqual(rec["ward"], "Phường Bến Nghé")
+            self.assertEqual(rec["district"], "Quận 1")
+            self.assertEqual(rec["province"], "TP. Hồ Chí Minh")
+
+            # Scan every table & column in tenant DB for PII leaks
+            tables = [
+                r["name"]
+                for r in db.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            ]
+            for tbl in tables:
+                for row in db.execute(f"SELECT * FROM {tbl}").fetchall():
+                    dumped = json.dumps(dict(row), ensure_ascii=False)
+                    self.assertNotIn("Phạm Thị Thu Hương", dumped, tbl)
+                    self.assertNotIn("0123987654", dumped, tbl)
+                    self.assertNotIn("Số 88 Đường Nguyễn Huệ", dumped, tbl)
+
+            # W6.1b-2 tables must remain completely empty
+            for empty_tbl in ("order_recipients", "delivery_compensations", "vouchers"):
+                cnt = db.execute(f"SELECT COUNT(*) AS c FROM {empty_tbl}").fetchone()["c"]
+                self.assertEqual(cnt, 0, empty_tbl)
+
+    def test_two_sources_same_external_order_id_and_sequence_non_regression(self) -> None:
+        base_events = _sample_v2_events()
+
+        # F17: Same external_order_id from two different sources creates two distinct orders.id
+        ev_src_a = copy.deepcopy(base_events["order.created"])
+        ev_src_a["event_id"] = "evt:srcA:same-oid:1"
+        ev_src_a["source_system"] = "marketplace_sim"
+        ev_src_a["data"]["external_order_id"] = "EXT-SHARED-999"
+
+        ev_src_b = copy.deepcopy(base_events["order.created"])
+        ev_src_b["event_id"] = "evt:srcB:same-oid:1"
+        ev_src_b["source_system"] = "marketplace_b_sim"
+        ev_src_b["data"]["external_order_id"] = "EXT-SHARED-999"
+
+        res_a = self.service.ingest_event(
+            ev_src_a, tenant_id="shop-demo", connector_source_system="marketplace_sim"
+        )
+        res_b = self.service.ingest_event(
+            ev_src_b, tenant_id="shop-demo", connector_source_system="marketplace_b_sim"
+        )
+        self.assertNotEqual(res_a.order_id, res_b.order_id)
+
+        # F16: order.status_changed 'shipping' -> canonical 'shipping' (never 'delivered')
+        ev_ship = copy.deepcopy(base_events["order.status_changed"])
+        ev_ship["event_id"] = "evt:srcA:same-oid:3"
+        ev_ship["sequence"] = 3
+        ev_ship["data"]["external_order_id"] = "EXT-SHARED-999"
+        ev_ship["data"]["status"] = "shipping"
+        self.service.ingest_event(ev_ship, tenant_id="shop-demo")
+
+        bstore = self.sessions.business_store("shop-demo")
+        with bstore.connection() as db:
+            st = db.execute("SELECT status FROM orders WHERE id=?", (res_a.order_id,)).fetchone()["status"]
+        self.assertEqual(st, "shipping")
+
+        # Out-of-order lower sequence (seq=2 'confirmed') still records imported_events, does NOT regress order
+        ev_late_confirmed = copy.deepcopy(base_events["order.status_changed"])
+        ev_late_confirmed["event_id"] = "evt:srcA:same-oid:2"
+        ev_late_confirmed["sequence"] = 2
+        ev_late_confirmed["data"]["external_order_id"] = "EXT-SHARED-999"
+        ev_late_confirmed["data"]["status"] = "confirmed"
+        res_late = self.service.ingest_event(ev_late_confirmed, tenant_id="shop-demo")
+        self.assertTrue(res_late.sequence_ignored)
+
+        # Higher sequence with regressed canonical status ('pending' after 'shipping') also does NOT regress
+        ev_regress = copy.deepcopy(base_events["order.status_changed"])
+        ev_regress["event_id"] = "evt:srcA:same-oid:4"
+        ev_regress["sequence"] = 4
+        ev_regress["data"]["external_order_id"] = "EXT-SHARED-999"
+        ev_regress["data"]["status"] = "pending"
+        res_reg = self.service.ingest_event(ev_regress, tenant_id="shop-demo")
+        self.assertTrue(res_reg.sequence_ignored)
+
+        # Shipment out-of-order & status non-regression
+        shp_1 = copy.deepcopy(base_events["shipment.updated"])
+        shp_1["event_id"] = "evt:shp:EXT-SHARED-999:2"
+        shp_1["sequence"] = 2
+        shp_1["data"]["external_order_id"] = "EXT-SHARED-999"
+        shp_1["data"]["external_shipment_id"] = "SHP-SHARED-1"
+        shp_1["data"]["carrier_status_raw"] = "delivering"
+        self.service.ingest_event(shp_1, tenant_id="shop-demo")
+
+        shp_old = copy.deepcopy(shp_1)
+        shp_old["event_id"] = "evt:shp:EXT-SHARED-999:1"
+        shp_old["sequence"] = 1
+        shp_old["data"]["carrier_status_raw"] = "ready_to_pick"
+        res_shp_old = self.service.ingest_event(shp_old, tenant_id="shop-demo")
+        self.assertTrue(res_shp_old.sequence_ignored)
+
+        shp_reg = copy.deepcopy(shp_1)
+        shp_reg["event_id"] = "evt:shp:EXT-SHARED-999:3"
+        shp_reg["sequence"] = 3
+        shp_reg["data"]["carrier_status_raw"] = "picked"
+        res_shp_reg = self.service.ingest_event(shp_reg, tenant_id="shop-demo")
+        self.assertTrue(res_shp_reg.sequence_ignored)
+
+        with bstore.connection() as db:
+            ord_row = db.execute("SELECT status FROM orders WHERE id=?", (res_a.order_id,)).fetchone()
+            shp_row = db.execute(
+                "SELECT shipment_id, status FROM shipments WHERE external_shipment_id='SHP-SHARED-1'"
+            ).fetchone()
+            se_cnt = db.execute(
+                "SELECT COUNT(*) AS c FROM shipment_events WHERE shipment_id=?",
+                (shp_row["shipment_id"],),
+            ).fetchone()["c"]
+            ie_cnt = db.execute(
+                "SELECT COUNT(*) AS c FROM imported_events WHERE order_id=?",
+                (res_a.order_id,),
+            ).fetchone()["c"]
+        self.assertEqual(ord_row["status"], "shipping")
+        self.assertEqual(shp_row["status"], "out_for_delivery")
+        self.assertEqual(se_cnt, 1)
+        self.assertEqual(ie_cnt, 7)
 
 
 if __name__ == "__main__":

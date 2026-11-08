@@ -176,6 +176,230 @@ class MarketplaceSimContractBridgeTests(unittest.TestCase):
                     httpd.shutdown()
                     httpd.server_close()
 
+    def test_item4_full_30_days_plus_13_stories_import_counts_states_and_zero_pii(self) -> None:
+        import hashlib
+        import hmac
+        import re
+        from retailops.identity.persistent import PersistentSessions
+        from retailops.integration.intake import import_events_jsonl
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sim_dir = root / "sim_store"
+            sim = MarketplaceSimulator.initialize(sim_dir, seed=20261106)
+            sim.run_days(30)
+            story_order_ids: dict[str, str] = {}
+            for story_name in STORY_NAMES:
+                s_res = sim.insert_story(story_name)
+                story_order_ids[story_name] = s_res["external_order_id"]
+
+            export_file = root / "sim_30d_13stories.jsonl"
+            total_exported = sim.export_events(export_file)
+            raw_lines = export_file.read_bytes().splitlines()
+            self.assertEqual(len(raw_lines), total_exported)
+
+            # Parse raw JSONL to gather expected entity sets and PII values to verify redaction
+            exp_orders: set[str] = set()
+            exp_shipments: set[str] = set()
+            exp_shipment_events = 0
+            exp_payments: set[tuple[str, str]] = set()
+            exp_refunds: set[tuple[str, str]] = set()
+            raw_phones: set[str] = set()
+            raw_addresses: set[str] = set()
+            raw_line_by_event: dict[tuple[str, str], bytes] = {}
+
+            for raw_line in raw_lines:
+                ev = json.loads(raw_line.decode("utf-8"))
+                raw_line_by_event[(ev["source_system"], ev["event_id"])] = raw_line
+                et = ev["event_type"]
+                d = ev["data"]
+                if et == "order.created":
+                    exp_orders.add(d["external_order_id"])
+                    raw_phones.add(d["recipient"]["phone"])
+                    raw_addresses.add(d["recipient"]["address_line"])
+                elif et == "shipment.updated":
+                    exp_shipments.add(d["external_shipment_id"])
+                    exp_shipment_events += 1
+                elif et == "payment.updated":
+                    exp_payments.add((d["provider"], d["provider_txn_ref"]))
+                elif et == "refund.updated":
+                    exp_refunds.add((d["provider"], d["provider_refund_ref"]))
+
+            digest_key = b"w6-1b-1-item4-e2e-digest-secret-32b!!"
+            sessions = PersistentSessions(root / "persistent")
+            sessions.provision_tenant("shop-e2e", "Shop E2E", seed_demo=False)
+
+            imp_res = import_events_jsonl(
+                sessions,
+                tenant_id="shop-e2e",
+                source_system="marketplace_sim",
+                jsonl_path=export_file,
+                digest_key=digest_key,
+            )
+            self.assertEqual(
+                (imp_res["received"], imp_res["duplicates"], imp_res["errors"]),
+                (total_exported, 0, 0),
+            )
+
+            bstore = sessions.business_store("shop-e2e")
+            with bstore.connection() as db:
+                self.assertEqual(
+                    db.execute("SELECT COUNT(*) AS c FROM orders").fetchone()["c"],
+                    len(exp_orders),
+                )
+                self.assertEqual(
+                    db.execute("SELECT COUNT(*) AS c FROM shipments").fetchone()["c"],
+                    len(exp_shipments),
+                )
+                self.assertEqual(
+                    db.execute("SELECT COUNT(*) AS c FROM shipment_events").fetchone()["c"],
+                    exp_shipment_events,
+                )
+                self.assertEqual(
+                    db.execute("SELECT COUNT(*) AS c FROM payment_transactions").fetchone()["c"],
+                    len(exp_payments),
+                )
+                self.assertEqual(
+                    db.execute("SELECT COUNT(*) AS c FROM refunds").fetchone()["c"],
+                    len(exp_refunds),
+                )
+                self.assertEqual(
+                    db.execute("SELECT COUNT(*) AS c FROM imported_events").fetchone()["c"],
+                    total_exported,
+                )
+                for empty_tbl in ("order_recipients", "delivery_compensations", "vouchers"):
+                    self.assertEqual(
+                        db.execute(f"SELECT COUNT(*) AS c FROM {empty_tbl}").fetchone()["c"],
+                        0,
+                        empty_tbl,
+                    )
+
+                # Verify F10: P-101, P-102, P-202 have description, material, care from marketplace_sim
+                for pid in ("P-101", "P-102", "P-202"):
+                    p_row = dict(
+                        db.execute("SELECT * FROM products WHERE id=?", (pid,)).fetchone()
+                    )
+                    self.assertTrue(bool(p_row["description"]), pid)
+                    self.assertTrue(bool(p_row["material"]), pid)
+                    self.assertTrue(bool(p_row["care"]), pid)
+
+                # Verify final canonical states of all 13 named stories (W6.1a Section 2 table)
+                def _story_state(name: str) -> dict:
+                    ext_oid = story_order_ids[name]
+                    o = dict(
+                        db.execute(
+                            "SELECT * FROM orders WHERE source_system='marketplace_sim' AND external_order_id=?",
+                            (ext_oid,),
+                        ).fetchone()
+                    )
+                    shp_r = db.execute(
+                        "SELECT * FROM shipments WHERE order_id=?", (o["id"],)
+                    ).fetchone()
+                    pays = [
+                        dict(r)
+                        for r in db.execute(
+                            "SELECT * FROM payment_transactions WHERE order_id=? ORDER BY created_at ASC",
+                            (o["id"],),
+                        ).fetchall()
+                    ]
+                    refs = [
+                        dict(r)
+                        for r in db.execute(
+                            "SELECT * FROM refunds WHERE order_id=? ORDER BY initiated_at ASC",
+                            (o["id"],),
+                        ).fetchall()
+                    ]
+                    return {
+                        "order": o,
+                        "shipment": dict(shp_r) if shp_r else None,
+                        "payments": pays,
+                        "refunds": refs,
+                    }
+
+                s1 = _story_state("giao_dung_han_cod")
+                self.assertEqual(s1["order"]["status"], "delivered")
+                self.assertEqual(s1["order"]["payment_status"], "paid")
+                self.assertEqual(s1["payments"][-1]["status"], "succeeded")
+
+                s2 = _story_state("dang_trung_chuyen")
+                self.assertEqual(s2["order"]["status"], "shipping")
+                self.assertEqual(s2["shipment"]["status"], "in_transit")
+
+                s3 = _story_state("cap_nhat_ao_giao_lai")
+                self.assertEqual(s3["order"]["status"], "delivered")
+                self.assertEqual(s3["shipment"]["status"], "delivered")
+                self.assertEqual(s3["shipment"]["delivery_attempts"], 1)
+
+                s4 = _story_state("giao_that_bai_hoan_ve")
+                self.assertEqual(s4["order"]["status"], "cancelled")
+                self.assertEqual(s4["shipment"]["status"], "returned")
+                self.assertEqual(s4["shipment"]["delivery_attempts"], 3)
+
+                s5 = _story_state("nghen_kho_mega_sale")
+                self.assertEqual(s5["order"]["status"], "shipping")
+                self.assertEqual(s5["shipment"]["status"], "in_transit")
+
+                s6 = _story_state("hoan_tien_cham")
+                self.assertEqual(s6["order"]["status"], "delivered")
+                self.assertEqual(s6["refunds"][-1]["status"], "processing")
+
+                s7 = _story_state("hoan_tien_that_bai")
+                self.assertEqual(s7["order"]["status"], "delivered")
+                self.assertEqual(s7["refunds"][-1]["status"], "failed")
+                self.assertTrue(bool(s7["refunds"][-1]["failure_reason"]))
+
+                s8 = _story_state("thanh_toan_that_bai_roi_thanh_cong")
+                self.assertEqual(len(s8["payments"]), 2)
+                self.assertEqual(
+                    [p["status"] for p in s8["payments"]], ["failed", "succeeded"]
+                )
+                self.assertEqual(s8["order"]["payment_status"], "paid")
+
+                s9 = _story_state("huy_truoc_khi_giao")
+                self.assertEqual(s9["order"]["status"], "cancelled")
+                self.assertIsNone(s9["shipment"])
+
+                for delivered_story in ("doi_size_trong_han", "qua_han_doi_tra", "het_bao_hanh"):
+                    sd = _story_state(delivered_story)
+                    self.assertEqual(sd["order"]["status"], "delivered", delivered_story)
+                    self.assertIsNotNone(sd["order"]["delivered_at"], delivered_story)
+
+                s13 = _story_state("giao_tre_han_cam_ket")
+                self.assertEqual(s13["order"]["status"], "delivered")
+                self.assertAlmostEqual(
+                    (s13["order"]["delivered_at"] - s13["order"]["promised_delivery_by"]) / 3600.0,
+                    72.0,
+                    places=3,
+                )
+
+                # Verify HMAC digest over raw bytes and PII redaction across entire DB
+                for r in db.execute(
+                    "SELECT source_system, event_id, event_type, payload_digest, redacted_fields, payload_json FROM imported_events"
+                ).fetchall():
+                    raw_b = raw_line_by_event[(r["source_system"], r["event_id"])]
+                    expected_digest = hmac.new(digest_key, raw_b, hashlib.sha256).hexdigest()
+                    self.assertEqual(r["payload_digest"], expected_digest)
+                    self.assertNotEqual(r["payload_digest"], hashlib.sha256(raw_b).hexdigest())
+                    if r["event_type"] == "order.created":
+                        rec = json.loads(r["payload_json"])["data"]["recipient"]
+                        self.assertIsNone(rec["name"])
+                        self.assertIsNone(rec["phone"])
+                        self.assertIsNone(rec["address_line"])
+                        self.assertTrue(bool(rec["ward"]))
+                        self.assertTrue(bool(rec["district"]))
+                        self.assertTrue(bool(rec["province"]))
+
+                full_phone_re = re.compile(r"\b0123\d{6}\b")
+                for tbl_r in db.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall():
+                    tbl = tbl_r["name"]
+                    for row in db.execute(f"SELECT * FROM {tbl}").fetchall():
+                        txt = json.dumps(dict(row), ensure_ascii=False)
+                        self.assertIsNone(full_phone_re.search(txt), f"Phone leak in {tbl}")
+                        for addr in raw_addresses:
+                            self.assertNotIn(addr, txt, f"Address leak in {tbl}")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -193,6 +193,38 @@ def import_events_jsonl(
     mgr = ConnectorManager(sessions)
     connector = mgr.get_connector_record(tenant_clean, clean_source)
     status_mapping = connector["status_mapping"] if connector is not None else None
+    from retailops.integration.connectors import (
+        CONNECTORS_DATA_DIR,
+        load_default_status_mapping,
+        validate_status_mapping,
+    )
+
+    if status_mapping is not None:
+        validated_mapping = validate_status_mapping(status_mapping)
+    else:
+        default_file = CONNECTORS_DATA_DIR / f"{clean_source}.json"
+        validated_mapping = (
+            load_default_status_mapping(clean_source)
+            if default_file.is_file()
+            else load_default_status_mapping("marketplace_sim")
+        )
+
+    with sessions.control.connection() as id_db:
+        tenant_row = id_db.execute(
+            "SELECT id, active FROM tenants WHERE id=?", (tenant_clean,)
+        ).fetchone()
+    require(
+        tenant_row is not None,
+        404,
+        "tenant_not_found",
+        f"Cửa hàng {tenant_clean} không tồn tại.",
+    )
+    require(
+        bool(tenant_row["active"]),
+        400,
+        "tenant_inactive",
+        f"Cửa hàng {tenant_clean} chưa được kích hoạt.",
+    )
 
     file_bytes = path.read_bytes()
     raw_lines = [
@@ -213,32 +245,51 @@ def import_events_jsonl(
     errors = 0
     sequence_ignored = 0
     error_details: list[dict[str, Any]] = []
+    pending_mappings: list[tuple[str, str]] = []
 
-    for idx, raw_line in enumerate(raw_lines, 1):
-        try:
-            res = svc.ingest_event(
-                raw_line,
-                tenant_id=tenant_clean,
-                connector_source_system=clean_source,
-                received_via="import",
-                digest_key=resolved_digest_key,
-                status_mapping=status_mapping,
-                actor_principal_id=actor_principal_id,
-                rebase_offset_seconds=rebase_offset_seconds,
-            )
-            if res.is_replay:
-                duplicates += 1
-            else:
-                received += 1
-                if res.sequence_ignored:
-                    sequence_ignored += 1
-        except ApiError as exc:
-            if exc.status >= 500:
-                raise
-            errors += 1
-            error_details.append(
-                {"line": idx, "code": exc.code, "message": exc.message}
-            )
+    bstore = sessions.business_store(tenant_clean)
+    with bstore.connection(write=True) as db:
+        bstore._ensure_purge_tombstone_table(db)
+        for idx, raw_line in enumerate(raw_lines, 1):
+            db.execute("SAVEPOINT sp_import_evt")
+            try:
+                res = svc.ingest_event(
+                    raw_line,
+                    tenant_id=tenant_clean,
+                    connector_source_system=clean_source,
+                    received_via="import",
+                    digest_key=resolved_digest_key,
+                    actor_principal_id=actor_principal_id,
+                    rebase_offset_seconds=rebase_offset_seconds,
+                    _db=db,
+                    _validated_status_mapping=validated_mapping,
+                    _skip_tenant_check=True,
+                    _pending_mappings=pending_mappings,
+                )
+                db.execute("RELEASE SAVEPOINT sp_import_evt")
+                if res.is_replay:
+                    duplicates += 1
+                else:
+                    received += 1
+                    if res.sequence_ignored:
+                        sequence_ignored += 1
+            except ApiError as exc:
+                db.execute("ROLLBACK TO SAVEPOINT sp_import_evt")
+                db.execute("RELEASE SAVEPOINT sp_import_evt")
+                if exc.status >= 500:
+                    raise
+                errors += 1
+                error_details.append(
+                    {"line": idx, "code": exc.code, "message": exc.message}
+                )
+
+    seen_pairs: set[tuple[str, str]] = set()
+    for ext_cid, cid in pending_mappings:
+        pair = (ext_cid, cid)
+        if pair in seen_pairs:
+            continue
+        seen_pairs.add(pair)
+        svc._ensure_mapping(tenant_clean, clean_source, ext_cid, cid)
 
     summary = {
         "result": "EVENTS_IMPORTED",

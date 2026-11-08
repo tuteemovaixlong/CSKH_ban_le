@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import copy
 from dataclasses import dataclass
 import hashlib
@@ -37,6 +38,75 @@ DEFAULT_ORDER_STATUS_MAP: dict[str, str] = {
     "delivered": "delivered",
     "cancelled": "cancelled",
 }
+
+_ORDER_STATUS_RANK: dict[str, int] = {
+    "pending": 0,
+    "shipping": 1,
+    "delivered": 2,
+    "cancelled": 2,
+}
+_TERMINAL_ORDER_STATUSES = frozenset({"delivered", "cancelled"})
+
+_SHIPMENT_STATUS_RANK: dict[str, int] = {
+    "created": 0,
+    "picked_up": 1,
+    "in_transit": 2,
+    "out_for_delivery": 3,
+    "delivery_failed": 3,
+    "returning": 4,
+    "delivered": 5,
+    "returned": 5,
+    "cancelled": 5,
+}
+_TERMINAL_SHIPMENT_STATUSES = frozenset({"delivered", "returned", "cancelled"})
+
+_PAYMENT_STATUS_RANK: dict[str, int] = {
+    "pending": 0,
+    "succeeded": 1,
+    "failed": 1,
+    "cancelled": 1,
+}
+_TERMINAL_PAYMENT_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
+
+_REFUND_STATUS_RANK: dict[str, int] = {
+    "pending": 0,
+    "processing": 1,
+    "completed": 2,
+    "failed": 2,
+}
+_TERMINAL_REFUND_STATUSES = frozenset({"completed", "failed"})
+
+
+def can_advance_order_status(current: str, target: str) -> bool:
+    if current == target:
+        return True
+    if current in _TERMINAL_ORDER_STATUSES:
+        return False
+    return _ORDER_STATUS_RANK.get(target, -1) >= _ORDER_STATUS_RANK.get(current, 99)
+
+
+def can_advance_shipment_status(current: str, target: str) -> bool:
+    if current == target:
+        return True
+    if current in _TERMINAL_SHIPMENT_STATUSES:
+        return False
+    return _SHIPMENT_STATUS_RANK.get(target, -1) >= _SHIPMENT_STATUS_RANK.get(current, 99)
+
+
+def can_advance_payment_status(current: str, target: str) -> bool:
+    if current == target:
+        return True
+    if current in _TERMINAL_PAYMENT_STATUSES:
+        return False
+    return _PAYMENT_STATUS_RANK.get(target, -1) >= _PAYMENT_STATUS_RANK.get(current, 99)
+
+
+def can_advance_refund_status(current: str, target: str) -> bool:
+    if current == target:
+        return True
+    if current in _TERMINAL_REFUND_STATUSES:
+        return False
+    return _REFUND_STATUS_RANK.get(target, -1) >= _REFUND_STATUS_RANK.get(current, 99)
 
 
 @dataclass
@@ -317,6 +387,126 @@ class IntegrationIngestService:
             )
         return customer_id
 
+    @staticmethod
+    def _max_entity_sequence_in_tx(
+        db: Any,
+        *,
+        tenant_id: str,
+        entity_kind: str,
+        connector_source: str = "",
+        order_id: str = "",
+        entity_key: str = "",
+    ) -> int | None:
+        """Return max recorded sequence for the same entity in imported_events (portable SQLite/PG SQL)."""
+        if entity_kind == "order":
+            row = db.execute(
+                "SELECT MAX(sequence) AS max_seq FROM imported_events "
+                "WHERE tenant_id=? AND order_id=? "
+                "AND event_type IN ('order.created', 'order.status_changed')",
+                (tenant_id, order_id),
+            ).fetchone()
+            return int(row["max_seq"]) if row and row["max_seq"] is not None else None
+
+        if entity_kind == "customer":
+            row = db.execute(
+                "SELECT MAX(sequence) AS max_seq FROM imported_events "
+                "WHERE tenant_id=? AND source_system=? AND external_customer_id=? "
+                "AND event_type='customer.upserted'",
+                (tenant_id, connector_source, entity_key),
+            ).fetchone()
+            return int(row["max_seq"]) if row and row["max_seq"] is not None else None
+
+        if entity_kind == "product":
+            rows = db.execute(
+                "SELECT sequence, payload_json FROM imported_events "
+                "WHERE tenant_id=? AND source_system=? AND event_type='product.upserted'",
+                (tenant_id, connector_source),
+            ).fetchall()
+            matched = [
+                int(r["sequence"])
+                for r in rows
+                if r["sequence"] is not None
+                and json.loads(str(r["payload_json"])).get("data", {}).get("external_product_id")
+                == entity_key
+            ]
+            return max(matched) if matched else None
+
+        if entity_kind == "shipment":
+            rows = db.execute(
+                "SELECT sequence, payload_json FROM imported_events "
+                "WHERE tenant_id=? AND order_id=? AND event_type='shipment.updated'",
+                (tenant_id, order_id),
+            ).fetchall()
+            matched = [
+                int(r["sequence"])
+                for r in rows
+                if r["sequence"] is not None
+                and json.loads(str(r["payload_json"])).get("data", {}).get("external_shipment_id")
+                == entity_key
+            ]
+            return max(matched) if matched else None
+
+        if entity_kind == "payment":
+            rows = db.execute(
+                "SELECT sequence, payload_json FROM imported_events "
+                "WHERE tenant_id=? AND order_id=? AND event_type='payment.updated'",
+                (tenant_id, order_id),
+            ).fetchall()
+            matched = []
+            for r in rows:
+                if r["sequence"] is None:
+                    continue
+                d = json.loads(str(r["payload_json"])).get("data", {})
+                if f"{d.get('provider')}::{d.get('provider_txn_ref')}" == entity_key:
+                    matched.append(int(r["sequence"]))
+            return max(matched) if matched else None
+
+        if entity_kind == "refund":
+            rows = db.execute(
+                "SELECT sequence, payload_json FROM imported_events "
+                "WHERE tenant_id=? AND order_id=? AND event_type='refund.updated'",
+                (tenant_id, order_id),
+            ).fetchall()
+            matched = []
+            for r in rows:
+                if r["sequence"] is None:
+                    continue
+                d = json.loads(str(r["payload_json"])).get("data", {})
+                if f"{d.get('provider')}::{d.get('provider_refund_ref')}" == entity_key:
+                    matched.append(int(r["sequence"]))
+            return max(matched) if matched else None
+
+        return None
+
+    @staticmethod
+    def _recompute_order_payment_status_in_tx(db: Any, order_id: str) -> str:
+        """Recompute orders.payment_status from payment_transactions and completed refunds (W6.1b-D6)."""
+        paid_row = db.execute(
+            "SELECT COALESCE(SUM(amount), 0) AS paid_sum FROM payment_transactions "
+            "WHERE order_id=? AND status='succeeded'",
+            (order_id,),
+        ).fetchone()
+        refunded_row = db.execute(
+            "SELECT COALESCE(SUM(amount), 0) AS ref_sum FROM refunds "
+            "WHERE order_id=? AND status='completed'",
+            (order_id,),
+        ).fetchone()
+        paid_sum = int(paid_row["paid_sum"] or 0) if paid_row else 0
+        ref_sum = int(refunded_row["ref_sum"] or 0) if refunded_row else 0
+        if paid_sum <= 0:
+            new_status = "unpaid"
+        elif ref_sum >= paid_sum:
+            new_status = "refunded"
+        elif ref_sum > 0:
+            new_status = "partially_refunded"
+        else:
+            new_status = "paid"
+        db.execute(
+            "UPDATE orders SET payment_status=? WHERE id=?",
+            (new_status, order_id),
+        )
+        return new_status
+
     def ingest_event(
         self,
         event_or_raw: bytes | str | dict[str, Any],
@@ -329,6 +519,10 @@ class IntegrationIngestService:
         status_mapping: dict[str, Any] | None = None,
         actor_principal_id: str | None = None,
         rebase_offset_seconds: float = 0.0,
+        _db: Any = None,
+        _validated_status_mapping: dict[str, Any] | None = None,
+        _skip_tenant_check: bool = False,
+        _pending_mappings: list[tuple[str, str]] | None = None,
     ) -> ImportResult:
         """Validate and atomically ingest a single retailops-integration-v2 event."""
         require(
@@ -396,22 +590,23 @@ class IntegrationIngestService:
                 "Trường merchant_id của sự kiện không khớp với connector cửa hàng.",
             )
 
-        with self.identity_store.connection() as id_db:
-            tenant_row = id_db.execute(
-                "SELECT id, active FROM tenants WHERE id=?", (tenant_clean,)
-            ).fetchone()
-        require(
-            tenant_row is not None,
-            404,
-            "tenant_not_found",
-            f"Cửa hàng {tenant_clean} không tồn tại.",
-        )
-        require(
-            bool(tenant_row["active"]),
-            400,
-            "tenant_inactive",
-            f"Cửa hàng {tenant_clean} chưa được kích hoạt.",
-        )
+        if not _skip_tenant_check:
+            with self.identity_store.connection() as id_db:
+                tenant_row = id_db.execute(
+                    "SELECT id, active FROM tenants WHERE id=?", (tenant_clean,)
+                ).fetchone()
+            require(
+                tenant_row is not None,
+                404,
+                "tenant_not_found",
+                f"Cửa hàng {tenant_clean} không tồn tại.",
+            )
+            require(
+                bool(tenant_row["active"]),
+                400,
+                "tenant_inactive",
+                f"Cửa hàng {tenant_clean} chưa được kích hoạt.",
+            )
 
         envelope_source = validated["source_system"]
         event_id = validated["event_id"]
@@ -421,7 +616,7 @@ class IntegrationIngestService:
         )
         data = validated["data"]
 
-        bstore = self.get_bstore(tenant_clean)
+        bstore = self.get_bstore(tenant_clean) if _db is None else None
         now = time.time()
         replay_row: dict[str, Any] | None = None
         mapped_ext_customer_id: str | None = None
@@ -430,11 +625,22 @@ class IntegrationIngestService:
         result_ext_order_id: str | None = None
         result_items_count = 0
         result_total = 0
+        sequence_ignored = False
 
-        with bstore.connection(write=True) as db:
-            bstore._ensure_purge_tombstone_table(db)
+        @contextmanager
+        def _tx_scope():
+            if _db is not None:
+                yield _db
+            else:
+                assert bstore is not None
+                with bstore.connection(write=True) as conn:
+                    bstore._ensure_purge_tombstone_table(conn)
+                    yield conn
 
-            if status_mapping is not None:
+        with _tx_scope() as db:
+            if _validated_status_mapping is not None:
+                active_status_mapping = _validated_status_mapping
+            elif status_mapping is not None:
                 from retailops.integration.connectors import validate_status_mapping
 
                 active_status_mapping = validate_status_mapping(status_mapping)
@@ -491,118 +697,184 @@ class IntegrationIngestService:
                     )
                 replay_row = dict(existing_event)
             else:
+                from retailops.integration.connectors import map_raw_status
+
+                imp_event_id = str(uuid.uuid4())
                 stored_event = copy.deepcopy(validated)
                 redacted_fields: list[str] = []
+                imp_status_val: str | None = None
+                imp_total_val: int | None = None
+                imp_currency_val: str | None = None
+
+                def _insert_imported_event_row() -> None:
+                    db.execute(
+                        """INSERT INTO imported_events (
+                               id, source_system, event_id, tenant_id,
+                               event_type, sequence, received_via, payload_digest, redacted_fields,
+                               external_customer_id, customer_id, order_id, status, total, currency,
+                               payload_json, signature, created_at
+                           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)""",
+                        (
+                            imp_event_id,
+                            envelope_source,
+                            event_id,
+                            tenant_clean,
+                            event_type,
+                            sequence,
+                            received_via,
+                            payload_digest,
+                            json.dumps(redacted_fields, ensure_ascii=False)
+                            if redacted_fields
+                            else None,
+                            mapped_ext_customer_id,
+                            mapped_customer_id,
+                            result_order_id or None,
+                            imp_status_val,
+                            imp_total_val,
+                            imp_currency_val,
+                            json.dumps(stored_event, ensure_ascii=False),
+                            now,
+                        ),
+                    )
 
                 if event_type == "product.upserted":
                     ext_pid = data["external_product_id"]
-                    raw_variants = data["variants"]
-                    variant_labels = [v["variant_name"] for v in raw_variants]
-                    total_stock = (
-                        sum(v["stock"] for v in raw_variants if v["stock"] is not None)
-                        if any(v["stock"] is not None for v in raw_variants)
-                        else None
+                    max_seq = self._max_entity_sequence_in_tx(
+                        db,
+                        tenant_id=tenant_clean,
+                        entity_kind="product",
+                        connector_source=connector_source,
+                        entity_key=ext_pid,
                     )
-                    db.execute(
-                        """INSERT INTO products(
-                               id, name, aliases, category, price, stock, warranty_days,
-                               description, variants, material, care, is_system_immutable,
-                               extra_data, created_at, updated_at
-                           ) VALUES (?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, 0, '{}', ?, ?)
-                           ON CONFLICT(id) DO UPDATE SET
-                               name=excluded.name,
-                               category=excluded.category,
-                               price=excluded.price,
-                               stock=excluded.stock,
-                               warranty_days=excluded.warranty_days,
-                               description=excluded.description,
-                               variants=excluded.variants,
-                               material=excluded.material,
-                               care=excluded.care,
-                               updated_at=excluded.updated_at""",
-                        (
-                            ext_pid,
-                            data["title"],
-                            data["category"],
-                            data["price"],
-                            total_stock,
-                            data["warranty_days"],
-                            data["description"] or "",
-                            json.dumps(variant_labels, ensure_ascii=False),
-                            data["material"],
-                            data["care"],
-                            occurred_ts,
-                            occurred_ts,
-                        ),
-                    )
-                    for v in raw_variants:
-                        sku = v["sku"]
-                        by_sku = db.execute(
-                            "SELECT id FROM product_variants WHERE sku=?", (sku,)
-                        ).fetchone()
-                        if by_sku is not None:
-                            db.execute(
-                                """UPDATE product_variants
-                                   SET product_id=?, variant_name=?, size=?, color=?, stock=?, price=?
-                                   WHERE id=?""",
-                                (
-                                    ext_pid,
-                                    v["variant_name"],
-                                    v["size"],
-                                    v["color"],
-                                    v["stock"],
-                                    v["price"] if v["price"] is not None else data["price"],
-                                    by_sku["id"],
-                                ),
-                            )
-                        else:
-                            unmapped_seed = db.execute(
-                                "SELECT id FROM product_variants "
-                                "WHERE product_id=? AND variant_name=? AND (sku IS NULL OR trim(sku) = '') "
-                                "LIMIT 1",
-                                (ext_pid, v["variant_name"]),
+                    _insert_imported_event_row()
+                    if max_seq is not None and sequence <= max_seq:
+                        sequence_ignored = True
+                    else:
+                        raw_variants = data["variants"]
+                        variant_labels = [v["variant_name"] for v in raw_variants]
+                        total_stock = (
+                            sum(v["stock"] for v in raw_variants if v["stock"] is not None)
+                            if any(v["stock"] is not None for v in raw_variants)
+                            else None
+                        )
+                        db.execute(
+                            """INSERT INTO products(
+                                   id, name, aliases, category, price, stock, warranty_days,
+                                   description, variants, material, care, is_system_immutable,
+                                   extra_data, created_at, updated_at
+                               ) VALUES (?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, 0, '{}', ?, ?)
+                               ON CONFLICT(id) DO UPDATE SET
+                                   name=excluded.name,
+                                   category=excluded.category,
+                                   price=excluded.price,
+                                   stock=excluded.stock,
+                                   warranty_days=excluded.warranty_days,
+                                   description=excluded.description,
+                                   variants=excluded.variants,
+                                   material=excluded.material,
+                                   care=excluded.care,
+                                   updated_at=excluded.updated_at""",
+                            (
+                                ext_pid,
+                                data["title"],
+                                data["category"],
+                                data["price"],
+                                total_stock,
+                                data["warranty_days"],
+                                data["description"] or "",
+                                json.dumps(variant_labels, ensure_ascii=False),
+                                data["material"],
+                                data["care"],
+                                occurred_ts,
+                                occurred_ts,
+                            ),
+                        )
+                        for v in raw_variants:
+                            sku = v["sku"]
+                            by_sku = db.execute(
+                                "SELECT id FROM product_variants WHERE sku=?", (sku,)
                             ).fetchone()
-                            if unmapped_seed is not None:
+                            if by_sku is not None:
                                 db.execute(
                                     """UPDATE product_variants
-                                       SET sku=?, size=?, color=?, stock=?, price=?
+                                       SET product_id=?, variant_name=?, size=?, color=?, stock=?, price=?
                                        WHERE id=?""",
                                     (
-                                        sku,
-                                        v["size"],
-                                        v["color"],
-                                        v["stock"],
-                                        v["price"] if v["price"] is not None else data["price"],
-                                        unmapped_seed["id"],
-                                    ),
-                                )
-                            else:
-                                var_id = f"{ext_pid}-{sku}".replace(" ", "_")[:80]
-                                db.execute(
-                                    """INSERT INTO product_variants(
-                                           id, product_id, variant_name, size, color, stock, sku, price
-                                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                                    (
-                                        var_id,
                                         ext_pid,
                                         v["variant_name"],
                                         v["size"],
                                         v["color"],
                                         v["stock"],
-                                        sku,
                                         v["price"] if v["price"] is not None else data["price"],
+                                        by_sku["id"],
                                     ),
                                 )
+                            else:
+                                unmapped_seed = db.execute(
+                                    "SELECT id FROM product_variants "
+                                    "WHERE product_id=? AND variant_name=? AND (sku IS NULL OR trim(sku) = '') "
+                                    "LIMIT 1",
+                                    (ext_pid, v["variant_name"]),
+                                ).fetchone()
+                                if unmapped_seed is not None:
+                                    db.execute(
+                                        """UPDATE product_variants
+                                           SET sku=?, size=?, color=?, stock=?, price=?
+                                           WHERE id=?""",
+                                        (
+                                            sku,
+                                            v["size"],
+                                            v["color"],
+                                            v["stock"],
+                                            v["price"] if v["price"] is not None else data["price"],
+                                            unmapped_seed["id"],
+                                        ),
+                                    )
+                                else:
+                                    var_id = f"{ext_pid}-{sku}".replace(" ", "_")[:80]
+                                    db.execute(
+                                        """INSERT INTO product_variants(
+                                               id, product_id, variant_name, size, color, stock, sku, price
+                                           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                                        (
+                                            var_id,
+                                            ext_pid,
+                                            v["variant_name"],
+                                            v["size"],
+                                            v["color"],
+                                            v["stock"],
+                                            sku,
+                                            v["price"] if v["price"] is not None else data["price"],
+                                        ),
+                                    )
 
                 elif event_type == "customer.upserted":
                     mapped_ext_customer_id = data["external_customer_id"]
-                    mapped_customer_id = self._resolve_customer_in_tx(
+                    max_seq = self._max_entity_sequence_in_tx(
                         db,
                         tenant_id=tenant_clean,
+                        entity_kind="customer",
                         connector_source=connector_source,
-                        external_customer_id=mapped_ext_customer_id,
-                        display_name=data["display_name"],
+                        entity_key=mapped_ext_customer_id,
                     )
+                    if max_seq is not None and sequence <= max_seq:
+                        sequence_ignored = True
+                        mapped_customer_id = self._resolve_customer_in_tx(
+                            db,
+                            tenant_id=tenant_clean,
+                            connector_source=connector_source,
+                            external_customer_id=mapped_ext_customer_id,
+                            display_name=None,
+                        )
+                    else:
+                        mapped_customer_id = self._resolve_customer_in_tx(
+                            db,
+                            tenant_id=tenant_clean,
+                            connector_source=connector_source,
+                            external_customer_id=mapped_ext_customer_id,
+                            display_name=data["display_name"],
+                        )
+                    _insert_imported_event_row()
 
                 elif event_type == "order.created":
                     stored_event, redacted_fields, ship_to_area = redact_order_created_recipient(
@@ -641,161 +913,176 @@ class IntegrationIngestService:
                                 "Đơn hàng nguồn đã thuộc về khách hàng khác; không được đổi chủ đơn hàng.",
                             )
                         result_order_id = internal_oid
+                        max_seq = self._max_entity_sequence_in_tx(
+                            db,
+                            tenant_id=tenant_clean,
+                            entity_kind="order",
+                            order_id=result_order_id,
+                        )
                     else:
                         result_order_id = f"ord_{uuid.uuid4().hex}"
-
-                    ordered_at_ts = float(
-                        iso_vn_to_epoch(data["ordered_at"], "data.ordered_at")
-                    ) + float(rebase_offset_seconds)
-                    promised_ts = float(
-                        iso_vn_to_epoch(
-                            data["promised_delivery_by"], "data.promised_delivery_by"
-                        )
-                    ) + float(rebase_offset_seconds)
+                        max_seq = None
 
                     items = data["items"]
                     result_items_count = len(items)
                     result_total = int(data["total"])
+                    imp_status_val = "pending"
+                    imp_total_val = result_total
+                    imp_currency_val = data["currency"]
 
-                    resolved_items: list[dict[str, Any]] = []
-                    for item in items:
-                        sku_row = db.execute(
-                            "SELECT id, product_id FROM product_variants WHERE sku=?",
-                            (item["sku"],),
-                        ).fetchone()
-                        if sku_row is not None:
-                            prod_id = str(sku_row["product_id"])
-                            var_id = str(sku_row["id"])
-                        else:
-                            prod_id = str(item["external_product_id"])
-                            var_id = None
+                    _insert_imported_event_row()
+
+                    if max_seq is not None and sequence <= max_seq:
+                        sequence_ignored = True
+                    else:
+                        ordered_at_ts = float(
+                            iso_vn_to_epoch(data["ordered_at"], "data.ordered_at")
+                        ) + float(rebase_offset_seconds)
+                        promised_ts = float(
+                            iso_vn_to_epoch(
+                                data["promised_delivery_by"], "data.promised_delivery_by"
+                            )
+                        ) + float(rebase_offset_seconds)
+
+                        resolved_items: list[dict[str, Any]] = []
+                        for item in items:
+                            sku_row = db.execute(
+                                "SELECT id, product_id FROM product_variants WHERE sku=?",
+                                (item["sku"],),
+                            ).fetchone()
+                            if sku_row is not None:
+                                prod_id = str(sku_row["product_id"])
+                                var_id = str(sku_row["id"])
+                            else:
+                                prod_id = str(item["external_product_id"])
+                                var_id = None
+                                db.execute(
+                                    """INSERT INTO products (
+                                           id, name, aliases, price, variants,
+                                           is_system_immutable, extra_data, created_at, updated_at
+                                       ) VALUES (?, ?, '[]', ?, '[]', 0, '{}', ?, ?)
+                                       ON CONFLICT(id) DO NOTHING""",
+                                    (
+                                        prod_id,
+                                        item["title"],
+                                        int(item["unit_price"]),
+                                        occurred_ts,
+                                        occurred_ts,
+                                    ),
+                                )
+                            resolved_items.append(
+                                {
+                                    "product_id": prod_id,
+                                    "variant_id": var_id,
+                                    "title": item["title"],
+                                    "variant_name": item["variant_name"],
+                                    "quantity": int(item["quantity"]),
+                                    "unit_price": int(item["unit_price"]),
+                                }
+                            )
+
+                        primary_pid = resolved_items[0]["product_id"]
+                        primary_title = resolved_items[0]["title"]
+                        order_name = (
+                            primary_title
+                            if len(resolved_items) == 1
+                            else f"{primary_title} và {len(resolved_items) - 1} sản phẩm khác"
+                        )
+                        order_variant = resolved_items[0]["variant_name"] or "Tiêu chuẩn"
+
+                        if existing_order is None:
                             db.execute(
-                                """INSERT INTO products (
-                                       id, name, aliases, price, variants,
-                                       is_system_immutable, extra_data, created_at, updated_at
-                                   ) VALUES (?, ?, '[]', ?, '[]', 0, '{}', ?, ?)
-                                   ON CONFLICT(id) DO NOTHING""",
+                                """INSERT INTO orders (
+                                       id, customer_id, product_id, source_system, external_order_id,
+                                       name, variant, amount, status, ordered_at, ordered_at_backfilled,
+                                       payment_method, payment_status, shipping_fee, ship_to_area,
+                                       promised_delivery_by, version, cancel_reason, delivered_at
+                                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, 0, ?, 'unpaid', ?, ?, ?, 1, NULL, NULL)""",
                                 (
-                                    prod_id,
-                                    item["title"],
-                                    int(item["unit_price"]),
-                                    occurred_ts,
+                                    result_order_id,
+                                    mapped_customer_id,
+                                    primary_pid,
+                                    connector_source,
+                                    ext_oid,
+                                    order_name,
+                                    order_variant,
+                                    result_total,
+                                    ordered_at_ts,
+                                    data["payment_method"],
+                                    int(data["shipping_fee"]),
+                                    ship_to_area,
+                                    promised_ts,
+                                ),
+                            )
+                        else:
+                            db.execute(
+                                """UPDATE orders
+                                   SET name=?, variant=?, amount=?, product_id=?,
+                                       ordered_at=?, ordered_at_backfilled=0,
+                                       payment_method=?, shipping_fee=?, ship_to_area=?,
+                                       promised_delivery_by=?, version=version+1
+                                   WHERE id=?""",
+                                (
+                                    order_name,
+                                    order_variant,
+                                    result_total,
+                                    primary_pid,
+                                    ordered_at_ts,
+                                    data["payment_method"],
+                                    int(data["shipping_fee"]),
+                                    ship_to_area,
+                                    promised_ts,
+                                    result_order_id,
+                                ),
+                            )
+
+                        db.execute("DELETE FROM order_items WHERE order_id=?", (result_order_id,))
+                        for r_item in resolved_items:
+                            qty = r_item["quantity"]
+                            u_price = r_item["unit_price"]
+                            db.execute(
+                                """INSERT INTO order_items (
+                                       id, tenant_id, order_id, product_id, variant_id,
+                                       product_title, variant_name, quantity, unit_price, subtotal, created_at
+                                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                (
+                                    str(uuid.uuid4()),
+                                    tenant_clean,
+                                    result_order_id,
+                                    r_item["product_id"],
+                                    r_item["variant_id"],
+                                    r_item["title"],
+                                    r_item["variant_name"],
+                                    qty,
+                                    u_price,
+                                    qty * u_price,
                                     occurred_ts,
                                 ),
                             )
-                        resolved_items.append(
-                            {
-                                "product_id": prod_id,
-                                "variant_id": var_id,
-                                "title": item["title"],
-                                "variant_name": item["variant_name"],
-                                "quantity": int(item["quantity"]),
-                                "unit_price": int(item["unit_price"]),
-                            }
-                        )
 
-                    primary_pid = resolved_items[0]["product_id"]
-                    primary_title = resolved_items[0]["title"]
-                    order_name = (
-                        primary_title
-                        if len(resolved_items) == 1
-                        else f"{primary_title} và {len(resolved_items) - 1} sản phẩm khác"
-                    )
-                    order_variant = resolved_items[0]["variant_name"] or "Tiêu chuẩn"
-
-                    if existing_order is None:
+                        audit_payload = {
+                            "source_system": connector_source,
+                            "event_id": event_id,
+                            "external_customer_id": mapped_ext_customer_id,
+                            "external_order_id": ext_oid,
+                            "order_id": result_order_id,
+                            "total": result_total,
+                            "currency": data["currency"],
+                            "status": "pending",
+                            "actor_principal_id": actor_principal_id,
+                            "items_count": result_items_count,
+                        }
                         db.execute(
-                            """INSERT INTO orders (
-                                   id, customer_id, product_id, source_system, external_order_id,
-                                   name, variant, amount, status, ordered_at, ordered_at_backfilled,
-                                   payment_method, payment_status, shipping_fee, ship_to_area,
-                                   promised_delivery_by, version, cancel_reason, delivered_at
-                               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, 0, ?, 'unpaid', ?, ?, ?, 1, NULL, NULL)""",
+                            "INSERT INTO business_events (customer_id, created_at, kind, order_id, payload) "
+                            "VALUES (?, ?, ?, ?, ?)",
                             (
-                                result_order_id,
                                 mapped_customer_id,
-                                primary_pid,
-                                connector_source,
-                                ext_oid,
-                                order_name,
-                                order_variant,
-                                result_total,
-                                ordered_at_ts,
-                                data["payment_method"],
-                                int(data["shipping_fee"]),
-                                ship_to_area,
-                                promised_ts,
-                            ),
-                        )
-                    else:
-                        db.execute(
-                            """UPDATE orders
-                               SET name=?, variant=?, amount=?, product_id=?,
-                                   ordered_at=?, ordered_at_backfilled=0,
-                                   payment_method=?, shipping_fee=?, ship_to_area=?,
-                                   promised_delivery_by=?, version=version+1
-                               WHERE id=?""",
-                            (
-                                order_name,
-                                order_variant,
-                                result_total,
-                                primary_pid,
-                                ordered_at_ts,
-                                data["payment_method"],
-                                int(data["shipping_fee"]),
-                                ship_to_area,
-                                promised_ts,
+                                now,
+                                "order_imported",
                                 result_order_id,
+                                json.dumps(audit_payload, ensure_ascii=False),
                             ),
                         )
-
-                    db.execute("DELETE FROM order_items WHERE order_id=?", (result_order_id,))
-                    for r_item in resolved_items:
-                        qty = r_item["quantity"]
-                        u_price = r_item["unit_price"]
-                        db.execute(
-                            """INSERT INTO order_items (
-                                   id, tenant_id, order_id, product_id, variant_id,
-                                   product_title, variant_name, quantity, unit_price, subtotal, created_at
-                               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                            (
-                                str(uuid.uuid4()),
-                                tenant_clean,
-                                result_order_id,
-                                r_item["product_id"],
-                                r_item["variant_id"],
-                                r_item["title"],
-                                r_item["variant_name"],
-                                qty,
-                                u_price,
-                                qty * u_price,
-                                occurred_ts,
-                            ),
-                        )
-
-                    audit_payload = {
-                        "source_system": connector_source,
-                        "event_id": event_id,
-                        "external_customer_id": mapped_ext_customer_id,
-                        "external_order_id": ext_oid,
-                        "order_id": result_order_id,
-                        "total": result_total,
-                        "currency": data["currency"],
-                        "status": "pending",
-                        "actor_principal_id": actor_principal_id,
-                        "items_count": result_items_count,
-                    }
-                    db.execute(
-                        "INSERT INTO business_events (customer_id, created_at, kind, order_id, payload) "
-                        "VALUES (?, ?, ?, ?, ?)",
-                        (
-                            mapped_customer_id,
-                            now,
-                            "order_imported",
-                            result_order_id,
-                            json.dumps(audit_payload, ensure_ascii=False),
-                        ),
-                    )
 
                 elif event_type == "order.status_changed":
                     ext_oid = data["external_order_id"]
@@ -813,73 +1100,492 @@ class IntegrationIngestService:
                     )
                     result_order_id = str(ord_row["id"])
                     mapped_customer_id = str(ord_row["customer_id"])
-                    from retailops.integration.connectors import map_raw_status
 
                     raw_status = data["status"]
                     canonical_status = map_raw_status(
                         active_status_mapping, "order", raw_status
                     )
-                    delivered_at_val = ord_row["delivered_at"]
-                    if canonical_status == "delivered" and delivered_at_val is None:
-                        delivered_at_val = occurred_ts
-                    cancel_reason_val = data["reason"] if canonical_status == "cancelled" else None
-                    db.execute(
-                        """UPDATE orders
-                           SET status=?,
-                               delivered_at=?,
-                               cancel_reason=COALESCE(?, cancel_reason),
-                               version=version+1
-                           WHERE id=?""",
-                        (
-                            canonical_status,
-                            delivered_at_val,
-                            cancel_reason_val,
-                            result_order_id,
-                        ),
+                    imp_status_val = raw_status
+
+                    max_seq = self._max_entity_sequence_in_tx(
+                        db,
+                        tenant_id=tenant_clean,
+                        entity_kind="order",
+                        order_id=result_order_id,
+                    )
+                    _insert_imported_event_row()
+
+                    curr_order_status = str(ord_row["status"])
+                    if (max_seq is not None and sequence <= max_seq) or not can_advance_order_status(
+                        curr_order_status, canonical_status
+                    ):
+                        sequence_ignored = True
+                    else:
+                        delivered_at_val = ord_row["delivered_at"]
+                        if canonical_status == "delivered" and delivered_at_val is None:
+                            delivered_at_val = occurred_ts
+                        cancel_reason_val = (
+                            data["reason"] if canonical_status == "cancelled" else None
+                        )
+                        db.execute(
+                            """UPDATE orders
+                               SET status=?,
+                                   delivered_at=?,
+                                   cancel_reason=COALESCE(?, cancel_reason),
+                                   version=version+1
+                               WHERE id=?""",
+                            (
+                                canonical_status,
+                                delivered_at_val,
+                                cancel_reason_val,
+                                result_order_id,
+                            ),
+                        )
+
+                elif event_type == "shipment.updated":
+                    ext_oid = data["external_order_id"]
+                    ext_shp_id = data["external_shipment_id"]
+                    result_ext_order_id = ext_oid
+                    ord_row = db.execute(
+                        "SELECT id, customer_id FROM orders "
+                        "WHERE source_system=? AND external_order_id=?",
+                        (connector_source, ext_oid),
+                    ).fetchone()
+                    require(
+                        ord_row is not None,
+                        404,
+                        "order_not_found",
+                        f"Không tìm thấy đơn hàng nguồn '{ext_oid}' thuộc '{connector_source}'.",
+                    )
+                    result_order_id = str(ord_row["id"])
+                    mapped_customer_id = str(ord_row["customer_id"])
+
+                    carrier = data["carrier"]
+                    carrier_status_raw = data["carrier_status_raw"]
+                    canonical_status = map_raw_status(
+                        active_status_mapping,
+                        "shipment",
+                        carrier_status_raw,
+                        carrier=carrier,
+                    )
+                    imp_status_val = carrier_status_raw
+
+                    existing_shp = db.execute(
+                        "SELECT shipment_id, order_id, status, delivery_attempts FROM shipments "
+                        "WHERE source_system=? AND external_shipment_id=?",
+                        (connector_source, ext_shp_id),
+                    ).fetchone()
+                    if existing_shp is not None and str(existing_shp["order_id"]) != result_order_id:
+                        raise ApiError(
+                            409,
+                            "shipment_order_conflict",
+                            "Vận đơn nguồn đã gắn với đơn hàng khác.",
+                        )
+
+                    max_seq = self._max_entity_sequence_in_tx(
+                        db,
+                        tenant_id=tenant_clean,
+                        entity_kind="shipment",
+                        order_id=result_order_id,
+                        entity_key=ext_shp_id,
+                    )
+                    _insert_imported_event_row()
+
+                    if max_seq is not None and sequence <= max_seq:
+                        sequence_ignored = True
+                    elif existing_shp is not None and not can_advance_shipment_status(
+                        str(existing_shp["status"]), canonical_status
+                    ):
+                        sequence_ignored = True
+                    else:
+                        est_ts = (
+                            float(
+                                iso_vn_to_epoch(
+                                    data["estimated_delivery_at"],
+                                    "data.estimated_delivery_at",
+                                )
+                            )
+                            + float(rebase_offset_seconds)
+                            if data["estimated_delivery_at"] is not None
+                            else None
+                        )
+                        delivered_ts = occurred_ts if canonical_status == "delivered" else None
+                        hub_clean = (data["hub_name"] or "").strip()
+                        dist_clean = str(data["district"]).strip()
+                        prov_clean = str(data["province"]).strip()
+                        current_area = (
+                            f"{hub_clean}, {dist_clean}, {prov_clean}"
+                            if hub_clean
+                            else f"{dist_clean}, {prov_clean}"
+                        )[:200]
+                        incoming_attempts = int(data["delivery_attempts"])
+
+                        if existing_shp is None:
+                            shipment_id = f"shp_{uuid.uuid4().hex}"
+                            db.execute(
+                                """INSERT INTO shipments (
+                                       shipment_id, order_id, source_system, external_shipment_id,
+                                       carrier, tracking_code, status, carrier_status_raw,
+                                       current_area, shipper_name, shipper_phone_masked,
+                                       estimated_delivery_at, delivered_at, delivery_attempts, updated_at
+                                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                (
+                                    shipment_id,
+                                    result_order_id,
+                                    connector_source,
+                                    ext_shp_id,
+                                    carrier,
+                                    data["tracking_code"],
+                                    canonical_status,
+                                    carrier_status_raw,
+                                    current_area,
+                                    data["shipper_name"],
+                                    data["shipper_phone_masked"],
+                                    est_ts,
+                                    delivered_ts,
+                                    incoming_attempts,
+                                    occurred_ts,
+                                ),
+                            )
+                        else:
+                            shipment_id = str(existing_shp["shipment_id"])
+                            new_attempts = max(
+                                int(existing_shp["delivery_attempts"]), incoming_attempts
+                            )
+                            db.execute(
+                                """UPDATE shipments
+                                   SET carrier=?,
+                                       tracking_code=?,
+                                       status=?,
+                                       carrier_status_raw=?,
+                                       current_area=?,
+                                       shipper_name=COALESCE(?, shipper_name),
+                                       shipper_phone_masked=COALESCE(?, shipper_phone_masked),
+                                       estimated_delivery_at=?,
+                                       delivered_at=COALESCE(delivered_at, ?),
+                                       delivery_attempts=?,
+                                       updated_at=?
+                                   WHERE shipment_id=?""",
+                                (
+                                    carrier,
+                                    data["tracking_code"],
+                                    canonical_status,
+                                    carrier_status_raw,
+                                    current_area,
+                                    data["shipper_name"],
+                                    data["shipper_phone_masked"],
+                                    est_ts,
+                                    delivered_ts,
+                                    new_attempts,
+                                    occurred_ts,
+                                    shipment_id,
+                                ),
+                            )
+
+                        db.execute(
+                            """INSERT INTO shipment_events (
+                                   shipment_event_id, shipment_id, occurred_at, status,
+                                   carrier_status_raw, description, fail_reason,
+                                   hub_name, district, province, estimated_delivery_at, source_event_id
+                               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                            (
+                                f"shpevt_{uuid.uuid4().hex}",
+                                shipment_id,
+                                occurred_ts,
+                                canonical_status,
+                                carrier_status_raw,
+                                data["description"],
+                                data["fail_reason"],
+                                data["hub_name"],
+                                data["district"],
+                                data["province"],
+                                est_ts,
+                                imp_event_id,
+                            ),
+                        )
+                        if canonical_status == "delivered":
+                            db.execute(
+                                "UPDATE orders SET delivered_at=COALESCE(delivered_at, ?) WHERE id=?",
+                                (occurred_ts, result_order_id),
+                            )
+
+                elif event_type == "payment.updated":
+                    ext_oid = data["external_order_id"]
+                    result_ext_order_id = ext_oid
+                    ord_row = db.execute(
+                        "SELECT id, customer_id FROM orders "
+                        "WHERE source_system=? AND external_order_id=?",
+                        (connector_source, ext_oid),
+                    ).fetchone()
+                    require(
+                        ord_row is not None,
+                        404,
+                        "order_not_found",
+                        f"Không tìm thấy đơn hàng nguồn '{ext_oid}' thuộc '{connector_source}'.",
+                    )
+                    result_order_id = str(ord_row["id"])
+                    mapped_customer_id = str(ord_row["customer_id"])
+
+                    provider = data["provider"]
+                    txn_ref = data["provider_txn_ref"]
+                    raw_status = data["provider_status_raw"]
+                    canonical_status = map_raw_status(
+                        active_status_mapping, "payment", raw_status
+                    )
+                    amount = int(data["amount"])
+                    imp_status_val = raw_status
+                    imp_total_val = amount
+                    result_total = amount
+
+                    existing_pay = db.execute(
+                        "SELECT payment_id, order_id, status FROM payment_transactions "
+                        "WHERE provider=? AND provider_txn_ref=?",
+                        (provider, txn_ref),
+                    ).fetchone()
+                    if existing_pay is not None and str(existing_pay["order_id"]) != result_order_id:
+                        raise ApiError(
+                            409,
+                            "payment_order_conflict",
+                            "Giao dịch thanh toán nguồn đã gắn với đơn hàng khác.",
+                        )
+
+                    max_seq = self._max_entity_sequence_in_tx(
+                        db,
+                        tenant_id=tenant_clean,
+                        entity_kind="payment",
+                        order_id=result_order_id,
+                        entity_key=f"{provider}::{txn_ref}",
+                    )
+                    _insert_imported_event_row()
+
+                    if max_seq is not None and sequence <= max_seq:
+                        sequence_ignored = True
+                    elif existing_pay is not None and not can_advance_payment_status(
+                        str(existing_pay["status"]), canonical_status
+                    ):
+                        sequence_ignored = True
+                    else:
+                        settled_ts = (
+                            float(iso_vn_to_epoch(data["settled_at"], "data.settled_at"))
+                            + float(rebase_offset_seconds)
+                            if data["settled_at"] is not None
+                            else (occurred_ts if canonical_status == "succeeded" else None)
+                        )
+                        if existing_pay is None:
+                            db.execute(
+                                """INSERT INTO payment_transactions (
+                                       payment_id, order_id, provider, provider_txn_ref,
+                                       method, amount, status, provider_status_raw,
+                                       created_at, settled_at
+                                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                (
+                                    f"pay_{uuid.uuid4().hex}",
+                                    result_order_id,
+                                    provider,
+                                    txn_ref,
+                                    data["method"],
+                                    amount,
+                                    canonical_status,
+                                    raw_status,
+                                    occurred_ts,
+                                    settled_ts,
+                                ),
+                            )
+                        else:
+                            db.execute(
+                                """UPDATE payment_transactions
+                                   SET method=?,
+                                       amount=?,
+                                       status=?,
+                                       provider_status_raw=?,
+                                       settled_at=COALESCE(settled_at, ?)
+                                   WHERE payment_id=?""",
+                                (
+                                    data["method"],
+                                    amount,
+                                    canonical_status,
+                                    raw_status,
+                                    settled_ts,
+                                    existing_pay["payment_id"],
+                                ),
+                            )
+                        self._recompute_order_payment_status_in_tx(db, result_order_id)
+
+                elif event_type == "refund.updated":
+                    ext_oid = data["external_order_id"]
+                    result_ext_order_id = ext_oid
+                    ord_row = db.execute(
+                        "SELECT id, customer_id FROM orders "
+                        "WHERE source_system=? AND external_order_id=?",
+                        (connector_source, ext_oid),
+                    ).fetchone()
+                    require(
+                        ord_row is not None,
+                        404,
+                        "order_not_found",
+                        f"Không tìm thấy đơn hàng nguồn '{ext_oid}' thuộc '{connector_source}'.",
+                    )
+                    result_order_id = str(ord_row["id"])
+                    mapped_customer_id = str(ord_row["customer_id"])
+
+                    provider = data["provider"]
+                    refund_ref = data["provider_refund_ref"]
+                    raw_status = data["provider_status_raw"]
+                    canonical_status = map_raw_status(
+                        active_status_mapping, "refund", raw_status
+                    )
+                    amount = int(data["amount"])
+                    imp_status_val = raw_status
+                    imp_total_val = amount
+                    result_total = amount
+
+                    existing_ref = db.execute(
+                        "SELECT refund_id, order_id, status, request_id FROM refunds "
+                        "WHERE provider=? AND provider_refund_ref=?",
+                        (provider, refund_ref),
+                    ).fetchone()
+                    if existing_ref is not None and str(existing_ref["order_id"]) != result_order_id:
+                        raise ApiError(
+                            409,
+                            "refund_order_conflict",
+                            "Giao dịch hoàn tiền nguồn đã gắn với đơn hàng khác.",
+                        )
+
+                    payment_id_val: str | None = None
+                    if data["provider_txn_ref"] is not None:
+                        pay_row = db.execute(
+                            "SELECT payment_id, order_id FROM payment_transactions "
+                            "WHERE provider=? AND provider_txn_ref=?",
+                            (provider, data["provider_txn_ref"]),
+                        ).fetchone()
+                        if pay_row is None:
+                            pay_row = db.execute(
+                                "SELECT payment_id, order_id FROM payment_transactions "
+                                "WHERE order_id=? AND provider_txn_ref=?",
+                                (result_order_id, data["provider_txn_ref"]),
+                            ).fetchone()
+                        if pay_row is None or str(pay_row["order_id"]) != result_order_id:
+                            raise ApiError(
+                                422,
+                                "payment_transaction_not_found",
+                                "Không tìm thấy giao dịch thanh toán gốc thuộc đơn hàng cho hoàn tiền này.",
+                            )
+                        payment_id_val = str(pay_row["payment_id"])
+
+                    max_seq = self._max_entity_sequence_in_tx(
+                        db,
+                        tenant_id=tenant_clean,
+                        entity_kind="refund",
+                        order_id=result_order_id,
+                        entity_key=f"{provider}::{refund_ref}",
+                    )
+                    will_ignore = (max_seq is not None and sequence <= max_seq) or (
+                        existing_ref is not None
+                        and not can_advance_refund_status(
+                            str(existing_ref["status"]), canonical_status
+                        )
                     )
 
-                # Keep UNIQUE(source_system, event_id) aligned with envelope_source while preserving
-                # connector_source on customer-bearing rows when connector_source == envelope_source.
-                db.execute(
-                    """INSERT INTO imported_events (
-                           id, source_system, event_id, tenant_id,
-                           event_type, sequence, received_via, payload_digest, redacted_fields,
-                           external_customer_id, customer_id, order_id, status, total, currency,
-                           payload_json, signature, created_at
-                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)""",
-                    (
-                        str(uuid.uuid4()),
-                        envelope_source,
-                        event_id,
-                        tenant_clean,
-                        event_type,
-                        sequence,
-                        received_via,
-                        payload_digest,
-                        json.dumps(redacted_fields, ensure_ascii=False)
-                        if redacted_fields
-                        else None,
-                        mapped_ext_customer_id,
-                        mapped_customer_id,
-                        result_order_id or None,
-                        data.get("status") if event_type == "order.status_changed" else (
-                            "pending" if event_type == "order.created" else None
-                        ),
-                        result_total if event_type == "order.created" else None,
-                        data.get("currency") if event_type == "order.created" else None,
-                        json.dumps(stored_event, ensure_ascii=False),
-                        now,
-                    ),
-                )
+                    if not will_ignore and canonical_status != "failed":
+                        paid_row = db.execute(
+                            "SELECT COALESCE(SUM(amount), 0) AS paid_sum FROM payment_transactions "
+                            "WHERE order_id=? AND status='succeeded'",
+                            (result_order_id,),
+                        ).fetchone()
+                        paid_sum = int(paid_row["paid_sum"] or 0) if paid_row else 0
+                        other_ref_row = db.execute(
+                            "SELECT COALESCE(SUM(amount), 0) AS ref_sum FROM refunds "
+                            "WHERE order_id=? AND status <> 'failed' "
+                            "AND NOT (provider=? AND provider_refund_ref=?)",
+                            (result_order_id, provider, refund_ref),
+                        ).fetchone()
+                        other_ref_sum = (
+                            int(other_ref_row["ref_sum"] or 0) if other_ref_row else 0
+                        )
+                        if other_ref_sum + amount > paid_sum:
+                            raise ApiError(
+                                422,
+                                "refund_exceeds_paid_amount",
+                                "Tổng số tiền hoàn vượt quá số tiền đã thu của đơn hàng.",
+                            )
+
+                    _insert_imported_event_row()
+
+                    if will_ignore:
+                        sequence_ignored = True
+                    else:
+                        init_ts = (
+                            float(iso_vn_to_epoch(data["initiated_at"], "data.initiated_at"))
+                            + float(rebase_offset_seconds)
+                            if data["initiated_at"] is not None
+                            else occurred_ts
+                        )
+                        comp_ts = (
+                            float(iso_vn_to_epoch(data["completed_at"], "data.completed_at"))
+                            + float(rebase_offset_seconds)
+                            if data["completed_at"] is not None
+                            else (occurred_ts if canonical_status == "completed" else None)
+                        )
+                        if existing_ref is None:
+                            db.execute(
+                                """INSERT INTO refunds (
+                                       refund_id, order_id, request_id, payment_id,
+                                       provider, provider_refund_ref, amount, channel,
+                                       status, provider_status_raw, initiated_at,
+                                       completed_at, failure_reason
+                                   ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                (
+                                    f"rfd_{uuid.uuid4().hex}",
+                                    result_order_id,
+                                    payment_id_val,
+                                    provider,
+                                    refund_ref,
+                                    amount,
+                                    data["channel"],
+                                    canonical_status,
+                                    raw_status,
+                                    init_ts,
+                                    comp_ts,
+                                    data["failure_reason"],
+                                ),
+                            )
+                        else:
+                            db.execute(
+                                """UPDATE refunds
+                                   SET payment_id=COALESCE(?, payment_id),
+                                       amount=?,
+                                       channel=?,
+                                       status=?,
+                                       provider_status_raw=?,
+                                       initiated_at=?,
+                                       completed_at=COALESCE(completed_at, ?),
+                                       failure_reason=?
+                                   WHERE refund_id=?""",
+                                (
+                                    payment_id_val,
+                                    amount,
+                                    data["channel"],
+                                    canonical_status,
+                                    raw_status,
+                                    init_ts,
+                                    comp_ts,
+                                    data["failure_reason"],
+                                    existing_ref["refund_id"],
+                                ),
+                            )
+                        self._recompute_order_payment_status_in_tx(db, result_order_id)
 
         if replay_row is not None:
             r_cid = replay_row.get("customer_id")
             r_ext_cid = replay_row.get("external_customer_id")
             r_oid = replay_row.get("order_id") or ""
             if r_cid and r_ext_cid:
-                self._ensure_mapping(
-                    tenant_clean, connector_source, str(r_ext_cid), str(r_cid)
-                )
+                if _pending_mappings is not None:
+                    _pending_mappings.append((str(r_ext_cid), str(r_cid)))
+                else:
+                    self._ensure_mapping(
+                        tenant_clean, connector_source, str(r_ext_cid), str(r_cid)
+                    )
             return ImportResult(
                 success=True,
                 status="already_processed",
@@ -899,12 +1605,15 @@ class IntegrationIngestService:
             tenant_clean, mapped_customer_id, result_order_id or None
         )
         if mapped_ext_customer_id and mapped_customer_id:
-            self._ensure_mapping(
-                tenant_clean,
-                connector_source,
-                mapped_ext_customer_id,
-                mapped_customer_id,
-            )
+            if _pending_mappings is not None:
+                _pending_mappings.append((mapped_ext_customer_id, mapped_customer_id))
+            else:
+                self._ensure_mapping(
+                    tenant_clean,
+                    connector_source,
+                    mapped_ext_customer_id,
+                    mapped_customer_id,
+                )
 
         return ImportResult(
             success=True,
@@ -917,6 +1626,7 @@ class IntegrationIngestService:
             event_type=event_type,
             external_order_id=result_ext_order_id,
             is_replay=False,
+            sequence_ignored=sequence_ignored,
             items_count=result_items_count,
             total=result_total,
         )

@@ -243,22 +243,34 @@ class PostgresSalesImportTests(unittest.TestCase):
         self.assertEqual(self.traces(first.order_id), {'orders': 1, 'items': 1, 'imported': 1, 'audit': 1})
 
     def test_rollback_leaves_no_traces_on_postgresql(self):
+        from contextlib import contextmanager
+
         event = make_pg_order_created(
             external_order_id='SIM-O-PG-RB',
             external_customer_id='pg_rb_buyer',
-            items=[
-                {
-                    'sku': 'SKU-GHOST-NONE',
-                    'external_product_id': 'P-DOES-NOT-EXIST',
-                    'title': 'Ghost',
-                    'variant_name': 'Tiêu chuẩn',
-                    'quantity': 1,
-                    'unit_price': 1000,
-                }
-            ],
         )
-        with self.assertRaises(ApiError) as ctx:
-            self.service.ingest_event(event, tenant_id=self.tenant)
+        orig_conn = self.bstore.connection
+
+        class FaultyPgProxy:
+            def __init__(self, real_db):
+                self._real_db = real_db
+
+            def execute(self, sql, *args, **kwargs):
+                if 'INSERT INTO order_items' in sql:
+                    return self._real_db.execute('SELECT 1 / 0')
+                return self._real_db.execute(sql, *args, **kwargs)
+
+            def __getattr__(self, name):
+                return getattr(self._real_db, name)
+
+        @contextmanager
+        def faulty_conn(*args, **kwargs):
+            with orig_conn(*args, **kwargs) as real_db:
+                yield FaultyPgProxy(real_db)
+
+        with patch.object(self.bstore, 'connection', faulty_conn):
+            with self.assertRaises(ApiError) as ctx:
+                self.service.ingest_event(event, tenant_id=self.tenant)
         self.assertEqual(ctx.exception.code, 'database_unavailable')
         self.assertEqual(
             self.rows("SELECT 1 FROM orders WHERE external_order_id='SIM-O-PG-RB'"), []
