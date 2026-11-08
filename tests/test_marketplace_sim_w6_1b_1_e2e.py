@@ -117,6 +117,65 @@ class MarketplaceSimContractBridgeTests(unittest.TestCase):
         self.assertEqual(set(mapping["payment"].keys()), payment_codes)
         self.assertEqual(set(mapping["refund"].keys()), refund_codes)
 
+    def test_marketplace_sim_send_delivers_all_events_to_loopback_internal_route(self) -> None:
+        import os
+        import threading
+        from unittest.mock import patch
+        from wsgiref.simple_server import WSGIRequestHandler, make_server
+        from retailops.http.public import PublicWeb
+        from retailops.identity.persistent import PersistentSessions
+        from retailops.integration.connectors import ConnectorManager
+
+        class QuietHandler(WSGIRequestHandler):
+            def log_message(self, format, *args):  # noqa: A002
+                pass
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sim_dir = root / "sim_store"
+            sim = MarketplaceSimulator.initialize(sim_dir, seed=20261108)
+            sim.run_days(2)
+            pre_status = sim.get_status()
+            total_events = pre_status["total_events"]
+            self.assertGreater(total_events, 15)
+
+            secrets_dir = root / "secrets"
+            secrets_dir.mkdir(parents=True, exist_ok=True)
+            conn_key_file = secrets_dir / "retailops_connector_marketplace_sim"
+            digest_key_file = secrets_dir / "retailops_event_digest_key"
+            conn_key_file.write_text("sim-loopback-hmac-secret-32-bytes-ok!!\n", encoding="utf-8")
+            digest_key_file.write_text("sim-loopback-digest-key-32-bytes-ok!!\n", encoding="utf-8")
+
+            sessions = PersistentSessions(root / "persistent")
+            sessions.provision_tenant("shop-demo", "Shop Demo", seed_demo=False)
+            env_vars = {
+                "RETAILOPS_CONNECTOR_SECRETS_DIR": str(secrets_dir),
+                "RETAILOPS_EVENT_DIGEST_KEY_FILE": str(digest_key_file),
+            }
+            with patch.dict(os.environ, env_vars, clear=False):
+                ConnectorManager(sessions).add_connector(
+                    "shop-demo",
+                    source_system="marketplace_sim",
+                    merchant_id=pre_status["merchant_id"],
+                )
+                pub = PublicWeb("https://retailops.example.test", sessions, start_timer_worker=False)
+                httpd = make_server("127.0.0.1", 0, pub, handler_class=QuietHandler)
+                port = httpd.server_address[1]
+                t = threading.Thread(target=httpd.serve_forever, daemon=True)
+                t.start()
+                try:
+                    endpoint = f"http://127.0.0.1:{port}/internal/integrations/shop-demo/marketplace_sim/events"
+                    send_res = sim.send_pending_events(
+                        endpoint=endpoint,
+                        secret_file=conn_key_file,
+                    )
+                    self.assertEqual(send_res, {"sent": total_events, "dead": 0})
+                    post_status = sim.get_status()
+                    self.assertEqual(post_status["by_delivery_status"], {"sent": total_events})
+                finally:
+                    httpd.shutdown()
+                    httpd.server_close()
+
 
 if __name__ == "__main__":
     unittest.main()

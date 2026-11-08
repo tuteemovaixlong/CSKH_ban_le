@@ -89,6 +89,18 @@ def check_integration_secrets_contract():
         if stripped.startswith("!") and "integration-secrets" in stripped:
             raise SystemExit(f".dockerignore must never allow integration-secrets/: {stripped}")
 
+    # 6. Both Caddyfile and Caddyfile.maintenance must block /internal and /internal/* with 404 before reverse_proxy
+    for caddy_path in ("deploy/Caddyfile", "deploy/Caddyfile.maintenance"):
+        caddy_src = require(
+            caddy_path,
+            "path /internal /internal/*",
+            "handle @internal_routes",
+            "404",
+            "reverse_proxy web:8000",
+        )
+        if caddy_src.index("handle @internal_routes") >= caddy_src.index("reverse_proxy web:8000"):
+            raise SystemExit(f"{caddy_path} must reject /internal/* before reverse_proxy web:8000")
+
 
 def main():
     require("Dockerfile", "deploy/rollout-public-web.sh", "deploy/cutover-postgres.sh",

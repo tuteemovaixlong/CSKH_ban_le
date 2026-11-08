@@ -33,6 +33,12 @@ from retailops.integration.ingest import (
     read_regular_secret_file,
     redact_order_created_recipient,
 )
+from retailops.integration.intake import (
+    assert_no_proxy_headers,
+    compute_sim_hmac_signature,
+    handle_internal_event_post,
+    import_events_jsonl,
+)
 
 __all__ = [
     "ALL_EVENT_TYPES",
@@ -47,8 +53,12 @@ __all__ = [
     "REQUEST_EVENT_TYPES",
     "SECRET_REF_RE",
     "W6_1B_1_SUPPORTED_EVENT_TYPES",
+    "assert_no_proxy_headers",
     "compute_payload_hmac_digest",
+    "compute_sim_hmac_signature",
     "ensure_w6_1b_1_supported_event",
+    "handle_internal_event_post",
+    "import_events_jsonl",
     "inspect_secret_file",
     "iso_vn_to_epoch",
     "load_connector_secret",

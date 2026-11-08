@@ -74,6 +74,15 @@ def add_parser(commands):
     importer = sub.add_parser('import-sqlite', help='Import an offline persistent snapshot into an empty target.')
     importer.add_argument('--offline-snapshot', type=Path, required=True,
                           help='Copied persistent/ directory; stop source web and all writers before making the copy.')
+    imp_ev = sub.add_parser(
+        'import-events',
+        help='Import a JSONL file of retailops-integration-v2 events into a tenant canonical store.',
+    )
+    imp_ev.add_argument('--tenant', required=True, help='Target tenant ID.')
+    imp_ev.add_argument('--source-system', required=True, help='Connector source_system (e.g. marketplace_sim).')
+    imp_ev.add_argument('--file', type=Path, required=True, help='Path to JSONL events file.')
+    imp_ev.add_argument('--rebase-clock', choices=('now',), default=None,
+                        help="Shift event timestamps by (import_now - latest_occurred_at).")
 
 
 def run(args):
@@ -110,6 +119,27 @@ def run(args):
             target = getattr(args, 'db_path', None) or resolved_output
             return inspect_sqlite_outbox_status(target)
         return inspect_postgres_outbox_status(dsn)
+
+    if action == 'import-events':
+        from retailops.integration.intake import import_events_jsonl
+
+        if backend == 'postgresql':
+            from retailops.identity.postgres import PostgresSessions
+
+            sessions = PostgresSessions(dsn, data_root=Path(resolved_output))
+        else:
+            from retailops.identity.persistent import PersistentSessions
+
+            out_root = Path(resolved_output)
+            pers_dir = out_root / 'persistent' if (out_root / 'persistent').is_dir() or not (out_root / 'identity.sqlite3').is_file() else out_root
+            sessions = PersistentSessions(pers_dir)
+        return import_events_jsonl(
+            sessions,
+            tenant_id=args.tenant,
+            source_system=args.source_system,
+            jsonl_path=args.file,
+            rebase_clock=args.rebase_clock,
+        )
 
     if action == 'migrate-v5':
         if backend == 'sqlite':

@@ -67,7 +67,7 @@ def serve_public():
     print('RetailOps synthetic HTTPS backend ready; awaiting Caddy.', flush=True)
     serve(app, host='0.0.0.0', port=8000, threads=8, connection_limit=100,
           channel_timeout=30, max_request_header_size=16384, max_request_body_size=CHAT_ATTACHMENT_JSON_MAX_BYTES,
-          clear_untrusted_proxy_headers=True, expose_tracebacks=False, ident='RetailOps')
+          clear_untrusted_proxy_headers=False, expose_tracebacks=False, ident='RetailOps')
 
 
 def serve_private():

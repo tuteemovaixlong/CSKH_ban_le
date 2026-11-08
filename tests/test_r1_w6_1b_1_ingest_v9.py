@@ -1519,5 +1519,307 @@ class Item2ConnectorAndComposeSecretsTests(unittest.TestCase):
         self.assertNotIn(digest_marker, audit_dump)
 
 
+class Item3InternalRouteAndImportEventsCliTests(unittest.TestCase):
+    """Item 3 (W6.1b-D4): /internal/integrations/<tenant>/<source>/events HMAC & proxy guards + import-events CLI."""
+
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory(prefix="r1-w61b1-item3-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.out_dir = self.root / "out"
+        self.secrets_dir = self.root / "secrets"
+        self.secrets_dir.mkdir(parents=True, exist_ok=True)
+        self.conn_secret = b"connector-hmac-secret-32-bytes-ok!"
+        self.digest_secret = b"event-digest-hmac-key-32-bytes-ok!"
+        (self.secrets_dir / "retailops_connector_marketplace_sim").write_bytes(self.conn_secret + b"\n")
+        self.digest_file = self.secrets_dir / "retailops_event_digest_key"
+        self.digest_file.write_bytes(self.digest_secret + b"\n")
+
+        self.sessions = PersistentSessions(self.out_dir / "persistent")
+        self.sessions.provision_tenant("shop-demo", "Shop Demo", seed_demo=False)
+
+    def _make_order_event(
+        self,
+        *,
+        event_id: str = "evt:order:ORD-I3-1:1",
+        ext_order_id: str = "ORD-I3-1",
+        merchant_id: str = "MERCHANT-SIM-001",
+        occurred_at: str = "2026-10-10T08:00:00+07:00",
+        ordered_at: str = "2026-10-10T08:00:00+07:00",
+        promised_by: str = "2026-10-12T08:00:00+07:00",
+    ) -> dict:
+        return {
+            "contract": "retailops-integration-v2",
+            "event_id": event_id,
+            "event_type": "order.created",
+            "source_system": "marketplace_sim",
+            "merchant_id": merchant_id,
+            "occurred_at": occurred_at,
+            "sequence": 1,
+            "data": {
+                "external_order_id": ext_order_id,
+                "external_customer_id": "CUST-I3-1",
+                "ordered_at": ordered_at,
+                "promised_delivery_by": promised_by,
+                "payment_method": "cod",
+                "shipping_fee": 25000,
+                "total": 315000,
+                "currency": "VND",
+                "recipient": {
+                    "name": "Lê Thị Mẫu",
+                    "phone": "0909888777",
+                    "address_line": "99 Nguyễn Huệ",
+                    "ward": "Phường Bến Nghé",
+                    "district": "Quận 1",
+                    "province": "TP. Hồ Chí Minh",
+                },
+                "items": [
+                    {
+                        "external_product_id": "P-101",
+                        "sku": "SKU-101-S",
+                        "title": "Áo sơ mi lụa công sở",
+                        "variant_name": "Trắng / S",
+                        "quantity": 1,
+                        "unit_price": 290000,
+                    }
+                ],
+            },
+        }
+
+    def test_internal_route_auth_proxy_connector_and_replay_guards(self) -> None:
+        import threading
+        import time
+        import urllib.error
+        import urllib.request
+        from wsgiref.simple_server import WSGIRequestHandler, make_server
+        from retailops.http.public import PublicWeb
+        from retailops.integration.connectors import ConnectorManager
+        from retailops.integration.intake import compute_sim_hmac_signature
+
+        class QuietHandler(WSGIRequestHandler):
+            def log_message(self, format, *args):  # noqa: A002
+                pass
+
+        env_vars = {
+            "RETAILOPS_CONNECTOR_SECRETS_DIR": str(self.secrets_dir),
+            "RETAILOPS_EVENT_DIGEST_KEY_FILE": str(self.digest_file),
+        }
+        with patch.dict(os.environ, env_vars, clear=False):
+            mgr = ConnectorManager(self.sessions)
+            pub = PublicWeb("https://retailops.example.test", self.sessions, start_timer_worker=False)
+            httpd = make_server("127.0.0.1", 0, pub, handler_class=QuietHandler)
+            port = httpd.server_address[1]
+            t = threading.Thread(target=httpd.serve_forever, daemon=True)
+            t.start()
+            try:
+                base_url = f"http://127.0.0.1:{port}"
+                target_url = f"{base_url}/internal/integrations/shop-demo/marketplace_sim/events"
+                opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+                def post_raw(url: str, raw_body: bytes, hdrs: dict[str, str]) -> tuple[int, dict]:
+                    req = urllib.request.Request(
+                        url,
+                        data=raw_body,
+                        headers={"Content-Type": "application/json; charset=utf-8", **hdrs},
+                        method="POST",
+                    )
+                    try:
+                        with opener.open(req, timeout=5) as resp:
+                            return int(resp.getcode()), json.loads(resp.read().decode("utf-8"))
+                    except urllib.error.HTTPError as exc:
+                        return int(exc.code), json.loads(exc.read().decode("utf-8"))
+
+                ev = self._make_order_event()
+                raw = json.dumps(ev, ensure_ascii=False).encode("utf-8")
+                ts_now = int(time.time())
+                valid_hdrs = {
+                    "X-Sim-Event-Id": ev["event_id"],
+                    "X-Sim-Timestamp": str(ts_now),
+                    "X-Sim-Signature": compute_sim_hmac_signature(self.conn_secret, ts_now, raw),
+                }
+
+                # 1. Connector not added yet -> 404
+                code, _ = post_raw(target_url, raw, valid_hdrs)
+                self.assertEqual(code, 404)
+
+                # Add connector, then disable -> 503
+                mgr.add_connector("shop-demo", source_system="marketplace_sim")
+                mgr.disable_connector("shop-demo", source_system="marketplace_sim")
+                code, body = post_raw(target_url, raw, valid_hdrs)
+                self.assertEqual((code, body["error"]), (503, "connector_unavailable"))
+
+                # Re-enable connector
+                mgr.add_connector("shop-demo", source_system="marketplace_sim")
+
+                # 2. Proxy headers -> 404
+                for proxy_h, proxy_v in (
+                    ("X-Forwarded-For", "203.0.113.10"),
+                    ("Via", "1.1 caddy"),
+                    ("X-Forwarded-Proto", "https"),
+                    ("Forwarded", "for=198.51.100.1"),
+                    ("X-Real-IP", "198.51.100.2"),
+                ):
+                    code, body = post_raw(target_url, raw, {**valid_hdrs, proxy_h: proxy_v})
+                    self.assertEqual((code, body["error"]), (404, "not_found"), proxy_h)
+
+                # 3. Bad signature -> 401
+                code, _ = post_raw(
+                    target_url,
+                    raw,
+                    {**valid_hdrs, "X-Sim-Signature": "v1=" + ("0" * 64)},
+                )
+                self.assertEqual(code, 401)
+
+                # 4. Stale timestamp (>300s) -> 401
+                old_ts = ts_now - 305
+                code, _ = post_raw(
+                    target_url,
+                    raw,
+                    {
+                        "X-Sim-Event-Id": ev["event_id"],
+                        "X-Sim-Timestamp": str(old_ts),
+                        "X-Sim-Signature": compute_sim_hmac_signature(self.conn_secret, old_ts, raw),
+                    },
+                )
+                self.assertEqual(code, 401)
+
+                # 5. Mismatched X-Sim-Event-Id -> 401
+                code, _ = post_raw(
+                    target_url,
+                    raw,
+                    {**valid_hdrs, "X-Sim-Event-Id": "evt:other:999"},
+                )
+                self.assertEqual(code, 401)
+
+                # 6. Wrong merchant_id -> 401
+                bad_m_ev = self._make_order_event(
+                    event_id="evt:order:ORD-BAD-M:1",
+                    ext_order_id="ORD-BAD-M",
+                    merchant_id="WRONG-MERCHANT",
+                )
+                bad_m_raw = json.dumps(bad_m_ev, ensure_ascii=False).encode("utf-8")
+                code, body = post_raw(
+                    target_url,
+                    bad_m_raw,
+                    {
+                        "X-Sim-Event-Id": bad_m_ev["event_id"],
+                        "X-Sim-Timestamp": str(ts_now),
+                        "X-Sim-Signature": compute_sim_hmac_signature(self.conn_secret, ts_now, bad_m_raw),
+                    },
+                )
+                self.assertEqual((code, body["error"]), (401, "merchant_id_mismatch"))
+
+                # 7. Valid first delivery -> 200; replay -> 409 duplicate_event without changing DB
+                code1, body1 = post_raw(target_url, raw, valid_hdrs)
+                self.assertEqual(code1, 200)
+                self.assertTrue(body1["ok"])
+                with self.sessions.business_store("shop-demo").connection() as db:
+                    orders_before = db.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
+                    events_before = db.execute("SELECT COUNT(*) FROM imported_events").fetchone()[0]
+
+                code2, body2 = post_raw(target_url, raw, valid_hdrs)
+                self.assertEqual((code2, body2["error"]), (409, "duplicate_event"))
+                with self.sessions.business_store("shop-demo").connection() as db:
+                    self.assertEqual(db.execute("SELECT COUNT(*) FROM orders").fetchone()[0], orders_before)
+                    self.assertEqual(db.execute("SELECT COUNT(*) FROM imported_events").fetchone()[0], events_before)
+            finally:
+                httpd.shutdown()
+                httpd.server_close()
+
+    def test_import_events_cli_idempotent_replay_audit_and_rebase_clock(self) -> None:
+        import subprocess
+        import sys
+        from retailops.integration.contract import iso_vn_to_epoch
+        from retailops.integration.intake import import_events_jsonl
+
+        ev1 = self._make_order_event(
+            event_id="evt:order:ORD-IMP-1:1",
+            ext_order_id="ORD-IMP-1",
+            occurred_at="2026-10-05T10:00:00+07:00",
+            ordered_at="2026-10-05T10:00:00+07:00",
+            promised_by="2026-10-07T10:00:00+07:00",
+        )
+        ev2 = self._make_order_event(
+            event_id="evt:order:ORD-IMP-2:1",
+            ext_order_id="ORD-IMP-2",
+            occurred_at="2026-10-10T10:00:00+07:00",
+            ordered_at="2026-10-10T10:00:00+07:00",
+            promised_by="2026-10-13T10:00:00+07:00",
+        )
+        jsonl_file = self.root / "batch.jsonl"
+        jsonl_file.write_text(
+            json.dumps(ev1, ensure_ascii=False) + "\n" + json.dumps(ev2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+
+        fixed_now = 1800000000.0
+        res1 = import_events_jsonl(
+            self.sessions,
+            tenant_id="shop-demo",
+            source_system="marketplace_sim",
+            jsonl_path=jsonl_file,
+            rebase_clock="now",
+            now_fn=lambda: fixed_now,
+            digest_key=self.digest_secret,
+        )
+        self.assertEqual((res1["received"], res1["duplicates"], res1["errors"]), (2, 0, 0))
+        expected_offset = fixed_now - iso_vn_to_epoch("2026-10-10T10:00:00+07:00", "occurred_at")
+        self.assertAlmostEqual(res1["rebase_offset_seconds"], expected_offset, places=3)
+
+        # Verify relative intervals preserved after --rebase-clock now
+        with self.sessions.business_store("shop-demo").connection() as db:
+            r1 = dict(db.execute("SELECT * FROM orders WHERE external_order_id='ORD-IMP-1'").fetchone())
+            r2 = dict(db.execute("SELECT * FROM orders WHERE external_order_id='ORD-IMP-2'").fetchone())
+        self.assertAlmostEqual(r2["ordered_at"], fixed_now, places=3)
+        self.assertAlmostEqual(r2["ordered_at"] - r1["ordered_at"], 5 * 86400.0, places=3)
+        self.assertAlmostEqual(r1["promised_delivery_by"] - r1["ordered_at"], 2 * 86400.0, places=3)
+        self.assertAlmostEqual(r2["promised_delivery_by"] - r2["ordered_at"], 3 * 86400.0, places=3)
+
+        # Second run via packaged CLI reports only duplicates
+        cli_env = {
+            **os.environ,
+            "PYTHONIOENCODING": "utf-8",
+            "RETAILOPS_OUTPUT": str(self.out_dir),
+            "RETAILOPS_STORAGE_BACKEND": "sqlite",
+            "RETAILOPS_EVENT_DIGEST_KEY_FILE": str(self.digest_file),
+        }
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "retailops",
+                "database",
+                "--output",
+                str(self.out_dir),
+                "import-events",
+                "--tenant",
+                "shop-demo",
+                "--source-system",
+                "marketplace_sim",
+                "--file",
+                str(jsonl_file),
+            ],
+            cwd=str(Path(__file__).resolve().parents[1]),
+            env=cli_env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        res2 = json.loads(proc.stdout)
+        self.assertEqual((res2["received"], res2["duplicates"], res2["errors"]), (0, 2, 0))
+
+        with self.sessions.control.connection() as id_db:
+            audits = [
+                json.loads(r["after_json"])
+                for r in id_db.execute(
+                    "SELECT after_json FROM admin_audit_log WHERE action='database.import_events' ORDER BY id ASC"
+                ).fetchall()
+            ]
+        self.assertEqual(len(audits), 2)
+        self.assertEqual((audits[0]["received"], audits[0]["duplicates"]), (2, 0))
+        self.assertEqual((audits[1]["received"], audits[1]["duplicates"]), (0, 2))
+
+
 if __name__ == "__main__":
     unittest.main()

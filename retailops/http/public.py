@@ -3,6 +3,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import secrets
 import threading
 import weakref
@@ -23,9 +24,17 @@ from retailops.config import DEFAULT_CASE_TIMER_SCAN_SECONDS, public_origin
 from retailops.identity.contracts import RequestContext, SessionBackend
 from retailops.http.routes import EVIDENCE_UPLOAD_ROUTE_RE, api_result, parse_evidence_request_body
 from retailops.http.assets import ASSETS
+from retailops.integration.intake import (
+    MAX_EVENT_BODY_BYTES,
+    assert_no_proxy_headers,
+    handle_internal_event_post,
+)
 from retailops.order_reasons import ReasonCatalogError, reason_catalog
 
 CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+INTERNAL_INGEST_ROUTE_RE = re.compile(
+    r"^/internal/integrations/([A-Za-z0-9_-]{1,64})/([a-z0-9_]{1,64})/events$"
+)
 
 
 def _case_timer_worker_loop(weak_web, stop_event: threading.Event, interval: float) -> None:
@@ -138,9 +147,41 @@ class PublicWeb:
         require(len(raw) == size, 400, 'invalid_length', 'Nội dung yêu cầu chưa đầy đủ.')
         return json.loads(raw)
 
+    @staticmethod
+    def raw_json_bytes(environ, max_size=MAX_EVENT_BODY_BYTES):
+        require(environ.get('CONTENT_TYPE', '').split(';')[0].strip().lower() == 'application/json',
+                415, 'json_required', 'Yêu cầu phải là JSON.')
+        length = environ.get('CONTENT_LENGTH', '')
+        require(length.isascii() and length.isdecimal(), 400, 'invalid_length', 'Độ dài yêu cầu không hợp lệ.')
+        size = int(length)
+        require(0 < size <= max_size, 413, 'body_too_large', 'Yêu cầu quá lớn hoặc rỗng.')
+        raw = environ['wsgi.input'].read(size)
+        require(len(raw) == size, 400, 'invalid_length', 'Nội dung yêu cầu chưa đầy đủ.')
+        return raw
+
     def route(self, env):
         method, path, host = env.get('REQUEST_METHOD'), env.get('PATH_INFO', ''), env.get('HTTP_HOST', '')
         mime, headers = 'application/json; charset=utf-8', []
+        if path == '/internal' or path.startswith('/internal/'):
+            assert_no_proxy_headers(env)
+            m = INTERNAL_INGEST_ROUTE_RE.fullmatch(path)
+            require(m is not None, 404, 'not_found', 'Không tìm thấy đường dẫn.')
+            require(method == 'POST', 405, 'method_not_allowed', 'Phương thức không được hỗ trợ.')
+            require(not env.get('QUERY_STRING'), 400, 'unexpected_query', 'Đường dẫn không nhận tham số truy vấn.')
+            raw_body = self.raw_json_bytes(env)
+            status, payload = handle_internal_event_post(
+                self.sessions,
+                tenant_id=m.group(1),
+                source_system=m.group(2),
+                raw_body=raw_body,
+                headers={
+                    'x-sim-event-id': env.get('HTTP_X_SIM_EVENT_ID', ''),
+                    'x-sim-timestamp': env.get('HTTP_X_SIM_TIMESTAMP', ''),
+                    'x-sim-signature': env.get('HTTP_X_SIM_SIGNATURE', ''),
+                },
+            )
+            return status, payload, mime, headers
+
         # Health checks may reach Waitress directly. Every business route requires the exact public host.
         loopback_health = method == 'GET' and path == '/healthz' and env.get('REMOTE_ADDR') in ('127.0.0.1', '::1') and host in ('127.0.0.1:8000', 'localhost:8000')
         require(host == self.host or loopback_health, 403, 'invalid_host', 'Địa chỉ web không hợp lệ.')

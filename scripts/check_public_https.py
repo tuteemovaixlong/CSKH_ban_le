@@ -157,6 +157,7 @@ def main():
                     pass
                 time.sleep(0.5)
             assert st_norm_code == 200, f"Expected 200 from /healthz after maintenance disabled, got {st_norm_code}"
+            assert request('/internal/integrations/ci-shop/marketplace_sim/events', {})[0] == 404
             print('PUBLIC_CADDY_MAINTENANCE_SWITCH_OK (operational script tested with idempotency, missing backup failure, and real Caddy 503 fail-closed)')
             # Provision through the packaged operator CLI, then switch the same HTTPS stack.
             admin = base+['exec','-T','web','python','-m','retailops','identity']
