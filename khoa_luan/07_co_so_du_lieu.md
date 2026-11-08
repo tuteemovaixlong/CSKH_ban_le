@@ -269,6 +269,7 @@ Mọi lần nhân viên mở bản đầy đủ đều ghi một dòng vào nh�
 | `connector_id` | khóa chính |
 | `source_system` | duy nhất, ví dụ `marketplace_sim`, `payment_sim` |
 | `kind` | `marketplace`, `carrier`, `payment` |
+| `merchant_id` | mã cửa hàng phía sàn, phải khớp `merchant_id` của sự kiện; thêm theo W6.1b-D5 |
 | `secret_ref` | **tên** khóa ký trong kho secret; bản thân khóa không nằm trong DB |
 | `status_mapping_json` | bảng ánh xạ mã trạng thái gốc sang trạng thái chuẩn |
 | `enabled`, `created_at`, `updated_at` | |
@@ -393,7 +394,7 @@ erDiagram
 ```mermaid
 flowchart LR
   SIM["Sàn ảo marketplace_sim<br/>kho dữ liệu riêng"] -- "sự kiện ký HMAC" --> IN["Endpoint nhận sự kiện<br/>chỉ trong mạng nội bộ"]
-  PAY["Cổng thanh toán giả lập<br/>định dạng webhook của cổng thật"] -- "payment, refund" --> IN
+  PAY["Cổng thanh toán giả lập<br/>dạng chung"] -- "payment, refund" --> IN
   IN --> CON["Connector theo cửa hàng<br/>khóa ký, ánh xạ trạng thái"]
   CON --> AD["Adapter<br/>chống trùng, không đi lùi"]
   AD --> DB[("Schema của cửa hàng<br/>mô hình chuẩn")]
@@ -418,4 +419,6 @@ flowchart LR
 - W6.1 tách thành **W6.1a** sàn ảo cùng khung connector, và **W6.1b** migration v9 cùng phía RetailOps.
 - Ngày 2026-11-07, W6.1a-D11 đến D14: lưu đầy đủ người nhận trong bảng riêng có mã hóa, model chỉ thấy bản đã che; thời hạn giao cam kết và vị trí theo từng mốc hành trình; bồi thường giao trễ do nhân viên duyệt, sàn phát mã; thông báo chủ động cho khách ở các mốc chính.
 
-Còn chốt khi viết handoff: cổng thanh toán nào làm mẫu cho định dạng webhook giả lập; mã hóa bằng `pgcrypto` hay thư viện ở tầng ứng dụng; danh sách kiểu dữ liệu và chỉ mục chi tiết.
+Ngày 2026-11-08, [§20](../docs/phase_role_aware_ops/W0_OWNER_DECISION_DELTA_2026-10-29.md#20-w61b-owner-decisions-2026-11-08) chốt thêm: W6.1b chia thành W6.1b-1 và W6.1b-2 với một migration v9 duy nhất; `integration_connectors` có thêm cột `merchant_id`; cổng thanh toán giả lập giữ dạng chung suốt R1, cổng thật để sau khóa luận; luật nối hoàn tiền với yêu cầu; khách nhìn thấy mã đơn của sàn.
+
+Còn chốt khi viết handoff W6.1b-2: mã hóa người nhận bằng `pgcrypto` hay thư viện ở tầng ứng dụng, nơi giữ khóa, thời hạn lưu.
