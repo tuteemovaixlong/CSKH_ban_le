@@ -9,7 +9,9 @@ ORDER_SYSTEM_PROMPT = (
     'The store name is RetailOps Shop. '
     'Use list_orders for all orders, get_order/get_context for current order facts, '
     'and track_shipment for carrier information. Never invent identifiers or facts. '
-    'Order IDs start with "O-" (e.g. O-100001). Product IDs start with "P-" (e.g. P-101). '
+    'Order IDs may be marketplace IDs (e.g. SIM-O-0001), O-... IDs, or internal ord_... IDs; always speak to the customer using external_order_id. '
+    'If a tool returns error="ambiguous_order", do not guess: list the returned candidates (source_system, ordered_at, item_names) and ask the customer to clarify. '
+    'Product IDs start with "P-" (e.g. P-101). '
     'NEVER pass an order ID to get_product; get_product strictly accepts a product_id (P-...). '
     'Order records returned by get_order or list_orders already contain product name, variant, and amount. '
     'When the customer asks if they ordered an item or asks about orders from an image '
@@ -61,10 +63,11 @@ def _text(value, limit=180):
 
 
 def _order(order):
-    if not isinstance(order, dict) or not _text(order.get('id')):
+    display_id = _text(order.get('external_order_id') if isinstance(order, dict) else '') or _text(order.get('id') if isinstance(order, dict) else '')
+    if not isinstance(order, dict) or not display_id:
         return None
     status = _STATUS_MAP.get(order.get('status'), 'Ch\u01b0a r\u00f5 tr\u1ea1ng th\u00e1i')
-    lines = [f"{_text(order['id'])}: {status}"]
+    lines = [f"{display_id}: {status}"]
     for key in ('name', 'variant'):
         if _text(order.get(key)):
             lines.append(_text(order[key]))
@@ -105,11 +108,19 @@ def _synthesize_order_response(tool_results):
             if code == 'order_not_found':
                 parts.append(f'Kh\u00f4ng t\u00ecm th\u1ea5y \u0111\u01a1n h\u00e0ng {oid} trong c\u00e1c \u0111\u01a1n thu\u1ed9c t\u00e0i kho\u1ea3n c\u1ee7a anh/ch\u1ecb. '
                              'Vui l\u00f2ng ki\u1ec3m tra m\u00e3 ho\u1eb7c ch\u1ecdn m\u1ed9t \u0111\u01a1n trong danh s\u00e1ch b\u00ean ph\u1ea3i.')
+            elif code == 'ambiguous_order':
+                cand_lines = [f'M\u00e3 \u0111\u01a1n {oid} kh\u1edbp v\u1edbi nhi\u1ec1u \u0111\u01a1n h\u00e0ng trong t\u00e0i kho\u1ea3n. Vui l\u00f2ng cho bi\u1ebft anh/ch\u1ecb mu\u1ed1n h\u1ecfi \u0111\u01a1n n\u00e0o:']
+                for cand in (result.get('candidates') or [])[:10]:
+                    if isinstance(cand, dict):
+                        src = _text(cand.get('source_system')) or 'kh\u00f4ng r\u00f5 ngu\u1ed3n'
+                        items_txt = ', '.join(_text(x) for x in (cand.get('item_names') or []) if _text(x)) or 's\u1ea3n ph\u1ea9m'
+                        cand_lines.append(f"- Ngu\u1ed3n {src}: {items_txt} (m\u00e3 n\u1ed9i b\u1ed9: {_text(cand.get('internal_order_id') or cand.get('id'))})")
+                parts.append('\n'.join(cand_lines))
             elif code in ('permission_denied', 'forbidden'):
                 parts.append('T\u00e0i kho\u1ea3n hi\u1ec7n t\u1ea1i kh\u00f4ng c\u00f3 quy\u1ec1n th\u1ef1c hi\u1ec7n tra c\u1ee9u n\u00e0y.')
             elif code == 'product_not_found':
                 raw_pid = tr.get('args', {}).get('product_id', '')
-                if not (isinstance(raw_pid, str) and re.match(r'^(O-|DH|\d{5,})', raw_pid, re.I)):
+                if not (isinstance(raw_pid, str) and re.match(r'^(O-|SIM-O-|ord_|DH|\d{5,})', raw_pid, re.I)):
                     supplemental.append('Danh m\u1ee5c ch\u01b0a c\u00f3 s\u1ea3n ph\u1ea9m kh\u1edbp m\u00e3 tra c\u1ee9u.')
             elif code in ('tool_not_allowed', 'invalid_tool_arguments'):
                 supplemental.append('M\u1ed9t ph\u1ea7n tra c\u1ee9u b\u1ed5 sung kh\u00f4ng th\u1ef1c hi\u1ec7n \u0111\u01b0\u1ee3c; ch\u1ec9 th\u00f4ng tin \u0111\u00e3 x\u00e1c minh \u0111\u01b0\u1ee3c hi\u1ec3n th\u1ecb.')
@@ -118,11 +129,23 @@ def _synthesize_order_response(tool_results):
                     return None
         elif isinstance(result.get('shipment'), dict) and result['shipment']:
             shipment = result['shipment']
-            lines = [f"Th\u00f4ng tin v\u1eadn chuy\u1ec3n \u0111\u01a1n {_text(result.get('order_id'))}:"]
-            for key, label in (('carrier', 'H\u00e3ng'), ('status_text', 'Tr\u1ea1ng th\u00e1i'),
-                               ('current_location', 'V\u1ecb tr\u00ed'), ('estimated_delivery', 'D\u1ef1 ki\u1ebfn giao')):
-                if _text(shipment.get(key)):
-                    lines.append(f'{label}: {_text(shipment[key])}')
+            disp_oid = _text(result.get('external_order_id')) or _text(result.get('order_id'))
+            lines = [f"Th\u00f4ng tin v\u1eadn chuy\u1ec3n \u0111\u01a1n {disp_oid}:"]
+            for key, label in (
+                ('carrier', 'H\u00e3ng'),
+                ('tracking_code', 'M\u00e3 v\u1eadn \u0111\u01a1n'),
+                ('status_text', 'Tr\u1ea1ng th\u00e1i'),
+                ('current_area', 'V\u1ecb tr\u00ed'),
+                ('estimated_delivery_at', 'D\u1ef1 ki\u1ebfn giao'),
+                ('fail_reason', 'L\u00fd do giao th\u1ea5t b\u1ea1i'),
+            ):
+                val = _text(shipment.get(key))
+                if not val and key == 'current_area':
+                    val = _text(shipment.get('current_location'))
+                if not val and key == 'estimated_delivery_at':
+                    val = _text(shipment.get('estimated_delivery'))
+                if val:
+                    lines.append(f'{label}: {val}')
             if result.get('order_status') in _STATUS_MAP:
                 lines.append('Tr\u1ea1ng th\u00e1i \u0111\u01a1n: ' + _STATUS_MAP[result['order_status']])
             if len(lines) == 1:
@@ -130,6 +153,12 @@ def _synthesize_order_response(tool_results):
                     return None
             else:
                 parts.append('\n'.join(lines))
+        elif 'shipment' in result and result.get('shipment') is None:
+            disp_oid = _text(result.get('external_order_id')) or _text(result.get('order_id'))
+            msg = f"H\u1ec7 th\u1ed1ng hi\u1ec7n ch\u01b0a ghi nh\u1eadn th\u00f4ng tin v\u1eadn \u0111\u01a1n cho \u0111\u01a1n h\u00e0ng {disp_oid}."
+            if result.get('order_status') in _STATUS_MAP:
+                msg += '\nTr\u1ea1ng th\u00e1i \u0111\u01a1n: ' + _STATUS_MAP[result['order_status']]
+            parts.append(msg)
         elif isinstance(result.get('orders'), list):
             rendered = []
             for order in result['orders']:

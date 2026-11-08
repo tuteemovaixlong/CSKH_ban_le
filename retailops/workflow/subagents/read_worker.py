@@ -40,6 +40,7 @@ def summarize_tool_result(name, args, result):
             arg_map = args if isinstance(args, dict) else {}
             error_labels = {
                 'order_not_found': f"Không tìm thấy đơn hàng {arg_map.get('order_id', '')} trong tài khoản",
+                'ambiguous_order': f"Mã đơn {arg_map.get('order_id', '')} khớp nhiều đơn hàng của khách; cần hỏi rõ",
                 'order_outside_case_scope': f"Đơn hàng {arg_map.get('order_id', '')} nằm ngoài phạm vi ca hỗ trợ",
                 'tool_not_allowed': f"Công cụ '{name}' ngoài phạm vi worker",
                 'invalid_tool_arguments': 'Tham số truyền vào công cụ không hợp lệ',
@@ -51,7 +52,7 @@ def summarize_tool_result(name, args, result):
         if name == 'get_order':
             order = result.get('order')
             if isinstance(order, dict):
-                oid = order.get('id', '')
+                oid = order.get('external_order_id') or order.get('id', '')
                 oname = order.get('name', '')
                 ovar = f" ({order.get('variant')})" if order.get('variant') else ""
                 ostatus = f", trạng thái: {order.get('status')}" if order.get('status') else ""
@@ -70,7 +71,7 @@ def summarize_tool_result(name, args, result):
         if name == 'get_context':
             order = result.get('order')
             prod = result.get('product')
-            oid = order.get('id') if isinstance(order, dict) else None
+            oid = (order.get('external_order_id') or order.get('id')) if isinstance(order, dict) else None
             pid = (order.get('product_id') if isinstance(order, dict) else None) or (prod.get('id') if isinstance(prod, dict) else None)
             parts = []
             if oid:
@@ -104,7 +105,8 @@ def summarize_tool_result(name, args, result):
         if name == 'get_case_order':
             order = result.get('order')
             if isinstance(order, dict):
-                return f"Đơn {order.get('id', '')} trong ca: trạng thái {order.get('status', '')}"
+                oid = order.get('external_order_id') or order.get('id', '')
+                return f"Đơn {oid} trong ca: trạng thái {order.get('status', '')}"
             return "Không có thông tin đơn hàng trong ca"
         if name == 'list_case_order_actions':
             actions = result.get('order_actions')

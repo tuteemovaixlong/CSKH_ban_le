@@ -132,25 +132,8 @@ def apply_seed_data(data: dict):
 
     print(f"   Đã thêm {added_cust} khách hàng, {added_ord} đơn hàng vào SQLite.")
 
-    # 3. Lưu Shipments Telemetry
-    shipments = data.get("shipments", {})
-    if shipments:
-        print("===> 3. Cập nhật telemetry vận chuyển (data/mock_shipments.json)...")
-        ship_file = ROOT / "data" / "mock_shipments.json"
-        existing_ships = {}
-        if ship_file.exists():
-            try:
-                with open(ship_file, "r", encoding="utf-8") as f:
-                    existing_ships = json.load(f)
-            except Exception:
-                pass
-        existing_ships.update(shipments)
-        with open(ship_file, "w", encoding="utf-8") as f:
-            json.dump(existing_ships, f, ensure_ascii=False, indent=2)
-        print(f"   Đã cập nhật {len(shipments)} vận đơn vào data/mock_shipments.json.")
-
-    # 4. Đồng bộ lại Colab Notebook
-    print("===> 4. Đồng bộ hóa Google Colab Notebook...")
+    # 3. Đồng bộ lại Colab Notebook
+    print("===> 3. Đồng bộ hóa Google Colab Notebook...")
     subprocess.run([sys.executable, str(ROOT / "scripts" / "build_agent_notebook.py")], check=True)
     print("   Đã đồng bộ notebooks/colab_agent.ipynb thành công!")
 

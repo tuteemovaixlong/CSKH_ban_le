@@ -20,7 +20,7 @@ VN_TZ = timezone(timedelta(hours=7))
 # Authoritative store policy windows (grounded in data/knowledge/*.md):
 # - data/knowledge/returns.md: 7 days from delivery
 # - data/knowledge/policy_size_exchange_twoway.md: 15 days from delivery
-# - data/knowledge/policy_warranty_exchange_1to1.md: 90 days default (overridden by products.warranty_days)
+# - Default store warranty policy: 90 days default (overridden by products.warranty_days)
 RETURN_WINDOW_DAYS = 7
 SIZE_EXCHANGE_WINDOW_DAYS = 15
 DEFAULT_WARRANTY_DAYS = 90

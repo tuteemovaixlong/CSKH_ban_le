@@ -1,19 +1,31 @@
 """Read-only tools bound to the authenticated customer by the application."""
 from datetime import datetime, timedelta, timezone
-import json
 from pathlib import Path
 import re
 
-from retailops.business.eligibility import compute_order_eligibility
+from retailops.business.eligibility import compute_order_eligibility, format_vn_iso
 from retailops.business.variants import match_variants
+from retailops.core import ApiError
+from retailops.knowledge.tool import KnowledgeTool
 from retailops.order_reasons import reason_catalog
 from retailops_conversation import normalize
-from retailops.knowledge.tool import KnowledgeTool
 
 ROOT = Path(__file__).resolve().parent
 _ORDER_ID = re.compile(r'\bO-(\d+)\b', re.IGNORECASE)
 _INTERNAL_ORDER_ID = re.compile(r'\bord_([0-9a-f]{32})\b', re.IGNORECASE)
-_EXTERNAL_ORDER_ID = re.compile(r'\b((?!P-\d+\b)[A-Z]{2,8}-(?:O-)?[A-Za-z0-9_-]{2,48})\b', re.IGNORECASE)
+_EXTERNAL_ORDER_ID = re.compile(r'\b((?!P-\d+\b|KB:)[A-Za-z0-9]{2,12}-[A-Za-z0-9_-]{2,48})\b', re.IGNORECASE)
+
+# Customer PII (name, phone, address, email, customer_id) and internal backfill markers are never sent to the model.
+_PII_KEYS = (
+    'customer_id',
+    'customer_name',
+    'phone',
+    'customer_phone',
+    'shipping_address',
+    'address',
+    'email',
+    'ordered_at_backfilled',
+)
 
 
 def customer_named_orders(text):
@@ -34,7 +46,7 @@ def is_order_confirmed(order, confirmed):
     if not isinstance(order, dict) or not confirmed:
         return False
     lowered = {str(x).lower() for x in confirmed if x}
-    for key in ('id', 'external_order_id'):
+    for key in ('id', 'internal_order_id', 'external_order_id'):
         val = order.get(key)
         if val and (val in confirmed or str(val).lower() in lowered):
             return True
@@ -50,6 +62,60 @@ def confirmed_orders_for(text, snapshot):
     named = customer_named_orders(text)
     focus = snapshot.get('order_id') if isinstance(snapshot, dict) else None
     return named or ({focus} if focus else set())
+
+
+def _ambiguous_order_response(oid, candidates):
+    return {
+        'error': 'ambiguous_order',
+        'order_id': oid,
+        'message': (
+            'Có nhiều đơn hàng của bạn trùng mã này từ các nguồn khác nhau. '
+            'Không tự chọn đơn: hãy hỏi lại khách xác nhận nguồn đặt hàng, ngày đặt hoặc tên sản phẩm '
+            'rồi gọi lại công cụ bằng internal_order_id tương ứng.'
+        ),
+        'candidates': candidates,
+    }
+
+
+def _fallback_order_details(order, product, *, now_ts=None):
+    eligibility = compute_order_eligibility(order, product=product, as_of=now_ts)
+    ordered_iso = (
+        None
+        if int(order.get('ordered_at_backfilled') or 0) == 1
+        else format_vn_iso(order.get('ordered_at'))
+    )
+    is_unrecorded_seed = (
+        order.get('source_system') == 'retailops_seed'
+        and order.get('payment_method') is None
+    )
+    payment_status = None if is_unrecorded_seed else order.get('payment_status')
+    return {
+        'ordered_at': ordered_iso,
+        'payment_method': order.get('payment_method'),
+        'payment_status': payment_status,
+        'shipping_fee': int(order['shipping_fee']) if order.get('shipping_fee') is not None else None,
+        'ship_to_area': order.get('ship_to_area'),
+        'promised_delivery_by': format_vn_iso(order.get('promised_delivery_by')),
+        'delivered_at': format_vn_iso(order.get('delivered_at')),
+        'refund_summary': None,
+        'payment': (
+            {'method': order.get('payment_method'), 'status': payment_status}
+            if order.get('payment_method') is not None
+            else None
+        ),
+        'delivery': (
+            {
+                'ship_to_area': order.get('ship_to_area'),
+                'promised_delivery_by': format_vn_iso(order.get('promised_delivery_by')),
+                'delivered_at': format_vn_iso(order.get('delivered_at')),
+            }
+            if (order.get('delivered_at') is not None or order.get('promised_delivery_by') is not None)
+            else None
+        ),
+        'refund': None,
+        'eligibility': eligibility,
+        'as_of': eligibility['as_of'],
+    }
 
 
 class BoundTools:
@@ -71,25 +137,57 @@ class BoundTools:
         self.shipment = None
         self.human_support = None
 
-    def read_order(self, oid, focus=True):
+    def _resolve_order_or_candidates(self, oid, *, focus=True):
         with self.store.connection() as db:
-            order = self.store.owned(db, self.customer, oid)
+            if hasattr(self.store, 'resolve_customer_order_in_tx'):
+                order, candidates = self.store.resolve_customer_order_in_tx(db, self.customer, oid)
+                if candidates is not None:
+                    return None, _ambiguous_order_response(oid, candidates)
+            else:
+                order = self.store.owned(db, self.customer, oid)
             product = self.catalog.for_order(order)
-            if hasattr(self.store, 'order_eligibility'):
-                eligibility = self.store.order_eligibility(order, db=db)
+            if hasattr(self.store, 'read_order_details_in_tx'):
+                details = self.store.read_order_details_in_tx(db, order)
             else:
                 now_ts = self.store._now() if hasattr(self.store, '_now') else None
-                eligibility = compute_order_eligibility(order, product=product, as_of=now_ts)
-        self.versions[oid] = order['version']
+                details = _fallback_order_details(order, product, now_ts=now_ts)
+        canonical_id = order['id']
+        ext_id = order.get('external_order_id') or canonical_id
+        self.versions[canonical_id] = order['version']
         if focus:
-            self.context = {'order_id': oid, 'product_id': product['id'] if product else None}
-        # Customer PII (name, phone, address, email, customer_id) is never sent to the model.
-        _PII_KEYS = ('customer_id', 'customer_name', 'phone', 'customer_phone', 'shipping_address', 'address', 'email')
-        return {k: v for k, v in order.items() if k not in _PII_KEYS} | {
-            'product_id': product['id'] if product else None, 'currency': 'VND',
-            'payment': None, 'delivery': None, 'address': None, 'refund': None,
-            'eligibility': eligibility, 'as_of': eligibility['as_of'],
-            'source': 'synthetic-demo/orders'}
+            self.context = {'order_id': canonical_id, 'product_id': product['id'] if product else order.get('product_id')}
+        enriched = {k: v for k, v in order.items() if k not in _PII_KEYS} | {
+            'id': canonical_id,
+            'internal_order_id': canonical_id,
+            'external_order_id': ext_id,
+            'source_system': order.get('source_system'),
+            'product_id': product['id'] if product else order.get('product_id'),
+            'currency': 'VND',
+            'ordered_at': details['ordered_at'],
+            'payment_method': details['payment_method'],
+            'payment_status': details['payment_status'],
+            'shipping_fee': details['shipping_fee'],
+            'ship_to_area': details['ship_to_area'],
+            'promised_delivery_by': details['promised_delivery_by'],
+            'delivered_at': details['delivered_at'],
+            'refund_summary': details['refund_summary'],
+            'payment': details['payment'],
+            'delivery': details['delivery'],
+            'address': None,
+            'refund': details['refund'],
+            'eligibility': details['eligibility'],
+            'as_of': details['as_of'],
+            'source': 'retailops_db/orders',
+        }
+        return enriched, None
+
+    def read_order(self, oid, focus=True):
+        order, ambiguous = self._resolve_order_or_candidates(oid, focus=focus)
+        if ambiguous is not None:
+            err = ApiError(409, 'ambiguous_order', ambiguous['message'])
+            err.ambiguous_payload = ambiguous
+            raise err
+        return order
 
     def __call__(self, name, args):
         if name == 'search_knowledge':
@@ -108,7 +206,12 @@ class BoundTools:
                 res['note'] = f'Showing {len(sliced)} of {len(orders)} orders; list is truncated and not complete.'
             return res
         if name == 'get_order':
-            return {'order': self.read_order(args['order_id'])}
+            try:
+                return {'order': self.read_order(args['order_id'], focus=True)}
+            except ApiError as exc:
+                if exc.code == 'ambiguous_order' and hasattr(exc, 'ambiguous_payload'):
+                    return exc.ambiguous_payload
+                raise
         if name == 'search_products':
             query = normalize(args['query']).strip()
             products = []
@@ -149,7 +252,12 @@ class BoundTools:
             return result
         if name == 'get_context':
             oid = self.context['order_id']
-            order = self.read_order(oid) if oid else None
+            if oid:
+                order, ambiguous = self._resolve_order_or_candidates(oid, focus=True)
+                if ambiguous is not None:
+                    return ambiguous
+            else:
+                order = None
             return {'order': order, 'product': self.catalog.products.get(self.context['product_id']),
                     'note': 'These are current focused records, not permission to change them.'}
         if name in ('prepare_order_action', 'prepare_cancellation'):
@@ -164,12 +272,20 @@ class BoundTools:
                 target_text = args.get('target_variant')
                 if target_text is not None and action_type != 'exchange':
                     return {'error': 'invalid_tool_arguments', 'message': 'target_variant is only allowed when action_type is exchange.'}
-            order = self.read_order(args['order_id'], focus=False)
+            order, ambiguous = self._resolve_order_or_candidates(args['order_id'], focus=False)
+            if ambiguous is not None:
+                self.prepared_order_action = None
+                self.cancel_order = None
+                return ambiguous
             if not is_order_confirmed(order, self.confirmed_orders):
                 self.prepared_order_action = None
                 self.cancel_order = None
                 return {
-                    'order_id': order['id'], 'action_type': action_type, 'eligible': False,
+                    'order_id': order['external_order_id'],
+                    'internal_order_id': order['id'],
+                    'external_order_id': order['external_order_id'],
+                    'action_type': action_type,
+                    'eligible': False,
                     'ineligible_reason': {
                         'code': 'order_not_confirmed',
                         'message': 'The customer did not name this order in their message and it is not the order in focus.'},
@@ -254,6 +370,9 @@ class BoundTools:
                 next_step = ineligible['message']
             result = {
                 'order': order,
+                'order_id': order['external_order_id'],
+                'internal_order_id': order['id'],
+                'external_order_id': order['external_order_id'],
                 'action_type': action_type,
                 'exchange_kind': exchange_kind,
                 'eligible': eligible,
@@ -286,118 +405,45 @@ class BoundTools:
                     'timezone': 'Asia/Ho_Chi_Minh (UTC+07:00)', 'source': 'backend_clock'}
         if name == 'track_shipment':
             oid = args['order_id']
-            order = self.read_order(oid)
-            carriers = {
-                'O-101': {
-                    'carrier': 'Giao Hàng Tiết Kiệm (GHTK)',
-                    'tracking_code': 'GHTK.VN.0918231',
-                    'status': 'in_transit',
-                    'status_text': 'Đang trung chuyển',
-                    'current_location': 'Bưu cục Tân Bình, TP.HCM',
-                    'shipper': 'Nguyễn Văn Nam (0903.112.334)',
-                    'estimated_delivery': 'Ngày mai (trước 17:00)',
-                    'steps': [
-                        {'time': '08:30 hôm nay', 'event': 'Đang trên xe trung chuyển liên tỉnh'},
-                        {'time': '20:15 hôm qua', 'event': 'Đã nhập kho phân loại Tân Bình'},
-                        {'time': '14:00 hôm qua', 'event': 'Shop RetailOps đã bàn giao cho shipper GHTK'}
-                    ]
-                },
-                'O-102': {
-                    'carrier': 'Giao Hàng Nhanh (GHN)',
-                    'tracking_code': 'GHN.VN.8839210',
-                    'status': 'delivered',
-                    'status_text': 'Đã giao thành công',
-                    'current_location': 'Người nhận đã ký nhận',
-                    'shipper': 'Trần Quốc Tuấn (0982.551.442)',
-                    'estimated_delivery': 'Đã giao lúc 10:15 hôm qua',
-                    'steps': [
-                        {'time': '10:15 hôm qua', 'event': 'Giao hàng thành công - Khách hàng đã ký nhận'},
-                        {'time': '08:00 hôm qua', 'event': 'Shipper đang trên đường giao tới bạn'}
-                    ]
-                },
-                'O-301': {
-                    'carrier': 'SPX Express',
-                    'tracking_code': 'SPX.VN.9928110',
-                    'status': 'delivery_failed_virtual',
-                    'status_text': 'Bưu tá báo không liên lạc được (Ảo)',
-                    'current_location': 'Bưu cục Cầu Giấy 2, Hà Nội',
-                    'shipper': 'Nguyễn Văn Tuấn (0934.112.233)',
-                    'system_note': 'Tổng đài kiểm tra bưu cục ghi nhận không có lịch sử cuộc gọi ra lúc cập nhật.',
-                    'can_reassign_today': True,
-                    'estimated_delivery': 'Hôm nay trước 18:00 (khiếu nại giao lại ngay trong ca)',
-                    'steps': [
-                        {'time': '14:30 hôm nay', 'event': 'Bưu tá báo không liên lạc được (Hệ thống ghi nhận nghi vấn báo ảo)'},
-                        {'time': '08:15 hôm nay', 'event': 'Bưu tá Nguyễn Văn Tuấn (0934.112.233) xuất kho giao hàng'},
-                        {'time': '05:00 hôm nay', 'event': 'Nhập bưu cục Cầu Giấy 2'}
-                    ]
-                },
-                'O-302': {
-                    'carrier': 'Giao Hàng Tiết Kiệm (GHTK)',
-                    'tracking_code': 'GHTK.VN.4419201',
-                    'status': 'delivered',
-                    'status_text': 'Đã giao thành công',
-                    'current_location': 'Khách hàng đã ký nhận',
-                    'shipper': 'Lê Quốc Bảo (0912.883.991)',
-                    'delivery_date': '5 ngày trước',
-                    'product_id': 'P-104',
-                    'warranty_eligible': True,
-                    'warranty_days_left': 85,
-                    'steps': [
-                        {'time': '11:00 5 ngày trước', 'event': 'Giao hàng thành công - Người nhận ký nhận'},
-                        {'time': '08:30 5 ngày trước', 'event': 'Shipper đang giao hàng'}
-                    ]
-                },
-                'O-303': {
-                    'carrier': 'Giao Hàng Nhanh (GHN)',
-                    'tracking_code': 'GHN.VN.7721890',
-                    'status': 'delivered',
-                    'status_text': 'Đã giao thành công',
-                    'current_location': 'Khách hàng đã ký nhận',
-                    'shipper': 'Hoàng Minh Đức (0977.441.229)',
-                    'delivery_date': '2 ngày trước',
-                    'product_id': 'P-203',
-                    'exchange_eligible': True,
-                    'steps': [
-                        {'time': '15:20 2 ngày trước', 'event': 'Giao hàng thành công - Người nhận ký nhận'},
-                        {'time': '09:00 2 ngày trước', 'event': 'Shipper đang giao hàng'}
-                    ]
-                },
-                'O-304': {
-                    'carrier': 'Giao Hàng Nhanh (GHN)',
-                    'tracking_code': 'GHN.VN.8821990',
-                    'status': 'sorting_delayed',
-                    'status_text': 'Nghẽn trạm phân loại Mega Sale > 48h',
-                    'current_location': 'Kho Tổng BN Mega SOC (Bắc Ninh)',
-                    'delayed_hours': 54,
-                    'reason': 'Quá tải phân loại hàng hóa đợt Mega Sale sàn TMĐT',
-                    'shipper': 'Chưa điều phối (Đang chờ phân tuyến trung chuyển)',
-                    'estimated_delivery': 'Dự kiến 20/09/2026',
-                    'eligible_voucher': 'VOUCHER_50K_COMPENSATION',
-                    'voucher_code': 'SALE50K-BN-SOC',
-                    'steps': [
-                        {'time': '54 giờ trước', 'event': 'Đã nhập Kho Tổng BN Mega SOC - Đang chờ phân loại'},
-                        {'time': '60 giờ trước', 'event': 'Rời kho lấy hàng Shop RetailOps'}
-                    ]
-                }
-            }
-            extra_shipments_file = ROOT / "data" / "mock_shipments.json"
-            if extra_shipments_file.exists():
-                try:
-                    with open(extra_shipments_file, "r", encoding="utf-8") as f:
-                        carriers.update(json.load(f))
-                except Exception:
-                    pass
-            # Unknown per-account synthetic orders have no carrier record. Do not
-            # fabricate a tracking code, carrier, location or delivery promise.
-            shipment = carriers.get(oid) or {
-                'carrier': None, 'tracking_code': None, 'status': 'unknown',
-                'status_text': 'Ch\u01b0a c\u00f3 d\u1eef li\u1ec7u h\u00e0nh tr\u00ecnh v\u1eadn chuy\u1ec3n',
-                'current_location': None, 'shipper': None,
-                'estimated_delivery': None, 'steps': []
+            with self.store.connection() as db:
+                if hasattr(self.store, 'resolve_customer_order_in_tx'):
+                    raw_order, candidates = self.store.resolve_customer_order_in_tx(db, self.customer, oid)
+                    if candidates is not None:
+                        self.shipment = None
+                        return _ambiguous_order_response(oid, candidates)
+                else:
+                    raw_order = self.store.owned(db, self.customer, oid)
+                product = self.catalog.for_order(raw_order)
+                if hasattr(self.store, 'read_order_details_in_tx'):
+                    details = self.store.read_order_details_in_tx(db, raw_order)
+                else:
+                    now_ts = self.store._now() if hasattr(self.store, '_now') else None
+                    details = _fallback_order_details(raw_order, product, now_ts=now_ts)
+                shipment = (
+                    self.store.read_order_shipment_in_tx(db, raw_order)
+                    if hasattr(self.store, 'read_order_shipment_in_tx')
+                    else None
+                )
+            canonical_id = raw_order['id']
+            ext_id = raw_order.get('external_order_id') or canonical_id
+            self.versions[canonical_id] = raw_order['version']
+            self.context = {
+                'order_id': canonical_id,
+                'product_id': product['id'] if product else raw_order.get('product_id'),
             }
             self.shipment = shipment
-            return {'order_id': oid, 'shipment': shipment, 'order_status': order['status'],
-                    'source': 'synthetic-demo/shipments'}
+            return {
+                'order_id': ext_id,
+                'internal_order_id': canonical_id,
+                'external_order_id': ext_id,
+                'source_system': raw_order.get('source_system'),
+                'order_status': raw_order.get('status'),
+                'promised_delivery_by': details.get('promised_delivery_by'),
+                'eligibility': details.get('eligibility'),
+                'as_of': details.get('as_of'),
+                'shipment': shipment,
+                'source': 'retailops_db/shipments',
+            }
         if name == 'check_inventory':
             pid = args['product_id']
             size = args['size'].upper().strip()
@@ -446,7 +492,6 @@ class BoundTools:
                     'escalated': False,
                     'message': 'Truy vấn hiện tại ở chế độ chỉ đọc (read-only); không thực hiện chuyển tiếp hoặc thay đổi trạng thái.',
                 }
-            from retailops.core import ApiError
             from retailops.guardrails.topic_filter import contains_canary_or_secret
 
             reason = str(args.get('reason') or '').strip()

@@ -1232,9 +1232,10 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                         'Chỉ được tra cứu công cụ trực tiếp trên ca hỗ trợ trong phạm vi Staff Desk.',
                     )
                 if isinstance(arguments, dict) and arguments.get('order_id'):
+                    arg_oid = str(arguments['order_id']).strip()
                     ord_row = db.execute(
-                        'SELECT customer_id FROM orders WHERE id=?',
-                        (arguments['order_id'],),
+                        'SELECT id, customer_id FROM orders WHERE customer_id=? AND (id=? OR external_order_id=?) LIMIT 1',
+                        (conv['customer_id'], arg_oid, arg_oid),
                     ).fetchone()
                     require(
                         ord_row is not None and ord_row['customer_id'] == conv['customer_id'],

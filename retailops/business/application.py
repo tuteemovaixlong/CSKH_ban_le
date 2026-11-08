@@ -528,6 +528,11 @@ class Application:
                         if isinstance(order_obj, dict) and 'id' in order_obj and 'version' in order_obj:
                             bound.versions[order_obj['id']] = order_obj['version']
                             bound.context = {'order_id': order_obj['id'], 'product_id': order_obj.get('product_id')}
+                    elif name == 'track_shipment' and isinstance(cached_res, dict) and not cached_res.get('error'):
+                        bound.shipment = cached_res.get('shipment')
+                        oid_internal = cached_res.get('internal_order_id') or cached_res.get('order_id')
+                        if oid_internal:
+                            bound.context['order_id'] = oid_internal
                     elif name == 'get_product' and isinstance(cached_res, dict) and isinstance(cached_res.get('product'), dict):
                         pid = cached_res['product'].get('id')
                         if bound.context['product_id'] != pid:

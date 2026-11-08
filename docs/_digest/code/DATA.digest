@@ -1,5 +1,5 @@
 ---
-> Sources: data/products.json; data/mock_shipments.json; data/deepseek_seed_data.json; data/knowledge/cancellation.md; data/knowledge/faq.md; data/knowledge/payments.md; data/knowledge/policy_mega_sale_delay_voucher.md; data/knowledge/policy_shipper_complaint.md; data/knowledge/policy_size_exchange_twoway.md; data/knowledge/policy_warranty_exchange_1to1.md; data/knowledge/returns.md; data/knowledge/shipping.md; evals/scenarios/baseline_v1.jsonl; evals/scenarios/benchmark_250.jsonl; evals/scenarios/master_250_v1.jsonl; evals/qrels/policy_qrels_v1.json; evals/fixtures/sidecar_250.json; evals/harness/constants.py; evals/harness/runner.py; evals/harness/qrels.py; evals/harness/sidecar.py; evals/harness/writer.py; docs/phase4/PHASE_4_INFRASTRUCTURE_SPEC.md; docs/phase4/PLAN_PHASE_4_EVALUATION.md; docs/phase4/PHASE_4_ACCEPTANCE_CRITERIA.md
+> Sources: data/products.json; data/connectors/marketplace_sim.json; data/knowledge/cancellation.md; data/knowledge/faq.md; data/knowledge/payments.md; data/knowledge/policy_mega_sale_delay_voucher.md; data/knowledge/policy_shipper_complaint.md; data/knowledge/policy_size_exchange_twoway.md; data/knowledge/policy_warranty_exchange_1to1.md; data/knowledge/returns.md; data/knowledge/shipping.md; evals/scenarios/baseline_v1.jsonl; evals/scenarios/benchmark_250.jsonl; evals/scenarios/master_250_v1.jsonl; evals/qrels/policy_qrels_v1.json; evals/fixtures/sidecar_250.json; evals/harness/constants.py; evals/harness/runner.py; evals/harness/qrels.py; evals/harness/sidecar.py; evals/harness/writer.py; docs/phase4/PHASE_4_INFRASTRUCTURE_SPEC.md; docs/phase4/PLAN_PHASE_4_EVALUATION.md; docs/phase4/PHASE_4_ACCEPTANCE_CRITERIA.md
 > SHA: 8a666fcce464c96b1dd5fc6848a2d4168c6505d1 — local HEAD; merged SHA after G2 [UNVERIFIED].
 > Generated: 2026-10-08; local read-only inventory/hash computation.
 ---
@@ -48,8 +48,7 @@
 | Field | Value | Citation file:line |
 |---|---|---|
 | products.json |source=“Danh mục giả lập RetailOps v1”;19products/452lines; raw1d942f28d67d5f90ca94e4dd274230ef305b1b2891d060157ba54822f9db886c; LF4a3e81d744b1c475018b2e42be638cdce93c05ee1b4504a81f18d1e954be914f | data/products.json:2-452; computation §1 |
-| mock_shipments.json |8order-keyedentries/210lines; rawa396fb87d7df226fd9af0f24707c859f1522d1bed658aeea117942d91de064ba; LFb74d66a5dc6aea5f5d8c041ded6050d7642a28fc4ec819f315af9d74cefaf4b8 | data/mock_shipments.json:1-210; computation §1 |
-| deepseek_seed_data.json |products8/customers6/orders8/shipments8/inventory8;406lines; raw=LF b66498a424d4876bbab5fb464d4e9c410ed5d8cfed464c9b8260f3f382bd5b1a | data/deepseek_seed_data.json:2; data/deepseek_seed_data.json:127; data/deepseek_seed_data.json:165; data/deepseek_seed_data.json:231; data/deepseek_seed_data.json:369; computation §1 |
+| canonical shipments & demo events | Legacy static shipment/seed JSON files retired in W6.1b-1; shipments and orders ingested into canonical DB tables via `retailops-integration-v2` | data/connectors/marketplace_sim.json:1 |
 
 ## 5. Knowledge inventory — local computation, LF hashes
 
@@ -82,6 +81,6 @@
 
 - [UNVERIFIED] Merged SHA/G2: source remains PENDING (docs/phase4/PHASE_4_ACCEPTANCE_CRITERIA.md:104).
 - [UNVERIFIED] Named human creator/creation timestamp of benchmarks/qrels/fixtures: scanned metadata do not provide these fields (evals/scenarios/benchmark_250.jsonl:1-250; evals/qrels/policy_qrels_v1.json:1-2214; evals/fixtures/sidecar_250.json:1-4002).
-- [UNVERIFIED] Model training corpus/fine-tuning splits/benchmark exposure history: not supplied by cited data; eval overlap alone does not establish train/test non-contamination (data/deepseek_seed_data.json:1-406; evals/scenarios/benchmark_250.jsonl:1-250).
+- [UNVERIFIED] Model training corpus/fine-tuning splits/benchmark exposure history: not supplied by cited data; eval overlap alone does not establish train/test non-contamination (evals/scenarios/benchmark_250.jsonl:1-250).
 - [UNVERIFIED] Semantic/template overlap and train-vs-KB leakage are not checked by §6 exact set intersections (evals/scenarios/benchmark_250.jsonl:1-250; data/knowledge/faq.md:1-13).
 - [UNVERIFIED] Live DB/index corpus/hash cannot be determined from local seed files (docs/phase4/PHASE_4_INFRASTRUCTURE_SPEC.md:64).

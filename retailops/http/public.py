@@ -163,11 +163,20 @@ class PublicWeb:
         method, path, host = env.get('REQUEST_METHOD'), env.get('PATH_INFO', ''), env.get('HTTP_HOST', '')
         mime, headers = 'application/json; charset=utf-8', []
         if path == '/internal' or path.startswith('/internal/'):
-            assert_no_proxy_headers(env)
-            m = INTERNAL_INGEST_ROUTE_RE.fullmatch(path)
-            require(m is not None, 404, 'not_found', 'Không tìm thấy đường dẫn.')
-            require(method == 'POST', 405, 'method_not_allowed', 'Phương thức không được hỗ trợ.')
-            require(not env.get('QUERY_STRING'), 400, 'unexpected_query', 'Đường dẫn không nhận tham số truy vấn.')
+            try:
+                assert_no_proxy_headers(env)
+                m = INTERNAL_INGEST_ROUTE_RE.fullmatch(path)
+                require(m is not None, 404, 'not_found', 'Không tìm thấy đường dẫn.')
+                require(method == 'POST', 405, 'method_not_allowed', 'Phương thức không được hỗ trợ.')
+                require(not env.get('QUERY_STRING'), 400, 'unexpected_query', 'Đường dẫn không nhận tham số truy vấn.')
+            except ApiError:
+                clen = env.get('CONTENT_LENGTH', '')
+                if clen.isascii() and clen.isdecimal() and 0 < int(clen) <= MAX_EVENT_BODY_BYTES and 'wsgi.input' in env:
+                    try:
+                        env['wsgi.input'].read(int(clen))
+                    except Exception:
+                        pass
+                raise
             raw_body = self.raw_json_bytes(env)
             status, payload = handle_internal_event_post(
                 self.sessions,

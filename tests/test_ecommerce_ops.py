@@ -33,6 +33,51 @@ class TestEcommerceOps(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.store = BusinessStore(Path(self.temp.name) / "business.sqlite3")
         self.store.seed()
+        now_ts = self.store._now()
+        with self.store.connection() as db:
+            db.execute(
+                """INSERT INTO shipments (
+                    shipment_id, order_id, source_system, external_shipment_id, carrier, tracking_code,
+                    status, carrier_status_raw, current_area, estimated_delivery_at, delivered_at,
+                    delivery_attempts, shipper_name, shipper_phone_masked, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    "shp_o301", "O-301", "marketplace_sim", "EXT-SHP-301",
+                    "SPX Express", "SPX.VN.9928110",
+                    "delivery_failed", "DELIVERY_FAIL", "Bưu cục Cầu Giấy 2, Hà Nội",
+                    now_ts + 14400.0, None, 1,
+                    "Nguyễn Văn Tuấn", "093****233", now_ts - 1800.0,
+                ),
+            )
+            db.execute(
+                """INSERT INTO shipment_events (
+                    shipment_event_id, shipment_id, occurred_at, status, carrier_status_raw,
+                    description, fail_reason, hub_name, district, province, estimated_delivery_at, source_event_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    "se_o301_1", "shp_o301", now_ts - 1800.0, "delivery_failed", "DELIVERY_FAIL",
+                    "Giao hàng không thành công", "Không liên lạc được người nhận",
+                    "Bưu cục Cầu Giấy 2", "Cầu Giấy", "Hà Nội", now_ts + 14400.0, "evt_o301_fail_1",
+                ),
+            )
+            db.execute(
+                "UPDATE orders SET status = 'shipping', promised_delivery_by = ? WHERE id = 'O-304'",
+                (now_ts - 54.0 * 3600.0,),
+            )
+            db.execute(
+                """INSERT INTO shipments (
+                    shipment_id, order_id, source_system, external_shipment_id, carrier, tracking_code,
+                    status, carrier_status_raw, current_area, estimated_delivery_at, delivered_at,
+                    delivery_attempts, shipper_name, shipper_phone_masked, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    "shp_o304", "O-304", "marketplace_sim", "EXT-SHP-304",
+                    "Giao Hàng Nhanh (GHN)", "GHN.VN.8821990",
+                    "in_transit", "congested_at_soc", "Kho Tổng BN Mega SOC, Bắc Ninh",
+                    now_ts + 48.0 * 3600.0, None, 0,
+                    None, None, now_ts - 3600.0,
+                ),
+            )
         self.catalog = Catalog()
         self.tools = BoundTools(
             self.store, self.catalog, "C-003",
@@ -41,16 +86,19 @@ class TestEcommerceOps(unittest.TestCase):
         )
 
     def test_sop1_fake_delivery_attempt_lookup(self):
-        """SOP 1: Shipper fake delivery attempt -> AI retrieves driver name, phone, and reassign flag."""
+        """SOP 1: Shipper failed delivery attempt -> DB-backed shipment exposes masked driver phone and fail reason."""
         shipment_data = self.tools("track_shipment", {"order_id": "O-301"})
         shipment = shipment_data["shipment"]
 
         self.assertEqual(shipment_data["order_id"], "O-301")
         self.assertEqual(shipment["carrier"], "SPX Express")
-        self.assertEqual(shipment["status"], "delivery_failed_virtual")
-        self.assertIn("0934.112.233", shipment["shipper"])
-        self.assertIn("Nguyễn Văn Tuấn", shipment["shipper"])
-        self.assertTrue(shipment["can_reassign_today"])
+        self.assertEqual(shipment["status"], "delivery_failed")
+        self.assertEqual(shipment["carrier_status_raw"], "DELIVERY_FAIL")
+        self.assertEqual(shipment["shipper_name"], "Nguyễn Văn Tuấn")
+        self.assertEqual(shipment["shipper_phone_masked"], "093****233")
+        self.assertNotIn("0934112233", str(shipment_data))
+        self.assertEqual(shipment["delivery_attempts"], 1)
+        self.assertIn("Không liên lạc", shipment["fail_reason"])
 
     def test_sop2_damaged_item_goes_to_the_model_with_server_tools(self):
         """SOP 2 (W3.2-D3/D7): a damaged-item complaint reaches the dispute worker, which lets the model read the
@@ -119,7 +167,7 @@ class TestEcommerceOps(unittest.TestCase):
         self.assertNotIn("action_proposal", processed_state)
 
     def test_sop4_mega_sale_sorting_delay_voucher(self):
-        """SOP 4: Sorting hub bottleneck (>48h delay) -> AI detects delay and provides 50K compensation voucher."""
+        """SOP 4: Sorting hub bottleneck (>48h delay) -> DB-backed shipment + read-time eligibility detects delay without unverified voucher."""
         tools_c004 = BoundTools(
             self.store, self.catalog, "C-004",
             {"order_id": "O-304", "product_id": "P-401"},
@@ -129,10 +177,12 @@ class TestEcommerceOps(unittest.TestCase):
         shipment = shipment_data["shipment"]
 
         self.assertEqual(shipment["carrier"], "Giao Hàng Nhanh (GHN)")
-        self.assertEqual(shipment["status"], "sorting_delayed")
-        self.assertGreater(shipment["delayed_hours"], 48)
-        self.assertIn("BN Mega SOC", shipment["current_location"])
-        self.assertEqual(shipment["voucher_code"], "SALE50K-BN-SOC")
+        self.assertEqual(shipment["status"], "in_transit")
+        self.assertEqual(shipment["carrier_status_raw"], "congested_at_soc")
+        self.assertIn("BN Mega SOC", shipment["current_area"])
+        self.assertTrue(shipment_data["eligibility"]["is_late_vs_promised"])
+        self.assertGreater(shipment_data["eligibility"]["late_by_hours"], 48)
+        self.assertNotIn("voucher_code", shipment)
 
     def test_sop5_customer_extreme_rage_strict_mode(self):
         """SOP 5: Extreme rage / social boycott threat -> Strict mode de-escalation & red alert escalation."""

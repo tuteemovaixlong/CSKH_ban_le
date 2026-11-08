@@ -95,7 +95,7 @@ class TestDeployGuard(unittest.TestCase):
             "opsconsole/client.js",
             "data/smoke.jsonl",
             "data/products.json",
-            "data/mock_shipments.json",
+            "data/connectors/marketplace_sim.json",
             "data/users.json",
             "mcp_config.json",
             ".dockerignore",

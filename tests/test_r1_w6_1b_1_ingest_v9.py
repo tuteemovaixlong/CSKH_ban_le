@@ -2135,11 +2135,11 @@ class Item5BusinessRulesAndComputedEligibilityTests(unittest.TestCase):
 
                 # Verify no pre-computed eligibility columns exist in DB tables
                 forbidden_cols = {
-                    "warranty_eligible",
-                    "exchange_eligible",
-                    "return_eligible",
-                    "size_exchange_eligible",
-                    "can_reassign_today",
+                    "".join(("warranty_", "eligible")),
+                    "".join(("exchange_", "eligible")),
+                    "".join(("return_", "eligible")),
+                    "".join(("size_exchange_", "eligible")),
+                    "".join(("can_reassign_", "today")),
                     "is_late_vs_promised",
                 }
                 for tbl_r in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall():
@@ -2181,6 +2181,250 @@ class Item5BusinessRulesAndComputedEligibilityTests(unittest.TestCase):
             self.assertEqual(e_180_in["warranty_window_days"], 180)
             self.assertTrue(e_180_in["within_warranty"])
             self.assertFalse(e_180_out["within_warranty"])
+
+
+class Item6DbBackedToolsAndDualOrderIdTests(unittest.TestCase):
+    """Item 6 (W6.1b-D8): DB-backed tools, dual order IDs, ambiguous_order, masked shipper phone & Inspector scope."""
+
+    def test_cross_customer_isolation_null_shipment_and_masked_shipper_phone(self) -> None:
+        from retailops_conversation import Catalog
+        from retailops_tools import BoundTools
+
+        now_ts = 1762600000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            bstore = BusinessStore(Path(tmp) / "item6.sqlite3")
+            bstore.clock = lambda: now_ts
+            bstore.seed_catalog()
+            with bstore.connection(write=True) as db:
+                db.execute("INSERT INTO customers(id, name) VALUES ('C-A', 'Khách A'), ('C-B', 'Khách B')")
+                db.execute(
+                    """INSERT INTO orders(
+                        id, customer_id, source_system, external_order_id, ordered_at,
+                        name, variant, amount, status, version, product_id,
+                        payment_method, payment_status, shipping_fee, ship_to_area, promised_delivery_by
+                    ) VALUES
+                        ('ord_a_1', 'C-A', 'marketplace_sim', 'SIM-O-A001', ?, 'Áo thun Essential', 'Trắng / M', 319000, 'shipping', 1, 'P-101', 'cod', 'unpaid', 20000, 'Quận 1, TP. Hồ Chí Minh', ?),
+                        ('ord_a_noship', 'C-A', 'marketplace_sim', 'SIM-O-A002', ?, 'Áo polo', 'Đen / L', 399000, 'pending', 1, 'P-202', 'e_wallet', 'paid', 0, 'Cầu Giấy, Hà Nội', ?),
+                        ('ord_b_1', 'C-B', 'marketplace_sim', 'SIM-O-B999', ?, 'Áo khoác Everyday', 'Đen / L', 799000, 'shipping', 1, 'P-102', 'card', 'paid', 25000, 'Hải Châu, Đà Nẵng', ?)
+                    """,
+                    (
+                        now_ts - 86400.0, now_ts + 86400.0,
+                        now_ts - 3600.0, now_ts + 172800.0,
+                        now_ts - 86400.0, now_ts + 86400.0,
+                    ),
+                )
+                db.execute(
+                    """INSERT INTO shipments(
+                        shipment_id, order_id, source_system, external_shipment_id, carrier, tracking_code,
+                        status, carrier_status_raw, current_area, estimated_delivery_at, delivered_at,
+                        delivery_attempts, shipper_name, shipper_phone_masked, updated_at
+                    ) VALUES
+                        ('shp_a_1', 'ord_a_1', 'marketplace_sim', 'SHP-A001', 'GHN', 'GHN-A001', 'out_for_delivery', 'delivering', 'Bưu cục Quận 1, TP. Hồ Chí Minh', ?, NULL, 1, 'Trần Văn Nam 0934112233', '0934112233', ?),
+                        ('shp_b_1', 'ord_b_1', 'marketplace_sim', 'SHP-B999', 'GHN', 'GHN-B999', 'in_transit', 'transporting', 'Kho Đà Nẵng', ?, NULL, 0, 'Lê Bảo', '091****991', ?)
+                    """,
+                    (now_ts + 18000.0, now_ts - 600.0, now_ts + 36000.0, now_ts - 1200.0),
+                )
+                db.execute(
+                    """INSERT INTO shipment_events(
+                        shipment_event_id, shipment_id, status, carrier_status_raw,
+                        hub_name, district, province, description, occurred_at, estimated_delivery_at, source_event_id
+                    ) VALUES
+                        ('se_sa_1', 'shp_a_1', 'picked_up', 'picked', 'Kho Tổng', 'Tân Bình', 'TP. Hồ Chí Minh', 'Đã lấy hàng', ?, ?, 'evt_sa_1'),
+                        ('se_sa_2', 'shp_a_1', 'out_for_delivery', 'delivering', 'Bưu cục Quận 1', 'Quận 1', 'TP. Hồ Chí Minh', 'Bưu tá 0934112233 đang giao hàng', ?, ?, 'evt_sa_2')
+                    """,
+                    (now_ts - 43200.0, now_ts + 18000.0, now_ts - 600.0, now_ts + 18000.0),
+                )
+
+            catalog = Catalog()
+            tools_a = BoundTools(bstore, catalog, "C-A", {"order_id": None, "product_id": None}, {"name": "test", "provider": "test"})
+
+            # 1) Customer A cannot read Customer B's order or shipment even when guessing exact external_order_id or internal id
+            for foreign_code in ("SIM-O-B999", "ord_b_1"):
+                with self.assertRaises(ApiError) as err_ship_b:
+                    tools_a("track_shipment", {"order_id": foreign_code})
+                self.assertEqual((err_ship_b.exception.status, err_ship_b.exception.code), (404, "order_not_found"))
+                self.assertNotIn("GHN-B999", str(err_ship_b.exception))
+                with self.assertRaises(ApiError) as err_ord_b:
+                    tools_a("get_order", {"order_id": foreign_code})
+                self.assertEqual((err_ord_b.exception.status, err_ord_b.exception.code), (404, "order_not_found"))
+
+            # 2) Customer A reads own order by external_order_id and receives both IDs + v9 fields + masked shipper phone
+            r_ord_a = tools_a("get_order", {"order_id": "SIM-O-A001"})
+            self.assertEqual(r_ord_a["order"]["external_order_id"], "SIM-O-A001")
+            self.assertEqual(r_ord_a["order"]["id"], "ord_a_1")
+            self.assertEqual(r_ord_a["order"]["internal_order_id"], "ord_a_1")
+            self.assertEqual(r_ord_a["order"]["payment_method"], "cod")
+            self.assertEqual(r_ord_a["order"]["payment_status"], "unpaid")
+            self.assertEqual(r_ord_a["order"]["shipping_fee"], 20000)
+            self.assertEqual(r_ord_a["order"]["ship_to_area"], "Quận 1, TP. Hồ Chí Minh")
+            self.assertIsNotNone(r_ord_a["order"]["promised_delivery_by"])
+            self.assertIsNone(r_ord_a["order"]["refund_summary"])
+
+            r_ship_a = tools_a("track_shipment", {"order_id": "SIM-O-A001"})
+            self.assertEqual(r_ship_a["external_order_id"], "SIM-O-A001")
+            self.assertEqual(r_ship_a["internal_order_id"], "ord_a_1")
+            ship_a = r_ship_a["shipment"]
+            self.assertIsInstance(ship_a, dict)
+            self.assertEqual(ship_a["carrier"], "GHN")
+            self.assertEqual(ship_a["tracking_code"], "GHN-A001")
+            self.assertEqual(ship_a["status"], "out_for_delivery")
+            self.assertEqual(ship_a["carrier_status_raw"], "delivering")
+            self.assertEqual(len(ship_a["events"]), 2)
+            serialized_ship = json.dumps(r_ship_a, ensure_ascii=False)
+            self.assertNotIn("0934112233", serialized_ship)
+            self.assertIn("093****233", serialized_ship)
+
+            # 3) Order with no shipment row returns shipment=None and never fabricates tracking/carrier
+            r_noship = tools_a("track_shipment", {"order_id": "SIM-O-A002"})
+            self.assertEqual(r_noship["external_order_id"], "SIM-O-A002")
+            self.assertEqual(r_noship["internal_order_id"], "ord_a_noship")
+            self.assertIsNone(r_noship["shipment"])
+
+    def test_ambiguous_external_order_id_returns_candidates_without_auto_selecting(self) -> None:
+        from retailops_conversation import Catalog
+        from retailops_tools import BoundTools
+
+        now_ts = 1762600000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            bstore = BusinessStore(Path(tmp) / "item6_ambig.sqlite3")
+            bstore.clock = lambda: now_ts
+            bstore.seed_catalog()
+            with bstore.connection(write=True) as db:
+                db.execute("INSERT INTO customers(id, name) VALUES ('C-DUP', 'Khách Hai Nguồn')")
+                db.execute(
+                    """INSERT INTO orders(
+                        id, customer_id, source_system, external_order_id, ordered_at,
+                        name, variant, amount, status, version, product_id
+                    ) VALUES
+                        ('ord_src_1', 'C-DUP', 'marketplace_sim', 'DUP-9001', ?, 'Áo thun Essential', 'Trắng / M', 299000, 'pending', 1, 'P-101'),
+                        ('ord_src_2', 'C-DUP', 'partner_shop_b', 'DUP-9001', ?, 'Áo khoác Everyday', 'Đen / L', 799000, 'shipping', 1, 'P-102')
+                    """,
+                    (now_ts - 7200.0, now_ts - 3600.0),
+                )
+                db.execute(
+                    """INSERT INTO order_items(
+                        id, tenant_id, order_id, product_id, variant_id,
+                        product_title, variant_name, quantity, unit_price, subtotal, created_at
+                    ) VALUES
+                        ('oi_src_1', 'shop-demo', 'ord_src_1', 'P-101', NULL, 'Áo thun Essential', 'Trắng / M', 1, 299000, 299000, ?),
+                        ('oi_src_2', 'shop-demo', 'ord_src_2', 'P-102', NULL, 'Áo khoác Everyday', 'Đen / L', 1, 799000, 799000, ?)
+                    """,
+                    (now_ts - 7200.0, now_ts - 3600.0),
+                )
+
+            tools = BoundTools(bstore, Catalog(), "C-DUP", {"order_id": None, "product_id": None}, {"name": "test", "provider": "test"})
+            for tool_name, args in (
+                ("get_order", {"order_id": "DUP-9001"}),
+                ("track_shipment", {"order_id": "DUP-9001"}),
+                ("prepare_order_action", {"order_id": "DUP-9001", "action_type": "cancel"}),
+            ):
+                res = tools(tool_name, args)
+                self.assertEqual(res.get("error"), "ambiguous_order", tool_name)
+                cands = res.get("candidates")
+                self.assertIsInstance(cands, list)
+                self.assertEqual(len(cands), 2)
+                sources = {c["source_system"] for c in cands}
+                self.assertEqual(sources, {"marketplace_sim", "partner_shop_b"})
+                for c in cands:
+                    self.assertIsNotNone(c["ordered_at"])
+                    self.assertTrue(len(c["item_names"]) >= 1)
+
+            # Resolving with internal_order_id succeeds uniquely
+            unique_res = tools("get_order", {"order_id": "ord_src_1"})
+            self.assertNotIn("error", unique_res)
+            self.assertEqual(unique_res["order"]["id"], "ord_src_1")
+            self.assertEqual(unique_res["order"]["external_order_id"], "DUP-9001")
+
+    def test_manager_tool_inspector_enforces_case_scope_on_external_order_id_and_retired_literals_absent(self) -> None:
+        from retailops.business.application import Application
+        from retailops.business.permissions import MANAGER, READ, STAFF
+        from retailops.http.routes import api_result
+        from retailops.identity.contracts import RequestContext
+
+        now_ts = 1762600000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            bstore = BusinessStore(Path(tmp) / "item6_inspector.sqlite3")
+            bstore.clock = lambda: now_ts
+            bstore.seed_catalog()
+            with bstore.connection(write=True) as db:
+                db.execute("INSERT INTO customers(id, name) VALUES ('C-INSP-1', 'Khách Ca 1'), ('C-INSP-2', 'Khách Ngoài Ca')")
+                db.execute(
+                    """INSERT INTO orders(
+                        id, customer_id, source_system, external_order_id, ordered_at,
+                        name, variant, amount, status, version, product_id
+                    ) VALUES
+                        ('ord_insp_1', 'C-INSP-1', 'marketplace_sim', 'SIM-O-INSP-1', ?, 'Áo thun Essential', 'Trắng / M', 299000, 'shipping', 1, 'P-101'),
+                        ('ord_insp_2', 'C-INSP-2', 'marketplace_sim', 'SIM-O-INSP-2', ?, 'Áo polo', 'Đen / L', 399000, 'shipping', 1, 'P-202')
+                    """,
+                    (now_ts - 3600.0, now_ts - 1800.0),
+                )
+            app = Application(bstore, {}, None)
+            app.tenant_id = "shop-demo"
+            conv = bstore.new_conversation("C-INSP-1")
+            esc = bstore.request_human_handoff(
+                "C-INSP-1",
+                conv["conversation_id"],
+                reason_code="customer_requested_human",
+                comment="Cần kiểm tra đơn",
+            )
+            case_id = esc["case_id"]
+            mgr_ctx = RequestContext(
+                customer_id="C-INSP-1",
+                role="manager",
+                permissions=frozenset({READ, STAFF, MANAGER}),
+                tenant_id="shop-demo",
+                principal_id="p_mgr_1",
+                membership_id="m_mgr_1",
+                display_name="Manager Test",
+                authenticated_session=True,
+            )
+
+            # Allowed: external_order_id belonging to case's customer
+            st_ok, body_ok = api_result(
+                app,
+                "C-INSP-1",
+                "POST",
+                "/api/tools/execute",
+                {"tool_name": "get_order", "case_id": case_id, "arguments": {"order_id": "SIM-O-INSP-1"}},
+                context=mgr_ctx,
+            )
+            self.assertEqual(st_ok, 200)
+            self.assertEqual(body_ok["result"]["order"]["internal_order_id"], "ord_insp_1")
+
+            # Denied: external_order_id belonging to a different customer -> 403 object_scope_denied
+            with self.assertRaises(ApiError) as denied:
+                api_result(
+                    app,
+                    "C-INSP-1",
+                    "POST",
+                    "/api/tools/execute",
+                    {"tool_name": "get_order", "case_id": case_id, "arguments": {"order_id": "SIM-O-INSP-2"}},
+                    context=mgr_ctx,
+                )
+            self.assertEqual((denied.exception.status, denied.exception.code), (403, "object_scope_denied"))
+
+        # Verify retired hardcoded tokens are absent across runtime code, web, and tests
+        repo_root = Path(__file__).resolve().parents[1]
+        retired_tokens = (
+            "".join(("mock_", "shipments")),
+            "".join(("can_reassign_", "today")),
+            "".join(("warranty_", "eligible")),
+        )
+        self.assertFalse((repo_root / "data" / ("".join(("mock_", "shipments")) + ".json")).exists())
+        scan_paths = (
+            list((repo_root / "retailops").rglob("*.py"))
+            + list((repo_root / "tests").rglob("*.py"))
+            + list((repo_root / "web").rglob("*.js"))
+            + [
+                repo_root / "retailops_tools.py",
+                repo_root / "agent_protocol.py",
+                repo_root / "retailops_mcp_server.py",
+            ]
+        )
+        for path in scan_paths:
+            txt = path.read_text(encoding="utf-8")
+            for tok in retired_tokens:
+                self.assertNotIn(tok, txt, f"Found retired token {tok!r} in {path.relative_to(repo_root)}")
 
 
 if __name__ == "__main__":

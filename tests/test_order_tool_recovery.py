@@ -176,9 +176,7 @@ class OrderToolRecoveryTests(unittest.TestCase):
         bound = BoundTools(self.store, self.app.catalog, 'C-001', snapshot, {})
         result = bound('track_shipment', {'order_id': 'O-819125'})
         self.assertEqual(result['order_status'], 'pending')
-        self.assertIsNone(result['shipment']['carrier'])
-        self.assertIsNone(result['shipment']['tracking_code'])
-        self.assertIsNone(result['shipment']['estimated_delivery'])
+        self.assertIsNone(result['shipment'])
 
     def test_database_outage_is_not_order_not_found(self):
         with patch.object(OpenRouterAgent, 'request', return_value=api_response(None, [('get_order', {'order_id': 'O-819125'})])):

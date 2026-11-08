@@ -172,6 +172,20 @@ class MultiAgentChatIntegrationTests(unittest.TestCase):
         self.assertEqual(history[0]["content"], "Thời tiết hôm nay đẹp quá shop ơi!")
 
     def test_order_inquiry_routes_to_order_agent_and_tracks_shipment(self):
+        with self.store.connection() as db:
+            db.execute(
+                """INSERT INTO shipments (
+                    shipment_id, order_id, source_system, external_shipment_id, carrier, tracking_code,
+                    status, carrier_status_raw, current_area, estimated_delivery_at, delivered_at,
+                    delivery_attempts, shipper_name, shipper_phone_masked, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    "shp_chat_101", "O-101", "marketplace_sim", "EXT-SHP-CHAT-101",
+                    "Giao Hàng Tiết Kiệm (GHTK)", "GHTK.VN.0918231",
+                    "in_transit", "transporting", "Bưu cục Tân Bình, TP.HCM",
+                    1794218400.0, None, 0, "Nguyễn Văn Nam", "090****334", 1794132000.0,
+                ),
+            )
         result = self.chat("Kiểm tra giúp tôi đơn hàng O-101 xem đang ở đâu nhé")
         self.assertEqual(result["action"], "reply")
         trace = result["trace"]

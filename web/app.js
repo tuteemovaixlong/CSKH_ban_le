@@ -3,7 +3,14 @@
 // Same-origin API; credentials and inference URLs are never stored in the page.
 const byId = id => document.getElementById(id);
 const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; };
-const statuses = {pending: 'Chờ xử lý', delivered: 'Đã giao', cancelled: 'Đã hủy'};
+const statuses = {pending: 'Chờ xử lý', shipping: 'Đang vận chuyển', delivered: 'Đã giao', cancelled: 'Đã hủy'};
+const formatCustomerOrderId = order => (order && typeof order === 'object' ? (order.external_order_id || order.id || '—') : '—');
+const formatDualOrderId = (internalId, externalId) => {
+  const intId = typeof internalId === 'string' ? internalId.trim() : '';
+  const extId = typeof externalId === 'string' ? externalId.trim() : '';
+  if (extId && intId && extId !== intId) return `${extId} (${intId})`;
+  return extId || intId || '—';
+};
 // W3.2-D2: request reasons come from the one shared catalog (GET /api/order-action-reasons); no list lives here.
 let reasonCatalog = null;
 const stockLabels = {in_stock: 'còn hàng', out_of_stock: 'hết hàng', unknown: 'chưa rõ tồn kho'};
@@ -853,6 +860,7 @@ function renderOrder() {
     const q = orderSearchQuery.toLowerCase();
     filtered = filtered.filter(o =>
       o.id.toLowerCase().includes(q) ||
+      (o.external_order_id && o.external_order_id.toLowerCase().includes(q)) ||
       ((o.display_name || o.name) && (o.display_name || o.name).toLowerCase().includes(q)) ||
       (o.customer_id && o.customer_id.toLowerCase().includes(q))
     );
@@ -868,7 +876,8 @@ function renderOrder() {
     tabs.replaceChildren();
     for (const item of orders) {
       const isSelected = Boolean(selected && item.id === selected);
-      const button = el('button', isSelected ? 'selected' : '', item.id);
+      const tabLabel = isManager ? formatDualOrderId(item.id, item.external_order_id) : formatCustomerOrderId(item);
+      const button = el('button', isSelected ? 'selected' : '', tabLabel);
       button.dataset.order = item.id;
       button.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
       button.onclick = () => act(() => lookupOrder(item.id));
@@ -889,8 +898,9 @@ function renderOrder() {
         card.dataset.order = item.id;
 
         const header = el('div', 'order-card-header');
+        const cardLabel = isManager ? formatDualOrderId(item.id, item.external_order_id) : formatCustomerOrderId(item);
         header.append(
-          el('span', 'order-card-oid', item.id),
+          el('span', 'order-card-oid', cardLabel),
           el('span', 'order-card-badge ' + item.status, statuses[item.status] || item.status)
         );
 
@@ -921,7 +931,8 @@ function renderOrder() {
   }
 
   const top = el('div', 'order-line');
-  top.append(el('h3', '', order.id), el('span', 'badge ' + order.status, statuses[order.status]));
+  const detailHeading = isManager ? formatDualOrderId(order.id, order.external_order_id) : formatCustomerOrderId(order);
+  top.append(el('h3', '', detailHeading), el('span', 'badge ' + order.status, statuses[order.status] || order.status));
   const item = el('div', 'item'), copy = el('div');
   copy.append(el('strong', '', order.display_name || order.name), el('p', '', order.variant));
   item.append(copy);
@@ -930,9 +941,11 @@ function renderOrder() {
   area.append(top, el('p', 'order-date', 'Đơn ' + (order.customer_id ? ('khách ' + order.customer_id + ' · ') : '') + 'Phiên bản ' + order.version), item, total);
   area.append(el('p', 'order-policy', order.status === 'pending'
     ? 'Có thể yêu cầu hủy. Cần chọn lý do và xác nhận gửi cửa hàng duyệt.'
-    : order.status === 'delivered'
-      ? 'Đơn đã giao: có thể gửi yêu cầu trả hàng hoặc đổi hàng kèm ảnh bằng chứng.'
-      : 'Đơn đã hủy. Trạng thái được lưu trên máy chủ.'));
+    : order.status === 'shipping'
+      ? 'Đơn đang vận chuyển: không hỗ trợ hủy tự phục vụ; vui lòng nhắn CSKH nếu cần hỗ trợ.'
+      : order.status === 'delivered'
+        ? 'Đơn đã giao: có thể gửi yêu cầu trả hàng hoặc đổi hàng kèm ảnh bằng chứng.'
+        : 'Đơn đã hủy. Trạng thái được lưu trên máy chủ.'));
 
   const lookup = el('button', 'order-action', 'Tra cứu đơn này');
   lookup.onclick = () => act(() => lookupOrder(order.id));
@@ -1342,22 +1355,53 @@ function showShipment(row, shipment) {
   const card = el('div', 'shipment-card');
   const header = el('div', 'shipment-header');
   const status = typeof shipment.status === 'string' && /^[a-z_]{1,40}$/.test(shipment.status) ? shipment.status : 'unknown';
+  const rawCode = shipmentText(shipment.carrier_status_raw);
+  const statusBase = shipmentText(shipment.status_text) || 'Ch\u01b0a c\u00f3 d\u1eef li\u1ec7u h\u00e0nh tr\u00ecnh';
+  const pillLabel = rawCode ? `${statusBase} (${rawCode})` : statusBase;
   header.append(
     el('strong', '', '\ud83d\ude9a ' + (shipmentText(shipment.carrier) || 'Th\u00f4ng tin v\u1eadn chuy\u1ec3n')),
-    el('span', 'tracking-pill ' + status, shipmentText(shipment.status_text) || 'Ch\u01b0a c\u00f3 d\u1eef li\u1ec7u h\u00e0nh tr\u00ecnh')
+    el('span', 'tracking-pill ' + status, pillLabel)
   );
   const body = el('div', 'shipment-body');
-  for (const [key, label] of [
-    ['tracking_code', 'M\u00e3 v\u1eadn \u0111\u01a1n: '], ['current_location', 'V\u1ecb tr\u00ed hi\u1ec7n t\u1ea1i: '],
-    ['shipper', 'Shipper: '], ['estimated_delivery', '\u23f0 D\u1ef1 ki\u1ebfn nh\u1eadn: ']
-  ]) {
-    const value = shipmentText(shipment[key]);
-    if (value) body.append(el('p', key === 'estimated_delivery' ? 'delivery-eta' : '', label + value));
+  const trackingCode = shipmentText(shipment.tracking_code);
+  if (trackingCode) body.append(el('p', '', 'M\u00e3 v\u1eadn \u0111\u01a1n: ' + trackingCode));
+  const area = shipmentText(shipment.current_area) || shipmentText(shipment.current_location);
+  if (area) body.append(el('p', '', 'V\u1ecb tr\u00ed g\u1ea7n nh\u1ea5t: ' + area));
+  const shipperName = shipmentText(shipment.shipper_name);
+  const shipperPhone = shipmentText(shipment.shipper_phone_masked);
+  const shipperCombined = (shipperName && shipperPhone)
+    ? `${shipperName} (${shipperPhone})`
+    : (shipperName || shipperPhone || shipmentText(shipment.shipper));
+  if (shipperCombined) body.append(el('p', '', 'Shipper: ' + shipperCombined));
+  const eta = shipmentText(shipment.estimated_delivery_at) || shipmentText(shipment.estimated_delivery);
+  if (eta) body.append(el('p', 'delivery-eta', '\u23f0 D\u1ef1 ki\u1ebfn nh\u1eadn: ' + eta));
+  if (typeof shipment.delivery_attempts === 'number' && Number.isFinite(shipment.delivery_attempts) && shipment.delivery_attempts > 0) {
+    body.append(el('p', '', 'S\u1ed1 l\u1ea7n giao: ' + shipment.delivery_attempts));
   }
-  const steps = Array.isArray(shipment.steps) ? shipment.steps.filter(step => step && shipmentText(step.event)).slice(0, 20) : [];
-  if (steps.length) {
+  const failReason = shipmentText(shipment.fail_reason);
+  if (failReason) body.append(el('p', '', 'L\u00fd do giao th\u1ea5t b\u1ea1i: ' + failReason));
+
+  const events = Array.isArray(shipment.events)
+    ? shipment.events.filter(ev => ev && typeof ev === 'object' && (shipmentText(ev.description) || shipmentText(ev.status_text) || shipmentText(ev.location))).slice(0, 30)
+    : [];
+  const legacySteps = !events.length && Array.isArray(shipment.steps)
+    ? shipment.steps.filter(step => step && shipmentText(step.event)).slice(0, 20)
+    : [];
+  if (events.length) {
     const timeline = el('div', 'shipment-timeline');
-    for (const step of steps) {
+    for (const ev of events) {
+      const item = el('div', 'timeline-item');
+      const loc = shipmentText(ev.location)
+        || [shipmentText(ev.hub_name), shipmentText(ev.district), shipmentText(ev.province)].filter(Boolean).join(', ');
+      const desc = shipmentText(ev.description) || shipmentText(ev.status_text);
+      const evtLabel = (loc && desc && !desc.includes(loc)) ? `${loc} \u2014 ${desc}` : (desc || loc);
+      item.append(el('span', 'timeline-time', shipmentText(ev.occurred_at)), el('span', 'timeline-event', evtLabel));
+      timeline.append(item);
+    }
+    body.append(timeline);
+  } else if (legacySteps.length) {
+    const timeline = el('div', 'shipment-timeline');
+    for (const step of legacySteps) {
       const item = el('div', 'timeline-item');
       item.append(el('span', 'timeline-time', shipmentText(step.time)), el('span', 'timeline-event', shipmentText(step.event)));
       timeline.append(item);
@@ -1419,6 +1463,7 @@ function showTrace(row, trace, replayed = false) {
   }
   const toolErrors = {
     order_not_found: 'kh\u00f4ng t\u00ecm th\u1ea5y trong t\u00e0i kho\u1ea3n',
+    ambiguous_order: 'm\u00e3 \u0111\u01a1n kh\u1edbp nhi\u1ec1u \u0111\u01a1n; c\u1ea7n h\u1ecfi r\u00f5',
     tool_not_allowed: 'ngo\u00e0i ph\u1ea1m vi worker; kh\u00f4ng th\u1ef1c thi',
     invalid_tool_arguments: 'tham s\u1ed1 kh\u00f4ng h\u1ee3p l\u1ec7',
     product_not_found: 'ch\u01b0a t\u00ecm th\u1ea5y trong danh m\u1ee5c',
@@ -2190,7 +2235,7 @@ async function selectInspectorCase(caseId) {
     if (primaryOrder) {
       const parsedVar = parseInspectorVariantSample(primaryOrder.variant);
       sample = {
-        orderId: primaryOrder.id || sample.orderId,
+        orderId: primaryOrder.external_order_id || primaryOrder.id || sample.orderId,
         productId: primaryOrder.product_id || '',
         color: parsedVar.color,
         size: parsedVar.size
@@ -2227,7 +2272,8 @@ async function openToolInspector() {
       inspectorCasesById.set(c.case_id, c);
       if (inspectorCaseSelect) {
         const statusTag = c.status === 'resolved' ? 'Đã đóng' : (c.holder ? 'Đang xử lý' : 'Hàng chờ');
-        const label = `${c.case_id} · ${c.customer_name || c.customer_id || 'Khách'}${c.order_id ? ' (' + c.order_id + ')' : ''} [${statusTag}]`;
+        const dualOid = c.order_id ? ' (' + formatDualOrderId(c.order_id, c.external_order_id) + ')' : '';
+        const label = `${c.case_id} · ${c.customer_name || c.customer_id || 'Khách'}${dualOid} [${statusTag}]`;
         const opt = el('option', '', label);
         opt.value = c.case_id;
         inspectorCaseSelect.append(opt);
@@ -2822,7 +2868,8 @@ function renderStaffCaseOrderActions() {
     const topRow = el('div', 'case-ops-req-top');
     const ord = req.order || {};
     const ordName = ord.display_name || ord.name || '';
-    const ordParts = [`Đơn ${req.order_id}`];
+    const ordLabel = formatDualOrderId(req.order_id || ord.id, req.external_order_id || ord.external_order_id);
+    const ordParts = [`Đơn ${ordLabel}`];
     if (ordName) ordParts.push(ordName + (ord.variant ? ` (${ord.variant})` : ''));
     if (ord.amount != null) ordParts.push(money(ord.amount));
     if (ord.status) ordParts.push(`[${statuses[ord.status] || ord.status}]`);
@@ -3078,7 +3125,7 @@ function renderStaffCaseOrderActions() {
           const allowedNote = hasOpen
             ? 'đang có yêu cầu mở'
             : (choices.length ? ('cho phép: ' + choices.map(c => c.label).join(', ')) : 'không đủ điều kiện');
-          const opt = el('option', '', `${o.id} · ${o.display_name || o.name || 'Đơn hàng'} [${statusVi} · ${allowedNote}]`);
+          const opt = el('option', '', `${formatDualOrderId(o.id, o.external_order_id)} · ${o.display_name || o.name || 'Đơn hàng'} [${statusVi} · ${allowedNote}]`);
           opt.value = o.id;
           opt.disabled = hasOpen || choices.length === 0;
           cOrdSel.append(opt);
@@ -3326,7 +3373,7 @@ function renderStaffCaseOrderActions() {
         const ordSel = el('select', 'case-ops-select');
         ordSel.id = 'staff-df-order-select';
         eligiblePendingOrders.forEach(o => {
-          const opt = el('option', '', `${o.id} · ${o.display_name || o.name || 'Đơn hàng'} (${money(o.amount || 0)})`);
+          const opt = el('option', '', `${formatDualOrderId(o.id, o.external_order_id)} · ${o.display_name || o.name || 'Đơn hàng'} (${money(o.amount || 0)})`);
           opt.value = o.id;
           ordSel.append(opt);
         });
@@ -4813,7 +4860,7 @@ function renderManagerOrderActionsTable() {
     tdReq.append(reqCode);
 
     const tdType = el('td', '', formatStaffOrderActionType(item));
-    const tdOrder = el('td', '', item.order_id || '—');
+    const tdOrder = el('td', '', formatDualOrderId(item.order_id, item.external_order_id));
     const tdCustomer = el('td', '', item.customer_display_name || 'Khách hàng');
     const tdStatus = el('td', '', STAFF_OA_STATUS_VI[item.status] || item.status || '—');
 
@@ -5132,7 +5179,7 @@ document.querySelectorAll('.sop-action-btn').forEach(btn => {
     } else if (sop === '4') {
       await lookupOrder(oid || 'O-304');
       mgrDialog?.close?.();
-      message(`[Mô phỏng] SOP 4: Mô phỏng cấp mã voucher đền bù 50.000đ [SALE50K-BN-SOC] cho đơn hàng ${oid || 'O-304'}. (Chế độ demo giao diện - chưa kết nối backend mutation)`, 'assistant', 'ui_simulation');
+      message(`[Mô phỏng] SOP 4: Mô phỏng tạo đề xuất bồi thường giao trễ 50.000đ cho đơn hàng ${oid || 'O-304'}. (Chế độ demo giao diện - chưa kết nối backend mutation)`, 'assistant', 'ui_simulation');
     } else if (sop === '5') {
       mgrDialog?.close?.();
       message(`[Mô phỏng] SOP 5: Mô phỏng tiếp nhận khẩn cấp & kích hoạt Strict Mode. Chuyên viên quản lý ca sẽ liên hệ khách hàng. (Chế độ demo giao diện - chưa kết nối backend mutation)`, 'assistant', 'ui_simulation');
@@ -5167,6 +5214,7 @@ async function loadManagerOrdersTable() {
   if (searchQ) {
     filtered = filtered.filter(o =>
       o.id.toLowerCase().includes(searchQ) ||
+      (o.external_order_id && o.external_order_id.toLowerCase().includes(searchQ)) ||
       ((o.display_name || o.name) && (o.display_name || o.name).toLowerCase().includes(searchQ)) ||
       (o.customer_id && o.customer_id.toLowerCase().includes(searchQ))
     );
@@ -5174,20 +5222,22 @@ async function loadManagerOrdersTable() {
 
   if (!filtered.length) {
     const tr = el('tr');
-    tr.innerHTML = '<td colspan="8" class="manager-table-empty">Không tìm thấy đơn hàng nào.</td>';
+    const tdEmpty = el('td', 'manager-table-empty', 'Không tìm thấy đơn hàng nào.');
+    tdEmpty.colSpan = 8;
+    tr.append(tdEmpty);
     tbody.append(tr);
     return;
   }
 
   for (const o of filtered) {
     const tr = el('tr');
-    const tdId = el('td'); tdId.innerHTML = `<strong>${o.id}</strong>`;
+    const tdId = el('td'); tdId.append(el('strong', '', formatDualOrderId(o.id, o.external_order_id)));
     const tdCust = el('td', '', o.customer_id || 'Khách');
     const tdName = el('td', '', o.display_name || o.name);
     const tdVar = el('td', '', o.variant);
     const tdAmount = el('td', '', money(o.amount));
     const tdStatus = el('td');
-    tdStatus.innerHTML = `<span class="order-card-badge ${o.status}">${statuses[o.status] || o.status}</span>`;
+    tdStatus.append(el('span', 'order-card-badge ' + o.status, statuses[o.status] || o.status));
     const tdVer = el('td', '', 'v' + o.version);
 
     const tdAction = el('td');
