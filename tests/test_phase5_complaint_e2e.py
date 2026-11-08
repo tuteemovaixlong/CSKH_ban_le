@@ -311,11 +311,11 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
 
         # Primary synthetic tenant
         self.tenant_id = "tenant-p5d-demo"
-        self.sessions.provision_tenant(self.tenant_id, "RetailOps P5D Synthetic Shop", seed_demo=True)
+        self.sessions.provision_tenant(self.tenant_id, "RetailOps P5D Synthetic Shop", seed_demo=False).seed_catalog()
 
         # Secondary synthetic tenant for cross-tenant testing
         self.other_tenant_id = "tenant-p5d-other"
-        self.sessions.provision_tenant(self.other_tenant_id, "Other Synthetic Shop", seed_demo=True)
+        self.sessions.provision_tenant(self.other_tenant_id, "Other Synthetic Shop", seed_demo=False).seed_catalog()
 
         # Integration v2 ingest service
         self.adapter = IntegrationIngestService(self.sessions, digest_key=TEST_DIGEST_KEY)
@@ -1648,8 +1648,8 @@ class Phase5ComplaintPgvectorTests(unittest.TestCase):
         # 1. Provision two distinct tenants
         self.tenant_a = "tenant-p5d-pg-a"
         self.tenant_b = "tenant-p5d-pg-b"
-        self.sessions.provision_tenant(self.tenant_a, "PG Shop A", seed_demo=True)
-        self.sessions.provision_tenant(self.tenant_b, "PG Shop B", seed_demo=True)
+        self.sessions.provision_tenant(self.tenant_a, "PG Shop A", seed_demo=False).seed_catalog()
+        self.sessions.provision_tenant(self.tenant_b, "PG Shop B", seed_demo=False).seed_catalog()
 
         self.bstore_a = self.sessions.business_store(self.tenant_a)
         self.bstore_b = self.sessions.business_store(self.tenant_b)
@@ -1817,7 +1817,7 @@ class Phase5ComplaintPgvectorTests(unittest.TestCase):
 
         # 4. Safe fallback: unpopulated tenant knowledge base
         tenant_c = "tenant-p5d-pg-empty"
-        self.sessions.provision_tenant(tenant_c, "Empty Shop", seed_demo=True)
+        self.sessions.provision_tenant(tenant_c, "Empty Shop", seed_demo=False).seed_catalog()
         c_cookie = f"{self.sessions.cookie_name}=" + self.sessions.login_google(
             email="buyer.empty@synthetic.retailops",
             name="Empty Buyer",
