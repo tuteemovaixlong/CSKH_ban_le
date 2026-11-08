@@ -20,7 +20,7 @@ from retailops.core import ApiError
 from retailops.identity.postgres import PostgresSessions
 from retailops.integration.ingest import IntegrationIngestService
 from retailops.storage import cli as database_cli
-from retailops.storage.pg_repositories import PostgresIdentityStore
+from retailops.storage.pg_repositories import PostgresBusinessStore, PostgresIdentityStore
 from retailops.storage.pg_schema import initialize
 from retailops.storage.postgres import IDENTITY_SCHEMA, tenant_schema, transaction
 from scripts.postgres_test_guard import require_disposable_postgres_test_target
@@ -102,8 +102,10 @@ class PostgresSalesImportTests(unittest.TestCase):
         PostgresIdentityStore(DSN, create=True)
         self.sessions = PostgresSessions(DSN, api_infer=fixtures.ModelFixture(), api_daily_limit=1)
         self.tenant = 'shop-a'
-        self.sessions.provision_tenant(self.tenant, 'Cửa hàng A', seed_demo=True)
-        self.sessions.provision_tenant('shop-b', 'Cửa hàng B', seed_demo=True)
+        store_a = self.sessions.provision_tenant(self.tenant, 'Cửa hàng A', seed_demo=False)
+        store_a.seed_catalog()
+        store_b = self.sessions.provision_tenant('shop-b', 'Cửa hàng B', seed_demo=False)
+        store_b.seed_catalog()
         self.service = IntegrationIngestService(self.sessions, digest_key=TEST_DIGEST_KEY)
         self.control = self.sessions.control
         self.bstore = self.sessions.business_store(self.tenant)
@@ -249,7 +251,7 @@ class PostgresSalesImportTests(unittest.TestCase):
             external_order_id='SIM-O-PG-RB',
             external_customer_id='pg_rb_buyer',
         )
-        orig_conn = self.bstore.connection
+        orig_conn = PostgresBusinessStore.connection
 
         class FaultyPgProxy:
             def __init__(self, real_db):
@@ -264,11 +266,11 @@ class PostgresSalesImportTests(unittest.TestCase):
                 return getattr(self._real_db, name)
 
         @contextmanager
-        def faulty_conn(*args, **kwargs):
-            with orig_conn(*args, **kwargs) as real_db:
+        def faulty_conn(store_self, *args, **kwargs):
+            with orig_conn(store_self, *args, **kwargs) as real_db:
                 yield FaultyPgProxy(real_db)
 
-        with patch.object(self.bstore, 'connection', faulty_conn):
+        with patch.object(PostgresBusinessStore, 'connection', faulty_conn):
             with self.assertRaises(ApiError) as ctx:
                 self.service.ingest_event(event, tenant_id=self.tenant)
         self.assertEqual(ctx.exception.code, 'database_unavailable')

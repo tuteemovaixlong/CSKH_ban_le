@@ -523,7 +523,8 @@ class RealPostgresBusinessV7Tests(unittest.TestCase):
         self.addCleanup(self.clear)
         PostgresIdentityStore(DSN, create=True)
         self.sessions = PostgresSessions(DSN, api_daily_limit=1)
-        self.sessions.provision_tenant('shop-a', 'Cửa hàng A', seed_demo=True)
+        store = self.sessions.provision_tenant('shop-a', 'Cửa hàng A', seed_demo=False)
+        store.seed_catalog()
         self.schema = tenant_schema(self.sessions.control.tenant('shop-a')['storage_key'])
 
     def constraints(self):
@@ -545,6 +546,7 @@ class RealPostgresBusinessV7Tests(unittest.TestCase):
                 "(type = 'exchange' AND exchange_kind IN ('size', 'one_to_one')) "
                 "OR (type <> 'exchange' AND exchange_kind IS NULL))",
                 "UPDATE retailops_schema SET version = 6 WHERE component = 'business'",
+                "INSERT INTO customers(id, name) VALUES ('C-001', 'Khách W3') ON CONFLICT DO NOTHING",
                 "INSERT INTO orders(id, customer_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version) VALUES "
                 "('O-V7B', 'C-001', 'retailops_seed', 'O-V7B', 1.0, 'Áo', 'Đen / L', 1, 'delivered', 1), ('O-V7C', 'C-001', 'retailops_seed', 'O-V7C', 1.0, 'Áo', 'Đen / M', 1, 'delivered', 1), "
                 "('O-V7A', 'C-001', 'retailops_seed', 'O-V7A', 1.0, 'Áo', 'Đen / S', 1, 'pending', 1)",

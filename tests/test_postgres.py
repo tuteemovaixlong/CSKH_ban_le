@@ -2152,13 +2152,13 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             pg_ingest.ingest_event(pg_purged_evt, tenant_id='shop-a')
         self.assertEqual(ctx_pg_tomb.exception.code, 'order_purged_tombstone')
 
-        # Google login on PostgresSessions preserves imported order and never adds sample orders
+        # Google login on a non-demo PostgresSessions tenant (shop-b) preserves imported order and never adds sample orders
         sec_pg_imp = self.sessions.login_google(
-            'pg.imported.only@example.com', 'PG Imported Only', sub='pg-sub-imp-only-01', email_verified=True, tenant_id='shop-a'
+            'pg.imported.only@example.com', 'PG Imported Only', sub='pg-sub-imp-only-01', email_verified=True, tenant_id='shop-b'
         )
         cid_pg_imp = self.request('/api/session', cookie=f"{self.sessions.cookie_name}={sec_pg_imp}")[1]['customer_id']
         pg_ingest.link_external_customer(
-            tenant_id='shop-a',
+            tenant_id='shop-b',
             source_system='marketplace_sim',
             external_customer_id='ext-pg-imp-only-01',
             customer_id=cid_pg_imp,
@@ -2169,7 +2169,7 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             'event_id': 'pg-evt-imp-only-920001',
             'event_type': 'order.created',
             'source_system': 'marketplace_sim',
-            'merchant_id': 'shop-a',
+            'merchant_id': 'shop-b',
             'occurred_at': '2026-11-01T10:05:00+07:00',
             'sequence': 1,
             'data': {
@@ -2185,14 +2185,28 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
                 'recipient': {'name': 'Nguyễn Văn Thử', 'phone': '0901234567', 'address_line': '123 Đường Mẫu', 'ward': 'Phường Bến Nghé', 'district': 'Quận 1', 'province': 'TP. Hồ Chí Minh'},
             },
         }
-        pg_imp_res = pg_ingest.ingest_event(pg_valid_evt, tenant_id='shop-a')
+        pg_imp_res = pg_ingest.ingest_event(pg_valid_evt, tenant_id='shop-b')
         self.assertTrue(pg_imp_res.success)
         sec_pg_imp2 = self.sessions.login_google(
-            'pg.imported.only@example.com', 'PG Imported Only', sub='pg-sub-imp-only-01', email_verified=True, tenant_id='shop-a'
+            'pg.imported.only@example.com', 'PG Imported Only', sub='pg-sub-imp-only-01', email_verified=True, tenant_id='shop-b'
         )
         code_pg_imp, body_pg_imp, _ = self.request('/api/orders', cookie=f"{self.sessions.cookie_name}={sec_pg_imp2}")
         self.assertEqual(code_pg_imp, 200)
         self.assertEqual([o['id'] for o in body_pg_imp['orders']], [pg_imp_res.order_id])
+
+        # And on demo-seeded tenant (shop-a), first-time Google login seeds 3 account-template orders once and re-login is idempotent
+        sec_pg_demo1 = self.sessions.login_google(
+            'pg.demo.acct@example.com', 'PG Demo Account', sub='pg-sub-demo-acct-01', email_verified=True, tenant_id='shop-a'
+        )
+        code_d1, body_d1, _ = self.request('/api/orders', cookie=f"{self.sessions.cookie_name}={sec_pg_demo1}")
+        self.assertEqual(code_d1, 200)
+        self.assertEqual(len(body_d1['orders']), 3)
+        sec_pg_demo2 = self.sessions.login_google(
+            'pg.demo.acct@example.com', 'PG Demo Account', sub='pg-sub-demo-acct-01', email_verified=True, tenant_id='shop-a'
+        )
+        code_d2, body_d2, _ = self.request('/api/orders', cookie=f"{self.sessions.cookie_name}={sec_pg_demo2}")
+        self.assertEqual(code_d2, 200)
+        self.assertEqual([o['id'] for o in body_d2['orders']], [o['id'] for o in body_d1['orders']])
 
     def test_purge_demo_order_cli_postgres_dry_run_readonly_and_execute_contract(self):
         """Phase 5 Fix B (FIXB-2): Real PostgreSQL CLI dry-run, SET TRANSACTION READ ONLY,
