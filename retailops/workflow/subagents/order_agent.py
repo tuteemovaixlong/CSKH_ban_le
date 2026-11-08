@@ -101,7 +101,7 @@ def _synthesize_order_response(tool_results):
         name = tr.get('name')
         if code:
             raw_id = tr.get('args', {}).get('order_id', '')
-            oid = raw_id if isinstance(raw_id, str) and re.fullmatch(r'[A-Z]{1,6}-[0-9]{1,8}', raw_id) else ''
+            oid = raw_id if isinstance(raw_id, str) and re.fullmatch(r'[A-Za-z0-9_-]{1,64}', raw_id) else ''
             if code == 'order_not_found':
                 parts.append(f'Kh\u00f4ng t\u00ecm th\u1ea5y \u0111\u01a1n h\u00e0ng {oid} trong c\u00e1c \u0111\u01a1n thu\u1ed9c t\u00e0i kho\u1ea3n c\u1ee7a anh/ch\u1ecb. '
                              'Vui l\u00f2ng ki\u1ec3m tra m\u00e3 ho\u1eb7c ch\u1ecdn m\u1ed9t \u0111\u01a1n trong danh s\u00e1ch b\u00ean ph\u1ea3i.')

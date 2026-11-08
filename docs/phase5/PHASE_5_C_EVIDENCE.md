@@ -200,7 +200,7 @@ K4–K6 là acceptance offline/merged của P5-C. P5-D được theo dõi riêng
 
 ### Blocker N1 — trùng `order_id` có thể đổi chủ đơn hàng — ĐÃ SỬA
 
-`SalesImportAdapter.ingest_event()` chỉ deduplicate theo `(source_system, event_id)` rồi dùng `ON CONFLICT(id) DO UPDATE` cho `orders` ([retailops/sales/adapter.py](../../retailops/sales/adapter.py)). Một event mới, hợp lệ và có `order_id` cũ nhưng `external_customer_id` khác sẽ ghi đè `customer_id` của đơn. Review tái hiện được: customer A import `order_id=same`, sau đó customer B import event khác với cùng `order_id`; đơn chuyển sang B. Đây vi phạm P5-K6 và có thể làm lộ/mất quyền sở hữu dữ liệu.
+`SalesImportAdapter.ingest_event()` chỉ deduplicate theo `(source_system, event_id)` rồi dùng `ON CONFLICT(id) DO UPDATE` cho `orders` (`retailops/sales/adapter.py`, đã thay bằng `retailops/integration/ingest.py` ở W6.1b-1). Một event mới, hợp lệ và có `order_id` cũ nhưng `external_customer_id` khác sẽ ghi đè `customer_id` của đơn. Review tái hiện được: customer A import `order_id=same`, sau đó customer B import event khác với cùng `order_id`; đơn chuyển sang B. Đây vi phạm P5-K6 và có thể làm lộ/mất quyền sở hữu dữ liệu.
 
 **Sửa:** trước khi ghi, adapter đọc chủ hiện tại của `order_id` trong cùng transaction; khác customer → `409 order_owner_conflict` và rollback; `DO UPDATE` không còn đụng `customer_id`. Regression: `N1OrderOwnershipTests` (5 test SQLite) + `test_n1_other_customer_cannot_take_over_order` (PostgreSQL).
 

@@ -285,17 +285,17 @@ class OrderToolRecoveryTests(unittest.TestCase):
         """T03: Sequence list_orders -> duplicate get_order -> unallowed tool does not trigger tool_response_failed."""
         tool_results = [
             {'name': 'list_orders', 'args': {}, 'result': {'orders': [
-                {'id': 'O-819126', 'name': 'Quần tây ống đứng tôn dáng', 'variant': 'Đen / L', 'amount': 520000, 'status': 'delivered'}
+                {'id': 'O-819126', 'name': 'Quần tây đen hàn quốc', 'variant': 'Đen / L', 'amount': 520000, 'status': 'delivered'}
             ]}},
             {'name': 'get_order', 'args': {'order_id': 'O-819126'}, 'result': {'order': {
-                'id': 'O-819126', 'name': 'Quần tây ống đứng tôn dáng', 'variant': 'Đen / L', 'amount': 520000, 'status': 'delivered'
+                'id': 'O-819126', 'name': 'Quần tây đen hàn quốc', 'variant': 'Đen / L', 'amount': 520000, 'status': 'delivered'
             }}},
             {'name': 'prepare_cancellation', 'args': {'order_id': 'O-819126'}, 'result': {'error': 'tool_not_allowed'}}
         ]
         res = _synthesize_order_response(tool_results)
         self.assertIsNotNone(res)
         self.assertIn('O-819126', res)
-        self.assertIn('Quần tây ống đứng tôn dáng', res)
+        self.assertIn('Quần tây đen hàn quốc', res)
         self.assertIn('Một phần tra cứu bổ sung không thực hiện được', res)
 
     def test_t04_distinct_ids_o12_and_o123_not_confused_by_substring(self):
@@ -425,7 +425,7 @@ class OrderToolRecoveryTests(unittest.TestCase):
 
         responses = [
             api_response(None, [('list_orders', {})]),
-            api_response('Bạn đã đặt Quần tây ống đứng tôn dáng trong đơn O-819126.')
+            api_response('Bạn đã đặt Quần tây đen hàn quốc trong đơn O-819126.')
         ]
         with patch.object(OpenRouterAgent, 'request', side_effect=responses) as req:
             result = self.app.chat('C-001', self.body('Có đơn nào mua món này không?', attachment=att))
@@ -479,14 +479,14 @@ class OrderToolRecoveryTests(unittest.TestCase):
         """T11: Candidate products from visual/search match are framed as candidates without 100% certainty."""
         tool_results = [
             {'name': 'search_products', 'args': {'query': 'quần tây'}, 'result': {'products': [
-                {'id': 'P-602', 'name': 'Quần tây ống đứng tôn dáng', 'category': 'Thời trang', 'variants': ['Đen · Size S/M/L'], 'price': 520000}
+                {'id': 'P-602', 'name': 'Quần tây đen hàn quốc', 'category': 'Thời trang', 'variants': ['Đen · Size S/M/L'], 'price': 520000}
             ]}}
         ]
         res = _synthesize_order_response(tool_results)
         self.assertIsNotNone(res)
         self.assertIn('Sản phẩm khớp trong danh mục (chưa xác nhận liên kết với đơn):', res)
         self.assertIn('P-602', res)
-        self.assertIn('Quần tây ống đứng tôn dáng', res)
+        self.assertIn('Quần tây đen hàn quốc', res)
 
     def test_t12_truncated_order_list_explicitly_informs_customer(self):
         """T12: When list_orders is truncated, synthesized response clearly notifies customer."""

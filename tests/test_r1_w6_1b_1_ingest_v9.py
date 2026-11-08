@@ -778,5 +778,425 @@ class RealPostgresBusinessV9Tests(unittest.TestCase):
                 )
 
 
+def _sample_v2_events() -> dict[str, dict]:
+    return {
+        "product.upserted": {
+            "contract": "retailops-integration-v2",
+            "event_id": "evt-prod-sample-0001",
+            "event_type": "product.upserted",
+            "source_system": "marketplace_sim",
+            "merchant_id": "shop-demo",
+            "occurred_at": "2026-10-01T08:00:00+07:00",
+            "sequence": 1,
+            "data": {
+                "external_product_id": "P-101",
+                "title": "Áo sơ mi Oxford nam",
+                "category": "Áo sơ mi",
+                "price": 350000,
+                "description": "Áo sơ mi công sở chất cotton thoáng mát.",
+                "material": "Cotton Oxford",
+                "care": "Giặt nước lạnh",
+                "warranty_days": 90,
+                "variants": [
+                    {
+                        "sku": "SKU-P101-WHT-M",
+                        "variant_name": "Trắng · Size M",
+                        "size": "M",
+                        "color": "Trắng",
+                        "price": 350000,
+                        "stock": 12,
+                    }
+                ],
+            },
+        },
+        "customer.upserted": {
+            "contract": "retailops-integration-v2",
+            "event_id": "evt-cust-sample-0001",
+            "event_type": "customer.upserted",
+            "source_system": "marketplace_sim",
+            "merchant_id": "shop-demo",
+            "occurred_at": "2026-10-01T08:05:00+07:00",
+            "sequence": 1,
+            "data": {
+                "external_customer_id": "SIM-C-0001",
+                "display_name": "Nguyễn Thị Minh",
+            },
+        },
+        "order.created": {
+            "contract": "retailops-integration-v2",
+            "event_id": "evt-ord-sample-0001",
+            "event_type": "order.created",
+            "source_system": "marketplace_sim",
+            "merchant_id": "shop-demo",
+            "occurred_at": "2026-10-01T09:00:00+07:00",
+            "sequence": 1,
+            "data": {
+                "external_order_id": "SIM-O-20261001-0001",
+                "external_customer_id": "SIM-C-0001",
+                "ordered_at": "2026-10-01T09:00:00+07:00",
+                "items": [
+                    {
+                        "sku": "SKU-P101-WHT-M",
+                        "external_product_id": "P-101",
+                        "title": "Áo sơ mi Oxford nam",
+                        "variant_name": "Trắng · Size M",
+                        "quantity": 1,
+                        "unit_price": 350000,
+                    }
+                ],
+                "shipping_fee": 25000,
+                "total": 375000,
+                "currency": "VND",
+                "payment_method": "cod",
+                "promised_delivery_by": "2026-10-04T18:00:00+07:00",
+                "recipient": {
+                    "name": "Nguyễn Thị Minh",
+                    "phone": "0901234567",
+                    "address_line": "123 Lê Lợi",
+                    "ward": "Phường Bến Nghé",
+                    "district": "Quận 1",
+                    "province": "TP. Hồ Chí Minh",
+                },
+            },
+        },
+        "order.status_changed": {
+            "contract": "retailops-integration-v2",
+            "event_id": "evt-ordst-sample-0002",
+            "event_type": "order.status_changed",
+            "source_system": "marketplace_sim",
+            "merchant_id": "shop-demo",
+            "occurred_at": "2026-10-01T11:00:00+07:00",
+            "sequence": 2,
+            "data": {
+                "external_order_id": "SIM-O-20261001-0001",
+                "status": "shipping",
+                "reason": None,
+            },
+        },
+        "shipment.updated": {
+            "contract": "retailops-integration-v2",
+            "event_id": "evt-shp-sample-0001",
+            "event_type": "shipment.updated",
+            "source_system": "marketplace_sim",
+            "merchant_id": "shop-demo",
+            "occurred_at": "2026-10-01T14:00:00+07:00",
+            "sequence": 1,
+            "data": {
+                "external_shipment_id": "SIM-S-20261001-0001",
+                "external_order_id": "SIM-O-20261001-0001",
+                "carrier": "GHN",
+                "tracking_code": "GHN88899900",
+                "carrier_status_raw": "transporting",
+                "hub_name": "Kho phân loại Quận 12",
+                "district": "Quận 12",
+                "province": "TP. Hồ Chí Minh",
+                "description": "Kiện hàng đang trung chuyển",
+                "fail_reason": None,
+                "shipper_name": "Trần Văn Giao",
+                "shipper_phone_masked": "0903***418",
+                "estimated_delivery_at": "2026-10-03T17:00:00+07:00",
+                "delivery_attempts": 0,
+            },
+        },
+        "payment.updated": {
+            "contract": "retailops-integration-v2",
+            "event_id": "evt-pay-sample-0001",
+            "event_type": "payment.updated",
+            "source_system": "payment_sim",
+            "merchant_id": "shop-demo",
+            "occurred_at": "2026-10-01T09:01:00+07:00",
+            "sequence": 1,
+            "data": {
+                "provider": "payment_sim",
+                "provider_txn_ref": "PAY-SIM-0001",
+                "external_order_id": "SIM-O-20261001-0001",
+                "method": "bank_transfer",
+                "amount": 375000,
+                "provider_status_raw": "PAY_SUCCEEDED",
+                "settled_at": "2026-10-01T09:01:00+07:00",
+            },
+        },
+        "refund.updated": {
+            "contract": "retailops-integration-v2",
+            "event_id": "evt-ref-sample-0001",
+            "event_type": "refund.updated",
+            "source_system": "payment_sim",
+            "merchant_id": "shop-demo",
+            "occurred_at": "2026-10-05T10:00:00+07:00",
+            "sequence": 1,
+            "data": {
+                "provider": "payment_sim",
+                "provider_refund_ref": "REF-SIM-0001",
+                "provider_txn_ref": "PAY-SIM-0001",
+                "external_order_id": "SIM-O-20261001-0001",
+                "amount": 350000,
+                "channel": "original_method",
+                "provider_status_raw": "REFUND_COMPLETED",
+                "failure_reason": None,
+                "initiated_at": "2026-10-05T09:00:00+07:00",
+                "completed_at": "2026-10-05T10:00:00+07:00",
+            },
+        },
+        "voucher.issued": {
+            "contract": "retailops-integration-v2",
+            "event_id": "evt-vch-sample-0001",
+            "event_type": "voucher.issued",
+            "source_system": "marketplace_sim",
+            "merchant_id": "shop-demo",
+            "occurred_at": "2026-10-06T10:00:00+07:00",
+            "sequence": 1,
+            "data": {
+                "external_voucher_id": "VCH-SIM-0001",
+                "code": "COMP50K-0001",
+                "voucher_type": "amount",
+                "value": 50000,
+                "valid_until": "2026-11-06T23:59:59+07:00",
+                "external_order_id": "SIM-O-20261001-0001",
+                "external_customer_id": "SIM-C-0001",
+                "request_ref": "req-comp-0001",
+            },
+        },
+        "voucher.requested": {
+            "contract": "retailops-integration-v2",
+            "event_id": "evt-vchreq-sample-0001",
+            "event_type": "voucher.requested",
+            "source_system": "retailops",
+            "merchant_id": "shop-demo",
+            "occurred_at": "2026-10-06T09:55:00+07:00",
+            "sequence": 1,
+            "data": {
+                "request_id": "req-comp-0001",
+                "external_order_id": "SIM-O-20261001-0001",
+                "external_customer_id": "SIM-C-0001",
+                "voucher_type": "amount",
+                "value": 50000,
+                "reason": "late_delivery",
+                "approved_by_role": "staff",
+            },
+        },
+    }
+
+
+class Item1ContractV2AndRetireV1Tests(unittest.TestCase):
+    """W6.1b-1 Item 1 (W6.1b-D3): RetailOps v2 contract validator and v1 sales retirement."""
+
+    def setUp(self) -> None:
+        self.samples = _sample_v2_events()
+
+    def test_all_event_types_and_nullable_fields_pass_retailops_validator(self) -> None:
+        import copy
+        from retailops.integration.contract import (
+            ALL_EVENT_TYPES,
+            ContractValidationError,
+            INBOUND_EVENT_TYPES,
+            validate_event_v2,
+        )
+
+        self.assertEqual(set(self.samples.keys()), set(ALL_EVENT_TYPES))
+        for etype, ev in self.samples.items():
+            with self.subTest(event_type=etype):
+                out = validate_event_v2(copy.deepcopy(ev))
+                self.assertEqual(out["event_type"], etype)
+                if etype in INBOUND_EVENT_TYPES:
+                    validate_event_v2(copy.deepcopy(ev), allow_requests=False)
+                else:
+                    with self.assertRaises(ContractValidationError):
+                        validate_event_v2(copy.deepcopy(ev), allow_requests=False)
+
+        refund = copy.deepcopy(self.samples["refund.updated"])
+        for f in ("provider_txn_ref", "provider_status_raw", "initiated_at", "completed_at"):
+            refund["data"][f] = None
+        validate_event_v2(refund)
+
+        voucher = copy.deepcopy(self.samples["voucher.issued"])
+        for f in ("valid_until", "external_order_id", "external_customer_id", "request_ref"):
+            voucher["data"][f] = None
+        validate_event_v2(voucher)
+
+    def test_w61a_intentional_negative_mutations_all_rejected(self) -> None:
+        import copy
+        from retailops.integration.contract import ContractValidationError, validate_event_v2
+        from retailops.integration.ingest import redact_order_created_recipient
+
+        # Missing envelope keys
+        for env_key in list(self.samples["order.created"].keys()):
+            m = copy.deepcopy(self.samples["order.created"])
+            del m[env_key]
+            with self.assertRaises(ContractValidationError):
+                validate_event_v2(m)
+
+        # Missing data keys for every event type
+        for etype, base in self.samples.items():
+            for dk in list(base["data"].keys()):
+                m = copy.deepcopy(base)
+                del m["data"][dk]
+                with self.assertRaises(ContractValidationError):
+                    validate_event_v2(m)
+
+        # Missing nested keys in variants, items, recipient
+        for sk in list(self.samples["product.upserted"]["data"]["variants"][0].keys()):
+            m = copy.deepcopy(self.samples["product.upserted"])
+            del m["data"]["variants"][0][sk]
+            with self.assertRaises(ContractValidationError):
+                validate_event_v2(m)
+        for sk in list(self.samples["order.created"]["data"]["items"][0].keys()):
+            m = copy.deepcopy(self.samples["order.created"])
+            del m["data"]["items"][0][sk]
+            with self.assertRaises(ContractValidationError):
+                validate_event_v2(m)
+        for sk in list(self.samples["order.created"]["data"]["recipient"].keys()):
+            m = copy.deepcopy(self.samples["order.created"])
+            del m["data"]["recipient"][sk]
+            with self.assertRaises(ContractValidationError):
+                validate_event_v2(m)
+
+        # Unknown fields at envelope, data, and nested levels
+        m_env = copy.deepcopy(self.samples["customer.upserted"])
+        m_env["extra_top"] = "forbidden"
+        with self.assertRaises(ContractValidationError):
+            validate_event_v2(m_env)
+
+        for etype, base in self.samples.items():
+            m = copy.deepcopy(base)
+            m["data"]["unexpected_field"] = 1
+            with self.assertRaises(ContractValidationError):
+                validate_event_v2(m)
+
+        for contact in ("phone", "email", "address"):
+            m = copy.deepcopy(self.samples["customer.upserted"])
+            m["data"][contact] = "0901234567"
+            with self.assertRaises(ContractValidationError):
+                validate_event_v2(m)
+
+        m_var = copy.deepcopy(self.samples["product.upserted"])
+        m_var["data"]["variants"][0]["extra"] = 1
+        with self.assertRaises(ContractValidationError):
+            validate_event_v2(m_var)
+
+        m_itm = copy.deepcopy(self.samples["order.created"])
+        m_itm["data"]["items"][0]["discount"] = 0
+        with self.assertRaises(ContractValidationError):
+            validate_event_v2(m_itm)
+
+        m_rec = copy.deepcopy(self.samples["order.created"])
+        m_rec["data"]["recipient"]["email"] = "x@y.com"
+        with self.assertRaises(ContractValidationError):
+            validate_event_v2(m_rec)
+
+        # Booleans, floats, empty items, non-dict, domain & cross-field rules
+        bad_cases: list[tuple[str, object]] = [("not_a_dict", ["bad"])]
+
+        def mut(etype: str, fn) -> dict:
+            d = copy.deepcopy(self.samples[etype])
+            fn(d)
+            return d
+
+        bad_cases.extend(
+            [
+                ("bool_sequence", mut("customer.upserted", lambda d: d.__setitem__("sequence", True))),
+                ("bool_price", mut("product.upserted", lambda d: d["data"].__setitem__("price", False))),
+                ("float_price", mut("product.upserted", lambda d: d["data"].__setitem__("price", 100.5))),
+                ("empty_items", mut("order.created", lambda d: d["data"].__setitem__("items", []))),
+                ("wrong_contract", mut("customer.upserted", lambda d: d.__setitem__("contract", "retailops-integration-v1"))),
+                ("short_event_id", mut("customer.upserted", lambda d: d.__setitem__("event_id", "short"))),
+                ("space_event_id", mut("customer.upserted", lambda d: d.__setitem__("event_id", "bad id spaces"))),
+                ("utc_z_ts", mut("customer.upserted", lambda d: d.__setitem__("occurred_at", "2026-10-01T08:00:00Z"))),
+                ("offset_08_ts", mut("customer.upserted", lambda d: d.__setitem__("occurred_at", "2026-10-01T08:00:00+08:00"))),
+                ("zero_sequence", mut("customer.upserted", lambda d: d.__setitem__("sequence", 0))),
+                ("neg_amount", mut("payment.updated", lambda d: d["data"].__setitem__("amount", -1))),
+                ("huge_amount", mut("payment.updated", lambda d: d["data"].__setitem__("amount", 10**12 + 1))),
+                ("long_text", mut("product.upserted", lambda d: d["data"].__setitem__("description", "A" * 501))),
+                ("email_in_text", mut("customer.upserted", lambda d: d["data"].__setitem__("display_name", "Khách a@b.vn"))),
+                ("total_mismatch", mut("order.created", lambda d: d["data"].__setitem__("total", d["data"]["total"] + 1000))),
+                ("promised_eq_ordered", mut("order.created", lambda d: d["data"].__setitem__("promised_delivery_by", d["data"]["ordered_at"]))),
+                ("wrong_currency", mut("order.created", lambda d: d["data"].__setitem__("currency", "USD"))),
+                ("wrong_pay_method", mut("order.created", lambda d: d["data"].__setitem__("payment_method", "crypto"))),
+                ("bad_order_status", mut("order.status_changed", lambda d: d["data"].__setitem__("status", "returned"))),
+                ("unmasked_shipper_phone", mut("shipment.updated", lambda d: d["data"].__setitem__("shipper_phone_masked", "0903123418"))),
+                ("attempts_gt_3", mut("shipment.updated", lambda d: d["data"].__setitem__("delivery_attempts", 4))),
+                ("mkt_prepaid_payment", mut("payment.updated", lambda d: (d.__setitem__("source_system", "marketplace_sim"), d["data"].__setitem__("method", "bank_transfer")))),
+                ("paysim_cod_payment", mut("payment.updated", lambda d: (d.__setitem__("source_system", "payment_sim"), d["data"].__setitem__("method", "cod")))),
+                ("bad_refund_channel", mut("refund.updated", lambda d: d["data"].__setitem__("channel", "cash"))),
+                ("wrong_refund_source", mut("refund.updated", lambda d: d.__setitem__("source_system", "marketplace_sim"))),
+                ("free_ship_nonzero", mut("voucher.issued", lambda d: (d["data"].__setitem__("voucher_type", "free_shipping"), d["data"].__setitem__("value", 30000)))),
+                ("voucher_customer_approver", mut("voucher.requested", lambda d: d["data"].__setitem__("approved_by_role", "customer"))),
+                ("voucher_bad_reason", mut("voucher.requested", lambda d: d["data"].__setitem__("reason", "vip_gift"))),
+            ]
+        )
+
+        # Redacted order.created cannot be re-imported (W6.1b-D7)
+        redacted_ord, redacted_paths, area = redact_order_created_recipient(self.samples["order.created"])
+        self.assertEqual(
+            redacted_paths,
+            ["data.recipient.name", "data.recipient.phone", "data.recipient.address_line"],
+        )
+        self.assertEqual(area, "Quận 1, TP. Hồ Chí Minh")
+        bad_cases.append(("redacted_order_reimport", redacted_ord))
+
+        for label, bad_ev in bad_cases:
+            with self.subTest(case=label):
+                with self.assertRaises(ContractValidationError):
+                    validate_event_v2(bad_ev)
+
+    def test_voucher_issued_validates_v2_but_returns_422_unsupported_in_w6_1b_1(self) -> None:
+        import copy
+        from retailops.integration.contract import ensure_w6_1b_1_supported_event, validate_event_v2
+        from retailops.integration.ingest import IntegrationIngestService
+
+        vch = copy.deepcopy(self.samples["voucher.issued"])
+        validate_event_v2(vch, allow_requests=False)
+        with self.assertRaises(ApiError) as err1:
+            ensure_w6_1b_1_supported_event("voucher.issued")
+        self.assertEqual((err1.exception.status, err1.exception.code), (422, "unsupported_event_type"))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            sessions = PersistentSessions(Path(tmp))
+            sessions.provision_tenant("shop-demo", "Shop Demo", seed_demo=False)
+            svc = IntegrationIngestService(sessions, digest_key=b"test-digest-key-32-bytes-minimum!!")
+            with self.assertRaises(ApiError) as err2:
+                svc.ingest_event(vch, tenant_id="shop-demo", connector_source_system="marketplace_sim")
+            self.assertEqual((err2.exception.status, err2.exception.code), (422, "unsupported_event_type"))
+
+    def test_v1_sales_retired_and_retailops_never_imports_marketplace_sim(self) -> None:
+        import ast
+
+        repo_root = Path(__file__).resolve().parents[1]
+        sales_dir = repo_root / "retailops" / "sales"
+        self.assertEqual(list(sales_dir.rglob("*.py")) if sales_dir.exists() else [], [])
+
+        py_files = (
+            list((repo_root / "retailops").rglob("*.py"))
+            + list((repo_root / "scripts").rglob("*.py"))
+            + list(repo_root.glob("retailops_*.py"))
+            + [repo_root / "agent_protocol.py"]
+        )
+        for py_path in py_files:
+            if not py_path.exists():
+                continue
+            src = py_path.read_text(encoding="utf-8")
+            tree = ast.parse(src, filename=str(py_path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        self.assertFalse(
+                            alias.name == "marketplace_sim" or alias.name.startswith("marketplace_sim."),
+                            f"{py_path} imports marketplace_sim",
+                        )
+                        self.assertFalse(
+                            alias.name == "retailops.sales" or alias.name.startswith("retailops.sales."),
+                            f"{py_path} imports retired retailops.sales",
+                        )
+                elif isinstance(node, ast.ImportFrom):
+                    mod = node.module or ""
+                    self.assertFalse(
+                        mod == "marketplace_sim" or mod.startswith("marketplace_sim."),
+                        f"{py_path} imports from marketplace_sim",
+                    )
+                    self.assertFalse(
+                        mod == "retailops.sales" or mod.startswith("retailops.sales."),
+                        f"{py_path} imports from retired retailops.sales",
+                    )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -14,7 +14,7 @@
 
 ## Phạm vi và giới hạn
 
-- Kết quả đóng mục tiêu hẹp: không còn đơn khớp tên legacy **“Quần tây ống đứng tôn dáng”** trong lần global post-check được dán. Không có bằng chứng rằng mọi dữ liệu demo khác trong hệ thống đã được xóa.
+- Kết quả đóng mục tiêu hẹp: không còn đơn mục tiêu `P-602` (**“Quần tây đen hàn quốc”**) trong lần global post-check được dán. Không có bằng chứng rằng mọi dữ liệu demo khác trong hệ thống đã được xóa.
 - Đây là SQL/psql operation do owner thực hiện; output không chứng minh `scripts/purge_demo_order.py` từ Fix B đã là công cụ tạo hai dòng purge trên, dù PR #45 sau đó đã merge vào `main` tại `ae0a2e417baf0bc8011bdb62fc9cf3f7741aac36`.
 - Operation result không kèm snapshot source/image tại thời điểm chạy lệnh, backup/restore evidence, raw SSM transcript, hay kiểm tra UI/search/KPI ngay sau purge. Vì vậy ghi nhận **business-row removal PASS theo owner-pasted DB output**, nhưng không tự đóng toàn bộ formal acceptance của Fix B.
 - Với target legacy có `product_id=NULL`, liên hệ với catalog `P-602` chỉ là đối chiếu legacy-name/price, không phải foreign-key provenance. Catalog `P-602` không bị yêu cầu xóa.

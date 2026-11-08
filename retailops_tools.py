@@ -11,11 +11,33 @@ from retailops.knowledge.tool import KnowledgeTool
 
 ROOT = Path(__file__).resolve().parent
 _ORDER_ID = re.compile(r'\bO-(\d+)\b', re.IGNORECASE)
+_INTERNAL_ORDER_ID = re.compile(r'\bord_([0-9a-f]{32})\b', re.IGNORECASE)
+_EXTERNAL_ORDER_ID = re.compile(r'\b((?!P-\d+\b)[A-Z]{2,8}-(?:O-)?[A-Za-z0-9_-]{2,48})\b', re.IGNORECASE)
 
 
 def customer_named_orders(text):
-    """Order IDs the customer wrote in a message."""
-    return {f'O-{digits}' for digits in _ORDER_ID.findall(text or '')}
+    """Order IDs (internal or external) the customer wrote in a message."""
+    src = text or ''
+    found = {f'O-{digits}' for digits in _ORDER_ID.findall(src)}
+    found.update(f'ord_{h.lower()}' for h in _INTERNAL_ORDER_ID.findall(src))
+    for ext in _EXTERNAL_ORDER_ID.findall(src):
+        found.add(ext)
+        found.add(ext.upper())
+    return found
+
+
+def is_order_confirmed(order, confirmed):
+    """Return True when an order's internal id or external_order_id is in confirmed."""
+    if confirmed is None:
+        return True
+    if not isinstance(order, dict) or not confirmed:
+        return False
+    lowered = {str(x).lower() for x in confirmed if x}
+    for key in ('id', 'external_order_id'):
+        val = order.get(key)
+        if val and (val in confirmed or str(val).lower() in lowered):
+            return True
+    return False
 
 
 def confirmed_orders_for(text, snapshot):
@@ -136,7 +158,7 @@ class BoundTools:
                 if target_text is not None and action_type != 'exchange':
                     return {'error': 'invalid_tool_arguments', 'message': 'target_variant is only allowed when action_type is exchange.'}
             order = self.read_order(args['order_id'], focus=False)
-            if self.confirmed_orders is not None and order['id'] not in self.confirmed_orders:
+            if not is_order_confirmed(order, self.confirmed_orders):
                 self.prepared_order_action = None
                 self.cancel_order = None
                 return {

@@ -110,8 +110,8 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
 
         with store.connection(write=True) as db:
             db.execute(
-                "INSERT INTO orders(id, customer_id, name, variant, amount, status, version, product_id) "
-                "VALUES ('O-P604-SEED-REGRESSION', 'C-001', 'Quần tây ống đứng tôn dáng', "
+                "INSERT INTO orders(id, customer_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version, product_id) "
+                "VALUES ('O-P604-SEED-REGRESSION', 'C-001', 'retailops_seed', 'O-P604-SEED-REGRESSION', 1700000000.0, 'Quần tây đen hàn quốc', "
                 "'Đen / L', 520000, 'delivered', 1, 'P-602') ON CONFLICT DO NOTHING"
             )
         with store.connection() as db:
@@ -291,6 +291,7 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
                     allow_business_v6_upgrade=True,
                     allow_business_v7_upgrade=True,
                     allow_business_v8_upgrade=True,
+                    allow_business_v9_upgrade=True,
                 )
         self.assertEqual(self.fresh_store().orders('C-001')[0]['status'], 'pending')
         with store.connection() as db:
@@ -383,8 +384,8 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         with bstore.connection(write=True) as bdb:
             bdb.execute("INSERT INTO customers (id, name) VALUES ('CG-pg-shared', 'Shared Collided Customer') ON CONFLICT DO NOTHING")
             bdb.execute(
-                "INSERT INTO orders (id, customer_id, name, variant, amount, status, version, product_id) "
-                "VALUES ('O-PG-COLLIDE', 'CG-pg-shared', 'Áo Khoác PG', 'Đen / L', 800000, 'pending', 1, 'P-101') "
+                "INSERT INTO orders (id, customer_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version, product_id) "
+                "VALUES ('O-PG-COLLIDE', 'CG-pg-shared', 'retailops_seed', 'O-PG-COLLIDE', 1700000000.0, 'Áo Khoác PG', 'Đen / L', 800000, 'pending', 1, 'P-101') "
                 "ON CONFLICT DO NOTHING"
             )
 
@@ -615,8 +616,8 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         with b_store.connection(write=True) as b_db:
             b_db.execute("INSERT INTO customers (id, name) VALUES ('CG-mig-shared', 'Shared Mig Customer') ON CONFLICT DO NOTHING")
             b_db.execute(
-                "INSERT INTO orders (id, customer_id, name, variant, amount, status, version) "
-                "VALUES ('O-MIG-1', 'CG-mig-shared', 'Item Mig', 'L', 200000, 'pending', 1) ON CONFLICT DO NOTHING"
+                "INSERT INTO orders (id, customer_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version) "
+                "VALUES ('O-MIG-1', 'CG-mig-shared', 'retailops_seed', 'O-MIG-1', 1700000000.0, 'Item Mig', 'L', 200000, 'pending', 1) ON CONFLICT DO NOTHING"
             )
             b_db.execute(
                 "INSERT INTO conversations (id, customer_id, order_id, product_id, revision, expires_at) "
@@ -726,18 +727,18 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             )
             # Real orders: O-REC-001 & O-REC-002 intended for Alice, O-REC-003 intended for Bob
             b_db.execute(
-                "INSERT INTO orders (id, customer_id, product_id, name, variant, amount, status, version) "
-                "VALUES ('O-REC-001', 'CG-rec-shared', 'P-REC-001', 'Áo Polo Test', 'L / Đen', 250000, 'pending', 1) "
+                "INSERT INTO orders (id, customer_id, product_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version) "
+                "VALUES ('O-REC-001', 'CG-rec-shared', 'P-REC-001', 'retailops_seed', 'O-REC-001', 1700000000.0, 'Áo Polo Test', 'L / Đen', 250000, 'pending', 1) "
                 "ON CONFLICT DO NOTHING"
             )
             b_db.execute(
-                "INSERT INTO orders (id, customer_id, product_id, name, variant, amount, status, version) "
-                "VALUES ('O-REC-002', 'CG-rec-shared', 'P-REC-001', 'Áo Polo Test', 'XL / Trắng', 250000, 'delivered', 1) "
+                "INSERT INTO orders (id, customer_id, product_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version) "
+                "VALUES ('O-REC-002', 'CG-rec-shared', 'P-REC-001', 'retailops_seed', 'O-REC-002', 1700000000.0, 'Áo Polo Test', 'XL / Trắng', 250000, 'delivered', 1) "
                 "ON CONFLICT DO NOTHING"
             )
             b_db.execute(
-                "INSERT INTO orders (id, customer_id, product_id, name, variant, amount, status, version) "
-                "VALUES ('O-REC-003', 'CG-rec-shared', 'P-REC-001', 'Áo Polo Test', 'M / Xanh', 500000, 'pending', 1) "
+                "INSERT INTO orders (id, customer_id, product_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version) "
+                "VALUES ('O-REC-003', 'CG-rec-shared', 'P-REC-001', 'retailops_seed', 'O-REC-003', 1700000000.0, 'Áo Polo Test', 'M / Xanh', 500000, 'pending', 1) "
                 "ON CONFLICT DO NOTHING"
             )
             # Real conversations: 11111111-1111-1111-1111-111111111111 for Alice, 22222222-2222-2222-2222-222222222222 for Bob
@@ -1744,10 +1745,10 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         with store_a.connection(write=True) as db:
             db.execute("INSERT INTO customers(id, name) VALUES ('pg_legacy_mixed', 'PG Legacy Mixed') ON CONFLICT DO NOTHING")
             db.execute(
-                "INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id) VALUES "
-                "('O-888881', 'pg_legacy_mixed', 'Áo sơ mi lụa công sở', 'Trắng / M', 450000, 'pending', 1, NULL, 'P-601'), "
-                "('O-888882', 'pg_legacy_mixed', 'Quần tây ống đứng tôn dáng', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602'), "
-                "('O-888883', 'pg_legacy_mixed', 'Giày lười da bò cao cấp', 'Nâu / 41', 890000, 'delivered', 1, NULL, 'P-603') "
+                "INSERT INTO orders(id, customer_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version, cancel_reason, product_id) VALUES "
+                "('O-888881', 'pg_legacy_mixed', 'retailops_seed', 'O-888881', 1700000000.0, 'Áo sơ mi lụa công sở', 'Trắng / M', 450000, 'pending', 1, NULL, 'P-601'), "
+                "('O-888882', 'pg_legacy_mixed', 'retailops_seed', 'O-888882', 1700000000.0, 'Quần tây đen hàn quốc', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602'), "
+                "('O-888883', 'pg_legacy_mixed', 'retailops_seed', 'O-888883', 1700000000.0, 'Giày lười da bò cao cấp', 'Nâu / 41', 890000, 'delivered', 1, NULL, 'P-603') "
                 "ON CONFLICT DO NOTHING"
             )
             db.execute(
@@ -1758,10 +1759,10 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             )
             db.execute("INSERT INTO customers(id, name) VALUES ('pg_legacy_mod', 'PG Legacy Mod') ON CONFLICT DO NOTHING")
             db.execute(
-                "INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id) VALUES "
-                "('O-877771', 'pg_legacy_mod', 'Áo sơ mi lụa công sở', 'Trắng / M', 490000, 'pending', 1, NULL, 'P-601'), "
-                "('O-877772', 'pg_legacy_mod', 'Quần tây ống đứng tôn dáng', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602'), "
-                "('O-877773', 'pg_legacy_mod', 'Giày lười da bò cao cấp', 'Nâu / 41', 890000, 'delivered', 1, NULL, 'P-603') "
+                "INSERT INTO orders(id, customer_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version, cancel_reason, product_id) VALUES "
+                "('O-877771', 'pg_legacy_mod', 'retailops_seed', 'O-877771', 1700000000.0, 'Áo sơ mi lụa công sở', 'Trắng / M', 490000, 'pending', 1, NULL, 'P-601'), "
+                "('O-877772', 'pg_legacy_mod', 'retailops_seed', 'O-877772', 1700000000.0, 'Quần tây đen hàn quốc', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602'), "
+                "('O-877773', 'pg_legacy_mod', 'retailops_seed', 'O-877773', 1700000000.0, 'Giày lười da bò cao cấp', 'Nâu / 41', 890000, 'delivered', 1, NULL, 'P-603') "
                 "ON CONFLICT DO NOTHING"
             )
         store_a.seed_demo_sample_orders('pg_legacy_mixed')
@@ -1772,20 +1773,20 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         cookie_pg_mix = self.login(pg_mix_member)
         code_pg_mix, body_pg_mix, _ = self.request('/api/orders/O-888882', cookie=cookie_pg_mix)
         self.assertEqual(code_pg_mix, 200)
-        self.assertEqual(body_pg_mix['order']['name'], 'Quần tây ống đứng tôn dáng')
+        self.assertEqual(body_pg_mix['order']['name'], 'Quần tây đen hàn quốc')
         self.assertNotIn('display_name', body_pg_mix['order'])
 
         # DATA1 Negative control on PostgreSQL (R3): non-demo 6-digit P-602 orders (O-123456, O-754321) do NOT get display_name
         with store_a.connection(write=True) as db:
             db.execute("INSERT INTO customers(id, name) VALUES ('non_demo_customer', 'Non Demo PG') ON CONFLICT DO NOTHING")
             db.execute(
-                "INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id) "
-                "VALUES ('O-123456', 'non_demo_customer', 'Quần tây ống đứng tôn dáng', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602') "
+                "INSERT INTO orders(id, customer_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version, cancel_reason, product_id) "
+                "VALUES ('O-123456', 'non_demo_customer', 'retailops_seed', 'O-123456', 1700000000.0, 'Quần tây đen hàn quốc', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602') "
                 "ON CONFLICT DO NOTHING"
             )
             db.execute(
-                "INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id) "
-                "VALUES ('O-754321', 'non_demo_customer', 'Quần tây ống đứng tôn dáng', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602') "
+                "INSERT INTO orders(id, customer_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version, cancel_reason, product_id) "
+                "VALUES ('O-754321', 'non_demo_customer', 'retailops_seed', 'O-754321', 1700000000.0, 'Quần tây đen hàn quốc', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602') "
                 "ON CONFLICT DO NOTHING"
             )
         nd_member = self.member('non_demo_pg', 'shop-a', 'non_demo_customer', 'customer')
@@ -2089,10 +2090,10 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         with store_a.connection(write=True) as db:
             db.execute("INSERT INTO customers(id, name) VALUES ('CG-d9b82ffe', 'PG Fix A Demo Customer') ON CONFLICT DO NOTHING")
             db.execute(
-                "INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id) VALUES "
-                "('O-819125', 'CG-d9b82ffe', 'Áo sơ mi lụa công sở', 'Trắng / M', 450000, 'pending', 1, NULL, 'P-601'), "
-                "('O-819126', 'CG-d9b82ffe', 'Quần tây ống đứng tôn dáng', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602'), "
-                "('O-819127', 'CG-d9b82ffe', 'Giày lười da bò cao cấp', 'Nâu / 41', 890000, 'delivered', 1, NULL, 'P-603') "
+                "INSERT INTO orders(id, customer_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version, cancel_reason, product_id) VALUES "
+                "('O-819125', 'CG-d9b82ffe', 'retailops_seed', 'O-819125', 1700000000.0, 'Áo sơ mi lụa công sở', 'Trắng / M', 450000, 'pending', 1, NULL, 'P-601'), "
+                "('O-819126', 'CG-d9b82ffe', 'retailops_seed', 'O-819126', 1700000000.0, 'Quần tây đen hàn quốc', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602'), "
+                "('O-819127', 'CG-d9b82ffe', 'retailops_seed', 'O-819127', 1700000000.0, 'Giày lười da bò cao cấp', 'Nâu / 41', 890000, 'delivered', 1, NULL, 'P-603') "
                 "ON CONFLICT DO NOTHING"
             )
             db.execute(
@@ -2109,7 +2110,7 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             product_id='P-602',
             status='delivered',
             amount=520000,
-            snapshot_name='Quần tây ống đứng tôn dáng',
+            snapshot_name='Quần tây đen hàn quốc',
         )
         with self.assertRaises(ApiError) as ctx_pg_mismatch:
             self.sessions.purge_demo_order(**{**pg_target, 'amount': 999999})
@@ -2155,18 +2156,31 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             ]
         self.assertEqual(rem_oids, ['O-819125', 'O-819127'])
 
-        from retailops.sales.simulator import DEFAULT_DEV_SECRET, SalesSimulator
-        pg_sim = SalesSimulator(tenant_id='shop-a', secret_key=DEFAULT_DEV_SECRET)
-        pg_purged_evt = pg_sim.create_order_event(
-            tenant='shop-a',
-            external_customer_id='ext-pg-cg',
-            order_id='O-819126',
-            status='delivered',
-            items=[{'product_id': 'P-602', 'product_title': 'Quần tây ống đứng tôn dáng', 'variant_name': 'Đen / L', 'quantity': 1, 'unit_price': 520000}],
-            event_id='pg-evt-replay-purged-819126',
-        )
+        from retailops.integration.ingest import IntegrationIngestService
+        pg_ingest = IntegrationIngestService(self.sessions, digest_key=b'test-digest-key-32-bytes-minimum!!')
+        pg_purged_evt = {
+            'contract': 'retailops-integration-v2',
+            'event_id': 'pg-evt-replay-purged-819126',
+            'event_type': 'order.created',
+            'source_system': 'marketplace_sim',
+            'merchant_id': 'shop-a',
+            'occurred_at': '2026-11-01T10:00:00+07:00',
+            'sequence': 1,
+            'data': {
+                'external_order_id': 'O-819126',
+                'external_customer_id': 'ext-pg-cg',
+                'ordered_at': '2026-11-01T10:00:00+07:00',
+                'items': [{'sku': 'SKU-P602-BLK-L', 'external_product_id': 'P-602', 'title': 'Quần tây đen hàn quốc', 'variant_name': 'Đen / L', 'quantity': 1, 'unit_price': 520000}],
+                'shipping_fee': 0,
+                'total': 520000,
+                'currency': 'VND',
+                'payment_method': 'cod',
+                'promised_delivery_by': '2026-11-04T10:00:00+07:00',
+                'recipient': {'name': 'Nguyễn Văn Thử', 'phone': '0901234567', 'address_line': '123 Đường Mẫu', 'ward': 'Phường Bến Nghé', 'district': 'Quận 1', 'province': 'TP. Hồ Chí Minh'},
+            },
+        }
         with self.assertRaises(ApiError) as ctx_pg_tomb:
-            self.sessions.import_sales_event(pg_purged_evt)
+            pg_ingest.ingest_event(pg_purged_evt, tenant_id='shop-a')
         self.assertEqual(ctx_pg_tomb.exception.code, 'order_purged_tombstone')
 
         # Google login on PostgresSessions preserves imported order and never adds sample orders
@@ -2174,28 +2188,42 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             'pg.imported.only@example.com', 'PG Imported Only', sub='pg-sub-imp-only-01', email_verified=True, tenant_id='shop-a'
         )
         cid_pg_imp = self.request('/api/session', cookie=f"{self.sessions.cookie_name}={sec_pg_imp}")[1]['customer_id']
-        self.sessions.sales_adapter.link_external_customer(
+        pg_ingest.link_external_customer(
             tenant_id='shop-a',
-            source_system='sales_simulator',
+            source_system='marketplace_sim',
             external_customer_id='ext-pg-imp-only-01',
             customer_id=cid_pg_imp,
             customer_name='PG Imported Only',
         )
-        pg_valid_evt = pg_sim.create_order_event(
-            tenant='shop-a',
-            external_customer_id='ext-pg-imp-only-01',
-            order_id='O-920001',
-            status='pending',
-            items=[{'product_id': 'P-601', 'product_title': 'Áo sơ mi lụa công sở', 'variant_name': 'Trắng / M', 'quantity': 1, 'unit_price': 450000}],
-            event_id='pg-evt-imp-only-920001',
-        )
-        self.assertTrue(self.sessions.import_sales_event(pg_valid_evt).success)
+        pg_valid_evt = {
+            'contract': 'retailops-integration-v2',
+            'event_id': 'pg-evt-imp-only-920001',
+            'event_type': 'order.created',
+            'source_system': 'marketplace_sim',
+            'merchant_id': 'shop-a',
+            'occurred_at': '2026-11-01T10:05:00+07:00',
+            'sequence': 1,
+            'data': {
+                'external_order_id': 'O-920001',
+                'external_customer_id': 'ext-pg-imp-only-01',
+                'ordered_at': '2026-11-01T10:05:00+07:00',
+                'items': [{'sku': 'SKU-P601-WHT-M', 'external_product_id': 'P-601', 'title': 'Áo sơ mi lụa công sở', 'variant_name': 'Trắng / M', 'quantity': 1, 'unit_price': 450000}],
+                'shipping_fee': 0,
+                'total': 450000,
+                'currency': 'VND',
+                'payment_method': 'cod',
+                'promised_delivery_by': '2026-11-04T10:05:00+07:00',
+                'recipient': {'name': 'Nguyễn Văn Thử', 'phone': '0901234567', 'address_line': '123 Đường Mẫu', 'ward': 'Phường Bến Nghé', 'district': 'Quận 1', 'province': 'TP. Hồ Chí Minh'},
+            },
+        }
+        pg_imp_res = pg_ingest.ingest_event(pg_valid_evt, tenant_id='shop-a')
+        self.assertTrue(pg_imp_res.success)
         sec_pg_imp2 = self.sessions.login_google(
             'pg.imported.only@example.com', 'PG Imported Only', sub='pg-sub-imp-only-01', email_verified=True, tenant_id='shop-a'
         )
         code_pg_imp, body_pg_imp, _ = self.request('/api/orders', cookie=f"{self.sessions.cookie_name}={sec_pg_imp2}")
         self.assertEqual(code_pg_imp, 200)
-        self.assertEqual([o['id'] for o in body_pg_imp['orders']], ['O-920001'])
+        self.assertEqual([o['id'] for o in body_pg_imp['orders']], [pg_imp_res.order_id])
 
     def test_purge_demo_order_cli_postgres_dry_run_readonly_and_execute_contract(self):
         """Phase 5 Fix B (FIXB-2): Real PostgreSQL CLI dry-run, SET TRANSACTION READ ONLY,
@@ -2208,15 +2236,15 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         with store_a.connection(write=True) as db:
             db.execute("INSERT INTO customers(id, name) VALUES ('CG-d9b82ffe', 'PG CLI Customer') ON CONFLICT DO NOTHING")
             db.execute(
-                "INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id) VALUES "
-                "('O-819125', 'CG-d9b82ffe', 'Áo sơ mi lụa công sở', 'Trắng / M', 450000, 'pending', 1, NULL, 'P-601'), "
-                "('O-819126', 'CG-d9b82ffe', 'Quần tây ống đứng tôn dáng', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602'), "
-                "('O-819127', 'CG-d9b82ffe', 'Giày lười da bò cao cấp', 'Nâu / 41', 890000, 'delivered', 1, NULL, 'P-603') "
+                "INSERT INTO orders(id, customer_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version, cancel_reason, product_id) VALUES "
+                "('O-819125', 'CG-d9b82ffe', 'retailops_seed', 'O-819125', 1700000000.0, 'Áo sơ mi lụa công sở', 'Trắng / M', 450000, 'pending', 1, NULL, 'P-601'), "
+                "('O-819126', 'CG-d9b82ffe', 'retailops_seed', 'O-819126', 1700000000.0, 'Quần tây đen hàn quốc', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602'), "
+                "('O-819127', 'CG-d9b82ffe', 'retailops_seed', 'O-819127', 1700000000.0, 'Giày lười da bò cao cấp', 'Nâu / 41', 890000, 'delivered', 1, NULL, 'P-603') "
                 "ON CONFLICT DO NOTHING"
             )
             db.execute(
                 "INSERT INTO order_items(id, tenant_id, order_id, product_id, variant_id, product_title, variant_name, quantity, unit_price, subtotal, created_at) "
-                "VALUES ('pg-cli-item-819126', 'shop-a', 'O-819126', 'P-602', 'P-602-L-Đen', 'Quần tây ống đứng tôn dáng', 'Đen / L', 1, 520000, 520000, ?)",
+                "VALUES ('pg-cli-item-819126', 'shop-a', 'O-819126', 'P-602', 'P-602-L-Đen', 'Quần tây đen hàn quốc', 'Đen / L', 1, 520000, 520000, ?)",
                 (now,),
             )
             db.execute(
@@ -2293,7 +2321,7 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
             '--product-id', 'P-602',
             '--status', 'delivered',
             '--amount', '520000',
-            '--snapshot-name', 'Quần tây ống đứng tôn dáng',
+            '--snapshot-name', 'Quần tây đen hàn quốc',
         ]
 
         dry_proc = subprocess.run(
@@ -2360,7 +2388,7 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
                     product_id='P-602',
                     status='delivered',
                     amount=520000,
-                    snapshot_name='Quần tây ống đứng tôn dáng',
+                    snapshot_name='Quần tây đen hàn quốc',
                     execute=True,
                     reason='Should roll back completely',
                     operator_id='pg-rollback-check',

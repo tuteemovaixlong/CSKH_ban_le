@@ -31,7 +31,7 @@ Source: [test_phase5_complaint_e2e.py](../../tests/test_phase5_complaint_e2e.py)
 | Request IDs / proposal IDs | Generated per request/run. Retained in raw lifecycle report `docs/phase5/evidence/P5_D_LIFECYCLE_REPORT.json`. |
 | Other identities | Customer 2 uses another synthetic sub in tenant A; customer 3 uses a synthetic sub in tenant B. |
 
-The canonical signed fixtures in [fixtures.py](../../retailops/sales/fixtures.py):62–113 are separate examples: tenant `demo-shop-01`, source `sales_simulator`, event IDs `evt_p5d_001_pending` / `evt_p5d_002_delivered`, timestamp `2026-10-11T12:00:00Z`. Do not confuse them with the imported events created by the E2E tests.
+The canonical signed fixtures in `retailops/sales/fixtures.py` (62–113, retired in W6.1b-1) are separate examples: tenant `demo-shop-01`, source `sales_simulator`, event IDs `evt_p5d_001_pending` / `evt_p5d_002_delivered`, timestamp `2026-10-11T12:00:00Z`. Do not confuse them with the imported events created by the E2E tests.
 
 ## 2. Existing API and storage contract
 
@@ -86,8 +86,8 @@ Latest current-tree Codex recheck: **16 ran / 15 PASS / 1 SKIPPED, 6.676s**, exi
 |---|---|
 | [test_phase5_complaint_e2e.py](../../tests/test_phase5_complaint_e2e.py) | `64dabe85d51529a2009db16313a85e48f28a0a6f0374fd3f2880232f5b711207` |
 | [dispute_agent.py](../../retailops/workflow/subagents/dispute_agent.py) | `cb31d93cfa5eebd5d4bc455c315d7dccabc653bfc425c844f9fc69232c193a1c` |
-| [fixtures.py](../../retailops/sales/fixtures.py) | `62019accece3c5c4a46a80a82b4d9cb8354bc61fed60c2d5e16a2c48c848cbc8` |
-| [simulator.py](../../retailops/sales/simulator.py) | `85e740d9f2047118072a0e33c07faaa90384e2c2c17dd54d0a158486a7f6406c` |
+| `retailops/sales/fixtures.py` | `62019accece3c5c4a46a80a82b4d9cb8354bc61fed60c2d5e16a2c48c848cbc8` |
+| `retailops/sales/simulator.py` | `85e740d9f2047118072a0e33c07faaa90384e2c2c17dd54d0a158486a7f6406c` |
 | [colab_agent.ipynb](../../notebooks/colab_agent.ipynb) | `76f399cf403ee26c73498e873d3617371dc5b8af141c0708c7dcba44c7a63f91` |
 | [P5_D_LIFECYCLE_REPORT.json](evidence/P5_D_LIFECYCLE_REPORT.json) | `4fc6c6b7d4c8f93cf36b910fbefd8e5f2be4fc018dc60e0e010541e8ab89341f` |
 | [P5_D_LIFECYCLE_MANIFEST.json](evidence/P5_D_LIFECYCLE_MANIFEST.json) | `12972900cdd37ae0562e3757609aef0e79a386628cc43798d41da3eeed87acb8` |

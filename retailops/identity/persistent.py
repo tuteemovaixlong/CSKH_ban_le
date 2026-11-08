@@ -357,16 +357,11 @@ class PersistentSessions:
         return totals
 
     @property
-    def sales_adapter(self):
-        if not hasattr(self, '_sales_adapter') or self._sales_adapter is None:
-            from retailops.sales.adapter import SalesImportAdapter
-            self._sales_adapter = SalesImportAdapter(self)
-        return self._sales_adapter
-
-    def import_sales_event(self, event_data, *, actor_principal_id=None, reference_time=None):
-        return self.sales_adapter.ingest_event(
-            event_data, actor_principal_id=actor_principal_id, reference_time=reference_time
-        )
+    def integration_service(self):
+        if not hasattr(self, '_integration_service') or self._integration_service is None:
+            from retailops.integration.ingest import IntegrationIngestService
+            self._integration_service = IntegrationIngestService(self)
+        return self._integration_service
 
     def purge_demo_order(
         self,

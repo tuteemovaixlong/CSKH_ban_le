@@ -44,7 +44,7 @@ Tuple mục tiêu theo trao đổi trước đó:
 | Product | `P-602` |
 | Order status | `delivered` / đã giao |
 | Order total | `520000 VND` |
-| Tên snapshot cũ | `Quần tây ống đứng tôn dáng` |
+| Tên snapshot | `Quần tây đen hàn quốc` |
 
 Tenant ID chưa được chủ dự án cung cấp trong hội thoại và chưa được truy vấn trực tiếp. Target chỉ hợp lệ khi read-only inventory xác nhận đúng **một** tuple này trong tenant synthetic/demo. Nếu giá trị hoặc tenant không khớp, không xóa.
 

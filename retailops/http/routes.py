@@ -615,11 +615,11 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 require(ok_off and off_val >= 0, 400, "invalid_offset", "Vị trí phân trang không hợp lệ.")
                 off = off_val
             return (200, app.store.list_manager_order_actions(status_group=status_group, limit=lim, offset=off))
-        m_exchange_options = re.fullmatch(r"/api/orders/([A-Z]{1,6}-[0-9]{1,8})/exchange-options", path)
+        m_exchange_options = re.fullmatch(r"/api/orders/([A-Za-z0-9_-]{1,64})/exchange-options", path)
         if m_exchange_options:
             # Variants of the order's own product with stock status; another customer's order is a 404.
             return (200, app.store.exchange_options(customer, m_exchange_options[1]))
-        m = re.fullmatch(r"/api/orders/([A-Z]{1,6}-[0-9]{1,8})", path)
+        m = re.fullmatch(r"/api/orders/([A-Za-z0-9_-]{1,64})", path)
         if m:
             return (200, {"order": _format_order_for_api(app.store.lookup(customer, m[1]), app)})
         if path == "/api/staff/cases":
@@ -674,7 +674,7 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 },
             })
         m_case_exchange_options = re.fullmatch(
-            r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/orders/([A-Z]{1,6}-[0-9]{1,8})/exchange-options", path
+            r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/orders/([A-Za-z0-9_-]{1,64})/exchange-options", path
         )
         if m_case_exchange_options:
             _require_ctx_permission(ctx, STAFF)

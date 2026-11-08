@@ -50,19 +50,86 @@ from retailops.business.application import Application
 from retailops.core import ApiError
 from retailops.http.public import PublicWeb
 from retailops.identity.persistent import PersistentSessions
+from retailops.integration.ingest import IntegrationIngestService
 from retailops.knowledge.repository import KnowledgeRepository
 from retailops.knowledge.tool import KnowledgeTool
-from retailops.sales.adapter import SalesImportAdapter
-from retailops.sales.events import compute_signature
-from retailops.sales.fixtures import (
-    FIXTURE_P5D_DELIVERED_ORDER,
-    FIXTURE_P5D_PENDING_ORDER,
-    get_signed_fixtures,
-)
-from retailops.sales.simulator import DEFAULT_DEV_SECRET, SalesSimulator
 from scripts.postgres_test_guard import require_disposable_postgres_test_target
 
 DSN = os.environ.get("RETAILOPS_TEST_DATABASE_URL", "")
+TEST_DIGEST_KEY = b"test-digest-key-32-bytes-minimum!!"
+
+
+def _make_p5d_order_created(
+    *,
+    external_order_id: str,
+    external_customer_id: str,
+    event_id: str,
+    source_system: str = "pos_online",
+    merchant_id: str = "tenant-p5d-demo",
+    sequence: int = 1,
+) -> dict:
+    return {
+        "contract": "retailops-integration-v2",
+        "event_id": event_id,
+        "event_type": "order.created",
+        "source_system": source_system,
+        "merchant_id": merchant_id,
+        "occurred_at": "2026-11-01T10:00:00+07:00",
+        "sequence": sequence,
+        "data": {
+            "external_order_id": external_order_id,
+            "external_customer_id": external_customer_id,
+            "ordered_at": "2026-11-01T10:00:00+07:00",
+            "items": [
+                {
+                    "sku": "SKU-P601-WHT-M",
+                    "external_product_id": "P-601",
+                    "title": "Áo sơ mi lụa công sở",
+                    "variant_name": "Trắng / M",
+                    "quantity": 1,
+                    "unit_price": 450000,
+                }
+            ],
+            "shipping_fee": 0,
+            "total": 450000,
+            "currency": "VND",
+            "payment_method": "cod",
+            "promised_delivery_by": "2026-11-04T10:00:00+07:00",
+            "recipient": {
+                "name": "Nguyễn Văn Thử",
+                "phone": "0901234567",
+                "address_line": "123 Đường Mẫu",
+                "ward": "Phường Bến Nghé",
+                "district": "Quận 1",
+                "province": "TP. Hồ Chí Minh",
+            },
+        },
+    }
+
+
+def _make_p5d_order_status_changed(
+    *,
+    external_order_id: str,
+    status: str,
+    event_id: str,
+    source_system: str = "pos_online",
+    merchant_id: str = "tenant-p5d-demo",
+    sequence: int = 2,
+) -> dict:
+    return {
+        "contract": "retailops-integration-v2",
+        "event_id": event_id,
+        "event_type": "order.status_changed",
+        "source_system": source_system,
+        "merchant_id": merchant_id,
+        "occurred_at": "2026-11-02T10:00:00+07:00",
+        "sequence": sequence,
+        "data": {
+            "external_order_id": external_order_id,
+            "status": status,
+            "reason": None,
+        },
+    }
 
 
 class MockDisputeChatGateway:
@@ -167,8 +234,12 @@ class MockDisputeChatGateway:
 
         # Cancellation tool call trigger if model is asked
         if allow_tools and any(kw in lower for kw in ("hủy đơn", "hủy hàng", "muốn hủy")):
-            m = re.search(r"\b(o-\d+|o0\d{5,}|o\d{5,})\b", lower)
-            target_oid = m.group(1).upper() if m else "O-90001"
+            m = re.search(r"\b(ord_[a-f0-9]{32}|o-\d+|o0\d{5,}|o\d{5,})\b", lower)
+            target_oid = (
+                (m.group(1) if m.group(1).startswith("ord_") else m.group(1).upper())
+                if m
+                else "O-90001"
+            )
             return {
                 "message": {
                     "role": "assistant",
@@ -246,9 +317,8 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         self.other_tenant_id = "tenant-p5d-other"
         self.sessions.provision_tenant(self.other_tenant_id, "Other Synthetic Shop", seed_demo=True)
 
-        # Adapters and simulators
-        self.adapter = SalesImportAdapter(self.sessions, default_secret=DEFAULT_DEV_SECRET)
-        self.simulator = SalesSimulator(tenant_id=self.tenant_id, secret_key=DEFAULT_DEV_SECRET)
+        # Integration v2 ingest service
+        self.adapter = IntegrationIngestService(self.sessions, digest_key=TEST_DIGEST_KEY)
 
         # Public web layer
         self.origin = "https://retailops.example.com"
@@ -363,29 +433,22 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         )
         self.assertEqual(link_res["customer_id"], self.cust1_id)
 
-        # 2. Ingest pending sales event
-        event = self.simulator.create_order_event(
+        # 2. Ingest pending v2 order.created event
+        event = _make_p5d_order_created(
             source_system="pos_online",
             event_id="evt_p5d_order_101",
             external_customer_id=self.cust1_ext_id,
-            order_id="O-90001",
-            status="pending",
-            items=[
-                {
-                    "product_id": "P-601",
-                    "product_title": "Áo sơ mi lụa công sở",
-                    "variant_name": "Trắng / M",
-                    "quantity": 1,
-                    "unit_price": 450000,
-                }
-            ],
-            total=450000,
+            external_order_id="O-90001",
         )
-        import_res = self.adapter.ingest_event(event)
+        import_res = self.adapter.ingest_event(
+            event, tenant_id=self.tenant_id, connector_source_system="pos_online"
+        )
         self.imported_event = copy.deepcopy(event)
+        self.imported_oid = import_res.order_id
         self.assertTrue(import_res.success)
         self.assertEqual(import_res.customer_id, self.cust1_id)
-        self.assertEqual(import_res.order_id, "O-90001")
+        self.assertTrue(self.imported_oid.startswith("ord_"))
+        self.assertEqual(import_res.external_order_id, "O-90001")
 
         # 3. Customer 1 checks /api/session
         status, sess, _ = self.request("/api/session", cookie=self.cust1_cookie)
@@ -399,7 +462,7 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         status, orders_res, _ = self.request("/api/orders", cookie=self.cust1_cookie)
         self.assertEqual(status, 200)
         order_ids = [o["id"] for o in orders_res["orders"]]
-        self.assertIn("O-90001", order_ids)
+        self.assertIn(self.imported_oid, order_ids)
 
         # 5. Verify email was not used as key
         self.assertNotIn("@", self.cust1_ext_id)
@@ -410,22 +473,23 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
     # -------------------------------------------------------------------------
 
     def test_02_order_visibility_isolation_across_customers_and_tenants(self):
-        """P5-K6/K7: Customer 1 sees O-90001; Customer 2 and other tenant receive 404."""
+        """P5-K6/K7: Customer 1 sees imported order; Customer 2 and other tenant receive 404."""
         self.test_01_same_identity_binding_import_and_session()
+        oid = self.imported_oid
 
-        # Customer 2 in same tenant sees ZERO orders for O-90001
+        # Customer 2 in same tenant sees ZERO orders for Customer 1's order
         status, orders_c2, _ = self.request("/api/orders", cookie=self.cust2_cookie)
         self.assertEqual(status, 200)
-        self.assertNotIn("O-90001", [o["id"] for o in orders_c2["orders"]])
+        self.assertNotIn(oid, [o["id"] for o in orders_c2["orders"]])
 
         # Customer 2 direct lookup raises 404 order_not_found
         with self.assertRaises(ApiError) as ctx:
-            self.request("/api/orders/O-90001", cookie=self.cust2_cookie)
+            self.request(f"/api/orders/{oid}", cookie=self.cust2_cookie)
         self.assertEqual(ctx.exception.code, "order_not_found")
 
         # Customer 3 in different tenant direct lookup raises 404 order_not_found
         with self.assertRaises(ApiError) as ctx:
-            self.request("/api/orders/O-90001", cookie=self.cust3_cookie)
+            self.request(f"/api/orders/{oid}", cookie=self.cust3_cookie)
         self.assertEqual(ctx.exception.code, "order_not_found")
 
     # -------------------------------------------------------------------------
@@ -435,6 +499,7 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
     def test_03_complaint_routing_cancellation_dispute_agent(self):
         """P5-K7: Supervisor routes cancellation complaint to dispute_agent, which opens the request form."""
         self.test_01_same_identity_binding_import_and_session()
+        oid = self.imported_oid
 
         # Create conversation
         status, conv, _ = self.request("/api/conversations", {}, cookie=self.cust1_cookie)
@@ -444,7 +509,7 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         # Send cancellation complaint
         chat_body = {
             "conversation_id": cid,
-            "text": "Tôi muốn hủy đơn hàng O-90001 vì tôi đặt nhầm sản phẩm",
+            "text": f"Tôi muốn hủy đơn hàng {oid} vì tôi đặt nhầm sản phẩm",
             "request_id": str(uuid.uuid4()),
         }
         status, chat_res, _ = self.request("/api/chat", chat_body, cookie=self.cust1_cookie)
@@ -462,23 +527,24 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         # W3.2-D7: no scripted proposal; the model called prepare_order_action and the server opened the shared form
         self.assertNotIn("action_proposal", chat_res)
         self.assertEqual(chat_res["order_action"]["action_type"], "cancel")
-        self.assertEqual(chat_res["order_action"]["order_id"], "O-90001")
+        self.assertEqual(chat_res["order_action"]["order_id"], oid)
 
         # Verify UI prompt asks the customer to pick a reason and confirm (nothing is mutated in DB yet)
         self.assertEqual(chat_res["action"], "choose_cancel_reason")
-        self.assertEqual(chat_res["order"]["id"], "O-90001")
+        self.assertEqual(chat_res["order"]["id"], oid)
 
     def test_04_complaint_routing_defect_is_model_driven_without_a_scripted_proposal(self):
         """P5-K7 (W3.2): the supervisor still routes a defect complaint to the dispute worker, but the worker no longer
         builds an exchange_1to1 proposal; the model answers and nothing is opened unless it calls prepare_order_action."""
         self.test_01_same_identity_binding_import_and_session()
+        oid = self.imported_oid
 
         status, conv, _ = self.request("/api/conversations", {}, cookie=self.cust1_cookie)
         cid = conv["conversation_id"]
 
         chat_body = {
             "conversation_id": cid,
-            "text": "Áo đơn O-90001 bị kẹt khóa và bung chỉ, shop đổi 1-1 cho tôi",
+            "text": f"Áo đơn {oid} bị kẹt khóa và bung chỉ, shop đổi 1-1 cho tôi",
             "request_id": str(uuid.uuid4()),
         }
         status, chat_res, _ = self.request("/api/chat", chat_body, cookie=self.cust1_cookie)
@@ -527,14 +593,15 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
     def test_06_dispute_worker_cross_customer_refusal_no_leak(self):
         """P5-K7: Dispute worker refuses to process another customer's order and leaks no information."""
         self.test_01_same_identity_binding_import_and_session()
+        oid = self.imported_oid
 
-        # Customer 2 attempts to cancel Customer 1's order O-90001 via chat
+        # Customer 2 attempts to cancel Customer 1's order via chat
         status, conv2, _ = self.request("/api/conversations", {}, cookie=self.cust2_cookie)
         cid2 = conv2["conversation_id"]
 
         chat_body = {
             "conversation_id": cid2,
-            "text": "Tôi muốn hủy đơn hàng O-90001",
+            "text": f"Tôi muốn hủy đơn hàng {oid}",
             "request_id": str(uuid.uuid4()),
         }
         status, chat_res, _ = self.request("/api/chat", chat_body, cookie=self.cust2_cookie)
@@ -705,20 +772,24 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
     def test_08_no_pre_confirmation_mutation(self):
         """P5-K7/K8: Complaint chat and proposal preparation produce zero mutations on orders."""
         self.test_03_complaint_routing_cancellation_dispute_agent()
+        oid = self.imported_oid
 
         bstore = self.sessions.business_store(self.tenant_id)
         with bstore.connection() as db:
-            order = db.execute("SELECT * FROM orders WHERE id='O-90001'").fetchone()
+            order = db.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone()
             self.assertEqual(order["status"], "pending")
             self.assertEqual(order["version"], 1)
 
             # Ensure NO order_cancelled event was emitted into business_events
-            ev = db.execute("SELECT * FROM business_events WHERE order_id='O-90001' AND kind='order_cancelled'").fetchone()
+            ev = db.execute(
+                "SELECT * FROM business_events WHERE order_id=? AND kind='order_cancelled'",
+                (oid,),
+            ).fetchone()
             self.assertIsNone(ev)
 
         # Now create explicit cancellation proposal via API
         prop_body = {
-            "order_id": "O-90001",
+            "order_id": oid,
             "order_version": 1,
             "cancel_reason": "ordered_by_mistake",
         }
@@ -729,7 +800,7 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
 
         # Check database again: STILL pending and version 1!
         with bstore.connection() as db:
-            order = db.execute("SELECT * FROM orders WHERE id='O-90001'").fetchone()
+            order = db.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone()
             self.assertEqual(order["status"], "pending")
             self.assertEqual(order["version"], 1)
 
@@ -744,9 +815,10 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
     def test_09_confirmation_rejected_for_wrong_customer_or_session(self):
         """P5-K8: Customer 2 cannot confirm Customer 1's cancellation proposal."""
         self.test_01_same_identity_binding_import_and_session()
+        oid = self.imported_oid
 
         # Customer 1 creates proposal
-        prop_body = {"order_id": "O-90001", "order_version": 1, "cancel_reason": "ordered_by_mistake"}
+        prop_body = {"order_id": oid, "order_version": 1, "cancel_reason": "ordered_by_mistake"}
         status, prop_res, _ = self.request("/api/cancellation-proposals", prop_body, cookie=self.cust1_cookie)
         pid = prop_res["proposal_id"]
 
@@ -764,21 +836,22 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         # Order is still pending
         bstore = self.sessions.business_store(self.tenant_id)
         with bstore.connection() as db:
-            order = db.execute("SELECT * FROM orders WHERE id='O-90001'").fetchone()
+            order = db.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone()
             self.assertEqual(order["status"], "pending")
 
     def test_10_confirmation_rejected_for_stale_order_version(self):
         """P5-K8: Confirmation fails if order version was modified before confirmation."""
         self.test_01_same_identity_binding_import_and_session()
+        oid = self.imported_oid
 
-        prop_body = {"order_id": "O-90001", "order_version": 1, "cancel_reason": "ordered_by_mistake"}
+        prop_body = {"order_id": oid, "order_version": 1, "cancel_reason": "ordered_by_mistake"}
         status, prop_res, _ = self.request("/api/cancellation-proposals", prop_body, cookie=self.cust1_cookie)
         pid = prop_res["proposal_id"]
 
         # Simulate concurrent order update (bump version to 2)
         bstore = self.sessions.business_store(self.tenant_id)
         with bstore.connection(write=True) as db:
-            db.execute("UPDATE orders SET version=2 WHERE id='O-90001'")
+            db.execute("UPDATE orders SET version=2 WHERE id=?", (oid,))
 
         # Confirm attempt must raise stale_order (409)
         endpoint = f"/api/cancellation-proposals/{pid}/confirm"
@@ -794,8 +867,9 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
     def test_11_confirmation_idempotency_and_replay(self):
         """P5-K8: Confirmation succeeds once, exact replay returns replayed=True, conflicting key raises 409."""
         self.test_01_same_identity_binding_import_and_session()
+        oid = self.imported_oid
 
-        prop_body = {"order_id": "O-90001", "order_version": 1, "cancel_reason": "ordered_by_mistake"}
+        prop_body = {"order_id": oid, "order_version": 1, "cancel_reason": "ordered_by_mistake"}
         status, prop_res, _ = self.request("/api/cancellation-proposals", prop_body, cookie=self.cust1_cookie)
         pid = prop_res["proposal_id"]
 
@@ -819,12 +893,13 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         # Verify DB state
         bstore = self.sessions.business_store(self.tenant_id)
         with bstore.connection() as db:
-            order = db.execute("SELECT * FROM orders WHERE id='O-90001'").fetchone()
+            order = db.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone()
             self.assertEqual(order["status"], "pending")
             self.assertEqual(order["version"], 1)
 
             ev_cnt = db.execute(
-                "SELECT count(*) as c FROM business_events WHERE order_id='O-90001' AND kind='order_action_requested'"
+                "SELECT count(*) as c FROM business_events WHERE order_id=? AND kind='order_action_requested'",
+                (oid,),
             ).fetchone()["c"]
             self.assertEqual(ev_cnt, 1)
 
@@ -844,7 +919,8 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         # Verify no duplicate mutation or event
         with bstore.connection() as db:
             ev_cnt_after = db.execute(
-                "SELECT count(*) as c FROM business_events WHERE order_id='O-90001' AND kind='order_action_requested'"
+                "SELECT count(*) as c FROM business_events WHERE order_id=? AND kind='order_action_requested'",
+                (oid,),
             ).fetchone()["c"]
             self.assertEqual(ev_cnt_after, 1)
 
@@ -861,8 +937,9 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
     def test_12_proposal_dismissal_preserves_order_state(self):
         """P5-K8: Dismissing a cancellation proposal preserves pending order status and closes proposal."""
         self.test_01_same_identity_binding_import_and_session()
+        oid = self.imported_oid
 
-        prop_body = {"order_id": "O-90001", "order_version": 1, "cancel_reason": "ordered_by_mistake"}
+        prop_body = {"order_id": oid, "order_version": 1, "cancel_reason": "ordered_by_mistake"}
         status, prop_res, _ = self.request("/api/cancellation-proposals", prop_body, cookie=self.cust1_cookie)
         pid = prop_res["proposal_id"]
 
@@ -872,7 +949,7 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
 
         bstore = self.sessions.business_store(self.tenant_id)
         with bstore.connection() as db:
-            order = db.execute("SELECT * FROM orders WHERE id='O-90001'").fetchone()
+            order = db.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone()
             self.assertEqual(order["status"], "pending")
             p_row = db.execute("SELECT * FROM proposals WHERE id=?", (pid,)).fetchone()
             self.assertEqual(p_row["state"], "dismissed")
@@ -895,6 +972,7 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
     def test_13_persistence_reload_and_audit_replay(self):
         """P5-K8: Reopen session storage, confirm persistent audit trails, and replay events cleanly."""
         self.test_11_confirmation_idempotency_and_replay()
+        oid = self.imported_oid
 
         # Simulate service restart: instantiate fresh PersistentSessions pointing to same directory
         restarted_sessions = PersistentSessions(
@@ -911,7 +989,7 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         # 2. Check /api/orders via restarted web
         env = {
             "REQUEST_METHOD": "GET",
-            "PATH_INFO": "/api/orders/O-90001",
+            "PATH_INFO": f"/api/orders/{oid}",
             "QUERY_STRING": "",
             "HTTP_HOST": "retailops.example.com",
             "HTTP_ORIGIN": self.origin,
@@ -922,17 +1000,24 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         self.assertEqual(data["order"]["status"], "pending")
         self.assertEqual(data["order"]["version"], 1)
 
-        # 3. Replay sales import event through adapter
-        restarted_adapter = SalesImportAdapter(restarted_sessions, default_secret=DEFAULT_DEV_SECRET)
+        # 3. Replay v2 import event through IntegrationIngestService
+        restarted_adapter = IntegrationIngestService(restarted_sessions, digest_key=TEST_DIGEST_KEY)
         replay_event = self.imported_event
-        replay_res = restarted_adapter.ingest_event(replay_event)
+        replay_res = restarted_adapter.ingest_event(
+            replay_event, tenant_id=self.tenant_id, connector_source_system="pos_online"
+        )
         self.assertTrue(replay_res.is_replay)
         self.assertEqual(replay_res.status, "already_processed")
 
         # 4. Audit trail inspection
         bstore = restarted_sessions.business_store(self.tenant_id)
         with bstore.connection() as db:
-            evs = [dict(r) for r in db.execute("SELECT * FROM business_events WHERE order_id='O-90001'").fetchall()]
+            evs = [
+                dict(r)
+                for r in db.execute(
+                    "SELECT * FROM business_events WHERE order_id=?", (oid,)
+                ).fetchall()
+            ]
             kinds = [e["kind"] for e in evs]
             self.assertIn("order_imported", kinds)
             self.assertIn("cancellation_proposed", kinds)
@@ -944,39 +1029,49 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
 
     def test_14_failure_path_delivered_order_cannot_be_cancelled(self):
         """P5-K7/K8: Delivered orders refuse cancellation proposals via both chat and API."""
-        # Ingest delivered order
-        deliv_event = self.simulator.create_order_event(
+        deliv_created = _make_p5d_order_created(
             source_system="pos_online",
             event_id="evt_p5d_deliv_001",
             external_customer_id=self.cust1_ext_id,
-            order_id="O-90002",
-            status="delivered",
-            items=[{"product_id": "P-601", "product_title": "Áo sơ mi lụa công sở", "quantity": 1, "unit_price": 450000}],
-            total=450000,
+            external_order_id="O-90002",
         )
-        self.adapter.ingest_event(deliv_event)
+        deliv_res = self.adapter.ingest_event(
+            deliv_created, tenant_id=self.tenant_id, connector_source_system="pos_online"
+        )
+        deliv_oid = deliv_res.order_id
+        self.adapter.ingest_event(
+            _make_p5d_order_status_changed(
+                source_system="pos_online",
+                event_id="evt_p5d_deliv_002",
+                external_order_id="O-90002",
+                status="delivered",
+                sequence=2,
+            ),
+            tenant_id=self.tenant_id,
+            connector_source_system="pos_online",
+        )
 
-        # 1. Customer chats asking to cancel delivered order O-90002
+        # 1. Customer chats asking to cancel delivered order
         status, conv, _ = self.request("/api/conversations", {}, cookie=self.cust1_cookie)
         cid = conv["conversation_id"]
 
         chat_body = {
             "conversation_id": cid,
-            "text": "Tôi muốn hủy đơn hàng O-90002",
+            "text": f"Tôi muốn hủy đơn hàng {deliv_oid}",
             "request_id": str(uuid.uuid4()),
         }
         status, chat_res, _ = self.request("/api/chat", chat_body, cookie=self.cust1_cookie)
         self.assertEqual(status, 200)
         self.assertNotIn("action_proposal", chat_res)
         self.assertEqual(chat_res["action"], "reply")
-        self.assertNotIn("order_action", chat_res)  # no form is opened for an ineligible order
-        self.assertIn("this order is delivered", chat_res["message"])  # the server's condition, not a script
+        self.assertNotIn("order_action", chat_res)
+        self.assertIn("this order is delivered", chat_res["message"])
 
         # 2. Direct API proposal creation raises 409 not_cancellable
         with self.assertRaises(ApiError) as ctx:
             self.request(
                 "/api/cancellation-proposals",
-                {"order_id": "O-90002", "order_version": 1, "cancel_reason": "ordered_by_mistake"},
+                {"order_id": deliv_oid, "order_version": 2, "cancel_reason": "ordered_by_mistake"},
                 cookie=self.cust1_cookie,
             )
         self.assertEqual(ctx.exception.code, "not_cancellable")
@@ -986,37 +1081,26 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
     # -------------------------------------------------------------------------
 
     def test_15_integrated_lifecycle_raw_report_and_tamper_verification(self):
-        """P5-K8 (D-R2): Full integrated lifecycle:
-        1. Sales order import -> bound Google customer session.
-        2. Complaint in chat -> dispute agent generates cancellation proposal.
-        3. Zero pre-confirmation database mutation verified.
-        4. Customer creates cancellation proposal.
-        5. Wrong customer and cross-tenant confirmation denied (404).
-        6. Owning customer confirms proposal -> order transitions to cancelled, version 2, 1 audit event.
-        7. Process reopen / restart -> exact confirmation replay returns replayed: True with zero additional mutation.
-        8. Write raw sanitized lifecycle report to disk (zero real secrets or PII).
-        9. Verify SHA256 equality on round-trip read.
-        10. Negative tamper assertions: tampered bytes or tampered checksums are detected and rejected.
-        """
-        # 1. Ingest order O-90001
-        pending_event = self.simulator.create_order_event(
+        """P5-K8 (D-R2): Full integrated lifecycle."""
+        pending_event = _make_p5d_order_created(
             source_system="pos_online",
             event_id="evt_p5d_lifecycle_001",
             external_customer_id=self.cust1_ext_id,
-            order_id="O-90001",
-            status="pending",
-            items=[{"product_id": "P-601", "product_title": "Áo sơ mi lụa công sở", "quantity": 1, "unit_price": 450000}],
-            total=450000,
+            external_order_id="O-90001",
         )
-        self.adapter.ingest_event(pending_event)
+        imp15 = self.adapter.ingest_event(
+            pending_event, tenant_id=self.tenant_id, connector_source_system="pos_online"
+        )
+        oid = imp15.order_id
 
         bstore = self.sessions.business_store(self.tenant_id)
         with bstore.connection() as db:
-            initial_order = db.execute("SELECT * FROM orders WHERE id='O-90001'").fetchone()
+            initial_order = db.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone()
             self.assertEqual(initial_order["status"], "pending")
             self.assertEqual(initial_order["version"], 1)
             initial_ev_count = db.execute(
-                "SELECT count(*) as c FROM business_events WHERE order_id='O-90001' AND kind='order_cancelled'"
+                "SELECT count(*) as c FROM business_events WHERE order_id=? AND kind='order_cancelled'",
+                (oid,),
             ).fetchone()["c"]
             self.assertEqual(initial_ev_count, 0)
 
@@ -1026,30 +1110,30 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
 
         chat_body = {
             "conversation_id": cid,
-            "text": "Tôi muốn hủy đơn hàng O-90001 do đổi ý",
+            "text": f"Tôi muốn hủy đơn hàng {oid} do đổi ý",
             "request_id": str(uuid.uuid4()),
         }
         status, chat_res, _ = self.request("/api/chat", chat_body, cookie=self.cust1_cookie)
         self.assertEqual(status, 200)
         self.assertEqual(chat_res["trace"].get("supervisor_intent"), "dispute_complaint")
-        # W3.2-D7: chat opens the shared request form; what the customer submits from it is the "proposal"
         self.assertNotIn("action_proposal", chat_res)
         self.assertEqual(chat_res["action"], "choose_cancel_reason")
-        self.assertEqual(chat_res["order_action"]["order_id"], "O-90001")
+        self.assertEqual(chat_res["order_action"]["order_id"], oid)
         proposal_action = {
             "action": "cancel_order",
             "order_id": chat_res["order_action"]["order_id"],
             "order_version": chat_res["order"]["version"],
-            "reason": "ordered_by_mistake",  # the reason the customer picks on the form
+            "reason": "ordered_by_mistake",
         }
 
         # 3. Pre-confirmation invariant check
         with bstore.connection() as db:
-            pre_order = db.execute("SELECT * FROM orders WHERE id='O-90001'").fetchone()
+            pre_order = db.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone()
             self.assertEqual(pre_order["status"], "pending")
             self.assertEqual(pre_order["version"], 1)
             pre_ev_count = db.execute(
-                "SELECT count(*) as c FROM business_events WHERE order_id='O-90001' AND kind='order_cancelled'"
+                "SELECT count(*) as c FROM business_events WHERE order_id=? AND kind='order_cancelled'",
+                (oid,),
             ).fetchone()["c"]
             self.assertEqual(pre_ev_count, 0)
 
@@ -1099,7 +1183,7 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
 
         # Confirm order still untouched
         with bstore.connection() as db:
-            mid_order = db.execute("SELECT * FROM orders WHERE id='O-90001'").fetchone()
+            mid_order = db.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone()
             self.assertEqual(mid_order["status"], "pending")
             self.assertEqual(mid_order["version"], 1)
 
@@ -1119,11 +1203,12 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
 
         # Check DB post first confirm
         with bstore.connection() as db:
-            post_order = db.execute("SELECT * FROM orders WHERE id='O-90001'").fetchone()
+            post_order = db.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone()
             self.assertEqual(post_order["status"], "pending")
             self.assertEqual(post_order["version"], 1)
             post_ev_count = db.execute(
-                "SELECT count(*) as c FROM business_events WHERE order_id='O-90001' AND kind='order_action_requested'"
+                "SELECT count(*) as c FROM business_events WHERE order_id=? AND kind='order_action_requested'",
+                (oid,),
             ).fetchone()["c"]
             self.assertEqual(post_ev_count, 1)
 
@@ -1168,11 +1253,12 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         # Verify mutation occurred exactly once in database
         bstore_reopened = reopened_sessions.business_store(self.tenant_id)
         with bstore_reopened.connection() as db:
-            reopen_order = db.execute("SELECT * FROM orders WHERE id='O-90001'").fetchone()
+            reopen_order = db.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone()
             self.assertEqual(reopen_order["status"], "pending")
             self.assertEqual(reopen_order["version"], 1)
             reopen_ev_count = db.execute(
-                "SELECT count(*) as c FROM business_events WHERE order_id='O-90001' AND kind='order_action_requested'"
+                "SELECT count(*) as c FROM business_events WHERE order_id=? AND kind='order_action_requested'",
+                (oid,),
             ).fetchone()["c"]
             self.assertEqual(reopen_ev_count, 1)
 
@@ -1188,7 +1274,8 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
                 "external_customer_id": self.cust1_ext_id,
                 "customer_id": self.cust1_id,
                 "principal_id": self.cust1_pid,
-                "order_id": "O-90001",
+                "order_id": oid,
+                "external_order_id": "O-90001",
                 "event_id": pending_event["event_id"],
             },
             "lifecycle_ids": {
@@ -1304,7 +1391,7 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         orig_fix_bytes = json.dumps(pending_event, sort_keys=True, separators=(",", ":")).encode("utf-8")
         orig_fix_hash = hashlib.sha256(orig_fix_bytes).hexdigest()
         tampered_fixture = copy.deepcopy(pending_event)
-        tampered_fixture["total"] = 999999
+        tampered_fixture["data"]["total"] = 999999
         tampered_fix_bytes = json.dumps(tampered_fixture, sort_keys=True, separators=(",", ":")).encode("utf-8")
         self.assertNotEqual(hashlib.sha256(tampered_fix_bytes).hexdigest(), orig_fix_hash)
 
@@ -1467,18 +1554,19 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         self.assertNotIn("đổi mới 1-1", res_miss["message"].lower())
         self.assertNotIn("30 ngày", res_miss["message"])
 
-        # 2. Foreign order O-90001 queried by Customer 2
+        # 2. Foreign order queried by Customer 2
+        oid = self.imported_oid
         status, conv_for, _ = self.request("/api/conversations", {}, cookie=self.cust2_cookie)
         self.assertEqual(status, 201)
         body_for = {
             "conversation_id": conv_for["conversation_id"],
-            "text": "Khiếu nại đơn O-90001 bị kẹt khóa và bung chỉ, kiểm tra chính sách đổi 1-1",
+            "text": f"Khiếu nại đơn {oid} bị kẹt khóa và bung chỉ, kiểm tra chính sách đổi 1-1",
             "request_id": str(uuid.uuid4()),
         }
-        before_for = snapshot_business_state("O-90001", self.cust2_id)
-        with patch.object(self.gateway, "chat", planner("O-90001")), patch.object(KnowledgeRepository, "search", fake_defect_repo_search):
+        before_for = snapshot_business_state(oid, self.cust2_id)
+        with patch.object(self.gateway, "chat", planner(oid)), patch.object(KnowledgeRepository, "search", fake_defect_repo_search):
             status, res_for, _ = self.request("/api/chat", body_for, cookie=self.cust2_cookie)
-        after_for = snapshot_business_state("O-90001", self.cust2_id)
+        after_for = snapshot_business_state(oid, self.cust2_id)
         self.assertEqual(status, 200)
         self.assertEqual(before_for, after_for)
         self.assertEqual(after_for["target_order"]["customer_id"], self.cust1_id)
@@ -1490,20 +1578,20 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         self.assertIn("get_order", for_tools)
         self.assertNotIn("action_proposal", res_for)
         self.assertEqual(res_for.get("sources", []), [])
-        self.assertIn("Không tìm thấy đơn hàng O-90001", res_for["message"])
+        self.assertIn(f"Không tìm thấy đơn hàng {oid}", res_for["message"])
         self.assertIn("thuộc tài khoản của anh/chị", res_for["message"])
         self.assertNotIn("đổi mới 1-1", res_for["message"].lower())
         self.assertNotIn("Áo sơ mi lụa", res_for["message"])
 
-        # 3. Positive control: owned order O-90001 queried by Customer 1 with relevant, cited policy evidence
+        # 3. Positive control: owned order queried by Customer 1 with relevant, cited policy evidence
         status, conv_ok, _ = self.request("/api/conversations", {}, cookie=self.cust1_cookie)
         self.assertEqual(status, 201)
         body_ok = {
             "conversation_id": conv_ok["conversation_id"],
-            "text": "Khiếu nại đơn O-90001 bị kẹt khóa và bung chỉ, kiểm tra chính sách đổi 1-1",
+            "text": f"Khiếu nại đơn {oid} bị kẹt khóa và bung chỉ, kiểm tra chính sách đổi 1-1",
             "request_id": str(uuid.uuid4()),
         }
-        with patch.object(self.gateway, "chat", planner("O-90001", owned=True)), patch.object(KnowledgeRepository, "search", fake_defect_repo_search):
+        with patch.object(self.gateway, "chat", planner(oid, owned=True)), patch.object(KnowledgeRepository, "search", fake_defect_repo_search):
             status, res_ok, _ = self.request("/api/chat", body_ok, cookie=self.cust1_cookie)
         self.assertEqual(status, 200)
         ok_tools = [t.get("name") for t in res_ok["trace"].get("tools", [])]
@@ -1514,12 +1602,14 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         self.assertEqual(sources_ok[0]["source_key"], "policies/warranty_defect.md")
         self.assertIn(f"[{sources_ok[0]['citation_id']}]", res_ok["message"])
 
-        # Zero pre-confirmation DB mutation on O-90001
+        # Zero pre-confirmation DB mutation on owned order
         with bstore.connection() as db:
-            ord_row = db.execute("SELECT status, version FROM orders WHERE id='O-90001'").fetchone()
+            ord_row = db.execute("SELECT status, version FROM orders WHERE id=?", (oid,)).fetchone()
             self.assertEqual(ord_row["status"], "pending")
             self.assertEqual(ord_row["version"], 1)
-            self.assertEqual(db.execute("SELECT COUNT(*) AS c FROM proposals WHERE order_id='O-90001'").fetchone()["c"], 0)
+            self.assertEqual(
+                db.execute("SELECT COUNT(*) AS c FROM proposals WHERE order_id=?", (oid,)).fetchone()["c"], 0
+            )
 
 
 @unittest.skipUnless(DSN, "RAG pgvector integration requires a disposable PostgreSQL database with pgvector.")
@@ -1547,8 +1637,6 @@ class Phase5ComplaintPgvectorTests(unittest.TestCase):
         from retailops.knowledge.chunking import SourceDocument
         from retailops.knowledge.repository import KnowledgeRepository
         from retailops.storage.pg_repositories import PostgresIdentityStore
-        from retailops.sales.adapter import SalesImportAdapter
-        from retailops.sales.simulator import DEFAULT_DEV_SECRET, SalesSimulator
 
         self.clear()
         self.addCleanup(self.clear)
@@ -1605,8 +1693,8 @@ class Phase5ComplaintPgvectorTests(unittest.TestCase):
         resolved1 = self.sessions.control.resolve(self.sessions.cookie_id(self.cust1_cookie))
         self.cust1_id = resolved1["customer_id"]
 
-        # Link external customer and import order O-90001 in Tenant A
-        adapter_a = SalesImportAdapter(self.sessions, default_secret=DEFAULT_DEV_SECRET)
+        # Link external customer and import v2 order in Tenant A
+        adapter_a = IntegrationIngestService(self.sessions, digest_key=TEST_DIGEST_KEY)
         adapter_a.link_external_customer(
             tenant_id=self.tenant_a,
             source_system="pos_online",
@@ -1614,17 +1702,17 @@ class Phase5ComplaintPgvectorTests(unittest.TestCase):
             customer_id=self.cust1_id,
             customer_name="Alpha PG Buyer",
         )
-        sim_a = SalesSimulator(tenant_id=self.tenant_a, secret_key=DEFAULT_DEV_SECRET)
-        evt_a = sim_a.create_order_event(
+        evt_a = _make_p5d_order_created(
             source_system="pos_online",
             event_id="evt_p5d_pga_001",
             external_customer_id=self.cust1_ext_id,
-            order_id="O-90001",
-            status="pending",
-            items=[{"product_id": "P-601", "product_title": "Áo sơ mi lụa công sở", "quantity": 1, "unit_price": 450000}],
-            total=450000,
+            external_order_id="O-90001",
+            merchant_id=self.tenant_a,
         )
-        adapter_a.ingest_event(evt_a)
+        imp_pg = adapter_a.ingest_event(
+            evt_a, tenant_id=self.tenant_a, connector_source_system="pos_online"
+        )
+        self.pg_oid = imp_pg.order_id
 
         # 5. Set up Customer 3 in Tenant B
         self.cust3_cookie_secret = self.sessions.login_google(
@@ -1686,7 +1774,7 @@ class Phase5ComplaintPgvectorTests(unittest.TestCase):
 
         chat_body1 = {
             "conversation_id": cid1,
-            "text": "Khiếu nại đổi trả đơn hàng O-90001 theo chính sách của shop",
+            "text": f"Khiếu nại đổi trả đơn hàng {self.pg_oid} theo chính sách của shop",
             "request_id": str(uuid.uuid4()),
         }
         status, chat_res1 = self.request("/api/chat", chat_body1, cookie=self.cust1_cookie)
