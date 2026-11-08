@@ -795,7 +795,6 @@ class Application:
                     'exchange_kind': prepared.get('exchange_kind'),
                     'target_variant_id': prepared.get('target_variant_id'),
                     'order_id': prepared['order'].get('id'),
-                    'external_order_id': prepared['order'].get('external_order_id'),
                 }
             if getattr(bound, 'shipment', None):
                 result['shipment'] = bound.shipment
