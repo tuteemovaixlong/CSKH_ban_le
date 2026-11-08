@@ -91,6 +91,32 @@ class MarketplaceSimContractBridgeTests(unittest.TestCase):
                 seen_all_types.add(validated["event_type"])
             self.assertEqual(seen_all_types, set(INBOUND_EVENT_TYPES))
 
+    def test_connector_mapping_file_matches_marketplace_sim_carriers_and_states(self) -> None:
+        from marketplace_sim.state_machines import (
+            ALLOWED_ORDER_TRANSITIONS,
+            ALLOWED_PAYMENT_TRANSITIONS,
+            ALLOWED_REFUND_TRANSITIONS,
+        )
+        from retailops.integration.connectors import load_default_status_mapping
+
+        carriers_cfg = json.loads(
+            (ROOT / "marketplace_sim" / "data" / "carriers.json").read_text(encoding="utf-8")
+        )["carriers"]
+        mapping = load_default_status_mapping("marketplace_sim")
+
+        for carrier in carriers_cfg:
+            code = carrier["code"]
+            self.assertIn(code, mapping["shipment"])
+            expected_raw_codes = set(carrier["status_codes"].values())
+            self.assertEqual(set(mapping["shipment"][code].keys()), expected_raw_codes)
+
+        order_codes = {s for targets in ALLOWED_ORDER_TRANSITIONS.values() for s in targets}
+        payment_codes = {s for targets in ALLOWED_PAYMENT_TRANSITIONS.values() for s in targets}
+        refund_codes = {s for targets in ALLOWED_REFUND_TRANSITIONS.values() for s in targets}
+        self.assertEqual(set(mapping["order"].keys()), order_codes)
+        self.assertEqual(set(mapping["payment"].keys()), payment_codes)
+        self.assertEqual(set(mapping["refund"].keys()), refund_codes)
+
 
 if __name__ == "__main__":
     unittest.main()

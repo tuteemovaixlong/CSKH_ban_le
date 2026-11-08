@@ -21,6 +21,7 @@ COPY tests /app/tests
 COPY data/smoke.jsonl /app/data/smoke.jsonl
 COPY data/products.json /app/data/products.json
 COPY data/knowledge /app/data/knowledge
+COPY data/connectors /app/data/connectors
 COPY data/mock_shipments.json /app/data/mock_shipments.json
 COPY data/order_action_reasons.json /app/data/order_action_reasons.json
 COPY data/deepseek_seed_data.json /app/data/deepseek_seed_data.json

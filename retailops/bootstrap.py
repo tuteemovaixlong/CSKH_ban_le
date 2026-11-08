@@ -10,6 +10,7 @@ from retailops.business.application import Application
 from retailops.business.store import BusinessStore
 from retailops.identity.demo import GuestSessions
 from retailops.identity.persistent import PersistentSessions
+from retailops.integration.connectors import warn_unready_connectors_on_startup
 from retailops.http.private import Server
 from retailops.http.public import PublicWeb
 from retailops.models import build_gateways
@@ -38,6 +39,7 @@ def build_public_app(settings: Settings | None = None) -> PublicWeb:
     sessions.case_timer_config = tcfg
     if settings.customer_ref_key:
         sessions.customer_ref_key = settings.customer_ref_key
+    warn_unready_connectors_on_startup(sessions)
     return PublicWeb(settings.origin, sessions, start_timer_worker=True, timer_scan_seconds=tcfg.scan_seconds)
 
 

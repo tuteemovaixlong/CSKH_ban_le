@@ -5,6 +5,7 @@ temporary Compose project and volumes. No API credentials or inference calls.
 """
 import json
 import os
+import secrets
 import subprocess
 import shutil
 import tempfile
@@ -192,6 +193,12 @@ def main():
             for name in ('compose.postgres.yaml','init-postgres.sh'):
                 shutil.copy2(ROOT/'deploy'/name,temp/name)
             run(['python3',str(ROOT/'deploy/configure-postgres.py'),'--directory',str(temp)])
+            int_secrets = temp / 'integration-secrets'
+            int_secrets.mkdir(mode=0o700, exist_ok=True)
+            for sname in ('retailops_connector_marketplace_sim', 'retailops_event_digest_key'):
+                spath = int_secrets / sname
+                spath.write_text(secrets.token_urlsafe(32) + '\n', encoding='utf-8')
+                os.chmod(spath, 0o444)
             pgbase = base+['-f',str(temp/'compose.postgres.yaml')]
             run(pgbase+['up','-d','--wait','--wait-timeout','90','postgres'])
             run(base+['stop','web'])
@@ -241,6 +248,10 @@ CREATE EXTENSION vector WITH SCHEMA retailops_extensions;
             run(cleanup_base+['down','--volumes','--remove-orphans'])
             if (temp/'postgres-secrets').exists():
                 shutil.rmtree(temp/'postgres-secrets')
+            if (temp/'integration-secrets').exists():
+                for child in (temp/'integration-secrets').iterdir():
+                    os.chmod(child, 0o600)
+                shutil.rmtree(temp/'integration-secrets')
 
 
 if __name__ == '__main__':

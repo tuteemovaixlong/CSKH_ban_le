@@ -326,6 +326,7 @@ class IntegrationIngestService:
         received_via: str = "import",
         digest_key: bytes | None = None,
         expected_merchant_id: str | None = None,
+        status_mapping: dict[str, Any] | None = None,
         actor_principal_id: str | None = None,
         rebase_offset_seconds: float = 0.0,
     ) -> ImportResult:
@@ -432,6 +433,33 @@ class IntegrationIngestService:
 
         with bstore.connection(write=True) as db:
             bstore._ensure_purge_tombstone_table(db)
+
+            if status_mapping is not None:
+                from retailops.integration.connectors import validate_status_mapping
+
+                active_status_mapping = validate_status_mapping(status_mapping)
+            else:
+                conn_row = db.execute(
+                    "SELECT status_mapping_json FROM integration_connectors WHERE source_system=?",
+                    (connector_source,),
+                ).fetchone()
+                if conn_row is not None and conn_row["status_mapping_json"]:
+                    from retailops.integration.connectors import validate_status_mapping
+
+                    active_status_mapping = validate_status_mapping(
+                        json.loads(str(conn_row["status_mapping_json"]))
+                    )
+                else:
+                    from retailops.integration.connectors import (
+                        CONNECTORS_DATA_DIR,
+                        load_default_status_mapping,
+                    )
+
+                    default_file = CONNECTORS_DATA_DIR / f"{connector_source}.json"
+                    if default_file.is_file():
+                        active_status_mapping = load_default_status_mapping(connector_source)
+                    else:
+                        active_status_mapping = load_default_status_mapping("marketplace_sim")
 
             # Check order purge tombstone before deduplication so purged orders stay blocked
             if "external_order_id" in data and data["external_order_id"] is not None:
@@ -641,6 +669,20 @@ class IntegrationIngestService:
                         else:
                             prod_id = str(item["external_product_id"])
                             var_id = None
+                            db.execute(
+                                """INSERT INTO products (
+                                       id, name, aliases, price, variants,
+                                       is_system_immutable, extra_data, created_at, updated_at
+                                   ) VALUES (?, ?, '[]', ?, '[]', 0, '{}', ?, ?)
+                                   ON CONFLICT(id) DO NOTHING""",
+                                (
+                                    prod_id,
+                                    item["title"],
+                                    int(item["unit_price"]),
+                                    occurred_ts,
+                                    occurred_ts,
+                                ),
+                            )
                         resolved_items.append(
                             {
                                 "product_id": prod_id,
@@ -771,14 +813,12 @@ class IntegrationIngestService:
                     )
                     result_order_id = str(ord_row["id"])
                     mapped_customer_id = str(ord_row["customer_id"])
+                    from retailops.integration.connectors import map_raw_status
+
                     raw_status = data["status"]
-                    canonical_status = DEFAULT_ORDER_STATUS_MAP.get(raw_status)
-                    if canonical_status is None:
-                        raise ApiError(
-                            422,
-                            "unknown_status_code",
-                            f"Mã trạng thái đơn '{raw_status}' không có trong bảng ánh xạ.",
-                        )
+                    canonical_status = map_raw_status(
+                        active_status_mapping, "order", raw_status
+                    )
                     delivered_at_val = ord_row["delivered_at"]
                     if canonical_status == "delivered" and delivered_at_val is None:
                         delivered_at_val = occurred_ts

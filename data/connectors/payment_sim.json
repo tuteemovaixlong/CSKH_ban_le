@@ -1,0 +1,22 @@
+{
+  "source_system": "payment_sim",
+  "kind": "payment",
+  "default_merchant_id": "MERCHANT-SIM-001",
+  "default_secret_ref": "retailops_connector_payment_sim",
+  "order": {},
+  "shipment": {},
+  "payment": {
+    "PAY_PENDING": "pending",
+    "PAY_SUCCEEDED": "succeeded",
+    "PAY_FAILED": "failed",
+    "COD_PENDING": "pending",
+    "COD_SETTLED": "succeeded",
+    "COD_CANCELLED": "cancelled"
+  },
+  "refund": {
+    "REFUND_INITIATED": "pending",
+    "REFUND_PROCESSING": "processing",
+    "REFUND_COMPLETED": "completed",
+    "REFUND_FAILED": "failed"
+  }
+}

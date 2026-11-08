@@ -1198,5 +1198,326 @@ class Item1ContractV2AndRetireV1Tests(unittest.TestCase):
                     )
 
 
+class Item2ConnectorAndComposeSecretsTests(unittest.TestCase):
+    """Item 2 (W6.1b-D5): integration_connectors, secret_ref safety, status mappings, CLI & audit."""
+
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory(prefix="r1-w61b1-item2-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.out_dir = self.root / "out"
+        self.secrets_dir = self.root / "secrets"
+        self.secrets_dir.mkdir(parents=True, exist_ok=True)
+        self.sessions = PersistentSessions(self.out_dir / "persistent")
+        self.sessions.provision_tenant("shop-demo", "Shop Demo", seed_demo=False)
+
+    def test_secret_ref_rejects_database_url_and_path_traversal(self) -> None:
+        from retailops.integration.connectors import ConnectorManager, validate_secret_ref
+
+        mgr = ConnectorManager(self.sessions, env={"RETAILOPS_CONNECTOR_SECRETS_DIR": str(self.secrets_dir)})
+        for bad_ref in (
+            "retailops_database_url",
+            "postgres_admin_password",
+            "../x",
+            "retailops_connector_../x",
+            "/run/secrets/retailops_connector_x",
+            "retailops_connector_UPPER",
+            "retailops_connector_",
+            "",
+        ):
+            with self.subTest(secret_ref=bad_ref):
+                with self.assertRaises(ApiError) as err1:
+                    validate_secret_ref(bad_ref)
+                self.assertEqual((err1.exception.status, err1.exception.code), (400, "invalid_secret_ref"))
+                with self.assertRaises(ApiError) as err2:
+                    mgr.add_connector("shop-demo", source_system="marketplace_sim", secret_ref=bad_ref)
+                self.assertEqual((err2.exception.status, err2.exception.code), (400, "invalid_secret_ref"))
+
+    def test_missing_short_directory_and_symlink_keys_fail_closed_503_with_no_default(self) -> None:
+        from retailops.integration.connectors import ConnectorManager, inspect_secret_file, load_connector_secret
+
+        env = {"RETAILOPS_CONNECTOR_SECRETS_DIR": str(self.secrets_dir)}
+        mgr = ConnectorManager(self.sessions, env=env)
+        mgr.add_connector("shop-demo", source_system="marketplace_sim")
+
+        # 1. Missing file -> 503 connector_unavailable (never falls back to default key)
+        with self.assertRaises(ApiError) as e_missing:
+            mgr.require_ready_connector("shop-demo", "marketplace_sim")
+        self.assertEqual((e_missing.exception.status, e_missing.exception.code), (503, "connector_unavailable"))
+
+        # 2. Short key (<32 bytes) -> 503 connector_unavailable
+        key_path = self.secrets_dir / "retailops_connector_marketplace_sim"
+        key_path.write_bytes(b"short-key-31-bytes-01234567890!")
+        self.assertEqual(len(key_path.read_bytes()), 31)
+        with self.assertRaises(ApiError) as e_short:
+            load_connector_secret("retailops_connector_marketplace_sim", env=env)
+        self.assertEqual((e_short.exception.status, e_short.exception.code), (503, "connector_unavailable"))
+
+        # 3. Directory instead of regular file -> 503 connector_unavailable
+        key_path.unlink()
+        key_path.mkdir()
+        self.assertEqual(inspect_secret_file(key_path), (False, "not_regular_file"))
+        with self.assertRaises(ApiError) as e_dir:
+            load_connector_secret("retailops_connector_marketplace_sim", env=env)
+        self.assertEqual((e_dir.exception.status, e_dir.exception.code), (503, "connector_unavailable"))
+        key_path.rmdir()
+
+        # 4. Symlink -> 503 connector_unavailable
+        real_secret = self.root / "real_target.secret"
+        real_secret.write_bytes(b"valid-secret-key-at-least-32-bytes-long!!")
+        symlink_created = False
+        try:
+            os.symlink(real_secret, key_path)
+            symlink_created = True
+        except (OSError, NotImplementedError):
+            symlink_created = False
+        if symlink_created:
+            self.assertEqual(inspect_secret_file(key_path), (False, "symlink_rejected"))
+            with self.assertRaises(ApiError) as e_sym:
+                load_connector_secret("retailops_connector_marketplace_sim", env=env)
+            self.assertEqual((e_sym.exception.status, e_sym.exception.code), (503, "connector_unavailable"))
+            key_path.unlink()
+        else:
+            # Verify lstat symlink branch deterministically on Windows runners without SeCreateSymbolicLinkPrivilege
+            fake_lstat = SimpleNamespace(st_mode=0o120777)
+            with patch("retailops.integration.connectors.os.lstat", return_value=fake_lstat), \
+                 patch("retailops.integration.ingest.os.lstat", return_value=fake_lstat):
+                self.assertEqual(inspect_secret_file(real_secret), (False, "symlink_rejected"))
+                with self.assertRaises(ApiError) as e_sym2:
+                    load_connector_secret("retailops_connector_marketplace_sim", env={"RETAILOPS_CONNECTOR_SECRETS_DIR": str(self.root)})
+                self.assertEqual((e_sym2.exception.status, e_sym2.exception.code), (503, "connector_unavailable"))
+
+        # 5. Valid >=32-byte regular file succeeds
+        key_path.write_bytes(b"connector-secret-32-bytes-exact!")
+        rec, loaded = mgr.require_ready_connector("shop-demo", "marketplace_sim")
+        self.assertEqual(loaded, b"connector-secret-32-bytes-exact!")
+        self.assertEqual(rec["merchant_id"], "MERCHANT-SIM-001")
+
+    def test_status_mapping_covers_39_carrier_codes_and_rejects_unknown_without_mutating_db(self) -> None:
+        from retailops.integration.connectors import (
+            CANONICAL_SHIPMENT_STATUSES,
+            ConnectorManager,
+            load_default_status_mapping,
+            map_raw_status,
+            validate_status_mapping,
+        )
+        from retailops.integration.ingest import IntegrationIngestService
+
+        mapping = load_default_status_mapping("marketplace_sim")
+        self.assertEqual(mapping["order"]["shipping"], "shipping")
+        self.assertNotEqual(mapping["order"]["shipping"], "delivered")
+        for carrier in ("GHN", "FASTSHIP_SIM", "VIETEXPRESS_SIM"):
+            self.assertEqual(len(mapping["shipment"][carrier]), 13)
+            for raw_code, canonical in mapping["shipment"][carrier].items():
+                self.assertIn(canonical, CANONICAL_SHIPMENT_STATUSES)
+                self.assertEqual(map_raw_status(mapping, "shipment", raw_code, carrier=carrier), canonical)
+
+        with self.assertRaises(ApiError) as bad_f16:
+            validate_status_mapping({"order": {"shipping": "delivered"}})
+        self.assertEqual(bad_f16.exception.status, 400)
+
+        for domain, code, kw in (
+            ("shipment", "UNKNOWN_CARRIER_STAGE", {"carrier": "GHN"}),
+            ("shipment", "delivering", {"carrier": "UNKNOWN_CARRIER"}),
+            ("payment", "PAY_MYSTERY", {}),
+            ("refund", "REFUND_MYSTERY", {}),
+            ("order", "mystery_state", {}),
+        ):
+            with self.assertRaises(ApiError) as unk:
+                map_raw_status(mapping, domain, code, **kw)
+            self.assertEqual((unk.exception.status, unk.exception.code), (422, "unknown_status_code"))
+
+        # Unknown status in connector mapping rejects event with 422 and leaves DB untouched
+        mgr = ConnectorManager(self.sessions, env={"RETAILOPS_CONNECTOR_SECRETS_DIR": str(self.secrets_dir)})
+        partial_map = dict(mapping)
+        partial_map["order"] = {"pending": "pending", "shipping": "shipping"}  # omit 'delivered'
+        mgr.add_connector("shop-demo", source_system="marketplace_sim", status_mapping=partial_map)
+
+        svc = IntegrationIngestService(self.sessions, digest_key=b"digest-key-at-least-32-bytes-ok!")
+        svc.ingest_event(
+            {
+                "contract": "retailops-integration-v2",
+                "event_id": "evt:order:ORD-MAP-1:1",
+                "event_type": "order.created",
+                "source_system": "marketplace_sim",
+                "merchant_id": "MERCHANT-SIM-001",
+                "occurred_at": "2026-10-10T09:00:00+07:00",
+                "sequence": 1,
+                "data": {
+                    "external_order_id": "ORD-MAP-1",
+                    "external_customer_id": "CUST-MAP-1",
+                    "ordered_at": "2026-10-10T09:00:00+07:00",
+                    "promised_delivery_by": "2026-10-12T09:00:00+07:00",
+                    "payment_method": "cod",
+                    "shipping_fee": 20000,
+                    "total": 310000,
+                    "currency": "VND",
+                    "recipient": {
+                        "name": "Trần Văn A",
+                        "phone": "0900111222",
+                        "address_line": "10 Lê Lợi",
+                        "ward": "Phường Bến Nghé",
+                        "district": "Quận 1",
+                        "province": "TP. Hồ Chí Minh",
+                    },
+                    "items": [
+                        {
+                            "external_product_id": "P-101",
+                            "sku": "SKU-101-M",
+                            "title": "Áo sơ mi lụa công sở",
+                            "variant_name": "Trắng / M",
+                            "quantity": 1,
+                            "unit_price": 290000,
+                        }
+                    ],
+                },
+            },
+            tenant_id="shop-demo",
+            connector_source_system="marketplace_sim",
+        )
+        with self.assertRaises(ApiError) as unk_ev:
+            svc.ingest_event(
+                {
+                    "contract": "retailops-integration-v2",
+                    "event_id": "evt:order:ORD-MAP-1:2",
+                    "event_type": "order.status_changed",
+                    "source_system": "marketplace_sim",
+                    "merchant_id": "MERCHANT-SIM-001",
+                    "occurred_at": "2026-10-11T09:00:00+07:00",
+                    "sequence": 2,
+                    "data": {
+                        "external_order_id": "ORD-MAP-1",
+                        "status": "delivered",
+                        "reason": None,
+                    },
+                },
+                tenant_id="shop-demo",
+                connector_source_system="marketplace_sim",
+            )
+        self.assertEqual((unk_ev.exception.status, unk_ev.exception.code), (422, "unknown_status_code"))
+        with self.sessions.business_store("shop-demo").connection() as db:
+            ord_row = db.execute("SELECT status FROM orders WHERE external_order_id='ORD-MAP-1'").fetchone()
+            ev_cnt = db.execute("SELECT COUNT(*) FROM imported_events").fetchone()[0]
+        self.assertEqual(ord_row["status"], "pending")
+        self.assertEqual(ev_cnt, 1)
+
+    def test_cli_audit_startup_warning_healthz_and_secret_non_leakage(self) -> None:
+        import subprocess
+        import sys
+        from retailops.bootstrap import build_public_app
+        from retailops.config import Settings
+        from retailops.integration.connectors import warn_unready_connectors_on_startup
+
+        secret_marker = "TOPSECRET_CONNECTOR_KEY_VALUE_32B_XYZ987654"
+        digest_marker = "TOPSECRET_DIGEST_KEY_VALUE_32B_ABC123456789"
+        conn_key_file = self.secrets_dir / "retailops_connector_marketplace_sim"
+        digest_key_file = self.secrets_dir / "retailops_event_digest_key"
+        conn_key_file.write_text(secret_marker + "\n", encoding="utf-8")
+        digest_key_file.write_text(digest_marker + "\n", encoding="utf-8")
+
+        cli_env = {
+            **os.environ,
+            "PYTHONIOENCODING": "utf-8",
+            "RETAILOPS_OUTPUT": str(self.out_dir),
+            "RETAILOPS_STORAGE_BACKEND": "sqlite",
+            "RETAILOPS_CONNECTOR_SECRETS_DIR": str(self.secrets_dir),
+            "RETAILOPS_EVENT_DIGEST_KEY_FILE": str(digest_key_file),
+        }
+        repo_root = Path(__file__).resolve().parents[1]
+
+        def run_cli(*args: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [sys.executable, "-m", "retailops", "connector", "--output", str(self.out_dir), *args],
+                cwd=str(repo_root),
+                env=cli_env,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+
+        res_add = run_cli("add", "--tenant", "shop-demo", "--source-system", "marketplace_sim")
+        self.assertEqual(res_add.returncode, 0, res_add.stderr)
+        res_list = run_cli("list", "--tenant", "shop-demo")
+        self.assertEqual(res_list.returncode, 0, res_list.stderr)
+        res_check_ok = run_cli("check")
+        self.assertEqual(res_check_ok.returncode, 0, res_check_ok.stderr)
+
+        for out_blob in (res_add.stdout, res_add.stderr, res_list.stdout, res_list.stderr, res_check_ok.stdout):
+            self.assertNotIn(secret_marker, out_blob)
+            self.assertNotIn(digest_marker, out_blob)
+
+        # Remove connector key: startup logs one warning (source_system + reason only), /healthz remains 200, check fails non-zero
+        conn_key_file.unlink()
+        res_check_missing = run_cli("check")
+        self.assertNotEqual(res_check_missing.returncode, 0)
+        self.assertIn("missing_file", res_check_missing.stderr)
+
+        with self.assertLogs("retailops_integration", level="WARNING") as cm:
+            warnings_out = warn_unready_connectors_on_startup(self.sessions, env=cli_env)
+        self.assertEqual(len(warnings_out), 1)
+        self.assertEqual(warnings_out[0]["source_system"], "marketplace_sim")
+        self.assertEqual(warnings_out[0]["reason"], "missing_file")
+        joined_logs = "\n".join(cm.output)
+        self.assertNotIn(secret_marker, joined_logs)
+        self.assertNotIn(digest_marker, joined_logs)
+
+        # /healthz remains 200 OK even when connector key is missing
+        with patch.dict(
+            os.environ,
+            {
+                "RETAILOPS_ENV": "development",
+                "RETAILOPS_DATA_MODE": "persistent-demo",
+                "RETAILOPS_STORAGE_BACKEND": "sqlite",
+                "RETAILOPS_OUTPUT": str(self.out_dir),
+                "RETAILOPS_PUBLIC_ORIGIN": "https://retailops.example.test",
+                "RETAILOPS_PUBLIC_HOST": "retailops.example.test",
+                "RETAILOPS_API_ENABLED": "false",
+                "RETAILOPS_CUSTOM_ENABLED": "false",
+                "RETAILOPS_CONNECTOR_SECRETS_DIR": str(self.secrets_dir),
+                "RETAILOPS_EVENT_DIGEST_KEY_FILE": "",
+            },
+            clear=False,
+        ):
+            pub_app = build_public_app(Settings.from_environment("public"))
+            try:
+                status_code, result_obj, _mime, _headers = pub_app.route(
+                    {
+                        "REQUEST_METHOD": "GET",
+                        "PATH_INFO": "/healthz",
+                        "REMOTE_ADDR": "127.0.0.1",
+                        "HTTP_HOST": "127.0.0.1:8000",
+                    }
+                )
+                self.assertEqual(status_code, 200)
+                self.assertEqual(result_obj["status"], "ok")
+            finally:
+                pub_app.stop_case_timer_worker()
+
+        # Disable connector -> connector check passes when digest key exists, fails when digest key missing
+        res_dis = run_cli("disable", "--tenant", "shop-demo", "--source-system", "marketplace_sim")
+        self.assertEqual(res_dis.returncode, 0, res_dis.stderr)
+        self.assertEqual(run_cli("check").returncode, 0)
+        digest_key_file.unlink()
+        res_check_no_digest = run_cli("check")
+        self.assertNotEqual(res_check_no_digest.returncode, 0)
+        self.assertIn("event_digest_key", res_check_no_digest.stderr)
+
+        # Verify admin_audit_log recorded add, list, disable and contains zero secret bytes
+        with self.sessions.control.connection() as id_db:
+            audits = [
+                dict(r)
+                for r in id_db.execute(
+                    "SELECT action, before_json, after_json, reason FROM admin_audit_log WHERE tenant_id='shop-demo' ORDER BY id ASC"
+                ).fetchall()
+            ]
+        actions = [a["action"] for a in audits]
+        self.assertIn("connector.add", actions)
+        self.assertIn("connector.list", actions)
+        self.assertIn("connector.disable", actions)
+        audit_dump = json.dumps(audits, ensure_ascii=False)
+        self.assertNotIn(secret_marker, audit_dump)
+        self.assertNotIn(digest_marker, audit_dump)
+
+
 if __name__ == "__main__":
     unittest.main()
