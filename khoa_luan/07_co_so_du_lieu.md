@@ -1,12 +1,12 @@
 # Cơ sở dữ liệu RetailOps
 
-Tài liệu để nắm vững database: dùng khi bảo vệ khóa luận và làm căn cứ chốt migration business v9 của W6.1. Kiểm trên code ngày 2026-11-06, `main` tại `d524373`. Phần A là hiện trạng v8 đang chạy production; phần B là thiết kế v9 đã được owner chốt hướng ngày 2026-11-06.
+Tài liệu để nắm vững database: dùng khi bảo vệ khóa luận và làm căn cứ cho migration business v9 của W6.1. Kiểm lần đầu trên code ngày 2026-11-06, `main` tại `d524373`; cập nhật mục A ngày 2026-11-09 sau khi thực thi W6.1b-1. Phần A mô tả mô hình hiện hành trong code ở business v9 và identity v5, còn DB production giữ ở v8 cho tới khi owner duyệt chạy runbook ở cuối mục A7; phần B lưu hồ sơ thiết kế v9 đã chốt ở §19 và §20.
 
-Nguồn chính: `retailops/storage/pg_schema.py` chứa DDL và các bước migration; `retailops/storage/postgres.py` chứa kết nối, giao dịch và số phiên bản; `retailops/business/store.py` chứa mọi thao tác đọc ghi nghiệp vụ; `retailops/workflow/schema.py` chứa bảng LangGraph.
+Nguồn chính: `retailops/storage/pg_schema.py` chứa DDL và các bước migration; `retailops/storage/postgres.py` chứa kết nối, giao dịch và số phiên bản; `retailops/business/store.py` chứa các thao tác đọc ghi nghiệp vụ; `retailops/integration/ingest.py` chứa cổng nhận sự kiện hợp đồng v2 và đường ghi chuẩn; `retailops/workflow/schema.py` chứa bảng LangGraph.
 
 ---
 
-# A. Hiện trạng, business v8 và identity v5
+# A. Hiện trạng trong code, business v9 và identity v5
 
 ## A1. Tổ chức vật lý
 
@@ -17,7 +17,7 @@ Database chia thành ba loại schema:
 | Schema | Số lượng | Chứa gì |
 |---|---|---|
 | `retailops_identity` | 1, dùng chung | cửa hàng, người dùng, vai trò, phiên đăng nhập, liên kết Google, nhật ký quản trị; 16 bảng |
-| `tenant_<32 ký tự hex>` | mỗi cửa hàng một schema | toàn bộ dữ liệu nghiệp vụ, hội thoại, ca, yêu cầu đơn, tri thức, checkpoint; 27 bảng |
+| `tenant_<32 ký tự hex>` | mỗi cửa hàng một schema | toàn bộ dữ liệu nghiệp vụ, hội thoại, ca, yêu cầu đơn, vận chuyển, thanh toán, hoàn tiền, tri thức, checkpoint; 35 bảng |
 | `retailops_extensions` | 1 | extension pgvector, cung cấp kiểu `vector` và toán tử khoảng cách |
 
 Tên schema của một cửa hàng là `tenant_` cộng `storage_key` trong bảng `retailops_identity.tenants`. Hàm `valid_schema` chỉ chấp nhận đúng mẫu `tenant_[a-f0-9]{32}` hoặc `retailops_identity`, nên không thể chèn tên schema tùy ý. Khi tạo schema, quyền `PUBLIC` bị thu hồi.
@@ -56,16 +56,22 @@ Thêm ba cơ chế ở tầng nghiệp vụ:
 
 ## A4. Schema nghiệp vụ của một cửa hàng
 
-**Bán hàng**
+**Bán hàng, vận chuyển, thanh toán và tích hợp**
 
 | Bảng | Vai trò | Ghi chú |
 |---|---|---|
 | `customers` | khách của cửa hàng | chỉ có `id`, `name` |
-| `products`, `product_variants` | catalog và biến thể có `size`, `color`, `stock` | `products.variants` là danh sách JSON cũ, `product_variants` là nguồn tồn kho thật |
-| `orders` | đơn hàng | `status` chỉ có `pending`, `delivered`, `cancelled`; có `version`, `delivered_at`; **không có** ngày đặt, thanh toán, địa chỉ, hoàn tiền |
-| `order_items` | dòng hàng của đơn nhập từ hệ thống ngoài | |
-| `imported_events` | mọi sự kiện đã nhận từ hệ thống ngoài, kèm chữ ký | chống nhận trùng |
-| `order_purge_tombstones` | dấu vết khi xóa đơn demo | |
+| `products`, `product_variants` | catalog và biến thể có `size`, `color`, `stock`, `sku` | `products.variants` là danh sách JSON cũ, `product_variants` là nguồn tồn kho thật; `product_variants.sku` có chỉ mục duy nhất từng phần khi khác trống |
+| `orders` | đơn hàng theo mô hình chuẩn v9 | `id` nội bộ do RetailOps sinh; cặp `source_system`, `external_order_id` duy nhất; `status` gồm `pending`, `shipping`, `delivered`, `cancelled`; có `version`, `ordered_at`, `payment_method`, `payment_status`, `shipping_fee`, `ship_to_area`, `promised_delivery_by`, `delivered_at`, `backfill_note` |
+| `order_items` | dòng hàng của đơn nhập từ hệ thống ngoài | gắn `sku` và biến thể |
+| `integration_connectors` | cấu hình connector theo cửa hàng | `source_system`, `kind`, `merchant_id`, `secret_ref`, `status_mapping_json`, `enabled`; khóa ký đọc từ `/run/secrets`, không lưu trong DB |
+| `imported_events` | mọi sự kiện hợp đồng v2 đã nhận qua HTTP hoặc CLI | có `event_type`, `sequence`, `received_via`, `payload_digest` HMAC-SHA256 trên byte gốc và `redacted_fields` sau khi gỡ dữ liệu cá nhân người nhận; chống nhận trùng theo `UNIQUE(source_system, event_id)` |
+| `shipments` | vận đơn của đơn hàng | trạng thái chuẩn kèm `carrier_status_raw`, khu vực hiện tại, shipper có số điện thoại đã che, dự kiến giao, số lần giao; `UNIQUE(source_system, external_shipment_id)` |
+| `shipment_events` | nhật ký hành trình vận đơn theo từng mốc | kho hoặc bưu cục, quận, tỉnh, dự kiến giao tại mốc; **trigger chặn UPDATE và DELETE**, chỉ được ghi thêm |
+| `payment_transactions` | giao dịch thanh toán theo cổng | trạng thái chuẩn kèm `provider_status_raw`; `UNIQUE(provider, provider_txn_ref)` |
+| `refunds` | giao dịch hoàn tiền do cổng thực hiện | nối tùy chọn sang `order_action_requests` và `payment_transactions`; `UNIQUE(provider, provider_refund_ref)` |
+| `order_recipients`, `delivery_compensations`, `vouchers` | người nhận có mã hóa, đề xuất bồi thường giao trễ, voucher phát ra | đã tạo ở migration v9, để trống ở W6.1b-1 tới khi W6.1b-2 dùng |
+| `order_purge_tombstones` | dấu vết khi xóa đơn demo | ngăn nạp lại đơn đã xóa |
 | `proposals` | luồng xác nhận hủy đơn đời cũ | giữ để tương thích |
 
 **Hội thoại và ca hỗ trợ**
@@ -119,13 +125,13 @@ Ràng buộc đóng mở được kiểm bằng `CHECK` trong DB, không chỉ t
 | Server sau mỗi lượt Trợ lý ca | `case_assist_turns` | `save_case_assist_turn` |
 | Khách đánh giá | `case_feedback_events` | `record_feedback` |
 | Bộ hẹn giờ | `cases`, `agent_turns` | `process_due_case_timers` |
-| Cổng tích hợp hệ thống ngoài | `imported_events`, `orders`, `order_items` | `retailops/sales/adapter.py` |
+| Cổng tích hợp hệ thống ngoài | `imported_events`, `products`, `product_variants`, `customers`, `orders`, `order_items`, `shipments`, `shipment_events`, `payment_transactions`, `refunds`, `order_action_requests`, `order_action_decisions` | `retailops/integration/ingest.py` |
 | CLI nạp tri thức | `knowledge_*` | `retailops/knowledge/repository.py` |
-| Seed demo | `customers`, `products`, `product_variants`, `orders` | `seed`, `seed_catalog`, `seed_demo_sample_orders` |
+| Seed demo | `products`, `product_variants`, và các bảng chuẩn qua đường nhập sự kiện `data/demo_events/` | `seed_catalog`, `retailops/integration/demo_seed.py` |
 
 **AI không có tool nào ghi vào database.** Tool `prepare_order_action` chỉ đọc điều kiện và mở form; yêu cầu chỉ được tạo khi khách tự bấm nút. Lịch sử hội thoại và checkpoint là do server ghi sau lượt chat, không phải do model quyết định.
 
-Hiện **kết quả hoàn tiền do nhân viên ghi tay** qua `record_order_action_refund_outcome`. Ở v9 việc này chuyển sang nhận từ sự kiện của cổng thanh toán.
+Với đơn đến từ connector tích hợp, **kết quả hoàn tiền do sự kiện `refund.updated` cập nhật** vào `refunds`: khi đơn có đúng một yêu cầu hủy, trả hoặc đổi đang chờ hoàn tiền thì hệ thống tự nối `refunds.request_id`, cập nhật `order_action_requests.refund_status` và ghi `order_action_decisions` với người thực hiện là `system`; nếu không xác định được yêu cầu duy nhất thì để trống `request_id` để Staff Desk cảnh báo. Hàm `record_order_action_refund_outcome` trả `409 refund_managed_by_provider` trên đơn có connector và chỉ còn dùng cho đơn không có connector.
 
 ## A7. Lịch sử migration
 
@@ -140,9 +146,22 @@ Hiện **kết quả hoàn tiền do nhân viên ghi tay** qua `record_order_act
 | v6 | W3 | `orders.delivered_at`; `order_action_requests`, `order_action_decisions` có trigger chỉ ghi thêm, `order_action_evidence`, `integration_outbox` |
 | v7 | W3.2 | đổi hàng tổng quát: `exchange_kind` là `other_variant` hoặc `same_variant`, cột biến thể đích |
 | v8 | W4 | `case_assist_turns`; bằng chứng nhận PDF, số trang, kết quả quét |
+| v9 | W6.1b-1 | thêm cột đơn, thanh toán, phí ship, khu vực giao, thời hạn cam kết, `backfill_note` và trạng thái `shipping` cho `orders`; mở rộng `imported_events` sang hợp đồng v2 có `payload_digest` HMAC-SHA256 và `redacted_fields`; chỉ mục duy nhất từng phần cho `product_variants.sku`; thêm 8 bảng `integration_connectors`, `shipments`, `shipment_events` có trigger chỉ ghi thêm, `payment_transactions`, `refunds`, cùng 3 bảng để trống cho W6.1b-2 là `order_recipients`, `delivery_compensations`, `vouchers`; backfill đơn cũ với `source_system = 'retailops_seed'` |
 | identity v1–v5 | đến W1 | liên kết khách, xử lý trùng, nhật ký hòa giải; v5 khóa vai trò cũ |
 
-Ứng dụng **từ chối khởi động** khi schema cũ hơn bản yêu cầu. Migration chỉ chạy bằng lệnh operator có cờ `--confirm-preflight --confirm-backup`, theo runbook: backup, diễn tập trên DB nháp, dừng web, backup cuối, migrate, rollout.
+Ứng dụng **từ chối khởi động** khi schema cũ hơn bản yêu cầu. Migration chỉ chạy bằng lệnh operator có cờ `--confirm-preflight --confirm-backup`, theo runbook có kiểm soát ở [RUNBOOK vận hành](../docs/04_OPERATIONS/RUNBOOK.md) và ngay dưới đây.
+
+### Runbook migrate v9 và nạp dữ liệu sự kiện (W6.1b-1)
+
+Chỉ chạy sau khi PR merge và có phê duyệt riêng của owner, theo đúng thứ tự:
+
+1. **Backup và diễn tập trên bản sao nháp.** Chụp `pg_dump` của DB hiện hành, khôi phục sang DB nháp tách biệt và diễn tập `python -m retailops database migrate-v9 --confirm-preflight --confirm-backup`; ghi số đơn backfill (`backfilled_orders`) và kiểm tra chạy lại lần hai là no-op (`upgraded: false`). Biên bản deploy ghi rõ **nơi lưu từng bản backup và ngày xóa** theo thời hạn owner chốt ở [§20](../docs/phase_role_aware_ops/W0_OWNER_DECISION_DELTA_2026-10-29.md#20-w61b-owner-decisions-2026-11-08); repo hiện chưa có backup định kỳ hay thời hạn giữ backup tự động, xem [PERSISTENT_IDENTITY](../docs/PERSISTENT_IDENTITY.md).
+2. **Tạo kho khóa tích hợp trên host.** Tạo `/opt/retailops/integration-secrets/` theo đúng cách của `postgres-secrets`: thư mục quyền `0700` thuộc `root`, mỗi tệp khóa quyền `0444`, là tệp thường, không phải symlink, tối thiểu 32 byte ngẫu nhiên; gồm một tệp `retailops_connector_marketplace_sim` cho connector `marketplace_sim` và một tệp `retailops_event_digest_key` cho khóa HMAC digest sự kiện. Không đưa khóa vào repo, biến môi trường, log hay chat. Sao lưu khóa tách biệt khỏi bản backup DB.
+3. **Dừng web, backup cuối và migrate thật.** Dừng dịch vụ `web`, chụp bản backup cuối cùng trước nâng cấp, kiểm tra `pg_restore --list`, rồi chạy `python -m retailops database migrate-v9 --confirm-preflight --confirm-backup`.
+4. **Rollout image mới và kiểm connector.** Cập nhật Compose và Caddyfile theo bản mới, rollout image mới; chạy `python -m retailops connector add` cho tenant production với `--tenant <tenant_id> --source-system marketplace_sim --kind marketplace --merchant-id <merchant_id> --secret-ref retailops_connector_marketplace_sim --status-mapping-file data/connectors/marketplace_sim.json`; chạy `python -m retailops connector check --tenant <tenant_id>` và xác nhận mã thoát bằng `0` (nếu khác `0` thì dừng ngay và kiểm tra log khởi động).
+5. **Dọn đơn demo viết cứng đời cũ.** Chạy `python -m retailops database purge-legacy-demo --tenant <tenant_id> --dry-run`; owner rà danh sách đơn sẽ xóa và đơn giữ lại do còn yêu cầu hủy, trả, đổi đang gắn vào trước khi chạy lệnh thật không có `--dry-run`.
+6. **Nhập dữ liệu sự kiện demo chuẩn.** Chạy `python -m retailops database import-events --tenant <tenant_id> --source-system marketplace_sim --file data/demo_events/store_events.jsonl --rebase-clock now` để nạp bộ cửa hàng chuẩn có dời mốc thời gian về thời điểm nhập.
+7. **Smoke và biên bản deploy.** Đăng nhập một khách demo hỏi `"đơn của tôi đang ở đâu"` và xác nhận `track_shipment` trả hành trình vận đơn đọc từ DB; từ bên ngoài kiểm tra Caddy trả `404` cho mọi đường dẫn `/internal/*`; ghi biên bản deploy kèm digest image, số đơn backfill, kết quả `purge-legacy-demo`, kết quả `import-events`, nơi lưu và ngày xóa từng bản backup.
 
 ## A8. Tự xem dữ liệu trên EC2, chỉ đọc
 

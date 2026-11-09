@@ -38,8 +38,9 @@ class ScriptedAgent:
 
 class ConversationTests(unittest.TestCase):
     def setUp(self):
+        from legacy_seed_fixture import seed_legacy_unit_fixture
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
-        self.store = BusinessStore(Path(self.temp.name) / 'business.sqlite3'); self.store.seed()
+        self.store = seed_legacy_unit_fixture(BusinessStore(Path(self.temp.name) / 'business.sqlite3'))
         self.model = ScriptedAgent()
         self.app = Application(self.store, {}, self.model)
         self.cid = self.store.new_conversation('C-001')['conversation_id']
@@ -230,7 +231,7 @@ class ConversationTests(unittest.TestCase):
         self.assertEqual(self.chat('hello')['message'], 'Recovered')
 
     def test_existing_database_migrates_without_resetting_cancelled_order(self):
-        from retailops.business.store import migrate_sqlite_business_v8
+        from retailops.business.store import migrate_sqlite_business_v9
         path = Path(self.temp.name) / 'old.sqlite3'
         db = sqlite3.connect(path)
         try:
@@ -240,8 +241,9 @@ class ConversationTests(unittest.TestCase):
         finally:
             db.close()
         self.assert_error('business_migration_required', lambda: BusinessStore(path))
-        migrate_sqlite_business_v8(path, preflight_confirmed=True, backup_confirmed=True)
-        migrated = BusinessStore(path); migrated.seed()
+        from legacy_seed_fixture import seed_legacy_unit_fixture
+        migrate_sqlite_business_v9(path, preflight_confirmed=True, backup_confirmed=True)
+        migrated = seed_legacy_unit_fixture(BusinessStore(path))
         order = migrated.lookup('C-001', 'O-101')
         self.assertEqual((order['status'], order['version']), ('cancelled', 2))
         self.assertTrue(migrated.new_conversation('C-001')['conversation_id'])

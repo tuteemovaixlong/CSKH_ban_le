@@ -13,6 +13,7 @@ from retailops.business.application import Application
 from retailops.business.store import BusinessStore
 from retailops.core import ApiError
 from retailops.knowledge.chunking import SourceDocument
+from legacy_seed_fixture import seed_legacy_unit_fixture
 from test_conversation import ScriptedAgent, response
 from scripts.postgres_test_guard import require_disposable_postgres_test_target
 
@@ -28,7 +29,7 @@ def policy_reply(messages):
 class RagFallbackTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
-        self.store = BusinessStore(Path(self.temp.name)/'business.sqlite3'); self.store.seed()
+        self.store = BusinessStore(Path(self.temp.name)/'business.sqlite3'); seed_legacy_unit_fixture(self.store)
 
     def test_sqlite_returns_typed_unavailable_and_orders_still_work(self):
         def final(messages):
@@ -81,7 +82,7 @@ class RagChatPostgresTests(unittest.TestCase):
         self.keys = [hashlib.md5((self.id()+str(i)).encode()).hexdigest() for i in range(2)]
         self.stores = [PostgresBusinessStore(DSN, key, create=True) for key in self.keys]
         self.addCleanup(self.cleanup)
-        for store in self.stores: store.seed()
+        for store in self.stores: seed_legacy_unit_fixture(store)
         self.store = self.stores[0]
         self.model = ScriptedAgent()
         self.app = Application(self.store, {}, self.model)

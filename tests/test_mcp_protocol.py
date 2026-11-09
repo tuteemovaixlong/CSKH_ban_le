@@ -1,19 +1,20 @@
 import asyncio
 import json
+import os
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-
+from retailops.business.store import BusinessStore
 try:
     from retailops_mcp_server import app
     from retailops.workflow.mcp_client import RetailOpsMCPClient
 except ImportError:
-    import os
     sys.path.insert(0, os.getcwd())
     from retailops_mcp_server import app
     from retailops.workflow.mcp_client import RetailOpsMCPClient
@@ -21,6 +22,70 @@ except ImportError:
 
 class RetailOpsMCPProtocolTests(unittest.TestCase):
     """Tests for MCP Tools, Resources, Prompts, and Guardrails."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.db_path = Path(self._tmp.name) / "mcp_business.sqlite3"
+        self._prev_db_env = os.environ.get("RETAILOPS_DB_PATH")
+        os.environ["RETAILOPS_DB_PATH"] = str(self.db_path)
+        self.addCleanup(self._restore_env)
+        store = BusinessStore(self.db_path)
+        store.seed()
+        now_ts = store._now()
+        with store.connection() as db:
+            db.execute(
+                "INSERT OR IGNORE INTO customers (id, name) VALUES (?, ?), (?, ?)",
+                ("C-001", "Khách A", "C-003", "Khách C"),
+            )
+            db.execute(
+                """INSERT OR REPLACE INTO orders (
+                    id, customer_id, product_id, name, variant, amount, status, version,
+                    source_system, external_order_id, ordered_at, promised_delivery_by
+                ) VALUES
+                    ('ord_mcp_101', 'C-001', 'P-101', 'Áo thun Essential', 'Trắng / M', 299000, 'shipping', 1, 'marketplace_sim', 'SIM-O-0101', ?, ?),
+                    ('ord_mcp_301', 'C-003', 'P-103', 'Áo Sơ Mi Oxford Dài Tay', 'Trắng / M', 350000, 'shipping', 1, 'marketplace_sim', 'SIM-O-0301', ?, ?),
+                    ('ord_mcp_304', 'C-003', 'P-301', 'Bộ Nồi Inox 3 Đáy Cao Cấp', 'Bạc / Bộ 3 món', 1250000, 'shipping', 1, 'marketplace_sim', 'SIM-O-0304', ?, ?)
+                """,
+                (
+                    now_ts - 86400.0, now_ts + 86400.0,
+                    now_ts - 86400.0, now_ts + 14400.0,
+                    now_ts - 90.0 * 3600.0, now_ts - 54.0 * 3600.0,
+                ),
+            )
+            db.execute(
+                """INSERT INTO shipments (
+                    shipment_id, order_id, source_system, external_shipment_id, carrier, tracking_code,
+                    status, carrier_status_raw, current_area, estimated_delivery_at, delivered_at,
+                    delivery_attempts, shipper_name, shipper_phone_masked, updated_at
+                ) VALUES
+                    ('shp_mcp_101', 'ord_mcp_101', 'marketplace_sim', 'EXT-SHP-101', 'Giao Hàng Tiết Kiệm (GHTK)', 'GHTK.VN.0918231', 'in_transit', 'transporting', 'Bưu cục Tân Bình, TP.HCM', ?, NULL, 0, 'Nguyễn Văn Nam', '090****334', ?),
+                    ('shp_mcp_301', 'ord_mcp_301', 'marketplace_sim', 'EXT-SHP-301', 'SPX Express', 'SPX.VN.9928110', 'delivery_failed', 'DELIVERY_FAIL', 'Bưu cục Cầu Giấy 2, Hà Nội', ?, NULL, 1, 'Nguyễn Văn Tuấn', '093****233', ?),
+                    ('shp_mcp_304', 'ord_mcp_304', 'marketplace_sim', 'EXT-SHP-304', 'Giao Hàng Nhanh (GHN)', 'GHN.VN.8821990', 'in_transit', 'congested_at_soc', 'Kho Tổng BN Mega SOC, Bắc Ninh', ?, NULL, 0, NULL, NULL, ?)
+                """,
+                (
+                    now_ts + 86400.0, now_ts - 3600.0,
+                    now_ts + 14400.0, now_ts - 1800.0,
+                    now_ts + 48.0 * 3600.0, now_ts - 3600.0,
+                ),
+            )
+            db.execute(
+                """INSERT INTO shipment_events (
+                    shipment_event_id, shipment_id, occurred_at, status, carrier_status_raw,
+                    description, fail_reason, hub_name, district, province, estimated_delivery_at, source_event_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    'se_mcp_301_1', 'shp_mcp_301', now_ts - 1800.0, 'delivery_failed', 'DELIVERY_FAIL',
+                    'Giao thất bại', 'Không liên lạc được người nhận', 'Bưu cục Cầu Giấy 2', 'Cầu Giấy', 'Hà Nội',
+                    now_ts + 14400.0, 'evt_mcp_301_1',
+                ),
+            )
+
+    def _restore_env(self):
+        if self._prev_db_env is None:
+            os.environ.pop("RETAILOPS_DB_PATH", None)
+        else:
+            os.environ["RETAILOPS_DB_PATH"] = self._prev_db_env
 
     def test_all_tools_registered(self):
         tools = asyncio.run(app.list_tools())
@@ -55,21 +120,22 @@ class RetailOpsMCPProtocolTests(unittest.TestCase):
         self.assertIn("retail_copilot_assistant", prompt_names)
 
     def test_track_shipment_tool(self):
-        # 1. Normal order
-        res1 = asyncio.run(app.call_tool("track_shipment", {"order_id": "O-101"}))
+        # 1. Normal order from DB
+        res1 = asyncio.run(app.call_tool("track_shipment", {"order_id": "SIM-O-0101"}))
         data1 = json.loads(res1.content[0].text)
-        self.assertEqual(data1["order_id"], "O-101")
+        self.assertEqual(data1["order_id"], "SIM-O-0101")
+        self.assertEqual(data1["internal_order_id"], "ord_mcp_101")
         self.assertIn("shipment", data1)
         self.assertEqual(data1["shipment"]["carrier"], "Giao Hàng Tiết Kiệm (GHTK)")
 
-        # 2. Mega SOC delayed order (>48h)
-        res2 = asyncio.run(app.call_tool("track_shipment", {"order_id": "O-304"}))
+        # 2. Mega SOC delayed order (>48h late vs promised_delivery_by, no hardcoded voucher)
+        res2 = asyncio.run(app.call_tool("track_shipment", {"order_id": "SIM-O-0304"}))
         data2 = json.loads(res2.content[0].text)
         self.assertTrue(data2["is_delayed_mega_soc"])
-        self.assertEqual(data2["compensation_voucher"], "SALE50K-BN-SOC")
+        self.assertIsNone(data2["compensation_voucher"])
 
-        # 3. Virtual delivery suspicion
-        res3 = asyncio.run(app.call_tool("track_shipment", {"order_id": "O-301"}))
+        # 3. Failed delivery attempt
+        res3 = asyncio.run(app.call_tool("track_shipment", {"order_id": "SIM-O-0301"}))
         data3 = json.loads(res3.content[0].text)
         self.assertTrue(data3["is_virtual_delivery_suspected"])
 
@@ -89,12 +155,12 @@ class RetailOpsMCPProtocolTests(unittest.TestCase):
         self.assertFalse(data_oos["in_stock"])
 
     def test_calculate_voucher_discount(self):
-        # Mega SOC delay voucher (SALE50K-BN-SOC)
-        res = asyncio.run(app.call_tool("calculate_voucher_discount", {"order_amount": 299000, "voucher_code": "SALE50K-BN-SOC"}))
+        # Fixed promo voucher (FREESHIP)
+        res = asyncio.run(app.call_tool("calculate_voucher_discount", {"order_amount": 350000, "voucher_code": "FREESHIP"}))
         data = json.loads(res.content[0].text)
         self.assertTrue(data["is_valid"])
-        self.assertEqual(data["discount_amount"], 50000)
-        self.assertEqual(data["final_amount"], 249000)
+        self.assertEqual(data["discount_amount"], 30000)
+        self.assertEqual(data["final_amount"], 320000)
 
         # Percentage voucher (RETAIL10)
         res_perc = asyncio.run(app.call_tool("calculate_voucher_discount", {"order_amount": 300000, "voucher_code": "RETAIL10"}))
@@ -180,8 +246,8 @@ class RetailOpsMCPProtocolTests(unittest.TestCase):
         tools = client.list_tools_sync()
         self.assertGreaterEqual(len(tools), 10)
 
-        res = client.call_tool_sync("track_shipment", {"order_id": "O-101"})
-        self.assertEqual(res.get("order_id"), "O-101")
+        res = client.call_tool_sync("track_shipment", {"order_id": "SIM-O-0101"})
+        self.assertEqual(res.get("order_id"), "SIM-O-0101")
 
         policy_text = client.read_resource_sync("retailops://policies/warranty-90d")
         self.assertIn("bảo hành", policy_text.lower())

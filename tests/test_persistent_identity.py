@@ -42,9 +42,10 @@ class PersistentTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.directory = Path(self.temp.name)/'persistent'
+        from legacy_seed_fixture import provision_legacy_unit_tenant
         self.restart()
-        self.sessions.provision_tenant('shop-a', 'Cửa hàng A', seed_demo=True)
-        self.sessions.provision_tenant('shop-b', 'Cửa hàng B', seed_demo=True)
+        provision_legacy_unit_tenant(self.sessions, 'shop-a', 'Cửa hàng A')
+        provision_legacy_unit_tenant(self.sessions, 'shop-b', 'Cửa hàng B')
         self.alice = self.member('alice', 'shop-a', 'C-001')
         self.bob = self.member('bob', 'shop-a', 'C-002')
         self.other = self.member('other', 'shop-b', 'C-001')
@@ -279,7 +280,9 @@ class PersistentTests(unittest.TestCase):
                                   cwd=ROOT, text=True, capture_output=True, timeout=10)
         result = cli('init-tenant', '--tenant', 'demo', '--name', 'Demo', '--seed-demo')
         self.assertEqual(result.returncode, 0, result.stderr)
-        result = cli('create-member', '--tenant', 'demo', '--principal', 'mai-anh', '--name', 'Mai Anh', '--customer', 'C-001')
+        with PersistentSessions(output / 'persistent').business_store('demo').connection() as db:
+            seeded_cid = db.execute('SELECT id FROM customers ORDER BY id ASC LIMIT 1').fetchone()['id']
+        result = cli('create-member', '--tenant', 'demo', '--principal', 'mai-anh', '--name', 'Mai Anh', '--customer', seeded_cid)
         self.assertEqual(result.returncode, 0, result.stderr)
         mid = json.loads(result.stdout)['membership_id']
         path = Path(self.temp.name)/'code.txt'

@@ -63,8 +63,9 @@ class ChainTests(unittest.TestCase):
                 gateway._headers['Authorization'] = 'Bearer ' + TOKEN
                 return gateway
 
+        from legacy_seed_fixture import seed_legacy_unit_fixture
         agent = LoopbackProxyAgent(ModelConfig(base_url='https://unit.ngrok-free.app'), 'unit.ngrok-free.app', TOKEN)
-        self.store = BusinessStore(Path(self.temp.name)/'business.sqlite3'); self.store.seed()
+        self.store = seed_legacy_unit_fixture(BusinessStore(Path(self.temp.name)/'business.sqlite3'))
         tokens = {hashlib.sha256(DEMO.encode()).hexdigest(): 'C-001', hashlib.sha256(('c'*40).encode()).hexdigest(): 'C-002'}
         self.api_server = self.start(Server(('127.0.0.1', 0), Application(self.store, tokens, agent)))
         self.http = urllib.request.build_opener(urllib.request.ProxyHandler({}))

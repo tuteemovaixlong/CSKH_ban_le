@@ -13,6 +13,7 @@ from retailops.core import ApiError
 from retailops.http.routes import api_result
 from retailops.workflow import approval
 from retailops.workflow.checkpoints import workflow
+from legacy_seed_fixture import seed_legacy_unit_fixture
 
 CUSTOMER = 'C-001'
 BODY = {'order_id': 'O-101', 'order_version': 1, 'cancel_reason': 'ordered_by_mistake'}
@@ -186,7 +187,7 @@ class WorkflowTests(WorkflowCases, unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.path = Path(self.temp.name)/'business.sqlite3'
-        self.fresh_store().seed()
+        seed_legacy_unit_fixture(self.fresh_store())
 
     def fresh_store(self):
         return BusinessStore(self.path)

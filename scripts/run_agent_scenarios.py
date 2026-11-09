@@ -31,6 +31,7 @@ Report (JSON with --out, summary on stdout):
   image token cost    prompt tokens on image-bearing turns and average prompt tokens per projected image
 """
 import argparse
+import atexit
 import base64
 import contextlib
 import copy
@@ -41,6 +42,7 @@ import json
 import math
 import os
 import re
+import shutil
 import sys
 import tempfile
 import time
@@ -54,7 +56,7 @@ DEFAULT_DATASET = ROOT / 'evals' / 'agent_scenarios_w3_2.jsonl'
 W4_DATASET = ROOT / 'evals' / 'agent_scenarios_w4.jsonl'
 DEFAULT_MODEL = 'yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2'
 PLACEHOLDER_KEY = 'scenario-runner-placeholder-key-0000'   # a vLLM server without --api-key ignores it
-CUSTOMER = 'C-001'
+DEFAULT_EXTERNAL_CUSTOMER = 'SIM-C-0070'
 INVALID_TOOL_CODES = frozenset({'tool_not_allowed', 'invalid_tool_arguments', 'invalid_knowledge_query'})
 LOOPBACK_HOSTS = frozenset({'localhost', '127.0.0.1', '::1'})
 TRUTHY_VISION = frozenset({'1', 'true', 'yes', 'on'})
@@ -64,15 +66,11 @@ REFUSAL = ('Chưa có --endpoint nên script không chạy.\n'
            'notebooks/colab_vllm_l4.py in ra).\n'
            'Muốn kiểm tra mã xung quanh model mà không cần model: dùng --fake (gateway giả, không mạng).')
 
-# Orders added on top of the demo seed (O-101 pending and O-102 delivered of C-001; O-202 is C-002's).
+# W6.1b-D12: Scenarios run strictly on data/demo_events/store_events.jsonl with zero hardcoded SQL seed rows.
 FIXTURES = {
-    'standard': [
-        {'id': 'O-701', 'status': 'delivered', 'variant': 'Đen · Size M · Số lượng 1', 'product_id': 'P-102', 'name': 'Áo khoác Everyday'},
-        {'id': 'O-702', 'status': 'delivered', 'variant': 'Đen / 41', 'product_id': 'P-603', 'name': 'Giày lười da bò cao cấp'},
-        {'id': 'O-705', 'status': 'pending', 'variant': 'Đen / L', 'product_id': 'P-102', 'name': 'Áo khoác Everyday'},
-        {'id': 'O-710', 'status': 'cancelled', 'variant': 'Đen / L', 'product_id': 'P-102', 'name': 'Áo khoác Everyday'},
-    ],
+    'standard': 'store_events.jsonl',
 }
+_DEMO_TEMPLATE_CACHE = {}
 COUNTED_TABLES = ('order_action_requests', 'order_action_decisions', 'proposals', 'integration_outbox', 'handoff_episodes')
 W4_COUNTED_TABLES = COUNTED_TABLES + ('case_assist_turns', 'order_action_evidence')
 _TEMPLATE = re.compile(r'\{\{\s*last_tool\.([A-Za-z0-9_.]+)\s*\}\}')
@@ -457,11 +455,22 @@ def grade_turn(expect, outcome, variant_label=lambda order_id, variant_id: None)
         failures.append(f"action is {result.get('action')!r}, expected {expect['action']!r}")
     if 'order_action' in expect:
         actual = result.get('order_action') or {}
+        actual_ord = result.get('order') or {}
         for key, wanted in expect['order_action'].items():
             if key == 'target_variant_label':
                 found = variant_label(actual.get('order_id'), actual.get('target_variant_id'))
                 if found != wanted:
                     failures.append(f'target variant is {found!r}, expected {wanted!r}')
+            elif key == 'order_id':
+                actual_ids = {
+                    x for x in (
+                        actual.get('order_id'),
+                        actual.get('external_order_id'),
+                        actual_ord.get('external_order_id'),
+                    ) if x
+                }
+                if wanted not in actual_ids:
+                    failures.append(f"order_action.order_id is {actual.get('external_order_id') or actual.get('order_id')!r}, expected {wanted!r}")
             elif actual.get(key) != wanted:
                 failures.append(f'order_action.{key} is {actual.get(key)!r}, expected {wanted!r}')
     trace = result.get('trace') or {}
@@ -523,7 +532,10 @@ def grade_final_state(expect, store):
     failures = []
     with store.connection() as db:
         for order_id, status in (expect.get('orders') or {}).items():
-            row = db.execute('SELECT status FROM orders WHERE id = ?', (order_id,)).fetchone()
+            row = db.execute(
+                'SELECT status FROM orders WHERE external_order_id = ? OR id = ?',
+                (order_id, order_id),
+            ).fetchone()
             actual = row[0] if row else None
             if actual != status:
                 failures.append(f'order {order_id} is {actual!r} at the end, expected {status!r}')
@@ -547,32 +559,54 @@ def percentile(values, pct):
 
 # ---------------------------------------------------------------- running
 
+def _provision_demo_template(fixture_name, persistent_sessions_cls):
+    if fixture_name not in FIXTURES:
+        raise ScenarioError(f'unknown fixture {fixture_name!r}')
+    cached = _DEMO_TEMPLATE_CACHE.get(fixture_name)
+    if cached is not None and Path(cached.name).is_dir():
+        return Path(cached.name) / 'persistent'
+    td = tempfile.TemporaryDirectory(prefix=f'w61b1-scenario-template-{fixture_name}-', ignore_cleanup_errors=True)
+    atexit.register(td.cleanup)
+    template_root = Path(td.name) / 'persistent'
+    sessions = persistent_sessions_cls(template_root, data_mode='persistent-demo')
+    sessions.provision_tenant('shop-scenarios', 'Shop scenarios', seed_demo=True)
+    _DEMO_TEMPLATE_CACHE[fixture_name] = td
+    return template_root
+
+
 class World:
-    """One scenario's own tenant: a temporary SQLite store with the demo seed and the scenario's fixture."""
+    """One scenario's own tenant: a fresh temporary SQLite store loaded from data/demo_events/."""
 
     def __init__(self, scenario, gateway):
         Application, self.ApiError, PersistentSessions, self.KnowledgeRepository, AgentError = _modules()
         self.temp = tempfile.TemporaryDirectory(prefix='w32-scenario-', ignore_cleanup_errors=True)
-        sessions = PersistentSessions(Path(self.temp.name) / 'persistent', data_mode='persistent-demo')
-        self.store = sessions.provision_tenant('shop-scenarios', 'Shop scenarios', seed_demo=True)
+        template_root = _provision_demo_template(scenario['fixture'], PersistentSessions)
+        persistent_dir = Path(self.temp.name) / 'persistent'
+        shutil.copytree(template_root, persistent_dir)
+        sessions = PersistentSessions(persistent_dir, data_mode='persistent-demo')
+        self.store = sessions.business_store('shop-scenarios')
         self.store.tenant_id = 'shop-scenarios'
         self.store.data_root = Path(self.temp.name) / 'data'
         self.store.malware_scanner = _ScenarioCleanScanner(self.ApiError)
         self.store.customer_ref_key = 'scenario-eval-hmac-secret-key-0123456789abcdef'
-        with self.store.connection(write=True) as db:
-            for order in FIXTURES[scenario['fixture']]:
-                db.execute('INSERT INTO orders(id, customer_id, product_id, name, variant, amount, status, version) '
-                           'VALUES (?, ?, ?, ?, ?, ?, ?, 1)',
-                           (order['id'], CUSTOMER, order['product_id'], order['name'], order['variant'], 599000, order['status']))
-            cust_row = db.execute('SELECT name FROM customers WHERE id = ?', (CUSTOMER,)).fetchone()
-            self.customer_pii_tokens = [cust_row[0]] if cust_row and cust_row[0] else ['Mai Anh']
+        ext_customer = scenario.get('customer') or DEFAULT_EXTERNAL_CUSTOMER
+        self.customer_id = sessions.control.get_external_customer_mapping(
+            'shop-scenarios',
+            'marketplace_sim',
+            ext_customer,
+        )
+        if not self.customer_id:
+            raise ScenarioError(f'unknown canonical demo customer {ext_customer!r}')
+        with self.store.connection() as db:
+            cust_row = db.execute('SELECT name FROM customers WHERE id = ?', (self.customer_id,)).fetchone()
+            self.customer_pii_tokens = [cust_row[0]] if cust_row and cust_row[0] else []
         self._obs_state = _TurnObservationState()
         self._obs_gateway = _ObservingGateway(gateway, self._obs_state, AgentError)
         self.actor = scenario.get('actor', 'customer')
         # Tool results are tested through the whole application; "api" has no response cache, so a repeated
         # question in another scenario can never be answered without the model.
         self.app = Application(self.store, {}, api_infer=self._obs_gateway, api_daily_limit=10000, tenant_id='shop-scenarios')
-        self.conversation = self.store.new_conversation(CUSTOMER, 'api')['conversation_id']
+        self.conversation = self.store.new_conversation(self.customer_id, 'api')['conversation_id']
         self.knowledge = scenario.get('knowledge')
         self.case_id = None
         self.staff_app = None
@@ -581,9 +615,9 @@ class World:
             setup = scenario['case_setup']
             for msg in setup['customer_messages']:
                 att = build_synthetic_attachment(msg['attachment']) if 'attachment' in msg else None
-                self.store.customer_message(CUSTOMER, self.conversation, msg['text'], attachment=att)
+                self.store.customer_message(self.customer_id, self.conversation, msg['text'], attachment=att)
             handoff = self.store.request_human_handoff(
-                CUSTOMER,
+                self.customer_id,
                 self.conversation,
                 reason_code='customer_requested',
                 comment=setup.get('handoff_comment') or 'Khách yêu cầu nhân viên hỗ trợ',
@@ -608,7 +642,7 @@ class World:
     def variant_label(self, order_id, variant_id):
         if not order_id or not variant_id:
             return None
-        for variant in self.store.exchange_options(CUSTOMER, order_id)['variants']:
+        for variant in self.store.exchange_options(self.customer_id, order_id)['variants']:
             if variant['id'] == variant_id:
                 return variant['label']
         return None
@@ -676,7 +710,7 @@ class World:
                 }
                 if 'attachment' in turn:
                     body['attachment'] = build_synthetic_attachment(turn['attachment'])
-                result = self.app.chat(CUSTOMER, body)
+                result = self.app.chat(self.customer_id, body)
             outcome['result'] = result
             trace = result.get('trace') or {}
         except self.ApiError as err:

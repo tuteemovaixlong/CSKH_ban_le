@@ -90,8 +90,9 @@ class PhaseR1W1IdentityRbacTests(unittest.TestCase):
             api_daily_limit=10,
             default_tenant_id="tenant-a",
         )
-        self.store_a = self.sessions.provision_tenant("tenant-a", "Cửa hàng Alpha", seed_demo=True)
-        self.store_b = self.sessions.provision_tenant("tenant-b", "Cửa hàng Beta", seed_demo=True)
+        from legacy_seed_fixture import provision_legacy_unit_tenant
+        self.store_a = provision_legacy_unit_tenant(self.sessions, "tenant-a", "Cửa hàng Alpha")
+        self.store_b = provision_legacy_unit_tenant(self.sessions, "tenant-b", "Cửa hàng Beta")
         self.web = PublicWeb(ORIGIN, self.sessions)
 
     def _provision_member(self, tenant_id: str, principal_id: str, name: str, customer_id: str, role: str):

@@ -8,14 +8,26 @@ from retailops.core import ApiError
 IDENTITY_SCHEMA = 'retailops_identity'
 IDENTITY_SCHEMA_CURRENT = 5
 IDENTITY_SCHEMA_COMPATIBLE = (1, 2, 3, 4, 5)
-# Phase R1 W2/W3/W3.2/W4 Business schema version mappings:
-#   PostgreSQL business schema: 5 -> 6 -> 7 -> 8  (BUSINESS_SCHEMA_CURRENT = 8; 5 = v5, 6 = v6, 7 = v7)
-#   SQLite business schema:     4 -> 5 -> 6 -> 7  (SQLITE_BUSINESS_SCHEMA_CURRENT = 7; 4 = v5, 5 = v6, 6 = v7)
+# Phase R1 Business schema version notes (PostgreSQL vs SQLite):
+#   - v5 (W2):     PG 5 / SQLite 4 — cases, handoff_episodes, case_feedback_events
+#   - v6 (W3):     PG 6 / SQLite 5 — orders.delivered_at, order_action_*, integration_outbox
+#   - v7 (W3.2):   PG 7 / SQLite 6 — generalized exchange (exchange_kind, target_variant_*)
+#   - v8 (W4):     PG 8 / SQLite 7 — case_assist_turns, PDF/ClamAV evidence metadata
+#   - v9 (W6.1b-1): PG 9 / SQLite 8 — canonical orders columns + 'shipping' status,
+#                  v2 imported_events (HMAC payload_digest + redacted_fields),
+#                  partial unique product_variants.sku, and 8 new tables
+#                  (integration_connectors, shipments, append-only shipment_events,
+#                  payment_transactions, refunds, plus empty W6.1b-2 tables
+#                  order_recipients, delivery_compensations, vouchers).
+# Normal startup fails closed below BUSINESS_SCHEMA_CURRENT; upgrades run only via
+# `python -m retailops database migrate-v9 --confirm-preflight --confirm-backup`.
 BUSINESS_V5_SCHEMA_VERSION = 5
 BUSINESS_V6_SCHEMA_VERSION = 6
 BUSINESS_V7_SCHEMA_VERSION = 7
-BUSINESS_SCHEMA_CURRENT = 8
-BUSINESS_SCHEMA_COMPATIBLE = (2, 3, 4, 5, 6, 7, 8)  # v2..v7 remain readable for explicit operator migration.
+BUSINESS_V8_SCHEMA_VERSION = 8
+BUSINESS_V9_SCHEMA_VERSION = 9
+BUSINESS_SCHEMA_CURRENT = BUSINESS_V9_SCHEMA_VERSION
+BUSINESS_SCHEMA_COMPATIBLE = (2, 3, 4, 5, 6, 7, 8, 9)  # v2..v8 remain readable for explicit operator migration.
 
 _LIBPQ_CONNINFO_KEYWORDS = frozenset({
     'authtype', 'service', 'user', 'password', 'passfile', 'channel_binding',

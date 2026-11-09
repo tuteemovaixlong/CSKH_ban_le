@@ -119,25 +119,7 @@ def _admin_control(app):
 def _format_order_for_api(order, app=None):
     if not isinstance(order, dict):
         return order
-    out = dict(order)
-    data_mode = getattr(app, 'data_mode', 'synthetic-demo') if app is not None else 'synthetic-demo'
-    store = getattr(app, 'store', None) if app is not None else None
-    is_demo_fixture = (
-        callable(getattr(store, 'is_demo_sample_order', None))
-        and store.is_demo_sample_order(out.get('customer_id'), out.get('id'))
-    )
-    if (
-        data_mode in ('synthetic-demo', 'persistent-demo')
-        and is_demo_fixture
-        and out.get('product_id') == 'P-602'
-        and out.get('name') == 'Quần tây đen hàn quốc'
-        and out.get('variant') == 'Đen / L'
-        and out.get('amount') == 520000
-        and isinstance(out.get('id'), str)
-        and re.fullmatch(r'O-[78]\d{5}', out['id'])
-    ):
-        out['display_name'] = 'Bộ xếp hình gỗ cho bé'
-    return out
+    return dict(order)
 
 
 def _parse_query_dict(query_str, allowed_keys):
@@ -389,7 +371,16 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             if ctx.principal_id is not None:
                 display_name = (ctx.display_name or "").strip()
             else:
-                display_name = ctx.display_name or ("Mai Anh" if customer == "C-001" else "Khách mẫu")
+                display_name = (ctx.display_name or "").strip()
+                if not display_name and customer:
+                    with app.store.connection() as db:
+                        cust_row = db.execute(
+                            "SELECT name FROM customers WHERE id=?", (customer,)
+                        ).fetchone()
+                    if cust_row and cust_row["name"]:
+                        display_name = str(cust_row["name"]).strip()
+                if not display_name:
+                    display_name = "Khách mẫu"
             res = {
                 "customer_id": customer,
                 "name": display_name,
@@ -615,11 +606,11 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 require(ok_off and off_val >= 0, 400, "invalid_offset", "Vị trí phân trang không hợp lệ.")
                 off = off_val
             return (200, app.store.list_manager_order_actions(status_group=status_group, limit=lim, offset=off))
-        m_exchange_options = re.fullmatch(r"/api/orders/([A-Z]{1,6}-[0-9]{1,8})/exchange-options", path)
+        m_exchange_options = re.fullmatch(r"/api/orders/([A-Za-z0-9_-]{1,64})/exchange-options", path)
         if m_exchange_options:
             # Variants of the order's own product with stock status; another customer's order is a 404.
             return (200, app.store.exchange_options(customer, m_exchange_options[1]))
-        m = re.fullmatch(r"/api/orders/([A-Z]{1,6}-[0-9]{1,8})", path)
+        m = re.fullmatch(r"/api/orders/([A-Za-z0-9_-]{1,64})", path)
         if m:
             return (200, {"order": _format_order_for_api(app.store.lookup(customer, m[1]), app)})
         if path == "/api/staff/cases":
@@ -663,18 +654,20 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 base_ord["days_since_delivery"] = o.get("days_since_delivery")
                 base_ord["delivery_age_label"] = o.get("delivery_age_label")
                 formatted_orders.append(base_ord)
+            unlinked_refunds = app.store.list_case_unlinked_refunds(resolved_case_id)
             return (200, {
                 "case_id": resolved_case_id,
                 "read_only": ro,
                 "orders": formatted_orders,
                 "consent_turns": info["consent_turns"],
+                "unlinked_refunds": unlinked_refunds,
                 "order_action_reasons": {
                     action: {e["code"]: e["label"] for e in reason_catalog().options(action, role=ctx.role)}
                     for action in ACTION_TYPES
                 },
             })
         m_case_exchange_options = re.fullmatch(
-            r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/orders/([A-Z]{1,6}-[0-9]{1,8})/exchange-options", path
+            r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/orders/([A-Za-z0-9_-]{1,64})/exchange-options", path
         )
         if m_case_exchange_options:
             _require_ctx_permission(ctx, STAFF)
@@ -701,11 +694,14 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 _format_order_for_api(o, app)
                 for o in (app.store.orders(case_row['customer_id']) if case_row else [])
             ]
+            unlinked_refunds = app.store.list_case_unlinked_refunds(resolved_case_id)
             return (200, {
                 "case_id": resolved_case_id,
                 "read_only": ro,
                 "order_actions": items,
                 "customer_orders": customer_orders,
+                "unlinked_refunds": unlinked_refunds,
+                "warnings": [u["warning"] for u in unlinked_refunds],
             })
         m_case_trans = re.fullmatch(r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/messages", path)
         if m_case_trans:
@@ -1232,9 +1228,10 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                         'Chỉ được tra cứu công cụ trực tiếp trên ca hỗ trợ trong phạm vi Staff Desk.',
                     )
                 if isinstance(arguments, dict) and arguments.get('order_id'):
+                    arg_oid = str(arguments['order_id']).strip()
                     ord_row = db.execute(
-                        'SELECT customer_id FROM orders WHERE id=?',
-                        (arguments['order_id'],),
+                        'SELECT id, customer_id FROM orders WHERE customer_id=? AND (id=? OR external_order_id=?) LIMIT 1',
+                        (conv['customer_id'], arg_oid, arg_oid),
                     ).fetchone()
                     require(
                         ord_row is not None and ord_row['customer_id'] == conv['customer_id'],

@@ -165,13 +165,16 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
 
     def test_google_login_preserves_existing_imported_orders_and_never_recreates_purged_orders(self):
         """Google login preserves existing/imported orders and never recreates tombstoned or deleted orders."""
-        from retailops.sales.simulator import DEFAULT_DEV_SECRET, SalesSimulator
+        from retailops.integration.ingest import IntegrationIngestService
 
         tenant_id = "preserve-orders-shop"
         bstore = self.sessions.provision_tenant(tenant_id, "Preserve Orders Shop", seed_demo=False)
         web = PublicWeb("https://retailops.example.com", self.sessions)
+        ingest_svc = IntegrationIngestService(
+            self.sessions, digest_key=b"test-digest-key-32-bytes-minimum!!"
+        )
 
-        # 1. Imported order customer: login -> link external customer -> import sales order -> re-login
+        # 1. Imported order customer: login -> link external customer -> import v2 order -> re-login
         sec1 = self.sessions.login_google(
             email="imported.buyer@example.com",
             name="Imported Buyer",
@@ -183,31 +186,51 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
             self.sessions.cookie_id(f"__Host-retailops_account={sec1}")
         )
         cid1 = mem1["customer_id"]
-        self.sessions.sales_adapter.link_external_customer(
+        ingest_svc.link_external_customer(
             tenant_id=tenant_id,
-            source_system="sales_simulator",
+            source_system="marketplace_sim",
             external_customer_id="ext_imp_buyer_01",
             customer_id=cid1,
             customer_name="Imported Buyer",
         )
-        sim = SalesSimulator(tenant_id=tenant_id, secret_key=DEFAULT_DEV_SECRET)
-        ev = sim.create_order_event(
-            tenant=tenant_id,
-            external_customer_id="ext_imp_buyer_01",
-            order_id="O-910001",
-            status="pending",
-            items=[
-                {
-                    "product_id": "P-601",
-                    "product_title": "Áo sơ mi lụa công sở",
-                    "variant_name": "Trắng / M",
-                    "quantity": 1,
-                    "unit_price": 450000,
-                }
-            ],
-            event_id="evt-imp-preserve-01",
-        )
-        imp = self.sessions.import_sales_event(ev)
+        ev = {
+            "contract": "retailops-integration-v2",
+            "event_id": "evt-imp-preserve-01",
+            "event_type": "order.created",
+            "source_system": "marketplace_sim",
+            "merchant_id": tenant_id,
+            "occurred_at": "2026-11-01T10:00:00+07:00",
+            "sequence": 1,
+            "data": {
+                "external_order_id": "O-910001",
+                "external_customer_id": "ext_imp_buyer_01",
+                "ordered_at": "2026-11-01T10:00:00+07:00",
+                "items": [
+                    {
+                        "sku": "SKU-P601-WHT-M",
+                        "external_product_id": "P-601",
+                        "title": "Áo sơ mi lụa công sở",
+                        "variant_name": "Trắng / M",
+                        "quantity": 1,
+                        "unit_price": 450000,
+                    }
+                ],
+                "shipping_fee": 0,
+                "total": 450000,
+                "currency": "VND",
+                "payment_method": "cod",
+                "promised_delivery_by": "2026-11-04T10:00:00+07:00",
+                "recipient": {
+                    "name": "Nguyễn Văn Thử",
+                    "phone": "0901234567",
+                    "address_line": "123 Đường Mẫu",
+                    "ward": "Phường Bến Nghé",
+                    "district": "Quận 1",
+                    "province": "TP. Hồ Chí Minh",
+                },
+            },
+        }
+        imp = ingest_svc.ingest_event(ev, tenant_id=tenant_id)
         self.assertTrue(imp.success)
 
         sec1_relogin = self.sessions.login_google(
@@ -224,7 +247,7 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
             "HTTP_COOKIE": f"__Host-retailops_account={sec1_relogin}",
         })
         self.assertEqual(st1, 200)
-        self.assertEqual([o["id"] for o in res1["orders"]], ["O-910001"])
+        self.assertEqual([o["id"] for o in res1["orders"]], [imp.order_id])
 
         # 2. Customer with purged legacy order (with tombstone) AND customer whose order was deleted to zero rows:
         # neither re-seeds sample orders on subsequent Google login.
@@ -239,8 +262,15 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
             self.sessions.cookie_id(f"__Host-retailops_account={sec2}")
         )
         cid2 = mem2["customer_id"]
-        seeded_oids = bstore.seed_demo_sample_orders(cid2)
-        self.assertEqual(len(seeded_oids), 3)
+        seeded_oids = ["O-819201", "O-819202", "O-819203"]
+        with bstore.connection(write=True) as db:
+            db.execute(
+                """INSERT INTO orders(id, customer_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version, cancel_reason, product_id)
+                   VALUES ('O-819201', ?, 'retailops_seed', 'O-819201', 1700000000.0, 'Áo sơ mi lụa công sở', 'Trắng / M', 450000, 'pending', 1, NULL, 'P-601'),
+                          ('O-819202', ?, 'retailops_seed', 'O-819202', 1700000000.0, 'Quần tây đen hàn quốc', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602'),
+                          ('O-819203', ?, 'retailops_seed', 'O-819203', 1700000000.0, 'Giày lười da bò cao cấp', 'Nâu / 41', 890000, 'delivered', 1, NULL, 'P-603')""",
+                (cid2, cid2, cid2),
+            )
         p602_oid = seeded_oids[1]
         purge_res = self.sessions.purge_demo_order(
             tenant_id=tenant_id,
@@ -256,6 +286,7 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
         )
         self.assertTrue(purge_res["executed"])
         self.assertTrue(bstore.is_order_purged(p602_oid))
+        self.assertEqual(bstore.seed_demo_sample_orders(cid2, sessions=self.sessions), [])
 
         sec2_relogin = self.sessions.login_google(
             email="purged.buyer@example.com",
@@ -436,8 +467,8 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
             bstore.seed_catalog(bdb)
             bdb.execute("INSERT INTO customers VALUES (?,?)", (legacy_cid, "Target Legacy"))
             bdb.execute(
-                "INSERT INTO orders (id, customer_id, name, variant, amount, status, version, product_id) "
-                "VALUES ('O-TARGET-01', ?, 'Váy Dạ Hội Đỏ', 'Đỏ / S', 950000, 'delivered', 1, 'P-601')",
+                "INSERT INTO orders (id, customer_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version, product_id) "
+                "VALUES ('O-TARGET-01', ?, 'retailops_seed', 'O-TARGET-01', 1700000000.0, 'Váy Dạ Hội Đỏ', 'Đỏ / S', 950000, 'delivered', 1, 'P-601')",
                 (legacy_cid,),
             )
 
@@ -559,8 +590,8 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
         with bstore_a.connection(write=True) as bdb:
             bstore_a.seed_catalog(bdb)
             bdb.execute(
-                "INSERT INTO orders (id, customer_id, name, variant, amount, status, version, product_id) "
-                "VALUES ('O-A1-001', ?, 'Áo sơ mi lụa công sở', 'Trắng / M', 450000, 'pending', 1, 'P-601')",
+                "INSERT INTO orders (id, customer_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version, product_id) "
+                "VALUES ('O-A1-001', ?, 'retailops_seed', 'O-A1-001', 1700000000.0, 'Áo sơ mi lụa công sở', 'Trắng / M', 450000, 'pending', 1, 'P-601')",
                 (mem_a1["customer_id"],),
             )
 
@@ -569,8 +600,8 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
         with bstore_b.connection(write=True) as bdb:
             bstore_b.seed_catalog(bdb)
             bdb.execute(
-                "INSERT INTO orders (id, customer_id, name, variant, amount, status, version, product_id) "
-                "VALUES ('O-B1-001', ?, 'Quần tây ống đứng tôn dáng', 'Đen / L', 520000, 'pending', 1, 'P-602')",
+                "INSERT INTO orders (id, customer_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version, product_id) "
+                "VALUES ('O-B1-001', ?, 'retailops_seed', 'O-B1-001', 1700000000.0, 'Quần tây đen hàn quốc', 'Đen / L', 520000, 'pending', 1, 'P-602')",
                 (mem_b1["customer_id"],),
             )
 

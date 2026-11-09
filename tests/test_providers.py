@@ -241,8 +241,9 @@ class ApiAdapterTests(unittest.TestCase):
 
 class SelectionTests(unittest.TestCase):
     def setUp(self):
+        from legacy_seed_fixture import seed_legacy_unit_fixture
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
-        self.store = BusinessStore(Path(self.temp.name)/'business.sqlite3'); self.store.seed()
+        self.store = seed_legacy_unit_fixture(BusinessStore(Path(self.temp.name)/'business.sqlite3'))
         self.custom, self.api = FakeAgent('custom'), FakeAgent('api')
         self.app = Application(self.store, {}, self.custom, api_infer=self.api, api_daily_limit=2)
 
@@ -319,7 +320,7 @@ class SelectionTests(unittest.TestCase):
 
     def test_v04_conversations_migrate_to_custom_without_reset(self):
         from contextlib import closing
-        from retailops.business.store import migrate_sqlite_business_v8
+        from retailops.business.store import migrate_sqlite_business_v9
         path = Path(self.temp.name)/'v04.sqlite3'
         with closing(sqlite3.connect(path)) as db, db:
             db.execute('CREATE TABLE conversations (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, order_id TEXT, product_id TEXT, revision INTEGER NOT NULL DEFAULT 0, expires_at REAL NOT NULL)')
@@ -327,7 +328,7 @@ class SelectionTests(unittest.TestCase):
         with self.assertRaises(ApiError) as err:
             BusinessStore(path)
         self.assertEqual(err.exception.code, 'business_migration_required')
-        migrate_sqlite_business_v8(path, preflight_confirmed=True, backup_confirmed=True)
+        migrate_sqlite_business_v9(path, preflight_confirmed=True, backup_confirmed=True)
         migrated = BusinessStore(path)
         with migrated.connection() as db:
             row = dict(db.execute("SELECT * FROM conversations WHERE id='old'").fetchone())
@@ -336,8 +337,9 @@ class SelectionTests(unittest.TestCase):
 
 class SelectorHttpTests(unittest.TestCase):
     def test_authenticated_options_and_selection_reach_correct_gateway(self):
+        from legacy_seed_fixture import seed_legacy_unit_fixture
         with tempfile.TemporaryDirectory() as folder:
-            store = BusinessStore(Path(folder)/'business.sqlite3'); store.seed()
+            store = seed_legacy_unit_fixture(BusinessStore(Path(folder)/'business.sqlite3'))
             custom, external = FakeAgent('custom'), FakeAgent('api')
             token = 't'*40
             app = Application(store, {hashlib.sha256(token.encode()).hexdigest(): 'C-001'}, custom, external)

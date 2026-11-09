@@ -14,7 +14,10 @@
 !data/products.json
 !data/knowledge/
 !data/knowledge/*
-!data/mock_shipments.json
+!data/connectors/
+!data/connectors/*
+!data/demo_events/
+!data/demo_events/*
 !data/order_action_reasons.json
 !Dockerfile
 !retailops_agent.py
@@ -47,6 +50,7 @@
 !deploy/admin-console.py
 !notebooks/
 !notebooks/**
-!data/deepseek_seed_data.json
+integration-secrets/
+integration-secrets/**
 **/__pycache__/
 **/*.pyc

@@ -31,16 +31,18 @@ class UsagePostgresTests(unittest.TestCase):
         store = PostgresBusinessStore(DSN, tenant['storage_key'], create=True)
         store.seed()
         try:
-            store.event('C-001', 'agent_replied', trace={'provider': 'custom', 'model': 'test-model',
+            with store.connection() as db:
+                cid = db.execute("SELECT customer_id FROM orders ORDER BY id ASC LIMIT 1").fetchone()['customer_id']
+            store.event(cid, 'agent_replied', trace={'provider': 'custom', 'model': 'test-model',
                         'model_calls': 1, 'prompt_tokens': 123, 'generated_tokens': 7,
                         'latency_ms': 42, 'tools': [{'name': 'get_order'}],
                         'message': 'PRIVATE_SENTINEL'}, raw_prompt='DO_NOT_EXPORT')
-            before = store.orders('C-001')
+            before = store.orders(cid)
             env = {'RETAILOPS_STORAGE_BACKEND': 'postgresql', 'RETAILOPS_DATABASE_URL': DSN,
                    'RETAILOPS_DATABASE_URL_FILE': ''}
             with patch.dict(os.environ, env):
                 report = export_snapshot(b't'*32)
-            self.assertEqual(store.orders('C-001'), before)
+            self.assertEqual(store.orders(cid), before)
             self.assertGreaterEqual(report['windows']['test']['1']['events'], 1)
             serialized = json.dumps(report)
             for text in ('PRIVATE_SENTINEL', 'DO_NOT_EXPORT', DSN, tid):

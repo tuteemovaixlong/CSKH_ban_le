@@ -4940,3 +4940,18 @@ body [hidden] {
   background: #ffffff;
   color: #0f172a;
 }
+
+.case-ops-unlinked-refund-warning {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #f59e0b;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.case-ops-unlinked-refund-item {
+  margin-top: 4px;
+}

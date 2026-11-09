@@ -20,6 +20,10 @@ import uuid
 ROOT = Path("/opt/retailops")
 REPORT_DIR = ROOT / "e2e-reports"
 COMPOSE = None
+DEFAULT_DEMO_SOURCE = "marketplace_sim"
+DEFAULT_DEMO_EXTERNAL_CUSTOMER = "SIM-C-0070"
+DEFAULT_DEMO_EXTERNAL_ORDER = "SIM-O-00115"
+DEFAULT_STAFF_EXTERNAL_CUSTOMER = "SIM-C-0039"
 
 
 class E2EFailure(RuntimeError):
@@ -251,14 +255,184 @@ def common_runtime_checks(http: HttpClient, expected_image: str | None, report: 
     })
 
 
+def open_container_sessions():
+    from retailops.config import database_settings
+
+    backend, dsn = database_settings(os.environ)
+    if backend == "postgresql":
+        from retailops.identity.postgres import PostgresSessions
+
+        return PostgresSessions(dsn)
+    from retailops.identity.persistent import PersistentSessions
+
+    output = Path(os.environ.get("RETAILOPS_OUTPUT", "/data"))
+    return PersistentSessions(output / "persistent")
+
+
+def select_seeded_targets(
+    sessions,
+    tenant: str,
+    *,
+    customer: str | None = None,
+    order_id: str | None = None,
+    require_staff_customer: bool = False,
+) -> dict[str, str]:
+    bstore = sessions.business_store(tenant)
+    cust_arg = (customer or "").strip() or None
+    ord_arg = (order_id or "").strip() or None
+
+    resolved_customer: str | None = None
+    with bstore.connection() as db:
+        if cust_arg is not None:
+            row = db.execute("SELECT id FROM customers WHERE id=?", (cust_arg,)).fetchone()
+            if row is not None:
+                resolved_customer = str(row["id"])
+            else:
+                mapped = sessions.control.get_external_customer_mapping(
+                    tenant, DEFAULT_DEMO_SOURCE, cust_arg
+                )
+                if mapped:
+                    chk = db.execute("SELECT id FROM customers WHERE id=?", (mapped,)).fetchone()
+                    if chk is not None:
+                        resolved_customer = str(chk["id"])
+            require(bool(resolved_customer), f"customer {cust_arg} not found in tenant {tenant}")
+        elif ord_arg is not None:
+            orow = db.execute(
+                "SELECT customer_id FROM orders WHERE id=? OR external_order_id=? ORDER BY id LIMIT 1",
+                (ord_arg, ord_arg),
+            ).fetchone()
+            require(orow is not None, f"order {ord_arg} not found in tenant {tenant}")
+            resolved_customer = str(orow["customer_id"])
+        else:
+            mapped = sessions.control.get_external_customer_mapping(
+                tenant, DEFAULT_DEMO_SOURCE, DEFAULT_DEMO_EXTERNAL_CUSTOMER
+            )
+            if mapped:
+                chk = db.execute("SELECT id FROM customers WHERE id=?", (mapped,)).fetchone()
+                if chk is not None:
+                    resolved_customer = str(chk["id"])
+            if not resolved_customer:
+                fallback = db.execute(
+                    """SELECT customer_id
+                       FROM orders
+                       GROUP BY customer_id
+                       HAVING SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) >= 1
+                       ORDER BY COUNT(*) DESC, customer_id ASC
+                       LIMIT 1"""
+                ).fetchone()
+                if fallback is not None:
+                    resolved_customer = str(fallback["customer_id"])
+            require(bool(resolved_customer), f"seeded customer not found in tenant {tenant}")
+
+    assert resolved_customer is not None
+    cust_orders = bstore.orders(resolved_customer)
+    if ord_arg is not None:
+        matched = next(
+            (
+                o
+                for o in cust_orders
+                if o.get("id") == ord_arg or o.get("external_order_id") == ord_arg
+            ),
+            None,
+        )
+        require(
+            matched is not None,
+            f"order {ord_arg} does not belong to customer {resolved_customer}",
+        )
+        require(matched.get("status") == "pending", f"order {ord_arg} is not pending")
+    else:
+        matched = next(
+            (
+                o
+                for o in cust_orders
+                if o.get("external_order_id") == DEFAULT_DEMO_EXTERNAL_ORDER
+                and o.get("status") == "pending"
+            ),
+            None,
+        )
+        if matched is None:
+            matched = next((o for o in cust_orders if o.get("status") == "pending"), None)
+        require(matched is not None, f"seeded pending order is missing for {resolved_customer}")
+
+    resolved_order_id = str(matched["id"])
+    resolved_external_order_id = str(matched.get("external_order_id") or resolved_order_id)
+
+    with bstore.connection() as db:
+        candidate_pid = str(matched.get("product_id") or "").strip()
+        prow = (
+            db.execute("SELECT id FROM products WHERE id=?", (candidate_pid,)).fetchone()
+            if candidate_pid
+            else None
+        )
+        if prow is None:
+            prow = db.execute("SELECT id FROM products ORDER BY id LIMIT 1").fetchone()
+        resolved_product_id = str(prow["id"]) if prow is not None else "P-101"
+
+        staff_cid: str | None = None
+        mapped_staff = sessions.control.get_external_customer_mapping(
+            tenant, DEFAULT_DEMO_SOURCE, DEFAULT_STAFF_EXTERNAL_CUSTOMER
+        )
+        if mapped_staff and mapped_staff != resolved_customer:
+            srow = db.execute("SELECT id FROM customers WHERE id=?", (mapped_staff,)).fetchone()
+            if srow is not None:
+                staff_cid = str(srow["id"])
+        if not staff_cid:
+            srow = db.execute(
+                "SELECT id FROM customers WHERE id<>? ORDER BY id LIMIT 1",
+                (resolved_customer,),
+            ).fetchone()
+            if srow is not None:
+                staff_cid = str(srow["id"])
+        if require_staff_customer:
+            require(bool(staff_cid), f"secondary staff customer not found in tenant {tenant}")
+
+    return {
+        "customer": resolved_customer,
+        "order_id": resolved_order_id,
+        "external_order_id": resolved_external_order_id,
+        "product_id": resolved_product_id,
+        "staff_customer": staff_cid or resolved_customer,
+    }
+
+
+def resolve_tenant_targets(
+    tenant: str,
+    *,
+    customer: str | None = None,
+    order_id: str | None = None,
+    require_staff_customer: bool = False,
+) -> dict[str, str]:
+    cmd = [
+        "exec",
+        "-T",
+        "web",
+        "python",
+        "/app/deploy/live-e2e.py",
+        "--resolve-targets",
+        "--tenant",
+        tenant,
+    ]
+    if customer:
+        cmd += ["--customer", customer]
+    if order_id:
+        cmd += ["--order-id", order_id]
+    if require_staff_customer:
+        cmd.append("--require-staff-customer")
+    proc = dc(cmd, timeout=60)
+    try:
+        return json.loads(proc.stdout.strip())
+    except json.JSONDecodeError as exc:
+        raise E2EFailure("target resolution returned non-JSON output") from exc
+
+
 def login_and_basic_checks(
     http: HttpClient,
     tenant: str,
     credential: str,
     cookie: Path,
     report: dict,
-    customer: str = "C-001",
-    order_id: str = "O-101",
+    customer: str,
+    order_id: str,
 ):
     status, login = http.request("/api/login", {"token": credential}, cookie=cookie)
     require(status == 200 and login.get("scope") == "synthetic-demo", "login failed")
@@ -323,26 +497,44 @@ def run_smoke(
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     rand_suffix = uuid.uuid4().hex[:6]
     tenant = tenant or os.environ.get("E2E_TENANT") or f"e2e-smoke-{stamp}-{rand_suffix}"
-    customer = customer or os.environ.get("E2E_CUSTOMER") or "C-001"
-    order_id = order_id or os.environ.get("E2E_ORDER_ID") or "O-101"
+    customer_override = customer or os.environ.get("E2E_CUSTOMER") or None
+    order_override = order_id or os.environ.get("E2E_ORDER_ID") or None
     principal = "e2e-smoke-" + uuid.uuid4().hex[:10]
     credential_path = "/tmp/" + principal + ".credential"
     membership = None
     report["tenant"] = tenant
     report["identity"] = {
         "tenant": tenant,
-        "customer": customer,
-        "order_id": order_id,
         "principal": principal,
     }
     try:
         cli(["identity", "init-tenant", "--tenant", tenant, "--name", f"RetailOps live smoke {tenant}", "--seed-demo"])
-        membership, credential = issue_member(tenant, principal, customer, "customer", credential_path)
+        targets = resolve_tenant_targets(
+            tenant,
+            customer=customer_override,
+            order_id=order_override,
+        )
+        resolved_customer = targets["customer"]
+        resolved_order_id = targets["order_id"]
+        report["identity"].update({
+            "customer": resolved_customer,
+            "order_id": resolved_order_id,
+            "external_order_id": targets.get("external_order_id", resolved_order_id),
+        })
+        membership, credential = issue_member(tenant, principal, resolved_customer, "customer", credential_path)
         secret_values.append(credential)
         cookie = http.temp_dir / "customer.cookies"
-        login_and_basic_checks(http, tenant, credential, cookie, report, customer=customer, order_id=order_id)
+        login_and_basic_checks(
+            http,
+            tenant,
+            credential,
+            cookie,
+            report,
+            customer=resolved_customer,
+            order_id=resolved_order_id,
+        )
 
-        status, order = http.request(f"/api/orders/{order_id}", cookie=cookie)
+        status, order = http.request(f"/api/orders/{resolved_order_id}", cookie=cookie)
         require(status == 200 and (order.get("order") or {}).get("status") == "pending", "owned order lookup failed")
         status, logout = http.request("/api/logout", {}, cookie=cookie)
         require(status == 200 and logout.get("logged_out") is True, "logout failed")
@@ -382,8 +574,19 @@ def establish_live_conversation(http, cookie, providers_payload, report):
     raise E2EFailure("no configured live model provider completed a chat")
 
 
-def run_full(http: HttpClient, report: dict, secret_values: list[str]):
-    tenant = "e2e-full-" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S") + "-" + uuid.uuid4().hex[:6]
+def run_full(
+    http: HttpClient,
+    report: dict,
+    secret_values: list[str],
+    *,
+    tenant: str | None = None,
+    customer: str | None = None,
+    order_id: str | None = None,
+):
+    default_tenant = "e2e-full-" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S") + "-" + uuid.uuid4().hex[:6]
+    tenant = tenant or os.environ.get("E2E_TENANT") or default_tenant
+    customer_override = customer or os.environ.get("E2E_CUSTOMER") or None
+    order_override = order_id or os.environ.get("E2E_ORDER_ID") or None
     customer_principal = "e2e-customer-" + uuid.uuid4().hex[:8]
     staff_principal = "e2e-staff-" + uuid.uuid4().hex[:8]
     customer_cred_path = "/tmp/" + customer_principal + ".credential"
@@ -393,6 +596,25 @@ def run_full(http: HttpClient, report: dict, secret_values: list[str]):
     report["tenant"] = tenant
     try:
         cli(["identity", "init-tenant", "--tenant", tenant, "--name", "RetailOps full live E2E", "--seed-demo"])
+        targets = resolve_tenant_targets(
+            tenant,
+            customer=customer_override,
+            order_id=order_override,
+            require_staff_customer=True,
+        )
+        target_customer = targets["customer"]
+        target_order_id = targets["order_id"]
+        target_order_display = targets.get("external_order_id") or target_order_id
+        target_product_id = targets.get("product_id") or "P-101"
+        staff_customer = targets["staff_customer"]
+        report["identity"] = {
+            "tenant": tenant,
+            "customer": target_customer,
+            "order_id": target_order_id,
+            "external_order_id": target_order_display,
+            "staff_customer": staff_customer,
+        }
+
         ingest = cli(["knowledge", "ingest", "--tenant", tenant, "--path", "/app/data/knowledge"])
         require(ingest.get("result") == "KNOWLEDGE_INGESTED", "knowledge ingest failed")
         report["checks"]["knowledge_ingest"] = True
@@ -403,11 +625,19 @@ def run_full(http: HttpClient, report: dict, secret_values: list[str]):
         }
 
         customer_membership, customer_credential = issue_member(
-            tenant, customer_principal, "C-001", "customer", customer_cred_path,
+            tenant, customer_principal, target_customer, "customer", customer_cred_path,
         )
         secret_values.append(customer_credential)
         customer_cookie = http.temp_dir / "customer.cookies"
-        pending, providers = login_and_basic_checks(http, tenant, customer_credential, customer_cookie, report)
+        pending, providers = login_and_basic_checks(
+            http,
+            tenant,
+            customer_credential,
+            customer_cookie,
+            report,
+            customer=target_customer,
+            order_id=target_order_id,
+        )
 
         provider, conversation_id, general = establish_live_conversation(http, customer_cookie, providers, report)
         report["selected_provider"] = provider
@@ -417,21 +647,32 @@ def run_full(http: HttpClient, report: dict, secret_values: list[str]):
         report["checks"]["general_model"] = True
         report["traces"] = {"general": trace_summary(general)}
 
-        order_id = "e2e_order_" + uuid.uuid4().hex
-        order_text = "Đơn O-101 hiện trạng thái gì? Hãy đọc dữ liệu hệ thống và không đoán trường còn thiếu."
-        status, order_chat = chat(http, customer_cookie, conversation_id, order_text, order_id)
+        order_req_id = "e2e_order_" + uuid.uuid4().hex
+        order_text = (
+            f"Đơn {target_order_display} hiện trạng thái gì? "
+            "Hãy đọc dữ liệu hệ thống và không đoán trường còn thiếu."
+        )
+        status, order_chat = chat(http, customer_cookie, conversation_id, order_text, order_req_id)
         require(status == 200 and "get_order" in tool_names(order_chat), "order chat did not use get_order")
-        require((order_chat.get("context") or {}).get("order_id") == "O-101", "order chat established wrong context")
+        require(
+            (order_chat.get("context") or {}).get("order_id") == target_order_id,
+            "order chat established wrong context",
+        )
         report["checks"]["order_model_tool"] = True
         report["traces"]["order"] = trace_summary(order_chat)
 
-        replay_status, replay = chat(http, customer_cookie, conversation_id, order_text, order_id, timeout=30)
+        replay_status, replay = chat(http, customer_cookie, conversation_id, order_text, order_req_id, timeout=30)
         require(replay_status == 200 and replay.get("replayed") is True, "chat idempotent replay failed")
         report["checks"]["chat_replay_before_restart"] = True
 
-        product_id = "e2e_product_" + uuid.uuid4().hex
-        status, product_chat = chat(http, customer_cookie, conversation_id,
-            "Cho tôi thông tin sản phẩm P-001 từ catalog, chỉ nêu thuộc tính hệ thống biết.", product_id)
+        product_req_id = "e2e_product_" + uuid.uuid4().hex
+        status, product_chat = chat(
+            http,
+            customer_cookie,
+            conversation_id,
+            f"Cho tôi thông tin sản phẩm {target_product_id} từ catalog, chỉ nêu thuộc tính hệ thống biết.",
+            product_req_id,
+        )
         require(status == 200 and set(tool_names(product_chat)) & {"get_product", "search_products", "get_context"},
                 "product chat did not use a product tool")
         report["checks"]["product_model_tool"] = True
@@ -446,8 +687,13 @@ def run_full(http: HttpClient, report: dict, secret_values: list[str]):
         report["traces"]["rag"] = trace_summary(rag_chat)
 
         cancel_chat_id = "e2e_cancel_" + uuid.uuid4().hex
-        status, cancel_chat = chat(http, customer_cookie, conversation_id,
-            "Tôi muốn hủy đơn O-101. Hãy kiểm tra điều kiện nhưng chưa được tự hủy nếu tôi chưa xác nhận.", cancel_chat_id)
+        status, cancel_chat = chat(
+            http,
+            customer_cookie,
+            conversation_id,
+            f"Tôi muốn hủy đơn {target_order_display}. Hãy kiểm tra điều kiện nhưng chưa được tự hủy nếu tôi chưa xác nhận.",
+            cancel_chat_id,
+        )
         require(status == 200 and any(name in tool_names(cancel_chat) for name in ("prepare_order_action", "prepare_cancellation")),
                 "cancel chat did not prepare order action")
         require(cancel_chat.get("action") in ("choose_order_action_reason", "choose_cancel_reason"),
@@ -459,10 +705,10 @@ def run_full(http: HttpClient, report: dict, secret_values: list[str]):
         events_status, events_before = http.request("/api/events", cookie=customer_cookie)
         require(events_status == 200, "event read before proposal failed")
         before_requested = sum(1 for event in events_before.get("events", [])
-                               if event.get("kind") == "order_action_requested" and event.get("order_id") == "O-101")
+                               if event.get("kind") == "order_action_requested" and event.get("order_id") == target_order_id)
 
         proposal_status, proposal = http.request("/api/cancellation-proposals", {
-            "order_id": "O-101",
+            "order_id": target_order_id,
             "order_version": pending["version"],
             "cancel_reason": "ordered_by_mistake",
         }, cookie=customer_cookie)
@@ -484,7 +730,7 @@ def run_full(http: HttpClient, report: dict, secret_values: list[str]):
         require(list_status == 200 and proposal_id in listed_after_ids, "pending proposal did not survive restart")
         report["checks"].update({"restart_session_persistence": True, "restart_pending_persistence": True})
 
-        replay_status, replay_after = chat(http, customer_cookie, conversation_id, order_text, order_id, timeout=30)
+        replay_status, replay_after = chat(http, customer_cookie, conversation_id, order_text, order_req_id, timeout=30)
         require(replay_status == 200 and replay_after.get("replayed") is True, "chat replay did not survive restart")
         report["checks"]["chat_replay_after_restart"] = True
 
@@ -500,7 +746,7 @@ def run_full(http: HttpClient, report: dict, secret_values: list[str]):
         require(second_status == 200 and second.get("replayed") is True, "duplicate confirmation was not replayed")
         require(second.get("order_action_request_id") == first.get("order_action_request_id"),
                 "replayed confirmation returned different request id")
-        order_status, order_after = http.request("/api/orders/O-101", cookie=customer_cookie)
+        order_status, order_after = http.request(f"/api/orders/{target_order_id}", cookie=customer_cookie)
         require(order_status == 200 and (order_after.get("order") or {}).get("status") == "pending",
                 "backend order did not stay pending while awaiting review")
         oa_status, oa_list = http.request("/api/order-actions", cookie=customer_cookie)
@@ -510,14 +756,14 @@ def run_full(http: HttpClient, report: dict, secret_values: list[str]):
         events_status, events_after = http.request("/api/events", cookie=customer_cookie)
         require(events_status == 200, "event read after confirmation failed")
         after_requested = sum(1 for event in events_after.get("events", [])
-                              if event.get("kind") == "order_action_requested" and event.get("order_id") == "O-101")
+                              if event.get("kind") == "order_action_requested" and event.get("order_id") == target_order_id)
         require(after_requested == before_requested + 1, "duplicate confirmation produced wrong audit count")
         report["checks"]["confirm_idempotency_and_backend_state"] = True
 
         # R1 W1 retired the legacy 'viewer' role; role isolation is proven with an active
         # Staff membership that must be denied a Manager-only endpoint.
         staff_membership, staff_credential = issue_member(
-            tenant, staff_principal, "C-002", "staff", staff_cred_path,
+            tenant, staff_principal, staff_customer, "staff", staff_cred_path,
         )
         secret_values.append(staff_credential)
         staff_cookie = http.temp_dir / "staff.cookies"
@@ -542,7 +788,29 @@ def main():
     parser.add_argument("--tenant", default=None, help="Explicit synthetic tenant ID (or E2E_TENANT env)")
     parser.add_argument("--customer", default=None, help="Explicit customer ID (or E2E_CUSTOMER env)")
     parser.add_argument("--order-id", default=None, help="Explicit order ID (or E2E_ORDER_ID env)")
+    parser.add_argument("--resolve-targets", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--require-staff-customer", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
+
+    if args.resolve_targets:
+        import sys
+
+        require(bool(args.tenant), "--tenant is required with --resolve-targets")
+        app_root = str(Path(__file__).resolve().parents[1])
+        if app_root not in sys.path:
+            sys.path.insert(0, app_root)
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8")
+        sessions = open_container_sessions()
+        targets = select_seeded_targets(
+            sessions,
+            args.tenant,
+            customer=args.customer,
+            order_id=args.order_id,
+            require_staff_customer=args.require_staff_customer,
+        )
+        print(json.dumps(targets, ensure_ascii=False))
+        return
 
     os.umask(0o077)
     require(ROOT.is_dir(), "/opt/retailops is missing")
@@ -578,7 +846,14 @@ def main():
                 order_id=args.order_id,
             )
         else:
-            run_full(http, report, secrets)
+            run_full(
+                http,
+                report,
+                secrets,
+                tenant=args.tenant,
+                customer=args.customer,
+                order_id=args.order_id,
+            )
         report["pass"] = True
         report["finished_at_utc"] = now_stamp()
         path = save_report(report, args.mode, stamp, secrets)

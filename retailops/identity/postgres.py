@@ -5,7 +5,14 @@ from collections import OrderedDict
 from retailops.identity.persistent import PersistentSessions, _clean_tenant_id, _env_tenant_id
 from retailops.business.progress import TurnCancelRegistry
 from retailops.storage.pg_repositories import PostgresBusinessStore, PostgresIdentityStore
-from retailops.storage.postgres import BUSINESS_SCHEMA_CURRENT, IDENTITY_SCHEMA, check_schema, tenant_schema, transaction
+from retailops.storage.postgres import (
+    BUSINESS_SCHEMA_COMPATIBLE,
+    BUSINESS_SCHEMA_CURRENT,
+    IDENTITY_SCHEMA,
+    check_schema,
+    tenant_schema,
+    transaction,
+)
 from retailops.core import ApiError
 from retailops.inference_gate import InferenceGate
 
@@ -65,14 +72,14 @@ class PostgresSessions(PersistentSessions):
                     ).fetchone()
                     if not ver_row or ver_row.get('component') != 'business':
                         raise ValueError('Unsupported PostgreSQL schema version or component.')
-                    if ver_row.get('version') not in (2, 3, 4, 5, 6, 7, 8):
+                    if ver_row.get('version') not in BUSINESS_SCHEMA_COMPATIBLE:
                         raise ValueError('Unsupported PostgreSQL schema version or component.')
                     if ver_row.get('version') < BUSINESS_SCHEMA_CURRENT:
                         raise ApiError(
                             503,
                             'business_migration_required',
                             f"Kho dữ liệu business PostgreSQL ({t_schema}) đang ở schema v{ver_row.get('version')}; "
-                            "khởi động bị chặn fail-closed. Hãy chạy lệnh operator database migrate-v8 với "
+                            "khởi động bị chặn fail-closed. Hãy chạy lệnh operator database migrate-v9 với "
                             "--confirm-preflight --confirm-backup.",
                         )
 

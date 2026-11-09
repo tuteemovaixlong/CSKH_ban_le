@@ -1088,7 +1088,7 @@ class IdentityStore:
             self.event(db, 'login', row['tenant_id'], row['id'])
         return secret
 
-    def get_or_create_google_member(self, tenant_id, email, name, role='customer', customer_id=None, sub=None, issuer='https://accounts.google.com', email_verified=False, live=False):
+    def get_or_create_google_member(self, tenant_id, email, name, role='customer', customer_id=None, sub=None, issuer='https://accounts.google.com', email_verified=False, live=False, *, return_created: bool = False):
         email_clean = email.strip().lower()
         require(role in ACTIVE_BUSINESS_ROLES, 400, 'invalid_role', 'Quyền không hợp lệ.')
         name_clean = name.strip() if (name and isinstance(name, str) and name.strip()) else email_clean.split('@')[0]
@@ -1225,7 +1225,7 @@ class IdentityStore:
                     'VALUES (?,?,?,?,?) ON CONFLICT(tenant_id, principal_id) DO UPDATE SET customer_id=excluded.customer_id',
                     (str(uuid.uuid4()), tenant_id, principal_id, cid, time.time())
                 )
-                return mid, cid
+                return (mid, cid, False) if return_created else (mid, cid)
 
             if role != 'customer':
                 require(
@@ -1273,7 +1273,7 @@ class IdentityStore:
             db.execute('INSERT INTO memberships(id,tenant_id,principal_id,customer_id,role) VALUES (?,?,?,?,?)',
                        (mid, tenant_id, principal_id, cid, role))
             self.event(db, 'membership_created', tenant_id, mid)
-            return mid, cid
+            return (mid, cid, True) if return_created else (mid, cid)
 
     def resolve(self, sid):
         with self.connection() as db:
@@ -1409,6 +1409,47 @@ class IdentityStore:
         return {'id': mapping_id, 'tenant_id': tenant_clean, 'source_system': source_clean,
                 'external_customer_id': ext_cust_clean, 'customer_id': cid_clean,
                 'created_at': now, 'updated_at': now, 'created': True}
+
+    def bulk_link_external_customers(self, tenant_id, source_system, pairs):
+        """Batch-insert (external_customer_id, customer_id) mappings in a single write transaction."""
+        tenant_clean = str(tenant_id).strip()
+        source_clean = str(source_system).strip()
+        if not pairs:
+            return []
+        self.tenant(tenant_clean)
+        cleaned_pairs = []
+        for external_customer_id, customer_id in pairs:
+            ext_cust_clean = str(external_customer_id).strip()
+            cid_clean = str(customer_id).strip()
+            require(tenant_clean and source_clean and ext_cust_clean and cid_clean,
+                    400, 'invalid_mapping_fields', 'Thiếu trường ánh xạ khách hàng.')
+            require('@' not in ext_cust_clean, 400, 'invalid_external_customer_id',
+                    'external_customer_id phải là mã định danh từ hệ thống nguồn, không dùng email làm khóa.')
+            cleaned_pairs.append((ext_cust_clean, cid_clean))
+
+        now = time.time()
+        results = []
+        with self.connection(write=True) as db:
+            existing_rows = db.execute(
+                'SELECT external_customer_id, customer_id FROM external_customer_mappings WHERE tenant_id=? AND source_system=?',
+                (tenant_clean, source_clean),
+            ).fetchall()
+            existing_map = {str(r['external_customer_id']): str(r['customer_id']) for r in existing_rows}
+            for ext_cust_clean, cid_clean in cleaned_pairs:
+                prev_cid = existing_map.get(ext_cust_clean)
+                if prev_cid is not None:
+                    require(prev_cid == cid_clean, 409, 'external_customer_mapping_conflict',
+                            'external_customer_id đã được ánh xạ tới khách hàng khác trong cửa hàng này.')
+                    results.append({'external_customer_id': ext_cust_clean, 'customer_id': cid_clean, 'created': False})
+                    continue
+                mapping_id = str(uuid.uuid4())
+                db.execute('''INSERT INTO external_customer_mappings (id, tenant_id, source_system, external_customer_id, customer_id, created_at, updated_at)
+                              VALUES (?,?,?,?,?,?,?)''',
+                           (mapping_id, tenant_clean, source_clean, ext_cust_clean, cid_clean, now, now))
+                self.event(db, 'external_customer_mapped', tenant_clean, None)
+                existing_map[ext_cust_clean] = cid_clean
+                results.append({'id': mapping_id, 'external_customer_id': ext_cust_clean, 'customer_id': cid_clean, 'created': True})
+        return results
 
     @staticmethod
     def _sanitize_audit_payload(payload):

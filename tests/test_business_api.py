@@ -16,8 +16,8 @@ class BusinessTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.store = BusinessStore(Path(self.temp.name) / 'business.sqlite3')
-        self.store.seed()
+        from legacy_seed_fixture import seed_legacy_unit_fixture
+        self.store = seed_legacy_unit_fixture(BusinessStore(Path(self.temp.name) / 'business.sqlite3'))
 
     def proposal(self, customer='C-001', oid='O-101', version=1, reason='ordered_by_mistake'):
         return self.store.propose(customer, {'order_id': oid, 'order_version': version, 'cancel_reason': reason})
@@ -56,8 +56,8 @@ class BusinessTests(unittest.TestCase):
         self.assertTrue(result['order_action_request_id'].startswith('oar_'))
         self.assertEqual(result['order']['status'], 'pending')
         self.assertEqual(result['order']['version'], 1)
-        reopened = BusinessStore(self.store.path)
-        reopened.seed()
+        from legacy_seed_fixture import seed_legacy_unit_fixture
+        reopened = seed_legacy_unit_fixture(BusinessStore(self.store.path))
         replay = reopened.confirm('C-001', pid, {'confirmed': True}, 'a'*32)
         self.assertTrue(replay['replayed'])
         self.assertEqual(replay['order_action_request_id'], result['order_action_request_id'])
@@ -97,7 +97,7 @@ class BusinessTests(unittest.TestCase):
 
     def test_idempotency_key_cannot_be_reused_for_another_order(self):
         with self.store.connection(write=True) as db:
-            db.execute("INSERT INTO orders(id,customer_id,name,variant,amount,status) VALUES ('O-103','C-001','Test','M',100,'pending')")
+            db.execute("INSERT INTO orders(id,customer_id,source_system,external_order_id,ordered_at,name,variant,amount,status) VALUES ('O-103','C-001','retailops_seed','O-103',1700000000.0,'Test','M',100,'pending')")
         first, second = self.proposal(), self.proposal(oid='O-103')
         self.store.confirm('C-001', first['proposal_id'], {'confirmed': True}, 'a'*32)
         self.assert_error('idempotency_conflict', lambda: self.store.confirm('C-001', second['proposal_id'], {'confirmed': True}, 'a'*32))
@@ -137,8 +137,8 @@ class HttpTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.token = 't'*40
-        self.store = BusinessStore(Path(self.temp.name) / 'business.sqlite3')
-        self.store.seed()
+        from legacy_seed_fixture import seed_legacy_unit_fixture
+        self.store = seed_legacy_unit_fixture(BusinessStore(Path(self.temp.name) / 'business.sqlite3'))
         app = Application(self.store, {hashlib.sha256(self.token.encode()).hexdigest(): 'C-001'})
         self.server = Server(('127.0.0.1', 0), app)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)

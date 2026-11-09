@@ -220,6 +220,8 @@ __marimo__/
 artifacts-business-local/
 api.env
 postgres-secrets/
+integration-secrets/
+/integration-secrets/
 
 # Generated runtime state and EC2 environment snapshots (not source code).
 # Ignoring a path does not delete data or untrack previously committed reports.

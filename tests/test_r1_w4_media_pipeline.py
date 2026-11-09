@@ -22,6 +22,7 @@ from retailops.core import ROOT
 from retailops.http.public import PublicWeb
 from retailops.identity.persistent import PersistentSessions
 from retailops_providers import OpenRouterAgent
+from legacy_seed_fixture import provision_legacy_unit_tenant, seed_legacy_unit_fixture
 
 API_KEY = "rk_live_secret_w4_media_" + "a" * 24
 TUNNEL_TOKEN = "tun_secret_w4_media_" + "b" * 28
@@ -78,7 +79,7 @@ class PhaseR1W4Item2NoRawHistoryTests(unittest.TestCase):
 
     def test_item2_chat_image_strips_exif_stores_outside_web_root_and_keeps_db_checkpoints_logs_free_of_base64(self):
         store = BusinessStore(Path(self.temp.name) / "business.sqlite3", create=True)
-        store.seed()
+        seed_legacy_unit_fixture(store)
         adapter = OpenRouterAgent(API_KEY, MODEL_ID, tunnel_token=TUNNEL_TOKEN, vision=True)
         app = Application(store, {}, api_infer=adapter, role="customer")
         cid = app.new_conversation("C-001", {"provider_id": "api"})["conversation_id"]
@@ -177,7 +178,7 @@ class PhaseR1W4Item2NoRawHistoryTests(unittest.TestCase):
 
     def test_item2_history_hydrates_only_most_recent_image_when_vision_on_and_omits_pixels_when_off(self):
         store = BusinessStore(Path(self.temp.name) / "business_hist.sqlite3", create=True)
-        store.seed()
+        seed_legacy_unit_fixture(store)
         vision_adapter = OpenRouterAgent(API_KEY, MODEL_ID, tunnel_token=TUNNEL_TOKEN, vision=True)
         app = Application(store, {}, api_infer=vision_adapter, role="customer")
         cid = app.new_conversation("C-001", {"provider_id": "api"})["conversation_id"]
@@ -272,9 +273,9 @@ class PhaseR1W4Item2NoRawHistoryTests(unittest.TestCase):
 
     def test_item2_chat_evidence_download_enforces_owner_staff_and_tenant_isolation(self):
         sessions = PersistentSessions(self.data_root / "persistent")
-        store_a = sessions.provision_tenant("shop-a", "Shop A", seed_demo=True)
+        store_a = provision_legacy_unit_tenant(sessions, "shop-a", "Shop A")
         store_a.add_customer("C-STAFFA", "Staff A")
-        store_b = sessions.provision_tenant("shop-b", "Shop B", seed_demo=True)
+        store_b = provision_legacy_unit_tenant(sessions, "shop-b", "Shop B")
         store_b.add_customer("C-STAFFB", "Staff B")
 
         def issue_cookie(tid: str, pid: str, name: str, cust_id: str, role: str) -> str:
@@ -381,7 +382,7 @@ class PhaseR1W4Item3ImageProjectionAndHumanFallbackTests(unittest.TestCase):
 
     def test_item3_projection_caps_3_images_resizes_to_1024_strips_exif_and_excludes_pii(self):
         store = BusinessStore(Path(self.temp.name) / "business_proj.sqlite3", create=True)
-        store.seed()
+        seed_legacy_unit_fixture(store)
         with store.connection(write=True) as db:
             db.execute("UPDATE customers SET name = ? WHERE id = 'C-001'", ("Trần Thị Bí Mật 0909123456 123 Nguyễn Huệ Q1",))
 
@@ -464,7 +465,7 @@ class PhaseR1W4Item3ImageProjectionAndHumanFallbackTests(unittest.TestCase):
 
         vision_adapter = OpenRouterAgent(API_KEY, MODEL_ID, tunnel_token=TUNNEL_TOKEN, vision=True)
         sessions = PersistentSessions(self.data_root / "persistent_fallback", api_infer=vision_adapter)
-        store = sessions.provision_tenant("shop-fb", "Shop Fallback", seed_demo=True)
+        store = provision_legacy_unit_tenant(sessions, "shop-fb", "Shop Fallback")
         store.add_customer("C-STAFFFB", "Staff Fallback")
         with store.connection(write=True) as db:
             db.execute("UPDATE orders SET status = 'delivered', delivered_at = ? WHERE id = 'O-102'", (1_785_000_000.0,))
@@ -776,7 +777,7 @@ class PhaseR1W4Item4PdfAndClamAVTests(unittest.TestCase):
 
         vision_adapter = OpenRouterAgent(API_KEY, MODEL_ID, tunnel_token=TUNNEL_TOKEN, vision=True)
         sessions = PersistentSessions(self.data_root / "persistent_pdf", api_infer=vision_adapter)
-        store = sessions.provision_tenant("shop-pdf", "Shop PDF", seed_demo=True)
+        store = provision_legacy_unit_tenant(sessions, "shop-pdf", "Shop PDF")
         fake_scanner = _FakeClamAVScanner(available=True)
         sessions.malware_scanner = fake_scanner
         store.malware_scanner = fake_scanner

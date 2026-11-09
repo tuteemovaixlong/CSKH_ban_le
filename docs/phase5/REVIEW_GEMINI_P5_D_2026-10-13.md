@@ -49,7 +49,7 @@ Các đoạn lifecycle đang được kiểm riêng: chat/proposal test_03/08, c
 
 ### D-R3 — Regression source sync: notebook hiện FAIL
 
-**P2 / blocker của regression bắt buộc.** `python scripts/build_agent_notebook.py --check` exit **1**; `test_colab_agent_notebook_sync` FAIL ([log](evidence/P5_D_REVIEW_20261013/notebook_check.log)). Giải bundle cho thấy chỉ [fixtures.py](../../retailops/sales/fixtures.py) khác working tree; [probe](evidence/P5_D_REVIEW_20261013/probes.json) ghi hashes embedded/current.
+**P2 / blocker của regression bắt buộc.** `python scripts/build_agent_notebook.py --check` exit **1**; `test_colab_agent_notebook_sync` FAIL ([log](evidence/P5_D_REVIEW_20261013/notebook_check.log)). Giải bundle cho thấy chỉ `retailops/sales/fixtures.py` khác working tree; [probe](evidence/P5_D_REVIEW_20261013/probes.json) ghi hashes embedded/current.
 
 **Closure cố định:** sau tất cả thay đổi code/tests/fixtures, regenerate bằng script hiện có rồi chạy `--check` và regression audit sync. Không sửa builder/ngưỡng/check để né failure; không chạy Colab/live model.
 

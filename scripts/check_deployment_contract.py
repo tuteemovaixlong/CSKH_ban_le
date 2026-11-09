@@ -2,6 +2,7 @@
 """Static deployment contract checks used by CI and release workflows."""
 from pathlib import Path
 import ast
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 PGVECTOR = "pgvector/pgvector:0.8.6-pg16-bookworm@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b"
@@ -19,10 +20,93 @@ def require(path, *needles):
     return source
 
 
+def check_integration_secrets_contract():
+    """Enforce W6.1b-D5 Compose secret mounts, env-only paths, and .dockerignore exclusion."""
+    pg_compose = text("deploy/compose.postgres.yaml")
+    pub_compose = text("deploy/compose.public.yaml")
+    api_compose = text("deploy/compose.api.yaml")
+    dockerfile = text("Dockerfile")
+    dockerignore = text(".dockerignore")
+
+    # 1. Both integration secrets declared as file: under ./integration-secrets/
+    for secret_name in ("retailops_connector_marketplace_sim", "retailops_event_digest_key"):
+        pattern = re.compile(
+            rf"(?m)^  {re.escape(secret_name)}:\s*\n    file:\s*\./integration-secrets/{re.escape(secret_name)}\s*$"
+        )
+        if not pattern.search(pg_compose):
+            raise SystemExit(
+                f"deploy/compose.postgres.yaml must declare file secret '{secret_name}' under ./integration-secrets/"
+            )
+
+    # 2. web service receives both secrets via secrets:
+    web_section = pg_compose.split("  postgres:", 1)[0]
+    for secret_name in ("retailops_connector_marketplace_sim", "retailops_event_digest_key"):
+        if not re.search(rf"(?m)^\s*-\s*{re.escape(secret_name)}\s*$", web_section):
+            raise SystemExit(
+                f"deploy/compose.postgres.yaml web service must mount '{secret_name}' via secrets:"
+            )
+
+    # 3. Never bind-mount any directory onto /run/secrets across any compose file
+    for cname, content in (
+        ("deploy/compose.postgres.yaml", pg_compose),
+        ("deploy/compose.public.yaml", pub_compose),
+        ("deploy/compose.api.yaml", api_compose),
+    ):
+        for line in content.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("- ") and ":/run/secrets" in stripped:
+                raise SystemExit(
+                    f"{cname} must never bind-mount a directory onto /run/secrets: {stripped}"
+                )
+
+    # 4. Connector and digest env vars must only point to paths under /run/secrets (never inline secret values)
+    for cname, content in (
+        ("deploy/compose.postgres.yaml", pg_compose),
+        ("deploy/compose.public.yaml", pub_compose),
+        ("deploy/compose.api.yaml", api_compose),
+    ):
+        for line in content.splitlines():
+            m = re.match(r"^\s*(RETAILOPS_(?:CONNECTOR|EVENT_DIGEST)[A-Z0-9_]*)\s*:\s*(.+?)\s*$", line)
+            if m:
+                key, val = m.group(1), m.group(2).strip().strip("\"'")
+                if not val.startswith("/run/secrets"):
+                    raise SystemExit(
+                        f"{cname} env var {key} must be a path under /run/secrets, got {val!r}"
+                    )
+    require(
+        "deploy/compose.postgres.yaml",
+        "RETAILOPS_CONNECTOR_SECRETS_DIR: /run/secrets",
+        "RETAILOPS_EVENT_DIGEST_KEY_FILE: /run/secrets/retailops_event_digest_key",
+    )
+
+    # 5. Dockerfile copies data/connectors and data/demo_events, never copies integration-secrets; .dockerignore forbids integration-secrets/
+    require("Dockerfile", "data/connectors", "data/demo_events")
+    if "integration-secrets" in dockerfile:
+        raise SystemExit("Dockerfile must never reference or COPY integration-secrets")
+    require(".dockerignore", "!data/connectors/", "!data/demo_events/")
+    for line in dockerignore.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("!") and "integration-secrets" in stripped:
+            raise SystemExit(f".dockerignore must never allow integration-secrets/: {stripped}")
+
+    # 6. Both Caddyfile and Caddyfile.maintenance must block /internal and /internal/* with 404 before reverse_proxy
+    for caddy_path in ("deploy/Caddyfile", "deploy/Caddyfile.maintenance"):
+        caddy_src = require(
+            caddy_path,
+            "path /internal /internal/*",
+            "handle @internal_routes",
+            "404",
+            "reverse_proxy web:8000",
+        )
+        if caddy_src.index("handle @internal_routes") >= caddy_src.index("reverse_proxy web:8000"):
+            raise SystemExit(f"{caddy_path} must reject /internal/* before reverse_proxy web:8000")
+
+
 def main():
     require("Dockerfile", "deploy/rollout-public-web.sh", "deploy/cutover-postgres.sh",
             "deploy/enable-pgvector.sh", "data/knowledge", "notebooks")
     require(".dockerignore", "!notebooks/", "!notebooks/**")
+    check_integration_secrets_contract()
     publish = require("deploy/publish_and_activate.py", "rollout-public-web.sh", "docker cp",
                       "Public web rollout checked for the activated image", "ssm_run",
                       "EC2 DEPLOY PREFLIGHT", "EC2_ROOT_DISK_LOW",

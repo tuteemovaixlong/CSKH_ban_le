@@ -21,8 +21,8 @@ class WorkerScopeResultsTests(unittest.TestCase):
     def setUp(self):
         recovery.OrderToolRecoveryTests.setUp(self)
         with self.store.connection(write=True) as db:
-            db.execute('INSERT INTO orders(id,customer_id,name,variant,amount,status) VALUES (?,?,?,?,?,?)',
-                       ('O-819127', 'C-001', 'Fixture shoe', 'Brown / 41', 890000, 'delivered'))
+            db.execute('INSERT INTO orders(id,customer_id,name,variant,amount,status,source_system,external_order_id,ordered_at) VALUES (?,?,?,?,?,?,?,?,?)',
+                       ('O-819127', 'C-001', 'Fixture shoe', 'Brown / 41', 890000, 'delivered', 'retailops_seed', 'O-819127', 1700000000.0))
 
     body = recovery.OrderToolRecoveryTests.body
 

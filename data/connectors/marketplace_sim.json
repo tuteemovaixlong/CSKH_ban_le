@@ -1,0 +1,74 @@
+{
+  "source_system": "marketplace_sim",
+  "kind": "marketplace",
+  "default_merchant_id": "MERCHANT-SIM-001",
+  "default_secret_ref": "retailops_connector_marketplace_sim",
+  "order": {
+    "pending": "pending",
+    "confirmed": "pending",
+    "shipping": "shipping",
+    "delivered": "delivered",
+    "cancelled": "cancelled"
+  },
+  "shipment": {
+    "GHN": {
+      "ready_to_pick": "created",
+      "picking": "created",
+      "picked": "picked_up",
+      "storing": "in_transit",
+      "transporting": "in_transit",
+      "sorting": "in_transit",
+      "delivering": "out_for_delivery",
+      "delivered": "delivered",
+      "delivery_fail": "delivery_failed",
+      "waiting_to_return": "returning",
+      "return": "returning",
+      "returned": "returned",
+      "cancel": "cancelled"
+    },
+    "FASTSHIP_SIM": {
+      "SIM_FS_CREATED": "created",
+      "SIM_FS_PICKUP_ASSIGNED": "created",
+      "SIM_FS_PICKED_UP": "picked_up",
+      "SIM_FS_WAREHOUSE_IN": "in_transit",
+      "SIM_FS_LINEHAUL": "in_transit",
+      "SIM_FS_HUB_SORTING": "in_transit",
+      "SIM_FS_OUT_FOR_DELIVERY": "out_for_delivery",
+      "SIM_FS_DELIVERED": "delivered",
+      "SIM_FS_ATTEMPT_FAILED": "delivery_failed",
+      "SIM_FS_RETURN_QUEUED": "returning",
+      "SIM_FS_RETURNING": "returning",
+      "SIM_FS_RETURNED": "returned",
+      "SIM_FS_CANCELLED": "cancelled"
+    },
+    "VIETEXPRESS_SIM": {
+      "SIM_VX_BOOKED": "created",
+      "SIM_VX_COLLECTING": "created",
+      "SIM_VX_COLLECTED": "picked_up",
+      "SIM_VX_DEPOT_STORED": "in_transit",
+      "SIM_VX_IN_TRANSIT": "in_transit",
+      "SIM_VX_SOC_SORTING": "in_transit",
+      "SIM_VX_LAST_MILE": "out_for_delivery",
+      "SIM_VX_POD_SUCCESS": "delivered",
+      "SIM_VX_POD_FAILED": "delivery_failed",
+      "SIM_VX_AWAIT_RTO": "returning",
+      "SIM_VX_RTO_TRANSIT": "returning",
+      "SIM_VX_RTO_DONE": "returned",
+      "SIM_VX_VOIDED": "cancelled"
+    }
+  },
+  "payment": {
+    "PAY_PENDING": "pending",
+    "PAY_SUCCEEDED": "succeeded",
+    "PAY_FAILED": "failed",
+    "COD_PENDING": "pending",
+    "COD_SETTLED": "succeeded",
+    "COD_CANCELLED": "cancelled"
+  },
+  "refund": {
+    "REFUND_INITIATED": "pending",
+    "REFUND_PROCESSING": "processing",
+    "REFUND_COMPLETED": "completed",
+    "REFUND_FAILED": "failed"
+  }
+}

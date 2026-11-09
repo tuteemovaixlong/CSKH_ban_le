@@ -104,8 +104,8 @@ class TestPrACorrectness(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.NamedTemporaryFile(suffix=".sqlite3", delete=False)
         self.tmp.close()
-        self.store = BusinessStore(self.tmp.name, create=True)
-        self.store.seed()
+        from legacy_seed_fixture import seed_legacy_unit_fixture
+        self.store = seed_legacy_unit_fixture(BusinessStore(self.tmp.name, create=True))
         self.agent = MockAgent()
         self.tokens = {hashlib.sha256(b"test_token").hexdigest(): "C-001"}
         self.app = Application(self.store, self.tokens, infer=self.agent, role="customer")
@@ -530,8 +530,8 @@ class TestPrACorrectness(unittest.TestCase):
         old focus; the context follows the order the customer asked about."""
         with self.store.connection(write=True) as db:
             db.execute(
-                "INSERT INTO orders (id, customer_id, name, variant, amount, status, product_id, version) "
-                "VALUES ('O-991002', 'C-001', 'Áo Không Rõ Mã', 'Trắng · Size L', 200000, 'delivered', NULL, 1)"
+                "INSERT INTO orders (id, customer_id, name, variant, amount, status, product_id, version, source_system, external_order_id, ordered_at) "
+                "VALUES ('O-991002', 'C-001', 'Áo Không Rõ Mã', 'Trắng · Size L', 200000, 'delivered', NULL, 1, 'retailops_seed', 'O-991002', 1700000000.0)"
             )
         try:
             tools = BoundTools(self.store, self.app.catalog, "C-001", {"order_id": "O-101", "product_id": "P-101"},
@@ -821,8 +821,8 @@ class TestPrACorrectness(unittest.TestCase):
         })
         with self.store.connection(write=True) as db:
             db.execute(
-                "INSERT INTO orders (id, customer_id, name, variant, amount, status, product_id, version) "
-                "VALUES ('O-9001', 'C-001', 'Áo Khoác Gió Đa Sắc', 'Be · Size M · Số lượng 1', 450000, 'delivered', 'P-901', 1)"
+                "INSERT INTO orders (id, customer_id, name, variant, amount, status, product_id, version, source_system, external_order_id, ordered_at) "
+                "VALUES ('O-9001', 'C-001', 'Áo Khoác Gió Đa Sắc', 'Be · Size M · Số lượng 1', 450000, 'delivered', 'P-901', 1, 'retailops_seed', 'O-9001', 1700000000.0)"
             )
         try:
             tools1 = BoundTools(self.store, self.app.catalog, "C-001", {"id": "c2"}, {"name": "test"}, can_cancel=True)
@@ -846,8 +846,8 @@ class TestPrACorrectness(unittest.TestCase):
         reports no stock, so the model has nothing to claim it checked."""
         with self.store.connection(write=True) as db:
             db.execute(
-                "INSERT INTO orders (id, customer_id, name, variant, amount, status, product_id, version) "
-                "VALUES ('O-991001', 'C-001', 'Áo Không Rõ Mã', 'Trắng · Size L', 200000, 'delivered', NULL, 1)"
+                "INSERT INTO orders (id, customer_id, name, variant, amount, status, product_id, version, source_system, external_order_id, ordered_at) "
+                "VALUES ('O-991001', 'C-001', 'Áo Không Rõ Mã', 'Trắng · Size L', 200000, 'delivered', NULL, 1, 'retailops_seed', 'O-991001', 1700000000.0)"
             )
         try:
             tools = BoundTools(self.store, self.app.catalog, "C-001", {"id": "c1"}, {"name": "test"}, can_cancel=True)
@@ -918,8 +918,8 @@ class TestPrACorrectness(unittest.TestCase):
                 bstore.seed_catalog(bdb)
                 bdb.execute("INSERT INTO customers (id, name) VALUES ('CG-7b9b7957', 'Collided Customer')")
                 bdb.execute(
-                    "INSERT INTO orders (id, customer_id, name, variant, amount, status, version, product_id) "
-                    "VALUES ('O-COLLIDE-01', 'CG-7b9b7957', 'Áo khoác len', 'Nâu / M', 650000, 'pending', 1, 'P-101')"
+                    "INSERT INTO orders (id, customer_id, name, variant, amount, status, version, product_id, source_system, external_order_id, ordered_at) "
+                    "VALUES ('O-COLLIDE-01', 'CG-7b9b7957', 'Áo khoác len', 'Nâu / M', 650000, 'pending', 1, 'P-101', 'retailops_seed', 'O-COLLIDE-01', 1700000000.0)"
                 )
 
             # 3. Run explicit operator v5 migration with tenant_stores resolver, then open store
@@ -1023,8 +1023,8 @@ class TestPrACorrectness(unittest.TestCase):
                 bstore.seed_catalog(bdb)
                 bdb.execute("INSERT INTO customers VALUES (?,?)", (legacy_cid, "Legacy User"))
                 bdb.execute(
-                    "INSERT INTO orders (id, customer_id, name, variant, amount, status, version, product_id) "
-                    "VALUES ('O-9001', ?, 'Váy Dạ Hội Đỏ', 'Đỏ / S', 950000, 'delivered', 1, 'P-101')",
+                    "INSERT INTO orders (id, customer_id, name, variant, amount, status, version, product_id, source_system, external_order_id, ordered_at) "
+                    "VALUES ('O-9001', ?, 'Váy Dạ Hội Đỏ', 'Đỏ / S', 950000, 'delivered', 1, 'P-101', 'retailops_seed', 'O-9001', 1700000000.0)",
                     (legacy_cid,)
                 )
 
@@ -1152,8 +1152,8 @@ class TestPrACorrectness(unittest.TestCase):
             bstore = sessions.business_store("iso-shop")
             with bstore.connection(write=True) as bdb:
                 bdb.execute(
-                    "INSERT INTO orders (id, customer_id, name, variant, amount, status, version, product_id) "
-                    "VALUES ('O-USERA-01', ?, 'Váy Dạ Hội Đỏ', 'Đỏ / S', 950000, 'delivered', 1, 'P-101')",
+                    "INSERT INTO orders (id, customer_id, name, variant, amount, status, version, product_id, source_system, external_order_id, ordered_at) "
+                    "VALUES ('O-USERA-01', ?, 'Váy Dạ Hội Đỏ', 'Đỏ / S', 950000, 'delivered', 1, 'P-101', 'retailops_seed', 'O-USERA-01', 1700000000.0)",
                     (cid_a,)
                 )
 
@@ -1214,8 +1214,8 @@ class TestPrACorrectness(unittest.TestCase):
                 bstore.seed_catalog(bdb)
                 bdb.execute("INSERT INTO customers (id, name) VALUES ('CG-shared', 'Shared Customer')")
                 bdb.execute(
-                    "INSERT INTO orders (id, customer_id, name, variant, amount, status, version, product_id) "
-                    "VALUES ('O-REC-01', 'CG-shared', 'Item 1', 'M', 100000, 'pending', 1, 'P-101')"
+                    "INSERT INTO orders (id, customer_id, name, variant, amount, status, version, product_id, source_system, external_order_id, ordered_at) "
+                    "VALUES ('O-REC-01', 'CG-shared', 'Item 1', 'M', 100000, 'pending', 1, 'P-101', 'retailops_seed', 'O-REC-01', 1700000000.0)"
                 )
                 bdb.execute(
                     "INSERT INTO conversations (id, customer_id, order_id, product_id, revision, expires_at) "
@@ -1615,16 +1615,16 @@ class TestPrACorrectness(unittest.TestCase):
                     (now, now)
                 )
                 bdb.execute(
-                    "INSERT INTO orders (id, customer_id, product_id, name, variant, amount, status, version) "
-                    "VALUES ('O-A1', 'CG-col-shared', 'P-COL-1', 'Polo Shirt', 'M', 100000, 'pending', 1)"
+                    "INSERT INTO orders (id, customer_id, product_id, name, variant, amount, status, version, source_system, external_order_id, ordered_at) "
+                    "VALUES ('O-A1', 'CG-col-shared', 'P-COL-1', 'Polo Shirt', 'M', 100000, 'pending', 1, 'retailops_seed', 'O-A1', 1700000000.0)"
                 )
                 bdb.execute(
-                    "INSERT INTO orders (id, customer_id, product_id, name, variant, amount, status, version) "
-                    "VALUES ('O-A2', 'CG-col-shared', 'P-COL-1', 'Polo Shirt', 'L', 100000, 'delivered', 1)"
+                    "INSERT INTO orders (id, customer_id, product_id, name, variant, amount, status, version, source_system, external_order_id, ordered_at) "
+                    "VALUES ('O-A2', 'CG-col-shared', 'P-COL-1', 'Polo Shirt', 'L', 100000, 'delivered', 1, 'retailops_seed', 'O-A2', 1700000000.0)"
                 )
                 bdb.execute(
-                    "INSERT INTO orders (id, customer_id, product_id, name, variant, amount, status, version) "
-                    "VALUES ('O-B1', 'CG-col-shared', 'P-COL-1', 'Polo Shirt', 'XL', 100000, 'pending', 1)"
+                    "INSERT INTO orders (id, customer_id, product_id, name, variant, amount, status, version, source_system, external_order_id, ordered_at) "
+                    "VALUES ('O-B1', 'CG-col-shared', 'P-COL-1', 'Polo Shirt', 'XL', 100000, 'pending', 1, 'retailops_seed', 'O-B1', 1700000000.0)"
                 )
                 bdb.execute(
                     "INSERT INTO conversations (id, customer_id, order_id, product_id, revision, expires_at) "
@@ -1859,8 +1859,8 @@ class TestPrACorrectness(unittest.TestCase):
             with bstore.connection(write=True) as bdb:
                 bdb.execute("INSERT INTO customers VALUES ('CG-guard-shared', 'Shared')")
                 bdb.execute("INSERT INTO customers VALUES ('CG-other-customer', 'Unrelated')")
-                bdb.execute("INSERT INTO orders (id, customer_id, name, variant, amount, status, version) VALUES ('O-GUARD-OK', 'CG-guard-shared', 'Item', 'M', 1000, 'pending', 1)")
-                bdb.execute("INSERT INTO orders (id, customer_id, name, variant, amount, status, version) VALUES ('O-OTHER-OWNER', 'CG-other-customer', 'Item', 'L', 2000, 'pending', 1)")
+                bdb.execute("INSERT INTO orders (id, customer_id, name, variant, amount, status, version, source_system, external_order_id, ordered_at) VALUES ('O-GUARD-OK', 'CG-guard-shared', 'Item', 'M', 1000, 'pending', 1, 'retailops_seed', 'O-GUARD-OK', 1700000000.0)")
+                bdb.execute("INSERT INTO orders (id, customer_id, name, variant, amount, status, version, source_system, external_order_id, ordered_at) VALUES ('O-OTHER-OWNER', 'CG-other-customer', 'Item', 'L', 2000, 'pending', 1, 'retailops_seed', 'O-OTHER-OWNER', 1700000000.0)")
 
             # Case A: Reassignment specifies an order that belongs to another customer
             bad_order_plan = {
@@ -1955,7 +1955,7 @@ class TestPrACorrectness(unittest.TestCase):
             bstore = sessions.business_store("shop-cli")
             with bstore.connection(write=True) as bdb:
                 bdb.execute("INSERT INTO customers VALUES ('CG-cli-shared', 'Shared CLI')")
-                bdb.execute("INSERT INTO orders (id, customer_id, name, variant, amount, status, version) VALUES ('O-CLI-1', 'CG-cli-shared', 'Item', 'M', 1000, 'pending', 1)")
+                bdb.execute("INSERT INTO orders (id, customer_id, name, variant, amount, status, version, source_system, external_order_id, ordered_at) VALUES ('O-CLI-1', 'CG-cli-shared', 'Item', 'M', 1000, 'pending', 1, 'retailops_seed', 'O-CLI-1', 1700000000.0)")
 
             plan = {
                 "reassignments": [

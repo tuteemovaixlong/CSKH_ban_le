@@ -509,14 +509,14 @@ function collectText(node) {
 
   // P5-E-DATA1: Positive demo fixture display_name vs Negative non-demo canonical name in UI
   mockOrders = [
-    { id: 'O-700102', customer_id: 'C-701', name: 'Quần tây ống đứng tôn dáng', display_name: 'Bộ xếp hình gỗ cho bé', variant: 'Đen / L', amount: 520000, status: 'delivered', version: 1, product_id: 'P-602' },
-    { id: 'O-123456', customer_id: 'non_demo_customer', name: 'Quần tây ống đứng tôn dáng', variant: 'Đen / L', amount: 520000, status: 'delivered', version: 1, product_id: 'P-602' }
+    { id: 'O-700102', customer_id: 'C-701', name: 'Quần tây đen hàn quốc', display_name: 'Bộ xếp hình gỗ cho bé', variant: 'Đen / L', amount: 520000, status: 'delivered', version: 1, product_id: 'P-602' },
+    { id: 'O-123456', customer_id: 'non_demo_customer', name: 'Quần tây đen hàn quốc', variant: 'Đen / L', amount: 520000, status: 'delivered', version: 1, product_id: 'P-602' }
   ];
   await run('refresh()');
   const cards = get('order-card-list').children;
   assert.equal(cards.length, 2);
   assert.ok(collectText(cards[0]).includes('Bộ xếp hình gỗ cho bé'));
-  assert.ok(collectText(cards[1]).includes('Quần tây ống đứng tôn dáng'));
+  assert.ok(collectText(cards[1]).includes('Quần tây đen hàn quốc'));
   assert.ok(!collectText(cards[1]).includes('Bộ xếp hình gỗ cho bé'));
 
   // P5-E-R4 (ADM1–ADM6): Customer/staff denied vs Manager/Platform-Admin Account & Quota Governance UI

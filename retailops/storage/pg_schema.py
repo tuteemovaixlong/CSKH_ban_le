@@ -2,8 +2,8 @@
 from retailops.core import ApiError
 from retailops.storage.postgres import (BUSINESS_SCHEMA_CURRENT, BUSINESS_V5_SCHEMA_VERSION,
                                         BUSINESS_V6_SCHEMA_VERSION, BUSINESS_V7_SCHEMA_VERSION,
-                                        IDENTITY_SCHEMA, IDENTITY_SCHEMA_CURRENT,
-                                        assert_schema, valid_schema)
+                                        BUSINESS_V8_SCHEMA_VERSION, IDENTITY_SCHEMA,
+                                        IDENTITY_SCHEMA_CURRENT, assert_schema, valid_schema)
 
 BUSINESS_DDL = [
     'CREATE TABLE customers (id TEXT PRIMARY KEY, name TEXT NOT NULL)',
@@ -22,10 +22,32 @@ BUSINESS_DDL = [
     'CREATE INDEX idx_variants_size_color ON product_variants(product_id, size, color)',
     '''CREATE TABLE orders (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL REFERENCES customers(id),
         product_id TEXT REFERENCES products(id),
+        source_system TEXT NOT NULL,
+        external_order_id TEXT,
         name TEXT NOT NULL, variant TEXT NOT NULL, amount BIGINT NOT NULL,
-        status TEXT NOT NULL CHECK(status IN ('pending','delivered','cancelled')),
+        status TEXT NOT NULL CONSTRAINT orders_status_v9_check CHECK(
+            status IN ('pending', 'shipping', 'delivered', 'cancelled')
+        ),
+        ordered_at DOUBLE PRECISION NOT NULL,
+        ordered_at_backfilled INTEGER NOT NULL DEFAULT 0 CONSTRAINT orders_ordered_at_backfilled_v9_check CHECK(
+            ordered_at_backfilled IN (0, 1)
+        ),
+        payment_method TEXT CONSTRAINT orders_payment_method_v9_check CHECK(
+            payment_method IS NULL OR payment_method IN ('cod', 'bank_transfer', 'e_wallet', 'card')
+        ),
+        payment_status TEXT NOT NULL DEFAULT 'unpaid' CONSTRAINT orders_payment_status_v9_check CHECK(
+            payment_status IN ('unpaid', 'paid', 'partially_refunded', 'refunded')
+        ),
+        shipping_fee BIGINT CONSTRAINT orders_shipping_fee_v9_check CHECK(
+            shipping_fee IS NULL OR shipping_fee >= 0
+        ),
+        ship_to_area TEXT CONSTRAINT orders_ship_to_area_v9_check CHECK(
+            ship_to_area IS NULL OR char_length(ship_to_area) <= 120
+        ),
+        promised_delivery_by DOUBLE PRECISION,
         version INTEGER NOT NULL DEFAULT 1, cancel_reason TEXT,
-        delivered_at DOUBLE PRECISION)''',
+        delivered_at DOUBLE PRECISION,
+        CONSTRAINT orders_source_external_v9_unique UNIQUE(source_system, external_order_id))''',
     'CREATE INDEX idx_orders_customer_id ON orders(customer_id)',
     'CREATE INDEX idx_orders_product_id ON orders(product_id)',
     '''CREATE TABLE proposals (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL REFERENCES customers(id),
@@ -132,10 +154,15 @@ P5C_BUSINESS_DDL = [
         created_at DOUBLE PRECISION NOT NULL)''',
     'CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id)',
     '''CREATE TABLE IF NOT EXISTS imported_events (id TEXT PRIMARY KEY, source_system TEXT NOT NULL,
-        event_id TEXT NOT NULL, tenant_id TEXT NOT NULL, external_customer_id TEXT NOT NULL,
-        customer_id TEXT NOT NULL, order_id TEXT NOT NULL, status TEXT NOT NULL,
-        total BIGINT NOT NULL, currency TEXT NOT NULL, payload_json TEXT NOT NULL,
-        signature TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL,
+        event_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
+        event_type TEXT, sequence BIGINT,
+        received_via TEXT CONSTRAINT imported_events_received_via_v9_check CHECK(
+            received_via IS NULL OR received_via IN ('http', 'import')
+        ),
+        payload_digest TEXT, redacted_fields TEXT,
+        external_customer_id TEXT, customer_id TEXT, order_id TEXT, status TEXT,
+        total BIGINT, currency TEXT, payload_json TEXT NOT NULL,
+        signature TEXT, created_at DOUBLE PRECISION NOT NULL,
         UNIQUE(source_system, event_id))''',
     'CREATE INDEX IF NOT EXISTS idx_imported_events_tenant_order ON imported_events(tenant_id, order_id)',
     '''CREATE INDEX IF NOT EXISTS idx_imported_events_external
@@ -574,10 +601,275 @@ BUSINESS_V8_UPGRADE_DDL = [
     $$''',
 ]
 
+BUSINESS_V9_TABLES_DDL = [
+    '''CREATE UNIQUE INDEX IF NOT EXISTS idx_product_variants_sku_unique
+        ON product_variants(sku) WHERE sku IS NOT NULL AND trim(sku) <> '' ''',
+    'CREATE INDEX IF NOT EXISTS idx_imported_events_tenant_type ON imported_events(tenant_id, event_type)',
+    '''CREATE TABLE IF NOT EXISTS integration_connectors (
+        connector_id TEXT PRIMARY KEY,
+        source_system TEXT NOT NULL UNIQUE,
+        kind TEXT NOT NULL CHECK(kind IN ('marketplace', 'carrier', 'payment')),
+        merchant_id TEXT NOT NULL,
+        secret_ref TEXT NOT NULL,
+        status_mapping_json TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0, 1)),
+        created_at DOUBLE PRECISION NOT NULL,
+        updated_at DOUBLE PRECISION NOT NULL)''',
+    '''CREATE TABLE IF NOT EXISTS shipments (
+        shipment_id TEXT PRIMARY KEY,
+        order_id TEXT NOT NULL REFERENCES orders(id),
+        source_system TEXT NOT NULL,
+        external_shipment_id TEXT NOT NULL,
+        carrier TEXT NOT NULL,
+        tracking_code TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN (
+            'created', 'picked_up', 'in_transit', 'out_for_delivery',
+            'delivered', 'delivery_failed', 'returning', 'returned', 'cancelled'
+        )),
+        carrier_status_raw TEXT NOT NULL,
+        current_area TEXT,
+        shipper_name TEXT,
+        shipper_phone_masked TEXT,
+        estimated_delivery_at DOUBLE PRECISION,
+        delivered_at DOUBLE PRECISION,
+        delivery_attempts INTEGER NOT NULL DEFAULT 0 CHECK(delivery_attempts >= 0),
+        updated_at DOUBLE PRECISION NOT NULL,
+        UNIQUE(source_system, external_shipment_id))''',
+    'CREATE INDEX IF NOT EXISTS idx_shipments_order ON shipments(order_id)',
+    '''CREATE TABLE IF NOT EXISTS shipment_events (
+        shipment_event_id TEXT PRIMARY KEY,
+        shipment_id TEXT NOT NULL REFERENCES shipments(shipment_id),
+        occurred_at DOUBLE PRECISION NOT NULL,
+        status TEXT NOT NULL CHECK(status IN (
+            'created', 'picked_up', 'in_transit', 'out_for_delivery',
+            'delivered', 'delivery_failed', 'returning', 'returned', 'cancelled'
+        )),
+        carrier_status_raw TEXT NOT NULL,
+        description TEXT,
+        fail_reason TEXT,
+        hub_name TEXT,
+        district TEXT,
+        province TEXT,
+        estimated_delivery_at DOUBLE PRECISION,
+        source_event_id TEXT NOT NULL UNIQUE)''',
+    'CREATE INDEX IF NOT EXISTS idx_shipment_events_shipment ON shipment_events(shipment_id, occurred_at ASC)',
+    '''CREATE OR REPLACE FUNCTION shipment_events_immutable() RETURNS trigger AS $$
+    BEGIN
+        RAISE EXCEPTION 'shipment_events is append-only';
+    END;
+    $$ LANGUAGE plpgsql''',
+    'DROP TRIGGER IF EXISTS trg_shipment_events_immutable ON shipment_events',
+    '''CREATE TRIGGER trg_shipment_events_immutable
+        BEFORE UPDATE OR DELETE ON shipment_events
+        FOR EACH ROW EXECUTE FUNCTION shipment_events_immutable()''',
+    '''CREATE TABLE IF NOT EXISTS payment_transactions (
+        payment_id TEXT PRIMARY KEY,
+        order_id TEXT NOT NULL REFERENCES orders(id),
+        provider TEXT NOT NULL,
+        provider_txn_ref TEXT NOT NULL,
+        method TEXT NOT NULL CHECK(method IN ('cod', 'bank_transfer', 'e_wallet', 'card')),
+        amount BIGINT NOT NULL CHECK(amount >= 0),
+        status TEXT NOT NULL CHECK(status IN ('pending', 'succeeded', 'failed', 'cancelled')),
+        provider_status_raw TEXT NOT NULL,
+        created_at DOUBLE PRECISION NOT NULL,
+        settled_at DOUBLE PRECISION,
+        UNIQUE(provider, provider_txn_ref))''',
+    'CREATE INDEX IF NOT EXISTS idx_payment_transactions_order ON payment_transactions(order_id)',
+    '''CREATE TABLE IF NOT EXISTS refunds (
+        refund_id TEXT PRIMARY KEY,
+        order_id TEXT NOT NULL REFERENCES orders(id),
+        request_id TEXT REFERENCES order_action_requests(request_id),
+        payment_id TEXT REFERENCES payment_transactions(payment_id),
+        provider TEXT NOT NULL,
+        provider_refund_ref TEXT NOT NULL,
+        amount BIGINT NOT NULL CHECK(amount > 0),
+        channel TEXT NOT NULL CHECK(channel IN ('original_method', 'bank_transfer', 'e_wallet')),
+        status TEXT NOT NULL CHECK(status IN ('pending', 'processing', 'completed', 'failed')),
+        provider_status_raw TEXT NOT NULL,
+        initiated_at DOUBLE PRECISION NOT NULL,
+        completed_at DOUBLE PRECISION,
+        failure_reason TEXT,
+        UNIQUE(provider, provider_refund_ref))''',
+    'CREATE INDEX IF NOT EXISTS idx_refunds_order ON refunds(order_id)',
+    'CREATE INDEX IF NOT EXISTS idx_refunds_request ON refunds(request_id)',
+    '''CREATE TABLE IF NOT EXISTS order_recipients (
+        order_id TEXT PRIMARY KEY REFERENCES orders(id),
+        name_enc TEXT,
+        phone_enc TEXT,
+        address_line_enc TEXT,
+        phone_lookup_hmac TEXT,
+        ward TEXT,
+        district TEXT,
+        province TEXT,
+        phone_masked TEXT,
+        created_at DOUBLE PRECISION NOT NULL,
+        retention_until DOUBLE PRECISION)''',
+    'CREATE INDEX IF NOT EXISTS idx_order_recipients_phone_hmac ON order_recipients(phone_lookup_hmac)',
+    '''CREATE TABLE IF NOT EXISTS delivery_compensations (
+        compensation_id TEXT PRIMARY KEY,
+        order_id TEXT NOT NULL REFERENCES orders(id),
+        shipment_id TEXT REFERENCES shipments(shipment_id),
+        reason TEXT NOT NULL CHECK(reason IN ('late_delivery')),
+        late_by_hours DOUBLE PRECISION NOT NULL CHECK(late_by_hours >= 0),
+        voucher_type TEXT NOT NULL CHECK(voucher_type IN ('amount', 'free_shipping')),
+        value BIGINT NOT NULL CHECK(value >= 0),
+        status TEXT NOT NULL CHECK(status IN ('proposed', 'approved', 'rejected', 'requested', 'issued', 'failed')),
+        decided_by_principal_id TEXT,
+        decided_at DOUBLE PRECISION,
+        note TEXT,
+        request_id TEXT)''',
+    'CREATE INDEX IF NOT EXISTS idx_delivery_compensations_order ON delivery_compensations(order_id)',
+    '''CREATE TABLE IF NOT EXISTS vouchers (
+        voucher_id TEXT PRIMARY KEY,
+        source_system TEXT NOT NULL,
+        external_voucher_id TEXT NOT NULL,
+        customer_id TEXT NOT NULL REFERENCES customers(id),
+        order_id TEXT REFERENCES orders(id),
+        compensation_id TEXT REFERENCES delivery_compensations(compensation_id),
+        code TEXT NOT NULL,
+        voucher_type TEXT NOT NULL CHECK(voucher_type IN ('amount', 'free_shipping')),
+        value BIGINT NOT NULL CHECK(value >= 0),
+        valid_until DOUBLE PRECISION,
+        issued_at DOUBLE PRECISION NOT NULL,
+        UNIQUE(source_system, external_voucher_id))''',
+    'CREATE INDEX IF NOT EXISTS idx_vouchers_customer ON vouchers(customer_id)',
+    'CREATE INDEX IF NOT EXISTS idx_vouchers_order ON vouchers(order_id)',
+]
+
+# Business v9 (W6.1b-D1, W6.1b-D5, W6.1b-D7): canonical orders v9 + backfill, imported_events v2 shape,
+# product_variants SKU partial unique index, and 8 v9 integration tables.
+# No statement contains a question mark or percent sign because psycopg treats them as placeholders.
+BUSINESS_V9_UPGRADE_DDL = [
+    'ALTER TABLE orders ADD COLUMN IF NOT EXISTS source_system TEXT',
+    'ALTER TABLE orders ADD COLUMN IF NOT EXISTS external_order_id TEXT',
+    'ALTER TABLE orders ADD COLUMN IF NOT EXISTS ordered_at DOUBLE PRECISION',
+    'ALTER TABLE orders ADD COLUMN IF NOT EXISTS ordered_at_backfilled INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method TEXT',
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_status TEXT NOT NULL DEFAULT 'unpaid'",
+    'ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_fee BIGINT',
+    'ALTER TABLE orders ADD COLUMN IF NOT EXISTS ship_to_area TEXT',
+    'ALTER TABLE orders ADD COLUMN IF NOT EXISTS promised_delivery_by DOUBLE PRECISION',
+    '''UPDATE orders
+       SET ordered_at_backfilled = 1,
+           ordered_at = extract(epoch from now())
+       WHERE ordered_at IS NULL''',
+    '''UPDATE orders
+       SET source_system = 'retailops_seed'
+       WHERE source_system IS NULL''',
+    '''UPDATE orders
+       SET external_order_id = id
+       WHERE external_order_id IS NULL AND source_system = 'retailops_seed' ''',
+    '''UPDATE orders
+       SET payment_status = 'unpaid'
+       WHERE payment_status IS NULL''',
+    'ALTER TABLE orders ALTER COLUMN source_system SET NOT NULL',
+    'ALTER TABLE orders ALTER COLUMN ordered_at SET NOT NULL',
+    'ALTER TABLE orders ALTER COLUMN ordered_at_backfilled SET NOT NULL',
+    'ALTER TABLE orders ALTER COLUMN payment_status SET NOT NULL',
+    '''DO $$
+    DECLARE legacy RECORD;
+    BEGIN
+        FOR legacy IN
+            SELECT conname FROM pg_constraint
+            WHERE conrelid = 'orders'::regclass
+              AND contype = 'c'
+              AND (
+                  position('status' in pg_get_constraintdef(oid)) > 0
+                  OR position('ordered_at_backfilled' in pg_get_constraintdef(oid)) > 0
+                  OR position('payment_method' in pg_get_constraintdef(oid)) > 0
+                  OR position('payment_status' in pg_get_constraintdef(oid)) > 0
+                  OR position('shipping_fee' in pg_get_constraintdef(oid)) > 0
+                  OR position('ship_to_area' in pg_get_constraintdef(oid)) > 0
+              )
+              AND conname NOT IN (
+                  'orders_status_v9_check',
+                  'orders_ordered_at_backfilled_v9_check',
+                  'orders_payment_method_v9_check',
+                  'orders_payment_status_v9_check',
+                  'orders_shipping_fee_v9_check',
+                  'orders_ship_to_area_v9_check'
+              )
+        LOOP
+            EXECUTE 'ALTER TABLE orders DROP CONSTRAINT ' || quote_ident(legacy.conname);
+        END LOOP;
+    END
+    $$''',
+    '''DO $$
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                       WHERE conrelid = 'orders'::regclass
+                         AND conname = 'orders_status_v9_check') THEN
+            ALTER TABLE orders ADD CONSTRAINT orders_status_v9_check CHECK (
+                status IN ('pending', 'shipping', 'delivered', 'cancelled'));
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                       WHERE conrelid = 'orders'::regclass
+                         AND conname = 'orders_ordered_at_backfilled_v9_check') THEN
+            ALTER TABLE orders ADD CONSTRAINT orders_ordered_at_backfilled_v9_check CHECK (
+                ordered_at_backfilled IN (0, 1));
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                       WHERE conrelid = 'orders'::regclass
+                         AND conname = 'orders_payment_method_v9_check') THEN
+            ALTER TABLE orders ADD CONSTRAINT orders_payment_method_v9_check CHECK (
+                payment_method IS NULL OR payment_method IN ('cod', 'bank_transfer', 'e_wallet', 'card'));
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                       WHERE conrelid = 'orders'::regclass
+                         AND conname = 'orders_payment_status_v9_check') THEN
+            ALTER TABLE orders ADD CONSTRAINT orders_payment_status_v9_check CHECK (
+                payment_status IN ('unpaid', 'paid', 'partially_refunded', 'refunded'));
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                       WHERE conrelid = 'orders'::regclass
+                         AND conname = 'orders_shipping_fee_v9_check') THEN
+            ALTER TABLE orders ADD CONSTRAINT orders_shipping_fee_v9_check CHECK (
+                shipping_fee IS NULL OR shipping_fee >= 0);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                       WHERE conrelid = 'orders'::regclass
+                         AND conname = 'orders_ship_to_area_v9_check') THEN
+            ALTER TABLE orders ADD CONSTRAINT orders_ship_to_area_v9_check CHECK (
+                ship_to_area IS NULL OR char_length(ship_to_area) <= 120);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                       WHERE conrelid = 'orders'::regclass
+                         AND conname = 'orders_source_external_v9_unique') THEN
+            ALTER TABLE orders ADD CONSTRAINT orders_source_external_v9_unique
+                UNIQUE (source_system, external_order_id);
+        END IF;
+    END
+    $$''',
+    'ALTER TABLE imported_events ALTER COLUMN external_customer_id DROP NOT NULL',
+    'ALTER TABLE imported_events ALTER COLUMN customer_id DROP NOT NULL',
+    'ALTER TABLE imported_events ALTER COLUMN order_id DROP NOT NULL',
+    'ALTER TABLE imported_events ALTER COLUMN status DROP NOT NULL',
+    'ALTER TABLE imported_events ALTER COLUMN total DROP NOT NULL',
+    'ALTER TABLE imported_events ALTER COLUMN currency DROP NOT NULL',
+    'ALTER TABLE imported_events ALTER COLUMN signature DROP NOT NULL',
+    'ALTER TABLE imported_events ADD COLUMN IF NOT EXISTS event_type TEXT',
+    'ALTER TABLE imported_events ADD COLUMN IF NOT EXISTS sequence BIGINT',
+    'ALTER TABLE imported_events ADD COLUMN IF NOT EXISTS received_via TEXT',
+    'ALTER TABLE imported_events ADD COLUMN IF NOT EXISTS payload_digest TEXT',
+    'ALTER TABLE imported_events ADD COLUMN IF NOT EXISTS redacted_fields TEXT',
+    '''DO $$
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                       WHERE conrelid = 'imported_events'::regclass
+                         AND conname = 'imported_events_received_via_v9_check') THEN
+            ALTER TABLE imported_events ADD CONSTRAINT imported_events_received_via_v9_check CHECK (
+                received_via IS NULL OR received_via IN ('http', 'import'));
+        END IF;
+    END
+    $$''',
+    *BUSINESS_V9_TABLES_DDL,
+]
+
 BUSINESS_DDL.extend(P5C_BUSINESS_DDL)
 BUSINESS_DDL.extend(BUSINESS_V5_DDL)
 BUSINESS_DDL.extend(BUSINESS_V6_TABLES_DDL)
 BUSINESS_DDL.extend(BUSINESS_V8_CASE_ASSIST_DDL)
+BUSINESS_DDL.extend(BUSINESS_V9_TABLES_DDL)
 IDENTITY_DDL.extend(P5C_IDENTITY_DDL)
 
 
@@ -623,6 +915,7 @@ def initialize(
     allow_business_v6_upgrade=False,
     allow_business_v7_upgrade=False,
     allow_business_v8_upgrade=False,
+    allow_business_v9_upgrade=False,
 ):
     from psycopg import sql
     valid_schema(schema)
@@ -789,10 +1082,12 @@ def initialize(
             for statement in P5C_IDENTITY_DDL:
                 db.raw.execute(statement)
         if component == 'business':
-            if row['version'] not in (1, 2, 3, 4, 5, 6, 7, 8):
+            if row['version'] not in (1, 2, 3, 4, 5, 6, 7, 8, 9):
                 raise ValueError('Unsupported PostgreSQL schema version or component.')
             requested_ver = (
                 BUSINESS_SCHEMA_CURRENT
+                if allow_business_v9_upgrade
+                else BUSINESS_V8_SCHEMA_VERSION
                 if allow_business_v8_upgrade
                 else BUSINESS_V7_SCHEMA_VERSION
                 if allow_business_v7_upgrade
@@ -810,20 +1105,21 @@ def initialize(
                 or allow_business_v6_upgrade
                 or allow_business_v7_upgrade
                 or allow_business_v8_upgrade
+                or allow_business_v9_upgrade
             )
             if row['version'] < BUSINESS_V5_SCHEMA_VERSION and not any_business_upgrade:
                 raise ApiError(
                     503,
                     'business_migration_required',
                     f"Kho dữ liệu business PostgreSQL ({schema}) đang ở schema v{row['version']}; khởi động bị chặn fail-closed. "
-                    "Hãy chạy lệnh operator database migrate-v8 với --confirm-preflight --confirm-backup.",
+                    "Hãy chạy lệnh operator database migrate-v9 với --confirm-preflight --confirm-backup.",
                 )
-            if row['version'] < target_ver and target_ver == BUSINESS_SCHEMA_CURRENT and not allow_business_v8_upgrade:
+            if row['version'] < target_ver and target_ver == BUSINESS_SCHEMA_CURRENT and not allow_business_v9_upgrade:
                 raise ApiError(
                     503,
                     'business_migration_required',
                     f"Kho dữ liệu business PostgreSQL ({schema}) đang ở schema v{row['version']}; khởi động bị chặn fail-closed. "
-                    "Hãy chạy lệnh operator database migrate-v8 với --confirm-preflight --confirm-backup.",
+                    "Hãy chạy lệnh operator database migrate-v9 với --confirm-preflight --confirm-backup.",
                 )
             db.raw.execute(sql.SQL('SET LOCAL search_path TO {}, pg_catalog').format(sql.Identifier(schema)))
             if row['version'] == 1:
@@ -889,22 +1185,30 @@ def initialize(
                     db.raw.execute(statement)
                 db.execute("UPDATE retailops_schema SET version=? WHERE component='business'", (BUSINESS_V7_SCHEMA_VERSION,))
                 row = {'component': 'business', 'version': BUSINESS_V7_SCHEMA_VERSION}
-            if row['version'] == BUSINESS_V7_SCHEMA_VERSION and target_ver >= BUSINESS_SCHEMA_CURRENT:
+            if row['version'] == BUSINESS_V7_SCHEMA_VERSION and target_ver >= BUSINESS_V8_SCHEMA_VERSION:
                 for statement in BUSINESS_V8_UPGRADE_DDL:
+                    db.raw.execute(statement)
+                db.execute("UPDATE retailops_schema SET version=? WHERE component='business'", (BUSINESS_V8_SCHEMA_VERSION,))
+                row = {'component': 'business', 'version': BUSINESS_V8_SCHEMA_VERSION}
+            for statement in P5C_BUSINESS_DDL:
+                db.raw.execute(statement)
+            if row['version'] == BUSINESS_V8_SCHEMA_VERSION and target_ver >= BUSINESS_SCHEMA_CURRENT:
+                for statement in BUSINESS_V9_UPGRADE_DDL:
                     db.raw.execute(statement)
                 db.execute("UPDATE retailops_schema SET version=? WHERE component='business'", (BUSINESS_SCHEMA_CURRENT,))
                 row = {'component': 'business', 'version': BUSINESS_SCHEMA_CURRENT}
             if row['version'] != target_ver:
                 raise ValueError('Unsupported PostgreSQL schema version or component.')
-            for statement in P5C_BUSINESS_DDL:
-                db.raw.execute(statement)
             for statement in BUSINESS_V5_DDL:
                 db.raw.execute(statement)
             if target_ver >= BUSINESS_V6_SCHEMA_VERSION:
                 for statement in BUSINESS_V6_DDL:
                     db.raw.execute(statement)
-            if target_ver >= BUSINESS_SCHEMA_CURRENT:
+            if target_ver >= BUSINESS_V8_SCHEMA_VERSION:
                 for statement in BUSINESS_V8_CASE_ASSIST_DDL:
+                    db.raw.execute(statement)
+            if target_ver >= BUSINESS_SCHEMA_CURRENT:
+                for statement in BUSINESS_V9_TABLES_DDL:
                     db.raw.execute(statement)
         assert_schema(db, schema, component)
         return False

@@ -21,9 +21,9 @@ COPY tests /app/tests
 COPY data/smoke.jsonl /app/data/smoke.jsonl
 COPY data/products.json /app/data/products.json
 COPY data/knowledge /app/data/knowledge
-COPY data/mock_shipments.json /app/data/mock_shipments.json
+COPY data/connectors /app/data/connectors
+COPY data/demo_events /app/data/demo_events
 COPY data/order_action_reasons.json /app/data/order_action_reasons.json
-COPY data/deepseek_seed_data.json /app/data/deepseek_seed_data.json
 RUN groupadd --gid 10001 retailops && useradd --uid 10001 --gid 10001 --no-create-home retailops && mkdir /data && chown 10001:10001 /data
 USER 10001:10001
 ENTRYPOINT ["python", "retailops_baseline.py"]

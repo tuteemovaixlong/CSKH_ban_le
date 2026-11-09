@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 from retailops_api import BusinessStore
 from retailops_public import COOKIE, GuestSessions, PublicWeb, create_application, public_origin
+from legacy_seed_fixture import seed_legacy_unit_fixture
 
 INVITE = 'fixture_invite_' + 'a' * 40
 ORIGIN = 'https://retailops.example.com'
@@ -87,10 +88,16 @@ class PublicTests(unittest.TestCase):
 
     def test_cancellation_guest_isolation_and_restart(self):
         # Existing private owner cancellation remains private and untouched.
-        owner = BusinessStore(Path(self.temp.name) / 'business.sqlite3'); owner.seed()
+        owner = seed_legacy_unit_fixture(BusinessStore(Path(self.temp.name) / 'business.sqlite3'))
         owner_proposal = owner.propose('C-001', {'order_id': 'O-101', 'order_version': 1, 'cancel_reason': 'no_longer_needed'})
         owner.confirm('C-001', owner_proposal['proposal_id'], {'confirmed': True}, 'o'*32)
         alice, bob = self.login(), self.login()
+        # Instantiate guest workspaces and add isolated pending O-101 to test /api/cancellation-proposals
+        self.assertEqual(len(self.request('/api/orders', cookie=alice)[1]['orders']), 3)
+        self.assertEqual(len(self.request('/api/orders', cookie=bob)[1]['orders']), 3)
+        for guest_cookie in (alice, bob):
+            sid = self.sessions.cookie_id(guest_cookie)
+            seed_legacy_unit_fixture(BusinessStore(self.directory / (sid + '.sqlite3')))
         status, proposal, _ = self.request('/api/cancellation-proposals',
             {'order_id': 'O-101', 'order_version': 1, 'cancel_reason': 'ordered_by_mistake'}, alice)
         self.assertEqual(status, 201)
@@ -179,7 +186,7 @@ class PublicTests(unittest.TestCase):
                 cookie = response.headers['Set-Cookie'].split(';')[0]
             request = urllib.request.Request(base+'/api/orders', headers={'Host': 'retailops.example.com', 'Cookie': cookie})
             with http.open(request, timeout=3) as response:
-                self.assertEqual(len(json.load(response)['orders']), 2)
+                self.assertEqual(len(json.load(response)['orders']), 3)
         finally:
             server.close(); server.task_dispatcher.shutdown(); thread.join(timeout=3)
 

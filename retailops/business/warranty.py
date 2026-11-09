@@ -1,5 +1,12 @@
 """Warranty business logic: precedence between product catalog and general policy, and eligibility checks."""
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
+
+_VN_TZ = timezone(timedelta(hours=7))
+
+
+def _iso_vn(ts: float) -> str:
+    return datetime.fromtimestamp(float(ts), tz=_VN_TZ).isoformat(timespec="seconds")
 
 
 def resolve_warranty_period(product: Optional[Dict[str, Any]], general_policy_days: int = 90) -> Dict[str, Any]:
@@ -37,11 +44,13 @@ def check_warranty_eligibility(
     rule = resolve_warranty_period(product, general_policy_days=general_policy_days)
     warranty_days = rule["warranty_days"]
 
+    as_of = _iso_vn(current_time)
     if not isinstance(order, dict):
         return {
             "status": "cannot_determine",
             "reason": "missing_order",
             "warranty_days": warranty_days,
+            "as_of": as_of,
             "message": "Không tìm thấy dữ liệu đơn hàng để kiểm tra thời hạn bảo hành.",
         }
 
@@ -51,21 +60,25 @@ def check_warranty_eligibility(
             "status": "cannot_determine",
             "reason": "missing_delivered_at",
             "warranty_days": warranty_days,
+            "as_of": as_of,
             "message": "Không thể kết luận thời hạn bảo hành do hệ thống chưa có ngày nhận hàng thực tế.",
         }
 
     seconds_in_day = 86400.0
-    elapsed_days = (current_time - delivered_at) / seconds_in_day
+    elapsed_seconds = float(current_time) - float(delivered_at)
+    elapsed_days = elapsed_seconds / seconds_in_day
 
-    if elapsed_days <= warranty_days:
+    if 0.0 <= elapsed_seconds <= warranty_days * seconds_in_day:
         return {
             "status": "eligible",
             "warranty_days": warranty_days,
             "days_remaining": int(warranty_days - elapsed_days),
+            "as_of": as_of,
         }
     else:
         return {
             "status": "expired",
             "warranty_days": warranty_days,
-            "days_exceeded": int(elapsed_days - warranty_days),
+            "days_exceeded": max(0, int(elapsed_days - warranty_days)),
+            "as_of": as_of,
         }

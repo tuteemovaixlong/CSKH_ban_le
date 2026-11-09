@@ -26,6 +26,8 @@ from retailops.business.schema import (
     POSTGRES_BUSINESS_SCHEMA_CURRENT,
     SQLITE_BUSINESS_SCHEMA_CURRENT,
     ensure_case_tables,
+    migrate_imported_events_v9,
+    migrate_orders_v9,
 )
 from retailops.business.store import (
     BusinessStore,
@@ -37,15 +39,19 @@ from retailops.http.public import PublicWeb
 from retailops.identity.persistent import PersistentSessions
 from retailops.identity.postgres import PostgresSessions
 from retailops.identity.store import IdentityStore
+from legacy_seed_fixture import provision_legacy_unit_tenant, seed_legacy_unit_fixture
 from retailops.storage import cli as database_cli
 from retailops.storage.pg_repositories import (
     PostgresBusinessStore,
     migrate_postgres_business_v6,
     migrate_postgres_business_v7,
+    migrate_postgres_business_v8,
+    migrate_postgres_business_v9,
 )
 from retailops.storage.pg_schema import (
     BUSINESS_DDL,
     BUSINESS_V5_DDL,
+    BUSINESS_V9_TABLES_DDL,
     P5C_BUSINESS_DDL,
     initialize as pg_initialize,
 )
@@ -184,18 +190,55 @@ def _build_mock_pg_harness(tenant_keys_v5: list[str]):
             )
             mem.commit()
             return []
-        if q.startswith("ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivered_at"):
+        if "EXECUTE FUNCTION shipment_events_immutable()" in q:
+            mem.execute(
+                "CREATE TRIGGER IF NOT EXISTS shipment_events_no_update "
+                "BEFORE UPDATE ON shipment_events "
+                "BEGIN SELECT RAISE(ABORT, 'shipment_events is append-only'); END"
+            )
+            mem.execute(
+                "CREATE TRIGGER IF NOT EXISTS shipment_events_no_delete "
+                "BEFORE DELETE ON shipment_events "
+                "BEGIN SELECT RAISE(ABORT, 'shipment_events is append-only'); END"
+            )
+            mem.commit()
+            return []
+        if q.startswith("ALTER TABLE orders ADD COLUMN IF NOT EXISTS "):
+            column = q.split("IF NOT EXISTS ", 1)[1].split()[0]
             cols = {r[1] for r in mem.execute("PRAGMA table_info(orders)").fetchall()}
-            if "delivered_at" not in cols:
-                mem.execute("ALTER TABLE orders ADD COLUMN delivered_at REAL")
+            if column not in cols:
+                mem.execute(q.replace(" IF NOT EXISTS", "").replace("DOUBLE PRECISION", "REAL"))
                 mem.commit()
             return []
-        # Business v7 upgrade statements. SQLite cannot emulate PL/pgSQL DO blocks (they only drop and add
-        # named CHECK constraints), so they are no-ops here; the real PostgreSQL run is covered by the
-        # RETAILOPS_TEST_DATABASE_URL test in test_r1_w3_2_business_v7.py.
+        # Business v7/v9 upgrade statements. SQLite cannot emulate PL/pgSQL DO blocks (they only drop and add
+        # named CHECK/UNIQUE constraints), so they are no-ops here; the real PostgreSQL run is covered by the
+        # RETAILOPS_TEST_DATABASE_URL tests in CI's postgres job.
         if q.startswith("DO $$"):
             return []
         if q.startswith("ALTER TABLE order_action_evidence ALTER COLUMN "):
+            return []
+        if q.startswith("ALTER TABLE orders ALTER COLUMN "):
+            if "payment_status SET NOT NULL" in q:
+                mem.commit()
+                mem.execute("PRAGMA foreign_keys=OFF")
+                migrate_orders_v9(mem)
+                mem.commit()
+                mem.execute("PRAGMA foreign_keys=ON")
+            return []
+        if q.startswith("ALTER TABLE imported_events ALTER COLUMN "):
+            if "signature DROP NOT NULL" in q:
+                mem.commit()
+                mem.execute("PRAGMA foreign_keys=OFF")
+                migrate_imported_events_v9(mem)
+                mem.commit()
+                mem.execute("PRAGMA foreign_keys=ON")
+            return []
+        if q.startswith("ALTER TABLE imported_events ADD COLUMN IF NOT EXISTS "):
+            column = q.split("IF NOT EXISTS ", 1)[1].split()[0]
+            cols = {r[1] for r in mem.execute("PRAGMA table_info(imported_events)").fetchall()}
+            if column not in cols:
+                mem.execute(q.replace(" IF NOT EXISTS", "").replace("DOUBLE PRECISION", "REAL"))
+                mem.commit()
             return []
         if q.startswith("ALTER TABLE order_action_requests ADD COLUMN IF NOT EXISTS "):
             column = q.split("IF NOT EXISTS ", 1)[1].split()[0]
@@ -218,6 +261,7 @@ def _build_mock_pg_harness(tenant_keys_v5: list[str]):
             .replace("retailops_extensions.vector(384)", "TEXT")
             .replace("tsvector GENERATED", "TEXT GENERATED")
             .replace("char_length(", "length(")
+            .replace("extract(epoch from now())", str(time.time()))
         )
         cur = mem.execute(sql_sqlite, tuple(params or ()))
         mem.commit()
@@ -228,7 +272,10 @@ def _build_mock_pg_harness(tenant_keys_v5: list[str]):
     base_v4_ddl = [
         stmt
         for stmt in BUSINESS_DDL
-        if "order_action_" not in stmt and "integration_outbox" not in stmt and "case_assist_" not in stmt
+        if "order_action_" not in stmt
+        and "integration_outbox" not in stmt
+        and "case_assist_" not in stmt
+        and stmt not in BUSINESS_V9_TABLES_DDL
     ]
     for idx, key in enumerate(tenant_keys_v5, start=1):
         tid = f"shop-{idx}"
@@ -239,12 +286,37 @@ def _build_mock_pg_harness(tenant_keys_v5: list[str]):
         mem.execute("PRAGMA foreign_keys=ON")
         for stmt in base_v4_ddl:
             if stmt.lstrip().startswith("CREATE TABLE orders"):
-                # Pre-v6 orders table has NO delivered_at column
-                stmt = stmt.replace(",\n        delivered_at DOUBLE PRECISION", "")
+                # Pre-v6 orders table has NO delivered_at or v9 columns
+                stmt = """CREATE TABLE orders (
+                    id TEXT PRIMARY KEY,
+                    customer_id TEXT NOT NULL REFERENCES customers(id),
+                    name TEXT NOT NULL,
+                    variant TEXT NOT NULL,
+                    amount BIGINT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN ('pending', 'delivered', 'cancelled')),
+                    version INTEGER NOT NULL DEFAULT 1,
+                    cancel_reason TEXT,
+                    product_id TEXT REFERENCES products(id))"""
             if stmt in BUSINESS_V5_DDL or stmt in P5C_BUSINESS_DDL:
                 continue
             _exec_pg_ddl_on_sqlite(mem, stmt)
         for stmt in P5C_BUSINESS_DDL:
+            if stmt.lstrip().startswith("CREATE TABLE IF NOT EXISTS imported_events"):
+                stmt = """CREATE TABLE IF NOT EXISTS imported_events (
+                    id TEXT PRIMARY KEY,
+                    source_system TEXT NOT NULL,
+                    event_id TEXT NOT NULL,
+                    tenant_id TEXT NOT NULL,
+                    external_customer_id TEXT NOT NULL,
+                    customer_id TEXT NOT NULL,
+                    order_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    total BIGINT NOT NULL,
+                    currency TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    signature TEXT NOT NULL,
+                    created_at DOUBLE PRECISION NOT NULL,
+                    UNIQUE(source_system, event_id))"""
             _exec_pg_ddl_on_sqlite(mem, stmt)
         for stmt in BUSINESS_V5_DDL:
             _exec_pg_ddl_on_sqlite(mem, stmt)
@@ -340,10 +412,10 @@ class PhaseR1W3BusinessV6SchemaAndMigrationTests(unittest.TestCase):
         self.root = Path(self.temp.name)
 
     def test_item1_sqlite_fresh_v6_schema_partial_unique_append_only_and_no_cascade_cleanup(self):
-        # W4 moved the current version on to Business v8 (SQLite 7, PostgreSQL 8); the W3 milestone is fixed history.
-        self.assertEqual(SQLITE_BUSINESS_SCHEMA_CURRENT, 7)
-        self.assertEqual(POSTGRES_BUSINESS_SCHEMA_CURRENT, 8)
-        self.assertEqual(BUSINESS_SCHEMA_CURRENT, 8)
+        # W6.1b-1 moved the current version on to Business v9 (SQLite 8, PostgreSQL 9); the W3 milestone is fixed history.
+        self.assertEqual(SQLITE_BUSINESS_SCHEMA_CURRENT, 8)
+        self.assertEqual(POSTGRES_BUSINESS_SCHEMA_CURRENT, 9)
+        self.assertEqual(BUSINESS_SCHEMA_CURRENT, 9)
         self.assertEqual(
             BUSINESS_V5_VERSION_MAPPING,
             {"logical_milestone": "business_v5", "sqlite": 4, "postgresql": 5},
@@ -355,12 +427,12 @@ class PhaseR1W3BusinessV6SchemaAndMigrationTests(unittest.TestCase):
 
         db_path = self.root / "fresh_v6.sqlite3"
         store = BusinessStore(db_path)
-        store.seed()
+        seed_legacy_unit_fixture(store)
         now = time.time()
 
         with store.connection(write=True) as db:
             ver_row = db.execute("SELECT component, version FROM retailops_schema").fetchone()
-            self.assertEqual((ver_row["component"], ver_row["version"]), ("business", 7))
+            self.assertEqual((ver_row["component"], ver_row["version"]), ("business", 8))
             order_cols = {r["name"] for r in db.execute("PRAGMA table_info(orders)").fetchall()}
             self.assertIn("delivered_at", order_cols)
 
@@ -574,6 +646,14 @@ class PhaseR1W3BusinessV6SchemaAndMigrationTests(unittest.TestCase):
             self.assertEqual(mig4["result"], "BUSINESS_V8_MIGRATED")
             self.assertEqual(mig4["schema_version"], 7)
 
+            mig5 = database_cli.run(
+                parser.parse_args(
+                    ["database", "--output", str(ws), "migrate-v9", "--confirm-preflight", "--confirm-backup"]
+                )
+            )
+            self.assertEqual(mig5["result"], "BUSINESS_V9_MIGRATED")
+            self.assertEqual(mig5["schema_version"], 8)
+
             chk = database_cli.run(parser.parse_args(["database", "--output", str(ws), "check"]))
             self.assertEqual(chk, {"result": "SQLITE_SCHEMA_READY", "tenants_checked": 2})
 
@@ -698,28 +778,34 @@ class PhaseR1W3BusinessV6SchemaAndMigrationTests(unittest.TestCase):
             self.assertEqual(mig5["result"], "BUSINESS_V8_MIGRATED")
             self.assertEqual(mig5["schema_version"], 8)
 
+            mig6 = database_cli.run(
+                parser.parse_args(["database", "migrate-v9", "--confirm-preflight", "--confirm-backup"])
+            )
+            self.assertEqual(mig6["result"], "BUSINESS_V9_MIGRATED")
+            self.assertEqual(mig6["schema_version"], 9)
+
             chk = database_cli.run(parser.parse_args(["database", "check"]))
             self.assertEqual(chk["result"], "POSTGRES_SCHEMA_READY")
 
             for sc in (schema_a, schema_b):
                 mem = state.schemas[sc]
-                self.assertEqual(mem.execute("SELECT version FROM retailops_schema").fetchone()[0], 8)
+                self.assertEqual(mem.execute("SELECT version FROM retailops_schema").fetchone()[0], 9)
                 o102 = mem.execute("SELECT delivered_at FROM orders WHERE id='O-102'").fetchone()
                 self.assertIsNone(o102["delivered_at"])
                 # Pending proposal NOT backfilled (W3-D9)
                 self.assertEqual(mem.execute("SELECT COUNT(*) FROM proposals").fetchone()[0], 1)
                 self.assertEqual(mem.execute("SELECT COUNT(*) FROM order_action_requests").fetchone()[0], 0)
 
-            # 3. Fresh PostgreSQL tenant schema initializes directly to v8 and enforces partial unique + append-only
+            # 3. Fresh PostgreSQL tenant schema initializes directly to v9 and enforces partial unique + append-only
             key_c = "c" * 32
             PostgresBusinessStore(pg_dsn, key_c, create=True)
             schema_c = tenant_schema(key_c)
             mem_c = state.schemas[schema_c]
-            self.assertEqual(mem_c.execute("SELECT version FROM retailops_schema").fetchone()[0], 8)
+            self.assertEqual(mem_c.execute("SELECT version FROM retailops_schema").fetchone()[0], 9)
             mem_c.execute("INSERT INTO customers VALUES ('C-900', 'Khách C')")
             mem_c.execute(
-                "INSERT INTO orders(id, customer_id, product_id, name, variant, amount, status, version) "
-                "VALUES ('O-900', 'C-900', 'P-101', 'Áo C', 'Đen / M', 290000, 'pending', 1)"
+                "INSERT INTO orders(id, customer_id, product_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version) "
+                "VALUES ('O-900', 'C-900', 'P-101', 'retailops_seed', 'O-900', 100.0, 'Áo C', 'Đen / M', 290000, 'pending', 1)"
             )
             mem_c.execute(
                 "INSERT INTO cases(case_id, conversation_id, customer_id, status, version, resume_count, created_at, updated_at) "
@@ -773,16 +859,16 @@ class PhaseR1W3OrderActionCreationAndFacadeTests(unittest.TestCase):
         self.pers = self.root / "persistent"
         self.sessions = PersistentSessions(self.pers, data_mode="persistent-demo")
         self.sessions.customer_ref_key = "test-w3-customer-ref-key-0123456789abcdef"
-        self.store_a = self.sessions.provision_tenant("shop-a", "Shop A", seed_demo=True)
-        self.store_b = self.sessions.provision_tenant("shop-b", "Shop B", seed_demo=True)
+        self.store_a = provision_legacy_unit_tenant(self.sessions, "shop-a", "Shop A")
+        self.store_b = provision_legacy_unit_tenant(self.sessions, "shop-b", "Shop B")
         with self.store_a.connection(write=True) as db:
             db.execute(
-                "INSERT INTO orders(id, customer_id, product_id, name, variant, amount, status, version) "
-                "VALUES ('O-103', 'C-001', 'P-102', 'Áo khoác Everyday', 'Xanh navy / L', 599000, 'delivered', 1)"
+                "INSERT INTO orders(id, customer_id, product_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version) "
+                "VALUES ('O-103', 'C-001', 'P-102', 'retailops_seed', 'O-103', 1700000000.0, 'Áo khoác Everyday', 'Xanh navy / L', 599000, 'delivered', 1)"
             )
             db.execute(
-                "INSERT INTO orders(id, customer_id, product_id, name, variant, amount, status, version) "
-                "VALUES ('O-104', 'C-001', 'P-101', 'Áo thun Essential', 'Trắng / S', 299000, 'pending', 1)"
+                "INSERT INTO orders(id, customer_id, product_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version) "
+                "VALUES ('O-104', 'C-001', 'P-101', 'retailops_seed', 'O-104', 1700000000.0, 'Áo thun Essential', 'Trắng / S', 299000, 'pending', 1)"
             )
         self.store_a.add_customer("C-STAFF-A", "Nhân viên A")
         self.store_a.add_customer("C-MGR-A", "Quản lý A")
@@ -1040,7 +1126,7 @@ class PhaseR1W3ReviewLifecycleDeliveryFailureRefundAndManagerStatusTests(unittes
         self.pers = self.root / "persistent"
         self.sessions = PersistentSessions(self.pers, data_mode="persistent-demo")
         self.sessions.customer_ref_key = "test-w3-customer-ref-key-0123456789abcdef"
-        self.store_a = self.sessions.provision_tenant("shop-a", "Shop A", seed_demo=True)
+        self.store_a = provision_legacy_unit_tenant(self.sessions, "shop-a", "Shop A")
         for cid, cname in (
             ("C-STAFF-1", "Nhân viên 1"),
             ("C-STAFF-2", "Nhân viên 2"),
@@ -1050,12 +1136,12 @@ class PhaseR1W3ReviewLifecycleDeliveryFailureRefundAndManagerStatusTests(unittes
             self.store_a.add_customer(cid, cname)
         with self.store_a.connection(write=True) as db:
             db.execute(
-                "INSERT INTO orders(id, customer_id, product_id, name, variant, amount, status, version) "
-                "VALUES ('O-105', 'C-001', 'P-101', 'Áo thun Essential', 'Đen / L', 299000, 'pending', 1)"
+                "INSERT INTO orders(id, customer_id, product_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version) "
+                "VALUES ('O-105', 'C-001', 'P-101', 'retailops_seed', 'O-105', 1700000000.0, 'Áo thun Essential', 'Đen / L', 299000, 'pending', 1)"
             )
             db.execute(
-                "INSERT INTO orders(id, customer_id, product_id, name, variant, amount, status, version) "
-                "VALUES ('O-106', 'C-001', 'P-102', 'Áo khoác Everyday', 'Xám / M', 599000, 'delivered', 1)"
+                "INSERT INTO orders(id, customer_id, product_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version) "
+                "VALUES ('O-106', 'C-001', 'P-102', 'retailops_seed', 'O-106', 1700000000.0, 'Áo khoác Everyday', 'Xám / M', 599000, 'delivered', 1)"
             )
         self.web = PublicWeb(self.ORIGIN, self.sessions)
         self.cust1 = self._issue_cookie("shop-a", "p-cust-1", "Khách 1", "C-001", "customer")
@@ -1451,8 +1537,8 @@ class PhaseR1W3EvidenceStorageExifStripAuthAndPurgeTests(unittest.TestCase):
         self.sessions.customer_ref_key = "test-w3-ev-customer-ref-key-0123456789abcdef"
         self.sessions.store_clock = lambda: self.now
 
-        # Tenant A (seed_demo already creates C-001 and C-002)
-        self.store_a = self.sessions.provision_tenant("tenant-ev-a", "Store Evidence A", seed_demo=True)
+        # Tenant A (legacy unit fixture creates C-001 and C-002)
+        self.store_a = provision_legacy_unit_tenant(self.sessions, "tenant-ev-a", "Store Evidence A")
         self.store_a.add_customer("C-STAFF1", "Staff Một")
         self.store_a.add_customer("C-MGR1", "Manager Một")
         with self.store_a.connection(write=True) as db:
@@ -1461,7 +1547,7 @@ class PhaseR1W3EvidenceStorageExifStripAuthAndPurgeTests(unittest.TestCase):
                 (self.now - 2 * 86400,),
             )
         # Tenant B (isolated tenant)
-        self.store_b = self.sessions.provision_tenant("tenant-ev-b", "Store Evidence B", seed_demo=True)
+        self.store_b = provision_legacy_unit_tenant(self.sessions, "tenant-ev-b", "Store Evidence B")
         self.store_b.add_customer("C-MGRB", "Manager B")
 
         self.origin = "https://retailops.example.com"
@@ -1781,7 +1867,7 @@ class PhaseR1W3OutboxWorkerJsonlEnvelopeManifestAndCliTests(unittest.TestCase):
         self.sessions = PersistentSessions(self.root / "persistent")
         self.sessions.customer_ref_key = self.customer_ref_key
         self.sessions.store_clock = lambda: self.now
-        self.store = self.sessions.provision_tenant("tenant-ob-1", "Outbox Shop", seed_demo=True)
+        self.store = provision_legacy_unit_tenant(self.sessions, "tenant-ob-1", "Outbox Shop")
         with self.store.connection(write=True) as db:
             db.execute("UPDATE customers SET name = ? WHERE id = 'C-001'", ("Nguyễn Văn Bí Mật",))
         self.web = PublicWeb("https://retailops.example.com", self.sessions, start_timer_worker=False)
@@ -1888,8 +1974,8 @@ class PhaseR1W3OutboxWorkerJsonlEnvelopeManifestAndCliTests(unittest.TestCase):
         # 5. Fake-clock retry schedule: 60s, 300s, 1800s, 7200s, 43200s, 43200s, 43200s -> 8th failure marks 'dead'
         with self.store.connection(write=True) as db:
             db.execute(
-                "INSERT INTO orders(id, customer_id, product_id, name, variant, amount, status, version) "
-                "VALUES ('O-199', 'C-001', 'P-101', 'Áo thun', 'Đen / M', 250000, 'pending', 1)"
+                "INSERT INTO orders(id, customer_id, product_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version) "
+                "VALUES ('O-199', 'C-001', 'P-101', 'retailops_seed', 'O-199', 1700000000.0, 'Áo thun', 'Đen / M', 250000, 'pending', 1)"
             )
         self.store.manager_update_order_status("O-199", "delivered", expected_version=1)
 
@@ -1947,7 +2033,7 @@ class PhaseR1W3AgentPrepareOrderActionTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="r1-w3-item11-")
         self.addCleanup(self.tmp.cleanup)
         self.store = BusinessStore(Path(self.tmp.name) / "business.sqlite3")
-        self.store.seed()
+        seed_legacy_unit_fixture(self.store)
 
         class ScriptedAgent:
             def __init__(self):

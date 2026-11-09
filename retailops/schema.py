@@ -1,8 +1,8 @@
 """Transactional schema initialization for legacy and new SQLite databases.
 
-Backend schema version mapping for Phase R1 W2/W3/W3.2/W4:
-- SQLite business schema current:     7 (logical Business v8; SQLite 6 = v7, 5 = v6, 4 = v5)
-- PostgreSQL business schema current: 8 (logical Business v8; PostgreSQL 7 = v7, 6 = v6, 5 = v5)
+Backend schema version mapping for Phase R1 W2/W3/W3.2/W4/W6.1b-1:
+- SQLite business schema current:     8 (logical Business v9; SQLite 7 = v8, 6 = v7, 5 = v6, 4 = v5)
+- PostgreSQL business schema current: 9 (logical Business v9; PostgreSQL 8 = v8, 7 = v7, 6 = v6, 5 = v5)
 - SQLite identity schema current:     5
 - PostgreSQL identity schema current: 5
 """
@@ -37,11 +37,13 @@ def migrate(db, component, initialize, *, target_version=None):
         initialize(db)
         if component == 'business' and not had_business_tables:
             from retailops.workflow.schema import initialize as graph_schema
-            from retailops.business.schema import ensure_case_tables, ensure_order_action_tables
+            from retailops.business.schema import ensure_case_tables, ensure_order_action_tables, ensure_v9_tables
             graph_schema(db)
             ensure_case_tables(db)
             if target >= 5:
                 ensure_order_action_tables(db)
+            if target >= 8:
+                ensure_v9_tables(db)
             initial_version = target
         else:
             initial_version = 1 if (had_business_tables or had_memberships) else target
@@ -96,3 +98,16 @@ def migrate(db, component, initialize, *, target_version=None):
         ensure_order_action_tables(db)
         ensure_case_assist_tables(db)
         db.execute("UPDATE retailops_schema SET version=7 WHERE component='business'")
+        version = 7
+
+    if component == 'business' and version < 8 and target >= 8:
+        # Business v9 (W6.1b-D1): canonical orders v9 + backfill, imported_events v2, SKU unique, 8 v9 tables.
+        from retailops.business.schema import (
+            ensure_v9_tables,
+            migrate_imported_events_v9,
+            migrate_orders_v9,
+        )
+        migrate_orders_v9(db)
+        migrate_imported_events_v9(db)
+        ensure_v9_tables(db)
+        db.execute("UPDATE retailops_schema SET version=8 WHERE component='business'")

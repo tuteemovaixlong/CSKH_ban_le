@@ -11,6 +11,7 @@ from retailops.storage.postgres import (
     BUSINESS_V5_SCHEMA_VERSION,
     BUSINESS_V6_SCHEMA_VERSION,
     BUSINESS_V7_SCHEMA_VERSION,
+    BUSINESS_V8_SCHEMA_VERSION,
     IDENTITY_SCHEMA,
     IDENTITY_SCHEMA_CURRENT,
     check_schema,
@@ -46,7 +47,7 @@ class PostgresBusinessStore(BusinessStore):
                         503,
                         'business_migration_required',
                         f"Kho dữ liệu business PostgreSQL ({self.schema}) đang ở schema v{ver}; khởi động bị chặn fail-closed. "
-                        "Hãy chạy lệnh operator database migrate-v8 với --confirm-preflight --confirm-backup.",
+                        "Hãy chạy lệnh operator database migrate-v9 với --confirm-preflight --confirm-backup.",
                     )
             if migrate:
                 with self.connection(write=True) as db:
@@ -170,7 +171,7 @@ def migrate_postgres_business_v5(dsn, *, preflight_confirmed=False, backup_confi
             if not ver_row or ver_row.get('component') != 'business':
                 raise ValueError('Unsupported PostgreSQL schema version or component.')
             prev_ver = ver_row.get('version')
-            if prev_ver not in (1, 2, 3, 4, 5, 6, 7, 8):
+            if prev_ver not in (1, 2, 3, 4, 5, 6, 7, 8, 9):
                 raise ValueError('Unsupported PostgreSQL schema version or component.')
             if prev_ver >= BUSINESS_V5_SCHEMA_VERSION:
                 continue
@@ -248,7 +249,7 @@ def migrate_postgres_business_v6(dsn, *, preflight_confirmed=False, backup_confi
             if not ver_row or ver_row.get('component') != 'business':
                 raise ValueError('Unsupported PostgreSQL schema version or component.')
             prev_ver = ver_row.get('version')
-            if prev_ver not in (1, 2, 3, 4, 5, 6, 7, 8):
+            if prev_ver not in (1, 2, 3, 4, 5, 6, 7, 8, 9):
                 raise ValueError('Unsupported PostgreSQL schema version or component.')
             initialize(
                 db,
@@ -307,7 +308,7 @@ def migrate_postgres_business_v7(dsn, *, preflight_confirmed=False, backup_confi
             if not ver_row or ver_row.get('component') != 'business':
                 raise ValueError('Unsupported PostgreSQL schema version or component.')
             prev_ver = ver_row.get('version')
-            if prev_ver not in (1, 2, 3, 4, 5, 6, 7, 8):
+            if prev_ver not in (1, 2, 3, 4, 5, 6, 7, 8, 9):
                 raise ValueError('Unsupported PostgreSQL schema version or component.')
             requests_before, legacy_rows = 0, 0
             if prev_ver == BUSINESS_V6_SCHEMA_VERSION:
@@ -393,7 +394,7 @@ def migrate_postgres_business_v8(
                 if not ver_row or ver_row.get('component') != 'business':
                     raise ValueError('Unsupported PostgreSQL schema version or component.')
                 prev_ver = ver_row.get('version')
-                if prev_ver not in (1, 2, 3, 4, 5, 6, 7, 8):
+                if prev_ver not in (1, 2, 3, 4, 5, 6, 7, 8, 9):
                     raise ValueError('Unsupported PostgreSQL schema version or component.')
                 initialize(
                     db,
@@ -414,7 +415,7 @@ def migrate_postgres_business_v8(
                 attachments_migrated += int(att_stats['attachments_migrated'])
                 attachments_removed += int(att_stats['attachments_removed'])
                 turns_updated += int(att_stats['turns_updated'])
-                if prev_ver < BUSINESS_SCHEMA_CURRENT or att_stats['turns_updated'] > 0:
+                if prev_ver < BUSINESS_V8_SCHEMA_VERSION or att_stats['turns_updated'] > 0:
                     any_upgraded = True
         except Exception:
             for wp in written_paths:
@@ -424,13 +425,107 @@ def migrate_postgres_business_v8(
     return {
         'result': 'BUSINESS_V8_MIGRATED',
         'backend': 'postgresql',
-        'schema_version': BUSINESS_SCHEMA_CURRENT,
-        'logical_version': BUSINESS_SCHEMA_CURRENT,
+        'schema_version': BUSINESS_V8_SCHEMA_VERSION,
+        'logical_version': BUSINESS_V8_SCHEMA_VERSION,
         'tenants': migrated_tenants,
         'upgraded': any_upgraded,
         'attachments_migrated': attachments_migrated,
         'attachments_removed': attachments_removed,
         'turns_updated': turns_updated,
+    }
+
+
+def migrate_postgres_business_v9(
+    dsn,
+    *,
+    preflight_confirmed=False,
+    backup_confirmed=False,
+    data_root: Path | None = None,
+    malware_scanner=None,
+):
+    """Explicit operator migration command for PostgreSQL Business v9 (W6.1b-D1, B2, B3, B6).
+
+    Iterates every tenant schema registered in retailops_identity.tenants and upgrades business
+    schemas to v9 inside one transaction per tenant: upgrades `orders` with canonical v9 columns
+    and backfills legacy rows (`source_system='retailops_seed'`, `external_order_id=id`,
+    `ordered_at=extract(epoch from now())`, `ordered_at_backfilled=1`), upgrades `imported_events`
+    to v2 shape, creates `idx_product_variants_sku_unique`, and creates all 8 Business v9 tables
+    plus append-only `shipment_events` triggers. Idempotent; never invoked automatically.
+    """
+    require(
+        preflight_confirmed is True and backup_confirmed is True,
+        400,
+        'migration_confirmation_required',
+        'Lệnh nâng cấp Business v9 yêu cầu xác nhận tường minh --confirm-preflight và --confirm-backup theo runbook.',
+    )
+    validate_dsn(dsn)
+    eff_root = Path(data_root) if data_root is not None else Path(os.environ.get('RETAILOPS_OUTPUT') or 'artifacts')
+    identity = PostgresIdentityStore(dsn, create=False, migrate=False, read_only=False)
+    with identity.connection(write=False) as id_db:
+        tenants = id_db.execute('SELECT id, storage_key FROM tenants ORDER BY id').fetchall()
+
+    any_upgraded = False
+    migrated_tenants = 0
+    orders_backfilled = 0
+    for tenant in tenants:
+        tid = str(tenant['id'])
+        schema = tenant_schema(tenant['storage_key'])
+        written_paths: list[Path] = []
+        try:
+            with transaction(dsn, schema, write=True) as db:
+                from psycopg import sql
+                exists = db.raw.execute('SELECT 1 FROM pg_namespace WHERE nspname=%s', (schema,)).fetchone()
+                if not exists:
+                    continue
+                migrated_tenants += 1
+                ver_row = db.raw.execute(
+                    sql.SQL('SELECT component,version FROM {}.retailops_schema').format(sql.Identifier(schema))
+                ).fetchone()
+                if not ver_row or ver_row.get('component') != 'business':
+                    raise ValueError('Unsupported PostgreSQL schema version or component.')
+                prev_ver = ver_row.get('version')
+                if prev_ver not in (1, 2, 3, 4, 5, 6, 7, 8, 9):
+                    raise ValueError('Unsupported PostgreSQL schema version or component.')
+                db.raw.execute(sql.SQL('SET LOCAL search_path TO {}, pg_catalog').format(sql.Identifier(schema)))
+                orders_pre_v9 = (
+                    int(db.raw.execute('SELECT COUNT(*) AS total FROM orders').fetchone()['total'])
+                    if prev_ver < BUSINESS_SCHEMA_CURRENT
+                    else 0
+                )
+                initialize(
+                    db,
+                    schema,
+                    'business',
+                    allow_business_v5_upgrade=True,
+                    allow_business_v6_upgrade=True,
+                    allow_business_v7_upgrade=True,
+                    allow_business_v8_upgrade=True,
+                    allow_business_v9_upgrade=True,
+                )
+                db.raw.execute(sql.SQL('SET LOCAL search_path TO {}, pg_catalog').format(sql.Identifier(schema)))
+                if prev_ver < BUSINESS_V8_SCHEMA_VERSION:
+                    _, written_paths = backfill_legacy_turn_attachments_v8(
+                        db,
+                        data_root=eff_root,
+                        tenant_id=tid,
+                        malware_scanner=malware_scanner,
+                    )
+                orders_backfilled += orders_pre_v9
+                if prev_ver < BUSINESS_SCHEMA_CURRENT:
+                    any_upgraded = True
+        except Exception:
+            for wp in written_paths:
+                wp.unlink(missing_ok=True)
+            raise
+
+    return {
+        'result': 'BUSINESS_V9_MIGRATED',
+        'backend': 'postgresql',
+        'schema_version': BUSINESS_SCHEMA_CURRENT,
+        'logical_version': BUSINESS_SCHEMA_CURRENT,
+        'tenants': migrated_tenants,
+        'upgraded': any_upgraded,
+        'orders_backfilled': orders_backfilled,
     }
 
 

@@ -247,8 +247,8 @@ class SupervisorProductSpecRoutingTests(unittest.TestCase):
             store.add_customer('C-001', 'Test Customer')
             with store.connection(write=True) as db:
                 db.execute(
-                    'INSERT INTO orders(id, customer_id, name, variant, amount, status) VALUES (?,?,?,?,?,?)',
-                    ('O-819125', 'C-001', 'Áo sơ mi lụa công sở', 'Trắng / M', 450000, 'pending')
+                    'INSERT INTO orders(id, customer_id, source_system, external_order_id, ordered_at, name, variant, amount, status) VALUES (?,?,?,?,?,?,?,?,?)',
+                    ('O-819125', 'C-001', 'retailops_seed', 'O-819125', 1700000000.0, 'Áo sơ mi lụa công sở', 'Trắng / M', 450000, 'pending')
                 )
             key = 'test_key_' + 'x' * 40
             adapter = OpenRouterAgent(key, API_MODEL)

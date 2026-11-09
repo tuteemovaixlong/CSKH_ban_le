@@ -89,7 +89,7 @@
 
 ## Target and retention contract (not live verified)
 
-Historical target tuple: `O-819126`, customer `CG-d9b82ffe`, product `P-602`, `delivered`, `520000` VND, old order snapshot `Quần tây ống đứng tôn dáng`. The current catalog item is expected to remain `Quần tây đen hàn quốc`. Tenant ID must be resolved from official identity mapping; do not infer it.
+Historical target tuple: `O-819126`, customer `CG-d9b82ffe`, product `P-602`, `delivered`, `520000` VND, old order snapshot `Quần tây đen hàn quốc`. The current catalog item is expected to remain `Quần tây đen hàn quốc`. Tenant ID must be resolved from official identity mapping; do not infer it.
 
 Expected retention: remove only the target order and scoped dependent operational rows; retain old business/security audit and imported-event history; keep conversation/turns/feedback but unlink the order; create a purge notice and tenant-local tombstone. These are requirements, **not live outcomes**.
 

@@ -7,8 +7,12 @@ services:
       RETAILOPS_STORAGE_BACKEND: postgresql
       RETAILOPS_DATABASE_URL: ""
       RETAILOPS_DATABASE_URL_FILE: /run/secrets/retailops_database_url
+      RETAILOPS_CONNECTOR_SECRETS_DIR: /run/secrets
+      RETAILOPS_EVENT_DIGEST_KEY_FILE: /run/secrets/retailops_event_digest_key
     secrets:
       - retailops_database_url
+      - retailops_connector_marketplace_sim
+      - retailops_event_digest_key
     depends_on:
       postgres: {condition: service_healthy}
   postgres:
@@ -44,5 +48,9 @@ secrets:
     file: ./postgres-secrets/app-password
   retailops_database_url:
     file: ./postgres-secrets/database-url
+  retailops_connector_marketplace_sim:
+    file: ./integration-secrets/retailops_connector_marketplace_sim
+  retailops_event_digest_key:
+    file: ./integration-secrets/retailops_event_digest_key
 volumes:
   postgres_data:

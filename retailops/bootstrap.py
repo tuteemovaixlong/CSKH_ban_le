@@ -10,6 +10,7 @@ from retailops.business.application import Application
 from retailops.business.store import BusinessStore
 from retailops.identity.demo import GuestSessions
 from retailops.identity.persistent import PersistentSessions
+from retailops.integration.connectors import warn_unready_connectors_on_startup
 from retailops.http.private import Server
 from retailops.http.public import PublicWeb
 from retailops.models import build_gateways
@@ -38,6 +39,7 @@ def build_public_app(settings: Settings | None = None) -> PublicWeb:
     sessions.case_timer_config = tcfg
     if settings.customer_ref_key:
         sessions.customer_ref_key = settings.customer_ref_key
+    warn_unready_connectors_on_startup(sessions)
     return PublicWeb(settings.origin, sessions, start_timer_worker=True, timer_scan_seconds=tcfg.scan_seconds)
 
 
@@ -54,6 +56,7 @@ def build_private_app(settings: Settings | None = None) -> Application:
     if settings.customer_ref_key:
         store.customer_ref_key = settings.customer_ref_key
     store.seed()
+    store.seed_demo_sample_orders('C-001')
     token_hash = hashlib.sha256(settings.access_token.encode()).hexdigest()
     return Application(store, {token_hash: 'C-001'}, gateways.custom, gateways.api, settings.api_daily_turn_limit)
 
@@ -65,7 +68,7 @@ def serve_public():
     print('RetailOps synthetic HTTPS backend ready; awaiting Caddy.', flush=True)
     serve(app, host='0.0.0.0', port=8000, threads=8, connection_limit=100,
           channel_timeout=30, max_request_header_size=16384, max_request_body_size=CHAT_ATTACHMENT_JSON_MAX_BYTES,
-          clear_untrusted_proxy_headers=True, expose_tracebacks=False, ident='RetailOps')
+          clear_untrusted_proxy_headers=False, expose_tracebacks=False, ident='RetailOps')
 
 
 def serve_private():

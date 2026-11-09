@@ -1,10 +1,10 @@
-"""Explicit database initialization, controlled Business v5/v6/v7/v8 migrations, and offline import."""
+"""Explicit database initialization, controlled Business v5..v9 migrations, and offline import."""
 import os
 from pathlib import Path
 
 
 def add_parser(commands):
-    parser = commands.add_parser('database', help='Initialize PostgreSQL, run Business v5/v6/v7/v8 migration, or import an offline SQLite snapshot.')
+    parser = commands.add_parser('database', help='Initialize PostgreSQL, run Business v5..v9 migration, or import an offline SQLite snapshot.')
     parser.add_argument('--output', type=Path, default=None,
                         help='Workspace directory containing persistent/ when using SQLite (defaults to RETAILOPS_OUTPUT or artifacts).')
     sub = parser.add_subparsers(dest='database_action', required=True)
@@ -54,6 +54,16 @@ def add_parser(commands):
                         help='Confirm read-only preflight checks were completed.')
     mig_v8.add_argument('--confirm-backup', action='store_true',
                         help='Confirm verified database backup was completed.')
+    mig_v9 = sub.add_parser(
+        'migrate-v9',
+        help='Explicitly upgrade all tenant business stores to Business v9 (orders v9 + backfill, imported_events v2, 8 v9 integration tables).',
+    )
+    mig_v9.add_argument('--db-path', type=Path, default=None,
+                        help='Optional standalone SQLite business file path (defaults to all tenants under --output/persistent).')
+    mig_v9.add_argument('--confirm-preflight', action='store_true',
+                        help='Confirm read-only preflight checks were completed.')
+    mig_v9.add_argument('--confirm-backup', action='store_true',
+                        help='Confirm verified database backup was completed.')
     sub.add_parser('check', help='Connect and verify identity and tenant business schema versions read-only.')
     outbox_st = sub.add_parser(
         'outbox-status',
@@ -64,6 +74,22 @@ def add_parser(commands):
     importer = sub.add_parser('import-sqlite', help='Import an offline persistent snapshot into an empty target.')
     importer.add_argument('--offline-snapshot', type=Path, required=True,
                           help='Copied persistent/ directory; stop source web and all writers before making the copy.')
+    imp_ev = sub.add_parser(
+        'import-events',
+        help='Import a JSONL file of retailops-integration-v2 events into a tenant canonical store.',
+    )
+    imp_ev.add_argument('--tenant', required=True, help='Target tenant ID.')
+    imp_ev.add_argument('--source-system', required=True, help='Connector source_system (e.g. marketplace_sim).')
+    imp_ev.add_argument('--file', type=Path, required=True, help='Path to JSONL events file.')
+    imp_ev.add_argument('--rebase-clock', choices=('now',), default=None,
+                        help="Shift event timestamps by (import_now - latest_occurred_at).")
+    purge_leg = sub.add_parser(
+        'purge-legacy-demo',
+        help='Remove legacy retailops_seed orders that have no linked order_action_requests.',
+    )
+    purge_leg.add_argument('--tenant', required=True, help='Target tenant ID.')
+    purge_leg.add_argument('--dry-run', action='store_true',
+                           help='Inspect and report removable vs retained legacy orders without mutating.')
 
 
 def run(args):
@@ -74,6 +100,7 @@ def run(args):
         migrate_sqlite_business_v6,
         migrate_sqlite_business_v7,
         migrate_sqlite_business_v8,
+        migrate_sqlite_business_v9,
     )
     from retailops.config import database_settings
     from retailops.core import ApiError
@@ -84,6 +111,7 @@ def run(args):
         migrate_postgres_business_v6,
         migrate_postgres_business_v7,
         migrate_postgres_business_v8,
+        migrate_postgres_business_v9,
     )
     from retailops.storage.postgres import BUSINESS_SCHEMA_CURRENT, IDENTITY_SCHEMA, tenant_schema, transaction
 
@@ -98,6 +126,67 @@ def run(args):
             target = getattr(args, 'db_path', None) or resolved_output
             return inspect_sqlite_outbox_status(target)
         return inspect_postgres_outbox_status(dsn)
+
+    if action == 'import-events':
+        from retailops.integration.intake import import_events_jsonl
+
+        if backend == 'postgresql':
+            from retailops.identity.postgres import PostgresSessions
+
+            sessions = PostgresSessions(dsn, data_root=Path(resolved_output))
+        else:
+            from retailops.identity.persistent import PersistentSessions
+
+            out_root = Path(resolved_output)
+            pers_dir = out_root / 'persistent' if (out_root / 'persistent').is_dir() or not (out_root / 'identity.sqlite3').is_file() else out_root
+            sessions = PersistentSessions(pers_dir)
+        return import_events_jsonl(
+            sessions,
+            tenant_id=args.tenant,
+            source_system=args.source_system,
+            jsonl_path=args.file,
+            rebase_clock=args.rebase_clock,
+        )
+
+    if action == 'purge-legacy-demo':
+        import time
+
+        if backend == 'postgresql':
+            from retailops.identity.postgres import PostgresSessions
+
+            sessions = PostgresSessions(dsn, data_root=Path(resolved_output))
+        else:
+            from retailops.identity.persistent import PersistentSessions
+
+            out_root = Path(resolved_output)
+            pers_dir = out_root / 'persistent' if (out_root / 'persistent').is_dir() or not (out_root / 'identity.sqlite3').is_file() else out_root
+            sessions = PersistentSessions(pers_dir)
+        tenant_clean = str(args.tenant or '').strip()
+        bstore = sessions.business_store(tenant_clean)
+        report = bstore.purge_legacy_demo_orders(dry_run=bool(args.dry_run))
+        if not args.dry_run:
+            cache = getattr(sessions, 'tool_caches', {}).get(tenant_clean)
+            if cache is not None and hasattr(cache, 'clear'):
+                cache.clear()
+            with sessions.control.connection(write=True) as id_db:
+                sessions.control.record_admin_audit(
+                    id_db,
+                    actor_principal_id='cli-operator',
+                    actor_role='operator',
+                    tenant_id=tenant_clean,
+                    target_membership_id=f'tenant:{tenant_clean}',
+                    action='database.purge_legacy_demo',
+                    outcome='allowed',
+                    before_state={'would_remove_count': report['would_remove_count']},
+                    after_state={
+                        'removed_count': report['removed_count'],
+                        'retained_count': report['retained_count'],
+                        'retained_order_ids': [r['order_id'] for r in report['retained_orders']],
+                    },
+                    reason='Operator purge-legacy-demo execution',
+                    now=time.time(),
+                )
+        return report
 
     if action == 'migrate-v5':
         if backend == 'sqlite':
@@ -158,6 +247,23 @@ def run(args):
             data_root=Path(resolved_output),
         )
 
+    if action == 'migrate-v9':
+        if backend == 'sqlite':
+            db_path = getattr(args, 'db_path', None)
+            target = db_path or resolved_output
+            return migrate_sqlite_business_v9(
+                target,
+                preflight_confirmed=preflight_ok,
+                backup_confirmed=backup_ok,
+                data_root=None if db_path is not None else Path(resolved_output),
+            )
+        return migrate_postgres_business_v9(
+            dsn,
+            preflight_confirmed=preflight_ok,
+            backup_confirmed=backup_ok,
+            data_root=Path(resolved_output),
+        )
+
     if backend == 'sqlite' and action == 'check':
         out_root = Path(resolved_output)
         pers = out_root / 'persistent' if (out_root / 'persistent').is_dir() else out_root
@@ -199,7 +305,7 @@ def run(args):
                             503,
                             'business_migration_required',
                             f"Kho dữ liệu business PostgreSQL ({t_schema}) đang ở schema v{ver_row.get('version')}; "
-                            "cần chạy database migrate-v8 với --confirm-preflight --confirm-backup.",
+                            "cần chạy database migrate-v9 với --confirm-preflight --confirm-backup.",
                         )
         return {'result': 'POSTGRES_SCHEMA_READY', 'version': 1, 'accounts_seeded': False}
     if action == 'migrate':
@@ -218,6 +324,7 @@ def run(args):
                     allow_business_v6_upgrade=allow_upgrade,
                     allow_business_v7_upgrade=allow_upgrade,
                     allow_business_v8_upgrade=allow_upgrade,
+                    allow_business_v9_upgrade=allow_upgrade,
                 )
         return {'result': 'POSTGRES_MIGRATED', 'business_schema_version': BUSINESS_SCHEMA_CURRENT,
                 'tenants': len(tenants)}

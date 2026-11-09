@@ -25,6 +25,42 @@ from retailops.core import (
     fields,
     require,
 )
+from retailops.business.eligibility import compute_order_eligibility, format_vn_iso
+
+SHIPMENT_STATUS_TEXT_VI = {
+    "ready_to_pick": "Chờ lấy hàng",
+    "picked": "Đã lấy hàng",
+    "in_transit": "Đang trung chuyển",
+    "sorting": "Đang phân loại tại kho",
+    "out_for_delivery": "Đang giao hàng",
+    "delivery_failed": "Giao hàng không thành công",
+    "delivered": "Đã giao thành công",
+    "returning": "Đang hoàn hàng",
+    "returned": "Đã hoàn hàng về kho",
+    "lost": "Thất lạc kiện hàng",
+    "damaged": "Kiện hàng hư hỏng",
+}
+
+_VN_FULL_PHONE_RE = re.compile(r"(?<!\d)(?:\+?84|0)\d(?:[\s.\-]?\d){8,9}(?!\d)")
+
+
+def mask_shipper_phone_text(text: str | None) -> str | None:
+    """Ensure any full phone number in shipper fields or descriptions is masked."""
+    if text is None:
+        return None
+    clean = str(text).strip()
+    if not clean:
+        return None
+
+    def _repl(match: re.Match) -> str:
+        digits = re.sub(r"\D", "", match.group(0))
+        if digits.startswith("84") and len(digits) >= 11:
+            digits = "0" + digits[2:]
+        if len(digits) >= 9:
+            return f"{digits[:3]}****{digits[-3:]}"
+        return "***"
+
+    return _VN_FULL_PHONE_RE.sub(_repl, clean)
 from retailops.business.variants import fold_attribute
 from retailops.order_reasons import reason_catalog
 from retailops.business.clamav import ClamdScanner
@@ -59,22 +95,26 @@ from retailops.business.schema import (
     BUSINESS_V6_VERSION_MAPPING,
     BUSINESS_V7_VERSION_MAPPING,
     BUSINESS_V8_VERSION_MAPPING,
+    BUSINESS_V9_VERSION_MAPPING,
     EXCHANGE_KINDS,
+    REQUIRED_V9_TABLES,
     SQLITE_BUSINESS_SCHEMA_CURRENT,
     SQLITE_BUSINESS_V5_SCHEMA_VERSION,
     SQLITE_BUSINESS_V6_SCHEMA_VERSION,
     SQLITE_BUSINESS_V7_SCHEMA_VERSION,
+    SQLITE_BUSINESS_V8_SCHEMA_VERSION,
     backfill_business_v5_cases,
     ensure_case_assist_tables,
     ensure_case_tables,
     ensure_import_tables,
     ensure_order_action_tables,
+    ensure_v9_tables,
     initialize as initialize_schema,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
 
-_MIGRATE_HINT = 'Hãy chạy lệnh operator database migrate-v8 với --confirm-preflight --confirm-backup.'
+_MIGRATE_HINT = 'Hãy chạy lệnh operator database migrate-v9 với --confirm-preflight --confirm-backup.'
 
 def _parse_variant_string(v_str):
     delimiter = "·" if "·" in str(v_str) else ("/" if "/" in str(v_str) else None)
@@ -144,7 +184,7 @@ def _inspect_sqlite_business_ready(path, *, target_version=SQLITE_BUSINESS_SCHEM
                 raise ApiError(
                     503,
                     'business_migration_required',
-                    f'Kho dữ liệu cửa hàng thiếu dấu vết schema Business v8; khởi động bị chặn fail-closed. {_MIGRATE_HINT}',
+                    f'Kho dữ liệu cửa hàng thiếu dấu vết schema Business v9; khởi động bị chặn fail-closed. {_MIGRATE_HINT}',
                 )
             ver = rows[0]['version']
             if ver not in range(1, SQLITE_BUSINESS_SCHEMA_CURRENT + 1):
@@ -153,7 +193,7 @@ def _inspect_sqlite_business_ready(path, *, target_version=SQLITE_BUSINESS_SCHEM
                 raise ApiError(
                     503,
                     'business_migration_required',
-                    f'Kho dữ liệu cửa hàng đang ở SQLite schema v{ver} (trước Business v8); khởi động bị chặn fail-closed. '
+                    f'Kho dữ liệu cửa hàng đang ở SQLite schema v{ver} (trước Business v9); khởi động bị chặn fail-closed. '
                     f'{_MIGRATE_HINT}',
                 )
             required_v5_tables = {'cases', 'handoff_episodes', 'case_feedback_events'}
@@ -188,7 +228,7 @@ def _inspect_sqlite_business_ready(path, *, target_version=SQLITE_BUSINESS_SCHEM
                             f'Kho dữ liệu cửa hàng chưa đầy đủ các cột đổi hàng Business v7; khởi động bị chặn fail-closed. '
                             f'{_MIGRATE_HINT}',
                         )
-                    if target_version >= SQLITE_BUSINESS_SCHEMA_CURRENT:
+                    if target_version >= SQLITE_BUSINESS_V8_SCHEMA_VERSION:
                         if 'case_assist_turns' not in tables:
                             raise ApiError(
                                 503,
@@ -215,6 +255,83 @@ def _inspect_sqlite_business_ready(path, *, target_version=SQLITE_BUSINESS_SCHEM
                                 f'Kho dữ liệu cửa hàng chưa đầy đủ cấu trúc bằng chứng Business v8; khởi động bị chặn fail-closed. '
                                 f'{_MIGRATE_HINT}',
                             )
+                        if target_version >= SQLITE_BUSINESS_SCHEMA_CURRENT:
+                            if not set(REQUIRED_V9_TABLES).issubset(tables) or 'imported_events' not in tables:
+                                raise ApiError(
+                                    503,
+                                    'business_migration_required',
+                                    f'Kho dữ liệu cửa hàng thiếu các bảng tích hợp Business v9; khởi động bị chặn fail-closed. '
+                                    f'{_MIGRATE_HINT}',
+                                )
+                            ord_info = list(ro_db.execute('PRAGMA table_info(orders)'))
+                            ord_cols = {row['name'] for row in ord_info}
+                            ord_not_null = {row['name'] for row in ord_info if int(row['notnull']) != 0}
+                            ord_master = ro_db.execute(
+                                "SELECT sql FROM sqlite_master WHERE type='table' AND name='orders'"
+                            ).fetchone()
+                            ord_ddl = str(ord_master['sql'] or '') if ord_master else ''
+                            required_v9_ord_cols = {
+                                'source_system',
+                                'external_order_id',
+                                'ordered_at',
+                                'ordered_at_backfilled',
+                                'payment_method',
+                                'payment_status',
+                                'shipping_fee',
+                                'ship_to_area',
+                                'promised_delivery_by',
+                            }
+                            if (
+                                not (required_v9_ord_cols <= ord_cols)
+                                or "'shipping'" not in ord_ddl
+                                or 'orders_source_external_v9_unique' not in ord_ddl
+                                or not ({'source_system', 'ordered_at', 'ordered_at_backfilled', 'payment_status'} <= ord_not_null)
+                            ):
+                                raise ApiError(
+                                    503,
+                                    'business_migration_required',
+                                    f'Kho dữ liệu cửa hàng chưa đầy đủ bảng orders Business v9; khởi động bị chặn fail-closed. '
+                                    f'{_MIGRATE_HINT}',
+                                )
+                            ie_info = list(ro_db.execute('PRAGMA table_info(imported_events)'))
+                            ie_cols = {row['name'] for row in ie_info}
+                            ie_not_null = {row['name'] for row in ie_info if int(row['notnull']) != 0}
+                            required_v9_ie_cols = {'event_type', 'sequence', 'received_via', 'payload_digest', 'redacted_fields'}
+                            legacy_ie_nullable = {
+                                'external_customer_id',
+                                'customer_id',
+                                'order_id',
+                                'status',
+                                'total',
+                                'currency',
+                                'signature',
+                            }
+                            if not (required_v9_ie_cols <= ie_cols) or bool(legacy_ie_nullable & ie_not_null):
+                                raise ApiError(
+                                    503,
+                                    'business_migration_required',
+                                    f'Kho dữ liệu cửa hàng chưa cập nhật imported_events Business v9; khởi động bị chặn fail-closed. '
+                                    f'{_MIGRATE_HINT}',
+                                )
+                            idx_names = {
+                                r[0]
+                                for r in ro_db.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
+                            }
+                            trg_names = {
+                                r[0]
+                                for r in ro_db.execute("SELECT name FROM sqlite_master WHERE type='trigger'").fetchall()
+                            }
+                            if (
+                                'idx_product_variants_sku_unique' not in idx_names
+                                or not {'shipment_events_no_update', 'shipment_events_no_delete'} <= trg_names
+                            ):
+                                raise ApiError(
+                                    503,
+                                    'business_migration_required',
+                                    f'Kho dữ liệu cửa hàng thiếu chỉ mục hoặc trigger Business v9; khởi động bị chặn fail-closed. '
+                                    f'{_MIGRATE_HINT}',
+                                )
+                            return 'v9_ready'
                         return 'v8_ready'
                     return 'v7_ready'
                 return 'v6_ready'
@@ -225,7 +342,7 @@ def _inspect_sqlite_business_ready(path, *, target_version=SQLITE_BUSINESS_SCHEM
             raise ApiError(
                 503,
                 'business_migration_required',
-                f'Kho dữ liệu cửa hàng legacy chưa nâng cấp lên Business v8; khởi động bị chặn fail-closed. {_MIGRATE_HINT}',
+                f'Kho dữ liệu cửa hàng legacy chưa nâng cấp lên Business v9; khởi động bị chặn fail-closed. {_MIGRATE_HINT}',
             )
         raise ValueError('Database belongs to another RetailOps component.')
     except sqlite3.Error as exc:
@@ -454,6 +571,19 @@ def _migrate_single_sqlite_business_file(
             if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='handoff_episodes'").fetchone()
             else 0
         )
+        orders_backfilled = 0
+        if target_version >= SQLITE_BUSINESS_SCHEMA_CURRENT and (ver_before < target_version or state == 'needs_migration'):
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='orders'").fetchone():
+                ord_cols_pre = {row['name'] for row in db.execute('PRAGMA table_info(orders)')}
+                if 'source_system' in ord_cols_pre and 'ordered_at' in ord_cols_pre:
+                    orders_backfilled = int(
+                        db.execute(
+                            'SELECT COUNT(*) FROM orders WHERE source_system IS NULL OR ordered_at IS NULL'
+                        ).fetchone()[0]
+                    )
+                else:
+                    orders_backfilled = int(db.execute('SELECT COUNT(*) FROM orders').fetchone()[0])
+
         if ver_before < target_version or state == 'needs_migration':
             migrate(db, 'business', initialize_schema, target_version=target_version)
             ensure_import_tables(db)
@@ -461,14 +591,16 @@ def _migrate_single_sqlite_business_file(
             backfill_res = backfill_business_v5_cases(db)
             if target_version >= SQLITE_BUSINESS_V6_SCHEMA_VERSION:
                 ensure_order_action_tables(db)
-            if target_version >= SQLITE_BUSINESS_SCHEMA_CURRENT:
+            if target_version >= SQLITE_BUSINESS_V8_SCHEMA_VERSION:
                 ensure_case_assist_tables(db)
+            if target_version >= SQLITE_BUSINESS_SCHEMA_CURRENT:
+                ensure_v9_tables(db)
         else:
             backfill_res = {'cases_created': 0, 'episodes_created': 0}
             legacy_exchange_rows = 0
 
         att_stats = {'attachments_migrated': 0, 'attachments_removed': 0, 'turns_updated': 0}
-        if backfill_attachments and target_version >= SQLITE_BUSINESS_SCHEMA_CURRENT:
+        if backfill_attachments and target_version >= SQLITE_BUSINESS_V8_SCHEMA_VERSION:
             eff_root = Path(data_root) if data_root is not None else db_path.parent
             att_stats, written_paths = backfill_legacy_turn_attachments_v8(
                 db,
@@ -513,6 +645,7 @@ def _migrate_single_sqlite_business_file(
             'attachments_migrated': int(att_stats['attachments_migrated']),
             'attachments_removed': int(att_stats['attachments_removed']),
             'turns_updated': int(att_stats['turns_updated']),
+            'orders_backfilled': int(orders_backfilled),
         }
     except Exception:
         if db.in_transaction:
@@ -749,7 +882,7 @@ def migrate_sqlite_business_v8(
         tid = key_to_tid.get(tf.stem, 'default')
         res = _migrate_single_sqlite_business_file(
             tf,
-            target_version=SQLITE_BUSINESS_SCHEMA_CURRENT,
+            target_version=SQLITE_BUSINESS_V8_SCHEMA_VERSION,
             backfill_attachments=True,
             data_root=eff_root,
             tenant_id=tid,
@@ -763,13 +896,67 @@ def migrate_sqlite_business_v8(
     return {
         'result': 'BUSINESS_V8_MIGRATED',
         'backend': 'sqlite',
-        'schema_version': SQLITE_BUSINESS_SCHEMA_CURRENT,
+        'schema_version': SQLITE_BUSINESS_V8_SCHEMA_VERSION,
         'logical_version': BUSINESS_V8_VERSION_MAPPING['postgresql'],
         'tenants': len(tenant_files),
         'upgraded': any_upgraded,
         'attachments_migrated': attachments_migrated,
         'attachments_removed': attachments_removed,
         'turns_updated': turns_updated,
+    }
+
+
+def migrate_sqlite_business_v9(
+    path,
+    *,
+    preflight_confirmed=False,
+    backup_confirmed=False,
+    data_root: Path | None = None,
+    malware_scanner=None,
+):
+    """Explicit operator migration command for SQLite Business v9 (W6.1b-D1, B2, B3, B6).
+
+    Upgrades every tenant business database to SQLite schema v8 (logical Business v9) in one
+    transaction per tenant: adds canonical v9 columns and 'shipping' status to `orders` (backfilling
+    legacy rows with `source_system='retailops_seed'`, `external_order_id=id`, `ordered_at=<migrate_ts>`,
+    `ordered_at_backfilled=1`), updates `imported_events` to v2 shape, adds partial unique index on
+    `product_variants.sku`, and creates all 8 Business v9 tables plus append-only `shipment_events`
+    triggers. Idempotent; never invoked automatically.
+    """
+    require(
+        preflight_confirmed is True and backup_confirmed is True,
+        400,
+        'migration_confirmation_required',
+        'Lệnh nâng cấp Business v9 yêu cầu xác nhận tường minh --confirm-preflight và --confirm-backup theo runbook.',
+    )
+    target = Path(path)
+    inferred_root, key_to_tid = _resolve_sqlite_tenant_id_map(target)
+    eff_root = Path(data_root) if data_root is not None else inferred_root
+    tenant_files = [target] if target.is_file() else _resolve_sqlite_tenant_files(target, milestone_label='Business v9')
+
+    any_upgraded = False
+    orders_backfilled = 0
+    for tf in tenant_files:
+        tid = key_to_tid.get(tf.stem, 'default')
+        res = _migrate_single_sqlite_business_file(
+            tf,
+            target_version=SQLITE_BUSINESS_SCHEMA_CURRENT,
+            backfill_attachments=True,
+            data_root=eff_root,
+            tenant_id=tid,
+            malware_scanner=malware_scanner,
+        )
+        any_upgraded = any_upgraded or res['upgraded']
+        orders_backfilled += res['orders_backfilled']
+
+    return {
+        'result': 'BUSINESS_V9_MIGRATED',
+        'backend': 'sqlite',
+        'schema_version': SQLITE_BUSINESS_SCHEMA_CURRENT,
+        'logical_version': BUSINESS_V9_VERSION_MAPPING['postgresql'],
+        'tenants': len(tenant_files),
+        'upgraded': any_upgraded,
+        'orders_backfilled': orders_backfilled,
     }
 
 
@@ -1006,63 +1193,19 @@ class BusinessStore:
                 db.close()
 
     def seed(self):
-        # Conflict handling preserves cancelled orders across process/container restarts.
+        # Populate system actors, base product catalog, and fixed simulator demo events (W6.1b-D2, D11).
+        from retailops.integration.demo_seed import seed_demo_store_events
+
         with self.connection(write=True) as db:
-            customers = [
-                ('C-001', 'Mai Anh'),
-                ('C-002', 'Khách mẫu'),
-                ('C-003', 'Trần Thị Mai'),
-                ('C-004', 'Lê Hoàng Nam'),
-                ('manager', 'Quản lý cửa hàng'),
-                ('system', 'Hệ thống')
-            ]
-            orders = [
-                ("O-101", "C-001", "Áo thun Essential", "Trắng · Size M · Số lượng 1", 299000, "pending", "P-101"),
-                ("O-102", "C-001", "Áo khoác Everyday", "Đen · Size L · Số lượng 1", 799000, "delivered", "P-102"),
-                ("O-202", "C-002", "Áo polo", "Xanh · Size M · Số lượng 1", 399000, "pending", "P-202"),
-                ("O-301", "C-003", "Áo Sơ Mi Oxford Dài Tay", "Trắng · Size M · Số lượng 1", 350000, "pending", "P-103"),
-                ("O-302", "C-003", "Áo Khoác Gió Bomber 2 Lớp", "Đen · Size L · Số lượng 1", 550000, "delivered", "P-104"),
-                ("O-303", "C-004", "Áo Polo Nam Phối Bo Cổ Co Giãn", "Xanh Navy · Size M · Số lượng 1", 399000, "delivered", "P-203"),
-                ("O-304", "C-004", "Bộ Nồi Inox 3 Đáy Cao Cấp", "Bạc · Bộ 3 món · Số lượng 1", 1250000, "pending", "P-401"),
-            ]
-            seed_file = ROOT / "data" / "deepseek_seed_data.json"
-            if seed_file.exists():
-                try:
-                    with open(seed_file, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                    known_cids = {x[0] for x in customers}
-                    for c in data.get("customers", []):
-                        if c["id"] not in known_cids:
-                            customers.append((c["id"], c["name"]))
-                            known_cids.add(c["id"])
-                    known_oids = {x[0] for x in orders}
-                    for o in data.get("orders", []):
-                        if o["id"] not in known_oids:
-                            orders.append((o["id"], o["customer_id"], o["name"], o["variant"], o["amount"], o["status"], o.get("product_id")))
-                            known_oids.add(o["id"])
-                except Exception:
-                    pass
-            db.executemany("INSERT INTO customers VALUES (?,?) ON CONFLICT DO NOTHING", customers)
+            db.executemany(
+                "INSERT INTO customers (id, name) VALUES (?, ?) ON CONFLICT DO NOTHING",
+                [
+                    ('manager', 'Quản lý cửa hàng'),
+                    ('system', 'Hệ thống'),
+                ],
+            )
             self.seed_catalog(db)
-            self._ensure_purge_tombstone_table(db)
-            tombstoned_oids = {
-                str(r["order_id"]) for r in db.execute("SELECT order_id FROM order_purge_tombstones").fetchall()
-            }
-            orders_to_seed = [o for o in orders if o[0] not in tombstoned_oids]
-            db.executemany("INSERT INTO orders(id, customer_id, name, variant, amount, status, product_id) VALUES (?,?,?,?,?,?,?) ON CONFLICT DO NOTHING", orders_to_seed)
-            order_to_product = {
-                'O-101': 'P-101', 'O-102': 'P-102', 'O-202': 'P-202',
-                'O-301': 'P-103', 'O-302': 'P-104', 'O-303': 'P-203', 'O-304': 'P-401',
-                'O-305': 'P-501', 'O-306': 'P-503', 'O-307': 'P-506', 'O-308': 'P-502',
-                'O-309': 'P-504', 'O-310': 'P-507', 'O-311': 'P-505', 'O-312': 'P-508',
-            }
-            for oid, pid in order_to_product.items():
-                db.execute("UPDATE orders SET product_id=? WHERE id=? AND product_id IS NULL", (pid, oid))
-            db.execute("""
-                UPDATE orders 
-                SET product_id = (SELECT p.id FROM products p WHERE p.name = orders.name LIMIT 1)
-                WHERE product_id IS NULL AND EXISTS (SELECT 1 FROM products p WHERE p.name = orders.name)
-            """)
+        seed_demo_store_events(self)
 
     def seed_catalog(self, db=None):
         def _do_seed(conn):
@@ -1147,36 +1290,6 @@ class BusinessStore:
             with self.connection(write=True) as conn:
                 _do_seed(conn)
 
-    _DEMO_SAMPLE_FIXTURE_SPEC = {
-        "P-601": {
-            "offset": 1,
-            "name": "Áo sơ mi lụa công sở",
-            "variant": "Trắng / M",
-            "amount": 450000,
-            "status": "pending",
-            "version": 1,
-            "cancel_reason": None,
-        },
-        "P-602": {
-            "offset": 2,
-            "name": "Quần tây đen hàn quốc",
-            "variant": "Đen / L",
-            "amount": 520000,
-            "status": "delivered",
-            "version": 1,
-            "cancel_reason": None,
-        },
-        "P-603": {
-            "offset": 3,
-            "name": "Giày lười da bò cao cấp",
-            "variant": "Nâu / 41",
-            "amount": 890000,
-            "status": "delivered",
-            "version": 1,
-            "cancel_reason": None,
-        },
-    }
-
     @staticmethod
     def _ensure_purge_tombstone_table(conn):
         conn.execute(
@@ -1255,145 +1368,103 @@ class BusinessStore:
         with self.connection() as conn:
             return _fetch(conn)
 
-    @classmethod
-    def _row_matches_demo_fixture_spec(cls, row: dict, pid: str) -> bool:
-        spec = cls._DEMO_SAMPLE_FIXTURE_SPEC.get(pid)
-        if not spec or not isinstance(row, dict):
-            return False
-        try:
-            amt = int(row.get("amount")) if row.get("amount") is not None else -1
-            ver = int(row.get("version")) if row.get("version") is not None else -1
-        except (TypeError, ValueError):
-            return False
-        return (
-            str(row.get("product_id")) == pid
-            and row.get("name") == spec["name"]
-            and row.get("variant") == spec["variant"]
-            and amt == spec["amount"]
-            and row.get("status") == spec["status"]
-            and ver == spec["version"]
-            and row.get("cancel_reason") is None
-        )
-
-    @staticmethod
-    def _has_import_or_item_provenance(conn, customer_id: str, order_ids: tuple[str, str, str]) -> bool:
-        oid1, oid2, oid3 = order_ids
-        imp = conn.execute(
-            "SELECT 1 FROM imported_events WHERE customer_id=? OR order_id IN (?, ?, ?) LIMIT 1",
-            (customer_id, oid1, oid2, oid3),
-        ).fetchone()
-        if imp is not None:
-            return True
-        items = conn.execute(
-            "SELECT 1 FROM order_items WHERE order_id IN (?, ?, ?) LIMIT 1",
-            (oid1, oid2, oid3),
-        ).fetchone()
-        if items is not None:
-            return True
-        sales_ev = conn.execute(
-            "SELECT 1 FROM business_events WHERE (customer_id=? OR order_id IN (?, ?, ?)) AND kind='sales_event_imported' LIMIT 1",
-            (customer_id, oid1, oid2, oid3),
-        ).fetchone()
-        return sales_ev is not None
-
-    def seed_demo_sample_orders(self, customer_id, db=None):
-        def _do_seed_orders(conn):
-            self._ensure_purge_tombstone_table(conn)
-            cust_tombstones = conn.execute(
-                "SELECT order_id, product_id FROM order_purge_tombstones WHERE customer_id=?",
-                (customer_id,),
-            ).fetchall()
-            if cust_tombstones:
-                return []
-            existing_rows = conn.execute(
-                "SELECT id, customer_id, name, variant, amount, status, version, cancel_reason, product_id "
-                "FROM orders WHERE customer_id=? ORDER BY id ASC",
-                (customer_id,),
-            ).fetchall()
-            if existing_rows:
-                if len(existing_rows) == 3:
-                    by_pid = {str(r["product_id"]): dict(r) for r in existing_rows}
-                    p601 = by_pid.get("P-601")
-                    p602 = by_pid.get("P-602")
-                    p603 = by_pid.get("P-603")
-                    if (
-                        p601
-                        and p602
-                        and p603
-                        and re.fullmatch(r"O-[78]\d{5}", str(p601["id"]))
-                        and re.fullmatch(r"O-[78]\d{5}", str(p602["id"]))
-                        and re.fullmatch(r"O-[78]\d{5}", str(p603["id"]))
-                    ):
-                        n1 = int(str(p601["id"])[2:])
-                        n2 = int(str(p602["id"])[2:])
-                        n3 = int(str(p603["id"])[2:])
-                        if (
-                            700001 <= n1 <= 899990
-                            and n2 == n1 + 1
-                            and n3 == n1 + 2
-                            and self._row_matches_demo_fixture_spec(p601, "P-601")
-                            and self._row_matches_demo_fixture_spec(p602, "P-602")
-                            and self._row_matches_demo_fixture_spec(p603, "P-603")
-                        ):
-                            oid_triplet = (str(p601["id"]), str(p602["id"]), str(p603["id"]))
-                            p602_oid = oid_triplet[1]
-                            has_prov = conn.execute(
-                                "SELECT 1 FROM business_events WHERE customer_id=? AND order_id=? AND kind='demo_sample_fixture_seeded' LIMIT 1",
-                                (customer_id, p602_oid),
-                            ).fetchone()
-                            if has_prov is None and not self._has_import_or_item_provenance(conn, customer_id, oid_triplet):
-                                self.log(
-                                    conn,
-                                    customer_id,
-                                    "demo_sample_fixture_seeded",
-                                    p602_oid,
-                                    fixture="google_demo_sample_v1",
-                                    product_id="P-602",
-                                    canonical_name="Quần tây đen hàn quốc",
-                                    display_name="Bộ xếp hình gỗ cho bé",
-                                )
-                return []
-            seed_base = 700000 + (abs(hash(customer_id)) % 199990)
-            p602_oid = f"O-{seed_base + 2}"
-            sample_orders = [
-                (f"O-{seed_base + 1}", customer_id, "Áo sơ mi lụa công sở", "Trắng / M", 450000, "pending", 1, None, "P-601"),
-                (p602_oid, customer_id, "Quần tây đen hàn quốc", "Đen / L", 520000, "delivered", 1, None, "P-602"),
-                (f"O-{seed_base + 3}", customer_id, "Giày lười da bò cao cấp", "Nâu / 41", 890000, "delivered", 1, None, "P-603"),
-            ]
-            tombstoned_oids = {
-                str(r["order_id"])
-                for r in conn.execute(
-                    "SELECT order_id FROM order_purge_tombstones WHERE order_id IN (?, ?, ?)",
-                    (sample_orders[0][0], sample_orders[1][0], sample_orders[2][0]),
-                ).fetchall()
-            }
-            inserted_oids = []
-            for ord_row in sample_orders:
-                if ord_row[0] in tombstoned_oids:
-                    continue
-                conn.execute(
-                    """INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id)
-                       VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING""",
-                    ord_row,
-                )
-                inserted_oids.append(ord_row[0])
-            if p602_oid in inserted_oids:
-                self.log(
-                    conn,
-                    customer_id,
-                    "demo_sample_fixture_seeded",
-                    p602_oid,
-                    fixture="google_demo_sample_v1",
-                    product_id="P-602",
-                    canonical_name="Quần tây đen hàn quốc",
-                    display_name="Bộ xếp hình gỗ cho bé",
-                )
-            return inserted_oids
+    def has_demo_store_seed(self, db=None) -> bool:
+        """Return True when this tenant has loaded the marketplace_sim demo store seed."""
+        def _check(conn) -> bool:
+            row = conn.execute(
+                "SELECT 1 FROM imported_events "
+                "WHERE source_system = 'marketplace_sim' AND event_id = 'evt:customer:SIM-C-0088:1' "
+                "LIMIT 1"
+            ).fetchone()
+            return row is not None
 
         if db is not None:
-            return _do_seed_orders(db)
-        with self.connection(write=True) as conn:
-            return _do_seed_orders(conn)
+            return _check(db)
+        with self.connection() as conn:
+            return _check(conn)
+
+    def seed_demo_sample_orders(self, customer_id, db=None, *, sessions=None):
+        """Instantiate the 3-order simulator account template for a new demo customer (W6.1b-D2, D11)."""
+        from retailops.integration.demo_seed import seed_demo_account_orders
+
+        return seed_demo_account_orders(self, customer_id, sessions=sessions, db=db)
+
+    def purge_legacy_demo_orders(self, *, dry_run: bool = False) -> dict:
+        """Remove legacy ``retailops_seed`` orders that have no linked cancel/return/exchange requests (W6.1b-D2).
+
+        Any ``retailops_seed`` order with >= 1 row in ``order_action_requests`` is retained and listed.
+        When ``dry_run=True``, mutates nothing and returns exact counts and order lists.
+        """
+        tenant_clean = str(getattr(self, "tenant_id", None) or "default")
+        with self.connection(write=not bool(dry_run)) as conn:
+            rows = conn.execute(
+                """SELECT id, customer_id, status, name, amount
+                   FROM orders
+                   WHERE source_system = 'retailops_seed'
+                   ORDER BY id ASC"""
+            ).fetchall()
+            removable: list[dict] = []
+            retained: list[dict] = []
+            for row in rows:
+                oid = str(row["id"])
+                req_rows = conn.execute(
+                    """SELECT request_id, type, status
+                       FROM order_action_requests
+                       WHERE order_id = ?
+                       ORDER BY created_at ASC, request_id ASC""",
+                    (oid,),
+                ).fetchall()
+                entry = {
+                    "order_id": oid,
+                    "customer_id": str(row["customer_id"]),
+                    "status": str(row["status"]),
+                    "name": str(row["name"]),
+                    "amount": int(row["amount"]),
+                }
+                if req_rows:
+                    retained.append(
+                        {
+                            **entry,
+                            "request_ids": [str(r["request_id"]) for r in req_rows],
+                        }
+                    )
+                else:
+                    removable.append(entry)
+
+            removed_count = 0
+            if not dry_run and removable:
+                for entry in removable:
+                    oid = entry["order_id"]
+                    conn.execute("UPDATE conversations SET order_id = NULL WHERE order_id = ?", (oid,))
+                    conn.execute("DELETE FROM proposals WHERE order_id = ?", (oid,))
+                    conn.execute("DELETE FROM order_items WHERE order_id = ?", (oid,))
+                    deleted = conn.execute(
+                        "DELETE FROM orders WHERE id = ? AND source_system = 'retailops_seed'",
+                        (oid,),
+                    ).rowcount
+                    removed_count += int(deleted or 0)
+                self.log(
+                    conn,
+                    "system",
+                    "legacy_demo_orders_purged",
+                    None,
+                    tenant_id=tenant_clean,
+                    removed_count=removed_count,
+                    retained_count=len(retained),
+                    removed_order_ids=[e["order_id"] for e in removable],
+                    retained_order_ids=[e["order_id"] for e in retained],
+                )
+
+            return {
+                "result": "PURGE_LEGACY_DEMO_DRY_RUN" if dry_run else "PURGE_LEGACY_DEMO_OK",
+                "tenant_id": tenant_clean,
+                "dry_run": bool(dry_run),
+                "would_remove_count": len(removable),
+                "removed_count": 0 if dry_run else removed_count,
+                "removable_orders": removable,
+                "retained_count": len(retained),
+                "retained_orders": retained,
+            }
 
     def _collect_purge_reference_counts(
         self, conn, *, order_id: str, customer_id: str, product_id: str
@@ -1753,41 +1824,6 @@ class BusinessStore:
                 "catalog_product": post_counts["product_snapshot"],
             }
 
-    def is_demo_sample_order(self, customer_id, order_id) -> bool:
-        if not isinstance(customer_id, str) or not customer_id or not isinstance(order_id, str) or not order_id:
-            return False
-        if not re.fullmatch(r"O-[78]\d{5}", order_id):
-            return False
-        n2 = int(order_id[2:])
-        if not (700002 <= n2 <= 899991):
-            return False
-        oid_triplet = (f"O-{n2 - 1}", order_id, f"O-{n2 + 1}")
-        with self.connection() as db:
-            p602_row = db.execute(
-                "SELECT id, customer_id, name, variant, amount, status, version, cancel_reason, product_id "
-                "FROM orders WHERE id=? AND customer_id=? LIMIT 1",
-                (order_id, customer_id),
-            ).fetchone()
-            if p602_row is None or not self._row_matches_demo_fixture_spec(dict(p602_row), "P-602"):
-                return False
-            if self._has_import_or_item_provenance(db, customer_id, oid_triplet):
-                return False
-            prov = db.execute(
-                "SELECT payload FROM business_events WHERE customer_id=? AND order_id=? AND kind='demo_sample_fixture_seeded' ORDER BY id ASC LIMIT 1",
-                (customer_id, order_id),
-            ).fetchone()
-            if prov is None:
-                return False
-            try:
-                payload = json.loads(prov["payload"]) if isinstance(prov["payload"], str) else (prov["payload"] or {})
-            except Exception:
-                payload = {}
-            return (
-                payload.get("fixture") == "google_demo_sample_v1"
-                and payload.get("product_id") == "P-602"
-                and payload.get("display_name") == "Bộ xếp hình gỗ cho bé"
-            )
-
     @staticmethod
     def _row_to_product(row):
         d = dict(row)
@@ -2119,12 +2155,66 @@ class BusinessStore:
         return dict(row)
 
     @staticmethod
-    def owned(db, customer, oid):
+    def resolve_customer_order_in_tx(db, customer, oid):
+        """Resolve an order belonging strictly to `customer` by internal `id` or `external_order_id`.
+
+        Returns `(order_dict, None)` when unique, or `(None, candidates)` when multiple orders of
+        this same customer share the identifier across connectors (W6.1b-D8: never auto-pick).
+        Raises `ApiError(404, 'order_not_found', ...)` when invalid or zero rows belong to `customer`.
+        """
         if not isinstance(oid, str) or not oid.isascii() or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', oid):
             require(False, 404, "order_not_found", "Không tìm thấy đơn hàng của bạn.")
-        row = db.execute("SELECT * FROM orders WHERE id=? AND customer_id=?", (oid, customer)).fetchone()
-        require(row is not None, 404, "order_not_found", "Không tìm thấy đơn hàng của bạn.")
-        return dict(row)
+        rows = db.execute(
+            "SELECT * FROM orders WHERE customer_id = ? AND (id = ? OR external_order_id = ?) "
+            "ORDER BY ordered_at DESC, id ASC",
+            (customer, oid, oid),
+        ).fetchall()
+        require(len(rows) > 0, 404, "order_not_found", "Không tìm thấy đơn hàng của bạn.")
+        if len(rows) == 1:
+            return dict(rows[0]), None
+        # If `oid` matches a unique internal `id` among the rows, internal `id` is globally unique per tenant.
+        exact_internal = [r for r in rows if r["id"] == oid and r["external_order_id"] != oid]
+        if len(exact_internal) == 1:
+            return dict(exact_internal[0]), None
+        candidates = []
+        for r in rows:
+            rd = dict(r)
+            item_rows = db.execute(
+                "SELECT product_title FROM order_items WHERE order_id = ? ORDER BY id ASC",
+                (rd["id"],),
+            ).fetchall()
+            item_names = [str(ir["product_title"]) for ir in item_rows if ir["product_title"]]
+            if not item_names and rd.get("name"):
+                item_names = [str(rd["name"])]
+            ordered_iso = (
+                None
+                if int(rd.get("ordered_at_backfilled") or 0) == 1
+                else format_vn_iso(rd.get("ordered_at"))
+            )
+            candidates.append(
+                {
+                    "internal_order_id": rd["id"],
+                    "external_order_id": rd["external_order_id"],
+                    "source_system": rd["source_system"],
+                    "ordered_at": ordered_iso,
+                    "item_names": item_names,
+                    "name": rd.get("name"),
+                    "amount": int(rd["amount"]) if rd.get("amount") is not None else None,
+                    "status": rd.get("status"),
+                }
+            )
+        return None, candidates
+
+    @staticmethod
+    def owned(db, customer, oid):
+        order, candidates = BusinessStore.resolve_customer_order_in_tx(db, customer, oid)
+        if candidates is not None:
+            raise ApiError(
+                409,
+                "ambiguous_order",
+                "Có nhiều đơn hàng của bạn trùng mã này từ các nguồn khác nhau; vui lòng xác định rõ đơn hàng.",
+            )
+        return order
 
     @staticmethod
     def log(db, customer, kind, oid=None, **payload):
@@ -2142,8 +2232,218 @@ class BusinessStore:
     def lookup(self, customer, oid):
         with self.connection(write=True) as db:
             order = self.owned(db, customer, oid)
-            self.log(db, customer, "order_viewed", oid)
+            self.log(db, customer, "order_viewed", order["id"])
             return order
+
+    def read_order_details_in_tx(self, db, order_dict: dict, *, now: float | None = None) -> dict:
+        """Read DB-backed payment, refund summary, shipment presence, and computed eligibility for one order."""
+        now_ts = self._now() if now is None else float(now)
+        oid = str(order_dict["id"])
+        eligibility = self._order_eligibility_in_tx(db, order_dict, now=now_ts)
+        pay_rows = db.execute(
+            "SELECT payment_id, provider, provider_txn_ref, method, amount, status, created_at, settled_at "
+            "FROM payment_transactions WHERE order_id = ? ORDER BY created_at ASC, payment_id ASC",
+            (oid,),
+        ).fetchall()
+        ref_rows = db.execute(
+            "SELECT refund_id, provider, provider_refund_ref, amount, status, failure_reason, initiated_at, completed_at "
+            "FROM refunds WHERE order_id = ? ORDER BY initiated_at ASC, refund_id ASC",
+            (oid,),
+        ).fetchall()
+        ship_row = db.execute(
+            "SELECT shipment_id, carrier, tracking_code, status, carrier_status_raw, current_area, "
+            "estimated_delivery_at, delivered_at, delivery_attempts "
+            "FROM shipments WHERE order_id = ? ORDER BY updated_at DESC, shipment_id DESC LIMIT 1",
+            (oid,),
+        ).fetchone()
+
+        is_unrecorded_seed = (
+            order_dict.get("source_system") == "retailops_seed"
+            and order_dict.get("payment_method") is None
+            and not pay_rows
+            and not ref_rows
+        )
+        payment_status = None if is_unrecorded_seed else order_dict.get("payment_status")
+        if pay_rows or order_dict.get("payment_method") is not None:
+            paid_total = sum(int(r["amount"]) for r in pay_rows if r["status"] == "succeeded")
+            latest_pay_ts = (pay_rows[-1]["settled_at"] or pay_rows[-1]["created_at"]) if pay_rows else None
+            payment_summary = {
+                "method": order_dict.get("payment_method"),
+                "status": payment_status,
+                "paid_total": paid_total if pay_rows else None,
+                "transactions_count": len(pay_rows),
+                "latest_updated_at": format_vn_iso(latest_pay_ts) if pay_rows else None,
+            }
+        else:
+            payment_summary = None
+
+        if ref_rows:
+            latest_ref_ts = ref_rows[-1]["completed_at"] or ref_rows[-1]["initiated_at"]
+            refund_summary = {
+                "count": len(ref_rows),
+                "refunded_total": sum(int(r["amount"]) for r in ref_rows if r["status"] == "completed"),
+                "pending_total": sum(int(r["amount"]) for r in ref_rows if r["status"] in ("pending", "processing")),
+                "latest_status": ref_rows[-1]["status"],
+                "latest_reason": ref_rows[-1]["failure_reason"],
+                "latest_updated_at": format_vn_iso(latest_ref_ts),
+            }
+        else:
+            refund_summary = None
+
+        if (
+            ship_row is not None
+            or order_dict.get("delivered_at") is not None
+            or order_dict.get("promised_delivery_by") is not None
+        ):
+            delivery_summary = {
+                "carrier": ship_row["carrier"] if ship_row is not None else None,
+                "tracking_code": ship_row["tracking_code"] if ship_row is not None else None,
+                "status": ship_row["status"] if ship_row is not None else None,
+                "current_area": ship_row["current_area"] if ship_row is not None else None,
+                "ship_to_area": order_dict.get("ship_to_area"),
+                "promised_delivery_by": format_vn_iso(order_dict.get("promised_delivery_by")),
+                "estimated_delivery_at": eligibility.get("latest_estimated_delivery_at"),
+                "delivered_at": format_vn_iso(order_dict.get("delivered_at")),
+            }
+        else:
+            delivery_summary = None
+
+        ordered_at_iso = (
+            None
+            if int(order_dict.get("ordered_at_backfilled") or 0) == 1
+            else format_vn_iso(order_dict.get("ordered_at"))
+        )
+        return {
+            "ordered_at": ordered_at_iso,
+            "payment_method": order_dict.get("payment_method"),
+            "payment_status": payment_status,
+            "shipping_fee": int(order_dict["shipping_fee"]) if order_dict.get("shipping_fee") is not None else None,
+            "ship_to_area": order_dict.get("ship_to_area"),
+            "promised_delivery_by": format_vn_iso(order_dict.get("promised_delivery_by")),
+            "delivered_at": format_vn_iso(order_dict.get("delivered_at")),
+            "refund_summary": refund_summary,
+            "payment": payment_summary,
+            "delivery": delivery_summary,
+            "refund": refund_summary,
+            "eligibility": eligibility,
+            "as_of": eligibility["as_of"],
+        }
+
+    def read_order_shipment_in_tx(self, db, order_dict: dict, *, now: float | None = None) -> dict | None:
+        """Read DB-backed shipment and chronological shipment_events for one order, or None if absent."""
+        oid = str(order_dict["id"])
+        ship_row = db.execute(
+            "SELECT * FROM shipments WHERE order_id = ? ORDER BY updated_at DESC, shipment_id DESC LIMIT 1",
+            (oid,),
+        ).fetchone()
+        if ship_row is None:
+            return None
+        sd = dict(ship_row)
+        evt_rows = db.execute(
+            "SELECT * FROM shipment_events WHERE shipment_id = ? "
+            "ORDER BY occurred_at ASC, shipment_event_id ASC",
+            (sd["shipment_id"],),
+        ).fetchall()
+        events = []
+        latest_evt_eta = None
+        latest_fail_reason = None
+        for er in evt_rows:
+            ed = dict(er)
+            if ed.get("estimated_delivery_at") is not None:
+                latest_evt_eta = ed["estimated_delivery_at"]
+            if ed.get("fail_reason"):
+                latest_fail_reason = ed["fail_reason"]
+            loc_parts = [p for p in (ed.get("hub_name"), ed.get("district"), ed.get("province")) if p]
+            events.append(
+                {
+                    "occurred_at": format_vn_iso(ed.get("occurred_at")),
+                    "status": ed.get("status"),
+                    "carrier_status_raw": ed.get("carrier_status_raw"),
+                    "status_text": SHIPMENT_STATUS_TEXT_VI.get(ed.get("status"), ed.get("status")),
+                    "hub_name": ed.get("hub_name"),
+                    "district": ed.get("district"),
+                    "province": ed.get("province"),
+                    "location": ", ".join(loc_parts) if loc_parts else None,
+                    "description": mask_shipper_phone_text(ed.get("description")),
+                    "fail_reason": mask_shipper_phone_text(ed.get("fail_reason")),
+                    "estimated_delivery_at": format_vn_iso(ed.get("estimated_delivery_at")),
+                }
+            )
+        effective_eta = sd.get("estimated_delivery_at") if sd.get("estimated_delivery_at") is not None else latest_evt_eta
+        return {
+            "shipment_id": sd["shipment_id"],
+            "external_shipment_id": sd["external_shipment_id"],
+            "source_system": sd["source_system"],
+            "carrier": sd["carrier"],
+            "tracking_code": sd["tracking_code"],
+            "status": sd["status"],
+            "carrier_status_raw": sd["carrier_status_raw"],
+            "status_text": SHIPMENT_STATUS_TEXT_VI.get(sd["status"], sd["status"]),
+            "current_area": sd.get("current_area"),
+            "estimated_delivery_at": format_vn_iso(effective_eta),
+            "delivered_at": format_vn_iso(sd.get("delivered_at")),
+            "delivery_attempts": int(sd.get("delivery_attempts") or 0),
+            "fail_reason": mask_shipper_phone_text(latest_fail_reason),
+            "shipper_name": mask_shipper_phone_text(sd.get("shipper_name")),
+            "shipper_phone_masked": mask_shipper_phone_text(sd.get("shipper_phone_masked")),
+            "events": events,
+        }
+
+    def _order_eligibility_in_tx(self, db, order_dict: dict, *, now: float | None = None) -> dict:
+        now_ts = self._now() if now is None else float(now)
+        product_dict = None
+        pid = order_dict.get("product_id")
+        if isinstance(pid, str) and pid.strip():
+            prod_row = db.execute("SELECT * FROM products WHERE id = ?", (pid.strip(),)).fetchone()
+            if prod_row is not None:
+                product_dict = self._row_to_product(prod_row)
+        oid = str(order_dict["id"])
+        ship_row = db.execute(
+            "SELECT * FROM shipments WHERE order_id = ? ORDER BY updated_at DESC, shipment_id DESC LIMIT 1",
+            (oid,),
+        ).fetchone()
+        ship_dict = dict(ship_row) if ship_row is not None else None
+        latest_evt_eta = None
+        if ship_dict is not None and ship_dict.get("estimated_delivery_at") is None:
+            eta_row = db.execute(
+                "SELECT estimated_delivery_at FROM shipment_events "
+                "WHERE shipment_id = ? AND estimated_delivery_at IS NOT NULL "
+                "ORDER BY occurred_at DESC, shipment_event_id DESC LIMIT 1",
+                (ship_dict["shipment_id"],),
+            ).fetchone()
+            if eta_row is not None:
+                latest_evt_eta = eta_row["estimated_delivery_at"]
+        return compute_order_eligibility(
+            order_dict,
+            product=product_dict,
+            shipment=ship_dict,
+            latest_event_estimated_delivery_at=latest_evt_eta,
+            as_of=now_ts,
+        )
+
+    def order_eligibility(
+        self,
+        order_or_id,
+        *,
+        customer_id: str | None = None,
+        now: float | None = None,
+        db=None,
+    ) -> dict:
+        def _run(conn):
+            if isinstance(order_or_id, dict):
+                ord_dict = order_or_id
+            elif customer_id is not None:
+                ord_dict = self.owned(conn, customer_id, str(order_or_id))
+            else:
+                row = conn.execute("SELECT * FROM orders WHERE id = ?", (str(order_or_id),)).fetchone()
+                require(row is not None, 404, "order_not_found", "Không tìm thấy đơn hàng.")
+                ord_dict = dict(row)
+            return self._order_eligibility_in_tx(conn, ord_dict, now=now)
+
+        if db is not None:
+            return _run(db)
+        with self.connection() as conn:
+            return _run(conn)
 
     def order_items(self, order_id):
         with self.connection() as db:
@@ -2398,11 +2698,13 @@ class BusinessStore:
             return
         now = self._now()
         with self.connection(write=True) as db:
+            canonical_oid = None
             if oid is not None:
-                self.owned(db, customer, oid)
+                ord_row = self.owned(db, customer, oid)
+                canonical_oid = ord_row["id"]
             updated = db.execute('''UPDATE conversations SET order_id=?,product_id=?,revision=revision+1,expires_at=?
                 WHERE id=? AND customer_id=? AND revision=? AND expires_at>?''',
-                (oid, pid, now + self.CONVERSATION_TTL, snapshot['id'], customer, snapshot['revision'], now)).rowcount
+                (canonical_oid, pid, now + self.CONVERSATION_TTL, snapshot['id'], customer, snapshot['revision'], now)).rowcount
             require(updated == 1, 409, 'conversation_changed', 'Ngữ cảnh đã thay đổi hoặc hết hạn. Hãy gửi lại yêu cầu trong cuộc trò chuyện hiện tại.')
 
     def replay(self, customer, cid, request_id, digest):
@@ -3414,12 +3716,14 @@ class BusinessStore:
                           k.status, k.holder, k.holder_name, k.version,
                           k.resolved_reason, k.resolved_at, k.resume_count,
                           he.reason_code, he.comment, he.created_at, k.updated_at,
-                          c.name AS customer_name, conv.order_id
+                          c.name AS customer_name, conv.order_id,
+                          ord.external_order_id AS external_order_id
                    FROM cases k
                    JOIN handoff_episodes he
                      ON he.case_id = k.case_id AND he.status = 'pending'
                    JOIN customers c ON k.customer_id = c.id
                    LEFT JOIN conversations conv ON k.conversation_id = conv.id
+                   LEFT JOIN orders ord ON conv.order_id = ord.id
                    WHERE k.status = 'waiting' AND k.holder IS NULL
                    ORDER BY k.updated_at DESC, he.created_at DESC
                    LIMIT ?''',
@@ -3433,12 +3737,14 @@ class BusinessStore:
                           k.resumed_at, k.created_at AS case_created_at,
                           he.reason_code, he.comment,
                           COALESCE(he.created_at, k.created_at) AS created_at, k.updated_at,
-                          c.name AS customer_name, conv.order_id
+                          c.name AS customer_name, conv.order_id,
+                          ord.external_order_id AS external_order_id
                    FROM cases k
                    LEFT JOIN handoff_episodes he
                      ON he.case_id = k.case_id AND he.status = 'pending'
                    JOIN customers c ON k.customer_id = c.id
                    LEFT JOIN conversations conv ON k.conversation_id = conv.id
+                   LEFT JOIN orders ord ON conv.order_id = ord.id
                    WHERE k.status = 'in_progress' AND k.holder IS NOT NULL
                    ORDER BY k.updated_at DESC
                    LIMIT ?''',
@@ -3465,10 +3771,12 @@ class BusinessStore:
                               ORDER BY he4.created_at DESC LIMIT 1
                           ) AS comment,
                           k.created_at, k.updated_at,
-                          c.name AS customer_name, conv.order_id
+                          c.name AS customer_name, conv.order_id,
+                          ord.external_order_id AS external_order_id
                    FROM cases k
                    JOIN customers c ON k.customer_id = c.id
                    JOIN conversations conv ON k.conversation_id = conv.id
+                   LEFT JOIN orders ord ON conv.order_id = ord.id
                    WHERE k.status = 'resolved'
                      AND conv.expires_at > ?
                      AND (k.resolved_at IS NULL OR k.resolved_at >= ?)
@@ -4555,6 +4863,77 @@ class BusinessStore:
         )
         return envelope
 
+    def _has_enabled_connector_in_tx(self, db, source_system: str | None) -> bool:
+        if not source_system:
+            return False
+        row = db.execute(
+            "SELECT 1 FROM integration_connectors WHERE source_system = ? AND enabled = 1 LIMIT 1",
+            (str(source_system),),
+        ).fetchone()
+        return row is not None
+
+    def list_case_unlinked_refunds(self, case_id: str) -> list[dict]:
+        """Return unlinked provider refunds (`refunds.request_id IS NULL`) on orders of a case's customer (W6.1b-D10)."""
+        require(
+            isinstance(case_id, str) and bool(re.fullmatch(r"[A-Za-z0-9_-]{1,80}", case_id)),
+            400,
+            "invalid_case_id",
+            "Mã ca hỗ trợ không hợp lệ.",
+        )
+        with self.connection() as db:
+            case_row = db.execute("SELECT customer_id FROM cases WHERE case_id = ?", (case_id,)).fetchone()
+            require(case_row is not None, 404, "case_not_found", "Không tìm thấy ca hỗ trợ.")
+            rows = db.execute(
+                """SELECT r.refund_id, r.order_id, r.provider, r.provider_refund_ref,
+                          r.amount, r.channel, r.status, r.provider_status_raw,
+                          r.initiated_at, r.completed_at, r.failure_reason,
+                          o.external_order_id, o.source_system,
+                          (SELECT COUNT(*) FROM order_action_requests oar
+                           WHERE oar.order_id = r.order_id AND oar.refund_status = 'pending') AS waiting_request_count
+                   FROM refunds r
+                   JOIN orders o ON r.order_id = o.id
+                   WHERE o.customer_id = ? AND r.request_id IS NULL
+                   ORDER BY r.initiated_at DESC, r.refund_id DESC""",
+                (case_row["customer_id"],),
+            ).fetchall()
+        out: list[dict] = []
+        for r in rows:
+            oid = str(r["order_id"])
+            ext_id = str(r["external_order_id"] or oid)
+            waiting_cnt = int(r["waiting_request_count"] or 0)
+            dual_lbl = f"{ext_id} ({oid})" if ext_id != oid else oid
+            if waiting_cnt > 1:
+                warn_msg = (
+                    f"Cảnh báo hoàn tiền: Đơn {dual_lbl} có giao dịch hoàn tiền {r['provider_refund_ref']} "
+                    f"({r['status']}) chưa nối được yêu cầu vì có {waiting_cnt} yêu cầu đang cùng chờ hoàn tiền."
+                )
+            else:
+                warn_msg = (
+                    f"Cảnh báo hoàn tiền: Đơn {dual_lbl} có giao dịch hoàn tiền {r['provider_refund_ref']} "
+                    f"({r['status']}) từ cổng thanh toán chưa xác định được yêu cầu hủy/trả/đổi tương ứng."
+                )
+            out.append(
+                {
+                    "refund_id": r["refund_id"],
+                    "order_id": oid,
+                    "internal_order_id": oid,
+                    "external_order_id": ext_id,
+                    "source_system": r["source_system"],
+                    "provider": r["provider"],
+                    "provider_refund_ref": r["provider_refund_ref"],
+                    "amount": int(r["amount"]),
+                    "channel": r["channel"],
+                    "status": r["status"],
+                    "provider_status_raw": r["provider_status_raw"],
+                    "initiated_at": format_vn_iso(r["initiated_at"]),
+                    "completed_at": format_vn_iso(r["completed_at"]),
+                    "failure_reason": r["failure_reason"],
+                    "waiting_request_count": waiting_cnt,
+                    "warning": warn_msg,
+                }
+            )
+        return out
+
     def _serialize_order_action_in_tx(self, db, row, *, now: float | None = None) -> dict:
         now_ts = self._now() if now is None else float(now)
         d = dict(row)
@@ -4609,13 +4988,23 @@ class BusinessStore:
                 stock = target_row["stock"] if target_row is not None else None
                 exchange_view["target_stock_status"] = self._stock_status(stock)
                 exchange_view["target_stock"] = int(stock) if stock is not None else None
+        order_eligibility = (
+            self._order_eligibility_in_tx(db, order_dict, now=now_ts)
+            if order_dict is not None
+            else None
+        )
+        src_sys = order_dict.get("source_system") if order_dict is not None else None
         return {
             **d,
             **exchange_view,
+            "external_order_id": order_dict.get("external_order_id") if order_dict is not None else d.get("order_id"),
+            "source_system": src_sys,
+            "refund_managed_by_provider": self._has_enabled_connector_in_tx(db, src_sys),
             "expected_order_version": int(d["expected_order_version"]),
             "version": int(d["version"]),
             "reason_label": reason_catalog().label(d["reason_code"]),
             "order": order_dict,
+            "order_eligibility": order_eligibility,
             "delivered_at": delivered_at,
             "days_since_delivery": days_since_delivery,
             "delivery_age_label": delivery_age_label,
@@ -4923,6 +5312,7 @@ class BusinessStore:
 
         now_ts = self._now() if now is None else float(now)
         order = self.owned(db, customer_id, order_id)
+        order_id = str(order["id"])
         require(
             int(order["version"]) == expected_order_version,
             409,
@@ -4930,6 +5320,12 @@ class BusinessStore:
             "Đơn đã thay đổi; vui lòng tải lại thông tin trước khi gửi yêu cầu.",
         )
         if action_type == "cancel":
+            if order["status"] == "shipping":
+                raise ApiError(
+                    409,
+                    "not_cancellable",
+                    "Đơn đang được vận chuyển (shipping) nên không thể mở yêu cầu hủy tự phục vụ; vui lòng liên hệ nhân viên CSKH hỗ trợ.",
+                )
             require(
                 order["status"] == "pending",
                 409,
@@ -5556,12 +5952,19 @@ class BusinessStore:
         now_ts = self._now()
         with self.connection(write=True) as db:
             order = self.owned(db, customer, oid)
+            if order["status"] == "shipping":
+                raise ApiError(
+                    409,
+                    "not_cancellable",
+                    "Đơn đang được vận chuyển (shipping) nên không thể mở yêu cầu hủy tự phục vụ; vui lòng liên hệ nhân viên CSKH hỗ trợ.",
+                )
             require(order["status"] == "pending", 409, "not_cancellable", "Đơn không còn ở trạng thái cho phép hủy.")
             require(order["version"] == version, 409, "stale_order", "Đơn đã thay đổi. Vui lòng tải lại thông tin.")
             pid, expires = str(uuid.uuid4()), now_ts + 600
+            canonical_oid = str(order["id"])
             db.execute("INSERT INTO proposals(id,customer_id,order_id,order_version,reason,expires_at) VALUES (?,?,?,?,?,?)",
-                       (pid, customer, oid, version, reason, expires))
-            self.log(db, customer, "cancellation_proposed", oid, proposal_id=pid, reason=reason)
+                       (pid, customer, canonical_oid, version, reason, expires))
+            self.log(db, customer, "cancellation_proposed", canonical_oid, proposal_id=pid, reason=reason)
         return {"proposal_id": pid, "order": order, "reason": reason, "expires_at": expires,
                 "message": "Đơn chưa bị hủy. Vui lòng xem lại và xác nhận."}
 
@@ -6459,6 +6862,16 @@ class BusinessStore:
         with self.connection(write=True) as db:
             req_row = db.execute("SELECT * FROM order_action_requests WHERE request_id = ?", (request_id,)).fetchone()
             require(req_row is not None, 404, "order_action_not_found", "Không tìm thấy yêu cầu đơn hàng.")
+            ord_row = db.execute(
+                "SELECT source_system FROM orders WHERE id = ?",
+                (req_row["order_id"],),
+            ).fetchone()
+            if ord_row is not None and self._has_enabled_connector_in_tx(db, ord_row["source_system"]):
+                raise ApiError(
+                    409,
+                    "refund_managed_by_provider",
+                    "Đơn hàng thuộc nguồn tích hợp có connector; kết quả hoàn tiền do cổng thanh toán cập nhật tự động.",
+                )
             cur_ver = int(req_row["version"])
             require(cur_ver == expected_ver, 409, "order_action_version_conflict", "Phiên bản yêu cầu đã thay đổi.")
             require(
@@ -6612,9 +7025,12 @@ class BusinessStore:
                 f"""SELECT r.request_id, r.order_id, r.case_id, r.type, r.exchange_kind,
                            r.status, r.refund_status, r.refund_decision,
                            r.created_at, r.updated_at, r.closed_at,
-                           c.name AS customer_name
+                           c.name AS customer_name,
+                           o.external_order_id AS external_order_id,
+                           o.source_system AS source_system
                     FROM order_action_requests r
                     LEFT JOIN customers c ON r.customer_id = c.id
+                    LEFT JOIN orders o ON r.order_id = o.id
                     {where_sql}
                     ORDER BY r.created_at DESC, r.request_id DESC
                     LIMIT ? OFFSET ?""",
@@ -6640,6 +7056,8 @@ class BusinessStore:
             items.append({
                 "request_id": r["request_id"],
                 "order_id": r["order_id"],
+                "external_order_id": r["external_order_id"] or r["order_id"],
+                "source_system": r["source_system"],
                 "case_id": r["case_id"],
                 "customer_display_name": cname,
                 "customer_name": cname,

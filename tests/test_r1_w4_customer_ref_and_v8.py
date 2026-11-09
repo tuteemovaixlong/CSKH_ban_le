@@ -25,9 +25,11 @@ from retailops.business.outbox import (
 from retailops.business.schema import (
     BUSINESS_V7_VERSION_MAPPING,
     BUSINESS_V8_VERSION_MAPPING,
+    BUSINESS_V9_VERSION_MAPPING,
     POSTGRES_BUSINESS_SCHEMA_CURRENT,
     SQLITE_BUSINESS_SCHEMA_CURRENT,
     SQLITE_BUSINESS_V7_SCHEMA_VERSION,
+    SQLITE_BUSINESS_V8_SCHEMA_VERSION,
     migrate_order_action_evidence_v8,
 )
 from retailops.business.store import (
@@ -35,15 +37,21 @@ from retailops.business.store import (
     _inspect_sqlite_business_ready,
     migrate_sqlite_business_v7,
     migrate_sqlite_business_v8,
+    migrate_sqlite_business_v9,
 )
 from retailops.config import Settings
 from retailops.core import ApiError
 from retailops.identity.persistent import PersistentSessions
 from retailops.identity.postgres import PostgresSessions
 from retailops.identity.store import IdentityStore
+from legacy_seed_fixture import provision_legacy_unit_tenant, seed_legacy_unit_fixture
 from retailops.storage import cli as database_cli
 from retailops.storage import pg_schema
-from retailops.storage.pg_repositories import PostgresBusinessStore, migrate_postgres_business_v8
+from retailops.storage.pg_repositories import (
+    PostgresBusinessStore,
+    migrate_postgres_business_v8,
+    migrate_postgres_business_v9,
+)
 from retailops.storage.pg_schema import initialize as pg_initialize
 from retailops.storage.postgres import (
     BUSINESS_SCHEMA_CURRENT,
@@ -109,7 +117,7 @@ class PhaseR1W4SaltedCustomerRefTests(unittest.TestCase):
             self.assertEqual((resolved_key, err_code), (key_a, None))
 
             sessions = PersistentSessions(self.pers, data_mode="persistent-demo")
-            store = sessions.provision_tenant("shop-a", "Shop A", seed_demo=True)
+            store = provision_legacy_unit_tenant(sessions, "shop-a", "Shop A")
             store.create_order_action_request(
                 "C-001",
                 {
@@ -155,7 +163,7 @@ class PhaseR1W4SaltedCustomerRefTests(unittest.TestCase):
         }
         with patch.dict(os.environ, clean_env, clear=True):
             sessions = PersistentSessions(self.pers, data_mode="persistent-demo")
-            store = sessions.provision_tenant("shop-a", "Shop A", seed_demo=True)
+            store = provision_legacy_unit_tenant(sessions, "shop-a", "Shop A")
 
             # Business operations succeed, but zero new rows are written to integration_outbox
             created = store.create_order_action_request(
@@ -382,19 +390,21 @@ class PhaseR1W4BusinessV8SqliteMigrationTests(unittest.TestCase):
 
     def test_fresh_sqlite_db_is_v8_straight_away_and_enforces_pdf_and_scan_constraints(self):
         self.assertEqual(SQLITE_BUSINESS_V7_SCHEMA_VERSION, 6)
-        self.assertEqual(SQLITE_BUSINESS_SCHEMA_CURRENT, 7)
-        self.assertEqual(POSTGRES_BUSINESS_SCHEMA_CURRENT, 8)
+        self.assertEqual(SQLITE_BUSINESS_V8_SCHEMA_VERSION, 7)
+        self.assertEqual(SQLITE_BUSINESS_SCHEMA_CURRENT, 8)
+        self.assertEqual(POSTGRES_BUSINESS_SCHEMA_CURRENT, 9)
         self.assertEqual(BUSINESS_V7_VERSION_MAPPING, {"logical_milestone": "business_v7", "sqlite": 6, "postgresql": 7})
         self.assertEqual(BUSINESS_V8_VERSION_MAPPING, {"logical_milestone": "business_v8", "sqlite": 7, "postgresql": 8})
+        self.assertEqual(BUSINESS_V9_VERSION_MAPPING, {"logical_milestone": "business_v9", "sqlite": 8, "postgresql": 9})
 
         fresh_path = self.root / "fresh_v8.sqlite3"
         store = BusinessStore(fresh_path)
-        store.seed()
-        self.assertEqual(_inspect_sqlite_business_ready(fresh_path), "v8_ready")
+        seed_legacy_unit_fixture(store)
+        self.assertEqual(_inspect_sqlite_business_ready(fresh_path), "v9_ready")
 
         with store.connection(write=True) as db:
             ver = db.execute("SELECT version FROM retailops_schema WHERE component='business'").fetchone()[0]
-            self.assertEqual(ver, 7)
+            self.assertEqual(ver, 8)
             tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             self.assertIn("case_assist_turns", tables)
 
@@ -445,7 +455,7 @@ class PhaseR1W4BusinessV8SqliteMigrationTests(unittest.TestCase):
                 with self.assertRaises(ApiError) as caught:
                     blocked()
                 self.assertEqual((caught.exception.status, caught.exception.code), (503, "business_migration_required"))
-                self.assertIn("migrate-v8", caught.exception.message)
+                self.assertIn("migrate-v9", caught.exception.message)
 
             # Zero bytes written during fail-closed checks
             self.assertEqual((file_sha(path_a), file_sha(path_b)), before_hashes)
@@ -497,7 +507,39 @@ class PhaseR1W4BusinessV8SqliteMigrationTests(unittest.TestCase):
                 },
             )
 
-            # Startup and `database check` now succeed
+            # Re-running migrate-v8 at the v8 milestone is a 100% no-op
+            dumps_after = (table_dump(path_a), table_dump(path_b))
+            files_after = sorted(str(p.relative_to(ws)) for p in (ws / "evidence").rglob("ev_*"))
+            again = migrate_sqlite_business_v8(
+                ws,
+                preflight_confirmed=True,
+                backup_confirmed=True,
+                malware_scanner=_FakeMigrationScanner(),
+            )
+            self.assertEqual(
+                again,
+                {
+                    "result": "BUSINESS_V8_MIGRATED",
+                    "backend": "sqlite",
+                    "schema_version": 7,
+                    "logical_version": 8,
+                    "tenants": 2,
+                    "upgraded": False,
+                    "attachments_migrated": 0,
+                    "attachments_removed": 0,
+                    "turns_updated": 0,
+                },
+            )
+            self.assertEqual((table_dump(path_a), table_dump(path_b)), dumps_after)
+            self.assertEqual(sorted(str(p.relative_to(ws)) for p in (ws / "evidence").rglob("ev_*")), files_after)
+
+            # Since W6.1b-1 moved current to Business v9, step up to v9 before `database check` / startup
+            res_v9 = database_cli.run(
+                parser.parse_args(
+                    ["database", "--output", str(ws), "migrate-v9", "--confirm-preflight", "--confirm-backup"]
+                )
+            )
+            self.assertEqual((res_v9["result"], res_v9["schema_version"], res_v9["upgraded"]), ("BUSINESS_V9_MIGRATED", 8, True))
             chk = database_cli.run(parser.parse_args(["database", "--output", str(ws), "check"]))
             self.assertEqual(chk, {"result": "SQLITE_SCHEMA_READY", "tenants_checked": 2})
 
@@ -535,32 +577,6 @@ class PhaseR1W4BusinessV8SqliteMigrationTests(unittest.TestCase):
         self.assertTrue(t3_msgs[1]["attachment"]["removed"])
         self.assertEqual(t3_msgs[1]["attachment"]["removed_reason"], "unsupported_evidence_type")
         self.assertNotIn("data", t3_msgs[1]["attachment"])
-
-        # Re-running migrate-v8 is a 100% no-op
-        dumps_after = (table_dump(path_a), table_dump(path_b))
-        files_after = sorted(str(p.relative_to(ws)) for p in (ws / "evidence").rglob("ev_*"))
-        again = migrate_sqlite_business_v8(
-            ws,
-            preflight_confirmed=True,
-            backup_confirmed=True,
-            malware_scanner=_FakeMigrationScanner(),
-        )
-        self.assertEqual(
-            again,
-            {
-                "result": "BUSINESS_V8_MIGRATED",
-                "backend": "sqlite",
-                "schema_version": 7,
-                "logical_version": 8,
-                "tenants": 2,
-                "upgraded": False,
-                "attachments_migrated": 0,
-                "attachments_removed": 0,
-                "turns_updated": 0,
-            },
-        )
-        self.assertEqual((table_dump(path_a), table_dump(path_b)), dumps_after)
-        self.assertEqual(sorted(str(p.relative_to(ws)) for p in (ws / "evidence").rglob("ev_*")), files_after)
 
 
 class PhaseR1W4BusinessV8PostgresMockTests(unittest.TestCase):
@@ -669,7 +685,7 @@ class PhaseR1W4BusinessV8PostgresMockTests(unittest.TestCase):
                 with self.assertRaises(ApiError) as err:
                     blocked()
                 self.assertEqual((err.exception.status, err.exception.code), (503, "business_migration_required"))
-                self.assertIn("migrate-v8", err.exception.message)
+                self.assertIn("migrate-v9", err.exception.message)
 
             with self.assertRaises(ApiError) as unconf:
                 database_cli.run(parser.parse_args(["database", "migrate-v8", "--confirm-backup"]))
@@ -697,7 +713,6 @@ class PhaseR1W4BusinessV8PostgresMockTests(unittest.TestCase):
                 },
             )
 
-            self.assertEqual(database_cli.run(parser.parse_args(["database", "check"]))["result"], "POSTGRES_SCHEMA_READY")
             for sc in (schema_a, schema_b):
                 mem = state.schemas[sc]
                 self.assertEqual(mem.execute("SELECT version FROM retailops_schema").fetchone()[0], 8)
@@ -731,7 +746,12 @@ class PhaseR1W4BusinessV8PostgresMockTests(unittest.TestCase):
                 },
             )
 
-            # Fresh PG schema initializes directly to v8
+            # Since W6.1b-1 moved current to Business v9, step up to v9 before `database check`
+            mig_v9 = migrate_postgres_business_v9(dsn, preflight_confirmed=True, backup_confirmed=True)
+            self.assertEqual((mig_v9["result"], mig_v9["schema_version"], mig_v9["upgraded"]), ("BUSINESS_V9_MIGRATED", 9, True))
+            self.assertEqual(database_cli.run(parser.parse_args(["database", "check"]))["result"], "POSTGRES_SCHEMA_READY")
+
+            # Fresh PG schema initializes directly to v9
             PostgresBusinessStore(dsn, "d" * 32, create=True)
             self.assertEqual(
                 state.schemas[tenant_schema("d" * 32)].execute("SELECT version FROM retailops_schema").fetchone()[0],
@@ -768,7 +788,7 @@ class RealPostgresBusinessV8Tests(unittest.TestCase):
         self.addCleanup(self.clear)
         PostgresIdentityStore(DSN, create=True)
         self.sessions = PostgresSessions(DSN, api_daily_limit=1, data_root=Path(self.temp.name))
-        self.sessions.provision_tenant("shop-a", "Cửa hàng A", seed_demo=True)
+        provision_legacy_unit_tenant(self.sessions, "shop-a", "Cửa hàng A")
         self.key = self.sessions.control.tenant("shop-a")["storage_key"]
         self.schema = tenant_schema(self.key)
 

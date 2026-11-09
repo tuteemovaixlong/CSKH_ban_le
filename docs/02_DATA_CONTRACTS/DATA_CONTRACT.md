@@ -8,7 +8,7 @@
 |---|---|---|
 | Scenario contracts | baseline30; benchmark250; master250; mỗi row có9fields | [DATA §2](../_digest/code/DATA.digest#2-scenario-inventory--local-computation) + [baseline:1](../../evals/scenarios/baseline_v1.jsonl#L1), [benchmark:1](../../evals/scenarios/benchmark_250.jsonl#L1), [master:1](../../evals/scenarios/master_250_v1.jsonl#L1) |
 | Annotation/fixture | qrels250queryrows; sidecar250caseentries | [DATA §3](../_digest/code/DATA.digest#3-sidecarqrels-inventory--local-computation) + [qrels:3](../../evals/qrels/policy_qrels_v1.json#L3), [sidecar:2](../../evals/fixtures/sidecar_250.json#L2), [qrels.py:90](../../evals/harness/qrels.py#L90) |
-| Business seeds/knowledge | Current `data/products.json`: 20 products, including orderless red-team fixture P-604; mock shipments8; deepseek seed8products/6customers/8orders/8shipments/8inventory;9Markdownknowledge | [DATA §4/5](../_digest/code/DATA.digest#4-business-json-inventory--local-computation) + [products](../../data/products.json), [shipments:2](../../data/mock_shipments.json#L2), [seed:2](../../data/deepseek_seed_data.json#L2), [faq:9](../../data/knowledge/faq.md#L9) |
+| Business seeds/knowledge | Current `data/products.json`: 20 products, including orderless red-team fixture P-604; connector status mappings in `data/connectors/`; canonical DB shipments (`shipments` / `shipment_events`);9Markdownknowledge | [DATA §4/5](../_digest/code/DATA.digest#4-business-json-inventory--local-computation) + [products](../../data/products.json), [connectors](../../data/connectors/marketplace_sim.json), [faq:9](../../data/knowledge/faq.md#L9) |
 
 `docs/_digest/code/DATA.digest` remains a historical inventory generated from the 2026-10-08 snapshot; its 19-product count/hash is not the current catalog. P-604 is a synthetic AI factuality probe: price, stock, warranty, recommended age, safety warnings/certifications, and variants are unknown/empty by design; it has no sample order. Its focused SQLite seed regression passed locally; PostgreSQL execution is pending CI. This fixture does not constitute a live-model safety result.
 
@@ -44,6 +44,6 @@ Mỗi JSONL result phải có common envelope gồm run/case/logical_request, sy
 ## 5. Unknown / Unverified
 
 - [UNVERIFIED] Creator và creation time của benchmarks/qrels/fixtures: source metadata không cung cấp; không suy từ ngày commit hay tên seed file. [DATA §7](../_digest/code/DATA.digest#7-unknown--unverified) + [benchmark:1](../../evals/scenarios/benchmark_250.jsonl#L1), [qrels:1](../../evals/qrels/policy_qrels_v1.json#L1), [sidecar:1](../../evals/fixtures/sidecar_250.json#L1).
-- [UNVERIFIED] Actual deployed DB/index/corpus snapshot và train-set provenance. [DATA §7](../_digest/code/DATA.digest#7-unknown--unverified) + [seed:1](../../data/deepseek_seed_data.json#L1), [infra:64](../phase4/PHASE_4_INFRASTRUCTURE_SPEC.md#L64).
+- [UNVERIFIED] Actual deployed DB/index/corpus snapshot và train-set provenance. [DATA §7](../_digest/code/DATA.digest#7-unknown--unverified) + [demo_events:1](../../data/demo_events/manifest.json#L1), [infra:64](../phase4/PHASE_4_INFRASTRUCTURE_SPEC.md#L64).
 
 Đọc tiếp: [metric dictionary](METRICS_DICTIONARY.md), [contamination](../01_AI_SYSTEM/AI_CONTAMINATION_ANALYSIS.md), [evaluation protocol](../03_EVALUATION/EVALUATION_PROTOCOL.md).

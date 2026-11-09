@@ -16,6 +16,7 @@ from retailops.http.routes import api_result
 from retailops.identity.contracts import RequestContext
 from retailops.workflow.case_assist import STAFF_CASE_ASSIST_TOOLS
 from retailops_providers import OpenRouterAgent
+from legacy_seed_fixture import seed_legacy_unit_fixture
 
 
 class _ScriptedFakeGateway:
@@ -99,14 +100,14 @@ class TestR1W4CaseAssistant(unittest.TestCase):
         self.store._now = lambda: self.now
         self.store.tenant_id = "tenant_w4"
         self.store.data_root = Path(self.tmp.name) / "data"
-        self.store.seed()
+        seed_legacy_unit_fixture(self.store)
 
         # Seed a second customer & order O-201 to test out-of-case scope isolation
         with self.store.connection(write=True) as db:
             db.execute("INSERT OR IGNORE INTO customers(id, name) VALUES ('C-002', 'Trần Văn B - 0909999888')")
             db.execute(
-                """INSERT OR IGNORE INTO orders(id, customer_id, product_id, name, variant, amount, status, version)
-                   VALUES ('O-201', 'C-002', 'P-101', 'Áo thun người khác', 'Đen · Size L', 250000, 'pending', 1)"""
+                """INSERT OR IGNORE INTO orders(id, customer_id, product_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version)
+                   VALUES ('O-201', 'C-002', 'P-101', 'retailops_seed', 'O-201', 1762100000.0, 'Áo thun người khác', 'Đen · Size L', 250000, 'pending', 1)"""
             )
 
         # Open a customer conversation and escalate to human support so we have an active case

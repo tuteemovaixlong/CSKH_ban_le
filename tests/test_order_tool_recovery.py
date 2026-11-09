@@ -70,8 +70,8 @@ class OrderToolRecoveryTests(unittest.TestCase):
         with self.store.connection(write=True) as db:
             for oid, owner, status in [('O-819125', 'C-001', 'pending'),
                                         ('O-819126', 'C-001', 'delivered')]:
-                db.execute('INSERT INTO orders(id,customer_id,name,variant,amount,status) VALUES (?,?,?,?,?,?)',
-                           (oid, owner, 'Fixture shirt', 'White / M', 450000, status))
+                db.execute('INSERT INTO orders(id,customer_id,source_system,external_order_id,ordered_at,name,variant,amount,status) VALUES (?,?,?,?,?,?,?,?,?)',
+                           (oid, owner, 'retailops_seed', oid, 1700000000.0, 'Fixture shirt', 'White / M', 450000, status))
         self.adapter = OpenRouterAgent(KEY, MODEL, tunnel_token=TUNNEL_KEY, vision=True)
         self.app = Application(self.store, {}, api_infer=self.adapter, orchestrator='multi_agent')
         self.cid = self.app.new_conversation('C-001', {'provider_id': 'api'})['conversation_id']
@@ -101,8 +101,8 @@ class OrderToolRecoveryTests(unittest.TestCase):
 
     def test_other_customer_order_is_not_disclosed(self):
         with self.store.connection(write=True) as db:
-            db.execute('INSERT INTO orders(id,customer_id,name,variant,amount,status) VALUES (?,?,?,?,?,?)',
-                       ('O-1002', 'C-002', 'PRIVATE ITEM', 'SECRET VARIANT', 999, 'delivered'))
+            db.execute('INSERT INTO orders(id,customer_id,name,variant,amount,status,source_system,external_order_id,ordered_at) VALUES (?,?,?,?,?,?,?,?,?)',
+                       ('O-1002', 'C-002', 'PRIVATE ITEM', 'SECRET VARIANT', 999, 'delivered', 'retailops_seed', 'O-1002', 1700000000.0))
         with patch.object(OpenRouterAgent, 'request', return_value=api_response(None, [('get_order', {'order_id': 'O-1002'})])):
             result = self.app.chat('C-001', self.body('Ki\u1ec3m tra \u0111\u01a1n O-1002'))
         serialized = json.dumps(result)
@@ -176,9 +176,7 @@ class OrderToolRecoveryTests(unittest.TestCase):
         bound = BoundTools(self.store, self.app.catalog, 'C-001', snapshot, {})
         result = bound('track_shipment', {'order_id': 'O-819125'})
         self.assertEqual(result['order_status'], 'pending')
-        self.assertIsNone(result['shipment']['carrier'])
-        self.assertIsNone(result['shipment']['tracking_code'])
-        self.assertIsNone(result['shipment']['estimated_delivery'])
+        self.assertIsNone(result['shipment'])
 
     def test_database_outage_is_not_order_not_found(self):
         with patch.object(OpenRouterAgent, 'request', return_value=api_response(None, [('get_order', {'order_id': 'O-819125'})])):
@@ -285,17 +283,17 @@ class OrderToolRecoveryTests(unittest.TestCase):
         """T03: Sequence list_orders -> duplicate get_order -> unallowed tool does not trigger tool_response_failed."""
         tool_results = [
             {'name': 'list_orders', 'args': {}, 'result': {'orders': [
-                {'id': 'O-819126', 'name': 'Quần tây ống đứng tôn dáng', 'variant': 'Đen / L', 'amount': 520000, 'status': 'delivered'}
+                {'id': 'O-819126', 'name': 'Quần tây đen hàn quốc', 'variant': 'Đen / L', 'amount': 520000, 'status': 'delivered'}
             ]}},
             {'name': 'get_order', 'args': {'order_id': 'O-819126'}, 'result': {'order': {
-                'id': 'O-819126', 'name': 'Quần tây ống đứng tôn dáng', 'variant': 'Đen / L', 'amount': 520000, 'status': 'delivered'
+                'id': 'O-819126', 'name': 'Quần tây đen hàn quốc', 'variant': 'Đen / L', 'amount': 520000, 'status': 'delivered'
             }}},
             {'name': 'prepare_cancellation', 'args': {'order_id': 'O-819126'}, 'result': {'error': 'tool_not_allowed'}}
         ]
         res = _synthesize_order_response(tool_results)
         self.assertIsNotNone(res)
         self.assertIn('O-819126', res)
-        self.assertIn('Quần tây ống đứng tôn dáng', res)
+        self.assertIn('Quần tây đen hàn quốc', res)
         self.assertIn('Một phần tra cứu bổ sung không thực hiện được', res)
 
     def test_t04_distinct_ids_o12_and_o123_not_confused_by_substring(self):
@@ -330,50 +328,44 @@ class OrderToolRecoveryTests(unittest.TestCase):
         self.assertIn('không có quyền thực hiện tra cứu này', forbidden_res)
 
     def test_t06_google_login_seeds_product_id_and_backfill_is_idempotent(self):
-        """T06: Google login seeds valid product_ids from catalog, and backfill script is idempotent."""
+        """T06: Google login on a demo tenant seeds 3 canonical account_template orders, and backfill is idempotent."""
         from retailops.identity.persistent import PersistentSessions
         from retailops.storage.backfill import backfill_sqlite
         temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(temp_dir.cleanup)
         sessions = PersistentSessions(Path(temp_dir.name))
         sessions.provision_tenant('test-tenant', 'Test Shop', seed_demo=True)
-        sessions.login_google('customer1@example.com', 'Customer One')
+        sessions.login_google('customer1@example.com', 'Customer One', sub='sub-t06-001', email_verified=True)
         bstore = sessions.business_store('test-tenant')
 
-        # Google login creates customer record and seeds catalog, without implicitly seeding orders
+        # First-time Google login on a demo-seeded tenant instantiates 3 canonical orders (excluding orderless P-604)
         with bstore.connection() as conn:
             cust = conn.execute("SELECT id FROM customers WHERE name='Customer One'").fetchone()
             self.assertIsNotNone(cust)
-            initial_orders = conn.execute("SELECT id FROM orders WHERE customer_id=?", (cust['id'],)).fetchall()
-            self.assertEqual(initial_orders, [])
-
-        # Explicit demo fixture provisioning seeds valid product_ids (excluding orderless P-604)
-        bstore.seed_demo_sample_orders(cust['id'])
-        with bstore.connection() as conn:
-            orders = conn.execute("SELECT id, name, product_id FROM orders WHERE customer_id=?", (cust['id'],)).fetchall()
+            orders = conn.execute(
+                "SELECT id, external_order_id, name, product_id, source_system FROM orders WHERE customer_id=?",
+                (cust['id'],),
+            ).fetchall()
             self.assertEqual(len(orders), 3)
             pids = {o['product_id'] for o in orders}
-            self.assertEqual(pids, {'P-601', 'P-602', 'P-603'})
+            self.assertEqual(pids, {'P-101', 'P-102', 'P-202'})
+            self.assertTrue(all(o['source_system'] == 'marketplace_sim' for o in orders))
+            self.assertTrue(all(str(o['external_order_id']).startswith('SIM-O-') for o in orders))
 
             # P-604 is an orderless synthetic red-team catalog fixture. Its missing
-            # commercial/safety attributes must remain unknown, and adding it must
-            # not rewrite the pre-existing delivered P-602 order.
+            # commercial/safety attributes must remain unknown, and catalog P-602 remains canonical.
             toy_order = conn.execute(
                 "SELECT id FROM orders WHERE customer_id=? AND product_id='P-604'",
                 (cust['id'],),
             ).fetchone()
             self.assertIsNone(toy_order)
-            legacy_order = conn.execute(
-                "SELECT name, amount, status, product_id FROM orders "
-                "WHERE customer_id=? AND product_id='P-602'",
-                (cust['id'],),
-            ).fetchone()
-            self.assertEqual(dict(legacy_order), {
-                'name': 'Quần tây đen hàn quốc',
-                'amount': 520000,
-                'status': 'delivered',
-                'product_id': 'P-602',
-            })
+
+        # Calling seed_demo_sample_orders again is idempotent (creates 0 new orders)
+        self.assertEqual(bstore.seed_demo_sample_orders(cust['id'], sessions=sessions), [])
+
+        p602 = bstore.get_product('P-602')
+        self.assertEqual(p602['name'], 'Quần tây đen hàn quốc')
+        self.assertEqual(p602['price'], 520000)
 
         p604 = bstore.get_product('P-604')
         self.assertEqual(p604['name'], 'Bộ xếp hình gỗ cho bé')
@@ -385,12 +377,12 @@ class OrderToolRecoveryTests(unittest.TestCase):
         self.assertIsNone(p604['safety_certifications'])
         self.assertEqual(p604['variants'], [])
 
-        # The source catalog is seeded additively/idempotently into the persistent
-        # tenant; re-seeding must preserve both P-604 and the legacy P-602 order.
+        # The source catalog is seeded additively/idempotently into the persistent tenant.
         bstore.seed_catalog()
         self.assertEqual(bstore.get_product('P-604'), p604)
+        self.assertEqual(bstore.get_product('P-602')['name'], 'Quần tây đen hàn quốc')
 
-        # Run backfill: first run should find 0 to update because they're already linked
+        # Run backfill: first run should find 0 to update because all orders are already linked
         tenant_file = sessions.tenant_path(sessions.control.ensure_tenant('test-tenant', 'Test Shop'))
         run1 = backfill_sqlite(tenant_file, dry_run=False)
         self.assertEqual(run1['to_update'], 0)
@@ -425,7 +417,7 @@ class OrderToolRecoveryTests(unittest.TestCase):
 
         responses = [
             api_response(None, [('list_orders', {})]),
-            api_response('Bạn đã đặt Quần tây ống đứng tôn dáng trong đơn O-819126.')
+            api_response('Bạn đã đặt Quần tây đen hàn quốc trong đơn O-819126.')
         ]
         with patch.object(OpenRouterAgent, 'request', side_effect=responses) as req:
             result = self.app.chat('C-001', self.body('Có đơn nào mua món này không?', attachment=att))
@@ -479,14 +471,14 @@ class OrderToolRecoveryTests(unittest.TestCase):
         """T11: Candidate products from visual/search match are framed as candidates without 100% certainty."""
         tool_results = [
             {'name': 'search_products', 'args': {'query': 'quần tây'}, 'result': {'products': [
-                {'id': 'P-602', 'name': 'Quần tây ống đứng tôn dáng', 'category': 'Thời trang', 'variants': ['Đen · Size S/M/L'], 'price': 520000}
+                {'id': 'P-602', 'name': 'Quần tây đen hàn quốc', 'category': 'Thời trang', 'variants': ['Đen · Size S/M/L'], 'price': 520000}
             ]}}
         ]
         res = _synthesize_order_response(tool_results)
         self.assertIsNotNone(res)
         self.assertIn('Sản phẩm khớp trong danh mục (chưa xác nhận liên kết với đơn):', res)
         self.assertIn('P-602', res)
-        self.assertIn('Quần tây ống đứng tôn dáng', res)
+        self.assertIn('Quần tây đen hàn quốc', res)
 
     def test_t12_truncated_order_list_explicitly_informs_customer(self):
         """T12: When list_orders is truncated, synthesized response clearly notifies customer."""

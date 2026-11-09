@@ -17,7 +17,7 @@ from retailops.order_reasons import reason_catalog
 from retailops.identity.bearer import authenticate_bearer
 from retailops.business.permissions import CANCEL, READ, ROLE_PERMISSIONS, STAFF
 from retailops_agent import AgentError, run_agent
-from retailops_tools import BoundTools, confirmed_orders_for
+from retailops_tools import BoundTools, confirmed_orders_for, is_order_confirmed
 from retailops.knowledge.citations import CitationError, cited_sources
 from retailops.knowledge.embedding import MODEL_ID as KNOWLEDGE_EMBEDDING_MODEL
 from retailops_providers import API_MODEL
@@ -528,6 +528,11 @@ class Application:
                         if isinstance(order_obj, dict) and 'id' in order_obj and 'version' in order_obj:
                             bound.versions[order_obj['id']] = order_obj['version']
                             bound.context = {'order_id': order_obj['id'], 'product_id': order_obj.get('product_id')}
+                    elif name == 'track_shipment' and isinstance(cached_res, dict) and not cached_res.get('error'):
+                        bound.shipment = cached_res.get('shipment')
+                        oid_internal = cached_res.get('internal_order_id') or cached_res.get('order_id')
+                        if oid_internal:
+                            bound.context['order_id'] = oid_internal
                     elif name == 'get_product' and isinstance(cached_res, dict) and isinstance(cached_res.get('product'), dict):
                         pid = cached_res['product'].get('id')
                         if bound.context['product_id'] != pid:
@@ -749,8 +754,8 @@ class Application:
             if prepared is None and bound.cancel_order:
                 prepared = {'order': bound.cancel_order, 'action_type': 'cancel', 'exchange_kind': None}
             if prepared:
-                target_oid = (prepared.get('order') or {}).get('id')
-                if target_oid not in confirmed_orders_for(text, snapshot):
+                target_ord = prepared.get('order') or {}
+                if not is_order_confirmed(target_ord, confirmed_orders_for(text, snapshot)):
                     prepared = None
                     bound.cancel_order = None
                     bound.prepared_order_action = None

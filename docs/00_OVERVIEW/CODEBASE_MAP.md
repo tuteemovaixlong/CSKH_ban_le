@@ -66,7 +66,7 @@ Inventory directory: các số đếm ngoài `docs/` được quét ngày **2026
 | `retailops/guardrails/` | Topic/sentiment/abuse triage | [topic_filter.py](../../retailops/guardrails/topic_filter.py), [sentiment.py](../../retailops/guardrails/sentiment.py) |
 | `retailops/storage/` | PostgreSQL adapter/schema, import/backfill | [postgres.py](../../retailops/storage/postgres.py), [pg_schema.py](../../retailops/storage/pg_schema.py), [import_sqlite.py](../../retailops/storage/import_sqlite.py) |
 | `retailops/knowledge/` | Ingest/chunk/embed/retrieve, citation provenance | [repository.py](../../retailops/knowledge/repository.py), [tool.py](../../retailops/knowledge/tool.py), [embedding.py](../../retailops/knowledge/embedding.py) |
-| `retailops/sales/` | Synthetic sales simulator, signed event contract, import/customer-mapping adapter | [simulator.py](../../retailops/sales/simulator.py), [events.py](../../retailops/sales/events.py), [adapter.py](../../retailops/sales/adapter.py), [fixtures.py](../../retailops/sales/fixtures.py) |
+| `retailops/integration/` | Hợp đồng sự kiện tích hợp v2, cổng nhận và ghi bảng chuẩn (W6.1b-1) | [contract.py](../../retailops/integration/contract.py), [ingest.py](../../retailops/integration/ingest.py) |
 | `web/` | Chat, lịch sử, provider selector, nghiệp vụ theo role | [app.js](../../web/app.js), [index.html](../../web/index.html), [chat-focus.js](../../web/chat-focus.js) |
 | `opsconsole/` | Dashboard report/usage/deployment snapshots; CLI import/evaluation | [server.py](../../opsconsole/server.py), [evaluation.py](../../opsconsole/evaluation.py), [usage.py](../../opsconsole/usage.py) |
 | `evals/` | Frozen scenarios, qrels, harness Phase 4 | [README](../../evals/README.md), [runner.py](../../evals/harness/runner.py), [validator.py](../../evals/harness/validator.py) |
@@ -174,7 +174,7 @@ P5-D candidate verification phải dùng job `offline` trong `ci.yml`, job này 
 | Quota/concurrency/cache | `retailops/account_usage.py`, `retailops/inference_gate.py`, `retailops/business/cache.py` |
 | RAG/citation | `retailops/knowledge/repository.py`, `retailops/knowledge/tool.py`, `retailops/knowledge/citations.py` |
 | MCP external integration | `retailops_mcp_server.py`, `retailops/workflow/mcp_client.py` |
-| Sales simulator/import/mapping | `retailops/sales/events.py`, `retailops/sales/adapter.py`, `retailops/sales/simulator.py`, `tests/test_phase5_sales_simulator_import.py` |
+| Integration v2/import/mapping | `retailops/integration/contract.py`, `retailops/integration/ingest.py`, `tests/test_phase5_sales_simulator_import.py` |
 | Same-customer complaint lifecycle | `retailops/workflow/subagents/dispute_agent.py`, `retailops/workflow/approval.py`, `tests/test_phase5_complaint_e2e.py`, [P5-D review](../phase5/REVIEW_GEMINI_P5_D_2026-10-13.md) |
 | Ops reports/usage/import | `opsconsole/server.py`, `opsconsole/evaluation.py`, `opsconsole/usage.py` |
 | Harness R10–R12 | `evals/harness/schema.py`, `evals/harness/grader.py`, `evals/harness/validator.py`, tests liên quan |

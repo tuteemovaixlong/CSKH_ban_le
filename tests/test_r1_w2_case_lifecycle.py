@@ -191,17 +191,17 @@ class PhaseR1W2BusinessV5MigrationTests(unittest.TestCase):
             BUSINESS_V5_VERSION_MAPPING,
             {"logical_milestone": "business_v5", "sqlite": 4, "postgresql": 5},
         )
-        self.assertEqual(SQLITE_BUSINESS_SCHEMA_CURRENT, 7)
-        self.assertEqual(POSTGRES_BUSINESS_SCHEMA_CURRENT, 8)
-        self.assertEqual(BUSINESS_SCHEMA_CURRENT, 8)
+        self.assertEqual(SQLITE_BUSINESS_SCHEMA_CURRENT, 8)
+        self.assertEqual(POSTGRES_BUSINESS_SCHEMA_CURRENT, 9)
+        self.assertEqual(BUSINESS_SCHEMA_CURRENT, 9)
 
-        # 1. Fresh SQLite BusinessStore creates SQLite v7 (logical Business v8) directly with Business v5..v8 tables
+        # 1. Fresh SQLite BusinessStore creates SQLite v8 (logical Business v9) directly with Business v5..v9 tables
         fresh_sqlite = self.root / "fresh_business.sqlite3"
-        store = BusinessStore(fresh_sqlite)
-        store.seed()
+        from legacy_seed_fixture import seed_legacy_unit_fixture
+        store = seed_legacy_unit_fixture(BusinessStore(fresh_sqlite))
         with store.connection() as db:
             ver_row = db.execute("SELECT component, version FROM retailops_schema").fetchone()
-            self.assertEqual((ver_row["component"], ver_row["version"]), ("business", 7))
+            self.assertEqual((ver_row["component"], ver_row["version"]), ("business", 8))
             tables = {
                 r[0]
                 for r in db.execute(
@@ -266,8 +266,8 @@ class PhaseR1W2BusinessV5MigrationTests(unittest.TestCase):
         t2_path = tenants_dir / f"{t2['storage_key']}.sqlite3"
 
         def _seed_pre_v5_sqlite(p: Path, *, with_open_handoff: bool):
-            b = BusinessStore(p)
-            b.seed()
+            from legacy_seed_fixture import seed_legacy_unit_fixture
+            b = seed_legacy_unit_fixture(BusinessStore(p))
             with closing(sqlite3.connect(p)) as db, db:
                 db.execute("DROP TABLE case_feedback_events")
                 db.execute("DROP TABLE handoff_episodes")
@@ -409,6 +409,13 @@ class PhaseR1W2BusinessV5MigrationTests(unittest.TestCase):
             )
             self.assertEqual(res_v8["result"], "BUSINESS_V8_MIGRATED")
             self.assertEqual(res_v8["upgraded"], True)
+            res_v9 = database_cli.run(
+                parser.parse_args(
+                    ["database", "--output", str(legacy_root), "migrate-v9", "--confirm-preflight", "--confirm-backup"]
+                )
+            )
+            self.assertEqual(res_v9["result"], "BUSINESS_V9_MIGRATED")
+            self.assertEqual(res_v9["upgraded"], True)
             chk = database_cli.run(parser.parse_args(["database", "--output", str(legacy_root), "check"]))
             self.assertEqual(chk, {"result": "SQLITE_SCHEMA_READY", "tenants_checked": 2})
 
@@ -556,9 +563,10 @@ class PhaseR1W2BusinessV5MigrationTests(unittest.TestCase):
                     return _CursorAdapter([])
 
                 mem = state.schemas[self.active_schema]
-                if q.startswith("CREATE OR REPLACE FUNCTION ") or q.startswith("DROP TRIGGER IF EXISTS "):
+                q_norm = " ".join(q.split())
+                if q_norm.startswith("CREATE OR REPLACE FUNCTION ") or q_norm.startswith("DROP TRIGGER IF EXISTS "):
                     return _CursorAdapter([])
-                if "EXECUTE FUNCTION order_action_decisions_immutable()" in q:
+                if "EXECUTE FUNCTION order_action_decisions_immutable()" in q_norm:
                     mem.execute(
                         "CREATE TRIGGER IF NOT EXISTS order_action_decisions_no_update "
                         "BEFORE UPDATE ON order_action_decisions "
@@ -568,6 +576,19 @@ class PhaseR1W2BusinessV5MigrationTests(unittest.TestCase):
                         "CREATE TRIGGER IF NOT EXISTS order_action_decisions_no_delete "
                         "BEFORE DELETE ON order_action_decisions "
                         "BEGIN SELECT RAISE(ABORT, 'order_action_decisions is append-only'); END"
+                    )
+                    mem.commit()
+                    return _CursorAdapter([])
+                if "EXECUTE FUNCTION shipment_events_immutable()" in q_norm:
+                    mem.execute(
+                        "CREATE TRIGGER IF NOT EXISTS shipment_events_no_update "
+                        "BEFORE UPDATE ON shipment_events "
+                        "BEGIN SELECT RAISE(ABORT, 'shipment_events is append-only'); END"
+                    )
+                    mem.execute(
+                        "CREATE TRIGGER IF NOT EXISTS shipment_events_no_delete "
+                        "BEFORE DELETE ON shipment_events "
+                        "BEGIN SELECT RAISE(ABORT, 'shipment_events is append-only'); END"
                     )
                     mem.commit()
                     return _CursorAdapter([])
@@ -671,13 +692,13 @@ class PhaseR1W2BusinessV5MigrationTests(unittest.TestCase):
             self.assertEqual(cases_a["pg-conv-2"]["status"], "resolved")
             self.assertEqual(cases_a["pg-conv-2"]["resolved_reason"], "migrated_v5")
 
-            # 3. Fresh PostgreSQL tenant schema initializes directly to v8 (logical Business v8)
+            # 3. Fresh PostgreSQL tenant schema initializes directly to v9 (logical Business v9)
             key_c = "c" * 32
             PostgresBusinessStore(pg_dsn, key_c, create=True)
             schema_c = tenant_schema(key_c)
             self.assertEqual(
                 state.schemas[schema_c].execute("SELECT version FROM retailops_schema").fetchone()[0],
-                8,
+                9,
             )
             self.assertIsNotNone(
                 state.schemas[schema_c].execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cases'").fetchone()
@@ -714,8 +735,9 @@ class PhaseR1W2CaseHandoffResumeFeedbackTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.now = 1_762_100_000.0
         self.store = BusinessStore(Path(self.tmp.name) / "biz.sqlite3")
+        from legacy_seed_fixture import seed_legacy_unit_fixture
         self.store.clock = lambda: self.now
-        self.store.seed()
+        seed_legacy_unit_fixture(self.store)
         self.agent = _SimpleAgent()
         from retailops.business.application import Application
 
@@ -1009,9 +1031,10 @@ class PhaseR1W2StaffDeskClaimResolveReadOnlyTests(unittest.TestCase):
             st.clock = lambda: self.now
             return st
 
+        from legacy_seed_fixture import provision_legacy_unit_tenant
         self.sessions.business_store = _clocked_bstore
-        self.store_a = self.sessions.provision_tenant("store-alpha", "Alpha", seed_demo=True)
-        self.store_b = self.sessions.provision_tenant("store-beta", "Beta", seed_demo=True)
+        self.store_a = provision_legacy_unit_tenant(self.sessions, "store-alpha", "Alpha")
+        self.store_b = provision_legacy_unit_tenant(self.sessions, "store-beta", "Beta")
         self.store_a.clock = lambda: self.now
         self.store_b.clock = lambda: self.now
         self.web = PublicWeb(ORIGIN, self.sessions, start_timer_worker=False)
@@ -1250,8 +1273,9 @@ class PhaseR1W2CaseTimersTests(unittest.TestCase):
             api_daily_limit=20,
             default_tenant_id="store-alpha",
         )
+        from legacy_seed_fixture import provision_legacy_unit_tenant
         self.sessions.store_clock = lambda: self.now
-        self.store = self.sessions.provision_tenant("store-alpha", "Alpha", seed_demo=True)
+        self.store = provision_legacy_unit_tenant(self.sessions, "store-alpha", "Alpha")
         self.web = PublicWeb(ORIGIN, self.sessions, start_timer_worker=False)
         self._wsgi = _wsgi
 

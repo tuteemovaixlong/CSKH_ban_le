@@ -8,6 +8,7 @@ from retailops.business.application import Application
 from retailops.business.store import BusinessStore
 from retailops_tools import BoundTools
 from retailops_conversation import Catalog
+from legacy_seed_fixture import seed_legacy_unit_fixture
 
 
 class FakeAgent:
@@ -37,7 +38,53 @@ class RetailProductionToolsTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.store = BusinessStore(Path(self.temp.name) / 'business.sqlite3')
-        self.store.seed()
+        seed_legacy_unit_fixture(self.store)
+        with self.store.connection() as db:
+            db.execute(
+                """INSERT INTO shipments (
+                    shipment_id, order_id, source_system, external_shipment_id, carrier, tracking_code,
+                    status, carrier_status_raw, current_area, estimated_delivery_at, delivered_at,
+                    delivery_attempts, shipper_name, shipper_phone_masked, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    'shp_o101', 'O-101', 'marketplace_sim', 'EXT-SHP-101',
+                    'Giao Hàng Tiết Kiệm (GHTK)', 'GHTK.VN.0918231',
+                    'in_transit', 'transporting', 'Bưu cục Tân Bình, TP.HCM',
+                    1794218400.0, None, 0, 'Nguyễn Văn Nam', '090****334', 1794132000.0,
+                ),
+            )
+            db.execute(
+                """INSERT INTO shipment_events (
+                    shipment_event_id, shipment_id, status, carrier_status_raw,
+                    hub_name, district, province, description, occurred_at, estimated_delivery_at, source_event_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    'se_s101_1', 'shp_o101', 'picked_up', 'picked',
+                    'Kho Shop', 'Cầu Giấy', 'Hà Nội', 'Đã lấy hàng tại shop', 1794110000.0, 1794218400.0, 'evt_s101_1',
+                    'se_s101_2', 'shp_o101', 'in_transit', 'transporting',
+                    'Bưu cục Tân Bình', 'Tân Bình', 'TP.HCM', 'Đang trung chuyển tới bưu cục phát', 1794132000.0, 1794218400.0, 'evt_s101_2',
+                ),
+            )
+            db.execute(
+                """INSERT INTO shipments (
+                    shipment_id, order_id, source_system, external_shipment_id, carrier, tracking_code,
+                    status, carrier_status_raw, current_area, estimated_delivery_at, delivered_at,
+                    delivery_attempts, shipper_name, shipper_phone_masked, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    'shp_o102', 'O-102', 'marketplace_sim', 'EXT-SHP-102',
+                    'Giao Hàng Nhanh (GHN)', 'GHN.VN.8839210',
+                    'delivered', 'delivered', 'Quận 1, TP.HCM',
+                    1794045600.0, 1794042900.0, 1, 'Trần Quốc Tuấn', '098****442', 1794042900.0,
+                ),
+            )
+            db.execute(
+                """INSERT INTO orders (
+                    id, customer_id, product_id, name, variant, amount, status, version,
+                    source_system, external_order_id, ordered_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ('O-109', 'C-001', 'P-101', 'Áo thun Essential', 'Trắng / M', 299000, 'pending', 1, 'marketplace_sim', 'SIM-O-0109', 1794100000.0),
+            )
         self.catalog = Catalog()
         self.identity = {'name': 'qwen3.5:4b', 'digest': 'abc', 'provider': 'custom'}
         conv = self.store.new_conversation('C-001')
@@ -61,12 +108,14 @@ class RetailProductionToolsTests(unittest.TestCase):
             validate_tool('request_human_support', {})  # missing reason
 
     def test_track_shipment_tool_execution(self):
-        # Order O-101 (in-transit GHTK)
+        # Order O-101 (in-transit GHTK from DB shipments + shipment_events)
         res_101 = self.tools('track_shipment', {'order_id': 'O-101'})
         self.assertEqual(res_101['order_id'], 'O-101')
         self.assertIn('GHTK', res_101['shipment']['carrier'])
         self.assertEqual(res_101['shipment']['status'], 'in_transit')
-        self.assertTrue(len(res_101['shipment']['steps']) >= 2)
+        self.assertEqual(res_101['shipment']['carrier_status_raw'], 'transporting')
+        self.assertEqual(res_101['shipment']['shipper_phone_masked'], '090****334')
+        self.assertTrue(len(res_101['shipment']['events']) >= 2)
         self.assertEqual(self.tools.shipment, res_101['shipment'])
 
         # Order O-102 (delivered GHN)
@@ -74,6 +123,12 @@ class RetailProductionToolsTests(unittest.TestCase):
         self.assertEqual(res_102['order_id'], 'O-102')
         self.assertIn('GHN', res_102['shipment']['carrier'])
         self.assertEqual(res_102['shipment']['status'], 'delivered')
+
+        # Order O-109 (no shipment row in DB -> returns shipment=None without fabricating)
+        res_109 = self.tools('track_shipment', {'order_id': 'SIM-O-0109'})
+        self.assertEqual(res_109['external_order_id'], 'SIM-O-0109')
+        self.assertEqual(res_109['internal_order_id'], 'O-109')
+        self.assertIsNone(res_109['shipment'])
 
     def test_check_inventory_tool_execution(self):
         # In stock

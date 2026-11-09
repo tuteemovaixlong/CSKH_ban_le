@@ -22,9 +22,7 @@ from retailops.core import ApiError, ROOT
 from retailops.http.public import PublicWeb
 from retailops.identity.persistent import PersistentSessions
 from retailops.identity.store import IdentityStore
-from retailops.sales.events import compute_signature
-from retailops.sales.fixtures import FIXTURE_ORDER_MULTI_ITEM
-from retailops.sales.simulator import DEFAULT_DEV_SECRET, DEFAULT_SAMPLE_ITEMS, SalesSimulator
+from retailops.integration.ingest import IntegrationIngestService
 from retailops.storage.pg_repositories import PostgresBusinessStore, PostgresIdentityStore
 from retailops.storage.postgres import transaction, validate_dsn
 from scripts import purge_demo_order as purge_cli
@@ -139,7 +137,7 @@ class Phase5FixATests(unittest.TestCase):
             "--product-id", "P-602",
             "--status", "delivered",
             "--amount", "520000",
-            "--snapshot-name", "Quần tây ống đứng tôn dáng",
+            "--snapshot-name", "Quần tây đen hàn quốc",
         ]
         existing_sqlite_dir = self.tmp_path / "existing_sqlite_dir"
         existing_sqlite_dir.mkdir(parents=True, exist_ok=True)
@@ -521,31 +519,15 @@ class Phase5FixATests(unittest.TestCase):
         self.assertIn("MANAGER_BACK_KPI_BTN_IDS", js)
 
     def test_fixa_data1_runtime_sources_and_p602_catalog_preservation(self):
-        legacy_name = "Quần tây ống đứng tôn dáng"
         owner_name = "Quần tây đen hàn quốc"
 
-        # 1. Runtime producer files must not contain the legacy order/product snapshot name
-        runtime_paths = [
-            ROOT / "data" / "products.json",
-            ROOT / "retailops" / "business" / "store.py",
-            ROOT / "retailops" / "http" / "routes.py",
-            ROOT / "retailops" / "sales" / "simulator.py",
-            ROOT / "retailops" / "sales" / "fixtures.py",
-            ROOT / "notebooks" / "colab_agent.ipynb",
-        ]
-        for path in runtime_paths:
-            content = path.read_text(encoding="utf-8")
-            self.assertNotIn(legacy_name, content, f"Legacy snapshot name still present in runtime file {path}")
+        # 1. Active catalog JSON carries the canonical owner-standardized name for P-602
+        products_json = json.loads((ROOT / "data" / "products.json").read_text(encoding="utf-8"))
+        p602_json = [p for p in products_json["products"] if p["id"] == "P-602"]
+        self.assertEqual(len(p602_json), 1)
+        self.assertEqual(p602_json[0]["name"], owner_name)
 
-        # 2. Simulator & fixture items for P-602 use owner-updated name
-        p602_sim = [i for i in DEFAULT_SAMPLE_ITEMS if i["product_id"] == "P-602"]
-        self.assertEqual(len(p602_sim), 1)
-        self.assertEqual(p602_sim[0]["product_title"], owner_name)
-        p602_fix = [i for i in FIXTURE_ORDER_MULTI_ITEM["items"] if i["product_id"] == "P-602"]
-        self.assertEqual(len(p602_fix), 1)
-        self.assertEqual(p602_fix[0]["product_title"], owner_name)
-
-        # 3. Seeded catalog preserves P-602 with owner-updated name and commercial attributes
+        # 2. Seeded catalog preserves P-602 with owner-updated name and commercial attributes
         sessions = PersistentSessions(self.tmp_path / "p602_cat", data_mode="persistent-demo")
         bstore = sessions.provision_tenant("demo-store", "Demo Store", seed_demo=True)
         p602 = bstore.get_product("P-602")
@@ -559,7 +541,8 @@ class Phase5FixATests(unittest.TestCase):
 
     def test_fixa_data2_to_data5_targeted_purge_guards_retention_and_tombstone(self):
         sessions = PersistentSessions(self.tmp_path / "purge_suite", data_mode="persistent-demo")
-        bstore = sessions.provision_tenant("demo-store", "Demo Store", seed_demo=True)
+        bstore = sessions.provision_tenant("demo-store", "Demo Store", seed_demo=False)
+        bstore.seed_catalog()
         web = PublicWeb("https://shop.example.com", sessions)
 
         now = time.time()
@@ -567,14 +550,14 @@ class Phase5FixATests(unittest.TestCase):
             db.execute("INSERT INTO customers(id, name) VALUES ('CG-d9b82ffe', 'Demo Customer') ON CONFLICT DO NOTHING")
             db.execute("INSERT INTO customers(id, name) VALUES ('mgr_demo', 'Store Manager') ON CONFLICT DO NOTHING")
             db.execute(
-                """INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id)
-                   VALUES ('O-819125', 'CG-d9b82ffe', 'Áo sơ mi lụa công sở', 'Trắng / M', 450000, 'pending', 1, NULL, 'P-601'),
-                          ('O-819126', 'CG-d9b82ffe', 'Quần tây ống đứng tôn dáng', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602'),
-                          ('O-819127', 'CG-d9b82ffe', 'Giày lười da bò cao cấp', 'Nâu / 41', 890000, 'delivered', 1, NULL, 'P-603')"""
+                """INSERT INTO orders(id, customer_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version, cancel_reason, product_id)
+                   VALUES ('O-819125', 'CG-d9b82ffe', 'retailops_seed', 'O-819125', 1700000000.0, 'Áo sơ mi lụa công sở', 'Trắng / M', 450000, 'pending', 1, NULL, 'P-601'),
+                          ('O-819126', 'CG-d9b82ffe', 'retailops_seed', 'O-819126', 1700000000.0, 'Quần tây đen hàn quốc', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602'),
+                          ('O-819127', 'CG-d9b82ffe', 'retailops_seed', 'O-819127', 1700000000.0, 'Giày lười da bò cao cấp', 'Nâu / 41', 890000, 'delivered', 1, NULL, 'P-603')"""
             )
             db.execute(
                 """INSERT INTO order_items(id, tenant_id, order_id, product_id, variant_id, product_title, variant_name, quantity, unit_price, subtotal, created_at)
-                   VALUES ('oi-819126-1', 'demo-store', 'O-819126', 'P-602', 'P-602-L-Đen', 'Quần tây ống đứng tôn dáng', 'Đen / L', 1, 520000, 520000, ?)""",
+                   VALUES ('oi-819126-1', 'demo-store', 'O-819126', 'P-602', 'P-602-L-Đen', 'Quần tây đen hàn quốc', 'Đen / L', 1, 520000, 520000, ?)""",
                 (now,),
             )
             db.execute(
@@ -625,7 +608,7 @@ class Phase5FixATests(unittest.TestCase):
             product_id="P-602",
             status="delivered",
             amount=520000,
-            snapshot_name="Quần tây ống đứng tôn dáng",
+            snapshot_name="Quần tây đen hàn quốc",
         )
 
         # Keep stale rows as sentinels: the CLI dry-run must not perform the
@@ -659,7 +642,7 @@ class Phase5FixATests(unittest.TestCase):
             {"product_id": "P-603"},
             {"status": "pending"},
             {"amount": 450000},
-            {"snapshot_name": "Quần tây đen hàn quốc"},
+            {"snapshot_name": "Áo sơ mi lụa công sở"},
         ):
             with self.assertRaises(ApiError) as ctx_mismatch:
                 sessions.purge_demo_order(**{**target_kwargs, **field_override})
@@ -701,7 +684,7 @@ class Phase5FixATests(unittest.TestCase):
                 "--amount",
                 "520000",
                 "--snapshot-name",
-                "Quần tây ống đứng tôn dáng",
+                "Quần tây đen hàn quốc",
                 ]
             )
         self.assertEqual(cli_dry_code, 0)
@@ -738,7 +721,7 @@ class Phase5FixATests(unittest.TestCase):
                 "--amount",
                 "520000",
                 "--snapshot-name",
-                "Quần tây ống đứng tôn dáng",
+                "Quần tây đen hàn quốc",
                 "--execute",
                 "--reason",
                 "Phase 5 Fix A cleanup of legacy demo snapshot order O-819126",
@@ -807,48 +790,91 @@ class Phase5FixATests(unittest.TestCase):
         self.assertEqual(sorted(o["id"] for o in cust_recheck["orders"]), ["O-819125", "O-819127"])
 
         # Attempting to replay or import an event for tombstoned order O-819126 is rejected with 409 order_purged_tombstone
-        sim = SalesSimulator(tenant_id="demo-store", secret_key=DEFAULT_DEV_SECRET)
-        purged_event = sim.create_order_event(
-            tenant="demo-store",
-            external_customer_id="ext-cg-demo",
-            order_id="O-819126",
-            status="delivered",
-            items=[
-                {
-                    "product_id": "P-602",
-                    "product_title": "Quần tây ống đứng tôn dáng",
-                    "variant_name": "Đen / L",
-                    "quantity": 1,
-                    "unit_price": 520000,
-                }
-            ],
-            event_id="evt-replay-purged-819126",
-        )
+        ingest_svc = IntegrationIngestService(sessions, digest_key=b"test-digest-key-32-bytes-minimum!!")
+        purged_event = {
+            "contract": "retailops-integration-v2",
+            "event_id": "evt-replay-purged-819126",
+            "event_type": "order.created",
+            "source_system": "marketplace_sim",
+            "merchant_id": "demo-store",
+            "occurred_at": "2026-11-01T10:00:00+07:00",
+            "sequence": 1,
+            "data": {
+                "external_order_id": "O-819126",
+                "external_customer_id": "ext-cg-demo",
+                "ordered_at": "2026-11-01T10:00:00+07:00",
+                "items": [
+                    {
+                        "sku": "SKU-P602-BLK-L",
+                        "external_product_id": "P-602",
+                        "title": "Quần tây đen hàn quốc",
+                        "variant_name": "Đen / L",
+                        "quantity": 1,
+                        "unit_price": 520000,
+                    }
+                ],
+                "shipping_fee": 0,
+                "total": 520000,
+                "currency": "VND",
+                "payment_method": "cod",
+                "promised_delivery_by": "2026-11-04T10:00:00+07:00",
+                "recipient": {
+                    "name": "Nguyễn Văn Thử",
+                    "phone": "0901234567",
+                    "address_line": "123 Đường Mẫu",
+                    "ward": "Phường Bến Nghé",
+                    "district": "Quận 1",
+                    "province": "TP. Hồ Chí Minh",
+                },
+            },
+        }
         with self.assertRaises(ApiError) as ctx_tomb:
-            sessions.import_sales_event(purged_event)
+            ingest_svc.ingest_event(purged_event, tenant_id="demo-store")
         self.assertEqual(ctx_tomb.exception.status, 409)
         self.assertEqual(ctx_tomb.exception.code, "order_purged_tombstone")
 
-        # Importing a NEW valid P-602 order with a different order_id succeeds normally
-        new_p602_event = sim.create_order_event(
-            tenant="demo-store",
-            external_customer_id="ext-cg-demo",
-            order_id="O-906020",
-            status="pending",
-            items=[
-                {
-                    "product_id": "P-602",
-                    "product_title": "Quần tây đen hàn quốc",
-                    "variant_name": "Đen / M",
-                    "quantity": 1,
-                    "unit_price": 520000,
-                }
-            ],
-            event_id="evt-new-valid-p602",
-        )
-        imp_res = sessions.import_sales_event(new_p602_event)
+        # Importing a NEW valid P-602 order with a different external_order_id succeeds normally
+        new_p602_event = {
+            "contract": "retailops-integration-v2",
+            "event_id": "evt-new-valid-p602",
+            "event_type": "order.created",
+            "source_system": "marketplace_sim",
+            "merchant_id": "demo-store",
+            "occurred_at": "2026-11-01T10:05:00+07:00",
+            "sequence": 1,
+            "data": {
+                "external_order_id": "O-906020",
+                "external_customer_id": "ext-cg-demo",
+                "ordered_at": "2026-11-01T10:05:00+07:00",
+                "items": [
+                    {
+                        "sku": "SKU-P602-BLK-M",
+                        "external_product_id": "P-602",
+                        "title": "Quần tây đen hàn quốc",
+                        "variant_name": "Đen / M",
+                        "quantity": 1,
+                        "unit_price": 520000,
+                    }
+                ],
+                "shipping_fee": 0,
+                "total": 520000,
+                "currency": "VND",
+                "payment_method": "cod",
+                "promised_delivery_by": "2026-11-04T10:05:00+07:00",
+                "recipient": {
+                    "name": "Nguyễn Văn Thử",
+                    "phone": "0901234567",
+                    "address_line": "123 Đường Mẫu",
+                    "ward": "Phường Bến Nghé",
+                    "district": "Quận 1",
+                    "province": "TP. Hồ Chí Minh",
+                },
+            },
+        }
+        imp_res = ingest_svc.ingest_event(new_p602_event, tenant_id="demo-store")
         self.assertTrue(imp_res.success)
-        self.assertEqual(imp_res.order_id, "O-906020")
+        self.assertTrue(imp_res.order_id.startswith("ord_"))
+        self.assertEqual(imp_res.external_order_id, "O-906020")
 
     def test_fixb_backend_readonly_error_parity_corrupt_sqlite_and_uninitialized_tombstone_bigint(self):
         # 1. SQLite & PostgreSQL read-only write attempts both raise ApiError(409, 'read_only_store')
@@ -971,7 +997,7 @@ class Phase5FixATests(unittest.TestCase):
             "--product-id", "P-602",
             "--status", "delivered",
             "--amount", "520000",
-            "--snapshot-name", "Quần tây ống đứng tôn dáng",
+            "--snapshot-name", "Quần tây đen hàn quốc",
         ]
         clean_env = {
             "RETAILOPS_STORAGE_BACKEND": "",
@@ -991,8 +1017,8 @@ class Phase5FixATests(unittest.TestCase):
         with bstore_rw.connection(write=True) as db:
             db.execute("INSERT INTO customers(id, name) VALUES ('CG-d9b82ffe', 'Demo Customer') ON CONFLICT DO NOTHING")
             db.execute(
-                "INSERT INTO orders(id, customer_id, name, variant, amount, status, version, cancel_reason, product_id) "
-                "VALUES ('O-819126', 'CG-d9b82ffe', 'Quần tây ống đứng tôn dáng', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602')"
+                "INSERT INTO orders(id, customer_id, source_system, external_order_id, ordered_at, name, variant, amount, status, version, cancel_reason, product_id) "
+                "VALUES ('O-819126', 'CG-d9b82ffe', 'retailops_seed', 'O-819126', 1700000000.0, 'Quần tây đen hàn quốc', 'Đen / L', 520000, 'delivered', 1, NULL, 'P-602')"
             )
             db.execute("DROP TABLE IF EXISTS order_purge_tombstones")
             self.assertFalse(bstore_rw._tombstone_table_exists(db))
@@ -1005,7 +1031,7 @@ class Phase5FixATests(unittest.TestCase):
             "--product-id", "P-602",
             "--status", "delivered",
             "--amount", "520000",
-            "--snapshot-name", "Quần tây ống đứng tôn dáng",
+            "--snapshot-name", "Quần tây đen hàn quốc",
         ]
         stdout_dry = io.StringIO()
         with patch.dict(os.environ, clean_env), redirect_stdout(stdout_dry):

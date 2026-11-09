@@ -33,5 +33,12 @@ assert 'order_action_request_id' in runner, 'live E2E must verify OD-05 order_ac
 assert '/api/order-actions' in runner, 'live E2E must verify created order action via /api/order-actions'
 assert 'first.get("status") == "requested"' in runner, 'live E2E must verify requested status after confirm'
 assert '(order_after.get("order") or {}).get("status") == "pending"' in runner, 'live E2E must verify order stays pending until human review'
+for legacy_id in ('"C-001"', '"O-101"', '"C-002"', '"P-001"'):
+    assert legacy_id not in runner, f'retired legacy seed identifier is forbidden in live E2E runner: {legacy_id}'
+assert 'select_seeded_targets' in runner, 'live E2E must resolve targets dynamically from seeded tenant data'
+public_https = (ROOT / 'scripts' / 'check_public_https.py').read_text(encoding='utf-8')
+assert "'/app/deploy/live-e2e.py'" in public_https and "'--resolve-targets'" in public_https and "'ci-shop'" in public_https, (
+    'check_public_https.py must exercise packaged /app/deploy/live-e2e.py --resolve-targets on ci-shop container'
+)
 
 print('LIVE_E2E_CONTRACT_OK')

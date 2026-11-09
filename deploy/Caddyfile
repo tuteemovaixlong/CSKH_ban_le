@@ -21,6 +21,13 @@
 		-Server
 		Strict-Transport-Security "max-age=86400"
 	}
+	@internal_routes {
+		path /internal /internal/*
+	}
+	handle @internal_routes {
+		header Content-Type "application/json; charset=utf-8"
+		respond `{"error":"not_found","message":"Không tìm thấy đường dẫn."}` 404
+	}
 	reverse_proxy web:8000 {
 		header_up -Authorization
 		header_up -Forwarded

@@ -20,6 +20,7 @@ import queue
 import re
 import sys
 import threading
+import time
 import urllib.parse
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -579,211 +580,51 @@ def _load_text_file(relative_path: str, default: str = "") -> str:
     return default
 
 
-def _get_active_orders() -> Dict[str, Dict[str, Any]]:
-    """Build in-memory or database orders lookup."""
-    orders_map: Dict[str, Dict[str, Any]] = {
-        "O-101": {
-            "order_id": "O-101",
-            "customer_id": "C-001",
-            "product_id": "P-101",
-            "product_name": "Áo thun Essential",
-            "variant": "Trắng · Size M · Số lượng 1",
-            "amount": 299000,
-            "status": "pending",
-            "order_date": "18/09/2026",
-            "payment_method": "COD",
-            "shipping_carrier": "Giao Hàng Tiết Kiệm (GHTK)"
-        },
-        "O-102": {
-            "order_id": "O-102",
-            "customer_id": "C-001",
-            "product_id": "P-102",
-            "product_name": "Áo khoác Everyday",
-            "variant": "Đen · Size L · Số lượng 1",
-            "amount": 799000,
-            "status": "delivered",
-            "order_date": "16/09/2026",
-            "payment_method": "Ví MoMo",
-            "shipping_carrier": "Giao Hàng Nhanh (GHN)"
-        },
-        "O-202": {
-            "order_id": "O-202",
-            "customer_id": "C-002",
-            "product_id": "P-202",
-            "product_name": "Áo polo",
-            "variant": "Xanh · Size M · Số lượng 1",
-            "amount": 399000,
-            "status": "pending",
-            "order_date": "18/09/2026",
-            "payment_method": "VNPAY",
-            "shipping_carrier": "SPX Express"
-        },
-        "O-301": {
-            "order_id": "O-301",
-            "customer_id": "C-003",
-            "product_id": "P-103",
-            "product_name": "Áo Sơ Mi Oxford Dài Tay",
-            "variant": "Trắng · Size M · Số lượng 1",
-            "amount": 350000,
-            "status": "pending",
-            "order_date": "18/09/2026",
-            "payment_method": "COD",
-            "shipping_carrier": "SPX Express"
-        },
-        "O-302": {
-            "order_id": "O-302",
-            "customer_id": "C-003",
-            "product_id": "P-104",
-            "product_name": "Áo Khoác Gió Bomber 2 Lớp",
-            "variant": "Đen · Size L · Số lượng 1",
-            "amount": 550000,
-            "status": "delivered",
-            "order_date": "13/09/2026",
-            "payment_method": "Thẻ tín dụng",
-            "shipping_carrier": "Giao Hàng Tiết Kiệm (GHTK)"
-        },
-        "O-303": {
-            "order_id": "O-303",
-            "customer_id": "C-004",
-            "product_id": "P-203",
-            "product_name": "Áo Polo Nam Phối Bo Cổ Co Giãn",
-            "variant": "Xanh Navy · Size M · Số lượng 1",
-            "amount": 399000,
-            "status": "delivered",
-            "order_date": "16/09/2026",
-            "payment_method": "COD",
-            "shipping_carrier": "Giao Hàng Nhanh (GHN)"
-        },
-        "O-304": {
-            "order_id": "O-304",
-            "customer_id": "C-004",
-            "product_id": "P-301",
-            "product_name": "Bộ Nồi Inox 3 Đáy Cao Cấp",
-            "variant": "Bạc · Bộ 3 món · Số lượng 1",
-            "amount": 1250000,
-            "status": "pending",
-            "order_date": "15/09/2026",
-            "payment_method": "ZaloPay",
-            "shipping_carrier": "Giao Hàng Nhanh (GHN)"
-        }
-    }
-    # Merge deepseek seed data if exists
-    seed_data = _load_json_file("data/deepseek_seed_data.json", {})
-    for item in seed_data.get("orders", []):
-        oid = item.get("id")
-        if oid and oid not in orders_map:
-            orders_map[oid] = {
-                "order_id": oid,
-                "customer_id": item.get("customer_id", "C-001"),
-                "product_id": item.get("product_id", "P-101"),
-                "product_name": item.get("product_name", item.get("title", "Sản phẩm RetailOps")),
-                "variant": item.get("variant", "Tiêu chuẩn"),
-                "amount": item.get("amount", 299000),
-                "status": item.get("status", "pending"),
-                "order_date": item.get("order_date", "18/09/2026"),
-                "payment_method": item.get("payment_method", "COD"),
-                "shipping_carrier": item.get("shipping_carrier", "GHTK")
-            }
-    return orders_map
+def _resolve_mcp_db_path() -> Optional[Path]:
+    env_path = os.environ.get("RETAILOPS_DB_PATH", "").strip()
+    if env_path:
+        p = Path(env_path)
+        return p if p.exists() else None
+    default_path = ROOT / "artifacts" / "business.sqlite3"
+    return default_path if default_path.exists() else None
 
 
-def _get_shipment_data() -> Dict[str, Dict[str, Any]]:
-    shipments: Dict[str, Dict[str, Any]] = {
-        "O-101": {
-            "carrier": "Giao Hàng Tiết Kiệm (GHTK)",
-            "tracking_code": "GHTK.VN.0918231",
-            "status": "in_transit",
-            "status_text": "Đang trung chuyển",
-            "current_location": "Bưu cục Tân Bình, TP.HCM",
-            "shipper": "Nguyễn Văn Nam (0903.112.334)",
-            "estimated_delivery": "Ngày mai (trước 17:00)",
-            "steps": [
-                {"time": "08:30 hôm nay", "event": "Đang trên xe trung chuyển liên tỉnh"},
-                {"time": "20:15 hôm qua", "event": "Đã nhập kho phân loại Tân Bình"},
-                {"time": "14:00 hôm qua", "event": "Shop RetailOps đã bàn giao cho shipper GHTK"}
-            ]
-        },
-        "O-102": {
-            "carrier": "Giao Hàng Nhanh (GHN)",
-            "tracking_code": "GHN.VN.8839210",
-            "status": "delivered",
-            "status_text": "Đã giao thành công",
-            "current_location": "Người nhận đã ký nhận",
-            "shipper": "Trần Quốc Tuấn (0982.551.442)",
-            "estimated_delivery": "Đã giao lúc 10:15 hôm qua",
-            "steps": [
-                {"time": "10:15 hôm qua", "event": "Giao hàng thành công - Khách hàng đã ký nhận"},
-                {"time": "08:00 hôm qua", "event": "Shipper đang trên đường giao tới bạn"}
-            ]
-        },
-        "O-301": {
-            "carrier": "SPX Express",
-            "tracking_code": "SPX.VN.9928110",
-            "status": "delivery_failed_virtual",
-            "status_text": "Bưu tá báo không liên lạc được (Ảo)",
-            "current_location": "Bưu cục Cầu Giấy 2, Hà Nội",
-            "shipper": "Nguyễn Văn Tuấn (0934.112.233)",
-            "system_note": "Tổng đài kiểm tra bưu cục ghi nhận không có lịch sử cuộc gọi ra lúc cập nhật.",
-            "can_reassign_today": True,
-            "estimated_delivery": "Hôm nay trước 18:00 (khiếu nại giao lại ngay trong ca)",
-            "steps": [
-                {"time": "14:30 hôm nay", "event": "Bưu tá báo không liên lạc được (Hệ thống ghi nhận nghi vấn báo ảo)"},
-                {"time": "08:15 hôm nay", "event": "Bưu tá Nguyễn Văn Tuấn (0934.112.233) xuất kho giao hàng"},
-                {"time": "05:00 hôm nay", "event": "Nhập bưu cục Cầu Giấy 2"}
-            ]
-        },
-        "O-302": {
-            "carrier": "Giao Hàng Tiết Kiệm (GHTK)",
-            "tracking_code": "GHTK.VN.4419201",
-            "status": "delivered",
-            "status_text": "Đã giao thành công",
-            "current_location": "Khách hàng đã ký nhận",
-            "shipper": "Lê Quốc Bảo (0912.883.991)",
-            "delivery_date": "5 ngày trước",
-            "product_id": "P-104",
-            "warranty_eligible": True,
-            "warranty_days_left": 85,
-            "steps": [
-                {"time": "11:00 5 ngày trước", "event": "Giao hàng thành công - Người nhận ký nhận"},
-                {"time": "08:30 5 ngày trước", "event": "Shipper đang giao hàng"}
-            ]
-        },
-        "O-303": {
-            "carrier": "Giao Hàng Nhanh (GHN)",
-            "tracking_code": "GHN.VN.7721890",
-            "status": "delivered",
-            "status_text": "Đã giao thành công",
-            "current_location": "Khách hàng đã ký nhận",
-            "shipper": "Hoàng Minh Đức (0977.441.229)",
-            "delivery_date": "2 ngày trước",
-            "product_id": "P-203",
-            "exchange_eligible": True,
-            "steps": [
-                {"time": "15:20 2 ngày trước", "event": "Giao hàng thành công - Người nhận ký nhận"},
-                {"time": "09:00 2 ngày trước", "event": "Shipper đang giao hàng"}
-            ]
-        },
-        "O-304": {
-            "carrier": "Giao Hàng Nhanh (GHN)",
-            "tracking_code": "GHN.VN.8821990",
-            "status": "sorting_delayed",
-            "status_text": "Nghẽn trạm phân loại Mega Sale > 48h",
-            "current_location": "Kho Tổng BN Mega SOC (Bắc Ninh)",
-            "delayed_hours": 54,
-            "reason": "Quá tải phân loại hàng hóa đợt Mega Sale sàn TMĐT",
-            "shipper": "Chưa điều phối (Đang chờ phân tuyến trung chuyển)",
-            "estimated_delivery": "Dự kiến 20/09/2026",
-            "eligible_voucher": "VOUCHER_50K_COMPENSATION",
-            "voucher_code": "SALE50K-BN-SOC",
-            "steps": [
-                {"time": "54 giờ trước", "event": "Đã nhập Kho Tổng BN Mega SOC - Đang chờ phân loại"},
-                {"time": "60 giờ trước", "event": "Rời kho lấy hàng Shop RetailOps"}
-            ]
-        }
+def _open_mcp_store():
+    db_path = _resolve_mcp_db_path()
+    if db_path is None:
+        return None
+    from retailops.business.store import BusinessStore
+
+    return BusinessStore(db_path)
+
+
+def _format_mcp_order_row(store, db, row) -> Dict[str, Any]:
+    od = dict(row)
+    details = store.read_order_details_in_tx(db, od)
+    ext_id = od.get("external_order_id") or od["id"]
+    return {
+        "id": od["id"],
+        "order_id": ext_id,
+        "internal_order_id": od["id"],
+        "external_order_id": ext_id,
+        "source_system": od.get("source_system"),
+        "customer_id": od.get("customer_id"),
+        "product_id": od.get("product_id"),
+        "product_name": od.get("name"),
+        "variant": od.get("variant"),
+        "amount": od.get("amount"),
+        "status": od.get("status"),
+        "ordered_at": details.get("ordered_at"),
+        "payment_method": details.get("payment_method"),
+        "payment_status": details.get("payment_status"),
+        "shipping_fee": details.get("shipping_fee"),
+        "ship_to_area": details.get("ship_to_area"),
+        "promised_delivery_by": details.get("promised_delivery_by"),
+        "delivered_at": details.get("delivered_at"),
+        "refund_summary": details.get("refund_summary"),
+        "eligibility": details.get("eligibility"),
+        "as_of": details.get("as_of"),
     }
-    extra = _load_json_file("data/mock_shipments.json", {})
-    shipments.update(extra)
-    return shipments
 
 
 # ---------------------------------------------------------------------------
@@ -791,34 +632,71 @@ def _get_shipment_data() -> Dict[str, Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 @app.tool()
 def track_shipment(order_id: str) -> dict:
-    """Tra cứu trạng thái vận chuyển, vị trí bưu kiện thực tế, bưu tá giao hàng và phát hiện nghẽn kho phân loại Mega SOC >48h hoặc shipper báo giao ảo."""
-    oid = order_id.strip().upper()
-    shipments = _get_shipment_data()
-    orders = _get_active_orders()
-    order = orders.get(oid, {"order_id": oid, "status": "pending"})
-
-    shipment = shipments.get(oid)
-    if not shipment:
-        shipment = {
-            "carrier": "Giao Hàng Tiết Kiệm (GHTK)",
-            "tracking_code": f"GHTK.VN.{oid.replace('-', '')}99",
-            "status": "processing",
-            "status_text": "Đang chuẩn bị kiện hàng tại kho",
-            "current_location": "Kho tổng RetailOps (Hà Nội)",
-            "shipper": "Chưa phân công",
-            "estimated_delivery": "2-3 ngày làm việc",
-            "steps": [
-                {"time": "Vừa xong", "event": "Đơn hàng đang được kiểm đếm và đóng gói tại kho"}
-            ]
+    """Tra cứu trạng thái vận chuyển từ DB (shipments, shipment_events), mã vận đơn, bưu tá (đã che SĐT) và điều kiện trễ hạn cam kết."""
+    oid = order_id.strip()
+    store = _open_mcp_store()
+    if store is None or not oid:
+        return {
+            "order_id": oid,
+            "external_order_id": oid,
+            "internal_order_id": None,
+            "order_status": None,
+            "shipment": None,
+            "is_delayed_mega_soc": False,
+            "is_virtual_delivery_suspected": False,
+            "compensation_voucher": None,
         }
 
+    with store.connection() as db:
+        row = db.execute(
+            """SELECT * FROM orders
+               WHERE id = ? OR external_order_id = ? OR UPPER(id) = UPPER(?) OR UPPER(external_order_id) = UPPER(?)
+               ORDER BY COALESCE(ordered_at, 0) DESC, id ASC
+               LIMIT 1""",
+            (oid, oid, oid, oid),
+        ).fetchone()
+        if row is None:
+            return {
+                "order_id": oid,
+                "external_order_id": oid,
+                "internal_order_id": None,
+                "order_status": None,
+                "shipment": None,
+                "error": "order_not_found",
+                "is_delayed_mega_soc": False,
+                "is_virtual_delivery_suspected": False,
+                "compensation_voucher": None,
+            }
+        order_dict = dict(row)
+        shipment = store.read_order_shipment_in_tx(db, order_dict)
+        details = store.read_order_details_in_tx(db, order_dict)
+        voucher_row = db.execute(
+            "SELECT code FROM vouchers WHERE order_id = ? ORDER BY issued_at DESC, voucher_id DESC LIMIT 1",
+            (order_dict["id"],),
+        ).fetchone()
+
+    elig = details.get("eligibility") or {}
+    hours_late = elig.get("late_by_hours") or 0
+    is_delayed = bool(
+        (elig.get("is_late_vs_promised") and hours_late >= 48)
+        or (
+            isinstance(shipment, dict)
+            and str(shipment.get("carrier_status_raw") or "").lower() in ("congested_at_soc", "sorting_hub_congested")
+        )
+    )
+    is_failed = bool(isinstance(shipment, dict) and shipment.get("status") == "delivery_failed")
+    ext_id = order_dict.get("external_order_id") or order_dict["id"]
     return {
-        "order_id": oid,
-        "order_status": order.get("status", "unknown"),
+        "order_id": ext_id,
+        "external_order_id": ext_id,
+        "internal_order_id": order_dict["id"],
+        "order_status": order_dict.get("status"),
         "shipment": shipment,
-        "is_delayed_mega_soc": shipment.get("delayed_hours", 0) >= 48 or shipment.get("status") in ("sorting_delayed", "congested_at_soc"),
-        "is_virtual_delivery_suspected": shipment.get("status") in ("delivery_failed_virtual",),
-        "compensation_voucher": shipment.get("voucher_code") or ("SALE50K-BN-SOC" if shipment.get("delayed_hours", 0) >= 48 else None)
+        "eligibility": elig,
+        "as_of": details.get("as_of"),
+        "is_delayed_mega_soc": is_delayed,
+        "is_virtual_delivery_suspected": is_failed,
+        "compensation_voucher": voucher_row["code"] if voucher_row is not None else None,
     }
 
 
@@ -890,7 +768,7 @@ def search_knowledge(query: str, top_k: int = 3) -> dict:
             "id": "kb_mega_soc_delay",
             "title": "Chính sách hỗ trợ và đền bù nghẽn kho Mega SOC >48h",
             "category": "shipping_delay",
-            "content": _load_text_file("data/knowledge/policy_mega_sale_delay_voucher.md", "Nghẽn trạm Mega SOC quá 48h được tặng voucher đền bù 50.000đ (SALE50K-BN-SOC)."),
+            "content": _load_text_file("data/knowledge/policy_mega_sale_delay_voucher.md", "Đơn trễ quá 48h so với thời hạn cam kết được đề xuất bồi thường voucher 50.000đ sau khi nhân viên duyệt và sàn phát mã."),
             "keywords": ["chậm", "trễ", "nghẽn", "soc", "mega soc", "48h", "voucher đền bù", "bồi thường", "bắc ninh"]
         },
         {
@@ -954,16 +832,38 @@ def search_knowledge(query: str, top_k: int = 3) -> dict:
 # ---------------------------------------------------------------------------
 @app.tool()
 def get_order(order_id: str, customer_id: str = "") -> dict:
-    """Tra cứu chi tiết một đơn hàng theo mã đơn (sản phẩm, phân loại, giá tiền, phương thức thanh toán, trạng thái)."""
-    oid = order_id.strip().upper()
-    orders = _get_active_orders()
-    order = orders.get(oid)
-
-    if not order:
+    """Tra cứu chi tiết một đơn hàng theo mã đơn từ DB (sản phẩm, phân loại, giá tiền, phương thức thanh toán, trạng thái)."""
+    oid = order_id.strip()
+    cid = customer_id.strip()
+    store = _open_mcp_store()
+    if store is None or not oid:
         return {
             "error": "order_not_found",
             "message": f"Không tìm thấy đơn hàng {oid} trong hệ thống."
         }
+    with store.connection() as db:
+        if cid and cid.upper() != "GUEST":
+            row = db.execute(
+                """SELECT * FROM orders
+                   WHERE customer_id = ? AND (id = ? OR external_order_id = ? OR UPPER(id) = UPPER(?) OR UPPER(external_order_id) = UPPER(?))
+                   ORDER BY COALESCE(ordered_at, 0) DESC, id ASC
+                   LIMIT 1""",
+                (cid, oid, oid, oid, oid),
+            ).fetchone()
+        else:
+            row = db.execute(
+                """SELECT * FROM orders
+                   WHERE id = ? OR external_order_id = ? OR UPPER(id) = UPPER(?) OR UPPER(external_order_id) = UPPER(?)
+                   ORDER BY COALESCE(ordered_at, 0) DESC, id ASC
+                   LIMIT 1""",
+                (oid, oid, oid, oid),
+            ).fetchone()
+        if row is None:
+            return {
+                "error": "order_not_found",
+                "message": f"Không tìm thấy đơn hàng {oid} trong hệ thống."
+            }
+        order = _format_mcp_order_row(store, db, row)
 
     return {
         "order": order,
@@ -978,16 +878,28 @@ def get_order(order_id: str, customer_id: str = "") -> dict:
 # ---------------------------------------------------------------------------
 @app.tool()
 def list_orders(customer_id: str = "", limit: int = 10) -> dict:
-    """Liệt kê danh sách các đơn hàng gần đây của khách hàng trong hệ thống RetailOps."""
-    orders = _get_active_orders()
-    orders_list = list(orders.values())
-
-    cid = customer_id.strip().upper()
-    if cid and cid != "GUEST":
-        orders_list = [o for o in orders_list if o.get("customer_id") == cid]
-
-    orders_list.sort(key=lambda x: x["order_id"], reverse=True)
-    results = orders_list[:limit]
+    """Liệt kê danh sách các đơn hàng gần đây của khách hàng từ DB RetailOps."""
+    cid = customer_id.strip()
+    lim = max(1, min(int(limit or 10), 50))
+    store = _open_mcp_store()
+    if store is None:
+        return {
+            "customer_id": cid or "all",
+            "total_orders": 0,
+            "orders": [],
+        }
+    with store.connection() as db:
+        if cid and cid.upper() != "GUEST":
+            rows = db.execute(
+                "SELECT * FROM orders WHERE customer_id = ? ORDER BY COALESCE(ordered_at, 0) DESC, id DESC LIMIT ?",
+                (cid, lim),
+            ).fetchall()
+        else:
+            rows = db.execute(
+                "SELECT * FROM orders ORDER BY COALESCE(ordered_at, 0) DESC, id DESC LIMIT ?",
+                (lim,),
+            ).fetchall()
+        results = [_format_mcp_order_row(store, db, r) for r in rows]
 
     return {
         "customer_id": cid or "all",
@@ -1002,9 +914,7 @@ def list_orders(customer_id: str = "", limit: int = 10) -> dict:
 @app.tool()
 def create_return_proposal(order_id: str, reason: str, solution_type: str = "exchange") -> dict:
     """Khởi tạo phiếu đề xuất Đổi trả / Bảo hành / Đổi size 2 chiều tận nhà theo chuẩn SOP RetailOps."""
-    oid = order_id.strip().upper()
-    orders = _get_active_orders()
-    order = orders.get(oid)
+    oid = order_id.strip()
 
     sol = solution_type.strip().lower()
     if sol not in ("exchange", "warranty", "refund", "return"):
@@ -1035,17 +945,11 @@ def create_return_proposal(order_id: str, reason: str, solution_type: str = "exc
 # ---------------------------------------------------------------------------
 @app.tool()
 def calculate_voucher_discount(order_amount: int, voucher_code: str) -> dict:
-    """Tính toán giá trị giảm giá và kiểm tra điều kiện áp dụng mã voucher đền bù nghẽn kho hoặc mã khuyến mãi."""
+    """Tính toán giá trị giảm giá và kiểm tra điều kiện áp dụng mã voucher từ DB hoặc mã khuyến mãi."""
     code = voucher_code.strip().upper()
     amount = max(0, int(order_amount))
 
     vouchers = {
-        "SALE50K-BN-SOC": {
-            "discount_type": "fixed",
-            "discount_value": 50000,
-            "min_order": 0,
-            "description": "Voucher đền bù đơn hàng chậm trễ tại Kho BN Mega SOC >48h"
-        },
         "RETAIL10": {
             "discount_type": "percentage",
             "discount_value": 10,
@@ -1067,6 +971,20 @@ def calculate_voucher_discount(order_amount: int, voucher_code: str) -> dict:
             "description": "Ưu đãi khách hàng VIP giảm 15% tối đa 100k cho đơn từ 500k"
         }
     }
+    store = _open_mcp_store()
+    if store is not None and code:
+        with store.connection() as db:
+            vrow = db.execute(
+                "SELECT * FROM vouchers WHERE UPPER(code) = ? LIMIT 1",
+                (code,),
+            ).fetchone()
+            if vrow is not None and (vrow["valid_until"] is None or float(vrow["valid_until"]) >= time.time()):
+                vouchers[code] = {
+                    "discount_type": "fixed",
+                    "discount_value": int(vrow["value"]),
+                    "min_order": 0,
+                    "description": f"Voucher phát hành từ hệ thống ({code})",
+                }
 
     rule = vouchers.get(code)
     if not rule:
@@ -1302,13 +1220,13 @@ def get_warranty_policy_resource() -> str:
 
 @app.resource("retailops://policies/mega-soc-delay")
 def get_mega_soc_delay_resource() -> str:
-    """Resource: Quy định xử lý và bồi thường voucher 50.000đ khi đơn hàng nghẽn kho phân loại Mega SOC >48h."""
+    """Resource: Quy định xử lý và đề xuất bồi thường khi đơn hàng nghẽn kho phân loại Mega SOC >48h."""
     content = _load_text_file("data/knowledge/policy_mega_sale_delay_voucher.md")
     if not content:
         content = (
             "# Quy định bồi hoàn nghẽn kho Mega SOC\n\n"
-            "- Kiện hàng lưu chuyển qua kho tổng SOC (Bắc Ninh, Củ Chi) vượt 48h tự động kích hoạt voucher SALE50K-BN-SOC.\n"
-            "- Khách hàng nhận voucher 50.000đ cho đơn hàng tiếp theo.\n"
+            "- Đơn hàng trễ quá 48h so với thời hạn cam kết được đề xuất bồi thường 50.000đ sau khi nhân viên duyệt.\n"
+            "- Mã voucher chỉ được thông báo tới khách hàng sau khi sàn phát hành và ghi nhận vào hệ thống.\n"
         )
     return content
 
@@ -1332,9 +1250,9 @@ def retail_copilot_assistant(customer_intent: str = "general") -> str:
         f"Mục tiêu hỗ trợ khách hàng hiện tại: {customer_intent}\n\n"
         "Quy tắc nghiệp vụ cốt lõi:\n"
         "1. Luôn tra cứu thực tế vận đơn qua `track_shipment` trước khi trả lời về tình trạng đơn hàng.\n"
-        "2. Nếu đơn bị nghẽn kho Mega SOC > 48h, thông cảm và chủ động gửi voucher bồi thường 50k (SALE50K-BN-SOC).\n"
-        "3. Nếu phát hiện bưu tá báo giao ảo (không có cuộc gọi), hỗ trợ yêu cầu giao lại trong ngày qua `track_shipment`.\n"
-        "4. Nếu khách hỏi đổi size hoặc bảo hành lỗi bung chỉ, cam kết đổi mới 1-1 tận nhà miễn phí ship 2 chiều qua `create_return_proposal`.\n"
+        "2. Nếu đơn bị trễ hạn cam kết > 48h hoặc nghẽn kho Mega SOC, thông cảm và hướng dẫn chuyển nhân viên kiểm tra đề xuất bồi thường; tuyệt đối không tự nêu mã voucher khi dữ liệu chưa có.\n"
+        "3. Nếu phát hiện giao hàng thất bại hoặc khách phản ánh shipper chưa gọi, hỗ trợ ghi nhận và chuyển nhân viên xử lý.\n"
+        "4. Nếu khách hỏi đổi size hoặc bảo hành lỗi sản xuất, kiểm tra điều kiện đơn và hướng dẫn tạo yêu cầu đổi trả.\n"
         "5. Giữ thái độ đồng cảm, trung thực, chuyên nghiệp, xoa dịu khách hàng hiệu quả."
     )
 

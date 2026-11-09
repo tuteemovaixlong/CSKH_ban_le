@@ -34,7 +34,7 @@ Local inventory có9knowledge Markdown, qrels250queries và sidecar250entries. Q
 
 | Câu hỏi chưa được xác minh | Vì sao chưa kết luận | Digest + nguồn giới hạn |
 |---|---|---|
-| [UNVERIFIED] Benchmark từng nằm trong pretraining/fine-tuning của model? |Không có training corpus/checkpoint provenance trong inventory | [DATA §7](../_digest/code/DATA.digest#7-unknown--unverified) + [benchmark:1](../../evals/scenarios/benchmark_250.jsonl#L1), [seed:1](../../data/deepseek_seed_data.json#L1) |
+| [UNVERIFIED] Benchmark từng nằm trong pretraining/fine-tuning của model? |Không có training corpus/checkpoint provenance trong inventory | [DATA §7](../_digest/code/DATA.digest#7-unknown--unverified) + [benchmark:1](../../evals/scenarios/benchmark_250.jsonl#L1), [demo_events:1](../../data/demo_events/manifest.json#L1) |
 | [UNVERIFIED] Paraphrase/template trùng giữa dev và held_out? |Exact-string intersection không kiểm semantic overlap | [DATA §6/7](../_digest/code/DATA.digest#6-exact-overlap--local-computation) + [master:1](../../evals/scenarios/master_250_v1.jsonl#L1) |
 | [UNVERIFIED] Operator đã tune prompt/model trên held_out? |Protocol quy định usage; không có exposure log được xác minh ở phép kiểm này | [EVAL §12](../_digest/code/EVAL.digest#12-planned-protocol-and-statistics) + [statistics:49](../phase4/PHASE_4_STATISTICAL_ANALYSIS.md#L49) |
 | [UNVERIFIED] Nhãn/expected_outcome lọt vào request model live? |Mock đọc nhãn để giả lập; chưa có live request trace để kiểm đường model thật | [EVAL §10/14](../_digest/code/EVAL.digest#10-telemetry-và-mock) + [runner.py:204](../../evals/harness/runner.py#L204), [runner.py:331](../../evals/harness/runner.py#L331) |

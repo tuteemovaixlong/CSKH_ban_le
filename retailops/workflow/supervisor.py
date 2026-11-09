@@ -126,8 +126,8 @@ def run_supervisor(state: MultiAgentState) -> MultiAgentState:
     normalized_msg = unicodedata.normalize('NFKD', lower_msg).encode('ASCII', 'ignore').decode('utf-8')
 
     # Check for order or product identifier in user text
-    has_specific_oid = bool(re.search(r'\b(o-\d+|o0\d{5,}|o\d{5,}|dh\d+|\d{5,})\b', lower_msg))
-    has_specific_pid = bool(re.search(r'\b(p-\d+)\b', lower_msg))
+    has_specific_oid = bool(re.search(r'\b(ord_[a-f0-9]{32}|sim-o-\d+|o-\d+|o0\d{5,}|o\d{5,}|dh\d+|\d{5,})\b', lower_msg))
+    has_specific_pid = bool(re.search(r'\b(sim-p-\d+|p-\d+)\b', lower_msg))
     has_order_phrase = bool(any(w in lower_msg for w in [
         "đơn em", "đơn này", "đơn tôi", "đơn mình", "đơn của", "mã đơn", "check đơn",
         "xem đơn", "tra đơn", "đơn cũ", "đơn mega sale", "có đơn", "đơn nào", "tìm đơn",
@@ -141,7 +141,7 @@ def run_supervisor(state: MultiAgentState) -> MultiAgentState:
     active_product_id = bound_ctx.get("product_id")
 
     prev_messages = state.get("messages", [])[:-1]
-    prev_had_order = any(bool(re.search(r'\b(O-\d+|P-\d+)\b', m.get("content", ""))) for m in prev_messages[-4:])
+    prev_had_order = any(bool(re.search(r'\b(ord_[a-f0-9]{32}|SIM-O-\d+|SIM-P-\d+|O-\d+|P-\d+)\b', m.get("content", ""))) for m in prev_messages[-4:])
     recent_subagents = [s for s in state.get("subagent_history", []) if s.startswith("supervisor:routed_to_")]
     prev_was_order_agent = bool(recent_subagents and recent_subagents[-1] == "supervisor:routed_to_order_agent")
 
