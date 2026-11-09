@@ -973,6 +973,26 @@ function renderOrder() {
     area.append(el('p', 'order-date', 'Đơn ' + (order.customer_id ? ('khách ' + order.customer_id + ' · ') : '') + 'Phiên bản ' + order.version));
   }
   area.append(item, total);
+  if (!isManager && order.recipient && typeof order.recipient === 'object') {
+    const recBox = el('div', 'order-recipient-box');
+    recBox.dataset.role = 'customer-recipient';
+    const areaParts = [order.recipient.ward, order.recipient.district, order.recipient.province].filter(Boolean);
+    if (order.recipient.purged) {
+      recBox.append(
+        el('p', 'order-recipient-line', 'SĐT người nhận: ' + (order.recipient.phone_masked || '—')),
+        el('p', 'order-recipient-line', 'Khu vực: ' + (areaParts.join(', ') || '—')),
+        el('small', 'order-recipient-note', 'Thông tin người nhận chi tiết đã xóa theo thời hạn lưu trữ.')
+      );
+    } else {
+      const fullAddr = [order.recipient.address_line, ...areaParts].filter(Boolean).join(', ');
+      recBox.append(
+        el('p', 'order-recipient-line', 'Người nhận: ' + (order.recipient.name || '—')),
+        el('p', 'order-recipient-line', 'SĐT: ' + (order.recipient.phone || order.recipient.phone_masked || '—')),
+        el('p', 'order-recipient-line', 'Địa chỉ: ' + (fullAddr || '—'))
+      );
+    }
+    area.append(recBox);
+  }
   area.append(el('p', 'order-policy', order.status === 'pending'
     ? 'Có thể yêu cầu hủy. Cần chọn lý do và xác nhận gửi cửa hàng duyệt.'
     : order.status === 'shipping'
@@ -2499,6 +2519,7 @@ let staffCaseOrderReasonsMap = null;
 let staffCaseOrderActionsReadOnly = false;
 let staffCaseOpenRequestSig = '';
 let staffOrderActionBusy = false;
+let staffRevealedRecipients = {};
 let staffConsentDraft = {
   caseId: null,
   orderId: '',
@@ -2510,10 +2531,13 @@ let staffConsentDraft = {
   otherOpsOpen: false,
   dfOrderId: '',
   dfAttempts: '1',
-  dfNote: ''
+  dfNote: '',
+  revealOrderId: '',
+  revealReason: ''
 };
 
 function resetStaffConsentDraft(caseId = null) {
+  staffRevealedRecipients = {};
   staffConsentDraft = {
     caseId: caseId || null,
     orderId: '',
@@ -2527,7 +2551,9 @@ function resetStaffConsentDraft(caseId = null) {
     variantOptions: {},
     dfOrderId: '',
     dfAttempts: '1',
-    dfNote: ''
+    dfNote: '',
+    revealOrderId: '',
+    revealReason: ''
   };
 }
 
@@ -3154,6 +3180,97 @@ function renderStaffCaseOrderActions() {
     panelEl.append(card);
   });
 
+  const allCaseOrdersForRecipient = staffCaseOrders.length > 0 ? staffCaseOrders : staffCaseCustomerOrders;
+  const linkedCaseOrderIds = new Set(
+    [caseObj.order_id, ...staffCaseOrderActions.map(r => r && r.order_id)].filter(Boolean)
+  );
+  const maskedRecipientOrders = allCaseOrdersForRecipient.filter(o => o && o.recipient_masked);
+  const revealableOrders = (isManager
+    ? maskedRecipientOrders
+    : (!isClosed && isHolder ? maskedRecipientOrders.filter(o => linkedCaseOrderIds.has(o.id)) : [])
+  ).filter(o => o.recipient_masked && o.recipient_masked.has_encrypted_recipient !== false);
+
+  if (maskedRecipientOrders.length > 0) {
+    const rcpCard = el('div', 'case-ops-consented-card');
+    rcpCard.id = 'staff-recipient-reveal-card';
+    rcpCard.dataset.role = 'staff-recipient-card';
+    rcpCard.append(el('strong', '', '🔐 Thông tin người nhận (kiểm toán)'));
+
+    maskedRecipientOrders.forEach(o => {
+      const rm = o.recipient_masked || {};
+      const areaTxt = [rm.ward, rm.district, rm.province].filter(Boolean).join(', ') || '—';
+      const lineTxt = `${formatDualOrderId(o.id, o.external_order_id)} · SĐT: ${rm.phone_masked || '—'} · Khu vực: ${areaTxt}`;
+      rcpCard.append(el('div', 'case-ops-meta-row', lineTxt));
+    });
+
+    if (revealableOrders.length > 0) {
+      const rcpRow = el('div', 'case-ops-controls-row');
+      const rcpOrdSel = el('select', 'case-ops-select');
+      rcpOrdSel.id = 'staff-reveal-order-select';
+      revealableOrders.forEach(o => {
+        const opt = el('option', '', formatDualOrderId(o.id, o.external_order_id));
+        opt.value = o.id;
+        rcpOrdSel.append(opt);
+      });
+      const selRcpOid = revealableOrders.some(o => o.id === staffConsentDraft.revealOrderId)
+        ? staffConsentDraft.revealOrderId
+        : revealableOrders[0].id;
+      rcpOrdSel.value = selRcpOid;
+      staffConsentDraft.revealOrderId = selRcpOid;
+
+      const rcpReasonInput = el('input', 'case-ops-input');
+      rcpReasonInput.type = 'text';
+      rcpReasonInput.id = 'staff-reveal-reason-input';
+      rcpReasonInput.maxLength = 500;
+      rcpReasonInput.placeholder = 'Lý do xem người nhận đầy đủ (bắt buộc)...';
+      rcpReasonInput.value = staffConsentDraft.revealReason || '';
+
+      const rcpBtn = el('button', 'secondary', '👁 Xem người nhận đầy đủ');
+      rcpBtn.type = 'button';
+      rcpBtn.id = 'btn-reveal-recipient';
+      rcpBtn.dataset.action = 'reveal-recipient';
+      const syncRevealBtn = () => {
+        rcpBtn.disabled = Boolean(staffOrderActionBusy || !(rcpReasonInput.value || '').trim());
+      };
+      rcpOrdSel.onchange = () => {
+        staffConsentDraft.revealOrderId = rcpOrdSel.value;
+        renderStaffCaseOrderActions();
+      };
+      rcpReasonInput.oninput = () => {
+        staffConsentDraft.revealReason = rcpReasonInput.value;
+        syncRevealBtn();
+      };
+      rcpBtn.onclick = () => submitStaffRevealRecipient();
+      syncRevealBtn();
+
+      rcpRow.append(rcpOrdSel, rcpReasonInput, rcpBtn);
+      rcpCard.append(rcpRow);
+
+      const revealed = staffRevealedRecipients[selRcpOid];
+      if (revealed && revealed.recipient) {
+        const revBox = el('div', 'case-ops-decisions');
+        revBox.dataset.role = 'revealed-recipient-details';
+        const r = revealed.recipient;
+        const fullAddr = [r.address_line, r.ward, r.district, r.province].filter(Boolean).join(', ');
+        revBox.append(
+          el('strong', '', `Đã mở khóa người nhận (${formatDualOrderId(revealed.order_id, revealed.external_order_id)}) · Đã ghi nhật ký kiểm toán`),
+          el('div', '', `Họ tên: ${r.name || '—'} · SĐT: ${r.phone || r.phone_masked || '—'}`),
+          el('div', '', `Địa chỉ: ${fullAddr || '—'}`)
+        );
+        rcpCard.append(revBox);
+      }
+    } else {
+      const gateMsg = el(
+        'span',
+        'case-ops-role-gate-note',
+        'Nhận giữ ca mở có gắn đơn hàng hoặc đăng nhập Quản lý để xem thông tin người nhận đầy đủ.'
+      );
+      gateMsg.dataset.role = 'recipient-gate-note';
+      rcpCard.append(gateMsg);
+    }
+    panelEl.append(rcpCard);
+  }
+
   if (!isClosed) {
     if (staffConsentDraft.caseId !== caseObj.case_id) {
       resetStaffConsentDraft(caseObj.case_id);
@@ -3568,6 +3685,38 @@ async function loadStaffCaseOrderActions(caseId, isCaseSelection = false) {
     staffCaseOrders = [];
     staffCaseConsentTurns = [];
     staffCaseOrderReasonsMap = null;
+    renderStaffCaseOrderActions();
+  }
+}
+
+async function submitStaffRevealRecipient() {
+  if (!activeStaffTicket?.case_id || staffOrderActionBusy) return;
+  const ordSel = byId('staff-reveal-order-select');
+  const reasonEl = byId('staff-reveal-reason-input');
+  const orderId = (ordSel?.value || staffConsentDraft.revealOrderId || '').trim();
+  const reason = (reasonEl?.value || staffConsentDraft.revealReason || '').trim();
+  if (!orderId) {
+    setStaffDeskNotice('Vui lòng chọn đơn hàng cần xem người nhận.', 'error');
+    return;
+  }
+  if (!reason) {
+    setStaffDeskNotice('Vui lòng nhập lý do trước khi xem thông tin người nhận.', 'error');
+    return;
+  }
+  staffOrderActionBusy = true;
+  renderStaffCaseOrderActions();
+  try {
+    const res = await api(`/api/staff/orders/${encodeURIComponent(orderId)}/reveal-recipient`, {
+      reason,
+      case_id: activeStaffTicket.case_id
+    });
+    staffRevealedRecipients[orderId] = res;
+    staffConsentDraft.revealReason = '';
+    setStaffDeskNotice('Đã giải mã thông tin người nhận và ghi nhật ký kiểm toán.', 'success');
+  } catch (err) {
+    setStaffDeskNotice(err.message || 'Không thể xem thông tin người nhận.', 'error');
+  } finally {
+    staffOrderActionBusy = false;
     renderStaffCaseOrderActions();
   }
 }

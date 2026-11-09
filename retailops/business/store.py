@@ -26,7 +26,10 @@ from retailops.core import (
     require,
 )
 from retailops.business.eligibility import compute_order_eligibility, format_vn_iso
-from retailops.integration.recipient_crypto import sync_order_recipient_retention_in_tx
+from retailops.integration.recipient_crypto import (
+    load_recipient_keyring,
+    sync_order_recipient_retention_in_tx,
+)
 
 SHIPMENT_STATUS_TEXT_VI = {
     "created": "Đã tạo vận đơn",
@@ -2315,6 +2318,21 @@ class BusinessStore:
         else:
             delivery_summary = None
 
+        rec_safe_row = db.execute(
+            "SELECT phone_masked, ward, district, province FROM order_recipients WHERE order_id = ?",
+            (oid,),
+        ).fetchone()
+        recipient_safe = (
+            {
+                "phone_masked": rec_safe_row["phone_masked"],
+                "ward": rec_safe_row["ward"],
+                "district": rec_safe_row["district"],
+                "province": rec_safe_row["province"],
+            }
+            if rec_safe_row is not None
+            else None
+        )
+
         ordered_at_iso = (
             None
             if int(order_dict.get("ordered_at_backfilled") or 0) == 1
@@ -2332,9 +2350,228 @@ class BusinessStore:
             "payment": payment_summary,
             "delivery": delivery_summary,
             "refund": refund_summary,
+            "recipient": recipient_safe,
             "eligibility": eligibility,
             "as_of": eligibility["as_of"],
         }
+
+    def _resolve_store_recipient_keyring(self):
+        if os.environ.get("RETAILOPS_RECIPIENT_KEY_FILE", "").strip():
+            return load_recipient_keyring()
+        if os.environ.get("RETAILOPS_ENV", "").strip().lower() in ("production", "prod", "live"):
+            return load_recipient_keyring()
+        ephemeral = getattr(self, "_ephemeral_recipient_keyring", None)
+        if ephemeral is not None:
+            return ephemeral
+        return load_recipient_keyring()
+
+    def read_order_recipient_masked_in_tx(self, db, order_id: str) -> dict | None:
+        row = db.execute(
+            """SELECT phone_masked, ward, district, province, name_enc, phone_enc, address_line_enc
+               FROM order_recipients WHERE order_id = ?""",
+            (str(order_id),),
+        ).fetchone()
+        if row is None:
+            return None
+        has_enc = any(
+            row[col] is not None for col in ("name_enc", "phone_enc", "address_line_enc")
+        )
+        return {
+            "phone_masked": row["phone_masked"],
+            "ward": row["ward"],
+            "district": row["district"],
+            "province": row["province"],
+            "has_encrypted_recipient": has_enc,
+            "purged": not has_enc,
+        }
+
+    def read_order_recipient_masked(self, order_id: str) -> dict | None:
+        with self.connection() as db:
+            return self.read_order_recipient_masked_in_tx(db, order_id)
+
+    def decrypt_order_recipient_in_tx(
+        self,
+        db,
+        order_id: str,
+        *,
+        tenant_id: str | None = None,
+    ) -> dict | None:
+        oid = str(order_id)
+        row = db.execute(
+            """SELECT order_id, name_enc, phone_enc, address_line_enc,
+                      phone_masked, ward, district, province, retention_until
+               FROM order_recipients WHERE order_id = ?""",
+            (oid,),
+        ).fetchone()
+        if row is None:
+            return None
+        has_enc = any(
+            row[col] is not None for col in ("name_enc", "phone_enc", "address_line_enc")
+        )
+        if not has_enc:
+            return {
+                "name": None,
+                "phone": None,
+                "address_line": None,
+                "phone_masked": row["phone_masked"],
+                "ward": row["ward"],
+                "district": row["district"],
+                "province": row["province"],
+                "purged": True,
+            }
+        keyring = self._resolve_store_recipient_keyring()
+        eff_tid = str(tenant_id or getattr(self, "tenant_id", None) or "default")
+        name_val = (
+            keyring.decrypt_field(
+                row["name_enc"], tenant_id=eff_tid, order_id=oid, field_name="name"
+            )
+            if row["name_enc"] is not None
+            else None
+        )
+        phone_val = (
+            keyring.decrypt_field(
+                row["phone_enc"], tenant_id=eff_tid, order_id=oid, field_name="phone"
+            )
+            if row["phone_enc"] is not None
+            else None
+        )
+        addr_val = (
+            keyring.decrypt_field(
+                row["address_line_enc"],
+                tenant_id=eff_tid,
+                order_id=oid,
+                field_name="address_line",
+            )
+            if row["address_line_enc"] is not None
+            else None
+        )
+        return {
+            "name": name_val,
+            "phone": phone_val,
+            "address_line": addr_val,
+            "phone_masked": row["phone_masked"],
+            "ward": row["ward"],
+            "district": row["district"],
+            "province": row["province"],
+            "purged": False,
+        }
+
+    def read_customer_order_recipient(
+        self,
+        customer_id: str,
+        order_id: str,
+        *,
+        tenant_id: str | None = None,
+    ) -> dict | None:
+        """Decrypt recipient strictly for an order owned by ``customer_id`` (W6.1b-2-D3)."""
+        with self.connection() as db:
+            ord_row = self.owned(db, customer_id, order_id)
+            return self.decrypt_order_recipient_in_tx(
+                db, str(ord_row["id"]), tenant_id=tenant_id
+            )
+
+    def authorize_and_decrypt_order_recipient(
+        self,
+        order_id: str,
+        *,
+        actor_role: str,
+        actor_principal_id: str | None,
+        tenant_id: str | None = None,
+        case_id: str | None = None,
+    ) -> dict:
+        """Authorize Staff (holding open case linked to order) or Manager, and decrypt recipient."""
+        raw_oid = str(order_id or "").strip()
+        require(bool(raw_oid), 400, "invalid_order", "Mã đơn hàng không hợp lệ.")
+        clean_case = str(case_id).strip() if isinstance(case_id, str) and case_id.strip() else None
+
+        with self.connection() as db:
+            ord_row = db.execute("SELECT * FROM orders WHERE id = ?", (raw_oid,)).fetchone()
+            if ord_row is None:
+                ext_matches = db.execute(
+                    "SELECT * FROM orders WHERE LOWER(external_order_id) = LOWER(?) ORDER BY id ASC",
+                    (raw_oid,),
+                ).fetchall()
+                if len(ext_matches) > 1:
+                    raise ApiError(
+                        409,
+                        "ambiguous_order",
+                        "Có nhiều đơn hàng trùng mã sàn này; vui lòng dùng mã nội bộ của đơn hàng.",
+                    )
+                if len(ext_matches) == 1:
+                    ord_row = ext_matches[0]
+            require(ord_row is not None, 404, "order_not_found", "Không tìm thấy đơn hàng.")
+            canonical_oid = str(ord_row["id"])
+            ord_customer_id = str(ord_row["customer_id"])
+
+            matched_case_id: str | None = None
+            if actor_role == "manager":
+                if clean_case is not None:
+                    c_row = db.execute(
+                        "SELECT case_id FROM cases WHERE case_id = ?", (clean_case,)
+                    ).fetchone()
+                    require(c_row is not None, 404, "case_not_found", "Không tìm thấy ca hỗ trợ.")
+                    matched_case_id = str(c_row["case_id"])
+            elif actor_role == "staff":
+                pid = str(actor_principal_id or "").strip()
+                require(
+                    bool(pid),
+                    403,
+                    "recipient_reveal_denied",
+                    "Nhân viên phải đăng nhập và đang giữ ca mở có gắn đơn hàng để xem người nhận.",
+                )
+                params: list = [pid, ord_customer_id, canonical_oid, canonical_oid]
+                case_filter_sql = ""
+                if clean_case is not None:
+                    case_filter_sql = " AND c.case_id = ?"
+                    params.append(clean_case)
+                held_row = db.execute(
+                    f"""SELECT c.case_id
+                        FROM cases c
+                        LEFT JOIN conversations conv ON conv.id = c.conversation_id
+                        WHERE c.status = 'in_progress'
+                          AND c.holder = ?
+                          AND c.customer_id = ?
+                          AND (
+                              conv.order_id = ?
+                              OR EXISTS (
+                                  SELECT 1 FROM order_action_requests oar
+                                  WHERE oar.case_id = c.case_id AND oar.order_id = ?
+                              )
+                          )
+                          {case_filter_sql}
+                        ORDER BY c.updated_at DESC
+                        LIMIT 1""",
+                    tuple(params),
+                ).fetchone()
+                require(
+                    held_row is not None,
+                    403,
+                    "recipient_reveal_denied",
+                    "Chỉ nhân viên đang giữ ca mở có gắn đơn hàng này hoặc Quản lý mới được xem thông tin người nhận.",
+                )
+                matched_case_id = str(held_row["case_id"])
+            else:
+                raise ApiError(
+                    403,
+                    "permission_denied",
+                    "Tài khoản này không có quyền xem thông tin người nhận.",
+                )
+
+            revealed = self.decrypt_order_recipient_in_tx(
+                db, canonical_oid, tenant_id=tenant_id
+            )
+            require(
+                revealed is not None,
+                404,
+                "recipient_not_found",
+                "Đơn hàng này không có dữ liệu người nhận.",
+            )
+            return {
+                "order_id": canonical_oid,
+                "external_order_id": ord_row["external_order_id"],
+                "case_id": matched_case_id,
+                "recipient": revealed,
+            }
 
     def read_order_shipment_in_tx(self, db, order_dict: dict, *, now: float | None = None) -> dict | None:
         """Read DB-backed shipment and chronological shipment_events for one order, or None if absent."""
