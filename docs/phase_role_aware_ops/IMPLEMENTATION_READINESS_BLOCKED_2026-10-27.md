@@ -461,3 +461,23 @@ Ghi chú không chặn: Tool Inspector bỏ 3 tool đọc trước đây đượ
 | `W61B-RR-12` | MAJOR | Bằng chứng toàn vẹn bằng SHA-256 trần trên thân sự kiện cho phép xác nhận dữ liệu người nhận: các trường còn lại đã nằm trong DB, chỉ cần thử tên và số điện thoại | W6.1b-D7 |
 
 **Kết luận:** W6.1b-1 **READY** để thực thi theo [W6.1b-1 execution handoff](W6_1B_1_EXECUTION_HANDOFF_2026-11-08.md) khi owner merge bản ghi này. W6.1b-2 chưa READY vì còn chốt cách mã hóa người nhận. Migration business v9 và deploy cần owner duyệt riêng, theo runbook ở mục 6 của handoff. Readiness tổng thể vẫn `BLOCKED` cho W6.2 trở đi.
+
+### 2026-11-09 W6.1b-1 verification and merge record
+
+**Kiểm chứng.** PR #75 của Argon, nhánh `feat/phase-r1-w6-1b-1-ingest-v9`, theo [W6.1b-1 handoff](W6_1B_1_EXECUTION_HANDOFF_2026-11-08.md) và §20. Ba vòng kiểm chứng độc lập, mỗi vòng chạy lại test, đối chiếu diff và CI:
+
+| Vòng | Head | Kết quả |
+|---|---|---|
+| 1 | `beac0f0` | Đạt phần lõi mục 0–10. **BLOCKER:** `deploy/live-e2e.py` tạo tenant seed demo rồi đăng nhập `C-001`, tra `O-101`, trong khi seed mới không còn các mã này, nên smoke chạy tự động sau rollout trong `deploy/publish_and_activate.py` sẽ fail; `scripts/get_login_token.py`, `scripts/run_live_benchmark_http.py` cùng lỗi. **MAJOR:** kịch bản `refund_status_is_not_invented` bị bỏ `"đã hoàn tiền"` khỏi `answer_not` để khớp câu trả lời mẫu mới, trái W6.1b-D12. **MINOR:** tên hiển thị `"Mai Anh"` viết cứng trong `retailops/http/routes.py`; nút mô phỏng SOP mặc định `O-301`–`O-304`; seed demo dùng khóa digest tạm khi thiếu khóa ở production. |
+| 2 | `c20904f` | MAJOR và MINOR đã sửa. BLOCKER sửa bằng cách chạy `python /app/deploy/live-e2e.py --resolve-targets` trong container, nhưng chạy dạng script thì `sys.path[0]` là `/app/deploy` nên `import retailops` lỗi `ModuleNotFoundError`; test chỉ gọi hàm trong cùng tiến trình nên không bắt được. |
+| 3 | `02ae111` | BLOCKER đóng: nhánh `--resolve-targets` thêm thư mục gốc ứng dụng vào `sys.path`; có test chạy dạng script bằng `subprocess` không đặt `PYTHONPATH`; job `offline` chạy resolver trong container đóng gói trên SQLite và PostgreSQL, in và kiểm `LIVE_E2E_RESOLVE_TARGETS_CONTAINER_OK`. Lần sửa MINOR làm `/api/session` của `GuestSessions` mở SQLite mỗi request, P99 vượt 50 ms trên CI; Argon lưu tạm tên hiển thị theo phiên, gộp tra phiên với giới hạn tần suất trong một giao dịch, giới hạn 60 lần mỗi phút giữ nguyên, và chép kho khách mới từ một kho mẫu đã seed; P99 `/api/session` trên CI còn 5,2 ms. |
+
+**Đã kiểm độc lập và đạt:** CI 6/6 trên `02ae111`; full suite cục bộ chỉ còn các lỗi môi trường đã có trên `main` là hai test migrate v8 và ba test W4 cần `pypdfium2`; hai bộ dữ liệu `data/demo_events/` sinh lại đúng SHA-256 theo manifest, 2.003 và 64 sự kiện; route nội bộ bị Caddy chặn và ứng dụng từ chối header do proxy thêm; `secret_ref` khớp `retailops_connector_*`, khóa đọc bằng `lstat` và `O_NOFOLLOW`; digest là HMAC trên byte gốc, các trường người nhận là `null`, quét DB không còn số điện thoại hay địa chỉ; `ambiguous_order` khi mã trùng; chỉ nối hoàn tiền khi đúng một yêu cầu chờ; trạng thái cuối của 13 kịch bản sàn ảo đúng; đủ 41 kịch bản hồi quy, không điều kiện chấm nào bị nới; RetailOps không import `marketplace_sim`; không còn `mock_shipments`, `deepseek_seed` hay khóa mặc định.
+
+**Merge:** owner duyệt, PR #75 merge vào `main` tại `16fb91e` ngày 2026-11-09. Workflow deploy tự bỏ qua vì cờ deploy đang tắt.
+
+**Còn mở:**
+- Migration business v9 và deploy W6.1b-1: owner duyệt riêng, theo mục 6 của handoff. Hai việc phải làm trước rollout: tạo `/opt/retailops/integration-secrets/` với hai tệp khóa, vì `deploy/compose.postgres.yaml` giờ khai báo hai secret này; chạy `database migrate-v9` khi web đã dừng, vì image mới từ chối chạy trên DB v8. Sau rollout: `connector add`, `connector check` phải trả 0, `purge-legacy-demo --dry-run` cho owner duyệt rồi mới chạy thật, `import-events`.
+- Mỗi lần live E2E smoke giờ tạo một tenant khoảng 2.000 sự kiện; dọn tenant `e2e-smoke-*` ở C6 cấp bách hơn.
+- Job `offline` được nâng timeout từ 12 lên 18 phút; notebook Colab tăng từ khoảng 1,09 MB lên 1,30 MB vì nhúng dữ liệu demo.
+- W6.1b-2 chưa READY: còn chốt cách mã hóa người nhận, thời hạn giữ backup và có thêm `refund.requested` hay không, theo §20.

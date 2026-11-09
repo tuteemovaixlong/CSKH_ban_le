@@ -1,6 +1,6 @@
 # Phase R1 — W6.1b-1 Execution Handoff: migration v9 và cổng nhận sự kiện
 
-> **Trạng thái:** **bản nháp** ngày 2026-11-08, sau [W6.1b readiness review](IMPLEMENTATION_READINESS_BLOCKED_2026-10-27.md#2026-11-08-w61b-readiness-review). Chỉ phát hành cho bên thực thi khi owner merge bản ghi này cùng §20. Không mở W6.1b-2 hay W6.2 trở đi.
+> **Trạng thái:** phát hành ngày 2026-11-08 khi owner merge PR #74, sau [W6.1b readiness review](IMPLEMENTATION_READINESS_BLOCKED_2026-10-27.md#2026-11-08-w61b-readiness-review). **Đã thực thi và merge** ngày 2026-11-09, PR #75, xem [biên bản kiểm chứng](IMPLEMENTATION_READINESS_BLOCKED_2026-10-27.md#2026-11-09-w61b-1-verification-and-merge-record); migrate v9 và deploy chờ owner duyệt theo mục 6. Không mở W6.1b-2 hay W6.2 trở đi.
 > **Quyết định áp dụng:** [§20](W0_OWNER_DECISION_DELTA_2026-10-29.md#20-w61b-owner-decisions-2026-11-08), [§19](W0_OWNER_DECISION_DELTA_2026-10-29.md#19-w61a-owner-decisions-2026-11-06) cho hợp đồng sự kiện v2, và [tài liệu database mục B](../../khoa_luan/07_co_so_du_lieu.md) cho thiết kế v9. Chỗ nào §20 nói khác mục B thì theo §20.
 > **Nguyên tắc:** dữ liệu nghiệp vụ chỉ vào DB qua cổng tích hợp; tool của AI chỉ đọc DB; điều kiện nghiệp vụ do server tính khi đọc; RetailOps không chạm vào tiền. Không thêm nhánh xử lý riêng theo từng tình huống hay từng mã đơn. Gặp quyết định chính sách chưa có trong tài liệu thì **dừng và hỏi owner**.
 
