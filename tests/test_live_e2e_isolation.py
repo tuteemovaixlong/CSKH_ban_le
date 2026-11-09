@@ -144,8 +144,9 @@ class TestLiveE2EIsolation(unittest.TestCase):
             self.assertTrue(cust_mid)
             self.assertTrue(staff_mid)
 
-            # CLI --resolve-targets entrypoint also works against RETAILOPS_OUTPUT
-            env = dict(os.environ, RETAILOPS_OUTPUT=str(out_dir), PYTHONPATH=str(REPO_ROOT))
+            # CLI --resolve-targets entrypoint also works against RETAILOPS_OUTPUT without PYTHONPATH
+            env = dict(os.environ, RETAILOPS_OUTPUT=str(out_dir))
+            env.pop("PYTHONPATH", None)
             env.pop("RETAILOPS_DATABASE_URL", None)
             env.pop("RETAILOPS_STORAGE_BACKEND", None)
             cli_out = subprocess.run(
@@ -212,6 +213,95 @@ class TestLiveE2EIsolation(unittest.TestCase):
                 self.mod.select_seeded_targets(sessions, "smoke-demo", customer="C-001")
             with self.assertRaises(self.mod.E2EFailure):
                 self.mod.select_seeded_targets(sessions, "smoke-demo", order_id="O-101")
+
+    def test_resolve_targets_script_subprocess_outside_repo_cwd_without_pythonpath(self):
+        """W6.1b-1 BLOCKER guard: running deploy/live-e2e.py as a script without PYTHONPATH works from any cwd."""
+        with tempfile.TemporaryDirectory() as td:
+            base_dir = Path(td)
+            out_dir = base_dir / "data"
+            outside_cwd = base_dir / "outside_cwd"
+            (out_dir / "persistent" / "tenants").mkdir(parents=True)
+            outside_cwd.mkdir(parents=True)
+            self.assertNotEqual(outside_cwd.resolve(), REPO_ROOT.resolve())
+
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "retailops",
+                    "identity",
+                    "--output",
+                    str(out_dir),
+                    "init-tenant",
+                    "--tenant",
+                    "tmp-script-shop",
+                    "--name",
+                    "Tmp Script Shop",
+                    "--seed-demo",
+                ],
+                cwd=str(REPO_ROOT),
+                check=True,
+            )
+
+            clean_env = dict(os.environ, RETAILOPS_OUTPUT=str(out_dir))
+            clean_env.pop("PYTHONPATH", None)
+            clean_env.pop("RETAILOPS_DATABASE_URL", None)
+            clean_env.pop("RETAILOPS_STORAGE_BACKEND", None)
+
+            # 1) Subprocess from a working directory outside REPO_ROOT with no PYTHONPATH
+            proc_outside = subprocess.run(
+                [
+                    sys.executable,
+                    str(LIVE_E2E_PATH),
+                    "--resolve-targets",
+                    "--tenant",
+                    "tmp-script-shop",
+                    "--require-staff-customer",
+                ],
+                cwd=str(outside_cwd),
+                env=clean_env,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            resolved_outside = json.loads(proc_outside.stdout.strip())
+
+            # 2) Exact repo-root relative script invocation (`python deploy/live-e2e.py --resolve-targets --tenant ...`)
+            proc_rel = subprocess.run(
+                [
+                    sys.executable,
+                    "deploy/live-e2e.py",
+                    "--resolve-targets",
+                    "--tenant",
+                    "tmp-script-shop",
+                ],
+                cwd=str(REPO_ROOT),
+                env=clean_env,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            resolved_rel = json.loads(proc_rel.stdout.strip())
+            self.assertEqual(resolved_outside, resolved_rel)
+
+            sessions = PersistentSessions(out_dir / "persistent")
+            expected_cid = sessions.control.get_external_customer_mapping(
+                "tmp-script-shop", "marketplace_sim", "SIM-C-0070"
+            )
+            self.assertTrue(expected_cid)
+            self.assertEqual(resolved_outside["customer"], expected_cid)
+            self.assertEqual(resolved_outside["external_order_id"], "SIM-O-00115")
+            self.assertTrue(resolved_outside["order_id"].startswith("ord_"))
+            self.assertNotEqual(resolved_outside["staff_customer"], expected_cid)
+
+            bstore = sessions.business_store("tmp-script-shop")
+            cust_orders = bstore.orders(resolved_outside["customer"])
+            pending_order = next(
+                (o for o in cust_orders if o["id"] == resolved_outside["order_id"]),
+                None,
+            )
+            self.assertIsNotNone(pending_order)
+            self.assertEqual(pending_order["status"], "pending")
 
     def test_login_token_and_benchmark_scripts_issue_valid_seeded_credentials(self):
         """W6.1b-1 BLOCKER guard: get_login_token.py and run_live_benchmark_http.py work on v2 seeded demo."""

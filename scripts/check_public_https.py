@@ -179,6 +179,10 @@ def main():
             ci_oid = seed_meta['oid']
             ci_ver = seed_meta['ver']
             other_oid = seed_meta['other']
+            resolved_sqlite = json.loads(run(base+['exec','-T','web','python','/app/deploy/live-e2e.py',
+                '--resolve-targets','--tenant','ci-shop']).strip())
+            assert resolved_sqlite['customer'] == ci_cid and resolved_sqlite['order_id'] == ci_oid, resolved_sqlite
+            assert resolved_sqlite['external_order_id'] == 'SIM-O-00115', resolved_sqlite
             member = json.loads(run(admin+['create-member','--tenant','ci-shop','--principal','ci-staff',
                 '--name','CI staff','--customer',ci_cid,'--role','staff']))['membership_id']
             run(admin+['issue-credential','--membership',member,'--credential-file','/tmp/ci-account-code'])
@@ -224,6 +228,11 @@ def main():
                         'import-sqlite','--offline-snapshot','/data/persistent'])
             run(pgbase+['up','-d','--no-build','--pull','never','--wait','--wait-timeout','60','web'])
             assert request('/healthz')[1]['storage_backend'] == 'postgresql'
+            resolved_pg = json.loads(run(pgbase+['exec','-T','web','python','/app/deploy/live-e2e.py',
+                '--resolve-targets','--tenant','ci-shop','--require-staff-customer']).strip())
+            assert resolved_pg['customer'] == ci_cid and resolved_pg['order_id'] == ci_oid, resolved_pg
+            assert resolved_pg['external_order_id'] == 'SIM-O-00115' and resolved_pg['staff_customer'] != ci_cid, resolved_pg
+            print('LIVE_E2E_RESOLVE_TARGETS_CONTAINER_OK (packaged /app/deploy/live-e2e.py on SQLite and PostgreSQL)')
             assert request('/api/orders',jar='account')[0] == 401
             assert request('/api/login',{'token':code},jar='account')[0] == 200
             assert any(o['id'] == ci_oid and o['status'] == 'pending' for o in request('/api/orders',jar='account')[1]['orders'])

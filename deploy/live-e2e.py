@@ -793,7 +793,14 @@ def main():
     args = parser.parse_args()
 
     if args.resolve_targets:
+        import sys
+
         require(bool(args.tenant), "--tenant is required with --resolve-targets")
+        app_root = str(Path(__file__).resolve().parents[1])
+        if app_root not in sys.path:
+            sys.path.insert(0, app_root)
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8")
         sessions = open_container_sessions()
         targets = select_seeded_targets(
             sessions,
