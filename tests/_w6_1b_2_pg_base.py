@@ -56,6 +56,7 @@ class RealPostgresW61b2Base(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="r1-w61b2-realpg-")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+        self.dsn = DSN
         self.clear_pg_schemas()
         self.addCleanup(self.clear_pg_schemas)
         PostgresIdentityStore(DSN, create=True)

@@ -2864,6 +2864,16 @@ class BusinessStore:
         ephemeral = getattr(self, "_ephemeral_recipient_keyring", None)
         if ephemeral is not None:
             return ephemeral
+        sref = getattr(self, "_sessions_ref", None)
+        sess_obj = sref() if callable(sref) else None
+        if sess_obj is not None:
+            krmap = getattr(sess_obj, "_ephemeral_recipient_keyrings", None)
+            if isinstance(krmap, dict):
+                tid = str(getattr(self, "tenant_id", None) or "default")
+                sess_kr = krmap.get(tid)
+                if sess_kr is not None:
+                    self._ephemeral_recipient_keyring = sess_kr
+                    return sess_kr
         return load_recipient_keyring()
 
     def read_order_recipient_masked_in_tx(self, db, order_id: str) -> dict | None:
@@ -3261,14 +3271,23 @@ class BusinessStore:
                     continue
                 comp_id = deterministic_compensation_id(oid, ship_id, "late_delivery")
 
-                existing_for_order = db.execute(
-                    """SELECT compensation_id FROM delivery_compensations
-                       WHERE order_id = ?
-                         AND reason = 'late_delivery'
-                         AND (shipment_id = ? OR shipment_id IS NULL OR ? IS NULL)
-                       LIMIT 1""",
-                    (oid, ship_id, ship_id),
-                ).fetchone()
+                if ship_id is None:
+                    existing_for_order = db.execute(
+                        """SELECT compensation_id FROM delivery_compensations
+                           WHERE order_id = ?
+                             AND reason = 'late_delivery'
+                           LIMIT 1""",
+                        (oid,),
+                    ).fetchone()
+                else:
+                    existing_for_order = db.execute(
+                        """SELECT compensation_id FROM delivery_compensations
+                           WHERE order_id = ?
+                             AND reason = 'late_delivery'
+                             AND (shipment_id = ? OR shipment_id IS NULL)
+                           LIMIT 1""",
+                        (oid, ship_id),
+                    ).fetchone()
                 if existing_for_order is not None:
                     continue
 
@@ -3536,19 +3555,29 @@ class BusinessStore:
                 )
                 matched_case_id = str(held_row["case_id"])
 
-            next_status = "requested" if decision == "approve" else "rejected"
-            next_request_id = comp_clean if decision == "approve" else None
-            upd = db.execute(
-                """UPDATE delivery_compensations
-                   SET status = ?,
-                       decided_by_principal_id = ?,
-                       decided_at = ?,
-                       note = ?,
-                       request_id = COALESCE(?, request_id)
-                   WHERE compensation_id = ?
-                     AND status = 'proposed'""",
-                (next_status, actor_pid, now_ts, clean_note, next_request_id, comp_clean),
-            )
+            if decision == "approve":
+                upd = db.execute(
+                    """UPDATE delivery_compensations
+                       SET status = 'requested',
+                           decided_by_principal_id = ?,
+                           decided_at = ?,
+                           note = ?,
+                           request_id = ?
+                       WHERE compensation_id = ?
+                         AND status = 'proposed'""",
+                    (actor_pid, now_ts, clean_note, comp_clean, comp_clean),
+                )
+            else:
+                upd = db.execute(
+                    """UPDATE delivery_compensations
+                       SET status = 'rejected',
+                           decided_by_principal_id = ?,
+                           decided_at = ?,
+                           note = ?
+                       WHERE compensation_id = ?
+                         AND status = 'proposed'""",
+                    (actor_pid, now_ts, clean_note, comp_clean),
+                )
             if upd.rowcount != 1:
                 raise ApiError(
                     409,

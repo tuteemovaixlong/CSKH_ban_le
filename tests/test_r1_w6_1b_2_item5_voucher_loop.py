@@ -854,10 +854,10 @@ class RealPostgresVoucherLoopItem5Tests(RealPostgresW61b2Base, _VoucherLoopSuite
             tenant_id="shop-vch-pg",
             cli_env={
                 "RETAILOPS_STORAGE_BACKEND": "postgresql",
-                "DATABASE_URL": self.dsn,
-                "RETAILOPS_OUTPUT": str(self.root),
+                "RETAILOPS_DATABASE_URL": self.dsn,
+                "RETAILOPS_OUTPUT": str(self.root / "data"),
             },
-            cli_db_prefix=["--output", str(self.root)],
+            cli_db_prefix=["--output", str(self.root / "data")],
         )
 
 

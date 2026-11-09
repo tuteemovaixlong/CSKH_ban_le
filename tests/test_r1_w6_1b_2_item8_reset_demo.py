@@ -625,8 +625,12 @@ class _ResetDemoSuiteMixin:
                     trgs = {
                         str(r["tgname"]): str(r["tgenabled"])
                         for r in db.execute(
-                            """SELECT tgname, tgenabled FROM pg_trigger
-                               WHERE tgname IN ('trg_order_action_decisions_immutable', 'trg_shipment_events_immutable')"""
+                            """SELECT t.tgname, t.tgenabled::text AS tgenabled
+                               FROM pg_trigger t
+                               JOIN pg_class c ON c.oid = t.tgrelid
+                               JOIN pg_namespace n ON n.oid = c.relnamespace
+                               WHERE n.nspname = current_schema()
+                                 AND t.tgname IN ('trg_order_action_decisions_immutable', 'trg_shipment_events_immutable')"""
                         ).fetchall()
                     }
                 self.assertEqual(trgs.get("trg_order_action_decisions_immutable"), "O")
@@ -770,7 +774,7 @@ class RealPostgresResetDemoItem8Tests(RealPostgresW61b2Base, _ResetDemoSuiteMixi
             tenant_id="shop-demo",
             cli_env={
                 "RETAILOPS_STORAGE_BACKEND": "postgresql",
-                "DATABASE_URL": dsn,
+                "RETAILOPS_DATABASE_URL": dsn,
                 "RETAILOPS_OUTPUT": str(self.root / "data"),
             },
             cli_db_prefix=["-m", "retailops", "database", "--output", str(self.root / "data")],

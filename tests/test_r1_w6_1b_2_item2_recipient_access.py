@@ -585,6 +585,54 @@ class RecipientRoleAccessItem2Tests(unittest.TestCase):
         for needle in (self.name_a, self.phone_a, self.addr_a, self.name_b, self.phone_b, self.addr_b):
             self.assertNotIn(needle, audit_dump)
 
+    def test_cached_session_app_resolves_ephemeral_demo_recipient_keyring_after_late_seed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pers_dir = Path(tmp) / "persistent"
+            with patch.dict(os.environ, {"RETAILOPS_RECIPIENT_KEY_FILE": ""}, clear=False):
+                os.environ.pop("RETAILOPS_RECIPIENT_KEY_FILE", None)
+                sessions = PersistentSessions(pers_dir, api_daily_limit=10)
+                store_a = sessions.provision_tenant("shop-late-seed", "Shop Late Seed", seed_demo=False)
+                sec = sessions.login_google(
+                    "late.seed.sample@example.com",
+                    "Late Seed Sample",
+                    sub="sub-late-seed-1",
+                    email_verified=True,
+                    tenant_id="shop-late-seed",
+                )
+                cookie = f"{sessions.cookie_name}={sec}"
+                with sessions.resolve(cookie) as b_zero:
+                    ctx_zero = _ctx(
+                        b_zero.role,
+                        b_zero.principal_id,
+                        customer_id=b_zero.customer_id,
+                        tenant_id=b_zero.tenant_id,
+                        display_name=b_zero.display_name,
+                    )
+                    code_zero, body_zero = api_result(
+                        b_zero.application, b_zero.customer_id, "GET", "/api/orders", context=ctx_zero
+                    )
+                    self.assertEqual(code_zero, 200)
+                    self.assertEqual(body_zero["orders"], [])
+                    sample_cid = b_zero.customer_id
+
+                seeded_oids = store_a.seed_demo_sample_orders(sample_cid, sessions=sessions)
+                self.assertEqual(len(seeded_oids), 3)
+
+                with sessions.resolve(cookie) as b_after:
+                    ctx_after = _ctx(
+                        b_after.role,
+                        b_after.principal_id,
+                        customer_id=b_after.customer_id,
+                        tenant_id=b_after.tenant_id,
+                        display_name=b_after.display_name,
+                    )
+                    code_ord, body_ord = api_result(
+                        b_after.application, b_after.customer_id, "GET", "/api/orders", context=ctx_after
+                    )
+                    self.assertEqual(code_ord, 200)
+                    self.assertEqual(len(body_ord["orders"]), 3)
+                    self.assertTrue(all(o.get("recipient") is not None for o in body_ord["orders"]))
+
 
 if __name__ == "__main__":
     unittest.main()

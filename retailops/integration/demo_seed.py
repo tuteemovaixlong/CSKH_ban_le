@@ -6,6 +6,7 @@ Never imports ``marketplace_sim``.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from functools import lru_cache
 import hashlib
 import json
@@ -103,22 +104,31 @@ def _resolve_demo_digest_key(svc: IntegrationIngestService) -> bytes:
 
 
 def _resolve_demo_recipient_keyring(
-    svc: IntegrationIngestService, bstore: Any = None
+    svc: IntegrationIngestService, bstore: Any = None, *, sessions: Any = None
 ) -> RecipientKeyring:
     if os.environ.get("RETAILOPS_RECIPIENT_KEY_FILE", "").strip():
         return svc._resolve_recipient_keyring()
     if os.environ.get("RETAILOPS_ENV", "").strip().lower() in ("production", "prod", "live"):
         return svc._resolve_recipient_keyring()
+    tid = str(getattr(bstore, "tenant_id", None) or "default") if bstore is not None else "default"
     if bstore is not None:
         bstore._ephemeral_recipient_keyring = _EPHEMERAL_DEMO_RECIPIENT_KEYRING
-        sref = getattr(bstore, "_sessions_ref", None)
-        sess_obj = sref() if callable(sref) else None
-        if sess_obj is not None:
-            krmap = getattr(sess_obj, "_ephemeral_recipient_keyrings", None)
-            if not isinstance(krmap, dict):
-                krmap = {}
-                sess_obj._ephemeral_recipient_keyrings = krmap
-            krmap[str(getattr(bstore, "tenant_id", None) or "default")] = _EPHEMERAL_DEMO_RECIPIENT_KEYRING
+    sref = getattr(bstore, "_sessions_ref", None) if bstore is not None else None
+    ref_sess = sref() if callable(sref) else None
+    for sess_obj in (ref_sess, sessions):
+        if sess_obj is None:
+            continue
+        krmap = getattr(sess_obj, "_ephemeral_recipient_keyrings", None)
+        if not isinstance(krmap, dict):
+            krmap = {}
+            sess_obj._ephemeral_recipient_keyrings = krmap
+        krmap[tid] = _EPHEMERAL_DEMO_RECIPIENT_KEYRING
+        apps_map = getattr(sess_obj, "apps", None)
+        if isinstance(apps_map, Mapping):
+            for app_entry in apps_map.values():
+                cached_store = getattr(app_entry, "store", None)
+                if cached_store is not None and str(getattr(cached_store, "tenant_id", None) or "default") == tid:
+                    cached_store._ephemeral_recipient_keyring = _EPHEMERAL_DEMO_RECIPIENT_KEYRING
     return _EPHEMERAL_DEMO_RECIPIENT_KEYRING
 
 
@@ -157,7 +167,7 @@ def seed_demo_store_events(
 
     svc = IntegrationIngestService(sess)
     digest_key = _resolve_demo_digest_key(svc)
-    recipient_keyring = _resolve_demo_recipient_keyring(svc, bstore)
+    recipient_keyring = _resolve_demo_recipient_keyring(svc, bstore, sessions=sess)
     validated_mapping = load_default_status_mapping("marketplace_sim")
     rebase_offset = (float(bstore._now()) - max_ts) if max_ts is not None else 0.0
 
@@ -321,7 +331,7 @@ def seed_demo_account_orders(
     tenant_id = str(getattr(bstore, "tenant_id", None) or "default")
     svc = IntegrationIngestService(sess)
     digest_key = _resolve_demo_digest_key(svc)
-    recipient_keyring = _resolve_demo_recipient_keyring(svc, bstore)
+    recipient_keyring = _resolve_demo_recipient_keyring(svc, bstore, sessions=sess)
     validated_mapping = load_default_status_mapping("marketplace_sim")
 
     def _check_already_populated(conn: Any) -> tuple[bool, str]:
