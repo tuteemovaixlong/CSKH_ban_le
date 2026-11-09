@@ -371,7 +371,16 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             if ctx.principal_id is not None:
                 display_name = (ctx.display_name or "").strip()
             else:
-                display_name = ctx.display_name or ("Mai Anh" if customer == "C-001" else "Khách mẫu")
+                display_name = (ctx.display_name or "").strip()
+                if not display_name and customer:
+                    with app.store.connection() as db:
+                        cust_row = db.execute(
+                            "SELECT name FROM customers WHERE id=?", (customer,)
+                        ).fetchone()
+                    if cust_row and cust_row["name"]:
+                        display_name = str(cust_row["name"]).strip()
+                if not display_name:
+                    display_name = "Khách mẫu"
             res = {
                 "customer_id": customer,
                 "name": display_name,

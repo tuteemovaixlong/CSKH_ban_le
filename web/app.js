@@ -5189,23 +5189,26 @@ async function deleteProduct(pid) {
 document.querySelectorAll('.sop-action-btn').forEach(btn => {
   btn.onclick = async () => {
     const sop = btn.dataset.sop;
-    const oid = btn.dataset.order;
-    if (sop === '1') {
-      await lookupOrder(oid || 'O-301');
+    const oid = (btn.dataset.order || selected || '').trim();
+    if (sop === '1' || sop === '2' || sop === '3' || sop === '4') {
+      if (!oid) {
+        mgrDialog?.close?.();
+        message('Vui lòng chọn một đơn hàng trong danh sách trước khi chạy mô phỏng SOP này.', 'assistant', 'ui_simulation');
+        return;
+      }
+      await lookupOrder(oid);
+      const matchedOrder = Array.isArray(orders) ? orders.find(o => o.id === oid || o.external_order_id === oid) : null;
+      const displayOid = (matchedOrder && matchedOrder.external_order_id) || oid;
       mgrDialog?.close?.();
-      message(`[Mô phỏng] SOP 1: Mô phỏng gửi lệnh khiếu nại bưu cục yêu cầu bưu tá giao lại ngay trong ca trước 18:00 cho đơn ${oid || 'O-301'}. (Chế độ demo giao diện - chưa kết nối backend mutation)`, 'assistant', 'ui_simulation');
-    } else if (sop === '2') {
-      await lookupOrder(oid || 'O-302');
-      mgrDialog?.close?.();
-      message(`[Mô phỏng] SOP 2: Mô phỏng duyệt lệnh Đổi mới 1-1 tận nhà cho đơn ${oid || 'O-302'}. Shipper GHTK sẽ mang sản phẩm mới tới đổi. (Chế độ demo giao diện - chưa kết nối backend mutation)`, 'assistant', 'ui_simulation');
-    } else if (sop === '3') {
-      await lookupOrder(oid || 'O-303');
-      mgrDialog?.close?.();
-      message(`[Mô phỏng] SOP 3: Mô phỏng duyệt Đổi size L 2 chiều tận nơi freeship cho đơn ${oid || 'O-303'}. (Chế độ demo giao diện - chưa kết nối backend mutation)`, 'assistant', 'ui_simulation');
-    } else if (sop === '4') {
-      await lookupOrder(oid || 'O-304');
-      mgrDialog?.close?.();
-      message(`[Mô phỏng] SOP 4: Mô phỏng tạo đề xuất bồi thường giao trễ 50.000đ cho đơn hàng ${oid || 'O-304'}. (Chế độ demo giao diện - chưa kết nối backend mutation)`, 'assistant', 'ui_simulation');
+      if (sop === '1') {
+        message(`[Mô phỏng] SOP 1: Mô phỏng gửi lệnh khiếu nại bưu cục yêu cầu bưu tá giao lại ngay trong ca trước 18:00 cho đơn ${displayOid}. (Chế độ demo giao diện - chưa kết nối backend mutation)`, 'assistant', 'ui_simulation');
+      } else if (sop === '2') {
+        message(`[Mô phỏng] SOP 2: Mô phỏng duyệt lệnh Đổi mới 1-1 tận nhà cho đơn ${displayOid}. Shipper GHTK sẽ mang sản phẩm mới tới đổi. (Chế độ demo giao diện - chưa kết nối backend mutation)`, 'assistant', 'ui_simulation');
+      } else if (sop === '3') {
+        message(`[Mô phỏng] SOP 3: Mô phỏng duyệt Đổi size L 2 chiều tận nơi freeship cho đơn ${displayOid}. (Chế độ demo giao diện - chưa kết nối backend mutation)`, 'assistant', 'ui_simulation');
+      } else if (sop === '4') {
+        message(`[Mô phỏng] SOP 4: Mô phỏng tạo đề xuất bồi thường giao trễ 50.000đ cho đơn hàng ${displayOid}. (Chế độ demo giao diện - chưa kết nối backend mutation)`, 'assistant', 'ui_simulation');
+      }
     } else if (sop === '5') {
       mgrDialog?.close?.();
       message(`[Mô phỏng] SOP 5: Mô phỏng tiếp nhận khẩn cấp & kích hoạt Strict Mode. Chuyên viên quản lý ca sẽ liên hệ khách hàng. (Chế độ demo giao diện - chưa kết nối backend mutation)`, 'assistant', 'ui_simulation');

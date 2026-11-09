@@ -95,6 +95,8 @@ def _resolve_sessions_for_store(bstore: Any, sessions: Any = None) -> tuple[Any,
 def _resolve_demo_digest_key(svc: IntegrationIngestService) -> bytes:
     if os.environ.get("RETAILOPS_EVENT_DIGEST_KEY_FILE", "").strip():
         return svc._resolve_digest_key()
+    if os.environ.get("RETAILOPS_ENV", "").strip().lower() in ("production", "prod", "live"):
+        return svc._resolve_digest_key()
     return _EPHEMERAL_DEMO_DIGEST_KEY
 
 

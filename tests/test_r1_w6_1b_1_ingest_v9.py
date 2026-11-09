@@ -3184,6 +3184,55 @@ class Item8DemoEventsAndPurgeLegacyTests(unittest.TestCase):
         self.assertEqual(json.loads(audit_rows[0]["after_json"])["removed_count"], 1)
         self.assertEqual(json.loads(audit_rows[0]["after_json"])["retained_order_ids"], ["O-101"])
 
+    def test_session_and_profile_display_name_comes_from_customer_data(self):
+        from retailops.business.application import Application
+        from retailops.http.routes import api_result
+
+        bstore = BusinessStore(self.out_dir / "session_name_data.sqlite3")
+        with bstore.connection(write=True) as db:
+            db.execute("INSERT INTO customers(id, name) VALUES ('C-001', 'Phạm Thị Hạnh')")
+            db.execute("INSERT INTO customers(id, name) VALUES ('cust_blank', '')")
+
+        app = Application(bstore, {})
+        code_s, sess = api_result(app, "C-001", "GET", "/api/session")
+        code_p, prof = api_result(app, "C-001", "GET", "/api/profile")
+        self.assertEqual((code_s, code_p), (200, 200))
+        self.assertEqual(sess["name"], "Phạm Thị Hạnh")
+        self.assertEqual(prof["name"], "Phạm Thị Hạnh")
+        self.assertNotEqual(sess["name"], "Mai Anh")
+
+        _, sess_blank = api_result(app, "cust_blank", "GET", "/api/session")
+        _, sess_missing = api_result(app, "cust_nonexistent", "GET", "/api/session")
+        self.assertEqual(sess_blank["name"], "Khách mẫu")
+        self.assertEqual(sess_missing["name"], "Khách mẫu")
+
+    def test_demo_seed_fails_closed_in_production_without_digest_key(self):
+        from retailops.integration.demo_seed import (
+            seed_demo_account_orders,
+            seed_demo_store_events,
+        )
+
+        bstore = BusinessStore(self.out_dir / "prod_no_key.sqlite3")
+        for env_val in ("production", "prod", "live"):
+            with patch.dict(
+                os.environ,
+                {"RETAILOPS_ENV": env_val, "RETAILOPS_EVENT_DIGEST_KEY_FILE": ""},
+                clear=False,
+            ):
+                with self.assertRaises(ApiError) as err_store:
+                    seed_demo_store_events(bstore)
+                self.assertEqual(err_store.exception.status, 503)
+                self.assertEqual(err_store.exception.code, "connector_unavailable")
+
+                with self.assertRaises(ApiError) as err_acct:
+                    seed_demo_account_orders(bstore, "cust_prod_test")
+                self.assertEqual(err_acct.exception.status, 503)
+                self.assertEqual(err_acct.exception.code, "connector_unavailable")
+
+        with bstore.connection() as db:
+            order_count = db.execute("SELECT COUNT(*) AS c FROM orders").fetchone()["c"]
+        self.assertEqual(order_count, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

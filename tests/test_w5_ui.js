@@ -30,6 +30,10 @@ assert.ok(suggestionsHtml.length > 0, 'Composer suggestions bar must exist');
 assert.ok(!suggestionsHtml.includes('O-101'), 'Sample prompt buttons in web/index.html must not contain O-101');
 assert.ok(suggestionsHtml.includes('Kiểm tra đơn hàng gần nhất của tôi'), 'Sample prompt must use generic phrasing');
 assert.ok(!embedJs.includes('O-101'), 'web/embed.js sample prompts must not contain O-101');
+for (const deadSopOrder of ['O-301', 'O-302', 'O-303', 'O-304']) {
+  assert.ok(!indexHtml.includes(deadSopOrder), `web/index.html must not hardcode ${deadSopOrder} on SOP buttons`);
+  assert.ok(!appJs.includes(deadSopOrder), `web/app.js must not fall back to ${deadSopOrder} on SOP buttons`);
+}
 
 // Required W5 DOM IDs in web/index.html
 for (const id of [
@@ -206,8 +210,13 @@ function createHarness(initialSession) {
     },
     createTextNode: text => ({ textContent: String(text) }),
     querySelector: sel => (sel && sel.startsWith('#') ? get(sel.slice(1)) : get(sel)),
-    querySelectorAll: () => []
+    querySelectorAll: sel => (sel === '.sop-action-btn' ? sopButtons : [])
   };
+  const sopButtons = ['1', '2', '3', '4', '5', '6'].map(num => {
+    const b = new Element('button');
+    b.dataset.sop = num;
+    return b;
+  });
 
   const storageMap = new Map();
   const localStorage = {
@@ -343,6 +352,14 @@ function createHarness(initialSession) {
           case_id: 'case_cust_open',
           provider_id: 'api',
           context: {}
+        };
+      } else if (url.startsWith('/api/conversations/') && url.endsWith('/focus') && method === 'POST') {
+        const oid = parsedBody.order_id;
+        resp = {
+          order: { id: oid, external_order_id: 'SIM-O-00115' },
+          context: { order_id: oid },
+          message: `Đã chọn đơn ${oid}.`,
+          source: 'store_data'
         };
       } else if (url.startsWith('/api/conversations/') && url.endsWith('/messages')) {
         resp = state.convMessagesPayload;
@@ -539,7 +556,7 @@ function createHarness(initialSession) {
 
   vm.runInContext(appJs, context);
   const run = code => vm.runInContext(code, context);
-  return { get, nodes, state, run, collectText, findDescendants };
+  return { get, nodes, state, run, collectText, findDescendants, sopButtons };
 }
 
 (async () => {
@@ -810,6 +827,28 @@ function createHarness(initialSession) {
     assert.equal(h.get('staff-desk-dialog').open, true, 'Row click must open Staff Desk');
     assert.equal(h.run('activeStaffTicket && activeStaffTicket.case_id'), 'case_w5_101');
     assert.equal(h.get('btn-open-transfer-case').hidden, false, 'Manager must see Chuyển ca on any in_progress case');
+
+    // SOP buttons require a selected order instead of falling back to O-301..O-304
+    h.run('selected = null; orders = [{ id: "ord_sim_115", external_order_id: "SIM-O-00115" }];');
+    const focusBefore = h.state.requests.filter(r => r.url.endsWith('/focus')).length;
+    await h.sopButtons[0].onclick();
+    await h.sopButtons[1].onclick();
+    assert.equal(
+      h.state.requests.filter(r => r.url.endsWith('/focus')).length,
+      focusBefore,
+      'SOP 1/2 must not call /focus when no order is selected'
+    );
+    assert.ok(
+      h.collectText(h.get('messages')).includes('Vui lòng chọn một đơn hàng'),
+      'SOP button without selected order must ask user to select an order'
+    );
+
+    h.run('selected = "ord_sim_115"; orders = [{ id: "ord_sim_115", external_order_id: "SIM-O-00115" }];');
+    await h.sopButtons[0].onclick();
+    const focusReqs = h.state.requests.filter(r => r.url.endsWith('/focus'));
+    assert.equal(focusReqs.length, focusBefore + 1, 'SOP 1 with selected order must call /focus once');
+    assert.equal(focusReqs.at(-1).body.order_id, 'ord_sim_115');
+    assert.ok(h.collectText(h.get('messages')).includes('SOP 1'));
   }
 
   console.log('W5_UI_OK');
