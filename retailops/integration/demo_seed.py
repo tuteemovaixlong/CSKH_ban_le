@@ -111,6 +111,14 @@ def _resolve_demo_recipient_keyring(
         return svc._resolve_recipient_keyring()
     if bstore is not None:
         bstore._ephemeral_recipient_keyring = _EPHEMERAL_DEMO_RECIPIENT_KEYRING
+        sref = getattr(bstore, "_sessions_ref", None)
+        sess_obj = sref() if callable(sref) else None
+        if sess_obj is not None:
+            krmap = getattr(sess_obj, "_ephemeral_recipient_keyrings", None)
+            if not isinstance(krmap, dict):
+                krmap = {}
+                sess_obj._ephemeral_recipient_keyrings = krmap
+            krmap[str(getattr(bstore, "tenant_id", None) or "default")] = _EPHEMERAL_DEMO_RECIPIENT_KEYRING
     return _EPHEMERAL_DEMO_RECIPIENT_KEYRING
 
 

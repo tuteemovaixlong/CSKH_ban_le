@@ -702,8 +702,26 @@ class IntegrationIngestService:
         active_recipient_keyring: RecipientKeyring | None = None
         if event_type == "order.created" and data.get("recipient") is not None:
             active_recipient_keyring = self._resolve_recipient_keyring(recipient_keyring)
+            if (
+                not os.environ.get("RETAILOPS_RECIPIENT_KEY_FILE", "").strip()
+                and os.environ.get("RETAILOPS_ENV", "").strip().lower()
+                not in ("production", "prod", "live")
+            ):
+                krmap = getattr(self.sessions, "_ephemeral_recipient_keyrings", None)
+                if not isinstance(krmap, dict):
+                    krmap = {}
+                    setattr(self.sessions, "_ephemeral_recipient_keyrings", krmap)
+                krmap[tenant_clean] = active_recipient_keyring
 
         bstore = self.get_bstore(tenant_clean) if _db is None else None
+        if (
+            bstore is not None
+            and active_recipient_keyring is not None
+            and not os.environ.get("RETAILOPS_RECIPIENT_KEY_FILE", "").strip()
+            and os.environ.get("RETAILOPS_ENV", "").strip().lower()
+            not in ("production", "prod", "live")
+        ):
+            bstore._ephemeral_recipient_keyring = active_recipient_keyring
         now = time.time()
         replay_row: dict[str, Any] | None = None
         mapped_ext_customer_id: str | None = None

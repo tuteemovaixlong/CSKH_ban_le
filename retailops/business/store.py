@@ -25,7 +25,14 @@ from retailops.core import (
     fields,
     require,
 )
-from retailops.business.eligibility import compute_order_eligibility, format_vn_iso
+from retailops.business.eligibility import (
+    LATE_DELIVERY_COMPENSATION_THRESHOLD_HOURS,
+    LATE_DELIVERY_COMPENSATION_VOUCHER_TYPE,
+    LATE_DELIVERY_COMPENSATION_VOUCHER_VND,
+    compute_order_eligibility,
+    deterministic_compensation_id,
+    format_vn_iso,
+)
 from retailops.integration.recipient_crypto import (
     load_recipient_keyring,
     sync_order_recipient_retention_in_tx,
@@ -2637,6 +2644,418 @@ class BusinessStore:
             "purged_count": purged,
             "order_ids": oids,
         }
+
+    def _serialize_compensation_in_tx(self, db, row) -> dict:
+        comp_id = str(row["compensation_id"])
+        oid = str(row["order_id"])
+        ord_row = db.execute(
+            "SELECT id, external_order_id, source_system, status, customer_id, promised_delivery_by, delivered_at "
+            "FROM orders WHERE id = ?",
+            (oid,),
+        ).fetchone()
+        ship_id = row["shipment_id"]
+        ship_row = (
+            db.execute(
+                "SELECT shipment_id, carrier, tracking_code, status FROM shipments WHERE shipment_id = ?",
+                (str(ship_id),),
+            ).fetchone()
+            if ship_id is not None
+            else None
+        )
+        v_row = db.execute(
+            "SELECT voucher_id, code, valid_until, issued_at FROM vouchers WHERE compensation_id = ? ORDER BY issued_at DESC LIMIT 1",
+            (comp_id,),
+        ).fetchone()
+        return {
+            "compensation_id": comp_id,
+            "order_id": oid,
+            "external_order_id": ord_row["external_order_id"] if ord_row is not None else None,
+            "source_system": ord_row["source_system"] if ord_row is not None else None,
+            "order_status": ord_row["status"] if ord_row is not None else None,
+            "shipment_id": str(ship_id) if ship_id is not None else None,
+            "carrier": ship_row["carrier"] if ship_row is not None else None,
+            "tracking_code": ship_row["tracking_code"] if ship_row is not None else None,
+            "reason": str(row["reason"]),
+            "late_by_hours": round(float(row["late_by_hours"]), 2),
+            "voucher_type": str(row["voucher_type"]),
+            "value": int(row["value"]),
+            "status": str(row["status"]),
+            "decided_by_principal_id": row["decided_by_principal_id"],
+            "decided_at": float(row["decided_at"]) if row["decided_at"] is not None else None,
+            "decided_at_iso": format_vn_iso(row["decided_at"]),
+            "note": row["note"],
+            "request_id": row["request_id"],
+            "voucher_code": v_row["code"] if v_row is not None else None,
+            "voucher_valid_until": format_vn_iso(v_row["valid_until"]) if v_row is not None else None,
+        }
+
+    def scan_late_delivery_compensations(
+        self,
+        *,
+        now: float | None = None,
+        _fail_after_first_insert_for_test: bool = False,
+    ) -> dict:
+        """Detect shipping/delivered orders late past 48h vs promised_delivery_by and propose 50,000 VND vouchers (W6.1b-2-D6, D7)."""
+        now_ts = float(self._now() if now is None else now)
+        with self.connection() as db:
+            candidate_ids = [
+                str(r["id"])
+                for r in db.execute(
+                    """SELECT id FROM orders
+                       WHERE status IN ('shipping', 'delivered')
+                         AND promised_delivery_by IS NOT NULL
+                       ORDER BY id ASC"""
+                ).fetchall()
+            ]
+
+        proposed_count = 0
+        for oid in candidate_ids:
+            inserted_this_order = False
+            with self.connection(write=True) as db:
+                ord_row = db.execute(
+                    """SELECT * FROM orders
+                       WHERE id = ?
+                         AND status IN ('shipping', 'delivered')
+                         AND promised_delivery_by IS NOT NULL""",
+                    (oid,),
+                ).fetchone()
+                if ord_row is None:
+                    continue
+                ord_dict = dict(ord_row)
+                elig = self._order_eligibility_in_tx(db, ord_dict, now=now_ts)
+                late_by = elig.get("late_by_hours")
+                if late_by is None or float(late_by) <= float(LATE_DELIVERY_COMPENSATION_THRESHOLD_HOURS):
+                    continue
+                ship_row = db.execute(
+                    "SELECT shipment_id FROM shipments WHERE order_id = ? ORDER BY updated_at DESC, shipment_id DESC LIMIT 1",
+                    (oid,),
+                ).fetchone()
+                ship_id = str(ship_row["shipment_id"]) if ship_row is not None else None
+                comp_id = deterministic_compensation_id(oid, ship_id, "late_delivery")
+
+                existing_for_order = db.execute(
+                    """SELECT compensation_id FROM delivery_compensations
+                       WHERE order_id = ?
+                         AND reason = 'late_delivery'
+                         AND (shipment_id = ? OR shipment_id IS NULL OR ? IS NULL)
+                       LIMIT 1""",
+                    (oid, ship_id, ship_id),
+                ).fetchone()
+                if existing_for_order is not None:
+                    continue
+
+                cur = db.execute(
+                    """INSERT INTO delivery_compensations (
+                           compensation_id, order_id, shipment_id, reason,
+                           late_by_hours, voucher_type, value, status,
+                           decided_by_principal_id, decided_at, note, request_id
+                       ) VALUES (?, ?, ?, 'late_delivery', ?, ?, ?, 'proposed', NULL, NULL, NULL, NULL)
+                       ON CONFLICT(compensation_id) DO NOTHING""",
+                    (
+                        comp_id,
+                        oid,
+                        ship_id,
+                        round(float(late_by), 2),
+                        LATE_DELIVERY_COMPENSATION_VOUCHER_TYPE,
+                        int(LATE_DELIVERY_COMPENSATION_VOUCHER_VND),
+                    ),
+                )
+                if cur.rowcount == 1:
+                    proposed_count += 1
+                    inserted_this_order = True
+                    self.log(
+                        db,
+                        str(ord_dict["customer_id"]),
+                        "delivery_compensation_proposed",
+                        oid,
+                        compensation_id=comp_id,
+                        shipment_id=ship_id,
+                        late_by_hours=round(float(late_by), 2),
+                        voucher_type=LATE_DELIVERY_COMPENSATION_VOUCHER_TYPE,
+                        value=int(LATE_DELIVERY_COMPENSATION_VOUCHER_VND),
+                    )
+            if _fail_after_first_insert_for_test and inserted_this_order and proposed_count == 1:
+                raise RuntimeError("Simulated mid-scan crash after first compensation proposal")
+
+        return {"proposed": proposed_count, "scanned": len(candidate_ids)}
+
+    def list_case_compensations(self, case_id: str) -> list[dict]:
+        """Return delivery_compensations for orders linked to the given case."""
+        require(
+            isinstance(case_id, str) and bool(re.fullmatch(r"[A-Za-z0-9_-]{1,80}", case_id)),
+            400,
+            "invalid_case_id",
+            "Mã ca hỗ trợ không hợp lệ.",
+        )
+        with self.connection() as db:
+            case_row = db.execute(
+                """SELECT c.case_id, conv.order_id AS conv_order_id
+                   FROM cases c
+                   LEFT JOIN conversations conv ON conv.id = c.conversation_id
+                   WHERE c.case_id = ?""",
+                (case_id,),
+            ).fetchone()
+            require(case_row is not None, 404, "case_not_found", "Không tìm thấy ca hỗ trợ.")
+            linked_oids: set[str] = set()
+            if case_row["conv_order_id"]:
+                linked_oids.add(str(case_row["conv_order_id"]))
+            for oar_r in db.execute(
+                "SELECT DISTINCT order_id FROM order_action_requests WHERE case_id = ?",
+                (case_id,),
+            ).fetchall():
+                if oar_r["order_id"]:
+                    linked_oids.add(str(oar_r["order_id"]))
+            if not linked_oids:
+                return []
+            placeholders = ",".join("?" for _ in linked_oids)
+            rows = db.execute(
+                f"""SELECT * FROM delivery_compensations
+                    WHERE order_id IN ({placeholders})
+                    ORDER BY CASE WHEN status = 'proposed' THEN 0 ELSE 1 END ASC, compensation_id ASC""",
+                tuple(sorted(linked_oids)),
+            ).fetchall()
+            return [self._serialize_compensation_in_tx(db, r) for r in rows]
+
+    def list_manager_compensations(
+        self,
+        *,
+        status: str = "all",
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict:
+        """Paginated store-wide delivery_compensations list for Manager without recipient PII."""
+        st_clean = str(status or "all").strip().lower()
+        allowed_st = ("all", "proposed", "approved", "requested", "issued", "rejected", "failed")
+        require(
+            st_clean in allowed_st,
+            400,
+            "invalid_status",
+            "Trạng thái lọc đề xuất bồi thường không hợp lệ.",
+        )
+        require(type(limit) is int and 1 <= limit <= 50, 400, "invalid_limit", "Giới hạn mỗi trang phải từ 1 đến 50.")
+        require(type(offset) is int and offset >= 0, 400, "invalid_offset", "Vị trí phân trang không hợp lệ.")
+
+        with self.connection() as db:
+            counts = {k: 0 for k in ("proposed", "approved", "requested", "issued", "rejected", "failed")}
+            for gr in db.execute(
+                "SELECT status, COUNT(*) AS cnt FROM delivery_compensations GROUP BY status"
+            ).fetchall():
+                if gr["status"] in counts:
+                    counts[gr["status"]] = int(gr["cnt"])
+            cnt_all = sum(counts.values())
+            counts["all"] = cnt_all
+            total_matching = counts[st_clean]
+
+            where_sql = "" if st_clean == "all" else "WHERE dc.status = ?"
+            params: list = [] if st_clean == "all" else [st_clean]
+            params.extend([limit, offset])
+
+            rows = db.execute(
+                f"""SELECT dc.*, c.name AS customer_name
+                    FROM delivery_compensations dc
+                    LEFT JOIN orders o ON o.id = dc.order_id
+                    LEFT JOIN customers c ON c.id = o.customer_id
+                    {where_sql}
+                    ORDER BY CASE WHEN dc.status = 'proposed' THEN 0 ELSE 1 END ASC, dc.compensation_id ASC
+                    LIMIT ? OFFSET ?""",
+                tuple(params),
+            ).fetchall()
+
+            items = []
+            for r in rows:
+                base = self._serialize_compensation_in_tx(db, r)
+                raw_cname = str(r["customer_name"] or "").strip()
+                if "@" in raw_cname:
+                    raw_cname = raw_cname.split("@", 1)[0].strip()
+                if " - " in raw_cname:
+                    raw_cname = raw_cname.split(" - ", 1)[0].strip()
+                raw_cname = re.sub(r"(?:\+?84|0)\d[\d\s.\-]{7,12}\d", "", raw_cname).strip(" -|,;·")
+                linked_case = db.execute(
+                    """SELECT c.case_id
+                       FROM cases c
+                       LEFT JOIN conversations conv ON conv.id = c.conversation_id
+                       WHERE conv.order_id = ?
+                          OR EXISTS (
+                              SELECT 1 FROM order_action_requests oar
+                              WHERE oar.case_id = c.case_id AND oar.order_id = ?
+                          )
+                       ORDER BY CASE WHEN c.status IN ('in_progress', 'waiting') THEN 0 ELSE 1 END ASC,
+                                c.updated_at DESC
+                       LIMIT 1""",
+                    (base["order_id"], base["order_id"]),
+                ).fetchone()
+                base["customer_name"] = raw_cname or "Khách hàng"
+                base["case_id"] = str(linked_case["case_id"]) if linked_case is not None else None
+                items.append(base)
+
+        return {
+            "status_filter": st_clean,
+            "total": total_matching,
+            "limit": limit,
+            "offset": offset,
+            "counts": counts,
+            "items": items,
+        }
+
+    def decide_delivery_compensation(
+        self,
+        compensation_id: str,
+        *,
+        decision: str,
+        actor: dict | None,
+        note: str | None = None,
+        case_id: str | None = None,
+    ) -> dict:
+        """Conditionally approve or reject a proposed delivery_compensation (WHERE status='proposed')."""
+        comp_clean = str(compensation_id or "").strip()
+        require(
+            bool(re.fullmatch(r"[A-Za-z0-9_-]{4,80}", comp_clean)),
+            400,
+            "invalid_compensation_id",
+            "Mã đề xuất bồi thường không hợp lệ.",
+        )
+        require(
+            decision in ("approve", "reject"),
+            400,
+            "invalid_decision",
+            "Quyết định bồi thường phải là approve hoặc reject.",
+        )
+        clean_note: str | None = None
+        if note is not None:
+            require(isinstance(note, str), 400, "invalid_note", "Ghi chú phải là chuỗi ký tự.")
+            stripped_note = note.strip()
+            require(len(stripped_note) <= 500, 400, "invalid_note", "Ghi chú không được vượt quá 500 ký tự.")
+            clean_note = stripped_note or None
+
+        clean_case: str | None = None
+        if case_id is not None:
+            require(
+                isinstance(case_id, str) and bool(re.fullmatch(r"[A-Za-z0-9_-]{1,80}", case_id.strip())),
+                400,
+                "invalid_case_id",
+                "Mã ca hỗ trợ không hợp lệ.",
+            )
+            clean_case = case_id.strip()
+
+        actor_role = str((actor or {}).get("role") or "").strip().lower()
+        actor_pid = str((actor or {}).get("principal_id") or "").strip()
+        require(
+            actor_role in ("staff", "manager") and bool(actor_pid),
+            403,
+            "permission_denied",
+            "Chỉ nhân viên đang giữ ca mở có gắn đơn hoặc Quản lý mới được duyệt bồi thường.",
+        )
+
+        now_ts = float(self._now())
+        with self.connection(write=True) as db:
+            comp_row = db.execute(
+                "SELECT * FROM delivery_compensations WHERE compensation_id = ?",
+                (comp_clean,),
+            ).fetchone()
+            require(
+                comp_row is not None,
+                404,
+                "compensation_not_found",
+                "Không tìm thấy đề xuất bồi thường.",
+            )
+            canonical_oid = str(comp_row["order_id"])
+            ord_row = db.execute(
+                "SELECT * FROM orders WHERE id = ?",
+                (canonical_oid,),
+            ).fetchone()
+            require(ord_row is not None, 404, "order_not_found", "Không tìm thấy đơn hàng của đề xuất bồi thường.")
+            ord_customer_id = str(ord_row["customer_id"])
+
+            matched_case_id: str | None = None
+            if actor_role == "manager":
+                if clean_case is not None:
+                    c_row = db.execute(
+                        "SELECT case_id FROM cases WHERE case_id = ?",
+                        (clean_case,),
+                    ).fetchone()
+                    require(c_row is not None, 404, "case_not_found", "Không tìm thấy ca hỗ trợ.")
+                    matched_case_id = str(c_row["case_id"])
+            else:
+                params: list = [actor_pid, ord_customer_id, canonical_oid, canonical_oid]
+                case_filter_sql = ""
+                if clean_case is not None:
+                    case_filter_sql = " AND c.case_id = ?"
+                    params.append(clean_case)
+                held_row = db.execute(
+                    f"""SELECT c.case_id
+                        FROM cases c
+                        LEFT JOIN conversations conv ON conv.id = c.conversation_id
+                        WHERE c.status = 'in_progress'
+                          AND c.holder = ?
+                          AND c.customer_id = ?
+                          AND (
+                              conv.order_id = ?
+                              OR EXISTS (
+                                  SELECT 1 FROM order_action_requests oar
+                                  WHERE oar.case_id = c.case_id AND oar.order_id = ?
+                              )
+                          )
+                          {case_filter_sql}
+                        ORDER BY c.updated_at DESC
+                        LIMIT 1""",
+                    tuple(params),
+                ).fetchone()
+                require(
+                    held_row is not None,
+                    403,
+                    "compensation_decision_denied",
+                    "Chỉ nhân viên đang giữ ca mở có gắn đơn hàng này hoặc Quản lý mới được duyệt/từ chối đề xuất bồi thường.",
+                )
+                matched_case_id = str(held_row["case_id"])
+
+            next_status = "approved" if decision == "approve" else "rejected"
+            upd = db.execute(
+                """UPDATE delivery_compensations
+                   SET status = ?,
+                       decided_by_principal_id = ?,
+                       decided_at = ?,
+                       note = ?
+                   WHERE compensation_id = ?
+                     AND status = 'proposed'""",
+                (next_status, actor_pid, now_ts, clean_note, comp_clean),
+            )
+            if upd.rowcount != 1:
+                raise ApiError(
+                    409,
+                    "compensation_not_proposed",
+                    "Đề xuất bồi thường đã được xử lý bởi người khác hoặc không còn ở trạng thái chờ duyệt.",
+                )
+
+            updated_row = db.execute(
+                "SELECT * FROM delivery_compensations WHERE compensation_id = ?",
+                (comp_clean,),
+            ).fetchone()
+            serialized = self._serialize_compensation_in_tx(db, updated_row)
+            self.log(
+                db,
+                ord_customer_id,
+                "delivery_compensation_approved" if decision == "approve" else "delivery_compensation_rejected",
+                canonical_oid,
+                compensation_id=comp_clean,
+                status=serialized["status"],
+                value=serialized["value"],
+                voucher_type=serialized["voucher_type"],
+                case_id=matched_case_id,
+                note=clean_note,
+                actor={
+                    "principal_id": actor_pid,
+                    "role": actor_role,
+                    "tenant_id": (actor or {}).get("tenant_id"),
+                    "membership_id": (actor or {}).get("membership_id"),
+                },
+            )
+            return {
+                "status": "ok",
+                "compensation": serialized,
+                "order_id": canonical_oid,
+                "customer_id": ord_customer_id,
+                "case_id": matched_case_id,
+            }
 
     def read_order_shipment_in_tx(self, db, order_dict: dict, *, now: float | None = None) -> dict | None:
         """Read DB-backed shipment and chronological shipment_events for one order, or None if absent."""

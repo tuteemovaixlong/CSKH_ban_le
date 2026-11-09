@@ -23,6 +23,7 @@ from retailops.http.public import PublicWeb
 from retailops.identity.persistent import PersistentSessions
 from retailops.identity.store import IdentityStore
 from retailops.integration.ingest import IntegrationIngestService
+from retailops.integration.recipient_crypto import RecipientKeyring
 from retailops.storage.pg_repositories import PostgresBusinessStore, PostgresIdentityStore
 from retailops.storage.postgres import transaction, validate_dsn
 from scripts import purge_demo_order as purge_cli
@@ -790,7 +791,13 @@ class Phase5FixATests(unittest.TestCase):
         self.assertEqual(sorted(o["id"] for o in cust_recheck["orders"]), ["O-819125", "O-819127"])
 
         # Attempting to replay or import an event for tombstoned order O-819126 is rejected with 409 order_purged_tombstone
-        ingest_svc = IntegrationIngestService(sessions, digest_key=b"test-digest-key-32-bytes-minimum!!")
+        ingest_svc = IntegrationIngestService(
+            sessions,
+            digest_key=b"test-digest-key-32-bytes-minimum!!",
+            recipient_keyring=RecipientKeyring.from_raw_keys(
+                {"v1": b"test-recipient-key-32-bytes-min!"}, "v1"
+            ),
+        )
         purged_event = {
             "contract": "retailops-integration-v2",
             "event_id": "evt-replay-purged-819126",

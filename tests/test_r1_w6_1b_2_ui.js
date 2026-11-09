@@ -124,6 +124,38 @@ function createHarness() {
           json: async () => state.revealResponse,
         };
       }
+      if (String(url).includes('/api/staff/compensations/')) {
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: () => 'application/json' },
+          json: async () => state.compDecisionResponse || { status: 'ok', compensation: { status: 'approved', value: 50000 } },
+        };
+      }
+      if (String(url).includes('/api/staff/cases/') && String(url).endsWith('/order-actions')) {
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: () => 'application/json' },
+          json: async () => state.caseOrderActionsResponse || { order_actions: [], compensations: [], customer_orders: [], unlinked_refunds: [] },
+        };
+      }
+      if (String(url).includes('/api/staff/cases/') && String(url).endsWith('/orders')) {
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: () => 'application/json' },
+          json: async () => ({ orders: [], consent_turns: [] }),
+        };
+      }
+      if (String(url).startsWith('/api/manager/compensations')) {
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: () => 'application/json' },
+          json: async () => state.mgrCompensationsResponse || { items: [], counts: { proposed: 0, all: 0 } },
+        };
+      }
       throw new Error('Unexpected fetch in W6.1b-2 UI test: ' + url);
     },
   });
@@ -261,7 +293,75 @@ function createHarness() {
   const afterSwitchText = collectText(panelUnheld);
   assert.ok(!afterSwitchText.includes('Phạm Minh Tuấn'), 'Revealed recipient must be cleared when switching cases');
 
-  console.log('W6_1B_2_UI_ITEM2_OK');
+  // 5. Item 4: Staff Desk compensation proposal card (unheld vs held) + fixed 50,000 VND without value input
+  h.run(`
+    currentSessionRole = 'staff';
+    currentSessionPrincipalId = 'p_staff_ui_1';
+    activeStaffTicket = {
+      case_id: 'case_ui_comp',
+      status: 'waiting',
+      holder: null,
+      order_id: 'ord_aaaa1111bbbb2222cccc3333dddd4444'
+    };
+    staffCaseCompensations = [{
+      compensation_id: 'comp_ui_001',
+      order_id: 'ord_aaaa1111bbbb2222cccc3333dddd4444',
+      external_order_id: 'SIM-ORD-UI-01',
+      late_by_hours: 51.5,
+      voucher_type: 'amount',
+      value: 50000,
+      status: 'proposed'
+    }];
+    renderStaffCaseOrderActions();
+  `);
+  const compUnheldText = collectText(panelUnheld);
+  assert.ok(compUnheldText.includes('50.000'), 'Staff Desk must show fixed 50,000 VND proposal');
+  assert.equal(findByIdDeep(panelUnheld, 'btn-approve-comp-comp_ui_001'), null, 'Unheld Staff must not see approve button');
+
+  h.run(`
+    activeStaffTicket.status = 'in_progress';
+    activeStaffTicket.holder = 'p_staff_ui_1';
+    renderStaffCaseOrderActions();
+  `);
+  const compApproveBtn = findByIdDeep(panelUnheld, 'btn-approve-comp-comp_ui_001');
+  const compNoteInput = findByIdDeep(panelUnheld, 'staff-comp-note-comp_ui_001');
+  assert.ok(compApproveBtn, 'Held Staff must see compensation approve button');
+  compNoteInput.value = 'Đơn trễ 51.5h đủ điều kiện';
+  await compApproveBtn.onclick();
+
+  const compApproveCalls = h.fetchCalls.filter(c => c.url.endsWith('/api/staff/compensations/comp_ui_001/approve'));
+  assert.equal(compApproveCalls.length, 1);
+  assert.deepEqual(compApproveCalls[0].body, {
+    note: 'Đơn trễ 51.5h đủ điều kiện',
+    case_id: 'case_ui_comp'
+  }, 'Compensation approve call must NEVER send a value/denomination field');
+
+  // 6. Item 4: Manager store-wide compensation list in Staff Desk & Manager Console
+  h.state.mgrCompensationsResponse = {
+    items: [{
+      compensation_id: 'comp_mgr_store_02',
+      order_id: 'ord_bbbb2222cccc3333dddd4444eeee5555',
+      external_order_id: 'SIM-ORD-MGR-02',
+      customer_name: 'Khách B',
+      late_by_hours: 62.0,
+      voucher_type: 'amount',
+      value: 50000,
+      status: 'proposed'
+    }],
+    counts: { proposed: 1, all: 1 }
+  };
+  await h.run(`
+    currentSessionRole = 'manager';
+    loadManagerCompensations(true);
+  `);
+  const staffMgrPanel = h.get('staff-manager-compensations-panel');
+  const mgrConsolePanel = h.get('manager-compensations-panel');
+  assert.equal(staffMgrPanel.hidden, false);
+  assert.ok(collectText(staffMgrPanel).includes('SIM-ORD-MGR-02'));
+  assert.ok(collectText(mgrConsolePanel).includes('SIM-ORD-MGR-02'));
+  assert.ok(findByIdDeep(staffMgrPanel, 'staff-mgr-comp-approve-comp_mgr_store_02'));
+
+  console.log('W6_1B_2_UI_ITEM2_AND_ITEM4_OK');
 })().catch(err => {
   console.error(err);
   process.exit(1);

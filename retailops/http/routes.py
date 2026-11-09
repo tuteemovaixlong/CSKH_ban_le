@@ -695,6 +695,22 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 require(ok_off and off_val >= 0, 400, "invalid_offset", "Vị trí phân trang không hợp lệ.")
                 off = off_val
             return (200, app.store.list_manager_order_actions(status_group=status_group, limit=lim, offset=off))
+        if path == "/api/manager/compensations":
+            _require_ctx_permission(ctx, MANAGER)
+            _check_staff_tenant_scope(app, ctx)
+            qparams = _parse_query_dict(query, {"status", "limit", "offset"}) if query else {}
+            st_filter = qparams.get("status") or "all"
+            lim = 50
+            if "limit" in qparams and qparams["limit"] != "":
+                ok_lim, lim_val = _parse_non_negative_int(qparams["limit"])
+                require(ok_lim and 1 <= lim_val <= 50, 400, "invalid_limit", "Giới hạn mỗi trang phải từ 1 đến 50.")
+                lim = lim_val
+            off = 0
+            if "offset" in qparams and qparams["offset"] != "":
+                ok_off, off_val = _parse_non_negative_int(qparams["offset"])
+                require(ok_off and off_val >= 0, 400, "invalid_offset", "Vị trí phân trang không hợp lệ.")
+                off = off_val
+            return (200, app.store.list_manager_compensations(status=st_filter, limit=lim, offset=off))
         m_exchange_options = re.fullmatch(r"/api/orders/([A-Za-z0-9_-]{1,64})/exchange-options", path)
         if m_exchange_options:
             # Variants of the order's own product with stock status; another customer's order is a 404.
@@ -795,13 +811,31 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 for o in (app.store.orders(case_row['customer_id']) if case_row else [])
             ]
             unlinked_refunds = app.store.list_case_unlinked_refunds(resolved_case_id)
+            case_compensations = (
+                app.store.list_case_compensations(resolved_case_id)
+                if hasattr(app.store, "list_case_compensations")
+                else []
+            )
             return (200, {
                 "case_id": resolved_case_id,
                 "read_only": ro,
                 "order_actions": items,
                 "customer_orders": customer_orders,
+                "compensations": case_compensations,
                 "unlinked_refunds": unlinked_refunds,
                 "warnings": [u["warning"] for u in unlinked_refunds],
+            })
+        m_case_comp = re.fullmatch(r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/compensations", path)
+        if m_case_comp:
+            _require_ctx_permission(ctx, STAFF)
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
+            _, resolved_case_id, ro = _authorize_staff_transcript_view(
+                app, ctx, actor, case_id=m_case_comp[1], audit_resolved=False
+            )
+            return (200, {
+                "case_id": resolved_case_id,
+                "read_only": ro,
+                "compensations": app.store.list_case_compensations(resolved_case_id),
             })
         m_case_trans = re.fullmatch(r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/messages", path)
         if m_case_trans:
@@ -1160,6 +1194,38 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                     now=now_ts,
                 )
             return (200, {**result, "audited": True})
+        m_comp_decide = re.fullmatch(
+            r"/api/staff/compensations/([A-Za-z0-9_-]{4,80})/(approve|reject)",
+            path,
+        )
+        if m_comp_decide:
+            _require_ctx_permission(ctx, STAFF)
+            _check_staff_tenant_scope(app, ctx)
+            app_tid = getattr(app, "tenant_id", None)
+            if app_tid is not None and ctx.tenant_id is not None and str(app_tid) != str(ctx.tenant_id):
+                raise ApiError(
+                    403,
+                    "tenant_scope_denied",
+                    "Ngữ cảnh cửa hàng không khớp với phiên làm việc.",
+                )
+            require(
+                body is None or (isinstance(body, dict) and set(body).issubset({"note", "case_id"})),
+                400,
+                "invalid_fields",
+                "API duyệt bồi thường không nhận trường mệnh giá hoặc các trường không hợp lệ.",
+            )
+            actor = _extract_actor(app, customer, binding=binding, context=ctx)
+            res = app.store.decide_delivery_compensation(
+                m_comp_decide[1],
+                decision=m_comp_decide[2],
+                actor=actor,
+                note=body.get("note") if isinstance(body, dict) else None,
+                case_id=body.get("case_id") if isinstance(body, dict) else None,
+            )
+            if hasattr(app, "tool_cache") and res.get("customer_id"):
+                tenant_id = ctx.tenant_id or getattr(app, "tenant_id", "default")
+                app.tool_cache.invalidate(tenant_id=tenant_id, customer=res["customer_id"])
+            return (200, {"status": "ok", "compensation": res["compensation"]})
         m_staff_case_assist_cancel = re.fullmatch(r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/assist/cancel", path)
         if m_staff_case_assist_cancel:
             _require_ctx_permission(ctx, STAFF)

@@ -2511,6 +2511,7 @@ let staffDeskData = { waiting: [], in_progress: [], resolved: [], open_count: 0 
 let staffCaseOpsCollapsed = false;
 let staffDeskMaximized = false;
 let staffCaseOrderActions = [];
+let staffCaseCompensations = [];
 let staffCaseUnlinkedRefunds = [];
 let staffCaseCustomerOrders = [];
 let staffCaseOrders = [];
@@ -2520,6 +2521,24 @@ let staffCaseOrderActionsReadOnly = false;
 let staffCaseOpenRequestSig = '';
 let staffOrderActionBusy = false;
 let staffRevealedRecipients = {};
+let managerCompensations = [];
+let managerCompensationsCounts = {
+  proposed: 0,
+  approved: 0,
+  requested: 0,
+  issued: 0,
+  rejected: 0,
+  failed: 0,
+  all: 0
+};
+const compensationStatusLabels = {
+  proposed: 'Chờ duyệt',
+  approved: 'Đã duyệt',
+  requested: 'Đang chờ sàn phát mã',
+  issued: 'Đã phát voucher',
+  rejected: 'Đã từ chối',
+  failed: 'Phát thất bại'
+};
 let staffConsentDraft = {
   caseId: null,
   orderId: '',
@@ -2871,6 +2890,15 @@ async function loadStaffQueue(silent = false) {
       }
     }
     renderStaffBucketList();
+    if (currentSessionRole === 'manager') {
+      loadManagerCompensations(true).catch(() => {});
+    } else {
+      const mgrPanel = byId('staff-manager-compensations-panel');
+      if (mgrPanel) {
+        mgrPanel.hidden = true;
+        mgrPanel.replaceChildren();
+      }
+    }
   } catch (err) {
     if (!silent) {
       listEl.innerHTML = '<p class="staff-empty-hint is-error">Lỗi tải hàng đợi: ' + err.message + '</p>';
@@ -3271,6 +3299,70 @@ function renderStaffCaseOrderActions() {
     panelEl.append(rcpCard);
   }
 
+  if (staffCaseCompensations.length > 0) {
+    const compCard = el('div', 'case-ops-consented-card');
+    compCard.id = 'staff-case-compensations-card';
+    compCard.dataset.role = 'staff-case-compensations-card';
+    compCard.append(el('strong', '', '🎁 Đề xuất bồi thường giao trễ (mệnh giá cố định 50.000 ₫)'));
+
+    staffCaseCompensations.forEach(comp => {
+      const compItem = el('div', 'case-ops-item');
+      compItem.dataset.compensationId = comp.compensation_id;
+      const stLabel = compensationStatusLabels[comp.status] || comp.status || '—';
+      const ordLbl = formatDualOrderId(comp.order_id, comp.external_order_id);
+      const valLbl = money(comp.value || 50000);
+      const headerTxt = `${ordLbl} · Trễ ${comp.late_by_hours ?? '—'}h · Voucher giảm giá ${valLbl} · [${stLabel}]`;
+      compItem.append(el('div', 'case-ops-meta-row', headerTxt));
+      if (comp.voucher_code) {
+        compItem.append(el('div', 'case-ops-meta-row', `Mã voucher đã phát: ${comp.voucher_code}`));
+      }
+      if (comp.status === 'proposed') {
+        const compCtrl = el('div', 'case-ops-controls-row');
+        if (isManager || (!isClosed && isHolder)) {
+          const compNote = el('input', 'case-ops-input');
+          compNote.type = 'text';
+          compNote.id = `staff-comp-note-${comp.compensation_id}`;
+          compNote.maxLength = 500;
+          compNote.placeholder = 'Ghi chú duyệt/từ chối (tùy chọn)...';
+
+          const btnApprove = el('button', 'primary btn-sm', `✓ Duyệt ${valLbl}`);
+          btnApprove.type = 'button';
+          btnApprove.id = `btn-approve-comp-${comp.compensation_id}`;
+          btnApprove.dataset.action = 'approve-compensation';
+          btnApprove.disabled = staffOrderActionBusy;
+          btnApprove.onclick = () => submitCompensationDecision(comp.compensation_id, 'approve', {
+            note: compNote.value,
+            caseId: caseObj.case_id
+          });
+
+          const btnReject = el('button', 'secondary btn-sm', '✕ Từ chối');
+          btnReject.type = 'button';
+          btnReject.id = `btn-reject-comp-${comp.compensation_id}`;
+          btnReject.dataset.action = 'reject-compensation';
+          btnReject.disabled = staffOrderActionBusy;
+          btnReject.onclick = () => submitCompensationDecision(comp.compensation_id, 'reject', {
+            note: compNote.value,
+            caseId: caseObj.case_id
+          });
+
+          compCtrl.append(compNote, btnApprove, btnReject);
+        } else {
+          compCtrl.append(
+            el(
+              'span',
+              'case-ops-role-gate-note',
+              'Nhận giữ ca mở có gắn đơn hàng hoặc đăng nhập Quản lý để duyệt đề xuất bồi thường.'
+            )
+          );
+        }
+        compItem.append(compCtrl);
+      }
+      compCard.append(compItem);
+    });
+
+    panelEl.append(compCard);
+  }
+
   if (!isClosed) {
     if (staffConsentDraft.caseId !== caseObj.case_id) {
       resetStaffConsentDraft(caseObj.case_id);
@@ -3620,6 +3712,7 @@ function renderStaffCaseOrderActions() {
 async function loadStaffCaseOrderActions(caseId, isCaseSelection = false) {
   if (!caseId) {
     staffCaseOrderActions = [];
+    staffCaseCompensations = [];
     staffCaseUnlinkedRefunds = [];
     staffCaseCustomerOrders = [];
     staffCaseOrders = [];
@@ -3641,6 +3734,7 @@ async function loadStaffCaseOrderActions(caseId, isCaseSelection = false) {
     ]);
     if (!activeStaffTicket || activeStaffTicket.case_id !== caseId) return;
     staffCaseOrderActions = Array.isArray(res?.order_actions) ? res.order_actions : [];
+    staffCaseCompensations = Array.isArray(res?.compensations) ? res.compensations : [];
     staffCaseUnlinkedRefunds = Array.isArray(res?.unlinked_refunds) ? res.unlinked_refunds : [];
     staffCaseCustomerOrders = Array.isArray(res?.customer_orders) ? res.customer_orders : [];
     const openByOid = new Map();
@@ -3680,12 +3774,126 @@ async function loadStaffCaseOrderActions(caseId, isCaseSelection = false) {
   } catch (err) {
     if (!activeStaffTicket || activeStaffTicket.case_id !== caseId) return;
     staffCaseOrderActions = [];
+    staffCaseCompensations = [];
     staffCaseUnlinkedRefunds = [];
     staffCaseCustomerOrders = [];
     staffCaseOrders = [];
     staffCaseConsentTurns = [];
     staffCaseOrderReasonsMap = null;
     renderStaffCaseOrderActions();
+  }
+}
+
+async function submitCompensationDecision(compensationId, decision, opts = {}) {
+  if (!compensationId || !['approve', 'reject'].includes(decision) || staffOrderActionBusy) return;
+  const payload = {};
+  const cleanNote = String(opts.note || '').trim();
+  if (cleanNote) payload.note = cleanNote;
+  if (opts.caseId) payload.case_id = opts.caseId;
+  staffOrderActionBusy = true;
+  renderStaffCaseOrderActions();
+  renderManagerCompensationsPanels();
+  try {
+    await api(`/api/staff/compensations/${encodeURIComponent(compensationId)}/${decision}`, payload);
+    setStaffDeskNotice(
+      decision === 'approve'
+        ? 'Đã duyệt đề xuất bồi thường giao trễ (50.000 ₫).'
+        : 'Đã từ chối đề xuất bồi thường giao trễ.',
+      'success'
+    );
+    if (activeStaffTicket?.case_id) {
+      await loadStaffCaseOrderActions(activeStaffTicket.case_id, false);
+    }
+    if (currentSessionRole === 'manager') {
+      await loadManagerCompensations(true);
+    }
+  } catch (err) {
+    setStaffDeskNotice(err.message || 'Không thể xử lý đề xuất bồi thường.', 'error');
+  } finally {
+    staffOrderActionBusy = false;
+    renderStaffCaseOrderActions();
+    renderManagerCompensationsPanels();
+  }
+}
+
+function renderManagerCompensationsInto(container, idPrefix) {
+  if (!container) return;
+  if (currentSessionRole !== 'manager') {
+    container.hidden = true;
+    container.replaceChildren();
+    return;
+  }
+  container.hidden = false;
+  container.replaceChildren();
+  const proposedCnt = Number(managerCompensationsCounts.proposed || 0);
+  container.append(
+    el(
+      'strong',
+      '',
+      `🎁 Đề xuất bồi thường giao trễ toàn cửa hàng (${proposedCnt} chờ duyệt / tổng ${managerCompensations.length})`
+    )
+  );
+  if (!managerCompensations.length) {
+    container.append(el('div', 'case-ops-empty-hint', 'Chưa có đề xuất bồi thường giao trễ nào.'));
+    return;
+  }
+  managerCompensations.forEach(comp => {
+    const row = el('div', 'case-ops-item');
+    row.dataset.compensationId = comp.compensation_id;
+    const stLabel = compensationStatusLabels[comp.status] || comp.status || '—';
+    const ordLbl = formatDualOrderId(comp.order_id, comp.external_order_id);
+    const valLbl = money(comp.value || 50000);
+    const custLbl = comp.customer_name || 'Khách hàng';
+    const metaTxt = `${ordLbl} · ${custLbl} · Trễ ${comp.late_by_hours ?? '—'}h · ${valLbl} · [${stLabel}]`
+      + (comp.voucher_code ? ` · Mã: ${comp.voucher_code}` : '');
+    row.append(el('div', 'case-ops-meta-row', metaTxt));
+    if (comp.status === 'proposed') {
+      const actRow = el('div', 'case-ops-controls-row');
+      const btnApp = el('button', 'primary btn-sm', `✓ Duyệt ${valLbl}`);
+      btnApp.type = 'button';
+      btnApp.id = `${idPrefix}-approve-${comp.compensation_id}`;
+      btnApp.disabled = staffOrderActionBusy;
+      btnApp.onclick = () => submitCompensationDecision(comp.compensation_id, 'approve', {});
+
+      const btnRej = el('button', 'secondary btn-sm', '✕ Từ chối');
+      btnRej.type = 'button';
+      btnRej.id = `${idPrefix}-reject-${comp.compensation_id}`;
+      btnRej.disabled = staffOrderActionBusy;
+      btnRej.onclick = () => submitCompensationDecision(comp.compensation_id, 'reject', {});
+
+      actRow.append(btnApp, btnRej);
+      row.append(actRow);
+    }
+    container.append(row);
+  });
+}
+
+function renderManagerCompensationsPanels() {
+  renderManagerCompensationsInto(byId('staff-manager-compensations-panel'), 'staff-mgr-comp');
+  renderManagerCompensationsInto(byId('manager-compensations-panel'), 'mgr-console-comp');
+}
+
+async function loadManagerCompensations(silent = false) {
+  if (currentSessionRole !== 'manager') return;
+  try {
+    const res = await api('/api/manager/compensations?status=all&limit=50&offset=0');
+    managerCompensations = Array.isArray(res?.items) ? res.items : [];
+    if (res?.counts && typeof res.counts === 'object') {
+      managerCompensationsCounts = {
+        proposed: Number(res.counts.proposed || 0),
+        approved: Number(res.counts.approved || 0),
+        requested: Number(res.counts.requested || 0),
+        issued: Number(res.counts.issued || 0),
+        rejected: Number(res.counts.rejected || 0),
+        failed: Number(res.counts.failed || 0),
+        all: Number(res.counts.all || 0)
+      };
+    }
+    renderManagerCompensationsPanels();
+  } catch (err) {
+    if (!silent) {
+      console.warn('Lỗi tải danh sách đề xuất bồi thường:', err);
+    }
   }
 }
 
@@ -5194,7 +5402,10 @@ async function loadManagerData() {
     loadManagerAuditTrail()
   ];
   if (currentSessionRole === 'manager') {
-    tasks.push(loadManagerOrderActions().catch(() => {}));
+    tasks.push(
+      loadManagerOrderActions().catch(() => {}),
+      loadManagerCompensations(true).catch(() => {})
+    );
   }
   if (persistentAccount && (currentSessionRole === 'manager' || currentSessionRole === 'platform_admin')) {
     tasks.push(loadAdminAccounts().catch(() => {}), loadAdminAuditLog().catch(() => {}));
