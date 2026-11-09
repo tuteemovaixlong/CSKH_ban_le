@@ -1292,12 +1292,17 @@ class BusinessStore:
                     else:
                         var_stock = max(1, stock // len(raw_variants)) if raw_variants else stock
 
-                    var_id = f"{pid}-{size or 'STD'}-{color or 'STD'}".replace(" ", "_")
-                    conn.execute("""
-                        INSERT INTO product_variants(id, product_id, variant_name, size, color, stock, price)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT DO NOTHING
-                    """, (var_id, pid, v_str, size, color, var_stock, price))
+                    existing_var = conn.execute(
+                        "SELECT 1 FROM product_variants WHERE product_id = ? AND variant_name = ? LIMIT 1",
+                        (pid, v_str),
+                    ).fetchone()
+                    if existing_var is None:
+                        var_id = f"{pid}-{size or 'STD'}-{color or 'STD'}".replace(" ", "_")
+                        conn.execute("""
+                            INSERT INTO product_variants(id, product_id, variant_name, size, color, stock, price)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                            ON CONFLICT DO NOTHING
+                        """, (var_id, pid, v_str, size, color, var_stock, price))
 
         if db is not None:
             _do_seed(db)

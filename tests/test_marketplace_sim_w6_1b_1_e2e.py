@@ -65,8 +65,8 @@ class MarketplaceSimContractBridgeTests(unittest.TestCase):
                 ev = json.loads(line)
                 validated = validate_event_v2(ev, allow_requests=False)
                 seen_types.add(validated["event_type"])
-            # 7 loại sự kiện W6.1b-1 từ init + run + 13 story đều có mặt và vượt qua bộ kiểm
-            self.assertEqual(seen_types, set(W6_1B_1_SUPPORTED_EVENT_TYPES))
+            # 7 loại sự kiện trước khi phát voucher từ init + run + 13 story đều có mặt và vượt qua bộ kiểm
+            self.assertEqual(seen_types, set(INBOUND_EVENT_TYPES) - {"voucher.issued"})
 
             # Phát thêm voucher.issued qua ingest_voucher_requests để kiểm đủ cả 8 loại inbound
             req_example = json.loads(
