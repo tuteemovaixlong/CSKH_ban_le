@@ -6,8 +6,11 @@ identity backend must resolve existing business data without this purge policy.
 from __future__ import annotations
 import hashlib
 import hmac
+import os
 import re
 import secrets
+import shutil
+import sqlite3
 import threading
 import time
 from contextlib import contextmanager
@@ -42,6 +45,9 @@ class GuestSessions:
         self.inference_gate = InferenceGate()
         self.cancel_registry = TurnCancelRegistry()
         self.apps, self.active = {}, {}
+        self._seeded_sids: set[str] = set()
+        self._guest_names: dict[str, str] = {}
+        self._store_template_meta: tuple[float, tuple[str, str], dict] | None = None
         # All guests share this persistent quota. Owner business.sqlite3 is untouched.
         self.control = BusinessStore(self.directory / 'control.sqlite3')
         with self.control.connection(write=True) as db:
@@ -55,14 +61,48 @@ class GuestSessions:
             ''')
         self.purge()
 
-    def rate(self, bucket, limit, seconds=60):
+    def _rate_in_tx(self, db, bucket, limit, seconds=60):
         window = int(time.time()) // seconds
+        row = db.execute('SELECT window,count FROM public_rate WHERE bucket=?', (bucket,)).fetchone()
+        require(row is None or row['window'] != window or row['count'] < limit,
+                429, 'rate_limited', 'Demo đang nhận nhiều yêu cầu. Vui lòng thử lại sau một phút.')
+        db.execute('''INSERT INTO public_rate VALUES (?,?,1) ON CONFLICT(bucket) DO UPDATE SET
+            count=CASE WHEN window=excluded.window THEN count+1 ELSE 1 END, window=excluded.window''', (bucket, window))
+
+    def rate(self, bucket, limit, seconds=60):
         with self.control.connection(write=True) as db:
-            row = db.execute('SELECT window,count FROM public_rate WHERE bucket=?', (bucket,)).fetchone()
-            require(row is None or row['window'] != window or row['count'] < limit,
-                    429, 'rate_limited', 'Demo đang nhận nhiều yêu cầu. Vui lòng thử lại sau một phút.')
-            db.execute('''INSERT INTO public_rate VALUES (?,?,1) ON CONFLICT(bucket) DO UPDATE SET
-                count=CASE WHEN window=excluded.window THEN count+1 ELSE 1 END, window=excluded.window''', (bucket, window))
+            self._rate_in_tx(db, bucket, limit, seconds=seconds)
+
+    def _ensure_store_template(self) -> tuple[Path, dict]:
+        tmpl_path = self.directory / '_store_seed_template.sqlite3'
+        env_sig = (
+            os.environ.get('RETAILOPS_ENV', '').strip(),
+            os.environ.get('RETAILOPS_EVENT_DIGEST_KEY_FILE', '').strip(),
+        )
+        now = time.time()
+        if (
+            self._store_template_meta is not None
+            and tmpl_path.is_file()
+            and tmpl_path.stat().st_size > 0
+            and self._store_template_meta[1] == env_sig
+            and (now - self._store_template_meta[0]) < 300.0
+        ):
+            return tmpl_path, dict(self._store_template_meta[2])
+        for suffix in ('', '-wal', '-shm'):
+            (self.directory / ('_store_seed_template.sqlite3' + suffix)).unlink(missing_ok=True)
+        tmpl_store = BusinessStore(tmpl_path)
+        tmpl_store.data_mode = getattr(self, 'data_mode', 'synthetic-demo')
+        tmpl_store.tenant_id = 'guest-template'
+        tmpl_store.seed()
+        raw_conn = sqlite3.connect(str(tmpl_path))
+        try:
+            raw_conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+            raw_conn.execute('PRAGMA journal_mode=DELETE')
+        finally:
+            raw_conn.close()
+        ext_map = dict(getattr(tmpl_store, '_standalone_ext_mappings', {}))
+        self._store_template_meta = (now, env_sig, ext_map)
+        return tmpl_path, dict(ext_map)
 
     def purge(self):
         with self.lock, self.control.connection(write=True) as db:
@@ -73,6 +113,8 @@ class GuestSessions:
                 if self.active.get(sid, 0):
                     continue
                 self.apps.pop(sid, None)
+                self._seeded_sids.discard(sid)
+                self._guest_names.pop(sid, None)
                 # IDs are generated hashes, never browser-supplied paths.
                 if re.fullmatch('[a-f0-9]{64}', sid):
                     for suffix in ('', '-wal', '-shm'):
@@ -138,22 +180,48 @@ class GuestSessions:
     def session(self, header):
         sid = self.cookie_id(header)
         with self.lock:
-            with self.control.connection() as db:
+            with self.control.connection(write=True) as db:
                 row = db.execute('SELECT expires_at,invite_hash FROM guest_sessions WHERE id=?', (sid,)).fetchone()
-            require(row is not None and row['expires_at'] > time.time() and row['invite_hash'] == self.invite_hash,
-                    401, 'session_expired', 'Phiên demo đã kết thúc. Hãy nhập lại mã mời.')
-            self.rate('session:' + sid, 60)
+                require(row is not None and row['expires_at'] > time.time() and row['invite_hash'] == self.invite_hash,
+                        401, 'session_expired', 'Phiên demo đã kết thúc. Hãy nhập lại mã mời.')
+                self._rate_in_tx(db, 'session:' + sid, 60)
             if sid not in self.apps:
-                store = BusinessStore(self.directory / (sid + '.sqlite3'))
+                db_file = self.directory / (sid + '.sqlite3')
+                has_custom_clock = callable(getattr(self, 'store_clock', None))
+                existing_db = db_file.is_file() and db_file.stat().st_size > 0
+                already_seeded = sid in self._seeded_sids and existing_db
+                copied_store_template = False
+                template_ext_map = None
+                if not existing_db and not has_custom_clock:
+                    tmpl_path, template_ext_map = self._ensure_store_template()
+                    shutil.copyfile(tmpl_path, db_file)
+                    copied_store_template = True
+                store = BusinessStore(
+                    db_file,
+                    initialize_db=not (already_seeded or copied_store_template),
+                )
                 store.data_mode = getattr(self, 'data_mode', 'synthetic-demo')
                 store.tenant_id = f'guest-{sid[:16]}'
                 store.data_root = self.directory.parent if self.directory.name == 'public-guests' else self.directory
-                if callable(getattr(self, 'store_clock', None)):
+                if has_custom_clock:
                     store.clock = self.store_clock
                 if getattr(self, 'case_timer_config', None) is not None:
                     store.case_timer_config = self.case_timer_config
-                store.seed()
-                store.seed_demo_sample_orders('C-001')
+                if copied_store_template:
+                    store._standalone_ext_mappings = template_ext_map
+                    with store.connection() as wdb:
+                        wdb.execute('PRAGMA journal_mode=WAL')
+                    store.seed_demo_sample_orders('C-001')
+                if not already_seeded:
+                    if not copied_store_template and not store.has_demo_store_seed():
+                        store.seed()
+                        store.seed_demo_sample_orders('C-001')
+                    with store.connection() as rdb:
+                        crow = rdb.execute("SELECT name FROM customers WHERE id='C-001'").fetchone()
+                    self._guest_names[sid] = (
+                        str(crow['name']).strip() if crow and crow['name'] else 'Khách mẫu'
+                    )
+                    self._seeded_sids.add(sid)
                 app = Application(store, {}, self.infer, self.api_infer, self.api_daily_limit,
                                   cancel_registry=self.cancel_registry)
                 app.quota_store = self.control
@@ -178,8 +246,14 @@ class GuestSessions:
 
     @contextmanager
     def resolve(self, header):
+        sid = self.cookie_id(header)
         with self.session(header) as app:
-            yield SessionBinding(app, customer_id='C-001', workspace_id=self.cookie_id(header))
+            yield SessionBinding(
+                app,
+                customer_id='C-001',
+                workspace_id=sid,
+                display_name=self._guest_names.get(sid),
+            )
 
     def check_health(self):
         with self.control.connection() as db:
