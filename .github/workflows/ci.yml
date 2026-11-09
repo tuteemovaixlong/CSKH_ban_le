@@ -88,6 +88,7 @@ jobs:
           node tests/test_public_session.js
           RETAILOPS_UI_TEST_MODE=persistent node tests/test_public_session.js
           node tests/test_w5_ui.js
+          node tests/test_r1_w6_1b_1_1_ui_d8_v9.js
       - name: Unit, pgvector and HTTP contract tests (no model, no secrets)
         env:
           RETAILOPS_ALLOW_DESTRUCTIVE_TEST_DATABASE: "1"

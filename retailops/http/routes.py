@@ -44,6 +44,46 @@ ALLOWED_DIRECT_TOOLS = frozenset({
 })
 
 
+def _enrich_staff_cases_external_order_id(store, payload: dict) -> dict:
+    """Populate missing external_order_id from same-tenant orders on Staff Desk payloads."""
+    if not isinstance(payload, dict) or not hasattr(store, "connection"):
+        return payload
+    dict_targets: list[dict] = []
+    for bucket_key in ("waiting", "in_progress", "resolved", "escalations"):
+        bucket = payload.get(bucket_key)
+        if isinstance(bucket, list):
+            for item in bucket:
+                if isinstance(item, dict) and item.get("order_id") and not item.get("external_order_id"):
+                    dict_targets.append(item)
+    conv = payload.get("conversation")
+    if isinstance(conv, dict) and conv.get("order_id") and not conv.get("external_order_id"):
+        dict_targets.append(conv)
+    if not dict_targets:
+        return payload
+    needed_ids = sorted({str(t["order_id"]) for t in dict_targets if t.get("order_id")})
+    ext_by_order: dict[str, tuple[str | None, str | None]] = {}
+    with store.connection() as db:
+        for oid in needed_ids:
+            row = db.execute(
+                "SELECT id, customer_id, external_order_id FROM orders WHERE id = ?",
+                (oid,),
+            ).fetchone()
+            if row is not None:
+                ext_by_order[str(row["id"])] = (row["customer_id"], row["external_order_id"])
+    for item in dict_targets:
+        oid = str(item["order_id"])
+        found = ext_by_order.get(oid)
+        if found is None:
+            item.setdefault("external_order_id", None)
+            continue
+        ord_cust, ext_oid = found
+        if item.get("customer_id") and ord_cust and str(item["customer_id"]) != str(ord_cust):
+            item.setdefault("external_order_id", None)
+        else:
+            item["external_order_id"] = ext_oid
+    return payload
+
+
 def parse_evidence_request_body(
     content_type: str | None,
     content_length: str | None,
@@ -616,7 +656,7 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
         if path == "/api/staff/cases":
             _require_ctx_permission(ctx, STAFF)
             _check_staff_tenant_scope(app, ctx)
-            return (200, app.store.staff_desk_cases())
+            return (200, _enrich_staff_cases_external_order_id(app.store, app.store.staff_desk_cases()))
         if path == "/api/staff/members":
             _require_ctx_permission(ctx, STAFF)
             _check_staff_tenant_scope(app, ctx)
@@ -632,7 +672,7 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             _require_ctx_permission(ctx, STAFF)
             _check_staff_tenant_scope(app, ctx)
             desk = app.store.staff_desk_cases()
-            return (200, {"escalations": app.store.escalations(), **desk})
+            return (200, _enrich_staff_cases_external_order_id(app.store, {"escalations": app.store.escalations(), **desk}))
         if path == "/api/conversations":
             return (200, {"conversations": app.store.list_conversations(customer)})
         m_case_orders = re.fullmatch(r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/orders", path)
@@ -710,7 +750,10 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
             cid, resolved_case_id, ro = _authorize_staff_transcript_view(
                 app, ctx, actor, case_id=m_case_trans[1]
             )
-            return (200, app.store.conversation_transcript(cid, case_id=resolved_case_id, read_only=ro))
+            return (200, _enrich_staff_cases_external_order_id(
+                app.store,
+                app.store.conversation_transcript(cid, case_id=resolved_case_id, read_only=ro),
+            ))
         m_case_assist_get = re.fullmatch(r"/api/staff/cases/([A-Za-z0-9_-]{1,80})/assist", path)
         if m_case_assist_get:
             _require_ctx_permission(ctx, STAFF)
@@ -741,10 +784,13 @@ def api_result(app, customer, method, path, body=None, idempotency_key=None, bin
                 with app.store.connection() as db:
                     row = db.execute("SELECT customer_id FROM conversations WHERE id=?", (cid,)).fetchone()
                 require(row is not None and row["customer_id"] == customer, 403, "permission_denied", "Tài khoản này không có quyền thực hiện thao tác.")
-                return (200, app.store.conversation_transcript(cid))
+                return (200, _enrich_staff_cases_external_order_id(app.store, app.store.conversation_transcript(cid)))
             actor = _extract_actor(app, customer, binding=binding, context=ctx)
             cid, resolved_case_id, ro = _authorize_staff_transcript_view(app, ctx, actor, cid=cid)
-            return (200, app.store.conversation_transcript(cid, case_id=resolved_case_id, read_only=ro))
+            return (200, _enrich_staff_cases_external_order_id(
+                app.store,
+                app.store.conversation_transcript(cid, case_id=resolved_case_id, read_only=ro),
+            ))
     if method == "POST":
         if path == '/api/conversations':
             return (201, app.new_conversation(customer, body))

@@ -26,6 +26,7 @@ let currentCaseId = null, currentHandoffId = null, caseClosedNotifiedForId = nul
 const renderedStaffTurnIds = new Set();
 let currentAttachment = null;
 let orderScope = 'customer', managerFilter = 'all', orderSearchQuery = '';
+let focusedExternalOrderId = null;
 let currentSessionRole = 'customer', currentSessionTenantId = null, currentSessionPrincipalId = null;
 let currentSessionName = '';
 const staffLabel = () => currentSessionName || 'Chuyên viên CSKH';
@@ -241,9 +242,28 @@ const ratingLabels = {
 const cookieAuth = document.body?.dataset.auth === 'cookie';
 const persistentAccount = ['persistent-demo', 'production', 'live'].includes(document.body?.dataset.dataMode);
 const sourceLabels = {tool_result: 'Kết quả công cụ đã xác minh', interface: 'Hướng dẫn giao diện', store_data: 'Dữ liệu đơn hàng', llm_agent: 'Hội thoại model', safety_rail: 'Rào an toàn', ui_simulation: 'Mô phỏng giao diện', case_timer: 'Nhắc tự động'};
+function formatContextOrderLabel(orderId, externalOrderId = null) {
+  if (!orderId) return '';
+  const matched = Array.isArray(orders) ? orders.find(o => o && o.id === orderId) : null;
+  const extId = (typeof externalOrderId === 'string' && externalOrderId.trim())
+    ? externalOrderId.trim()
+    : (matched && typeof matched.external_order_id === 'string' && matched.external_order_id.trim()
+      ? matched.external_order_id.trim()
+      : '');
+  if (orderScope === 'store_all') {
+    return formatDualOrderId(orderId, extId);
+  }
+  return extId || orderId;
+}
 function showContext(context) {
   selected = context?.order_id || null;
-  byId('conversation-context').textContent = context?.order_id ? 'Đang trao đổi: ' + context.order_id
+  focusedExternalOrderId = selected
+    ? ((typeof context?.external_order_id === 'string' && context.external_order_id.trim())
+      ? context.external_order_id.trim()
+      : (orders.find(o => o && o.id === selected)?.external_order_id || null))
+    : null;
+  byId('conversation-context').textContent = selected
+    ? 'Đang trao đổi: ' + formatContextOrderLabel(selected, focusedExternalOrderId)
     : context?.product_id ? 'Đang trao đổi: sản phẩm ' + context.product_id : 'Chưa chọn đơn hoặc sản phẩm';
   renderOrder();
 }
@@ -851,6 +871,16 @@ function syncManagerButtonsVisibility() {
 function renderOrder() {
   const isManager = orderScope === 'store_all';
   syncManagerButtonsVisibility();
+  if (selected) {
+    const matchedSelected = orders.find(o => o && o.id === selected);
+    if (matchedSelected?.external_order_id) {
+      focusedExternalOrderId = matchedSelected.external_order_id;
+    }
+    const ctxNode = byId('conversation-context');
+    if (ctxNode) {
+      ctxNode.textContent = 'Đang trao đổi: ' + formatContextOrderLabel(selected, focusedExternalOrderId);
+    }
+  }
 
   let filtered = orders;
   if (managerFilter !== 'all') {
@@ -908,7 +938,7 @@ function renderOrder() {
 
         const footer = el('div', 'order-card-footer');
         footer.append(el('span', 'order-card-price', money(item.amount)));
-        if (item.customer_id) {
+        if (isManager && item.customer_id) {
           footer.append(el('span', 'order-card-cust', 'Khách ' + item.customer_id));
         }
 
@@ -938,7 +968,11 @@ function renderOrder() {
   item.append(copy);
   const total = el('div', 'detail-row total');
   total.append(el('span', '', 'Tổng cộng'), el('strong', '', money(order.amount)));
-  area.append(top, el('p', 'order-date', 'Đơn ' + (order.customer_id ? ('khách ' + order.customer_id + ' · ') : '') + 'Phiên bản ' + order.version), item, total);
+  area.append(top);
+  if (isManager) {
+    area.append(el('p', 'order-date', 'Đơn ' + (order.customer_id ? ('khách ' + order.customer_id + ' · ') : '') + 'Phiên bản ' + order.version));
+  }
+  area.append(item, total);
   area.append(el('p', 'order-policy', order.status === 'pending'
     ? 'Có thể yêu cầu hủy. Cần chọn lý do và xác nhận gửi cửa hàng duyệt.'
     : order.status === 'shipping'
@@ -1350,6 +1384,19 @@ function shipmentText(value) {
   return /^(null|undefined|none)$/i.test(clean) ? '' : clean.slice(0, 400);
 }
 
+function formatShipmentTimeVn(value) {
+  const clean = shipmentText(value);
+  if (!clean) return '';
+  if (!/^\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}/.test(clean)) return clean;
+  const hasOffset = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(clean);
+  const isoNorm = (hasOffset ? clean.replace(' ', 'T') : clean.replace(' ', 'T') + '+07:00');
+  const ms = Date.parse(isoNorm);
+  if (!Number.isFinite(ms)) return clean;
+  const vn = new Date(ms + 7 * 3600 * 1000);
+  const pad2 = n => String(n).padStart(2, '0');
+  return `${pad2(vn.getUTCHours())}:${pad2(vn.getUTCMinutes())} ${pad2(vn.getUTCDate())}/${pad2(vn.getUTCMonth() + 1)}/${vn.getUTCFullYear()}`;
+}
+
 function showShipment(row, shipment) {
   if (!shipment || typeof shipment !== 'object' || Array.isArray(shipment)) return;
   const card = el('div', 'shipment-card');
@@ -1373,8 +1420,14 @@ function showShipment(row, shipment) {
     ? `${shipperName} (${shipperPhone})`
     : (shipperName || shipperPhone || shipmentText(shipment.shipper));
   if (shipperCombined) body.append(el('p', '', 'Shipper: ' + shipperCombined));
-  const eta = shipmentText(shipment.estimated_delivery_at) || shipmentText(shipment.estimated_delivery);
-  if (eta) body.append(el('p', 'delivery-eta', '\u23f0 D\u1ef1 ki\u1ebfn nh\u1eadn: ' + eta));
+  const isDeliveredShipment = status === 'delivered' || Boolean(shipmentText(shipment.delivered_at));
+  if (isDeliveredShipment) {
+    const deliveredAt = formatShipmentTimeVn(shipment.delivered_at);
+    if (deliveredAt) body.append(el('p', 'delivery-eta', '\u2705 \u0110\u00e3 giao l\u00fac: ' + deliveredAt));
+  } else {
+    const eta = formatShipmentTimeVn(shipment.estimated_delivery_at || shipment.estimated_delivery);
+    if (eta) body.append(el('p', 'delivery-eta', '\u23f0 D\u1ef1 ki\u1ebfn nh\u1eadn: ' + eta));
+  }
   if (typeof shipment.delivery_attempts === 'number' && Number.isFinite(shipment.delivery_attempts) && shipment.delivery_attempts > 0) {
     body.append(el('p', '', 'S\u1ed1 l\u1ea7n giao: ' + shipment.delivery_attempts));
   }
@@ -1395,7 +1448,7 @@ function showShipment(row, shipment) {
         || [shipmentText(ev.hub_name), shipmentText(ev.district), shipmentText(ev.province)].filter(Boolean).join(', ');
       const desc = shipmentText(ev.description) || shipmentText(ev.status_text);
       const evtLabel = (loc && desc && !desc.includes(loc)) ? `${loc} \u2014 ${desc}` : (desc || loc);
-      item.append(el('span', 'timeline-time', shipmentText(ev.occurred_at)), el('span', 'timeline-event', evtLabel));
+      item.append(el('span', 'timeline-time', formatShipmentTimeVn(ev.occurred_at)), el('span', 'timeline-event', evtLabel));
       timeline.append(item);
     }
     body.append(timeline);
@@ -1403,7 +1456,7 @@ function showShipment(row, shipment) {
     const timeline = el('div', 'shipment-timeline');
     for (const step of legacySteps) {
       const item = el('div', 'timeline-item');
-      item.append(el('span', 'timeline-time', shipmentText(step.time)), el('span', 'timeline-event', shipmentText(step.event)));
+      item.append(el('span', 'timeline-time', formatShipmentTimeVn(step.time)), el('span', 'timeline-event', shipmentText(step.event)));
       timeline.append(item);
     }
     body.append(timeline);
@@ -1747,6 +1800,7 @@ async function loadConversation(cid) {
     renderProvider();
     showContext({
       order_id: data.conversation.order_id || null,
+      external_order_id: data.conversation.external_order_id || null,
       product_id: data.conversation.product_id || null
     });
     byId('messages').replaceChildren();
@@ -2741,8 +2795,9 @@ function renderStaffBucketList() {
       : (isInProgress ? ('🟡 Đang giữ' + (item.holder_name ? ': ' + item.holder_name : '')) : '🔴 Hàng chờ');
     const card = el('div', 'ticket-card' + (activeKey && activeKey === itemKey ? ' active' : ''));
     const header = el('div', 'ticket-header');
+    const ticketOrderLabel = item.order_id ? (' (' + formatDualOrderId(item.order_id, item.external_order_id) + ')') : '';
     header.append(
-      el('span', 'ticket-user', (item.customer_name || item.customer_id) + (item.order_id ? ' (' + item.order_id + ')' : '')),
+      el('span', 'ticket-user', (item.customer_name || item.customer_id) + ticketOrderLabel),
       el('span', 'ticket-badge ' + (isResolved ? 'resolved' : 'pending'), badgeLabel)
     );
     const silentLabel = formatCustomerSilentLabel(item);
@@ -4224,6 +4279,13 @@ function syncStaffTicketActions(caseObj, readOnly = false) {
   renderStaffCaseOrderActions();
 }
 
+function formatStaffActiveCustomerLabel(ticket) {
+  if (!ticket) return '—';
+  const customerLabel = ticket.customer_name || ticket.customer_id || 'Khách hàng';
+  if (!ticket.order_id) return customerLabel;
+  return customerLabel + ' · Đơn hàng: ' + formatDualOrderId(ticket.order_id, ticket.external_order_id);
+}
+
 async function refreshStaffTranscript(cid, forceScroll = false, caseId = null) {
   const transcriptEl = byId('staff-chat-transcript');
   if (!transcriptEl) return;
@@ -4240,9 +4302,16 @@ async function refreshStaffTranscript(cid, forceScroll = false, caseId = null) {
         holder: data.case.holder,
         holder_name: data.case.holder_name,
         version: data.case.version,
+        customer_name: data.conversation?.customer_name || activeStaffTicket.customer_name,
+        order_id: data.conversation?.order_id || activeStaffTicket.order_id || null,
+        external_order_id: data.conversation?.external_order_id || activeStaffTicket.external_order_id || null,
         customer_silent_seconds: data.case.customer_silent_seconds ?? null,
         handoff_id: data.active_handoff?.handoff_id || activeStaffTicket.handoff_id || null
       };
+      const activeCustEl = byId('staff-active-customer');
+      if (activeCustEl) {
+        activeCustEl.textContent = formatStaffActiveCustomerLabel(activeStaffTicket);
+      }
       syncStaffTicketActions(data.case, Boolean(data.read_only));
       const metaEl = byId('staff-active-meta');
       if (metaEl && (data.read_only || data.case.status === 'resolved') && !metaEl.textContent.includes('[Chỉ đọc')) {
@@ -4331,7 +4400,7 @@ async function selectStaffTicket(ticket) {
   document.querySelectorAll('.ticket-card').forEach(c => c.classList.remove('active'));
 
   const isClosed = ticket.status === 'resolved' || ticket.reason_code === 'resolved';
-  byId('staff-active-customer').textContent = (ticket.customer_name || ticket.customer_id) + (ticket.order_id ? ' · Đơn hàng: ' + ticket.order_id : '');
+  byId('staff-active-customer').textContent = formatStaffActiveCustomerLabel(ticket);
   byId('staff-active-meta').textContent = 'Mã ca: ' + (ticket.case_id || ticket.conversation_id)
     + ' · Lý do: ' + (ticket.comment || ticket.reason_code || (isClosed ? (ticket.resolved_reason || 'Đã đóng') : 'Yêu cầu gặp nhân viên'))
     + (isClosed ? ' · [Chỉ đọc · Ca đã đóng]' : '');

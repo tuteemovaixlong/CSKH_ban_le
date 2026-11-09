@@ -994,8 +994,20 @@ class Application:
         product = self.catalog.for_order(order)
         pid = product['id'] if product else None
         self.store.remember(customer, snapshot, order['id'], pid)
-        return {'order': order, 'message': describe_order(order, STATUSES, reason_catalog().labels()),
-                'context': {'order_id': order['id'], 'product_id': pid}, 'source': 'store_data', 'model_used': False}
+        if hasattr(self.store, 'read_order_details_in_tx') and hasattr(self.store, 'connection'):
+            with self.store.connection() as db:
+                details = self.store.read_order_details_in_tx(db, order)
+        else:
+            details = None
+        raw_ext = order.get('external_order_id')
+        ext_oid = raw_ext.strip() if isinstance(raw_ext, str) and raw_ext.strip() else None
+        return {
+            'order': order,
+            'message': describe_order(order, STATUSES, reason_catalog().labels(), details=details),
+            'context': {'order_id': order['id'], 'external_order_id': ext_oid, 'product_id': pid},
+            'source': 'store_data',
+            'model_used': False,
+        }
 
     def case_assist_progress(self, actor: dict, case_id: str) -> dict:
         """Progress of the caller's own running Case Assistant turn on `(tenant_id, principal_id, case_id)`."""

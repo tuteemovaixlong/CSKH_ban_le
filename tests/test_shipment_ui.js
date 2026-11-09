@@ -66,11 +66,13 @@ const allDb = text(render(completeDb));
 for (const value of [
   'GHN', 'GHN-SIM-001', 'delivery_fail', 'Giao h\u00e0ng th\u1ea5t b\u1ea1i',
   'B\u01b0u c\u1ee5c C\u1ea7u Gi\u1ea5y, H\u00e0 N\u1ed9i', 'Nguy\u1ec5n V\u0103n Nam (090****334)',
-  '2026-11-09T17:00:00+07:00', 'S\u1ed1 l\u1ea7n giao: 2', 'Kh\u00f4ng li\u00ean l\u1ea1c \u0111\u01b0\u1ee3c ng\u01b0\u1eddi nh\u1eadn',
+  'D\u1ef1 ki\u1ebfn nh\u1eadn', '17:00 09/11/2026', '08:00 08/11/2026', '14:30 08/11/2026',
+  'S\u1ed1 l\u1ea7n giao: 2', 'Kh\u00f4ng li\u00ean l\u1ea1c \u0111\u01b0\u1ee3c ng\u01b0\u1eddi nh\u1eadn',
   'Xu\u1ea5t kho trung chuy\u1ec3n', 'Giao l\u1ea7n 2 kh\u00f4ng g\u1eb7p kh\u00e1ch'
 ]) {
   assert.ok(allDb.includes(value), 'Missing expected shipment text: ' + value);
 }
+assert.doesNotMatch(allDb, /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/);
 const partial = text(render({
   ...completeDb,
   shipper_name:null,
