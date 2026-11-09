@@ -526,9 +526,9 @@ Ghi chú không chặn: Tool Inspector bỏ 3 tool đọc trước đây đượ
 
 | Tệp | Vị trí | Giữ tới |
 |---|---|---|
-| `pre-w6-1b-1-20261109T082229Z.dump` | `/opt/retailops/backups/` | hết đợt bảo vệ khóa luận |
-| `final-pre-w6-1b-1-20261109T082854Z.dump` | `/opt/retailops/backups/` | hết đợt bảo vệ khóa luận |
-| `integration-secrets-20261109T075429Z.tgz` | `/root/retailops-key-backups/` | lâu dài; mất khóa digest thì không kiểm chứng được các bản ghi sự kiện đã lưu |
+| `pre-w6-1b-1-20261109T082229Z.dump` | `/opt/retailops/backups/` | xóa ngày 2027-01-31 (W6.1b-2-D4) |
+| `final-pre-w6-1b-1-20261109T082854Z.dump` | `/opt/retailops/backups/` | xóa ngày 2027-01-31 (W6.1b-2-D4) |
+| `integration-secrets-20261109T075429Z.tgz` | `/root/retailops-key-backups/` | lâu dài; chỉ chứa khóa digest và khóa connector, không có dữ liệu cá nhân; mất khóa digest thì không kiểm chứng được các bản ghi sự kiện đã lưu |
 
 `RETAILOPS_DEPLOY_ENABLED` để `false` (tắt lúc 11:43:42Z).
 
@@ -538,4 +538,27 @@ Ghi chú không chặn: Tool Inspector bỏ 3 tool đọc trước đây đượ
 - Câu chốt "chưa có trích dẫn từ kho chính sách" vẫn xuất hiện (W6.2, C3 và F9); câu trả lời trộn "tôi" và "em" (W6.5, F14).
 - Mỗi lượt deploy, live E2E smoke tạo thêm 2 tenant `e2e-smoke-*`; dọn ở C6.
 - EC2 vẫn không có Elastic IP; mỗi lần stop/start đổi host, phải cập nhật Google OAuth. Bản sửa `rollout-public-web.sh` giờ tự quay về đúng khi IP đổi.
-- W6.1b-2 còn chốt mã hóa người nhận, chính sách giữ backup chung và `refund.requested`, theo §20.
+- W6.1b-2: đã chốt ở [§21](W0_OWNER_DECISION_DELTA_2026-10-29.md#21-w61b-2-owner-decisions-2026-11-09), xem readiness review bên dưới.
+
+### 2026-11-09 W6.1b-2 readiness review
+
+> **Phạm vi:** một lượt readiness review cho W6.1b-2, chỉ BLOCKER/MAJOR, đối chiếu §19 (W6.1a-D11 đến D14), §20 và code trên `main` tại `0beb80b`, sau khi W6.1b-1 và hotfix W6.1b-1.1 đã lên production. Một phần phát hiện do owner nêu khi rà phương án reset dữ liệu demo, Claude đối chiếu lại với code.
+
+| ID | Mức | Vấn đề | Đóng bằng |
+|---|---|---|---|
+| `W61B2-RR-01` | BLOCKER | Nhập lại cùng tệp sự kiện bị chống trùng theo `UNIQUE(source_system, event_id)` của `imported_events`; người nhận đã bị gỡ trước khi ghi ở W6.1b-1 nên không còn bản gốc để xử lý lại | W6.1b-2-D9: gỡ cả `imported_events` của nguồn rồi nhập lại; tệp `data/demo_events/store_events.jsonl` vẫn mang người nhận giả lập trong 128 `order.created` |
+| `W61B2-RR-02` | BLOCKER | Repo không có thư viện mã hóa; thêm thư viện cần owner duyệt | W6.1b-2-D1 duyệt `cryptography` |
+| `W61B2-RR-03` | MAJOR | `order_purge_tombstones` (từ lệnh gỡ một đơn của Phase 5) chặn `order.created` trùng mã sàn hoặc mã nội bộ; `seed_demo_account_orders` coi khách có tombstone là "đã có dữ liệu" và bỏ qua. `purge-legacy-demo` không ghi tombstone | W6.1b-2-D9: reset không tạo, không xóa tombstone; dry-run liệt kê và dừng nếu có |
+| `W61B2-RR-04` | MAJOR | `order_action_evidence` có tệp trên đĩa (`storage_relpath`); xóa dòng mà không xóa tệp để lại rác | W6.1b-2-D9: xóa tệp sau khi giao dịch commit, như `purge_expired_evidence` |
+| `W61B2-RR-05` | MAJOR | `import_events_jsonl` chạy cả tệp trong một giao dịch ghi, giữ khóa cửa hàng suốt quá trình; lệnh ghi khác của cùng cửa hàng chờ quá `lock_timeout` 5 giây thì trả 503. `orders.id` sinh ngẫu nhiên nên sau khi nhập lại, mã nội bộ đổi, `conversations.order_id` cũ trỏ vào đơn không còn | W6.1b-2-D9: dừng web khi reset, từ chối khi còn ca mở, đặt `conversations.order_id` về rỗng |
+| `W61B2-RR-06` | MAJOR | Outbox giao "ít nhất một lần": nhận việc bằng `SKIP LOCKED` chống hai tiến trình nhận cùng dòng, nhưng không chống ghi trùng yêu cầu hay gửi lại sau sự cố; khóa cửa hàng không áp dụng cho bước nhận việc của outbox | W6.1b-2-D6; sàn ảo đã chống trùng theo `request_id` |
+| `W61B2-RR-07` | MAJOR | Sàn ảo không chạy trên production, nên `voucher.requested` không tự có `voucher.issued` | W6.1b-2-D8: vòng tay, runbook và kịch bản demo |
+| `W61B2-RR-08` | MAJOR | Hoàn tiền của yêu cầu cũ về muộn sau khi khách mở yêu cầu mới có thể bị nối nhầm; khóa không giải quyết vì đây là luật nối | W6.1b-2-D5 |
+| `W61B2-RR-09` | MAJOR | W6.1a-D13 cho Manager đổi ngưỡng và mệnh giá, nhưng không có bảng cấu hình theo cửa hàng và W6.1b-2 không có migration | W6.1b-2-D7: ngưỡng là hằng số cấu hình trong R1, Manager sửa mệnh giá từng đề xuất |
+
+**Ghi chú không chặn:**
+- `pg_advisory_xact_lock(hashtextextended(schema, 0))` dùng khóa 64 bit; hai schema trùng hash sẽ chặn nhau, xác suất không đáng kể ở quy mô hiện tại.
+- `statement_timeout='15s'` đặt trong mọi giao dịch, **kể cả lệnh migrate**; dừng web chỉ loại bỏ tranh chấp khóa, không loại bỏ giới hạn 15 giây cho từng câu lệnh. Migrate v9 trên 52 tenant hiện tại không chạm giới hạn; cửa hàng lớn sau này cần xem lại.
+- `Caddyfile.maintenance` trên host còn bản ngày 2026-11-05, chưa có khối `@internal_routes` và dòng import admin; không dùng `switch-maintenance.sh` khi reset cho tới khi chép lại từ image.
+
+**Kết luận:** W6.1b-2 **READY** để thực thi theo [W6.1b-2 execution handoff](W6_1B_2_EXECUTION_HANDOFF_2026-11-09.md) khi owner merge §21. Reset dữ liệu và deploy cần owner duyệt riêng theo mục 6 của handoff. Readiness tổng thể vẫn `BLOCKED` cho W6.2 trở đi.
