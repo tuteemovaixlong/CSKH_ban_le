@@ -554,7 +554,7 @@ Ghi chú không chặn: Tool Inspector bỏ 3 tool đọc trước đây đượ
 | `W61B2-RR-06` | MAJOR | Outbox giao "ít nhất một lần": nhận việc bằng `SKIP LOCKED` chống hai tiến trình nhận cùng dòng, nhưng không chống ghi trùng yêu cầu hay gửi lại sau sự cố; khóa cửa hàng không áp dụng cho bước nhận việc của outbox | W6.1b-2-D6; sàn ảo đã chống trùng theo `request_id` |
 | `W61B2-RR-07` | MAJOR | Sàn ảo không chạy trên production, nên `voucher.requested` không tự có `voucher.issued` | W6.1b-2-D8: vòng tay, runbook và kịch bản demo |
 | `W61B2-RR-08` | MAJOR | Hoàn tiền của yêu cầu cũ về muộn sau khi khách mở yêu cầu mới có thể bị nối nhầm; khóa không giải quyết vì đây là luật nối | W6.1b-2-D5 |
-| `W61B2-RR-09` | MAJOR | W6.1a-D13 cho Manager đổi ngưỡng và mệnh giá, nhưng không có bảng cấu hình theo cửa hàng và W6.1b-2 không có migration | W6.1b-2-D7: ngưỡng là hằng số cấu hình trong R1, Manager sửa mệnh giá từng đề xuất |
+| `W61B2-RR-09` | MAJOR | W6.1a-D13 cho Manager đổi ngưỡng và mệnh giá, nhưng không có bảng cấu hình theo cửa hàng và W6.1b-2 không có migration | W6.1b-2-D7: owner chọn voucher cố định 50.000 VNĐ, ngưỡng 48 giờ cố định; không ai sửa mệnh giá trong R1 |
 
 **Ghi chú không chặn:**
 - `pg_advisory_xact_lock(hashtextextended(schema, 0))` dùng khóa 64 bit; hai schema trùng hash sẽ chặn nhau, xác suất không đáng kể ở quy mô hiện tại.
