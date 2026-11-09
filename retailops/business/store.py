@@ -1432,6 +1432,7 @@ class BusinessStore:
                     removable.append(entry)
 
             removed_count = 0
+            removed_order_ids: list[str] = []
             if not dry_run and removable:
                 for entry in removable:
                     oid = entry["order_id"]
@@ -1442,18 +1443,19 @@ class BusinessStore:
                         "DELETE FROM orders WHERE id = ? AND source_system = 'retailops_seed'",
                         (oid,),
                     ).rowcount
-                    removed_count += int(deleted or 0)
-                self.log(
-                    conn,
-                    "system",
-                    "legacy_demo_orders_purged",
-                    None,
-                    tenant_id=tenant_clean,
-                    removed_count=removed_count,
-                    retained_count=len(retained),
-                    removed_order_ids=[e["order_id"] for e in removable],
-                    retained_order_ids=[e["order_id"] for e in retained],
-                )
+                    if int(deleted or 0) > 0:
+                        removed_count += int(deleted or 0)
+                        removed_order_ids.append(oid)
+                        self.log(
+                            conn,
+                            entry["customer_id"],
+                            "legacy_demo_order_purged",
+                            oid,
+                            tenant_id=tenant_clean,
+                            status=entry["status"],
+                            name=entry["name"],
+                            amount=entry["amount"],
+                        )
 
             return {
                 "result": "PURGE_LEGACY_DEMO_DRY_RUN" if dry_run else "PURGE_LEGACY_DEMO_OK",
@@ -1461,6 +1463,7 @@ class BusinessStore:
                 "dry_run": bool(dry_run),
                 "would_remove_count": len(removable),
                 "removed_count": 0 if dry_run else removed_count,
+                "removed_order_ids": [] if dry_run else removed_order_ids,
                 "removable_orders": removable,
                 "retained_count": len(retained),
                 "retained_orders": retained,

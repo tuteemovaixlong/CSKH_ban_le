@@ -180,6 +180,7 @@ def run(args):
                     before_state={'would_remove_count': report['would_remove_count']},
                     after_state={
                         'removed_count': report['removed_count'],
+                        'removed_order_ids': list(report.get('removed_order_ids', [])),
                         'retained_count': report['retained_count'],
                         'retained_order_ids': [r['order_id'] for r in report['retained_orders']],
                     },

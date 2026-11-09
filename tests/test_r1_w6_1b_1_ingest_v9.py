@@ -3343,16 +3343,29 @@ class Item8DemoEventsAndPurgeLegacyTests(unittest.TestCase):
             sim_count_after = db.execute(
                 "SELECT COUNT(*) AS c FROM orders WHERE source_system='marketplace_sim'"
             ).fetchone()["c"]
+            purged_events = [
+                dict(r)
+                for r in db.execute(
+                    "SELECT customer_id, kind, order_id FROM business_events WHERE kind='legacy_demo_order_purged'"
+                ).fetchall()
+            ]
+            sys_events = db.execute(
+                "SELECT COUNT(*) AS c FROM business_events WHERE customer_id='system' OR kind='legacy_demo_orders_purged'"
+            ).fetchone()["c"]
         self.assertEqual(legacy_ids_after_live, ["O-101"])
         self.assertEqual(sim_count_after, sim_count_before)
+        self.assertEqual(purged_events, [{"customer_id": "C-001", "kind": "legacy_demo_order_purged", "order_id": "O-102"}])
+        self.assertEqual(int(sys_events), 0)
 
         with sessions.control.connection() as id_db:
             audit_rows = id_db.execute(
                 "SELECT action, after_json FROM admin_audit_log WHERE action='database.purge_legacy_demo'"
             ).fetchall()
         self.assertEqual(len(audit_rows), 1)
-        self.assertEqual(json.loads(audit_rows[0]["after_json"])["removed_count"], 1)
-        self.assertEqual(json.loads(audit_rows[0]["after_json"])["retained_order_ids"], ["O-101"])
+        after_audit = json.loads(audit_rows[0]["after_json"])
+        self.assertEqual(after_audit["removed_count"], 1)
+        self.assertEqual(after_audit["removed_order_ids"], ["O-102"])
+        self.assertEqual(after_audit["retained_order_ids"], ["O-101"])
 
     def test_session_and_profile_display_name_comes_from_customer_data(self):
         from retailops.business.application import Application
