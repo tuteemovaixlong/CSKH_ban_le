@@ -1582,10 +1582,13 @@ class Item2ConnectorAndComposeSecretsTests(unittest.TestCase):
 
         secret_marker = "TOPSECRET_CONNECTOR_KEY_VALUE_32B_XYZ987654"
         digest_marker = "TOPSECRET_DIGEST_KEY_VALUE_32B_ABC123456789"
+        recipient_marker = "TOPSECRET_RECIPIENT_KEY_VALUE_32B_DEF999888"
         conn_key_file = self.secrets_dir / "retailops_connector_marketplace_sim"
         digest_key_file = self.secrets_dir / "retailops_event_digest_key"
+        recipient_key_file = self.secrets_dir / "retailops_recipient_key_v1"
         conn_key_file.write_text(secret_marker + "\n", encoding="utf-8")
         digest_key_file.write_text(digest_marker + "\n", encoding="utf-8")
+        recipient_key_file.write_text(recipient_marker + "\n", encoding="utf-8")
 
         cli_env = {
             **os.environ,
@@ -1594,6 +1597,7 @@ class Item2ConnectorAndComposeSecretsTests(unittest.TestCase):
             "RETAILOPS_STORAGE_BACKEND": "sqlite",
             "RETAILOPS_CONNECTOR_SECRETS_DIR": str(self.secrets_dir),
             "RETAILOPS_EVENT_DIGEST_KEY_FILE": str(digest_key_file),
+            "RETAILOPS_RECIPIENT_KEY_FILE": str(recipient_key_file),
         }
         repo_root = Path(__file__).resolve().parents[1]
 
@@ -1617,6 +1621,7 @@ class Item2ConnectorAndComposeSecretsTests(unittest.TestCase):
         for out_blob in (res_add.stdout, res_add.stderr, res_list.stdout, res_list.stderr, res_check_ok.stdout):
             self.assertNotIn(secret_marker, out_blob)
             self.assertNotIn(digest_marker, out_blob)
+            self.assertNotIn(recipient_marker, out_blob)
 
         # Remove connector key: startup logs one warning (source_system + reason only), /healthz remains 200, check fails non-zero
         conn_key_file.unlink()
