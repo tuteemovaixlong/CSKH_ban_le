@@ -801,8 +801,13 @@ class RealPostgresBusinessV9Tests(unittest.TestCase):
                    ('ord_pg_sim_keep', 'C-PG-LEG-2', 'P-101', 'marketplace_sim', 'SIM-O-PG-KEEP', 1700000400.0, 'Áo sàn ảo', 'Trắng / M', 299000, 'pending', 1)"""
             )
             db.execute(
-                """INSERT INTO order_items(order_id, product_id, variant, quantity, unit_price)
-                   VALUES ('O-PG-LEG-2', 'P-102', 'Đen / L', 1, 520000)"""
+                """INSERT INTO order_items(
+                       id, tenant_id, order_id, product_id, product_title, variant_name,
+                       quantity, unit_price, subtotal, created_at
+                   ) VALUES (
+                       'oi_pg_leg_2', 'shop-v9', 'O-PG-LEG-2', 'P-102', 'Quần tây 2', 'Đen / L',
+                       1, 520000, 520000, 1700000200.0
+                   )"""
             )
 
         req = bstore.create_order_action_request(
