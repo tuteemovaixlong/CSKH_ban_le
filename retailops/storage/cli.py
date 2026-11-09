@@ -90,6 +90,13 @@ def add_parser(commands):
     purge_leg.add_argument('--tenant', required=True, help='Target tenant ID.')
     purge_leg.add_argument('--dry-run', action='store_true',
                            help='Inspect and report removable vs retained legacy orders without mutating.')
+    purge_rcp = sub.add_parser(
+        'purge-expired-recipients',
+        help='Purge encrypted recipient fields and phone_lookup_hmac past retention_until (manual operator run).',
+    )
+    purge_rcp.add_argument('--tenant', required=True, help='Target tenant ID.')
+    purge_rcp.add_argument('--dry-run', action='store_true',
+                           help='Report expired recipient rows without mutating.')
 
 
 def run(args):
@@ -185,6 +192,42 @@ def run(args):
                         'retained_order_ids': [r['order_id'] for r in report['retained_orders']],
                     },
                     reason='Operator purge-legacy-demo execution',
+                    now=time.time(),
+                )
+        return report
+
+    if action == 'purge-expired-recipients':
+        import time
+
+        if backend == 'postgresql':
+            from retailops.identity.postgres import PostgresSessions
+
+            sessions = PostgresSessions(dsn, data_root=Path(resolved_output))
+        else:
+            from retailops.identity.persistent import PersistentSessions
+
+            out_root = Path(resolved_output)
+            pers_dir = out_root / 'persistent' if (out_root / 'persistent').is_dir() or not (out_root / 'identity.sqlite3').is_file() else out_root
+            sessions = PersistentSessions(pers_dir)
+        tenant_clean = str(args.tenant or '').strip()
+        bstore = sessions.business_store(tenant_clean)
+        report = bstore.purge_expired_recipients(dry_run=bool(args.dry_run))
+        if not args.dry_run:
+            with sessions.control.connection(write=True) as id_db:
+                sessions.control.record_admin_audit(
+                    id_db,
+                    actor_principal_id='cli-operator',
+                    actor_role='operator',
+                    tenant_id=tenant_clean,
+                    target_membership_id=f'tenant:{tenant_clean}',
+                    action='database.purge_expired_recipients',
+                    outcome='allowed',
+                    before_state={'would_purge_count': report['would_purge_count']},
+                    after_state={
+                        'purged_count': report['purged_count'],
+                        'order_ids': list(report.get('order_ids', [])),
+                    },
+                    reason='Operator purge-expired-recipients execution',
                     now=time.time(),
                 )
         return report

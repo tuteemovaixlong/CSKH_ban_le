@@ -2573,6 +2573,71 @@ class BusinessStore:
                 "recipient": revealed,
             }
 
+    def purge_expired_recipients(
+        self,
+        *,
+        dry_run: bool = False,
+        now: float | None = None,
+    ) -> dict:
+        """NULL out encrypted recipient columns and phone_lookup_hmac past retention_until (W6.1b-2-D4)."""
+        now_ts = float(self._now() if now is None else now)
+        eff_tid = str(getattr(self, "tenant_id", None) or "default")
+        where_clause = """
+            retention_until IS NOT NULL
+            AND retention_until <= ?
+            AND (
+                name_enc IS NOT NULL
+                OR phone_enc IS NOT NULL
+                OR address_line_enc IS NOT NULL
+                OR phone_lookup_hmac IS NOT NULL
+            )
+        """
+        if dry_run:
+            with self.connection() as db:
+                rows = db.execute(
+                    f"SELECT order_id FROM order_recipients WHERE {where_clause} ORDER BY order_id ASC",
+                    (now_ts,),
+                ).fetchall()
+            oids = [str(r["order_id"]) for r in rows]
+            return {
+                "result": "PURGE_EXPIRED_RECIPIENTS_DRY_RUN",
+                "tenant_id": eff_tid,
+                "dry_run": True,
+                "as_of": now_ts,
+                "would_purge_count": len(oids),
+                "purged_count": 0,
+                "order_ids": oids,
+            }
+
+        with self.connection(write=True) as db:
+            rows = db.execute(
+                f"SELECT order_id FROM order_recipients WHERE {where_clause} ORDER BY order_id ASC",
+                (now_ts,),
+            ).fetchall()
+            oids = [str(r["order_id"]) for r in rows]
+            purged = 0
+            if oids:
+                purged = int(
+                    db.execute(
+                        f"""UPDATE order_recipients
+                            SET name_enc = NULL,
+                                phone_enc = NULL,
+                                address_line_enc = NULL,
+                                phone_lookup_hmac = NULL
+                            WHERE {where_clause}""",
+                        (now_ts,),
+                    ).rowcount
+                )
+        return {
+            "result": "PURGE_EXPIRED_RECIPIENTS_COMPLETED",
+            "tenant_id": eff_tid,
+            "dry_run": False,
+            "as_of": now_ts,
+            "would_purge_count": len(oids),
+            "purged_count": purged,
+            "order_ids": oids,
+        }
+
     def read_order_shipment_in_tx(self, db, order_dict: dict, *, now: float | None = None) -> dict | None:
         """Read DB-backed shipment and chronological shipment_events for one order, or None if absent."""
         oid = str(order_dict["id"])
