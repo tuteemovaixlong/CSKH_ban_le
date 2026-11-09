@@ -1505,7 +1505,13 @@ class Item2ConnectorAndComposeSecretsTests(unittest.TestCase):
         partial_map["order"] = {"pending": "pending", "shipping": "shipping"}  # omit 'delivered'
         mgr.add_connector("shop-demo", source_system="marketplace_sim", status_mapping=partial_map)
 
-        svc = IntegrationIngestService(self.sessions, digest_key=b"digest-key-at-least-32-bytes-ok!")
+        from retailops.integration.recipient_crypto import RecipientKeyring
+
+        svc = IntegrationIngestService(
+            self.sessions,
+            digest_key=b"digest-key-at-least-32-bytes-ok!",
+            recipient_keyring=RecipientKeyring.from_raw_keys({"v1": b"recipient-key-at-least-32-bytes!"}, "v1"),
+        )
         svc.ingest_event(
             {
                 "contract": "retailops-integration-v2",
@@ -1708,9 +1714,12 @@ class Item3InternalRouteAndImportEventsCliTests(unittest.TestCase):
         self.secrets_dir.mkdir(parents=True, exist_ok=True)
         self.conn_secret = b"connector-hmac-secret-32-bytes-ok!"
         self.digest_secret = b"event-digest-hmac-key-32-bytes-ok!"
+        self.recipient_secret = b"recipient-aes256-key-32-bytes-ok!!"
         (self.secrets_dir / "retailops_connector_marketplace_sim").write_bytes(self.conn_secret + b"\n")
         self.digest_file = self.secrets_dir / "retailops_event_digest_key"
         self.digest_file.write_bytes(self.digest_secret + b"\n")
+        self.recipient_file = self.secrets_dir / "retailops_recipient_key_v1"
+        self.recipient_file.write_bytes(self.recipient_secret + b"\n")
 
         self.sessions = PersistentSessions(self.out_dir / "persistent")
         self.sessions.provision_tenant("shop-demo", "Shop Demo", seed_demo=False)
@@ -1780,6 +1789,7 @@ class Item3InternalRouteAndImportEventsCliTests(unittest.TestCase):
         env_vars = {
             "RETAILOPS_CONNECTOR_SECRETS_DIR": str(self.secrets_dir),
             "RETAILOPS_EVENT_DIGEST_KEY_FILE": str(self.digest_file),
+            "RETAILOPS_RECIPIENT_KEY_FILE": str(self.recipient_file),
         }
         with patch.dict(os.environ, env_vars, clear=False):
             mgr = ConnectorManager(self.sessions)
@@ -1929,6 +1939,8 @@ class Item3InternalRouteAndImportEventsCliTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+        from retailops.integration.recipient_crypto import RecipientKeyring
+
         fixed_now = 1800000000.0
         res1 = import_events_jsonl(
             self.sessions,
@@ -1938,6 +1950,7 @@ class Item3InternalRouteAndImportEventsCliTests(unittest.TestCase):
             rebase_clock="now",
             now_fn=lambda: fixed_now,
             digest_key=self.digest_secret,
+            recipient_keyring=RecipientKeyring.from_raw_keys({"v1": self.recipient_secret}, "v1"),
         )
         self.assertEqual((res1["received"], res1["duplicates"], res1["errors"]), (2, 0, 0))
         expected_offset = fixed_now - iso_vn_to_epoch("2026-10-10T10:00:00+07:00", "occurred_at")
@@ -1959,6 +1972,7 @@ class Item3InternalRouteAndImportEventsCliTests(unittest.TestCase):
             "RETAILOPS_OUTPUT": str(self.out_dir),
             "RETAILOPS_STORAGE_BACKEND": "sqlite",
             "RETAILOPS_EVENT_DIGEST_KEY_FILE": str(self.digest_file),
+            "RETAILOPS_RECIPIENT_KEY_FILE": str(self.recipient_file),
         }
         proc = subprocess.run(
             [
@@ -2002,12 +2016,21 @@ class Item4CanonicalModelAndPiiTests(unittest.TestCase):
     """W6.1b-1 Item 4: canonical writes, sequence monotonicity, non-regression, HMAC digest & PII redaction."""
 
     def setUp(self) -> None:
+        from retailops.integration.recipient_crypto import RecipientKeyring
+
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.digest_key = b"item4-hmac-digest-secret-32-bytes!!"
+        self.recipient_keyring = RecipientKeyring.from_raw_keys(
+            {"v1": b"item4-recipient-aes-key-32-bytes!!"}, "v1"
+        )
         self.sessions = PersistentSessions(self.root / "persistent")
         self.sessions.provision_tenant("shop-demo", "Shop Demo", seed_demo=False)
-        self.service = IntegrationIngestService(self.sessions, digest_key=self.digest_key)
+        self.service = IntegrationIngestService(
+            self.sessions,
+            digest_key=self.digest_key,
+            recipient_keyring=self.recipient_keyring,
+        )
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -2091,8 +2114,10 @@ class Item4CanonicalModelAndPiiTests(unittest.TestCase):
                     self.assertNotIn("0123987654", dumped, tbl)
                     self.assertNotIn("Số 88 Đường Nguyễn Huệ", dumped, tbl)
 
-            # W6.1b-2 tables must remain completely empty
-            for empty_tbl in ("order_recipients", "delivery_compensations", "vouchers"):
+            # W6.1b-2: order_recipients holds 1 encrypted row; voucher/compensation tables stay empty on order.created
+            rec_cnt = db.execute("SELECT COUNT(*) AS c FROM order_recipients").fetchone()["c"]
+            self.assertEqual(rec_cnt, 1, "order_recipients")
+            for empty_tbl in ("delivery_compensations", "vouchers"):
                 cnt = db.execute(f"SELECT COUNT(*) AS c FROM {empty_tbl}").fetchone()["c"]
                 self.assertEqual(cnt, 0, empty_tbl)
 
@@ -2617,14 +2642,18 @@ class Item7ProviderRefundLinkingTests(unittest.TestCase):
         self.secrets_dir.mkdir(parents=True, exist_ok=True)
         self.conn_secret = b"k" * 32
         self.digest_key = b"d" * 32
+        self.recipient_key = b"r" * 32
         (self.secrets_dir / "retailops_connector_marketplace_sim").write_bytes(self.conn_secret)
         self.digest_file = self.root / "digest_key"
         self.digest_file.write_bytes(self.digest_key)
+        self.recipient_file = self.root / "recipient_key"
+        self.recipient_file.write_bytes(self.recipient_key)
         self.env_patcher = patch.dict(
             os.environ,
             {
                 "RETAILOPS_CONNECTOR_SECRETS_DIR": str(self.secrets_dir),
                 "RETAILOPS_EVENT_DIGEST_KEY_FILE": str(self.digest_file),
+                "RETAILOPS_RECIPIENT_KEY_FILE": str(self.recipient_file),
             },
             clear=False,
         )

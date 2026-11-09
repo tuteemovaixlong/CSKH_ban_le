@@ -21,6 +21,12 @@ from retailops.integration.contract import (
     iso_vn_to_epoch,
     validate_event_v2,
 )
+from retailops.integration.recipient_crypto import (
+    RecipientKeyring,
+    load_recipient_keyring,
+    recompute_product_orders_recipient_retention_in_tx,
+    sync_order_recipient_retention_in_tx,
+)
 
 logger = logging.getLogger("retailops_integration")
 
@@ -192,6 +198,7 @@ class IntegrationIngestService:
         sessions_or_stores: Any,
         *,
         digest_key: bytes | None = None,
+        recipient_keyring: RecipientKeyring | None = None,
     ) -> None:
         self.sessions = sessions_or_stores
         if hasattr(sessions_or_stores, "control"):
@@ -207,6 +214,16 @@ class IntegrationIngestService:
                 "sessions_or_stores must provide control (IdentityStore) and business_store(tenant_id)."
             )
         self._explicit_digest_key = bytes(digest_key) if digest_key is not None else None
+        self._explicit_recipient_keyring = recipient_keyring
+
+    def _resolve_recipient_keyring(
+        self, override: RecipientKeyring | None = None
+    ) -> RecipientKeyring:
+        if override is not None:
+            return override
+        if self._explicit_recipient_keyring is not None:
+            return self._explicit_recipient_keyring
+        return load_recipient_keyring()
 
     def _resolve_digest_key(self, override: bytes | None = None) -> bytes:
         if override is not None:
@@ -574,6 +591,7 @@ class IntegrationIngestService:
         connector_source_system: str = "marketplace_sim",
         received_via: str = "import",
         digest_key: bytes | None = None,
+        recipient_keyring: RecipientKeyring | None = None,
         expected_merchant_id: str | None = None,
         status_mapping: dict[str, Any] | None = None,
         actor_principal_id: str | None = None,
@@ -681,6 +699,9 @@ class IntegrationIngestService:
             rebase_offset_seconds
         )
         data = validated["data"]
+        active_recipient_keyring: RecipientKeyring | None = None
+        if event_type == "order.created" and data.get("recipient") is not None:
+            active_recipient_keyring = self._resolve_recipient_keyring(recipient_keyring)
 
         bstore = self.get_bstore(tenant_clean) if _db is None else None
         now = time.time()
@@ -941,6 +962,9 @@ class IntegrationIngestService:
                                             v["price"] if v["price"] is not None else data["price"],
                                         ),
                                     )
+                        recompute_product_orders_recipient_retention_in_tx(
+                            db, product_id=ext_pid
+                        )
 
                 elif event_type == "customer.upserted":
                     mapped_ext_customer_id = data["external_customer_id"]
@@ -1161,6 +1185,52 @@ class IntegrationIngestService:
                                 ),
                             )
 
+                        if data.get("recipient") is not None:
+                            assert active_recipient_keyring is not None
+                            enc_rec = active_recipient_keyring.encrypt_recipient_record(
+                                data["recipient"],
+                                tenant_id=tenant_clean,
+                                order_id=result_order_id,
+                            )
+                            db.execute(
+                                """INSERT INTO order_recipients (
+                                       order_id, name_enc, phone_enc, address_line_enc,
+                                       phone_lookup_hmac, ward, district, province, phone_masked,
+                                       created_at, retention_until
+                                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                                   ON CONFLICT(order_id) DO UPDATE SET
+                                       name_enc=excluded.name_enc,
+                                       phone_enc=excluded.phone_enc,
+                                       address_line_enc=excluded.address_line_enc,
+                                       phone_lookup_hmac=excluded.phone_lookup_hmac,
+                                       ward=excluded.ward,
+                                       district=excluded.district,
+                                       province=excluded.province,
+                                       phone_masked=excluded.phone_masked""",
+                                (
+                                    result_order_id,
+                                    enc_rec["name_enc"],
+                                    enc_rec["phone_enc"],
+                                    enc_rec["address_line_enc"],
+                                    enc_rec["phone_lookup_hmac"],
+                                    enc_rec["ward"],
+                                    enc_rec["district"],
+                                    enc_rec["province"],
+                                    enc_rec["phone_masked"],
+                                    occurred_ts,
+                                ),
+                            )
+                            if existing_order is not None and existing_order["status"] in (
+                                "delivered",
+                                "cancelled",
+                            ):
+                                sync_order_recipient_retention_in_tx(
+                                    db,
+                                    order_id=result_order_id,
+                                    status=str(existing_order["status"]),
+                                    transition_ts=occurred_ts,
+                                )
+
                         audit_payload = {
                             "source_system": connector_source,
                             "event_id": event_id,
@@ -1243,6 +1313,13 @@ class IntegrationIngestService:
                                 cancel_reason_val,
                                 result_order_id,
                             ),
+                        )
+                        sync_order_recipient_retention_in_tx(
+                            db,
+                            order_id=result_order_id,
+                            status=canonical_status,
+                            transition_ts=occurred_ts,
+                            delivered_at=delivered_at_val,
                         )
 
                 elif event_type == "shipment.updated":
@@ -1413,6 +1490,18 @@ class IntegrationIngestService:
                                 "UPDATE orders SET delivered_at=COALESCE(delivered_at, ?) WHERE id=?",
                                 (occurred_ts, result_order_id),
                             )
+                            ord_after = db.execute(
+                                "SELECT status, delivered_at FROM orders WHERE id=?",
+                                (result_order_id,),
+                            ).fetchone()
+                            if ord_after is not None and ord_after["status"] == "delivered":
+                                sync_order_recipient_retention_in_tx(
+                                    db,
+                                    order_id=result_order_id,
+                                    status="delivered",
+                                    transition_ts=occurred_ts,
+                                    delivered_at=ord_after["delivered_at"],
+                                )
 
                 elif event_type == "payment.updated":
                     ext_oid = data["external_order_id"]

@@ -26,6 +26,7 @@ from retailops.core import (
     require,
 )
 from retailops.business.eligibility import compute_order_eligibility, format_vn_iso
+from retailops.integration.recipient_crypto import sync_order_recipient_retention_in_tx
 
 SHIPMENT_STATUS_TEXT_VI = {
     "created": "Đã tạo vận đơn",
@@ -6342,6 +6343,12 @@ class BusinessStore:
                     (req_row["reason_code"], req_row["order_id"], expected_ord_ver),
                 ).rowcount
                 require(ord_won == 1, 409, "stale_order", "Đơn hàng vừa thay đổi đồng thời.")
+                sync_order_recipient_retention_in_tx(
+                    db,
+                    order_id=str(req_row["order_id"]),
+                    status="cancelled",
+                    transition_ts=float(now_ts),
+                )
                 order_mutated = True
 
             won = db.execute(
@@ -7171,6 +7178,17 @@ class BusinessStore:
                 ).rowcount
             require(won == 1, 409, "stale_order", f"Đơn hàng {oid} vừa thay đổi đồng thời.")
             updated_ord = db.execute("SELECT * FROM orders WHERE id = ?", (oid,)).fetchone()
+            sync_order_recipient_retention_in_tx(
+                db,
+                order_id=oid,
+                status=new_status,
+                transition_ts=float(now_ts),
+                delivered_at=(
+                    float(updated_ord["delivered_at"])
+                    if updated_ord["delivered_at"] is not None
+                    else None
+                ),
+            )
             self.log(
                 db,
                 row["customer_id"],

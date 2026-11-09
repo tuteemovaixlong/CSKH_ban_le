@@ -33,6 +33,8 @@ CIPHERTEXT_FORMAT_VERSION = "r1gcm1"
 DEFAULT_RECIPIENT_KEY_ID = "v1"
 KEY_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 RECIPIENT_ENCRYPTED_FIELDS = ("name", "phone", "address_line")
+RECIPIENT_DELIVERED_MIN_HOLD_DAYS = 90
+RECIPIENT_CANCELLED_HOLD_DAYS = 30
 
 _HKDF_SALT = b"retailops-recipient-hkdf-salt-v1"
 _HKDF_AES_INFO_PREFIX = b"retailops.order_recipients.aes256gcm.v1:"
@@ -192,6 +194,16 @@ def _b64url_decode(token: str) -> bytes:
 
 class RecipientKeyring:
     """Keyring supporting one active write key and ``{key_id: key}`` decryption map (W6.1b-2-D2)."""
+
+    @classmethod
+    def from_raw_keys(
+        cls,
+        keys: Mapping[str, bytes],
+        active_key_id: str = DEFAULT_RECIPIENT_KEY_ID,
+        *,
+        hmac_key_id: str | None = None,
+    ) -> "RecipientKeyring":
+        return cls(keys, active_key_id=active_key_id, hmac_key_id=hmac_key_id)
 
     def __init__(
         self,
@@ -451,3 +463,90 @@ def load_recipient_keyring(*, env: Mapping[str, str] | None = None) -> Recipient
     hmac_kid_raw = str(environ.get("RETAILOPS_RECIPIENT_HMAC_KEY_ID", "") or "").strip()
     hmac_kid = validate_recipient_key_id(hmac_kid_raw) if hmac_kid_raw else None
     return RecipientKeyring(keys, active_key_id=active_kid, hmac_key_id=hmac_kid)
+
+
+def compute_order_max_warranty_days_in_tx(db: Any, order_id: str) -> int:
+    """Return maximum ``warranty_days`` across all products in ``order_items`` / ``orders.product_id``."""
+    row = db.execute(
+        """SELECT COALESCE(MAX(COALESCE(p.warranty_days, 0)), 0) AS max_wd
+           FROM products p
+           WHERE p.id IN (
+               SELECT oi.product_id FROM order_items oi WHERE oi.order_id = ?
+               UNION
+               SELECT o.product_id FROM orders o WHERE o.id = ? AND o.product_id IS NOT NULL
+           )""",
+        (order_id, order_id),
+    ).fetchone()
+    if row is None:
+        return 0
+    val = row["max_wd"] if "max_wd" in row else row[0]
+    return max(0, int(val or 0))
+
+
+def sync_order_recipient_retention_in_tx(
+    db: Any,
+    *,
+    order_id: str,
+    status: str,
+    transition_ts: float,
+    delivered_at: float | None = None,
+) -> float | None:
+    """Compute and persist ``order_recipients.retention_until`` when an order changes status (W6.1b-2-D4)."""
+    rec_row = db.execute(
+        "SELECT order_id FROM order_recipients WHERE order_id = ?",
+        (order_id,),
+    ).fetchone()
+    if rec_row is None:
+        return None
+
+    if status == "delivered":
+        eff_delivered = delivered_at
+        if eff_delivered is None:
+            ord_row = db.execute(
+                "SELECT delivered_at FROM orders WHERE id = ?", (order_id,)
+            ).fetchone()
+            if ord_row is not None and ord_row["delivered_at"] is not None:
+                eff_delivered = float(ord_row["delivered_at"])
+            else:
+                eff_delivered = float(transition_ts)
+        max_wd = compute_order_max_warranty_days_in_tx(db, order_id)
+        hold_days = max(RECIPIENT_DELIVERED_MIN_HOLD_DAYS, max_wd)
+        retention_until: float | None = float(eff_delivered) + float(hold_days) * 86400.0
+    elif status == "cancelled":
+        retention_until = float(transition_ts) + float(RECIPIENT_CANCELLED_HOLD_DAYS) * 86400.0
+    else:
+        retention_until = None
+
+    db.execute(
+        "UPDATE order_recipients SET retention_until = ? WHERE order_id = ?",
+        (retention_until, order_id),
+    )
+    return retention_until
+
+
+def recompute_product_orders_recipient_retention_in_tx(db: Any, *, product_id: str) -> None:
+    """Refresh ``retention_until`` for already-delivered orders containing ``product_id``."""
+    rows = db.execute(
+        """SELECT DISTINCT o.id AS order_id, o.delivered_at
+           FROM orders o
+           JOIN order_recipients r ON r.order_id = o.id
+           WHERE o.status = 'delivered'
+             AND (
+                 o.product_id = ?
+                 OR EXISTS (
+                     SELECT 1 FROM order_items oi
+                     WHERE oi.order_id = o.id AND oi.product_id = ?
+                 )
+             )""",
+        (product_id, product_id),
+    ).fetchall()
+    for row in rows:
+        oid = str(row["order_id"])
+        deliv_ts = float(row["delivered_at"]) if row["delivered_at"] is not None else 0.0
+        sync_order_recipient_retention_in_tx(
+            db,
+            order_id=oid,
+            status="delivered",
+            transition_ts=deliv_ts,
+            delivered_at=row["delivered_at"],
+        )

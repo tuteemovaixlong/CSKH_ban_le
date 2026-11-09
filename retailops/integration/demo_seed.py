@@ -18,15 +18,17 @@ from retailops.integration.connectors import load_default_status_mapping
 from retailops.integration.contract import validate_event_v2
 from retailops.integration.ingest import IntegrationIngestService
 from retailops.integration.intake import compute_jsonl_rebase_offset
+from retailops.integration.recipient_crypto import RecipientKeyring
 
 DEMO_EVENTS_DIR = ROOT / "data" / "demo_events"
 STORE_EVENTS_PATH = DEMO_EVENTS_DIR / "store_events.jsonl"
 ACCOUNT_TEMPLATE_PATH = DEMO_EVENTS_DIR / "account_template.jsonl"
 MANIFEST_PATH = DEMO_EVENTS_DIR / "manifest.json"
 
-# Ephemeral per-process random key used strictly for internal demo seeding when
-# RETAILOPS_EVENT_DIGEST_KEY_FILE is not configured in local/test environments.
+# Ephemeral per-process random keys used strictly for internal demo seeding when
+# RETAILOPS_EVENT_DIGEST_KEY_FILE / RETAILOPS_RECIPIENT_KEY_FILE are not configured in local/test environments.
 _EPHEMERAL_DEMO_DIGEST_KEY = os.urandom(32)
+_EPHEMERAL_DEMO_RECIPIENT_KEYRING = RecipientKeyring({"v1": os.urandom(32)}, active_key_id="v1")
 
 
 class _InMemoryControlAdapter:
@@ -100,6 +102,18 @@ def _resolve_demo_digest_key(svc: IntegrationIngestService) -> bytes:
     return _EPHEMERAL_DEMO_DIGEST_KEY
 
 
+def _resolve_demo_recipient_keyring(
+    svc: IntegrationIngestService, bstore: Any = None
+) -> RecipientKeyring:
+    if os.environ.get("RETAILOPS_RECIPIENT_KEY_FILE", "").strip():
+        return svc._resolve_recipient_keyring()
+    if os.environ.get("RETAILOPS_ENV", "").strip().lower() in ("production", "prod", "live"):
+        return svc._resolve_recipient_keyring()
+    if bstore is not None:
+        bstore._ephemeral_recipient_keyring = _EPHEMERAL_DEMO_RECIPIENT_KEYRING
+    return _EPHEMERAL_DEMO_RECIPIENT_KEYRING
+
+
 @lru_cache(maxsize=4)
 def _load_prevalidated_store_events(
     path_str: str,
@@ -135,6 +149,7 @@ def seed_demo_store_events(
 
     svc = IntegrationIngestService(sess)
     digest_key = _resolve_demo_digest_key(svc)
+    recipient_keyring = _resolve_demo_recipient_keyring(svc, bstore)
     validated_mapping = load_default_status_mapping("marketplace_sim")
     rebase_offset = (float(bstore._now()) - max_ts) if max_ts is not None else 0.0
 
@@ -190,6 +205,7 @@ def seed_demo_store_events(
                 connector_source_system="marketplace_sim",
                 received_via="import",
                 digest_key=digest_key,
+                recipient_keyring=recipient_keyring,
                 rebase_offset_seconds=rebase_offset,
                 _db=db,
                 _validated_status_mapping=validated_mapping,
@@ -297,6 +313,7 @@ def seed_demo_account_orders(
     tenant_id = str(getattr(bstore, "tenant_id", None) or "default")
     svc = IntegrationIngestService(sess)
     digest_key = _resolve_demo_digest_key(svc)
+    recipient_keyring = _resolve_demo_recipient_keyring(svc, bstore)
     validated_mapping = load_default_status_mapping("marketplace_sim")
 
     def _check_already_populated(conn: Any) -> tuple[bool, str]:
@@ -363,6 +380,7 @@ def seed_demo_account_orders(
                 connector_source_system="marketplace_sim",
                 received_via="import",
                 digest_key=digest_key,
+                recipient_keyring=recipient_keyring,
                 rebase_offset_seconds=rebase_offset,
                 _db=conn,
                 _validated_status_mapping=validated_mapping,
