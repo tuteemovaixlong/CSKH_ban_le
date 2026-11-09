@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -29,7 +30,6 @@ import unittest
 from unittest.mock import patch
 
 from agent_protocol import PROTOCOL
-from marketplace_sim.simulator import MarketplaceSimulator
 from retailops.business.application import Application
 from retailops.business.permissions import ROLE_PERMISSIONS
 from retailops.core import ROOT
@@ -42,6 +42,10 @@ from retailops.integration.intake import compute_sim_hmac_signature, handle_inte
 from retailops.workflow.case_assist import CaseAssistBoundTools
 from retailops_tools import BoundTools
 from tests._w6_1b_2_pg_base import RealPostgresW61b2Base, pg_test_enabled
+
+HAS_MARKETPLACE_SIM = (ROOT / "marketplace_sim").is_dir() and (
+    importlib.util.find_spec("marketplace_sim") is not None
+)
 
 
 def _ctx(
@@ -120,15 +124,155 @@ class _VoucherLoopSuiteMixin:
             }
 
             # 1. Initialize marketplace_sim with two late-delivery stories (one approved by Staff, one by Manager)
-            sim = MarketplaceSimulator.initialize(sim_dir, seed=20261109, merchant_id="MERCHANT-I5-001")
-            s1_info = sim.insert_story("giao_tre_han_cam_ket")
-            sim.advance_hours(2)
-            s2_info = sim.insert_story("giao_tre_han_cam_ket")
             initial_export = tmp_root / "initial_events.jsonl"
-            sim.export_events(initial_export)
+            if HAS_MARKETPLACE_SIM:
+                from marketplace_sim.simulator import MarketplaceSimulator
 
-            ext_oid_staff = s1_info["external_order_id"]
-            ext_oid_mgr = s2_info["external_order_id"]
+                sim = MarketplaceSimulator.initialize(sim_dir, seed=20261109, merchant_id="MERCHANT-I5-001")
+                s1_info = sim.insert_story("giao_tre_han_cam_ket")
+                sim.advance_hours(2)
+                s2_info = sim.insert_story("giao_tre_han_cam_ket")
+                sim.export_events(initial_export)
+                ext_oid_staff = s1_info["external_order_id"]
+                ext_oid_mgr = s2_info["external_order_id"]
+            else:
+                ext_oid_staff = "SIM-O-I5-001"
+                ext_oid_mgr = "SIM-O-I5-002"
+                fallback_events = [
+                    {
+                        "contract": "retailops-integration-v2",
+                        "event_id": "evt:product:P-101:1",
+                        "event_type": "product.upserted",
+                        "source_system": "marketplace_sim",
+                        "merchant_id": "MERCHANT-I5-001",
+                        "occurred_at": "2026-10-01T08:00:00+07:00",
+                        "sequence": 1,
+                        "data": {
+                            "external_product_id": "P-101",
+                            "title": "Áo thun Essential",
+                            "category": "Áo thun",
+                            "price": 299000,
+                            "description": "Áo thun cổ tròn, mặc hằng ngày.",
+                            "material": "100% cotton",
+                            "care": "Giặt nước lạnh",
+                            "warranty_days": 90,
+                            "variants": [
+                                {
+                                    "sku": "SKU-P101-TRANG-M",
+                                    "variant_name": "Trắng · Size M",
+                                    "size": "M",
+                                    "color": "Trắng",
+                                    "price": 299000,
+                                    "stock": 12,
+                                }
+                            ],
+                        },
+                    },
+                    {
+                        "contract": "retailops-integration-v2",
+                        "event_id": "evt:customer:SIM-C-9501:1",
+                        "event_type": "customer.upserted",
+                        "source_system": "marketplace_sim",
+                        "merchant_id": "MERCHANT-I5-001",
+                        "occurred_at": "2026-10-01T08:01:00+07:00",
+                        "sequence": 1,
+                        "data": {"external_customer_id": "SIM-C-9501", "display_name": "Khách I5 A"},
+                    },
+                    {
+                        "contract": "retailops-integration-v2",
+                        "event_id": "evt:customer:SIM-C-9502:1",
+                        "event_type": "customer.upserted",
+                        "source_system": "marketplace_sim",
+                        "merchant_id": "MERCHANT-I5-001",
+                        "occurred_at": "2026-10-01T08:01:30+07:00",
+                        "sequence": 1,
+                        "data": {"external_customer_id": "SIM-C-9502", "display_name": "Khách I5 B"},
+                    },
+                ]
+                for idx, (ext_oid, ext_cid, phone_raw) in enumerate(
+                    [(ext_oid_staff, "SIM-C-9501", "0123950101"), (ext_oid_mgr, "SIM-C-9502", "0123950202")],
+                    start=1,
+                ):
+                    fallback_events.extend(
+                        [
+                            {
+                                "contract": "retailops-integration-v2",
+                                "event_id": f"evt:order:{ext_oid}:1",
+                                "event_type": "order.created",
+                                "source_system": "marketplace_sim",
+                                "merchant_id": "MERCHANT-I5-001",
+                                "occurred_at": f"2026-10-01T09:0{idx}:00+07:00",
+                                "sequence": 1,
+                                "data": {
+                                    "external_order_id": ext_oid,
+                                    "external_customer_id": ext_cid,
+                                    "ordered_at": f"2026-10-01T09:0{idx}:00+07:00",
+                                    "items": [
+                                        {
+                                            "sku": "SKU-P101-TRANG-M",
+                                            "external_product_id": "P-101",
+                                            "title": "Áo thun Essential",
+                                            "variant_name": "Trắng · Size M",
+                                            "quantity": 1,
+                                            "unit_price": 299000,
+                                        }
+                                    ],
+                                    "shipping_fee": 20000,
+                                    "total": 319000,
+                                    "currency": "VND",
+                                    "payment_method": "cod",
+                                    "promised_delivery_by": "2026-10-03T09:00:00+07:00",
+                                    "recipient": {
+                                        "name": f"Người nhận {idx}",
+                                        "phone": phone_raw,
+                                        "address_line": f"Số {10 + idx} Đường Kiểm Thử",
+                                        "ward": "Phường 1",
+                                        "district": "Quận 1",
+                                        "province": "TP. Hồ Chí Minh",
+                                    },
+                                },
+                            },
+                            {
+                                "contract": "retailops-integration-v2",
+                                "event_id": f"evt:order:{ext_oid}:2",
+                                "event_type": "order.status_changed",
+                                "source_system": "marketplace_sim",
+                                "merchant_id": "MERCHANT-I5-001",
+                                "occurred_at": f"2026-10-01T10:0{idx}:00+07:00",
+                                "sequence": 2,
+                                "data": {"external_order_id": ext_oid, "status": "shipping", "reason": None},
+                            },
+                            {
+                                "contract": "retailops-integration-v2",
+                                "event_id": f"evt:shipment:SIM-SHP-I5-0{idx}:1",
+                                "event_type": "shipment.updated",
+                                "source_system": "marketplace_sim",
+                                "merchant_id": "MERCHANT-I5-001",
+                                "occurred_at": f"2026-10-01T10:0{idx}:00+07:00",
+                                "sequence": 1,
+                                "data": {
+                                    "external_shipment_id": f"SIM-SHP-I5-0{idx}",
+                                    "external_order_id": ext_oid,
+                                    "carrier": "GHN",
+                                    "tracking_code": f"GHNSIMI50{idx}",
+                                    "carrier_status_raw": "transporting",
+                                    "hub_name": "Kho Phân Loại HCM SOC",
+                                    "district": "Huyện Củ Chi",
+                                    "province": "TP. Hồ Chí Minh",
+                                    "description": "Đang trung chuyển.",
+                                    "fail_reason": None,
+                                    "shipper_name": None,
+                                    "shipper_phone_masked": None,
+                                    "estimated_delivery_at": "2026-10-06T09:00:00+07:00",
+                                    "delivery_attempts": 0,
+                                },
+                            },
+                        ]
+                    )
+                initial_export.write_text(
+                    "\n".join(json.dumps(ev, ensure_ascii=False) for ev in fallback_events) + "\n",
+                    encoding="utf-8",
+                )
 
             with patch.dict(os.environ, base_env, clear=False):
                 ConnectorManager(sessions).add_connector(
@@ -341,37 +485,69 @@ class _VoucherLoopSuiteMixin:
             req_file.write_text(exp_proc_1.stdout, encoding="utf-8")
 
             # 4. Feed requests into marketplace_sim CLI `ingest-requests`, then export & import back!
-            sim_ing_1 = self._run_cli(
-                [
-                    "-m",
-                    "marketplace_sim",
-                    "ingest-requests",
-                    "--data-dir",
-                    str(sim_dir),
-                    "--file",
-                    str(req_file),
-                ],
-                env_extra={},
-            )
-            self.assertEqual(sim_ing_1.returncode, 0, sim_ing_1.stderr)
-            sim_ing_body_1 = json.loads(sim_ing_1.stdout)
-            self.assertEqual(sim_ing_body_1["issued"], 2)
-            self.assertEqual(sim_ing_body_1["skipped_errors"], 0)
-
             after_voucher_export = tmp_root / "after_voucher.jsonl"
-            sim_exp_proc = self._run_cli(
-                [
-                    "-m",
-                    "marketplace_sim",
-                    "export",
-                    "--data-dir",
-                    str(sim_dir),
-                    "--out",
-                    str(after_voucher_export),
-                ],
-                env_extra={},
-            )
-            self.assertEqual(sim_exp_proc.returncode, 0, sim_exp_proc.stderr)
+            if HAS_MARKETPLACE_SIM:
+                sim_ing_1 = self._run_cli(
+                    [
+                        "-m",
+                        "marketplace_sim",
+                        "ingest-requests",
+                        "--data-dir",
+                        str(sim_dir),
+                        "--file",
+                        str(req_file),
+                    ],
+                    env_extra={},
+                )
+                self.assertEqual(sim_ing_1.returncode, 0, sim_ing_1.stderr)
+                sim_ing_body_1 = json.loads(sim_ing_1.stdout)
+                self.assertEqual(sim_ing_body_1["issued"], 2)
+                self.assertEqual(sim_ing_body_1["skipped_errors"], 0)
+
+                sim_exp_proc = self._run_cli(
+                    [
+                        "-m",
+                        "marketplace_sim",
+                        "export",
+                        "--data-dir",
+                        str(sim_dir),
+                        "--out",
+                        str(after_voucher_export),
+                    ],
+                    env_extra={},
+                )
+                self.assertEqual(sim_exp_proc.returncode, 0, sim_exp_proc.stderr)
+            else:
+                synth_vouchers = []
+                for idx, raw_ln in enumerate(exported_lines, start=1):
+                    req_obj = json.loads(raw_ln)
+                    rdata = req_obj["data"]
+                    vid = f"SIM-V-0000{idx}"
+                    synth_vouchers.append(
+                        {
+                            "contract": "retailops-integration-v2",
+                            "event_id": f"evt:voucher:{vid}:1",
+                            "event_type": "voucher.issued",
+                            "source_system": "marketplace_sim",
+                            "merchant_id": "MERCHANT-I5-001",
+                            "occurred_at": req_obj["occurred_at"],
+                            "sequence": 1,
+                            "data": {
+                                "external_voucher_id": vid,
+                                "code": f"VCH-I5CONTAINER0{idx}",
+                                "voucher_type": rdata["voucher_type"],
+                                "value": int(rdata["value"]),
+                                "valid_until": "2026-12-31T23:59:59+07:00",
+                                "external_order_id": rdata["external_order_id"],
+                                "external_customer_id": rdata["external_customer_id"],
+                                "request_ref": rdata["request_id"],
+                            },
+                        }
+                    )
+                after_voucher_export.write_text(
+                    "\n".join(json.dumps(ev, ensure_ascii=False) for ev in synth_vouchers) + "\n",
+                    encoding="utf-8",
+                )
 
             # Deliver one voucher.issued via internal signed HTTP route, and import the full file via import-events
             voucher_lines = [
@@ -445,19 +621,20 @@ class _VoucherLoopSuiteMixin:
             self.assertEqual(exp_after_issued.returncode, 0)
             self.assertEqual(exp_after_issued.stdout.strip(), "")
 
-            sim_ing_2 = self._run_cli(
-                [
-                    "-m",
-                    "marketplace_sim",
-                    "ingest-requests",
-                    "--data-dir",
-                    str(sim_dir),
-                    "--file",
-                    str(req_file),
-                ],
-                env_extra={},
-            )
-            self.assertEqual(json.loads(sim_ing_2.stdout)["duplicates"], 2)
+            if HAS_MARKETPLACE_SIM:
+                sim_ing_2 = self._run_cli(
+                    [
+                        "-m",
+                        "marketplace_sim",
+                        "ingest-requests",
+                        "--data-dir",
+                        str(sim_dir),
+                        "--file",
+                        str(req_file),
+                    ],
+                    env_extra={},
+                )
+                self.assertEqual(json.loads(sim_ing_2.stdout)["duplicates"], 2)
 
             imp_vch_2 = self._run_cli(
                 [

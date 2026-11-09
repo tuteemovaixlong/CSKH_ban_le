@@ -41,7 +41,7 @@ jobs:
 
   postgres:
     runs-on: ubuntu-24.04
-    timeout-minutes: 8
+    timeout-minutes: 12
     services:
       postgres:
         image: pgvector/pgvector:0.8.6-pg16-bookworm@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
@@ -67,7 +67,7 @@ jobs:
           RETAILOPS_ALLOW_DESTRUCTIVE_TEST_DATABASE: "1"
         run: |
           python3 scripts/prepare_test_pgvector.py
-          python3 -m unittest tests.test_r1_w6_1b_1_ingest_v9 tests.test_r1_w6_1b_1_1_ui_d8_v9 -v
+          python3 -m unittest tests.test_r1_w6_1b_1_ingest_v9 tests.test_r1_w6_1b_1_1_ui_d8_v9 tests.test_r1_w6_1b_2_item1_recipients_ingest tests.test_r1_w6_1b_2_item4_compensations tests.test_r1_w6_1b_2_item5_voucher_loop tests.test_r1_w6_1b_2_item8_reset_demo -v
           python3 scripts/check_ops_console.py
           python3 scripts/check_account_usage_quota.py
           python3 -m py_compile deploy/admin-console.py deploy/publish_and_activate.py

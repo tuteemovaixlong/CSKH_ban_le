@@ -146,7 +146,8 @@ Với đơn đến từ connector tích hợp, **kết quả hoàn tiền do s�
 | v6 | W3 | `orders.delivered_at`; `order_action_requests`, `order_action_decisions` có trigger chỉ ghi thêm, `order_action_evidence`, `integration_outbox` |
 | v7 | W3.2 | đổi hàng tổng quát: `exchange_kind` là `other_variant` hoặc `same_variant`, cột biến thể đích |
 | v8 | W4 | `case_assist_turns`; bằng chứng nhận PDF, số trang, kết quả quét |
-| v9 | W6.1b-1 | thêm cột đơn, thanh toán, phí ship, khu vực giao, thời hạn cam kết, `backfill_note` và trạng thái `shipping` cho `orders`; mở rộng `imported_events` sang hợp đồng v2 có `payload_digest` HMAC-SHA256 và `redacted_fields`; chỉ mục duy nhất từng phần cho `product_variants.sku`; thêm 8 bảng `integration_connectors`, `shipments`, `shipment_events` có trigger chỉ ghi thêm, `payment_transactions`, `refunds`, cùng 3 bảng để trống cho W6.1b-2 là `order_recipients`, `delivery_compensations`, `vouchers`; backfill đơn cũ với `source_system = 'retailops_seed'` |
+| v9 | W6.1b-1 | thêm cột đơn, thanh toán, phí ship, khu vực giao, thời hạn cam kết, `backfill_note` và trạng thái `shipping` cho `orders`; mở rộng `imported_events` sang hợp đồng v2 có `payload_digest` HMAC-SHA256 và `redacted_fields`; chỉ mục duy nhất từng phần cho `product_variants.sku`; thêm 8 bảng `integration_connectors`, `shipments`, `shipment_events` có trigger chỉ ghi thêm, `payment_transactions`, `refunds`, `order_recipients`, `delivery_compensations`, `vouchers`; backfill đơn cũ với `source_system = 'retailops_seed'` |
+| giữ v9 (không migration) | W6.1b-2 | kích hoạt ghi và đọc `order_recipients` có mã hóa AES-256-GCM ở tầng ứng dụng kèm `retention_until`, vòng đề xuất `delivery_compensations` (48 giờ / 50.000 VNĐ cố định) và `vouchers`, thông báo chủ động `sys-notice-`, siết nối `refund.updated`, cùng hai lệnh quản trị `reset-marketplace-demo` và `seed-account-orders` |
 | identity v1–v5 | đến W1 | liên kết khách, xử lý trùng, nhật ký hòa giải; v5 khóa vai trò cũ |
 
 Ứng dụng **từ chối khởi động** khi schema cũ hơn bản yêu cầu. Migration chỉ chạy bằng lệnh operator có cờ `--confirm-preflight --confirm-backup`, theo runbook có kiểm soát ở [RUNBOOK vận hành](../docs/04_OPERATIONS/RUNBOOK.md) và ngay dưới đây.
@@ -162,6 +163,15 @@ Chỉ chạy sau khi PR merge và có phê duyệt riêng của owner, theo đú
 5. **Dọn đơn demo viết cứng đời cũ.** Chạy `python -m retailops database purge-legacy-demo --tenant <tenant_id> --dry-run`; owner rà danh sách đơn sẽ xóa và đơn giữ lại do còn yêu cầu hủy, trả, đổi đang gắn vào trước khi chạy lệnh thật không có `--dry-run`.
 6. **Nhập dữ liệu sự kiện demo chuẩn.** Chạy `python -m retailops database import-events --tenant <tenant_id> --source-system marketplace_sim --file data/demo_events/store_events.jsonl --rebase-clock now` để nạp bộ cửa hàng chuẩn có dời mốc thời gian về thời điểm nhập.
 7. **Smoke và biên bản deploy.** Đăng nhập một khách demo hỏi `"đơn của tôi đang ở đâu"` và xác nhận `track_shipment` trả hành trình vận đơn đọc từ DB; từ bên ngoài kiểm tra Caddy trả `404` cho mọi đường dẫn `/internal/*`; ghi biên bản deploy kèm digest image, số đơn backfill, kết quả `purge-legacy-demo`, kết quả `import-events`, nơi lưu và ngày xóa từng bản backup.
+
+### Rollout người nhận có mã hóa, vòng voucher và reset dữ liệu demo (W6.1b-2, không migration)
+
+W6.1b-2 giữ nguyên schema business v9 và identity v5 (không thêm bảng, cột hay chỉ mục). Trình tự vận hành theo [§21](../docs/phase_role_aware_ops/W0_OWNER_DECISION_DELTA_2026-10-29.md#21-w61b-2-owner-decisions-2026-11-09) và mục 7 [RUNBOOK vận hành](../docs/04_OPERATIONS/RUNBOOK.md):
+
+1. **Tạo khóa mã hóa người nhận và sao lưu tách riêng.** Tạo `/opt/retailops/integration-secrets/retailops_recipient_key_v1` là tệp thường, không symlink, quyền `0444`, tối thiểu 32 byte ngẫu nhiên. Bản sao lưu khóa này được lưu **tách riêng** khỏi gói sao lưu hai khóa tích hợp của W6.1b-1 và khỏi các bản `pg_dump`, với **ngày xóa cố định 2027-01-31** theo W6.1b-2-D4.
+2. **Đồng bộ cấu hình host và rollout image.** Chép `compose.postgres.yaml`, `Caddyfile` và `Caddyfile.maintenance` từ image mới lên `/opt/retailops/` trước khi chạy rollout (giữ dòng `import /etc/caddy/admin/*.caddy`), chạy workflow deploy, rồi kiểm tra `python -m retailops connector check --tenant <tenant_id>` trả mã thoát `0` với `recipient_key_status` là `"ok"`.
+3. **Backup, reset dữ liệu demo và nạp lại có mã hóa người nhận.** Dừng `web`, chụp `pg_dump` vào `/opt/retailops/backups/pre-w6-1b-2-<ts>.dump` (ngày xóa **2027-01-31** cùng hai bản dump của W6.1b-1), chạy `python -m retailops database reset-marketplace-demo --tenant <tenant_id> --source-system marketplace_sim --dry-run` để owner duyệt rồi chạy thật, nhập lại `data/demo_events/store_events.jsonl --rebase-clock now` qua `database import-events` để điền `order_recipients` dạng mã hóa, chạy `python -m retailops database seed-account-orders --tenant <tenant_id> --all-customers` để khôi phục 3 đơn mẫu cùng mã sàn cho các tài khoản khách đã đăng nhập, rồi bật `web`.
+4. **Thực thi vòng voucher và dọn dữ liệu quá hạn thủ công.** Vòng bồi thường giao trễ trên production thực hiện thủ công qua `database export-voucher-requests`, sàn ảo cục bộ và `database import-events` theo [kịch bản demo vòng voucher](../docs/04_OPERATIONS/DEMO_VOUCHER_LOOP.md). Khi cần xóa thông tin người nhận đã quá `retention_until`, operator chạy thủ công `python -m retailops database purge-expired-recipients --tenant <tenant_id> [--dry-run]`.
 
 ## A8. Tự xem dữ liệu trên EC2, chỉ đọc
 
@@ -245,31 +255,31 @@ Owner đã đồng ý hướng thiết kế dưới đây. Chi tiết cột và 
 
 ## B3. Bảng mới
 
-**`order_recipients`**, người nhận của đơn, theo W6.1a-D11
+**`order_recipients`**, người nhận của đơn, theo W6.1a-D11 và W6.1b-2-D2..D4
 
 | Cột | Ghi chú |
 |---|---|
 | `order_id` | khóa chính, FK `orders` |
-| `name_enc`, `phone_enc`, `address_line_enc` | đã mã hóa; khóa nằm trong kho secret, không nằm trong DB |
-| `phone_lookup_hmac` | HMAC của số điện thoại đã chuẩn hóa, để nhân viên tìm đơn theo số mà không giải mã toàn bảng |
+| `name_enc`, `phone_enc`, `address_line_enc` | mã hóa ở tầng ứng dụng bằng **AES-256-GCM** (`cryptography` pyca): nonce ngẫu nhiên 12 byte cho từng trường, AAD ràng buộc `tenant_id`, `order_id`, tên trường và `key_id`, chuỗi lưu mang tiền tố phiên bản định dạng kèm `key_id` (`v1:<key_id>:...`) để giải mã chọn khóa theo `key_id`; khóa đọc từ `/run/secrets/retailops_recipient_key_v1` (`RETAILOPS_RECIPIENT_KEY_FILE`, tệp thường kiểm bằng `lstat` và `O_NOFOLLOW`, tối thiểu 32 byte), không nằm trong DB |
+| `phone_lookup_hmac` | HMAC-SHA256 của số điện thoại đã chuẩn hóa, dùng khóa con dẫn xuất bằng **HKDF-SHA256** với nhãn riêng từ khóa người nhận (chỉ cần một tệp khóa), để tìm đơn theo số điện thoại mà không giải mã toàn bảng |
 | `ward`, `district`, `province` | không mã hóa, dùng cho thống kê và cho bản đã che |
 | `phone_masked` | ví dụ `0123.xxx.456`, dùng cho model và giao diện mặc định |
-| `created_at`, `retention_until` | hết hạn lưu thì xóa phần đã mã hóa |
+| `created_at`, `retention_until` | thời hạn giữ: khi giao xong là `delivered_at + max(90 ngày, warranty_days lớn nhất của sản phẩm trong đơn)`; khi hủy đơn là `cancelled_at + 30 ngày`; đơn chưa giao hoặc chưa hủy thì để `NULL`. Quá hạn thì operator chạy `database purge-expired-recipients` để xóa `name_enc`, `phone_enc`, `address_line_enc`, `phone_lookup_hmac` về `NULL`, giữ nguyên `ward`, `district`, `province` và `phone_masked` |
 
-Mọi lần nhân viên mở bản đầy đủ đều ghi một dòng vào nhật ký truy cập dữ liệu cá nhân, gồm người xem, vai trò, ca, thời điểm. Cách mã hóa, bằng `pgcrypto` hay thư viện mã hóa ở tầng ứng dụng, chốt khi viết handoff W6.1b; hiện repo chưa có thư viện mã hóa nào.
+Thiếu khóa người nhận lúc nhận `order.created` có thông tin người nhận thì cổng tích hợp từ chối sự kiện (`503`), không ghi thiếu trường. Model AI và toàn bộ tool chỉ nhận `phone_masked` cùng khu vực; khách xem bản giải mã của chính đơn mình trong chi tiết đơn; nhân viên đang giữ ca có gắn đơn hoặc Manager xem bản đầy đủ qua thao tác riêng có nhập lý do, mỗi lần xem đều ghi một dòng `recipient.reveal` vào `admin_audit_log`. Mọi bản `pg_dump` có chứa `order_recipients` và bản sao lưu khóa người nhận có ngày xóa cố định **2027-01-31** theo W6.1b-2-D4.
 
-**`delivery_compensations`**, đề xuất bồi thường giao trễ, theo W6.1a-D13
+**`delivery_compensations`**, đề xuất bồi thường giao trễ, theo W6.1a-D13 và W6.1b-2-D6, D7
 
 | Cột | Ghi chú |
 |---|---|
-| `compensation_id` | khóa chính |
+| `compensation_id` | khóa chính, sinh tất định từ `order_id`, `shipment_id` và `late_delivery` |
 | `order_id`, `shipment_id` | FK |
 | `reason` | `late_delivery` |
 | `late_by_hours` | số giờ trễ so với `promised_delivery_by` lúc phát hiện |
-| `voucher_type`, `value` | theo cấu hình của quản lý; mặc định voucher 50.000 VNĐ khi trễ quá 48 giờ |
+| `voucher_type`, `value` | cố định trong R1 theo hằng số cấu hình đặt cạnh thời hạn đổi trả: `voucher_type = 'amount'`, mệnh giá `50.000` VNĐ khi trễ quá ngưỡng cố định `48` giờ; giao diện và API duyệt không nhận trường sửa mệnh giá |
 | `status` | `proposed`, `approved`, `rejected`, `requested`, `issued`, `failed` |
-| `decided_by_principal_id`, `decided_at`, `note` | người duyệt |
-| `request_id` | mã yêu cầu `voucher.requested` gửi sàn qua outbox |
+| `decided_by_principal_id`, `decided_at`, `note` | người duyệt (nhân viên đang giữ ca có gắn đơn hoặc Manager của cửa hàng), cập nhật có điều kiện `WHERE status = 'proposed'` |
+| `request_id` | mã yêu cầu `voucher.requested` gửi sàn qua `integration_outbox` (bằng `compensation_id`) |
 
 **`vouchers`**, voucher do sàn phát
 
@@ -440,4 +450,4 @@ flowchart LR
 
 Ngày 2026-11-08, [§20](../docs/phase_role_aware_ops/W0_OWNER_DECISION_DELTA_2026-10-29.md#20-w61b-owner-decisions-2026-11-08) chốt thêm: W6.1b chia thành W6.1b-1 và W6.1b-2 với một migration v9 duy nhất; `integration_connectors` có thêm cột `merchant_id`; cổng thanh toán giả lập giữ dạng chung suốt R1, cổng thật để sau khóa luận; luật nối hoàn tiền với yêu cầu; khách nhìn thấy mã đơn của sàn.
 
-Còn chốt khi viết handoff W6.1b-2: mã hóa người nhận bằng `pgcrypto` hay thư viện ở tầng ứng dụng, nơi giữ khóa, thời hạn lưu.
+Ngày 2026-11-09, [§21](../docs/phase_role_aware_ops/W0_OWNER_DECISION_DELTA_2026-10-29.md#21-w61b-2-owner-decisions-2026-11-09) chốt toàn bộ phần còn lại cho W6.1b-2 mà không cần migration thêm: mã hóa người nhận ở tầng ứng dụng bằng AES-256-GCM (`cryptography` pyca) với khóa `/run/secrets/retailops_recipient_key_v1` và khóa con HKDF-SHA256 cho `phone_lookup_hmac`; quyền xem người nhận theo vai trò có ghi `admin_audit_log`; thời hạn giữ `retention_until` (sau giao `max(90 ngày, warranty_days)`, sau hủy `30 ngày`, lệnh xóa thủ công `purge-expired-recipients`, hạn xóa backup DB chứa người nhận và backup khóa người nhận ngày `2027-01-31`); siết luật nối hoàn tiền `refund.updated` (chỉ nối yêu cầu đã duyệt đang chờ hoàn, số tiền không vượt yêu cầu, thời điểm hoàn sau thời điểm duyệt, đã nối không đổi); bồi thường giao trễ cố định 48 giờ / `50.000 VNĐ` (`amount`), vòng phát mã voucher thủ công qua CLI và sàn ảo ngoài EC2, thông báo chủ động `sys-notice-<shipment_id>-<mốc>`, cùng lệnh `reset-marketplace-demo` và `seed-account-orders`.

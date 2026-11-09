@@ -79,12 +79,12 @@ def validate(cases):
 # fake gateway used by CI (scripts/run_agent_scenarios.py --fake); a real model ignores it and plans for itself.
 # ---------------------------------------------------------------------------------------------
 W32_DATASET = ROOT / 'evals' / 'agent_scenarios_w3_2.jsonl'
-W32_MIN_SCENARIOS, W32_MAX_SCENARIOS, W32_MIN_PER_CATEGORY = 20, 30, 2
+W32_MIN_SCENARIOS, W32_MAX_SCENARIOS, W32_MIN_PER_CATEGORY = 20, 35, 2
 W32_CATEGORIES = (
     'order_lookup', 'cancel', 'return_exchange', 'variant_change', 'ineligible',
     'follow_up', 'off_topic', 'policy', 'human_handoff'
 )
-W32_FIXTURES = {'standard'}
+W32_FIXTURES = {'standard', 'late_voucher_issued'}
 # The customer toolset of agent_protocol.TOOLS (a test keeps the two lists equal).
 W32_TOOLS = {
     'list_orders', 'get_order', 'search_products', 'get_product', 'get_context', 'prepare_order_action',
@@ -93,7 +93,10 @@ W32_TOOLS = {
 W32_RAILS = {'forbidden_topic', 'extreme_rage', 'human_request'}
 W32_MODES = {'general', 'retail'}
 W32_ACTIONS = {'reply', 'choose_cancel_reason', 'choose_order_action_reason'}
-W32_TABLES = {'order_action_requests', 'order_action_decisions', 'proposals', 'integration_outbox', 'handoff_episodes'}
+W32_TABLES = {
+    'order_action_requests', 'order_action_decisions', 'proposals',
+    'integration_outbox', 'handoff_episodes', 'delivery_compensations', 'vouchers'
+}
 W32_ORDER_ACTION_KEYS = {'order_id', 'action_type', 'exchange_kind', 'target_variant_id', 'target_variant_label'}
 W32_SCENARIO_KEYS = {'id', 'category', 'title', 'fixture', 'customer', 'turns', 'final_state', 'knowledge'}
 W32_REQUIRED_KEYS = {'id', 'category', 'title', 'fixture', 'turns', 'final_state'}
