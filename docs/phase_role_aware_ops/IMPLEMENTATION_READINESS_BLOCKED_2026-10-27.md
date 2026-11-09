@@ -481,3 +481,84 @@ Ghi chú không chặn: Tool Inspector bỏ 3 tool đọc trước đây đượ
 - Mỗi lần live E2E smoke giờ tạo một tenant khoảng 2.000 sự kiện; dọn tenant `e2e-smoke-*` ở C6 cấp bách hơn.
 - Job `offline` được nâng timeout từ 12 lên 18 phút; notebook Colab tăng từ khoảng 1,09 MB lên 1,30 MB vì nhúng dữ liệu demo.
 - W6.1b-2 chưa READY: còn chốt cách mã hóa người nhận, thời hạn giữ backup và có thêm `refund.requested` hay không, theo §20.
+
+### 2026-11-09 W6.1b-1 production deploy record and W6.1b-1.1 hotfix
+
+**Kiểm tra EC2 trước deploy.** EC2 vừa bật lại lúc 07:50Z: còn trống 42 GB đĩa, khoảng 6 GB RAM khả dụng, không swap. 52 tenant đều ở business v8. Tenant production là `browser-demo-20260908014853` (giá trị `RETAILOPS_DEMO_TENANT_ID`). Web và admin chạy image `sha256:8992bac609469b1d1febe8afa9fdf034cf3cc2bbf45bdbb93c833ae86e5d0a11`.
+
+**Khóa tích hợp.** Tạo lúc 07:54Z trong `/opt/retailops/integration-secrets/` (thư mục `0700 root`): `retailops_connector_marketplace_sim` và `retailops_event_digest_key`, mỗi tệp `0444`, 64 byte. Backup khóa tách khỏi backup DB: `/root/retailops-key-backups/integration-secrets-20261109T075429Z.tgz`.
+
+**Sự cố 1: lượt deploy đỏ có chủ đích không tự quay về được.**
+- *Diễn biến.* Workflow [`42582452909`](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/42582452909) đưa image `sha256:f2754fb82baad44902ea5a04abcf19564d3de64ddee001e9311fa510a0214d46` lên EC2. IP công khai đã đổi từ `35.172.227.184` sang `100.26.48.5` sau stop/start, nên `rollout-public-web.sh` sửa `public.env` rồi tạo lại web **bằng image mới** trước khi ghi nhận image cũ. Web mới từ chối khởi động đúng thiết kế (DB còn v8), nhưng script báo `No distinct previous live image is available for automatic rollback`. Caddy cũng được tạo lại mà không có overlay admin.
+- *Ảnh hưởng.* Web công khai trả 502 từ khoảng 08:10Z tới 08:18Z. DB không đổi vì web mới dừng ở bước kiểm schema chỉ đọc.
+- *Xử lý.* Ghi `deployed.env` về image cũ, tạo lại web và caddy kèm `--env-file admin.env -f compose.admin.yaml`; `/healthz` trả 200 từ ngoài, Caddy có lại mount `/etc/caddy/admin`. Bản `deployed.env` lỗi lưu ở `/root/deployed.env.failed-*`.
+- *Sửa gốc.* Mục 1 của W6.1b-1.1 bên dưới.
+
+**Sự cố 2: lộ invite token trong chat.** Lệnh kiểm `grep '^RETAILOPS_PUBLIC_'` do Claude đưa khớp luôn dòng `RETAILOPS_PUBLIC_INVITE_TOKEN`, và output được dán vào chat. Token được đổi trong cùng bước khôi phục web; bản `public.env` cũ (chứa token đã lộ) lưu ở `/root/public.env.bak-*`. Không dùng mẫu tiền tố đó để kiểm `public.env`.
+
+**Tệp cấu hình trên host.** `compose.postgres.yaml` và `Caddyfile` chép từ image mới, giữ dòng `import /etc/caddy/admin/*.caddy`; diff chỉ có hai biến `RETAILOPS_*`, hai secret `integration-secrets` và khối `@internal_routes`; `caddy validate` thoát 0. Bản cũ: `*.bak-w6-1b-1-20261109T082059Z`.
+
+**Migration business v9.**
+- Backup trước: `backups/pre-w6-1b-1-20261109T082229Z.dump`, 5.833.257 byte, 8.991 mục TOC.
+- Diễn tập trên DB nháp `retailops_rehearsal`: lần restore đầu dừng ở `permission denied to create extension "vector"` vì quy trình trong `docs/POSTGRESQL.md` viết trước khi có pgvector; restore lại bằng cách tạo schema `retailops_extensions` và extension bằng `postgres`, rồi `pg_restore -L` với TOC đã bỏ 3 mục extension (sửa gốc ở mục 2 của W6.1b-1.1). Migrate: 52 tenant, `upgraded: true`, `orders_backfilled: 674`; chạy lại `upgraded: false`; kết quả `52 business|9`. DB nháp đã xóa.
+- Dừng web lúc 08:28:54Z, backup cuối `backups/final-pre-w6-1b-1-20261109T082854Z.dump` (8.991 mục), **bản dùng để khôi phục về trước W6.1b-1**. Migrate thật: 52 tenant, `orders_backfilled: 674`, khớp diễn tập.
+- Bật web ngay bằng image `f2754fb8…` thay vì chờ workflow, nên web chỉ dừng khoảng 1 phút. `/internal/*` trả 404; `/run/secrets/` có đủ 3 tệp.
+
+**Rollout chính thức.** Workflow [`42586669481`](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/42586669481), image `sha256:0ef5105af1566a627e6168846f026af897efc2323e8bd58a3300c2d50b055b29`: `PUBLIC_WEB_ROLLOUT_OK`, `PUBLIC_WEB_SOURCE_MATCH`, 2 lần `LIVE_E2E_SMOKE_OK`, `ADMIN_CONSOLE_READY host=admin-retailops.100-26-48-5.sslip.io`, `ADMIN_CONSOLE_SMOKE_OK`.
+
+**Connector và dữ liệu.**
+- `connector add` trên tenant production: `marketplace_sim`, `MERCHANT-SIM-001`, `key_status: ok`; `connector check`: `CONNECTOR_CHECK_OK`, `digest_key_status: ok`.
+- `import-events` với `data/demo_events/store_events.jsonl`, `--rebase-clock now`: 2.003 dòng, `errors: 0`, `duplicates: 0`, dời đồng hồ 806.153 giây; tenant có 128 đơn `marketplace_sim`. Outbox không có sự kiện `dead`.
+- `purge-legacy-demo` chạy thật trả `ForeignKeyViolation` và rollback: hàm ghi audit với `customer_id = "system"`, mà trên PostgreSQL `business_events.customer_id` có khóa ngoại tới `customers`. Không đơn nào bị xóa. Sửa ở mục 0 của W6.1b-1.1.
+
+**Smoke tay lần 1 (tài khoản Google mới).** 3 đơn `SIM-O-F6E2B615-01/02/03`. `track_shipment` trả hành trình từ DB, số shipper đã che, agent nói bằng mã sàn. Không đạt: khung thông tin khi chọn đơn (`describe_order`) hiện mã nội bộ `ord_…` và câu "chưa có trong dữ liệu demo"; thanh "Đang trao đổi" hiện `ord_…`; thẻ đơn của khách hiện `cust_…` và "Phiên bản"; không có chip lọc đơn đang giao; Staff Desk chỉ hiện mã nội bộ; thẻ vận chuyển ghi "Dự kiến nhận" cho đơn đã giao và hiện giờ dạng ISO. Gom vào mục 3 của W6.1b-1.1.
+
+**W6.1b-1.1 hotfix.**
+- *Handoff.* [W6.1b-1.1 hotfix handoff](W6_1B_1_1_HOTFIX_HANDOFF_2026-11-09.md), PR #77 merge tại `6d481dc`.
+- *Thực hiện.* PR #78 của Argon, mục 0–3. Mục 0 có bằng chứng FAIL trước khi sửa trên PostgreSQL thật (CI run `42594256673`, `ForeignKeyViolation`); mục 3 có test Python và JS FAIL trước khi sửa.
+- *Kiểm chứng.* Mục 0, 1, 3 đạt. Mục 2 có BLOCKER: mẫu `grep` lọc TOC trong `docs/POSTGRESQL.md` đòi loại mục đứng ngay sau `; `, nên không lọc được dòng TOC thật nào (ví dụ `10; 2615 16670 SCHEMA - retailops_extensions postgres`), quy trình restore vẫn hỏng. Claude sửa mẫu và thêm test chạy trên đúng 3 dòng TOC thật (`0a8f899`), rồi cho test tự bỏ qua trong image phát hành vốn không có `docs/` (`9e9e6d2`). CI 6/6 trên `9e9e6d2`.
+- *Merge.* PR #78 merge vào `main` tại `0beb80b`.
+- *Deploy.* Workflow [`42609229270`](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/42609229270), image `sha256:3f085a1158d41b10f615465bab6f768384b9bb4f5bbba27318bb41f8128fe887`: `PUBLIC_WEB_ROLLOUT_OK`, 2 lần `LIVE_E2E_SMOKE_OK`, `ADMIN_CONSOLE_SMOKE_OK`. IP không đổi nên không qua nhánh sửa hostname.
+- *Gỡ đơn demo cũ.* Dry-run: gỡ 8, giữ `O-819127` (có yêu cầu trả/đổi). Owner duyệt; chạy thật `PURGE_LEGACY_DEMO_OK`, gỡ `O-101`, `O-102`, `O-202`, `O-757460`, `O-757462`, `O-819125`, `O-847063`, `O-847065`. Tenant còn `retailops_seed|1` và `marketplace_sim|131` (thêm 3 đơn mẫu của tài khoản Google mới).
+- *Smoke tay lần 2.* Đạt: thanh "Đang trao đổi" hiện `SIM-O-F6E2B615-02`; khung thông tin đơn đang giao có thanh toán, hoàn tiền, vận chuyển và nói rõ không hủy được; thẻ đơn không còn `cust_…` hay "Phiên bản"; có chip "Đang giao"; thẻ vận chuyển "Dự kiến nhận: 16:17 12/11/2026" và hành trình dạng `HH:mm dd/MM/yyyy`; Staff Desk hiện cả hai mã ở thẻ ca và tiêu đề ca. Owner chấp nhận nhãn "Đã giao lúc" của đơn đã giao dựa trên test JS, chưa kiểm tay. Đăng nhập Google chạy trên host mới.
+
+**Backup và thời hạn giữ (owner chốt 2026-11-09):**
+
+| Tệp | Vị trí | Giữ tới |
+|---|---|---|
+| `pre-w6-1b-1-20261109T082229Z.dump` | `/opt/retailops/backups/` | xóa ngày 2027-01-31 (W6.1b-2-D4) |
+| `final-pre-w6-1b-1-20261109T082854Z.dump` | `/opt/retailops/backups/` | xóa ngày 2027-01-31 (W6.1b-2-D4) |
+| `integration-secrets-20261109T075429Z.tgz` | `/root/retailops-key-backups/` | lâu dài; chỉ chứa khóa digest và khóa connector, không có dữ liệu cá nhân; mất khóa digest thì không kiểm chứng được các bản ghi sự kiện đã lưu |
+
+`RETAILOPS_DEPLOY_ENABLED` để `false` (tắt lúc 11:43:42Z).
+
+**Còn mở:**
+- Xóa `/root/public.env.bak-*` (chứa invite token đã lộ) và `/root/deployed.env.failed-*` sau khi owner xem lại biên bản; giữ `/root/purge-*.json` tới khi đóng W6.1b-1.
+- Khung "Quá trình suy luận" hiện cho khách còn lộ mã nội bộ trong suy luận và tham số tool (`ord_…`); ghi F20 trong [W6 backlog](W6_BACKLOG_2026-11-06.md).
+- Câu chốt "chưa có trích dẫn từ kho chính sách" vẫn xuất hiện (W6.2, C3 và F9); câu trả lời trộn "tôi" và "em" (W6.5, F14).
+- Mỗi lượt deploy, live E2E smoke tạo thêm 2 tenant `e2e-smoke-*`; dọn ở C6.
+- EC2 vẫn không có Elastic IP; mỗi lần stop/start đổi host, phải cập nhật Google OAuth. Bản sửa `rollout-public-web.sh` giờ tự quay về đúng khi IP đổi.
+- W6.1b-2: đã chốt ở [§21](W0_OWNER_DECISION_DELTA_2026-10-29.md#21-w61b-2-owner-decisions-2026-11-09), xem readiness review bên dưới.
+
+### 2026-11-09 W6.1b-2 readiness review
+
+> **Phạm vi:** một lượt readiness review cho W6.1b-2, chỉ BLOCKER/MAJOR, đối chiếu §19 (W6.1a-D11 đến D14), §20 và code trên `main` tại `0beb80b`, sau khi W6.1b-1 và hotfix W6.1b-1.1 đã lên production. Một phần phát hiện do owner nêu khi rà phương án reset dữ liệu demo, Claude đối chiếu lại với code.
+
+| ID | Mức | Vấn đề | Đóng bằng |
+|---|---|---|---|
+| `W61B2-RR-01` | BLOCKER | Nhập lại cùng tệp sự kiện bị chống trùng theo `UNIQUE(source_system, event_id)` của `imported_events`; người nhận đã bị gỡ trước khi ghi ở W6.1b-1 nên không còn bản gốc để xử lý lại | W6.1b-2-D9: gỡ cả `imported_events` của nguồn rồi nhập lại; tệp `data/demo_events/store_events.jsonl` vẫn mang người nhận giả lập trong 128 `order.created` |
+| `W61B2-RR-02` | BLOCKER | Repo không có thư viện mã hóa; thêm thư viện cần owner duyệt | W6.1b-2-D1 duyệt `cryptography` |
+| `W61B2-RR-03` | MAJOR | `order_purge_tombstones` (từ lệnh gỡ một đơn của Phase 5) chặn `order.created` trùng mã sàn hoặc mã nội bộ; `seed_demo_account_orders` coi khách có tombstone là "đã có dữ liệu" và bỏ qua. `purge-legacy-demo` không ghi tombstone | W6.1b-2-D9: reset không tạo, không xóa tombstone; dry-run liệt kê và dừng nếu có |
+| `W61B2-RR-04` | MAJOR | `order_action_evidence` có tệp trên đĩa (`storage_relpath`); xóa dòng mà không xóa tệp để lại rác | W6.1b-2-D9: xóa tệp sau khi giao dịch commit, như `purge_expired_evidence` |
+| `W61B2-RR-05` | MAJOR | `import_events_jsonl` chạy cả tệp trong một giao dịch ghi, giữ khóa cửa hàng suốt quá trình; lệnh ghi khác của cùng cửa hàng chờ quá `lock_timeout` 5 giây thì trả 503. `orders.id` sinh ngẫu nhiên nên sau khi nhập lại, mã nội bộ đổi, `conversations.order_id` cũ trỏ vào đơn không còn | W6.1b-2-D9: dừng web khi reset, từ chối khi còn ca mở, đặt `conversations.order_id` về rỗng |
+| `W61B2-RR-06` | MAJOR | Outbox giao "ít nhất một lần": nhận việc bằng `SKIP LOCKED` chống hai tiến trình nhận cùng dòng, nhưng không chống ghi trùng yêu cầu hay gửi lại sau sự cố; khóa cửa hàng không áp dụng cho bước nhận việc của outbox | W6.1b-2-D6; sàn ảo đã chống trùng theo `request_id` |
+| `W61B2-RR-07` | MAJOR | Sàn ảo không chạy trên production, nên `voucher.requested` không tự có `voucher.issued` | W6.1b-2-D8: vòng tay, runbook và kịch bản demo |
+| `W61B2-RR-08` | MAJOR | Hoàn tiền của yêu cầu cũ về muộn sau khi khách mở yêu cầu mới có thể bị nối nhầm; khóa không giải quyết vì đây là luật nối | W6.1b-2-D5 |
+| `W61B2-RR-09` | MAJOR | W6.1a-D13 cho Manager đổi ngưỡng và mệnh giá, nhưng không có bảng cấu hình theo cửa hàng và W6.1b-2 không có migration | W6.1b-2-D7: owner chọn voucher cố định 50.000 VNĐ, ngưỡng 48 giờ cố định; không ai sửa mệnh giá trong R1 |
+
+**Ghi chú không chặn:**
+- `pg_advisory_xact_lock(hashtextextended(schema, 0))` dùng khóa 64 bit; hai schema trùng hash sẽ chặn nhau, xác suất không đáng kể ở quy mô hiện tại.
+- `statement_timeout='15s'` đặt trong mọi giao dịch, **kể cả lệnh migrate**; dừng web chỉ loại bỏ tranh chấp khóa, không loại bỏ giới hạn 15 giây cho từng câu lệnh. Migrate v9 trên 52 tenant hiện tại không chạm giới hạn; cửa hàng lớn sau này cần xem lại.
+- `Caddyfile.maintenance` trên host còn bản ngày 2026-11-05, chưa có khối `@internal_routes` và dòng import admin; không dùng `switch-maintenance.sh` khi reset cho tới khi chép lại từ image.
+
+**Kết luận:** W6.1b-2 **READY** để thực thi theo [W6.1b-2 execution handoff](W6_1B_2_EXECUTION_HANDOFF_2026-11-09.md) khi owner merge §21. Reset dữ liệu và deploy cần owner duyệt riêng theo mục 6 của handoff. Readiness tổng thể vẫn `BLOCKED` cho W6.2 trở đi.
