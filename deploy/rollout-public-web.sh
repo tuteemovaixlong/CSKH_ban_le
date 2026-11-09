@@ -36,24 +36,11 @@ if [[ ! -f public.env || ! -f compose.public.yaml ]]; then
   exit 0
 fi
 
-# Refresh auto-generated sslip.io hostname if EC2 public IPv4 changed after stop/start
-existing_host=$(sed -n 's/^RETAILOPS_PUBLIC_HOST=//p' public.env 2>/dev/null || true)
-auto_host=""
-if [[ "$existing_host" =~ ^retailops\.([0-9]{1,3}-){3}[0-9]{1,3}\.sslip\.io$ ]]; then
-  metadata_token=$(curl --noproxy '*' --fail --silent --show-error --max-time 3 -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token 2>/dev/null || true)
-  if [[ -n "$metadata_token" ]]; then
-    current_ip=$(curl --noproxy '*' --fail --silent --show-error --max-time 3 -H "X-aws-ec2-metadata-token: $metadata_token" http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || true)
-    if [[ -n "$current_ip" ]]; then
-      auto_host="retailops.${current_ip//./-}.sslip.io"
-      if [[ "$existing_host" != "$auto_host" ]]; then
-        echo "EC2 public IPv4 changed; refreshing hostname in public.env: $existing_host -> $auto_host"
-        sed -i "s/^RETAILOPS_PUBLIC_HOST=.*/RETAILOPS_PUBLIC_HOST=$auto_host/" public.env
-        sed -i "s|^RETAILOPS_PUBLIC_ORIGIN=.*|RETAILOPS_PUBLIC_ORIGIN=https://$auto_host|" public.env
-      fi
-    fi
-  fi
-fi
-
+# Build compose stack and capture the currently running live web image BEFORE
+# refreshing sslip.io hostnames. In the 2026-11-09 incident, recreating web/caddy
+# inside the sslip.io refresh block launched the unverified new image first
+# (overwriting previous_image so rollback could not recover on schema mismatch)
+# and dropped Caddy's compose.admin.yaml overlay.
 test -f inference.env
 test -f api.env
 compose=(docker compose --project-name retailops-web --env-file deployed.env --env-file public.env -f compose.public.yaml)
@@ -66,11 +53,6 @@ if [[ -f compose.clamav.yaml ]]; then
 fi
 "${compose[@]}" config --quiet
 
-if [[ -n "$auto_host" && "$existing_host" != "$auto_host" ]]; then
-  "${compose[@]}" up -d --no-deps --no-build --pull never --force-recreate web caddy >/dev/null || true
-  sleep 3
-fi
-
 web_container=$("${compose[@]}" ps -q web 2>/dev/null || true)
 previous_image=""
 running_image_id=""
@@ -80,14 +62,47 @@ if [[ -n "$web_container" ]]; then
 fi
 target_image_id=$(docker image inspect --format '{{.Id}}' "$image_ref")
 
+# Refresh auto-generated sslip.io hostname in public.env only; do not recreate
+# web or caddy before web rollout and health verification.
+host_changed=false
+existing_host=$(sed -n 's/^RETAILOPS_PUBLIC_HOST=//p' public.env 2>/dev/null || true)
+auto_host=""
+if [[ "$existing_host" =~ ^retailops\.([0-9]{1,3}-){3}[0-9]{1,3}\.sslip\.io$ ]]; then
+  metadata_token=$(curl --noproxy '*' --fail --silent --show-error --max-time 3 -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token 2>/dev/null || true)
+  if [[ -n "$metadata_token" ]]; then
+    current_ip=$(curl --noproxy '*' --fail --silent --show-error --max-time 3 -H "X-aws-ec2-metadata-token: $metadata_token" http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || true)
+    if [[ -n "$current_ip" ]]; then
+      auto_host="retailops.${current_ip//./-}.sslip.io"
+      if [[ "$existing_host" != "$auto_host" ]]; then
+        echo "EC2 public IPv4 changed; refreshing hostname in public.env: $existing_host -> $auto_host"
+        sed -i "s/^RETAILOPS_PUBLIC_HOST=.*/RETAILOPS_PUBLIC_HOST=$auto_host/" public.env
+        sed -i "s|^RETAILOPS_PUBLIC_ORIGIN=.*|RETAILOPS_PUBLIC_ORIGIN=https://$auto_host|" public.env
+        host_changed=true
+      fi
+    fi
+  fi
+fi
+
 overlay_changed=false
 compose_backup=""
+
+recreate_caddy() {
+  local env_file=${1:-deployed.env}
+  local caddy_compose=(docker compose --project-name retailops-web --env-file "$env_file" --env-file public.env -f compose.public.yaml)
+  if [[ -d postgres-secrets ]]; then caddy_compose+=(-f compose.postgres.yaml); fi
+  if [[ -f compose.clamav.yaml ]]; then caddy_compose+=(-f compose.clamav.yaml); fi
+  if [[ -f admin.env && -f compose.admin.yaml ]]; then
+    caddy_compose+=(--env-file admin.env -f compose.admin.yaml)
+  fi
+  "${caddy_compose[@]}" config --quiet
+  "${caddy_compose[@]}" up -d --no-deps --no-build --pull never --force-recreate caddy >/dev/null
+}
 
 restore_previous() {
   if [[ "$overlay_changed" == true && -f "$compose_backup" ]]; then
     cp -p "$compose_backup" compose.public.yaml
   fi
-  if [[ -z "$previous_image" || ( "$previous_image" == "$image_ref" && "$overlay_changed" != true ) ]]; then
+  if [[ -z "$previous_image" || ( "$previous_image" == "$image_ref" && "$overlay_changed" != true && "$host_changed" != true ) ]]; then
     echo 'No distinct previous live image is available for automatic rollback' >&2
     return 1
   fi
@@ -107,7 +122,11 @@ restore_previous() {
     rm -f "$rollback_env"
     return 1
   fi
-  "${rollback[@]}" restart caddy >/dev/null || true
+  if [[ "$host_changed" == true ]]; then
+    recreate_caddy "$rollback_env" || true
+  else
+    "${rollback[@]}" restart caddy >/dev/null || true
+  fi
   mv "$rollback_env" deployed.env
   echo 'PUBLIC_WEB_ROLLBACK_OK'
 }
@@ -158,12 +177,20 @@ else
   rm -f "$compose_candidate"
 fi
 
-if [[ "$running_image_id" != "$target_image_id" || "$overlay_changed" == true ]]; then
+if [[ "$running_image_id" != "$target_image_id" || "$overlay_changed" == true || "$host_changed" == true ]]; then
   echo "PUBLIC_WEB_ROLLOUT: ${previous_image:-none} -> $image_ref"
   if ! "${compose[@]}" up -d --no-deps --no-build --pull never --force-recreate --wait --wait-timeout 90 web; then
     echo 'PUBLIC_WEB_ROLLOUT_FAILED; attempting rollback' >&2
     restore_previous
     exit 1
+  fi
+  if [[ "$host_changed" == true ]]; then
+    if ! recreate_caddy deployed.env; then
+      echo 'PUBLIC_WEB_CADDY_RECREATE_FAILED; attempting rollback' >&2
+      restore_previous
+      exit 1
+    fi
+    sleep 2
   fi
 else
   echo 'PUBLIC_WEB_ALREADY_USES_ACTIVATED_IMAGE'
