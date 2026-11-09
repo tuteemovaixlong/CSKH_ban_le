@@ -42,6 +42,11 @@ def _find_bash() -> str | None:
 
 
 class RestoreTocFilterTests(unittest.TestCase):
+    def setUp(self):
+        # The release image ships tests but not docs/; the source-checkout CI jobs run this check.
+        if not POSTGRESQL_DOC.is_file():
+            self.skipTest("docs/POSTGRESQL.md is not packaged in the release image")
+
     def test_documented_filter_drops_extension_entries_and_keeps_application_objects(self):
         pattern = _documented_pattern()
         compiled = re.compile(pattern)
