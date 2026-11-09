@@ -2786,30 +2786,34 @@ class Item7ProviderRefundLinkingTests(unittest.TestCase):
         return str(res_ord.order_id), str(res_ord.customer_id)
 
     def test_single_waiting_request_links_updates_status_and_records_system_decision(self) -> None:
+        from retailops.integration.contract import iso_vn_to_epoch
+
+        approval_ts = float(iso_vn_to_epoch("2026-11-08T13:00:00+07:00", "approval_ts"))
         oid, cid = self._seed_delivered_paid_connector_order("SIM-O-REF-1", "SIM-C-REF-1")
-        created = self.store.create_order_action_request(
-            cid,
-            {
-                "order_id": oid,
-                "type": "return",
-                "expected_order_version": 2,
-                "reason_code": "defective_item",
-                "reason_text": "Đường may bị bung chỉ",
-            },
-        )
-        req_id = created["order_action"]["request_id"]
-        ver = created["order_action"]["version"]
-        approved = self.store.transition_order_action_request(
-            req_id, "approve", {"version": ver}, actor=self.manager_actor
-        )
-        ref_req = self.store.request_order_action_refund(
-            req_id, {"version": approved["order_action"]["version"]}, actor=self.manager_actor
-        )
-        decided = self.store.decide_order_action_refund(
-            req_id,
-            {"version": ref_req["order_action"]["version"], "decision": "approved"},
-            actor=self.manager_actor,
-        )
+        with patch.object(self.store, "_now", return_value=approval_ts):
+            created = self.store.create_order_action_request(
+                cid,
+                {
+                    "order_id": oid,
+                    "type": "return",
+                    "expected_order_version": 2,
+                    "reason_code": "defective_item",
+                    "reason_text": "Đường may bị bung chỉ",
+                },
+            )
+            req_id = created["order_action"]["request_id"]
+            ver = created["order_action"]["version"]
+            approved = self.store.transition_order_action_request(
+                req_id, "approve", {"version": ver}, actor=self.manager_actor
+            )
+            ref_req = self.store.request_order_action_refund(
+                req_id, {"version": approved["order_action"]["version"]}, actor=self.manager_actor
+            )
+            decided = self.store.decide_order_action_refund(
+                req_id,
+                {"version": ref_req["order_action"]["version"], "decision": "approved"},
+                actor=self.manager_actor,
+            )
         self.assertEqual(decided["refund_status"], "pending")
         self.assertEqual(decided["refund_decision"], "approved")
 
@@ -2885,23 +2889,29 @@ class Item7ProviderRefundLinkingTests(unittest.TestCase):
 
         # Also verify REFUND_FAILED updates waiting request to 'failed' with system decision
         oid_fail, cid_fail = self._seed_delivered_paid_connector_order("SIM-O-REF-FAIL", "SIM-C-REF-FAIL")
-        c_fail = self.store.create_order_action_request(
-            cid_fail,
-            {
-                "order_id": oid_fail,
-                "type": "return",
-                "expected_order_version": 2,
-                "reason_code": "defective_item",
-                "reason_text": "Lỗi khóa kéo",
-            },
-        )
-        rid_fail = c_fail["order_action"]["request_id"]
-        ap_fail = self.store.transition_order_action_request(
-            rid_fail, "approve", {"version": c_fail["order_action"]["version"]}, actor=self.manager_actor
-        )
-        self.store.request_order_action_refund(
-            rid_fail, {"version": ap_fail["order_action"]["version"]}, actor=self.manager_actor
-        )
+        with patch.object(self.store, "_now", return_value=approval_ts):
+            c_fail = self.store.create_order_action_request(
+                cid_fail,
+                {
+                    "order_id": oid_fail,
+                    "type": "return",
+                    "expected_order_version": 2,
+                    "reason_code": "defective_item",
+                    "reason_text": "Lỗi khóa kéo",
+                },
+            )
+            rid_fail = c_fail["order_action"]["request_id"]
+            ap_fail = self.store.transition_order_action_request(
+                rid_fail, "approve", {"version": c_fail["order_action"]["version"]}, actor=self.manager_actor
+            )
+            rr_fail = self.store.request_order_action_refund(
+                rid_fail, {"version": ap_fail["order_action"]["version"]}, actor=self.manager_actor
+            )
+            self.store.decide_order_action_refund(
+                rid_fail,
+                {"version": rr_fail["order_action"]["version"], "decision": "approved"},
+                actor=self.manager_actor,
+            )
         self._ingest_raw(
             {
                 "contract": "retailops-integration-v2",

@@ -1748,7 +1748,7 @@ class IntegrationIngestService:
                     ext_oid = data["external_order_id"]
                     result_ext_order_id = ext_oid
                     ord_row = db.execute(
-                        "SELECT id, customer_id FROM orders "
+                        "SELECT id, customer_id, amount FROM orders "
                         "WHERE source_system=? AND external_order_id=?",
                         (connector_source, ext_oid),
                     ).fetchone()
@@ -1760,6 +1760,7 @@ class IntegrationIngestService:
                     )
                     result_order_id = str(ord_row["id"])
                     mapped_customer_id = str(ord_row["customer_id"])
+                    order_requested_cap = int(ord_row["amount"] or 0)
 
                     provider = data["provider"]
                     refund_ref = data["provider_refund_ref"]
@@ -1773,7 +1774,7 @@ class IntegrationIngestService:
                     result_total = amount
 
                     existing_ref = db.execute(
-                        "SELECT refund_id, order_id, status, request_id FROM refunds "
+                        "SELECT refund_id, order_id, status, request_id, initiated_at FROM refunds "
                         "WHERE provider=? AND provider_refund_ref=?",
                         (provider, refund_ref),
                     ).fetchone()
@@ -1867,10 +1868,13 @@ class IntegrationIngestService:
                             else (occurred_ts if canonical_status == "completed" else None)
                         )
                         target_req: dict[str, Any] | None = None
+                        linked_request_id: str | None = None
                         if existing_ref is not None and existing_ref["request_id"]:
+                            # W6.1b-2-D5: Once linked, never relink to another request.
+                            linked_request_id = str(existing_ref["request_id"])
                             linked_row = db.execute(
                                 "SELECT * FROM order_action_requests WHERE request_id = ?",
-                                (existing_ref["request_id"],),
+                                (linked_request_id,),
                             ).fetchone()
                             if linked_row is not None:
                                 target_req = dict(linked_row)
@@ -1882,10 +1886,54 @@ class IntegrationIngestService:
                                 (result_order_id,),
                             ).fetchall()
                             if len(waiting_rows) == 1:
-                                target_req = dict(waiting_rows[0])
-                        linked_request_id = (
-                            str(target_req["request_id"]) if target_req is not None else None
-                        )
+                                cand = dict(waiting_rows[0])
+                                is_approved_waiting = (
+                                    cand["status"] in ("approved", "received", "inspected", "completed")
+                                    and cand["refund_status"] == "pending"
+                                    and cand["refund_decision"] == "approved"
+                                )
+                                if is_approved_waiting:
+                                    req_ref_row = db.execute(
+                                        "SELECT COALESCE(SUM(amount), 0) AS req_sum FROM refunds "
+                                        "WHERE request_id = ? AND status <> 'failed' "
+                                        "AND NOT (provider = ? AND provider_refund_ref = ?)",
+                                        (cand["request_id"], provider, refund_ref),
+                                    ).fetchone()
+                                    req_ref_sum = int(req_ref_row["req_sum"] or 0) if req_ref_row else 0
+                                    cand_total_refund = (
+                                        amount if canonical_status == "failed" else (req_ref_sum + amount)
+                                    )
+                                    amount_ok = (
+                                        amount <= order_requested_cap
+                                        and cand_total_refund <= order_requested_cap
+                                    )
+                                    dec_row = db.execute(
+                                        """SELECT MAX(created_at) AS approved_at
+                                           FROM order_action_decisions
+                                           WHERE request_id = ?
+                                             AND (action = 'refund_approve' OR refund_decision = 'approved')""",
+                                        (cand["request_id"],),
+                                    ).fetchone()
+                                    approved_at_raw = dec_row["approved_at"] if dec_row is not None else None
+                                    if approved_at_raw is None:
+                                        approved_at_raw = (
+                                            cand.get("reviewed_at")
+                                            or cand.get("updated_at")
+                                            or cand.get("created_at")
+                                        )
+                                    effective_init_ts = (
+                                        float(existing_ref["initiated_at"])
+                                        if (
+                                            existing_ref is not None
+                                            and data["initiated_at"] is None
+                                            and existing_ref["initiated_at"] is not None
+                                        )
+                                        else float(init_ts)
+                                    )
+                                    ts_ok = effective_init_ts > float(approved_at_raw)
+                                    if amount_ok and ts_ok:
+                                        target_req = cand
+                                        linked_request_id = str(cand["request_id"])
                         if existing_ref is None:
                             db.execute(
                                 """INSERT INTO refunds (
