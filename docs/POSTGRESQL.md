@@ -155,10 +155,36 @@ Chạy pipeline với `set -o pipefail` để phát hiện lỗi `pg_dump`; ki�
 `pg_restore --list` trước khi coi đó là bản backup. Giữ cả `postgres-secrets` và cấu hình
 triển khai trong nơi backup bí mật riêng; pg_dump không sao lưu role/password của cluster.
 
-Restore vào **database mới**, tạo bởi admin và có owner `retailops`, rồi dùng `pg_restore
---exit-on-error --no-owner --no-acl` bằng role ứng dụng. Kiểm tra tài khoản, đơn, audit và
-phiên trên bản phục hồi trước khi đổi DSN. Không restore chồng lên database đang phục vụ web.
-Khôi phục có thể đưa lại quyền/mã/session cũ: đối chiếu các lần thu hồi sau snapshot.
+Restore luôn nạp vào **database mới** (không bao giờ restore chồng lên database đang phục vụ web). Vì role ứng dụng `retailops` không phải superuser nên không được tự chạy `CREATE EXTENSION vector`, phải khởi tạo trước schema `retailops_extensions` và extension `vector` bằng `postgres` (giống [`deploy/init-postgres.sh`](../deploy/init-postgres.sh)), lọc các mục extension khỏi TOC, rồi mới chạy `pg_restore --role=retailops`:
+
+```bash
+set -euo pipefail
+cd /opt/retailops
+target_db=retailops_restore
+pg_compose=(sudo docker compose --project-name retailops-web --env-file deployed.env --env-file public.env -f compose.public.yaml -f compose.postgres.yaml)
+
+"${pg_compose[@]}" exec -T postgres psql -U postgres -d postgres -v ON_ERROR_STOP=1 -v target_db="$target_db" <<'SQL'
+CREATE DATABASE :"target_db" OWNER retailops;
+\connect :"target_db"
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+CREATE SCHEMA retailops_extensions AUTHORIZATION postgres;
+REVOKE ALL ON SCHEMA retailops_extensions FROM PUBLIC;
+GRANT USAGE ON SCHEMA retailops_extensions TO retailops;
+CREATE EXTENSION vector WITH SCHEMA retailops_extensions;
+SQL
+
+pg_cid=$("${pg_compose[@]}" ps -q postgres)
+sudo docker cp "$retailops_pg_dump" "$pg_cid:/tmp/restore.dump"
+"${pg_compose[@]}" exec -T postgres sh -eu -c '
+  pg_restore --list /tmp/restore.dump \
+    | grep -Ev "^[0-9]+; [0-9]+ [0-9]+ (SCHEMA - retailops_extensions|EXTENSION - vector|COMMENT - EXTENSION vector)( |$)" \
+    > /tmp/restore.toc
+  pg_restore -L /tmp/restore.toc --exit-on-error --no-owner --no-acl -U postgres -d "$1" --role=retailops /tmp/restore.dump
+  rm -f /tmp/restore.dump /tmp/restore.toc
+' sh "$target_db"
+```
+
+Kiểm tra tài khoản, đơn, audit và phiên trên bản phục hồi trước khi đổi DSN. Khôi phục có thể đưa lại quyền/mã/session cũ: đối chiếu các lần thu hồi sau snapshot.
 
 Trước khi có ghi mới trên PostgreSQL, có thể quay lại cấu hình SQLite và nguồn được giữ
 nguyên. Sau khi PostgreSQL đã nhận giao dịch mới, SQLite cũ không còn đồng bộ; không tự

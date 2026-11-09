@@ -63,7 +63,7 @@ AWS có thể cấp public IPv4 mới sau stop/start nếu không dùng Elastic 
 - `RETAILOPS_PUBLIC_HOST`: hostname, không có scheme;
 - `RETAILOPS_PUBLIC_ORIGIN`: `https://` cộng chính hostname đó, không có dấu `/` cuối.
 
-Sau khi đổi cấu hình, ưu tiên workflow deploy hiện hành để đồng bộ image, public web và các phần đã cấu hình. Không recreate riêng `web`/`caddy` bằng public Compose khi admin đã bật: thao tác đó có thể làm Caddy mất overlay admin. Khi `admin.env` tồn tại, cần áp dụng cả `deploy/compose.admin.yaml` (Caddy mount `/etc/caddy/admin`, Caddy tham gia `admin_internal`, admin chỉ ở `admin_internal`) và xác nhận host admin đã được cập nhật. Không tắt kiểm tra Host/Origin và không bỏ xác minh TLS để làm test xanh.
+Sau khi đổi cấu hình, ưu tiên workflow deploy hiện hành để đồng bộ image, public web và các phần đã cấu hình. Trước bản sửa `deploy/rollout-public-web.sh` ở W6.1b-1.1, lượt deploy đỏ có chủ đích (để kéo image mới khi DB chưa migrate) phải sửa `public.env` bằng tay trước; sau bản sửa thì script tự cập nhật `public.env` đồng thời giữ nguyên `previous_image` và overlay admin khi tự động rollback. Không recreate riêng `web`/`caddy` bằng public Compose khi admin đã bật: thao tác đó có thể làm Caddy mất overlay admin. Khi `admin.env` tồn tại, cần áp dụng cả `deploy/compose.admin.yaml` (Caddy mount `/etc/caddy/admin`, Caddy tham gia `admin_internal`, admin chỉ ở `admin_internal`) và xác nhận host admin đã được cập nhật. Không tắt kiểm tra Host/Origin và không bỏ xác minh TLS để làm test xanh.
 
 ### Đối chiếu sau P5-C (snapshot owner, 2026-10-13)
 

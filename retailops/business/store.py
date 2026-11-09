@@ -28,8 +28,10 @@ from retailops.core import (
 from retailops.business.eligibility import compute_order_eligibility, format_vn_iso
 
 SHIPMENT_STATUS_TEXT_VI = {
+    "created": "Đã tạo vận đơn",
     "ready_to_pick": "Chờ lấy hàng",
     "picked": "Đã lấy hàng",
+    "picked_up": "Đã lấy hàng",
     "in_transit": "Đang trung chuyển",
     "sorting": "Đang phân loại tại kho",
     "out_for_delivery": "Đang giao hàng",
@@ -37,6 +39,7 @@ SHIPMENT_STATUS_TEXT_VI = {
     "delivered": "Đã giao thành công",
     "returning": "Đang hoàn hàng",
     "returned": "Đã hoàn hàng về kho",
+    "cancelled": "Đã hủy vận đơn",
     "lost": "Thất lạc kiện hàng",
     "damaged": "Kiện hàng hư hỏng",
 }
@@ -1432,6 +1435,7 @@ class BusinessStore:
                     removable.append(entry)
 
             removed_count = 0
+            removed_order_ids: list[str] = []
             if not dry_run and removable:
                 for entry in removable:
                     oid = entry["order_id"]
@@ -1442,18 +1446,19 @@ class BusinessStore:
                         "DELETE FROM orders WHERE id = ? AND source_system = 'retailops_seed'",
                         (oid,),
                     ).rowcount
-                    removed_count += int(deleted or 0)
-                self.log(
-                    conn,
-                    "system",
-                    "legacy_demo_orders_purged",
-                    None,
-                    tenant_id=tenant_clean,
-                    removed_count=removed_count,
-                    retained_count=len(retained),
-                    removed_order_ids=[e["order_id"] for e in removable],
-                    retained_order_ids=[e["order_id"] for e in retained],
-                )
+                    if int(deleted or 0) > 0:
+                        removed_count += int(deleted or 0)
+                        removed_order_ids.append(oid)
+                        self.log(
+                            conn,
+                            entry["customer_id"],
+                            "legacy_demo_order_purged",
+                            oid,
+                            tenant_id=tenant_clean,
+                            status=entry["status"],
+                            name=entry["name"],
+                            amount=entry["amount"],
+                        )
 
             return {
                 "result": "PURGE_LEGACY_DEMO_DRY_RUN" if dry_run else "PURGE_LEGACY_DEMO_OK",
@@ -1461,6 +1466,7 @@ class BusinessStore:
                 "dry_run": bool(dry_run),
                 "would_remove_count": len(removable),
                 "removed_count": 0 if dry_run else removed_count,
+                "removed_order_ids": [] if dry_run else removed_order_ids,
                 "removable_orders": removable,
                 "retained_count": len(retained),
                 "retained_orders": retained,
@@ -2370,6 +2376,11 @@ class BusinessStore:
                 }
             )
         effective_eta = sd.get("estimated_delivery_at") if sd.get("estimated_delivery_at") is not None else latest_evt_eta
+        effective_delivered_at = (
+            sd.get("delivered_at")
+            if sd.get("delivered_at") is not None
+            else (order_dict.get("delivered_at") if sd.get("status") == "delivered" else None)
+        )
         return {
             "shipment_id": sd["shipment_id"],
             "external_shipment_id": sd["external_shipment_id"],
@@ -2381,7 +2392,7 @@ class BusinessStore:
             "status_text": SHIPMENT_STATUS_TEXT_VI.get(sd["status"], sd["status"]),
             "current_area": sd.get("current_area"),
             "estimated_delivery_at": format_vn_iso(effective_eta),
-            "delivered_at": format_vn_iso(sd.get("delivered_at")),
+            "delivered_at": format_vn_iso(effective_delivered_at),
             "delivery_attempts": int(sd.get("delivery_attempts") or 0),
             "fail_reason": mask_shipper_phone_text(latest_fail_reason),
             "shipper_name": mask_shipper_phone_text(sd.get("shipper_name")),
@@ -3583,12 +3594,14 @@ class BusinessStore:
                        k.status AS case_status, k.holder, k.holder_name, k.version AS case_version,
                        k.resumed_at, k.created_at AS case_created_at,
                        he.reason_code, he.comment, NULL AS sentiment_flag,
-                       he.created_at, k.updated_at, c.name AS customer_name, conv.order_id
+                       he.created_at, k.updated_at, c.name AS customer_name, conv.order_id,
+                       ord.external_order_id AS external_order_id
                 FROM cases k
                 JOIN handoff_episodes he
                   ON he.case_id = k.case_id AND he.status = 'pending'
                 JOIN customers c ON k.customer_id = c.id
                 LEFT JOIN conversations conv ON k.conversation_id = conv.id
+                LEFT JOIN orders ord ON conv.order_id = ord.id AND ord.customer_id = k.customer_id
                 WHERE k.status IN ('waiting', 'in_progress')
                 ORDER BY k.updated_at DESC, he.created_at DESC
                 LIMIT ?
@@ -3610,7 +3623,8 @@ class BusinessStore:
         now = self._now()
         with self.connection() as db:
             rows = db.execute('''
-                SELECT c.id, c.customer_id, c.order_id, c.product_id, c.provider_id, c.expires_at,
+                SELECT c.id, c.customer_id, c.order_id, ord.external_order_id AS external_order_id,
+                       c.product_id, c.provider_id, c.expires_at,
                        SUM(CASE WHEN t.id IS NOT NULL
                                  AND t.request_id NOT LIKE ?
                                  AND t.request_id NOT LIKE ?
@@ -3620,9 +3634,10 @@ class BusinessStore:
                        MAX(t.created_at) as last_activity,
                        MIN(t.created_at) as first_activity
                 FROM conversations c
+                LEFT JOIN orders ord ON c.order_id = ord.id AND ord.customer_id = c.customer_id
                 LEFT JOIN agent_turns t ON c.id = t.conversation_id
                 WHERE c.customer_id = ? AND c.expires_at > ?
-                GROUP BY c.id, c.customer_id, c.order_id, c.product_id, c.provider_id, c.expires_at
+                GROUP BY c.id, c.customer_id, c.order_id, ord.external_order_id, c.product_id, c.provider_id, c.expires_at
                 ORDER BY COALESCE(MAX(t.created_at), c.expires_at) DESC
                 LIMIT ?
             ''', ('sys-reminder-%', 'sys-oar-%', 'sys-notice-%', customer, now, limit)).fetchall()
@@ -3721,9 +3736,9 @@ class BusinessStore:
                    FROM cases k
                    JOIN handoff_episodes he
                      ON he.case_id = k.case_id AND he.status = 'pending'
-                   JOIN customers c ON k.customer_id = c.id
+                    JOIN customers c ON k.customer_id = c.id
                    LEFT JOIN conversations conv ON k.conversation_id = conv.id
-                   LEFT JOIN orders ord ON conv.order_id = ord.id
+                   LEFT JOIN orders ord ON conv.order_id = ord.id AND ord.customer_id = k.customer_id
                    WHERE k.status = 'waiting' AND k.holder IS NULL
                    ORDER BY k.updated_at DESC, he.created_at DESC
                    LIMIT ?''',
@@ -3744,7 +3759,7 @@ class BusinessStore:
                      ON he.case_id = k.case_id AND he.status = 'pending'
                    JOIN customers c ON k.customer_id = c.id
                    LEFT JOIN conversations conv ON k.conversation_id = conv.id
-                   LEFT JOIN orders ord ON conv.order_id = ord.id
+                   LEFT JOIN orders ord ON conv.order_id = ord.id AND ord.customer_id = k.customer_id
                    WHERE k.status = 'in_progress' AND k.holder IS NOT NULL
                    ORDER BY k.updated_at DESC
                    LIMIT ?''',
@@ -3776,7 +3791,7 @@ class BusinessStore:
                    FROM cases k
                    JOIN customers c ON k.customer_id = c.id
                    JOIN conversations conv ON k.conversation_id = conv.id
-                   LEFT JOIN orders ord ON conv.order_id = ord.id
+                   LEFT JOIN orders ord ON conv.order_id = ord.id AND ord.customer_id = k.customer_id
                    WHERE k.status = 'resolved'
                      AND conv.expires_at > ?
                      AND (k.resolved_at IS NULL OR k.resolved_at >= ?)
@@ -3847,9 +3862,10 @@ class BusinessStore:
                 ).fetchone()
                 silent_secs = self._compute_customer_silent_seconds_in_tx(db, case_row, now=now)
             conv = db.execute('''
-                SELECT conv.*, c.name as customer_name
+                SELECT conv.*, c.name as customer_name, ord.external_order_id as external_order_id
                 FROM conversations conv
                 JOIN customers c ON conv.customer_id = c.id
+                LEFT JOIN orders ord ON conv.order_id = ord.id AND ord.customer_id = conv.customer_id
                 WHERE conv.id=?
             ''', (cid,)).fetchone() if cid else None
             turns = db.execute('''
