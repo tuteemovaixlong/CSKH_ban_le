@@ -779,6 +779,171 @@ class RealPostgresBusinessV9Tests(unittest.TestCase):
                     "INSERT INTO product_variants(id, product_id, variant_name, sku) VALUES ('pv_pg_2', 'P-101', 'PG-L', 'SKU-PG-DUP')"
                 )
 
+    def test_real_postgres_purge_legacy_demo_cli_audit_and_idempotency(self):
+        """W6.1b-1.1 Item 0: real PostgreSQL purge-legacy-demo CLI respects business_events.customer_id FK."""
+        import subprocess
+        from retailops.storage.postgres import transaction
+
+        bstore = self.sessions.business_store("shop-v9")
+        bstore.seed_catalog()
+
+        with transaction(DSN, self.schema, write=True) as db:
+            db.execute("INSERT INTO customers(id, name) VALUES ('C-PG-LEG-1', 'Khách Legacy 1') ON CONFLICT DO NOTHING")
+            db.execute("INSERT INTO customers(id, name) VALUES ('C-PG-LEG-2', 'Khách Legacy 2') ON CONFLICT DO NOTHING")
+            db.execute(
+                """INSERT INTO orders(
+                       id, customer_id, product_id, source_system, external_order_id,
+                       ordered_at, name, variant, amount, status, version
+                   ) VALUES
+                   ('O-PG-LEG-1', 'C-PG-LEG-1', 'P-101', 'retailops_seed', 'O-PG-LEG-1', 1700000100.0, 'Áo sơ mi 1', 'Trắng / M', 299000, 'pending', 1),
+                   ('O-PG-LEG-2', 'C-PG-LEG-1', 'P-102', 'retailops_seed', 'O-PG-LEG-2', 1700000200.0, 'Quần tây 2', 'Đen / L', 520000, 'pending', 1),
+                   ('O-PG-LEG-3', 'C-PG-LEG-2', 'P-202', 'retailops_seed', 'O-PG-LEG-3', 1700000300.0, 'Đầm công sở 3', 'Be / S', 650000, 'delivered', 1),
+                   ('ord_pg_sim_keep', 'C-PG-LEG-2', 'P-101', 'marketplace_sim', 'SIM-O-PG-KEEP', 1700000400.0, 'Áo sàn ảo', 'Trắng / M', 299000, 'pending', 1)"""
+            )
+            db.execute(
+                """INSERT INTO order_items(order_id, product_id, variant, quantity, unit_price)
+                   VALUES ('O-PG-LEG-2', 'P-102', 'Đen / L', 1, 520000)"""
+            )
+
+        req = bstore.create_order_action_request(
+            "C-PG-LEG-1",
+            {
+                "order_id": "O-PG-LEG-1",
+                "type": "cancel",
+                "expected_order_version": 1,
+                "reason_code": "ordered_by_mistake",
+            },
+        )
+        req_id = req["order_action"]["request_id"]
+
+        repo_root = Path(__file__).resolve().parents[1]
+        cli_env = {
+            **os.environ,
+            "PYTHONIOENCODING": "utf-8",
+            "RETAILOPS_STORAGE_BACKEND": "postgresql",
+            "RETAILOPS_DATABASE_URL": DSN,
+            "RETAILOPS_OUTPUT": str(self.temp.name),
+        }
+
+        def run_purge(*extra: str) -> dict:
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "retailops",
+                    "database",
+                    "--output",
+                    str(self.temp.name),
+                    "purge-legacy-demo",
+                    "--tenant",
+                    "shop-v9",
+                    *extra,
+                ],
+                cwd=str(repo_root),
+                env=cli_env,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+            self.assertEqual(proc.returncode, 0, f"stdout={proc.stdout}\nstderr={proc.stderr}")
+            return json.loads(proc.stdout)
+
+        dry = run_purge("--dry-run")
+        self.assertEqual(dry["result"], "PURGE_LEGACY_DEMO_DRY_RUN")
+        self.assertTrue(dry["dry_run"])
+        self.assertEqual(dry["would_remove_count"], 2)
+        self.assertEqual(dry["removed_count"], 0)
+        self.assertEqual([r["order_id"] for r in dry["removable_orders"]], ["O-PG-LEG-2", "O-PG-LEG-3"])
+        self.assertEqual(dry["retained_count"], 1)
+        self.assertEqual(dry["retained_orders"][0]["order_id"], "O-PG-LEG-1")
+        self.assertEqual(dry["retained_orders"][0]["request_ids"], [req_id])
+
+        with transaction(DSN, self.schema) as db:
+            ids_after_dry = [
+                r["id"]
+                for r in db.execute(
+                    "SELECT id FROM orders WHERE source_system='retailops_seed' ORDER BY id ASC"
+                ).fetchall()
+            ]
+        self.assertEqual(ids_after_dry, ["O-PG-LEG-1", "O-PG-LEG-2", "O-PG-LEG-3"])
+
+        live1 = run_purge()
+        self.assertEqual(live1["result"], "PURGE_LEGACY_DEMO_OK")
+        self.assertFalse(live1["dry_run"])
+        self.assertEqual(live1["removed_count"], 2)
+        self.assertEqual(live1["retained_count"], 1)
+        self.assertEqual(live1["retained_orders"][0]["order_id"], "O-PG-LEG-1")
+
+        with transaction(DSN, self.schema) as db:
+            legacy_after = [
+                r["id"]
+                for r in db.execute(
+                    "SELECT id FROM orders WHERE source_system='retailops_seed' ORDER BY id ASC"
+                ).fetchall()
+            ]
+            sim_after = [
+                r["id"]
+                for r in db.execute(
+                    "SELECT id FROM orders WHERE source_system='marketplace_sim' ORDER BY id ASC"
+                ).fetchall()
+            ]
+            ev_rows = [
+                dict(r)
+                for r in db.execute(
+                    "SELECT customer_id, kind, order_id, payload FROM business_events "
+                    "WHERE kind = 'legacy_demo_order_purged' ORDER BY order_id ASC"
+                ).fetchall()
+            ]
+            sys_ev_cnt = db.execute(
+                "SELECT COUNT(*) AS c FROM business_events WHERE customer_id = 'system' OR kind = 'legacy_demo_orders_purged'"
+            ).fetchone()["c"]
+        self.assertEqual(legacy_after, ["O-PG-LEG-1"])
+        self.assertEqual(sim_after, ["ord_pg_sim_keep"])
+        self.assertEqual(int(sys_ev_cnt), 0)
+        self.assertEqual(len(ev_rows), 2)
+        self.assertEqual(
+            [(r["order_id"], r["customer_id"]) for r in ev_rows],
+            [("O-PG-LEG-2", "C-PG-LEG-1"), ("O-PG-LEG-3", "C-PG-LEG-2")],
+        )
+
+        with self.sessions.control.connection() as id_db:
+            audits1 = [
+                dict(r)
+                for r in id_db.execute(
+                    "SELECT action, after_json FROM admin_audit_log WHERE action='database.purge_legacy_demo' ORDER BY id ASC"
+                ).fetchall()
+            ]
+        self.assertEqual(len(audits1), 1)
+        after1 = json.loads(audits1[0]["after_json"])
+        self.assertEqual(after1["removed_count"], 2)
+        self.assertEqual(after1["removed_order_ids"], ["O-PG-LEG-2", "O-PG-LEG-3"])
+        self.assertEqual(after1["retained_order_ids"], ["O-PG-LEG-1"])
+
+        # Second live execution: removed_count == 0, no error, no duplicate business_events
+        live2 = run_purge()
+        self.assertEqual(live2["result"], "PURGE_LEGACY_DEMO_OK")
+        self.assertEqual(live2["removed_count"], 0)
+        self.assertEqual(live2["retained_count"], 1)
+
+        with transaction(DSN, self.schema) as db:
+            ev_cnt_2 = db.execute(
+                "SELECT COUNT(*) AS c FROM business_events WHERE kind = 'legacy_demo_order_purged'"
+            ).fetchone()["c"]
+        self.assertEqual(int(ev_cnt_2), 2)
+
+        with self.sessions.control.connection() as id_db:
+            audits2 = [
+                dict(r)
+                for r in id_db.execute(
+                    "SELECT after_json FROM admin_audit_log WHERE action='database.purge_legacy_demo' ORDER BY id ASC"
+                ).fetchall()
+            ]
+        self.assertEqual(len(audits2), 2)
+        after2 = json.loads(audits2[1]["after_json"])
+        self.assertEqual(after2["removed_count"], 0)
+        self.assertEqual(after2["removed_order_ids"], [])
+
+
 
 def _sample_v2_events() -> dict[str, dict]:
     return {
