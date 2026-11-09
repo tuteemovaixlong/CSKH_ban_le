@@ -1862,7 +1862,7 @@ async function loadConversation(cid) {
         const noticeRow = caseSystemNoticeMessage(res.message || msgs[0]?.content || '', res.milestone || '');
         if (res.milestone === 'case_resolved') {
           lastClosedNoticeRow = noticeRow;
-        } else if (res.milestone) {
+        } else if (res.milestone && String(res.milestone).startsWith('case_')) {
           hasHumanSupport = true;
         }
       } else {

@@ -15,6 +15,7 @@ import time
 from typing import Any, Optional
 import uuid
 
+from retailops.business.proactive_notices import emit_proactive_shipment_notice_in_tx
 from retailops.core import ApiError, require
 from retailops.integration.contract import (
     ensure_w6_1b_1_supported_event,
@@ -1339,6 +1340,25 @@ class IntegrationIngestService:
                             transition_ts=occurred_ts,
                             delivered_at=delivered_at_val,
                         )
+                        if canonical_status == "delivered":
+                            shp_for_deliv = db.execute(
+                                "SELECT shipment_id FROM shipments "
+                                "WHERE order_id = ? ORDER BY updated_at DESC, shipment_id DESC LIMIT 1",
+                                (result_order_id,),
+                            ).fetchone()
+                            if shp_for_deliv is not None and shp_for_deliv["shipment_id"]:
+                                visible_oid = str(ext_oid or result_order_id)
+                                emit_proactive_shipment_notice_in_tx(
+                                    db,
+                                    customer_id=mapped_customer_id,
+                                    shipment_id=str(shp_for_deliv["shipment_id"]),
+                                    milestone="delivered",
+                                    notice_text=(
+                                        f"Thông báo vận đơn: Đơn hàng {visible_oid} đã được giao thành công."
+                                    ),
+                                    order_id=result_order_id,
+                                    now_ts=occurred_ts,
+                                )
 
                 elif event_type == "shipment.updated":
                     ext_oid = data["external_order_id"]
@@ -1520,6 +1540,32 @@ class IntegrationIngestService:
                                     transition_ts=occurred_ts,
                                     delivered_at=ord_after["delivered_at"],
                                 )
+                        if canonical_status in ("out_for_delivery", "delivery_failed", "delivered"):
+                            visible_oid = str(ext_oid or result_order_id)
+                            tracking_lbl = str(data["tracking_code"] or ext_shp_id)
+                            if canonical_status == "out_for_delivery":
+                                shp_notice_text = (
+                                    f"Thông báo vận đơn: Đơn hàng {visible_oid} đang trên đường giao đến bạn "
+                                    f"(vận đơn {tracking_lbl})."
+                                )
+                            elif canonical_status == "delivery_failed":
+                                shp_notice_text = (
+                                    f"Thông báo vận đơn: Lượt giao đơn hàng {visible_oid} (vận đơn {tracking_lbl}) "
+                                    "chưa thành công. Đơn vị vận chuyển sẽ cập nhật lịch giao tiếp theo hoặc bạn có thể nhắn tin để được hỗ trợ."
+                                )
+                            else:
+                                shp_notice_text = (
+                                    f"Thông báo vận đơn: Đơn hàng {visible_oid} đã được giao thành công."
+                                )
+                            emit_proactive_shipment_notice_in_tx(
+                                db,
+                                customer_id=mapped_customer_id,
+                                shipment_id=shipment_id,
+                                milestone=canonical_status,
+                                notice_text=shp_notice_text,
+                                order_id=result_order_id,
+                                now_ts=occurred_ts,
+                            )
 
                 elif event_type == "payment.updated":
                     ext_oid = data["external_order_id"]
@@ -1736,6 +1782,40 @@ class IntegrationIngestService:
                                     result_order_id,
                                     audit_vch,
                                 ),
+                            )
+                            ship_key_vch = (
+                                str(comp_row["shipment_id"]).strip()
+                                if comp_row["shipment_id"]
+                                else ""
+                            )
+                            if not ship_key_vch:
+                                shp_vch_row = db.execute(
+                                    "SELECT shipment_id FROM shipments "
+                                    "WHERE order_id = ? ORDER BY updated_at DESC, shipment_id DESC LIMIT 1",
+                                    (result_order_id,),
+                                ).fetchone()
+                                if shp_vch_row is not None and shp_vch_row["shipment_id"]:
+                                    ship_key_vch = str(shp_vch_row["shipment_id"]).strip()
+                            if not ship_key_vch:
+                                ship_key_vch = result_order_id
+                            visible_oid_vch = str(result_ext_order_id or result_order_id)
+                            val_fmt = f"{val_int:,}".replace(",", ".")
+                            vch_desc = (
+                                f"giảm {val_fmt} VNĐ"
+                                if vtype_val == "amount"
+                                else "miễn phí vận chuyển"
+                            )
+                            emit_proactive_shipment_notice_in_tx(
+                                db,
+                                customer_id=mapped_customer_id,
+                                shipment_id=ship_key_vch,
+                                milestone="voucher_issued",
+                                notice_text=(
+                                    f"Thông báo ưu đãi: Đơn hàng {visible_oid_vch} đã được phát hành "
+                                    f"mã voucher bồi thường {code_val} ({vch_desc})."
+                                ),
+                                order_id=result_order_id,
+                                now_ts=occurred_ts,
                             )
                         else:
                             imp_status_val = "ignored_unmatched_request"

@@ -33,6 +33,7 @@ from retailops.business.eligibility import (
     deterministic_compensation_id,
     format_vn_iso,
 )
+from retailops.business.proactive_notices import emit_proactive_shipment_notice_in_tx
 from retailops.integration.recipient_crypto import (
     load_recipient_keyring,
     sync_order_recipient_retention_in_tx,
@@ -2722,17 +2723,27 @@ class BusinessStore:
         """Detect shipping/delivered orders late past 48h vs promised_delivery_by and propose 50,000 VND vouchers (W6.1b-2-D6, D7)."""
         now_ts = float(self._now() if now is None else now)
         with self.connection() as db:
-            candidate_ids = [
-                str(r["id"])
-                for r in db.execute(
-                    """SELECT id FROM orders
-                       WHERE status IN ('shipping', 'delivered')
-                         AND promised_delivery_by IS NOT NULL
-                       ORDER BY id ASC"""
-                ).fetchall()
-            ]
+            raw_candidates = db.execute(
+                """SELECT id, status, promised_delivery_by, delivered_at FROM orders
+                   WHERE status IN ('shipping', 'delivered')
+                     AND promised_delivery_by IS NOT NULL
+                   ORDER BY id ASC"""
+            ).fetchall()
+            candidate_ids = []
+            for r in raw_candidates:
+                prom_val = r["promised_delivery_by"]
+                if prom_val is None:
+                    continue
+                ref_ts = (
+                    float(r["delivered_at"])
+                    if r["status"] == "delivered" and r["delivered_at"] is not None
+                    else now_ts
+                )
+                if ref_ts > float(prom_val):
+                    candidate_ids.append(str(r["id"]))
 
         proposed_count = 0
+        notices_emitted = 0
         for oid in candidate_ids:
             inserted_this_order = False
             with self.connection(write=True) as db:
@@ -2748,13 +2759,37 @@ class BusinessStore:
                 ord_dict = dict(ord_row)
                 elig = self._order_eligibility_in_tx(db, ord_dict, now=now_ts)
                 late_by = elig.get("late_by_hours")
-                if late_by is None or float(late_by) <= float(LATE_DELIVERY_COMPENSATION_THRESHOLD_HOURS):
+                if late_by is None or float(late_by) <= 0.0:
                     continue
                 ship_row = db.execute(
                     "SELECT shipment_id FROM shipments WHERE order_id = ? ORDER BY updated_at DESC, shipment_id DESC LIMIT 1",
                     (oid,),
                 ).fetchone()
                 ship_id = str(ship_row["shipment_id"]) if ship_row is not None else None
+                notice_ship_key = ship_id or oid
+                visible_oid = str(ord_dict.get("external_order_id") or oid)
+                late_req_id = f"sys-notice-{notice_ship_key}-late_delivery"
+                had_late_notice = (
+                    db.execute("SELECT 1 FROM agent_turns WHERE request_id = ? LIMIT 1", (late_req_id,)).fetchone()
+                    is not None
+                )
+                turn_id_late = emit_proactive_shipment_notice_in_tx(
+                    db,
+                    customer_id=str(ord_dict["customer_id"]),
+                    shipment_id=notice_ship_key,
+                    milestone="late_delivery",
+                    notice_text=(
+                        f"Thông báo đơn hàng: Đơn hàng {visible_oid} đã quá thời hạn giao cam kết. "
+                        "Hệ thống đang theo dõi ưu tiên đơn hàng của bạn; nếu cần hỗ trợ ngay, bạn hãy nhắn tin trong khung chat."
+                    ),
+                    order_id=oid,
+                    now_ts=now_ts,
+                    ttl_seconds=float(self.CONVERSATION_TTL),
+                )
+                if turn_id_late is not None and not had_late_notice:
+                    notices_emitted += 1
+                if float(late_by) <= float(LATE_DELIVERY_COMPENSATION_THRESHOLD_HOURS):
+                    continue
                 comp_id = deterministic_compensation_id(oid, ship_id, "late_delivery")
 
                 existing_for_order = db.execute(
@@ -2801,7 +2836,7 @@ class BusinessStore:
             if _fail_after_first_insert_for_test and inserted_this_order and proposed_count == 1:
                 raise RuntimeError("Simulated mid-scan crash after first compensation proposal")
 
-        return {"proposed": proposed_count, "scanned": len(candidate_ids)}
+        return {"proposed": proposed_count, "notices_emitted": notices_emitted, "scanned": len(candidate_ids)}
 
     def list_case_compensations(self, case_id: str) -> list[dict]:
         """Return delivery_compensations for orders linked to the given case."""
