@@ -415,3 +415,95 @@ def seed_demo_account_orders(
             svc._ensure_mapping(tenant_id, "marketplace_sim", ext_c, mapped_c)
 
     return created_oids
+
+
+def seed_all_customer_account_orders(
+    sessions: Any,
+    *,
+    tenant_id: str,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Seed the 3-order sample template for every active customer membership lacking orders (W6.1b-2-D9)."""
+    tenant_clean = str(tenant_id or "").strip()
+    sessions.control.tenant(tenant_clean)
+    is_dry = bool(dry_run)
+
+    with sessions.control.connection() as id_db:
+        mem_rows = id_db.execute(
+            """SELECT id, principal_id, customer_id
+               FROM memberships
+               WHERE tenant_id = ? AND role = 'customer' AND active = 1
+               ORDER BY id ASC""",
+            (tenant_clean,),
+        ).fetchall()
+
+    seen_cids: set[str] = set()
+    customer_entries: list[dict[str, str]] = []
+    for row in mem_rows:
+        cid = str(row["customer_id"] or "").strip()
+        if not cid or cid in seen_cids:
+            continue
+        seen_cids.add(cid)
+        customer_entries.append(
+            {
+                "membership_id": str(row["id"]),
+                "principal_id": str(row["principal_id"]),
+                "customer_id": cid,
+            }
+        )
+
+    bstore = sessions.business_store(tenant_clean)
+    eligible_customers: list[dict[str, str]] = []
+    skipped_customers: list[dict[str, str]] = []
+
+    with bstore.connection() as db:
+        has_tomb_tbl = bstore._tombstone_table_exists(db)
+        for entry in customer_entries:
+            cid = entry["customer_id"]
+            if has_tomb_tbl and db.execute(
+                "SELECT 1 FROM order_purge_tombstones WHERE customer_id = ? LIMIT 1",
+                (cid,),
+            ).fetchone() is not None:
+                skipped_customers.append({**entry, "reason": "tombstone"})
+                continue
+            if db.execute(
+                "SELECT 1 FROM orders WHERE customer_id = ? LIMIT 1",
+                (cid,),
+            ).fetchone() is not None:
+                skipped_customers.append({**entry, "reason": "already_has_orders"})
+                continue
+            eligible_customers.append(entry)
+
+    seeded_accounts_count = 0
+    orders_created_count = 0
+    seeded_details: list[dict[str, Any]] = []
+    if not is_dry:
+        for entry in eligible_customers:
+            created_oids = seed_demo_account_orders(
+                bstore,
+                entry["customer_id"],
+                sessions=sessions,
+            )
+            if created_oids:
+                seeded_accounts_count += 1
+                orders_created_count += len(created_oids)
+                seeded_details.append(
+                    {
+                        **entry,
+                        "order_ids": created_oids,
+                    }
+                )
+
+    return {
+        "result": "SEED_ACCOUNT_ORDERS_DRY_RUN" if is_dry else "SEED_ACCOUNT_ORDERS_OK",
+        "tenant_id": tenant_clean,
+        "dry_run": is_dry,
+        "total_customer_members": len(customer_entries),
+        "eligible_count": len(eligible_customers),
+        "eligible_customers": eligible_customers,
+        "skipped_count": len(skipped_customers),
+        "skipped_customers": skipped_customers,
+        "seeded_accounts_count": 0 if is_dry else seeded_accounts_count,
+        "orders_created_count": 0 if is_dry else orders_created_count,
+        "seeded_accounts": [] if is_dry else seeded_details,
+    }

@@ -103,6 +103,23 @@ def add_parser(commands):
     )
     exp_vreq.add_argument('--tenant', required=True, help='Target tenant ID.')
     exp_vreq.add_argument('--source-system', required=True, help='Marketplace source_system (e.g. marketplace_sim).')
+    rst_demo = sub.add_parser(
+        'reset-marketplace-demo',
+        help='Remove all orders and child records of a marketplace source_system in one transaction (W6.1b-2-D9).',
+    )
+    rst_demo.add_argument('--tenant', required=True, help='Target tenant ID.')
+    rst_demo.add_argument('--source-system', required=True, help='Marketplace source_system (e.g. marketplace_sim).')
+    rst_demo.add_argument('--dry-run', action='store_true',
+                          help='Report per-table row counts, evidence files, tombstones, and open cases without mutating.')
+    seed_acct = sub.add_parser(
+        'seed-account-orders',
+        help='Seed the 3-order sample template for every existing customer membership lacking orders (W6.1b-2-D9).',
+    )
+    seed_acct.add_argument('--tenant', required=True, help='Target tenant ID.')
+    seed_acct.add_argument('--all-customers', action='store_true', required=True,
+                           help='Confirm seeding sample orders for all eligible customer memberships in the tenant.')
+    seed_acct.add_argument('--dry-run', action='store_true',
+                           help='Report eligible vs skipped customer accounts without mutating.')
 
 
 def run(args):
@@ -252,6 +269,98 @@ def run(args):
         tenant_clean = str(args.tenant or '').strip()
         bstore = sessions.business_store(tenant_clean)
         return bstore.export_voucher_requests(source_system=args.source_system)
+
+    if action == 'reset-marketplace-demo':
+        import time
+
+        if backend == 'postgresql':
+            from retailops.identity.postgres import PostgresSessions
+
+            sessions = PostgresSessions(dsn, data_root=Path(resolved_output))
+        else:
+            from retailops.identity.persistent import PersistentSessions
+
+            out_root = Path(resolved_output)
+            pers_dir = out_root / 'persistent' if (out_root / 'persistent').is_dir() or not (out_root / 'identity.sqlite3').is_file() else out_root
+            sessions = PersistentSessions(pers_dir)
+        tenant_clean = str(args.tenant or '').strip()
+        bstore = sessions.business_store(tenant_clean)
+        report = bstore.reset_marketplace_demo(args.source_system, dry_run=bool(args.dry_run))
+        if not args.dry_run:
+            cache = getattr(sessions, 'tool_caches', {}).get(tenant_clean)
+            if cache is not None and hasattr(cache, 'clear'):
+                cache.clear()
+            with sessions.control.connection(write=True) as id_db:
+                sessions.control.record_admin_audit(
+                    id_db,
+                    actor_principal_id='cli-operator',
+                    actor_role='operator',
+                    tenant_id=tenant_clean,
+                    target_membership_id=f'tenant:{tenant_clean}',
+                    action='database.reset_marketplace_demo',
+                    outcome='allowed',
+                    before_state={
+                        'source_system': report['source_system'],
+                        'table_counts': report['table_counts'],
+                        'evidence_files_count': report['evidence_files_count'],
+                        'conversations_order_would_clear': report['conversations_order_would_clear'],
+                    },
+                    after_state={
+                        'deleted_counts': report['deleted_counts'],
+                        'conversations_order_cleared': report['conversations_order_cleared'],
+                        'deleted_evidence_files_count': len(report['deleted_evidence_files']),
+                        'failed_evidence_files': report['failed_evidence_files'],
+                    },
+                    reason=f"Operator reset-marketplace-demo ({report['source_system']}) execution",
+                    now=time.time(),
+                )
+        return report
+
+    if action == 'seed-account-orders':
+        import time
+        from retailops.integration.demo_seed import seed_all_customer_account_orders
+
+        if backend == 'postgresql':
+            from retailops.identity.postgres import PostgresSessions
+
+            sessions = PostgresSessions(dsn, data_root=Path(resolved_output))
+        else:
+            from retailops.identity.persistent import PersistentSessions
+
+            out_root = Path(resolved_output)
+            pers_dir = out_root / 'persistent' if (out_root / 'persistent').is_dir() or not (out_root / 'identity.sqlite3').is_file() else out_root
+            sessions = PersistentSessions(pers_dir)
+        tenant_clean = str(args.tenant or '').strip()
+        report = seed_all_customer_account_orders(
+            sessions,
+            tenant_id=tenant_clean,
+            dry_run=bool(args.dry_run),
+        )
+        if not args.dry_run:
+            cache = getattr(sessions, 'tool_caches', {}).get(tenant_clean)
+            if cache is not None and hasattr(cache, 'clear'):
+                cache.clear()
+            with sessions.control.connection(write=True) as id_db:
+                sessions.control.record_admin_audit(
+                    id_db,
+                    actor_principal_id='cli-operator',
+                    actor_role='operator',
+                    tenant_id=tenant_clean,
+                    target_membership_id=f'tenant:{tenant_clean}',
+                    action='database.seed_account_orders',
+                    outcome='allowed',
+                    before_state={
+                        'eligible_count': report['eligible_count'],
+                        'skipped_count': report['skipped_count'],
+                    },
+                    after_state={
+                        'seeded_accounts_count': report['seeded_accounts_count'],
+                        'orders_created_count': report['orders_created_count'],
+                    },
+                    reason='Operator seed-account-orders (--all-customers) execution',
+                    now=time.time(),
+                )
+        return report
 
     if action == 'migrate-v5':
         if backend == 'sqlite':

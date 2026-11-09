@@ -1484,6 +1484,470 @@ class BusinessStore:
                 "retained_orders": retained,
             }
 
+    def reset_marketplace_demo(self, source_system: str, *, dry_run: bool = False) -> dict:
+        """Atomically remove all canonical orders & child rows of ``source_system`` (W6.1b-2-D9)."""
+        from retailops.integration.connectors import validate_source_system_name
+
+        src = validate_source_system_name(source_system)
+        tenant_clean = str(getattr(self, "tenant_id", None) or "default").strip() or "default"
+        is_dry = bool(dry_run)
+
+        evidence_relpaths: list[str] = []
+        deleted_counts: dict[str, int] = {}
+
+        with self.connection(write=not is_dry) as conn:
+            blocking_tombstones: list[dict] = []
+            if self._tombstone_table_exists(conn):
+                blocking_tombstones = [
+                    {
+                        "order_id": str(r["order_id"]),
+                        "tenant_id": str(r["tenant_id"]),
+                        "customer_id": str(r["customer_id"]),
+                        "product_id": str(r["product_id"]),
+                        "status": str(r["status"]),
+                        "reason": str(r["reason"]),
+                        "purged_at": float(r["purged_at"]),
+                    }
+                    for r in conn.execute(
+                        """SELECT order_id, tenant_id, customer_id, product_id, status, reason, purged_at
+                           FROM order_purge_tombstones
+                           ORDER BY purged_at ASC, order_id ASC"""
+                    ).fetchall()
+                ]
+
+            open_cases = [
+                {
+                    "case_id": str(r["case_id"]),
+                    "conversation_id": str(r["conversation_id"]),
+                    "customer_id": str(r["customer_id"]),
+                    "status": str(r["status"]),
+                    "holder": r["holder"],
+                }
+                for r in conn.execute(
+                    """SELECT c.case_id, c.conversation_id, c.customer_id, c.status, c.holder
+                       FROM cases c
+                       WHERE c.status <> 'resolved'
+                         AND (
+                             EXISTS (
+                                 SELECT 1 FROM conversations conv
+                                 JOIN orders o ON o.id = conv.order_id
+                                 WHERE conv.id = c.conversation_id AND o.source_system = ?
+                             )
+                             OR EXISTS (
+                                 SELECT 1 FROM order_action_requests oar
+                                 JOIN orders o ON o.id = oar.order_id
+                                 WHERE o.source_system = ?
+                                   AND (oar.case_id = c.case_id OR oar.conversation_id = c.conversation_id)
+                             )
+                         )
+                       ORDER BY c.created_at ASC, c.case_id ASC""",
+                    (src, src),
+                ).fetchall()
+            ]
+
+            open_handoffs = [
+                {
+                    "handoff_id": str(r["handoff_id"]),
+                    "case_id": str(r["case_id"]),
+                    "conversation_id": str(r["conversation_id"]),
+                    "customer_id": str(r["customer_id"]),
+                    "status": str(r["status"]),
+                    "reason_code": r["reason_code"],
+                }
+                for r in conn.execute(
+                    """SELECT h.handoff_id, h.case_id, h.conversation_id, h.customer_id, h.status, h.reason_code
+                       FROM handoff_episodes h
+                       WHERE h.status = 'pending'
+                         AND (
+                             EXISTS (
+                                 SELECT 1 FROM conversations conv
+                                 JOIN orders o ON o.id = conv.order_id
+                                 WHERE conv.id = h.conversation_id AND o.source_system = ?
+                             )
+                             OR EXISTS (
+                                 SELECT 1 FROM order_action_requests oar
+                                 JOIN orders o ON o.id = oar.order_id
+                                 WHERE o.source_system = ?
+                                   AND (oar.case_id = h.case_id OR oar.conversation_id = h.conversation_id)
+                             )
+                         )
+                       ORDER BY h.created_at ASC, h.handoff_id ASC""",
+                    (src, src),
+                ).fetchall()
+            ]
+
+            ord_rows = conn.execute(
+                "SELECT id, external_order_id FROM orders WHERE source_system = ? ORDER BY id ASC",
+                (src,),
+            ).fetchall()
+            target_order_set = {str(r["id"]) for r in ord_rows}
+            target_ext_order_set = {str(r["external_order_id"]) for r in ord_rows if r["external_order_id"]}
+
+            target_req_set = {
+                str(r["request_id"])
+                for r in conn.execute(
+                    """SELECT request_id FROM order_action_requests
+                       WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?)""",
+                    (src,),
+                ).fetchall()
+            }
+            target_comp_set = {
+                str(r["compensation_id"])
+                for r in conn.execute(
+                    """SELECT compensation_id FROM delivery_compensations
+                       WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?)
+                          OR shipment_id IN (
+                              SELECT shipment_id FROM shipments
+                              WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?)
+                                 OR source_system = ?
+                          )""",
+                    (src, src, src),
+                ).fetchall()
+            }
+
+            ev_rows = conn.execute(
+                """SELECT evidence_id, storage_relpath, file_purged_at
+                   FROM order_action_evidence
+                   WHERE request_id IN (
+                       SELECT request_id FROM order_action_requests
+                       WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?)
+                   )
+                   ORDER BY evidence_id ASC""",
+                (src,),
+            ).fetchall()
+            evidence_relpaths = [
+                str(r["storage_relpath"])
+                for r in ev_rows
+                if r["file_purged_at"] is None and r["storage_relpath"]
+            ]
+
+            target_outbox_ids: list[str] = []
+            for ob_row in conn.execute(
+                "SELECT event_id, payload_json FROM integration_outbox ORDER BY event_id ASC"
+            ).fetchall():
+                try:
+                    env = json.loads(ob_row["payload_json"])
+                except Exception:
+                    env = {}
+                if not isinstance(env, dict):
+                    env = {}
+                data_obj = env.get("data") if isinstance(env.get("data"), dict) else {}
+                if (
+                    env.get("source_system") == src
+                    or data_obj.get("target_source_system") == src
+                    or env.get("order_id") in target_order_set
+                    or env.get("order_action_request_id") in target_req_set
+                    or data_obj.get("request_id") in target_comp_set
+                    or data_obj.get("external_order_id") in target_ext_order_set
+                ):
+                    target_outbox_ids.append(str(ob_row["event_id"]))
+
+            def _cnt(sql_q: str, params: tuple) -> int:
+                return int(conn.execute(sql_q, params).fetchone()["cnt"])
+
+            table_counts = {
+                "orders": len(target_order_set),
+                "order_items": _cnt(
+                    "SELECT COUNT(*) AS cnt FROM order_items WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?)",
+                    (src,),
+                ),
+                "proposals": _cnt(
+                    "SELECT COUNT(*) AS cnt FROM proposals WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?)",
+                    (src,),
+                ),
+                "shipments": _cnt(
+                    "SELECT COUNT(*) AS cnt FROM shipments WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?) OR source_system = ?",
+                    (src, src),
+                ),
+                "shipment_events": _cnt(
+                    """SELECT COUNT(*) AS cnt FROM shipment_events
+                       WHERE shipment_id IN (
+                           SELECT shipment_id FROM shipments
+                           WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?)
+                              OR source_system = ?
+                       )""",
+                    (src, src),
+                ),
+                "payment_transactions": _cnt(
+                    "SELECT COUNT(*) AS cnt FROM payment_transactions WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?)",
+                    (src,),
+                ),
+                "refunds": _cnt(
+                    """SELECT COUNT(*) AS cnt FROM refunds
+                       WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?)
+                          OR request_id IN (
+                              SELECT request_id FROM order_action_requests
+                              WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?)
+                          )""",
+                    (src, src),
+                ),
+                "order_recipients": _cnt(
+                    "SELECT COUNT(*) AS cnt FROM order_recipients WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?)",
+                    (src,),
+                ),
+                "delivery_compensations": len(target_comp_set),
+                "vouchers": _cnt(
+                    """SELECT COUNT(*) AS cnt FROM vouchers
+                       WHERE source_system = ?
+                          OR order_id IN (SELECT id FROM orders WHERE source_system = ?)
+                          OR compensation_id IN (
+                              SELECT compensation_id FROM delivery_compensations
+                              WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?)
+                                 OR shipment_id IN (
+                                     SELECT shipment_id FROM shipments
+                                     WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?)
+                                        OR source_system = ?
+                                 )
+                          )""",
+                    (src, src, src, src, src),
+                ),
+                "order_action_requests": len(target_req_set),
+                "order_action_decisions": _cnt(
+                    """SELECT COUNT(*) AS cnt FROM order_action_decisions
+                       WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?)
+                          OR request_id IN (
+                              SELECT request_id FROM order_action_requests
+                              WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?)
+                          )""",
+                    (src, src),
+                ),
+                "order_action_evidence": len(ev_rows),
+                "imported_events": _cnt(
+                    "SELECT COUNT(*) AS cnt FROM imported_events WHERE source_system = ? OR order_id IN (SELECT id FROM orders WHERE source_system = ?)",
+                    (src, src),
+                ),
+                "integration_outbox": len(target_outbox_ids),
+            }
+            conversations_to_clear = _cnt(
+                "SELECT COUNT(*) AS cnt FROM conversations WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?)",
+                (src,),
+            )
+
+            if not is_dry:
+                if blocking_tombstones:
+                    raise ApiError(
+                        409,
+                        "reset_blocked_by_tombstones",
+                        f"Từ chối reset dữ liệu {src}: đang có {len(blocking_tombstones)} tombstone chặn nhập lại.",
+                    )
+                if open_cases or open_handoffs:
+                    raise ApiError(
+                        409,
+                        "reset_blocked_by_open_cases",
+                        f"Từ chối reset dữ liệu {src}: đang có {len(open_cases)} ca mở và {len(open_handoffs)} handoff mở gắn với đơn hàng.",
+                    )
+
+                conversations_cleared = int(
+                    conn.execute(
+                        "UPDATE conversations SET order_id = NULL WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?)",
+                        (src,),
+                    ).rowcount
+                    or 0
+                )
+
+                is_pg = bool(getattr(self, "_supports_skip_locked", False))
+                if is_pg:
+                    conn.execute("ALTER TABLE order_action_decisions DISABLE TRIGGER trg_order_action_decisions_immutable")
+                    conn.execute("ALTER TABLE shipment_events DISABLE TRIGGER trg_shipment_events_immutable")
+                else:
+                    conn.execute("DROP TRIGGER IF EXISTS order_action_decisions_no_delete")
+                    conn.execute("DROP TRIGGER IF EXISTS shipment_events_no_delete")
+
+                deleted_counts["vouchers"] = int(
+                    conn.execute(
+                        """DELETE FROM vouchers
+                           WHERE source_system = ?
+                              OR order_id IN (SELECT id FROM orders WHERE source_system = ?)
+                              OR compensation_id IN (
+                                  SELECT compensation_id FROM delivery_compensations
+                                  WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?)
+                                     OR shipment_id IN (
+                                         SELECT shipment_id FROM shipments
+                                         WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?)
+                                            OR source_system = ?
+                                     )
+                              )""",
+                        (src, src, src, src, src),
+                    ).rowcount
+                    or 0
+                )
+                deleted_counts["refunds"] = int(
+                    conn.execute(
+                        """DELETE FROM refunds
+                           WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?)
+                              OR request_id IN (
+                                  SELECT request_id FROM order_action_requests
+                                  WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?)
+                              )""",
+                        (src, src),
+                    ).rowcount
+                    or 0
+                )
+                deleted_counts["delivery_compensations"] = int(
+                    conn.execute(
+                        """DELETE FROM delivery_compensations
+                           WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?)
+                              OR shipment_id IN (
+                                  SELECT shipment_id FROM shipments
+                                  WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?)
+                                     OR source_system = ?
+                              )""",
+                        (src, src, src),
+                    ).rowcount
+                    or 0
+                )
+                deleted_counts["order_action_evidence"] = int(
+                    conn.execute(
+                        """DELETE FROM order_action_evidence
+                           WHERE request_id IN (
+                               SELECT request_id FROM order_action_requests
+                               WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?)
+                           )""",
+                        (src,),
+                    ).rowcount
+                    or 0
+                )
+                deleted_counts["order_action_decisions"] = int(
+                    conn.execute(
+                        """DELETE FROM order_action_decisions
+                           WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?)
+                              OR request_id IN (
+                                  SELECT request_id FROM order_action_requests
+                                  WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?)
+                              )""",
+                        (src, src),
+                    ).rowcount
+                    or 0
+                )
+                deleted_counts["order_action_requests"] = int(
+                    conn.execute(
+                        "DELETE FROM order_action_requests WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?)",
+                        (src,),
+                    ).rowcount
+                    or 0
+                )
+                deleted_counts["shipment_events"] = int(
+                    conn.execute(
+                        """DELETE FROM shipment_events
+                           WHERE shipment_id IN (
+                               SELECT shipment_id FROM shipments
+                               WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?)
+                                  OR source_system = ?
+                           )""",
+                        (src, src),
+                    ).rowcount
+                    or 0
+                )
+                deleted_counts["shipments"] = int(
+                    conn.execute(
+                        "DELETE FROM shipments WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?) OR source_system = ?",
+                        (src, src),
+                    ).rowcount
+                    or 0
+                )
+                deleted_counts["payment_transactions"] = int(
+                    conn.execute(
+                        "DELETE FROM payment_transactions WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?)",
+                        (src,),
+                    ).rowcount
+                    or 0
+                )
+                deleted_counts["order_recipients"] = int(
+                    conn.execute(
+                        "DELETE FROM order_recipients WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?)",
+                        (src,),
+                    ).rowcount
+                    or 0
+                )
+                deleted_counts["proposals"] = int(
+                    conn.execute(
+                        "DELETE FROM proposals WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?)",
+                        (src,),
+                    ).rowcount
+                    or 0
+                )
+                deleted_counts["order_items"] = int(
+                    conn.execute(
+                        "DELETE FROM order_items WHERE order_id IN (SELECT id FROM orders WHERE source_system = ?)",
+                        (src,),
+                    ).rowcount
+                    or 0
+                )
+                deleted_counts["imported_events"] = int(
+                    conn.execute(
+                        "DELETE FROM imported_events WHERE source_system = ? OR order_id IN (SELECT id FROM orders WHERE source_system = ?)",
+                        (src, src),
+                    ).rowcount
+                    or 0
+                )
+                deleted_counts["orders"] = int(
+                    conn.execute(
+                        "DELETE FROM orders WHERE source_system = ?",
+                        (src,),
+                    ).rowcount
+                    or 0
+                )
+                ob_deleted = 0
+                for ob_eid in target_outbox_ids:
+                    ob_deleted += int(
+                        conn.execute(
+                            "DELETE FROM integration_outbox WHERE event_id = ?",
+                            (ob_eid,),
+                        ).rowcount
+                        or 0
+                    )
+                deleted_counts["integration_outbox"] = ob_deleted
+
+                if is_pg:
+                    conn.execute("ALTER TABLE shipment_events ENABLE TRIGGER trg_shipment_events_immutable")
+                    conn.execute("ALTER TABLE order_action_decisions ENABLE TRIGGER trg_order_action_decisions_immutable")
+                else:
+                    conn.execute(
+                        """CREATE TRIGGER IF NOT EXISTS order_action_decisions_no_delete
+                           BEFORE DELETE ON order_action_decisions
+                           BEGIN SELECT RAISE(ABORT, 'order_action_decisions is append-only'); END"""
+                    )
+                    conn.execute(
+                        """CREATE TRIGGER IF NOT EXISTS shipment_events_no_delete
+                           BEFORE DELETE ON shipment_events
+                           BEGIN SELECT RAISE(ABORT, 'shipment_events is append-only'); END"""
+                    )
+            else:
+                conversations_cleared = 0
+
+        deleted_evidence_files: list[str] = []
+        failed_evidence_files: list[dict] = []
+        if not is_dry:
+            for relpath in evidence_relpaths:
+                try:
+                    fpath = self._resolve_evidence_file_path(relpath)
+                    fpath.unlink(missing_ok=True)
+                    deleted_evidence_files.append(relpath)
+                except Exception as exc:
+                    failed_evidence_files.append(
+                        {
+                            "storage_relpath": relpath,
+                            "error": f"{exc.__class__.__name__}: {str(exc)[:200]}",
+                        }
+                    )
+
+        return {
+            "result": "RESET_MARKETPLACE_DEMO_DRY_RUN" if is_dry else "RESET_MARKETPLACE_DEMO_OK",
+            "tenant_id": tenant_clean,
+            "source_system": src,
+            "dry_run": is_dry,
+            "table_counts": table_counts,
+            "deleted_counts": {k: 0 for k in table_counts} if is_dry else deleted_counts,
+            "conversations_order_would_clear": conversations_to_clear,
+            "conversations_order_cleared": conversations_cleared,
+            "evidence_files_count": len(evidence_relpaths),
+            "deleted_evidence_files": deleted_evidence_files,
+            "failed_evidence_files": failed_evidence_files,
+            "blocking_tombstones": blocking_tombstones,
+            "open_cases": open_cases,
+            "open_handoffs": open_handoffs,
+        }
+
     def _collect_purge_reference_counts(
         self, conn, *, order_id: str, customer_id: str, product_id: str
     ) -> dict:
