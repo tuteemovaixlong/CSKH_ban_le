@@ -106,6 +106,87 @@ class LiveClient:
         return self.request("POST", "/api/chat", payload, timeout=timeout)
 
 
+PERSISTENT_AUTO_TOKEN_SCRIPT = """
+import os, secrets, sys
+from pathlib import Path
+from retailops.config import database_settings
+
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+
+backend, dsn = database_settings(os.environ)
+if backend == 'postgresql':
+    from retailops.identity.postgres import PostgresSessions
+    sessions = PostgresSessions(dsn)
+else:
+    from retailops.identity.persistent import PersistentSessions
+    out = Path(os.environ.get('RETAILOPS_OUTPUT', '/data'))
+    sessions = PersistentSessions(out / 'persistent')
+
+tenant_id = (os.environ.get('E2E_TENANT') or os.environ.get('RETAILOPS_DEMO_TENANT_ID') or 'retailops-demo').strip()
+cust_override = (os.environ.get('E2E_CUSTOMER') or '').strip()
+
+try:
+    sessions.control.tenant(tenant_id)
+except Exception:
+    sessions.provision_tenant(tenant_id, 'RetailOps Demo', seed_demo=True)
+
+bstore = sessions.business_store(tenant_id)
+with bstore.connection() as db:
+    has_orders = db.execute('SELECT 1 FROM orders LIMIT 1').fetchone() is not None
+if not has_orders:
+    bstore.seed()
+
+cid = None
+cust_name = 'Khach hang Demo'
+with bstore.connection() as db:
+    if cust_override:
+        row = db.execute('SELECT id, name FROM customers WHERE id=?', (cust_override,)).fetchone()
+        if not row:
+            mapped = sessions.control.get_external_customer_mapping(tenant_id, 'marketplace_sim', cust_override)
+            if mapped:
+                row = db.execute('SELECT id, name FROM customers WHERE id=?', (mapped,)).fetchone()
+        if row:
+            cid, cust_name = str(row['id']), str(row['name'] or cust_name)
+    if not cid:
+        mapped = sessions.control.get_external_customer_mapping(tenant_id, 'marketplace_sim', 'SIM-C-0070')
+        if mapped:
+            row = db.execute('SELECT id, name FROM customers WHERE id=?', (mapped,)).fetchone()
+            if row:
+                cid, cust_name = str(row['id']), str(row['name'] or cust_name)
+    if not cid:
+        row = (
+            db.execute(
+                "SELECT c.id, c.name FROM customers c JOIN orders o ON o.customer_id=c.id "
+                "WHERE o.status='pending' ORDER BY c.id LIMIT 1"
+            ).fetchone()
+            or db.execute('SELECT id, name FROM customers ORDER BY id LIMIT 1').fetchone()
+        )
+        if row:
+            cid, cust_name = str(row['id']), str(row['name'] or cust_name)
+
+if not cid:
+    raise RuntimeError(f'Khong tim thay khach hang seed trong tenant {tenant_id}')
+
+principal_id = 'demo-' + cid.lower().replace('_', '-')[:20]
+mid = None
+with sessions.control.connection() as db:
+    row = db.execute(
+        "SELECT id FROM memberships WHERE tenant_id=? AND customer_id=? AND role='customer' AND active=1 ORDER BY id LIMIT 1",
+        (tenant_id, cid),
+    ).fetchone()
+    if row:
+        mid = row['id'] if isinstance(row, dict) else row[0]
+
+if not mid:
+    mid = sessions.create_member(tenant_id, principal_id, cust_name, cid, 'customer')
+
+token = secrets.token_urlsafe(32)
+sessions.control.register_credential(mid, token)
+print(f"RETAILOPS_AUTO_TOKEN={token}")
+"""
+
+
 def resolve_token(token_arg: str | None) -> str:
     if token_arg and token_arg.strip() and token_arg.strip().lower() != "auto":
         return token_arg.strip()
@@ -113,51 +194,26 @@ def resolve_token(token_arg: str | None) -> str:
     public_env = Path("/opt/retailops/public.env")
     if public_env.exists():
         print("[*] Đang tự động phát sinh mã xác thực thành viên từ EC2 Docker...")
-        py_code = """
-import os, secrets
-from retailops.config import database_settings
-backend, dsn = database_settings(os.environ)
-if backend == 'postgresql':
-    from retailops.identity.postgres import PostgresSessions
-    sessions = PostgresSessions(dsn)
-else:
-    from retailops.identity.persistent import PersistentSessions
-    sessions = PersistentSessions('/data/persistent')
-
-mid = None
-with sessions.control.connection() as db:
-    row = db.execute("SELECT id FROM memberships WHERE tenant_id=? AND principal_id=?", ("retailops-demo", "mai-anh")).fetchone()
-    if row:
-        mid = row["id"] if isinstance(row, dict) else row[0]
-
-if not mid:
-    try:
-        sessions.provision_tenant("retailops-demo", "RetailOps Demo", seed_demo=True)
-    except Exception:
-        pass
-    try:
-        mid = sessions.create_member("retailops-demo", "mai-anh", "Mai Anh", "C-001", "customer")
-    except Exception:
-        with sessions.control.connection() as db:
-            row = db.execute("SELECT id FROM memberships WHERE active=1 LIMIT 1").fetchone()
-            if row:
-                mid = row["id"] if isinstance(row, dict) else row[0]
-
-token = secrets.token_urlsafe(32)
-sessions.control.register_credential(mid, token)
-print(f"RETAILOPS_AUTO_TOKEN={token}")
-"""
-        import subprocess
         docker_bin = ["sudo", "docker"] if (hasattr(os, "geteuid") and os.geteuid() != 0) else ["docker"]
-        cmd = docker_bin + [
-            "compose",
-            "--project-name", "retailops-web",
-            "--env-file", "deployed.env",
-            "--env-file", "public.env",
-            "-f", "compose.public.yaml",
-            "exec", "-T", "web",
-            "python", "-c", py_code
-        ]
+        compose_files = ["-f", "compose.public.yaml"]
+        if Path("/opt/retailops/postgres-secrets").is_dir():
+            compose_files += ["-f", "compose.postgres.yaml"]
+        if Path("/opt/retailops/compose.clamav.yaml").is_file():
+            compose_files += ["-f", "compose.clamav.yaml"]
+        cmd = (
+            docker_bin
+            + [
+                "compose",
+                "--project-name",
+                "retailops-web",
+                "--env-file",
+                "deployed.env",
+                "--env-file",
+                "public.env",
+            ]
+            + compose_files
+            + ["exec", "-T", "web", "python", "-c", PERSISTENT_AUTO_TOKEN_SCRIPT]
+        )
         try:
             res = subprocess.run(cmd, cwd="/opt/retailops", capture_output=True, text=True, check=True)
             for line in res.stdout.splitlines():
