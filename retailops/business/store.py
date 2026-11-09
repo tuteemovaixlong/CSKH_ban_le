@@ -2340,6 +2340,29 @@ class BusinessStore:
             else None
         )
 
+        vch_rows = db.execute(
+            """SELECT voucher_id, source_system, external_voucher_id, compensation_id,
+                      code, voucher_type, value, valid_until, issued_at
+               FROM vouchers
+               WHERE order_id = ?
+               ORDER BY issued_at ASC, voucher_id ASC""",
+            (oid,),
+        ).fetchall()
+        vouchers_list = [
+            {
+                "voucher_id": r["voucher_id"],
+                "source_system": r["source_system"],
+                "external_voucher_id": r["external_voucher_id"],
+                "compensation_id": r["compensation_id"],
+                "code": r["code"],
+                "voucher_type": r["voucher_type"],
+                "value": int(r["value"]),
+                "valid_until": format_vn_iso(r["valid_until"]),
+                "issued_at": format_vn_iso(r["issued_at"]),
+            }
+            for r in vch_rows
+        ]
+
         ordered_at_iso = (
             None
             if int(order_dict.get("ordered_at_backfilled") or 0) == 1
@@ -2358,6 +2381,7 @@ class BusinessStore:
             "delivery": delivery_summary,
             "refund": refund_summary,
             "recipient": recipient_safe,
+            "vouchers": vouchers_list,
             "eligibility": eligibility,
             "as_of": eligibility["as_of"],
         }
@@ -3008,22 +3032,48 @@ class BusinessStore:
                 )
                 matched_case_id = str(held_row["case_id"])
 
-            next_status = "approved" if decision == "approve" else "rejected"
+            next_status = "requested" if decision == "approve" else "rejected"
+            next_request_id = comp_clean if decision == "approve" else None
             upd = db.execute(
                 """UPDATE delivery_compensations
                    SET status = ?,
                        decided_by_principal_id = ?,
                        decided_at = ?,
-                       note = ?
+                       note = ?,
+                       request_id = COALESCE(?, request_id)
                    WHERE compensation_id = ?
                      AND status = 'proposed'""",
-                (next_status, actor_pid, now_ts, clean_note, comp_clean),
+                (next_status, actor_pid, now_ts, clean_note, next_request_id, comp_clean),
             )
             if upd.rowcount != 1:
                 raise ApiError(
                     409,
                     "compensation_not_proposed",
                     "Đề xuất bồi thường đã được xử lý bởi người khác hoặc không còn ở trạng thái chờ duyệt.",
+                )
+
+            if decision == "approve":
+                vreq_envelope = self._build_voucher_requested_envelope_in_tx(
+                    db,
+                    comp_row=comp_row,
+                    ord_row=ord_row,
+                    occurred_ts=now_ts,
+                    approved_by_role=actor_role,
+                )
+                eff_tid = self._effective_tenant_id((actor or {}).get("tenant_id"))
+                db.execute(
+                    """INSERT INTO integration_outbox (
+                           event_id, tenant_id, event_type, payload_json,
+                           created_at, status, attempts, next_attempt_at, last_error, published_at
+                       ) VALUES (?, ?, 'voucher.requested', ?, ?, 'pending', 0, ?, NULL, NULL)
+                       ON CONFLICT(event_id) DO NOTHING""",
+                    (
+                        vreq_envelope["event_id"],
+                        eff_tid,
+                        json.dumps(vreq_envelope, ensure_ascii=False, separators=(",", ":")),
+                        now_ts,
+                        now_ts,
+                    ),
                 )
 
             updated_row = db.execute(
@@ -3056,6 +3106,136 @@ class BusinessStore:
                 "customer_id": ord_customer_id,
                 "case_id": matched_case_id,
             }
+
+    def _build_voucher_requested_envelope_in_tx(
+        self,
+        db,
+        *,
+        comp_row,
+        ord_row,
+        occurred_ts: float,
+        approved_by_role: str,
+    ) -> dict:
+        from retailops.integration.contract import validate_event_v2
+
+        comp_id = str(comp_row["compensation_id"])
+        canonical_oid = str(ord_row["id"])
+        ord_source = str(ord_row["source_system"] or "marketplace_sim")
+        ord_customer_id = str(ord_row["customer_id"])
+        ext_order_id = str(ord_row["external_order_id"] or canonical_oid)
+
+        conn_row = db.execute(
+            "SELECT merchant_id FROM integration_connectors WHERE source_system = ?",
+            (ord_source,),
+        ).fetchone()
+        merchant_id: str | None = str(conn_row["merchant_id"]) if conn_row is not None else None
+        imp_row = db.execute(
+            """SELECT external_customer_id, payload_json
+               FROM imported_events
+               WHERE order_id = ?
+                 AND source_system = ?
+               ORDER BY CASE WHEN event_type = 'order.created' THEN 0 ELSE 1 END, id ASC
+               LIMIT 1""",
+            (canonical_oid, ord_source),
+        ).fetchone()
+        ext_customer_id: str | None = None
+        if imp_row is not None:
+            if imp_row["external_customer_id"]:
+                ext_customer_id = str(imp_row["external_customer_id"])
+            if not merchant_id and imp_row["payload_json"]:
+                try:
+                    parsed_ev = json.loads(str(imp_row["payload_json"]))
+                    if parsed_ev.get("merchant_id"):
+                        merchant_id = str(parsed_ev["merchant_id"])
+                except Exception:
+                    pass
+
+        if not ext_customer_id:
+            sref = getattr(self, "_sessions_ref", None)
+            sess_obj = sref() if callable(sref) else None
+            control = getattr(sess_obj, "control", None) if sess_obj is not None else None
+            eff_tid = self._effective_tenant_id(None)
+            if control is not None and hasattr(control, "connection"):
+                try:
+                    with control.connection() as id_db:
+                        m_row = id_db.execute(
+                            """SELECT external_customer_id
+                               FROM external_customer_mappings
+                               WHERE tenant_id = ? AND source_system = ? AND customer_id = ?
+                               ORDER BY created_at ASC
+                               LIMIT 1""",
+                            (eff_tid, ord_source, ord_customer_id),
+                        ).fetchone()
+                        if m_row is not None and m_row["external_customer_id"]:
+                            ext_customer_id = str(m_row["external_customer_id"])
+                except Exception:
+                    pass
+
+        envelope = {
+            "contract": "retailops-integration-v2",
+            "event_id": f"evt:vreq:{comp_id}",
+            "event_type": "voucher.requested",
+            "source_system": "retailops",
+            "merchant_id": merchant_id or "MERCHANT-DEFAULT",
+            "occurred_at": format_vn_iso(occurred_ts),
+            "sequence": 1,
+            "data": {
+                "request_id": comp_id,
+                "external_order_id": ext_order_id,
+                "external_customer_id": ext_customer_id or ord_customer_id,
+                "voucher_type": str(comp_row["voucher_type"]),
+                "value": int(comp_row["value"]),
+                "reason": str(comp_row["reason"]),
+                "approved_by_role": str(approved_by_role),
+            },
+        }
+        return validate_event_v2(envelope, allow_requests=True)
+
+    def export_voucher_requests(self, *, source_system: str) -> list[dict]:
+        """Export repeatable JSONL-ready voucher.requested envelopes for all 'requested' compensations of source_system."""
+        from retailops.integration.connectors import validate_source_system_name
+        from retailops.integration.contract import validate_event_v2
+
+        clean_source = validate_source_system_name(source_system)
+        out: list[dict] = []
+        with self.connection() as db:
+            rows = db.execute(
+                """SELECT dc.*, o.id AS ord_internal_id
+                   FROM delivery_compensations dc
+                   JOIN orders o ON o.id = dc.order_id
+                   WHERE dc.status = 'requested'
+                     AND o.source_system = ?
+                   ORDER BY COALESCE(dc.decided_at, 0) ASC, dc.compensation_id ASC""",
+                (clean_source,),
+            ).fetchall()
+            for dc in rows:
+                comp_id = str(dc["compensation_id"])
+                ev_id = f"evt:vreq:{comp_id}"
+                ob_row = db.execute(
+                    "SELECT payload_json FROM integration_outbox WHERE event_id = ?",
+                    (ev_id,),
+                ).fetchone()
+                if ob_row is not None and ob_row["payload_json"]:
+                    parsed = json.loads(str(ob_row["payload_json"]))
+                    out.append(validate_event_v2(parsed, allow_requests=True))
+                else:
+                    ord_row = db.execute(
+                        "SELECT * FROM orders WHERE id = ?",
+                        (str(dc["order_id"]),),
+                    ).fetchone()
+                    if ord_row is None:
+                        continue
+                    occ_ts = float(dc["decided_at"]) if dc["decided_at"] is not None else float(self._now())
+                    out.append(
+                        self._build_voucher_requested_envelope_in_tx(
+                            db,
+                            comp_row=dc,
+                            ord_row=ord_row,
+                            occurred_ts=occ_ts,
+                            approved_by_role="manager",
+                        )
+                    )
+        return out
 
     def read_order_shipment_in_tx(self, db, order_dict: dict, *, now: float | None = None) -> dict | None:
         """Read DB-backed shipment and chronological shipment_events for one order, or None if absent."""

@@ -1625,6 +1625,125 @@ class IntegrationIngestService:
                             )
                         self._recompute_order_payment_status_in_tx(db, result_order_id)
 
+                elif event_type == "voucher.issued":
+                    ext_vid = str(data["external_voucher_id"])
+                    code_val = str(data["code"])
+                    vtype_val = str(data["voucher_type"])
+                    val_int = int(data["value"])
+                    req_ref_raw = data.get("request_ref")
+                    req_ref = str(req_ref_raw).strip() if req_ref_raw is not None else ""
+                    ext_oid_opt = data.get("external_order_id")
+                    result_ext_order_id = str(ext_oid_opt) if ext_oid_opt is not None else None
+                    imp_total_val = val_int
+                    imp_currency_val = "VND"
+
+                    comp_row = (
+                        db.execute(
+                            """SELECT * FROM delivery_compensations
+                               WHERE request_id = ? OR compensation_id = ?
+                               ORDER BY compensation_id ASC
+                               LIMIT 1""",
+                            (req_ref, req_ref),
+                        ).fetchone()
+                        if req_ref
+                        else None
+                    )
+                    matched_ord_row = None
+                    if comp_row is not None and str(comp_row["status"]) == "requested":
+                        cand_ord = db.execute(
+                            "SELECT * FROM orders WHERE id = ?",
+                            (str(comp_row["order_id"]),),
+                        ).fetchone()
+                        if (
+                            cand_ord is not None
+                            and str(cand_ord["source_system"]) == envelope_source
+                            and (
+                                ext_oid_opt is None
+                                or str(cand_ord["external_order_id"] or "") == str(ext_oid_opt)
+                            )
+                        ):
+                            matched_ord_row = cand_ord
+
+                    if comp_row is not None and matched_ord_row is not None:
+                        comp_id_str = str(comp_row["compensation_id"])
+                        upd_comp = db.execute(
+                            """UPDATE delivery_compensations
+                               SET status = 'issued'
+                               WHERE compensation_id = ?
+                                 AND status = 'requested'""",
+                            (comp_id_str,),
+                        )
+                        if upd_comp.rowcount == 1:
+                            result_order_id = str(matched_ord_row["id"])
+                            result_ext_order_id = matched_ord_row["external_order_id"]
+                            mapped_customer_id = str(matched_ord_row["customer_id"])
+                            if data.get("external_customer_id"):
+                                mapped_ext_customer_id = str(data["external_customer_id"])
+                            imp_status_val = "issued"
+                            result_total = val_int
+                            _insert_imported_event_row()
+
+                            valid_until_ts = (
+                                float(iso_vn_to_epoch(data["valid_until"], "data.valid_until"))
+                                + float(rebase_offset_seconds)
+                                if data.get("valid_until")
+                                else None
+                            )
+                            det_voucher_id = (
+                                "vch_"
+                                + hashlib.sha256(
+                                    f"{envelope_source}\x00{ext_vid}".encode("utf-8")
+                                ).hexdigest()[:24]
+                            )
+                            db.execute(
+                                """INSERT INTO vouchers (
+                                       voucher_id, source_system, external_voucher_id,
+                                       customer_id, order_id, compensation_id,
+                                       code, voucher_type, value, valid_until, issued_at
+                                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                   ON CONFLICT(source_system, external_voucher_id) DO NOTHING""",
+                                (
+                                    det_voucher_id,
+                                    envelope_source,
+                                    ext_vid,
+                                    mapped_customer_id,
+                                    result_order_id,
+                                    comp_id_str,
+                                    code_val,
+                                    vtype_val,
+                                    val_int,
+                                    valid_until_ts,
+                                    occurred_ts,
+                                ),
+                            )
+                            audit_vch = json.dumps(
+                                {
+                                    "voucher_id": det_voucher_id,
+                                    "external_voucher_id": ext_vid,
+                                    "compensation_id": comp_id_str,
+                                    "voucher_type": vtype_val,
+                                    "value": val_int,
+                                    "event_id": event_id,
+                                },
+                                ensure_ascii=False,
+                            )
+                            db.execute(
+                                "INSERT INTO business_events(customer_id, created_at, kind, order_id, payload) VALUES (?, ?, ?, ?, ?)",
+                                (
+                                    mapped_customer_id,
+                                    occurred_ts,
+                                    "voucher_issued",
+                                    result_order_id,
+                                    audit_vch,
+                                ),
+                            )
+                        else:
+                            imp_status_val = "ignored_unmatched_request"
+                            _insert_imported_event_row()
+                    else:
+                        imp_status_val = "ignored_unmatched_request"
+                        _insert_imported_event_row()
+
                 elif event_type == "refund.updated":
                     ext_oid = data["external_order_id"]
                     result_ext_order_id = ext_oid

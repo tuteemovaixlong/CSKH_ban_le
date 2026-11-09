@@ -97,6 +97,12 @@ def add_parser(commands):
     purge_rcp.add_argument('--tenant', required=True, help='Target tenant ID.')
     purge_rcp.add_argument('--dry-run', action='store_true',
                            help='Report expired recipient rows without mutating.')
+    exp_vreq = sub.add_parser(
+        'export-voucher-requests',
+        help='Export repeatable JSONL lines of voucher.requested events for all compensations in requested status.',
+    )
+    exp_vreq.add_argument('--tenant', required=True, help='Target tenant ID.')
+    exp_vreq.add_argument('--source-system', required=True, help='Marketplace source_system (e.g. marketplace_sim).')
 
 
 def run(args):
@@ -231,6 +237,21 @@ def run(args):
                     now=time.time(),
                 )
         return report
+
+    if action == 'export-voucher-requests':
+        if backend == 'postgresql':
+            from retailops.identity.postgres import PostgresSessions
+
+            sessions = PostgresSessions(dsn, data_root=Path(resolved_output))
+        else:
+            from retailops.identity.persistent import PersistentSessions
+
+            out_root = Path(resolved_output)
+            pers_dir = out_root / 'persistent' if (out_root / 'persistent').is_dir() or not (out_root / 'identity.sqlite3').is_file() else out_root
+            sessions = PersistentSessions(pers_dir)
+        tenant_clean = str(args.tenant or '').strip()
+        bstore = sessions.business_store(tenant_clean)
+        return bstore.export_voucher_requests(source_system=args.source_system)
 
     if action == 'migrate-v5':
         if backend == 'sqlite':

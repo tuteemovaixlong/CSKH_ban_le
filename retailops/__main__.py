@@ -43,7 +43,12 @@ def main():
         elif args.command == 'connector':
             print(json.dumps(connector_cli.run(args), ensure_ascii=False))
         elif args.command == 'database':
-            print(json.dumps(database_cli.run(args), ensure_ascii=False))
+            res = database_cli.run(args)
+            if getattr(args, 'database_action', None) == 'export-voucher-requests':
+                for item in res:
+                    print(json.dumps(item, ensure_ascii=False, separators=(',', ':')))
+            else:
+                print(json.dumps(res, ensure_ascii=False))
         elif args.command == 'knowledge':
             print(json.dumps(knowledge_cli.run(args), ensure_ascii=False))
         else:

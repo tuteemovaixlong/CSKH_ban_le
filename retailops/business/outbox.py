@@ -150,12 +150,23 @@ def _file_lock(path: Path) -> threading.Lock:
 
 
 def validate_outbox_envelope(envelope: dict) -> dict:
-    """Validate outbound JSONL envelope against §11.4 and W3-D7 contract and reject any PII fields."""
+    """Validate outbound JSONL envelope against §11.4, W3-D7, or retailops-integration-v2 (W6.1b-2) and reject any PII fields."""
     if not isinstance(envelope, dict):
         raise ValueError("Outbox envelope must be a JSON object.")
     bad_keys = FORBIDDEN_PII_ENVELOPE_KEYS.intersection(envelope.keys())
     if bad_keys:
         raise ValueError(f"Forbidden PII/chat keys in outbox envelope: {sorted(bad_keys)}")
+    if envelope.get("contract") == "retailops-integration-v2":
+        from retailops.integration.contract import validate_event_v2
+
+        validated_v2 = validate_event_v2(envelope, allow_requests=True)
+        if validated_v2.get("event_type") != "voucher.requested":
+            raise ValueError(f"Unsupported v2 outbox event_type: {validated_v2.get('event_type')}")
+        data_obj = validated_v2.get("data") or {}
+        bad_data_keys = FORBIDDEN_PII_ENVELOPE_KEYS.intersection(data_obj.keys())
+        if bad_data_keys:
+            raise ValueError(f"Forbidden PII/chat keys in v2 outbox data: {sorted(bad_data_keys)}")
+        return validated_v2
     if envelope.get("schema") != OUTBOX_SCHEMA:
         raise ValueError(f"Unexpected outbox schema: {envelope.get('schema')}")
     if envelope.get("schema_version") != OUTBOX_SCHEMA_VERSION:

@@ -1310,24 +1310,24 @@ class Item1ContractV2AndRetireV1Tests(unittest.TestCase):
                 with self.assertRaises(ContractValidationError):
                     validate_event_v2(bad_ev)
 
-    def test_voucher_issued_validates_v2_but_returns_422_unsupported_in_w6_1b_1(self) -> None:
+    def test_voucher_issued_validates_v2_and_records_unmatched_in_imported_events(self) -> None:
         import copy
         from retailops.integration.contract import ensure_w6_1b_1_supported_event, validate_event_v2
         from retailops.integration.ingest import IntegrationIngestService
 
         vch = copy.deepcopy(self.samples["voucher.issued"])
         validate_event_v2(vch, allow_requests=False)
-        with self.assertRaises(ApiError) as err1:
-            ensure_w6_1b_1_supported_event("voucher.issued")
-        self.assertEqual((err1.exception.status, err1.exception.code), (422, "unsupported_event_type"))
+        ensure_w6_1b_1_supported_event("voucher.issued")
 
         with tempfile.TemporaryDirectory() as tmp:
             sessions = PersistentSessions(Path(tmp))
             sessions.provision_tenant("shop-demo", "Shop Demo", seed_demo=False)
             svc = IntegrationIngestService(sessions, digest_key=b"test-digest-key-32-bytes-minimum!!")
-            with self.assertRaises(ApiError) as err2:
-                svc.ingest_event(vch, tenant_id="shop-demo", connector_source_system="marketplace_sim")
-            self.assertEqual((err2.exception.status, err2.exception.code), (422, "unsupported_event_type"))
+            res = svc.ingest_event(vch, tenant_id="shop-demo", connector_source_system="marketplace_sim")
+            self.assertTrue(res.success)
+            with sessions.business_store("shop-demo").connection() as db:
+                self.assertEqual(db.execute("SELECT COUNT(*) AS c FROM imported_events").fetchone()["c"], 1)
+                self.assertEqual(db.execute("SELECT COUNT(*) AS c FROM vouchers").fetchone()["c"], 0)
 
     def test_v1_sales_retired_and_retailops_never_imports_marketplace_sim(self) -> None:
         import ast

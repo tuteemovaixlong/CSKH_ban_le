@@ -54,7 +54,7 @@ INBOUND_EVENT_TYPES = frozenset(
 
 REQUEST_EVENT_TYPES = frozenset({"voucher.requested"})
 ALL_EVENT_TYPES = INBOUND_EVENT_TYPES | REQUEST_EVENT_TYPES
-W6_1B_1_SUPPORTED_EVENT_TYPES = INBOUND_EVENT_TYPES - frozenset({"voucher.issued"})
+W6_1B_1_SUPPORTED_EVENT_TYPES = INBOUND_EVENT_TYPES
 
 PAYMENT_METHODS = frozenset({"cod", "bank_transfer", "e_wallet", "card"})
 ORDER_EVENT_STATUSES = frozenset(
@@ -725,16 +725,10 @@ def validate_event_v2(
 
 
 def ensure_w6_1b_1_supported_event(event_type: str) -> None:
-    """Reject valid v2 events whose canonical handling belongs to W6.1b-2."""
-    if event_type == "voucher.issued":
-        raise ApiError(
-            422,
-            "unsupported_event_type",
-            "Sự kiện 'voucher.issued' hợp lệ theo hợp đồng v2 nhưng chưa được xử lý ở W6.1b-1 (thuộc W6.1b-2).",
-        )
+    """Verify inbound event_type is in the canonical supported v2 inbound set (W6.1b-1 + W6.1b-2)."""
     if event_type not in W6_1B_1_SUPPORTED_EVENT_TYPES:
         raise ApiError(
             422,
             "unsupported_event_type",
-            f"Loại sự kiện '{event_type}' không được cổng nhận W6.1b-1 hỗ trợ.",
+            f"Loại sự kiện '{event_type}' không được cổng nhận hỗ trợ.",
         )

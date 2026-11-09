@@ -122,6 +122,7 @@ def _fallback_order_details(order, product, *, now_ts=None):
         ),
         'refund': None,
         'recipient': None,
+        'vouchers': [],
         'eligibility': eligibility,
         'as_of': eligibility['as_of'],
     }
@@ -184,6 +185,7 @@ class BoundTools:
             'delivery': details['delivery'],
             'address': None,
             'recipient': details.get('recipient'),
+            'vouchers': details.get('vouchers') or [],
             'refund': details['refund'],
             'eligibility': details['eligibility'],
             'as_of': details['as_of'],

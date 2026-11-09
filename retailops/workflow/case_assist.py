@@ -398,6 +398,7 @@ class CaseAssistBoundTools:
             "shipping_fee": det.get("shipping_fee", clean.get("shipping_fee")),
             "ship_to_area": det.get("ship_to_area", clean.get("ship_to_area")),
             "recipient": det.get("recipient"),
+            "vouchers": det.get("vouchers") or [],
             "promised_delivery_by": det.get("promised_delivery_by", clean.get("promised_delivery_by")),
             "refund_summary": det.get("refund_summary"),
             "eligibility": det.get("eligibility"),
