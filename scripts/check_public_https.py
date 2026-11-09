@@ -32,10 +32,13 @@ def main():
         compose = (ROOT / 'deploy/compose.public.yaml').read_text().replace('"80:80"', '"127.0.0.1:18080:80"').replace('"443:443"', '"127.0.0.1:18443:443"')
         (temp/'compose.public.yaml').write_text(compose)
         (temp/'Caddyfile').write_text((ROOT/'deploy/Caddyfile').read_text().replace('{$RETAILOPS_PUBLIC_HOST} {', '{$RETAILOPS_PUBLIC_HOST} {\n\ttls internal'))
+        ci_recipient_key = secrets.token_urlsafe(32)
+        (data/'ci_recipient_key_v1').write_text(ci_recipient_key + '\n', encoding='utf-8')
+        os.chmod(data/'ci_recipient_key_v1', 0o444)
         (temp/'inference.env').write_text('')
         (temp/'api.env').write_text('RETAILOPS_API_ENABLED=false\n')
         (temp/'deployed.env').write_text('RETAILOPS_IMAGE=retailops:ci\nRETAILOPS_DATA_DIR='+str(data)+'\n')
-        (temp/'public.env').write_text('RETAILOPS_PUBLIC_HOST='+HOST+'\nRETAILOPS_PUBLIC_ORIGIN=https://'+HOST+'\nRETAILOPS_PUBLIC_INVITE_TOKEN='+INVITE+'\nRETAILOPS_PUBLIC_CUSTOM_ENABLED=false\n')
+        (temp/'public.env').write_text('RETAILOPS_PUBLIC_HOST='+HOST+'\nRETAILOPS_PUBLIC_ORIGIN=https://'+HOST+'\nRETAILOPS_PUBLIC_INVITE_TOKEN='+INVITE+'\nRETAILOPS_PUBLIC_CUSTOM_ENABLED=false\nRETAILOPS_RECIPIENT_KEY_FILE=/data/ci_recipient_key_v1\n')
         base = ['docker','compose','--project-name','retailops-https-ci-'+str(os.getpid()),
                 '--project-directory',str(temp),'--env-file',str(temp/'deployed.env'),
                 '--env-file',str(temp/'public.env'),'-f',str(temp/'compose.public.yaml')]
@@ -217,9 +220,13 @@ def main():
             run(['python3',str(ROOT/'deploy/configure-postgres.py'),'--directory',str(temp)])
             int_secrets = temp / 'integration-secrets'
             int_secrets.mkdir(mode=0o700, exist_ok=True)
-            for sname in ('retailops_connector_marketplace_sim', 'retailops_event_digest_key'):
+            for sname, sval in (
+                ('retailops_connector_marketplace_sim', secrets.token_urlsafe(32)),
+                ('retailops_event_digest_key', secrets.token_urlsafe(32)),
+                ('retailops_recipient_key_v1', ci_recipient_key),
+            ):
                 spath = int_secrets / sname
-                spath.write_text(secrets.token_urlsafe(32) + '\n', encoding='utf-8')
+                spath.write_text(sval + '\n', encoding='utf-8')
                 os.chmod(spath, 0o444)
             pgbase = base+['-f',str(temp/'compose.postgres.yaml')]
             run(pgbase+['up','-d','--wait','--wait-timeout','90','postgres'])
@@ -273,6 +280,8 @@ CREATE EXTENSION vector WITH SCHEMA retailops_extensions;
         finally:
             cleanup_base = base+['-f',str(temp/'compose.postgres.yaml')] if (temp/'compose.postgres.yaml').exists() else base
             run(cleanup_base+['down','--volumes','--remove-orphans'])
+            if (data/'ci_recipient_key_v1').exists():
+                os.chmod(data/'ci_recipient_key_v1', 0o600)
             if (temp/'postgres-secrets').exists():
                 shutil.rmtree(temp/'postgres-secrets')
             if (temp/'integration-secrets').exists():
