@@ -177,7 +177,7 @@ pg_cid=$("${pg_compose[@]}" ps -q postgres)
 sudo docker cp "$retailops_pg_dump" "$pg_cid:/tmp/restore.dump"
 "${pg_compose[@]}" exec -T postgres sh -eu -c '
   pg_restore --list /tmp/restore.dump \
-    | grep -Ev "; (SCHEMA - retailops_extensions|EXTENSION - vector|COMMENT - EXTENSION vector)($| )" \
+    | grep -Ev "^[0-9]+; [0-9]+ [0-9]+ (SCHEMA - retailops_extensions|EXTENSION - vector|COMMENT - EXTENSION vector)( |$)" \
     > /tmp/restore.toc
   pg_restore -L /tmp/restore.toc --exit-on-error --no-owner --no-acl -U postgres -d "$1" --role=retailops /tmp/restore.dump
   rm -f /tmp/restore.dump /tmp/restore.toc
