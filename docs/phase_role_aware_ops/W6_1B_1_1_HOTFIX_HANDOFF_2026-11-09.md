@@ -1,7 +1,7 @@
-# Phase R1 — W6.1b-1.1 Hotfix Handoff (gỡ đơn demo cũ, rollout khi đổi IP, quy trình restore)
+# Phase R1 — W6.1b-1.1 Hotfix Handoff (gỡ đơn demo cũ, rollout khi đổi IP, quy trình restore, khung thông tin đơn)
 
 > **Trạng thái:** prompt thực thi do owner phát hành ngày 2026-11-09, sau lượt deploy W6.1b-1 lên production cùng ngày. Hotfix nhỏ: sửa code, test và tài liệu vận hành. Không có migration, không đổi schema, không mở W6.1b-2.
-> **Nguyên tắc:** chỉ làm 3 mục ở phần 2. Gặp quyết định chính sách chưa có trong tài liệu thì **dừng và hỏi owner**.
+> **Nguyên tắc:** chỉ làm 4 mục ở phần 2. Gặp quyết định chính sách chưa có trong tài liệu thì **dừng và hỏi owner**.
 
 ## 1. Lỗi gặp khi deploy W6.1b-1 lên production
 
@@ -21,6 +21,15 @@ Production lúc phát hiện: `main` tại `2a21581`, image `…/retailops@sha25
    - Đây cũng là bước dùng khi rollback sau migrate, nên nếu chỉ phát hiện lúc rollback thật thì rất nguy hiểm.
    - Trình tự đã chạy được trên production ngày 2026-11-09 (DB nháp `retailops_rehearsal`): tạo DB owner `retailops`; bằng `postgres` tạo schema `retailops_extensions` và extension `vector` giống `deploy/init-postgres.sh`; lấy TOC bằng `pg_restore --list`, bỏ các dòng `SCHEMA - retailops_extensions`, `EXTENSION - vector`, `COMMENT - EXTENSION vector`; chép dump và TOC vào container postgres; `pg_restore -L <toc> --exit-on-error --no-owner --no-acl --role=retailops`. Kết quả `restore_exit=0`, migrate v9 diễn tập đạt.
 
+4. **Khung thông tin khi khách chọn đơn còn nội dung trước v9 (smoke tay của owner).**
+   - Khi khách chọn một đơn, `Application.focus()` (`retailops/business/application.py`) trả tin nhắn do server tạo bằng `describe_order` (`retailops_conversation.py`), không qua model. Hàm này chưa được cập nhật trong W6.1b-1, nên:
+     - hiện mã nội bộ, ví dụ `Thông tin đơn ord_5aeef27f…`, trái W6.1b-D8 (khách chỉ thấy mã sàn `SIM-O-…`);
+     - luôn kết bằng "Thông tin thanh toán, địa chỉ nhận và lịch giao chi tiết chưa có trong dữ liệu demo", và nhánh `shipping`, `payment` khẳng định "chưa có" dữ liệu, trong khi DB v9 đã có vận đơn, thanh toán, hoàn tiền; cùng lúc đó agent trả lời đúng hành trình giao hàng, nên khách thấy hai thông tin mâu thuẫn;
+     - nhánh mặc định coi mọi đơn không phải `pending` là đã giao: đơn `shipping` hiện "Đơn đã giao nên không đủ điều kiện hủy"; nhánh `cancellation` coi đơn `shipping` là "đang chờ xử lý nên có thể yêu cầu hủy", trái F15 (đơn đang giao không hủy);
+     - câu "Luồng đổi/trả chưa được triển khai" sai từ W3.
+   - Thẻ vận chuyển trên web (`web/app.js`, khoảng dòng 1376) luôn ghi "⏰ Dự kiến nhận" kể cả khi đơn đã giao, và hiện thời gian dạng ISO thô `2026-11-04T16:17:26+07:00`.
+   - Danh sách và chi tiết đơn trên web đã đúng D8 (`formatCustomerOrderId`, `formatDualOrderId`); không đổi phần đó.
+
 ## 2. Phạm vi và tiêu chí chấp nhận
 
 | # | Việc phải làm | Tiêu chí chấp nhận (test cô lập) |
@@ -28,6 +37,7 @@ Production lúc phát hiện: `main` tại `2a21581`, image `…/retailops@sha25
 | 0 | **Sửa audit của `purge-legacy-demo`.** Trong `purge_legacy_demo_orders`, bỏ dòng `self.log(conn, "system", …)`. Thay bằng một sự kiện `legacy_demo_order_purged` cho **mỗi** đơn bị gỡ, ghi bằng `customer_id` thật của đơn đó và `order_id` của đơn, trong cùng giao dịch xóa. Ở `retailops/storage/cli.py`, thêm `removed_order_ids` vào `after_state` của `record_admin_audit` (`action='database.purge_legacy_demo'`). Không đổi luật chọn đơn gỡ hay giữ (W6.1b-D2). Rà các chỗ ghi `business_events` với `customer_id` không phải mã khách thật trong code W6.1b-1 (`retailops/integration/`, `retailops/business/store.py` phần purge và import); sửa cùng cách nếu có, liệt kê trong báo cáo. | Test mới chạy trên **PostgreSQL thật** (cùng cơ chế các test PostgreSQL hiện có trong `tests/test_r1_w6_1b_1_ingest_v9.py`): tenant có ít nhất 3 đơn `retailops_seed`, 1 đơn trong đó có `order_action_requests`. Dry-run rồi chạy thật qua CLI: `PURGE_LEGACY_DEMO_OK`, `removed_count` đúng, đơn có yêu cầu vẫn còn, `business_events` có đúng một dòng `legacy_demo_order_purged` cho mỗi đơn bị gỡ với `customer_id` thật, `admin_audit_log` có `removed_order_ids`. Chạy lại lần hai: `removed_count = 0`, không lỗi. **Báo cáo phải cho thấy test này FAIL trên `main` trước khi sửa** (dán dòng lỗi `ForeignKeyViolation` hoặc tương đương). Test SQLite hiện có vẫn PASS. |
 | 1 | **Sửa `deploy/rollout-public-web.sh` khi IP đổi.** (a) Đọc `web_container`, `previous_image`, `running_image_id` **trước** khối sửa hostname sslip.io. (b) Khối sửa hostname chỉ sửa `public.env` và đặt cờ, ví dụ `host_changed=true`; **không** chạy `up` cho web hay caddy. (c) Điều kiện tạo lại web thêm `host_changed`, ngang với `overlay_changed`. Sau khi web mới healthy, tạo lại caddy để nhận host mới; lệnh tạo lại caddy phải kèm `--env-file admin.env -f compose.admin.yaml` khi cả hai tệp tồn tại, giống `compose(admin=True)` trong `deploy/admin-console.py`. (d) `restore_previous` vẫn quay về `previous_image` cũ khi image mới lỗi; khi `host_changed`, sau rollback cũng tạo lại caddy kèm overlay admin. Giữ nguyên kiểm tra digest pinned và repository cho phép. Thêm chú thích ngắn trong script giải thích thứ tự này và nhắc sự cố 2026-11-09. | Test hợp đồng mới, ví dụ `tests/test_r1_w6_1b_1_1_rollout_ip_change.py`: `previous_image=` xuất hiện trước khối sslip.io; khối sslip.io không chứa `up `; có lệnh tạo lại caddy kèm overlay admin có điều kiện, chạy được bằng `bash -c` với tệp giả trong thư mục tạm (cả hai trường hợp có và không có `admin.env`), theo cách `test_r1_w4_deploy_contracts.py` đang làm; điều kiện rollout có `host_changed`. `bash -n deploy/rollout-public-web.sh` đạt. Các test hiện có về script (`test_r1_w4_deploy_contracts.py`, `test_release_source_consistency.py`, `test_deploy_guard.py`) vẫn PASS; nếu phải sửa regex trong test cũ thì giải thích từng chỗ trong báo cáo. |
 | 2 | **Sửa tài liệu vận hành.** (a) `docs/POSTGRESQL.md`, mục "Backup, restore và rollback": thay đoạn restore bằng trình tự có pgvector ở phần 1 mục 3, dạng lệnh chạy được trên EC2 (`docker compose … exec -T postgres …`), không chứa URL, mật khẩu hay khóa. (b) `docs/04_OPERATIONS/RUNBOOK.md` mục 7, phần W6.1b-1: bước 1 trỏ tới trình tự restore mới; bước 4 ghi rõ `rollout-public-web.sh` chỉ cập nhật `compose.public.yaml`, nên `compose.postgres.yaml` và `Caddyfile` trên host phải chép từ image mới trước khi rollout, và phải giữ dòng `import /etc/caddy/admin/*.caddy` mà `admin-console.py` đã thêm. (c) `docs/EC2_WEB_WORKFLOW.md`, mục "Khởi động lại sau khi stop/start EC2": thêm một câu rằng trước khi có bản sửa mục 1, lượt deploy đỏ có chủ đích phải sửa `public.env` bằng tay trước; sau bản sửa thì script tự xử lý. | `python scripts/check_docs_contract.py` PASS. Không có link hỏng trong ba tệp. |
+| 3 | **Khung thông tin đơn theo dữ liệu v9.** Viết lại `describe_order` (giữ chữ ký hoặc đổi kèm nơi gọi) để dùng dữ liệu server tính sẵn của `read_order_details_in_tx` trong `retailops/business/store.py` (thanh toán, hoàn tiền, vận chuyển, điều kiện hủy, trả, đổi), không tự suy luận lại. Khách thấy `external_order_id`, đơn không có mã sàn mới dùng `id`. Trạng thái `shipping` có câu riêng, không được hủy. Có dữ liệu thì tóm tắt ngắn (phương thức và trạng thái thanh toán, hãng và trạng thái vận chuyển, nơi giao theo khu vực, hạn cam kết hoặc ngày đã giao); trường nào `null` thì nói rõ chưa có thông tin đó, không bịa; không in số điện thoại, địa chỉ chi tiết hay tên người nhận. Bỏ câu "Luồng đổi/trả chưa được triển khai"; điều kiện trả, đổi lấy từ eligibility. Các nhánh `field` (`amount`, `shipping`, `payment`, `cancellation`) theo cùng nguyên tắc. Thẻ vận chuyển trên web: đơn đã giao ghi "Đã giao lúc …" bằng `delivered_at`; đơn chưa giao mới ghi "Dự kiến nhận"; thời gian trong thẻ, kể cả các mốc hành trình, hiển thị dạng `HH:mm dd/MM/yyyy` giờ Việt Nam. | Test Python cho `focus()` hoặc `describe_order` với 4 trạng thái `pending`, `shipping`, `delivered`, `cancelled`: chứa mã sàn, không chứa `ord_`; đơn `shipping` không có câu "đã giao" hay "có thể yêu cầu hủy"; có vận đơn và thanh toán thì có tóm tắt, không có thì nói chưa có; không còn chuỗi "chưa có trong dữ liệu demo" và "Luồng đổi/trả chưa được triển khai" trong repo (trừ test khẳng định chúng đã mất). Test JS (`tests/test_shipment_ui.js` hoặc tương đương): đơn đã giao hiện "Đã giao lúc", không hiện "Dự kiến nhận"; thời gian không còn dạng ISO thô. Chạy cả SQLite và PostgreSQL nếu test đụng store. |
 
 Build lại `notebooks/colab_agent.ipynb` nếu bundle nhúng tệp bị đổi.
 
@@ -36,6 +46,7 @@ Build lại `notebooks/colab_agent.ipynb` nếu bundle nhúng tệp bị đổi.
 - Gắn Elastic IP hoặc domain cố định: cần owner duyệt chi phí, để sau.
 - Tự động chép `compose.postgres.yaml` và `Caddyfile` từ image trong `rollout-public-web.sh` hay `publish_and_activate.py`.
 - Seed đơn mẫu cho tài khoản Google đã có trước W6.1b-1.
+- Đổi văn phong hay nội dung câu trả lời của model (thuộc W6.5, F14).
 - Mọi việc của W6.1b-2.
 
 ## 4. Cấm
@@ -46,7 +57,7 @@ Merge; push vào `main`; force-push, rebase, reset, stash; đổi variable hoặ
 
 Chạy và báo đúng số pass/fail/skip: `python -m unittest discover -s tests -q`; test JS theo `.github/workflows/ci.yml` bằng Node thật; `python scripts/build_agent_notebook.py --check`; `python scripts/check_docs_contract.py`; `python scripts/check_deployment_contract.py`; `bash -n deploy/rollout-public-web.sh`; `git diff --check`. Test PostgreSQL ở mục 0 phải chạy thật (không skip) trên CI của PR; nếu máy local không có PostgreSQL thì ghi rõ và dựa vào CI.
 
-Báo cáo gồm: file đổi theo từng mục 0–2; bằng chứng test mục 0 FAIL trước khi sửa; kết quả từng lệnh; DONE/BLOCKED từng mục; URL PR và kết quả CI. Thêm một dòng mới vào cột của bạn trong [W1 execution log](W1_EXECUTION_LOG_2026-10-31.md) (ghi rõ là W6.1b-1.1), không sửa dòng cũ.
+Báo cáo gồm: file đổi theo từng mục 0–3; bằng chứng test mục 0 FAIL trước khi sửa; kết quả từng lệnh; DONE/BLOCKED từng mục; URL PR và kết quả CI. Thêm một dòng mới vào cột của bạn trong [W1 execution log](W1_EXECUTION_LOG_2026-10-31.md) (ghi rõ là W6.1b-1.1), không sửa dòng cũ.
 
 ## 6. Sau khi báo cáo
 
@@ -55,4 +66,5 @@ Claude kiểm chứng một lượt theo tiêu chí ở phần 2; owner quyết 
 1. Trên EC2, kiểm IP công khai khớp `RETAILOPS_PUBLIC_HOST` trong `public.env`.
 2. Bật cờ deploy, chạy workflow **Deploy baseline runner to EC2**, tắt cờ. Mong đợi `PUBLIC_WEB_ROLLOUT_OK`, 2 lần `LIVE_E2E_SMOKE_OK`, `ADMIN_CONSOLE_SMOKE_OK`.
 3. Trên EC2, tenant production `browser-demo-20260908014853`: `purge-legacy-demo --dry-run` (mong đợi 8 gỡ, 1 giữ là `O-819127`), owner duyệt, rồi chạy thật. Sau đó tenant còn `retailops_seed|1` và `marketplace_sim|128` (hoặc nhiều hơn nếu có đơn mới).
-4. Claude ghi biên bản vào [readiness record](IMPLEMENTATION_READINESS_BLOCKED_2026-10-27.md).
+4. Smoke tay: khách chọn một đơn đã giao và một đơn đang giao; khung thông tin hiện mã `SIM-O-…`, có tóm tắt vận chuyển và thanh toán, đơn đang giao không báo được hủy; thẻ vận chuyển của đơn đã giao ghi "Đã giao lúc …".
+5. Claude ghi biên bản vào [readiness record](IMPLEMENTATION_READINESS_BLOCKED_2026-10-27.md).
