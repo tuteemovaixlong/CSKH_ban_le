@@ -196,7 +196,11 @@ class PublicWeb:
         require(host == self.host or loopback_health, 403, 'invalid_host', 'Địa chỉ web không hợp lệ.')
         require(method in ('GET', 'POST'), 405, 'method_not_allowed', 'Phương thức không được hỗ trợ.')
         allow_query = (
-            path in ('/auth/google/callback', '/api/admin/accounts', '/api/admin/audit-log')
+            path in (
+                '/auth/google/callback', '/api/admin/accounts', '/api/admin/audit-log',
+                # Manager list routes paginate with a query string (W5, W6.1b-2).
+                '/api/manager/order-actions', '/api/manager/compensations',
+            )
             or path.startswith('/api/admin/accounts/')
         )
         require(not env.get('QUERY_STRING') or allow_query, 400, 'unexpected_query', 'Đường dẫn không nhận tham số truy vấn.')
