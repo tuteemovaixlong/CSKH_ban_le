@@ -562,3 +562,54 @@ Ghi chú không chặn: Tool Inspector bỏ 3 tool đọc trước đây đượ
 - `Caddyfile.maintenance` trên host còn bản ngày 2026-11-05, chưa có khối `@internal_routes` và dòng import admin; không dùng `switch-maintenance.sh` khi reset cho tới khi chép lại từ image.
 
 **Kết luận:** W6.1b-2 **READY** để thực thi theo [W6.1b-2 execution handoff](W6_1B_2_EXECUTION_HANDOFF_2026-11-09.md) khi owner merge §21. Reset dữ liệu và deploy cần owner duyệt riêng theo mục 6 của handoff. Readiness tổng thể vẫn `BLOCKED` cho W6.2 trở đi.
+
+### 2026-11-10 W6.1b-2 verification and merge record
+
+**Kiểm chứng.** PR #80 của Argon, nhánh `feat/phase-r1-w6-1b-2`, theo [W6.1b-2 handoff](W6_1B_2_EXECUTION_HANDOFF_2026-11-09.md) và §21. Hai vòng kiểm chứng:
+
+| Vòng | Head | Kết quả |
+|---|---|---|
+| 1 | `07df51c` | Đạt mục 0–9: không đổi schema; `cryptography==46.0.5` ghim hash cùng `cffi`, `pycparser`, `typing_extensions`; AES-256-GCM, nonce 12 byte, AAD gồm tenant, đơn, trường, `key_id`, khóa con HKDF riêng cho mã hóa và cho HMAC tra số điện thoại; production thiếu khóa thì từ chối `order.created` có người nhận; tool và model chỉ nhận bản đã che; xem bản đầy đủ cần lý do, Staff phải giữ ca có gắn đơn, audit ghi trước khi trả dữ liệu; bồi thường cố định 48 giờ và 50.000 VNĐ, API duyệt từ chối trường mệnh giá, duyệt bằng cập nhật có điều kiện; khóa chống trùng tất định; reset tắt và bật lại trigger chỉ-ghi-thêm trong cùng giao dịch, xóa tệp bằng chứng sau commit; 3 kịch bản hồi quy mới, không nới kịch bản cũ. **MAJOR:** thông báo mốc vận chuyển phát lại khi nhập hàng loạt, nên sau reset tài khoản đã có hội thoại nhận một loạt thông báo cũ; `DEMO_VOUCHER_LOOP.md` cho khách chọn `SIM-O-ST-013` vốn thuộc khách giả lập không đăng nhập được, trong khi đơn trễ duy nhất của tài khoản thật là đơn mẫu `-02`, chỉ trễ quá 48 giờ sau khoảng 120 giờ kể từ lúc nạp. **Không chặn:** che số điện thoại người nhận lộ 7 trên 10 chữ số như cách che số shipper; ngoài production, thiếu tệp khóa thì dùng khóa tạm trong bộ nhớ. |
+| 2 | `7e07617` | Hai MAJOR đóng: `--no-notices` cho `import-events` và `seed-account-orders`, chỉ chặn 3 mốc vận chuyển, giữ thông báo trễ hạn và voucher, test FAIL trước khi sửa; tài liệu demo yêu cầu nạp ít nhất 5 ngày trước buổi demo, dùng đơn `-02` của tài khoản demo, có lệnh kiểm trước đề xuất `proposed`; RUNBOOK kiểm `tableowner` trước reset. Lượt CI đầu đỏ đúng một test `test_http_headroom` (P99 `GET /api/session` 144 ms, F19), chạy lại xanh. |
+
+**Đã kiểm độc lập và đạt:** CI 6/6 trên `7e07617`; 4 bộ test PostgreSQL thật của mục 1, 4, 5, 8 chạy không skip; cục bộ 24 test W6.1b-2 OK (4 skip PostgreSQL), test W6.1b-1 và `test_conversation` OK, kiểm docs, deploy, notebook, eval đạt; số đơn trễ thật trong dữ liệu demo được tính lại từ `data/demo_events/`.
+
+**Merge:** owner duyệt, PR #80 merge vào `main` tại `04db5e0` ngày 2026-11-10. Workflow deploy tự bỏ qua vì cờ deploy đang tắt.
+
+**Còn mở:**
+- F21: vòng quét trễ hạn mở lại giao dịch ghi mỗi 15 giây cho cả đơn đã có đề xuất và thông báo; ghi trong [W6 backlog](W6_BACKLOG_2026-11-06.md).
+- Deploy W6.1b-2 theo mục 6 của handoff: tạo khóa `retailops_recipient_key_v1` và backup riêng, chép `compose.postgres.yaml`, `Caddyfile`, `Caddyfile.maintenance` từ image, rollout, dừng web để reset rồi nhập lại với `--no-notices`, smoke. Nạp dữ liệu ít nhất 5 ngày trước buổi demo voucher.
+- Lệnh kiểm trước buổi demo dùng `list_manager_compensations` với giới hạn mặc định 50 dòng; quá 50 đề xuất thì có thể không thấy đơn của tài khoản demo.
+
+### 2026-11-10 W6.1b-2 production deploy record
+
+**Trước deploy.**
+- F21 sửa trong PR #82 (merge `ce24729`): vòng quét trễ hạn bỏ qua đơn đã có đề xuất bồi thường, và đơn trễ chưa quá 48 giờ đã có thông báo hoặc khách chưa có hội thoại. Đo với 8 cửa hàng khách: mỗi vòng quét nền từ 250–520 ms còn 130–160 ms. Test mới FAIL trước khi sửa (`3 != 0` giao dịch ghi), PASS sau khi sửa.
+- Lượt deploy [`42756086177`](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/42756086177) đỏ ở bước chạy test, trước khi build image: harness PostgreSQL của W6.1b-2 coi mọi lần chạy có `GITHUB_ACTIONS=true` là bắt buộc có PostgreSQL, trong khi workflow deploy chạy không có PostgreSQL. Sửa trong PR #83 (merge `7434a66`): chỉ bắt buộc khi job đặt `RETAILOPS_REQUIRE_PG_TESTS=1`. Production không bị đụng.
+
+**EC2.** IP `100.26.48.5` khớp `public.env`; đĩa còn trống 42 GB. Khóa `integration-secrets/retailops_recipient_key_v1` tạo lúc 04:07Z (`0444`, 64 byte); backup riêng `/root/retailops-recipient-key-backups/recipient-key-v1-20261110T040755Z.tgz`. `compose.postgres.yaml` trên host được thêm 4 dòng của PR #80 và kiểm SHA-256 trước (`5ae37352…`) và sau (`7cd49242…`, trùng bản trên `main`); bản cũ `compose.postgres.yaml.bak-w6-1b-2-*`.
+
+**Rollout.** Workflow [`42758617852`](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/42758617852), image `sha256:f1fe0d30db492dc1c2a23e66c8512a041e77f49d6af43f80a282a25a2b36c7ad`: 1.066 test hai lần, `PUBLIC_WEB_ROLLOUT_OK`, 2 lần `LIVE_E2E_SMOKE_OK` (smoke nạp dữ liệu sàn ảo có người nhận, nên khóa được gắn đúng), `ADMIN_CONSOLE_SMOKE_OK`. `/run/secrets/` có 4 tệp; `connector check`: `recipient_key_status: ok`. `Caddyfile.maintenance` chép từ image, giữ dòng import admin (`internal_routes` 2).
+
+**Reset dữ liệu demo: chưa chạy.** Bảng `shipment_events`, `order_action_decisions` thuộc `retailops`; 0 ca mở trên đơn sàn ảo. Backup trước reset `backups/pre-w6-1b-2-20261110T051527Z.dump` (11.189.066 byte, 13.265 mục TOC). Dry-run báo 131 đơn, 2 đề xuất bồi thường, 2.067 `imported_events` sẽ gỡ, nhưng `blocking_tombstones` có 2 mục nên chạy thật sẽ từ chối: `O-757461` (`CG-414e57aa`) và `O-819126` (`CG-d9b82ffe`), đều từ đợt dọn đơn demo cũ ngày 2026-10-24, không trùng mã `SIM-O-…` nào. Lệnh reset đang liệt kê mọi tombstone thay vì chỉ tombstone chặn dữ liệu của nguồn (F22). Owner chọn bỏ qua reset hôm nay; web dừng khoảng 1 phút lúc chụp backup.
+
+**Smoke và sự cố phát hiện.**
+- Tab "Yêu cầu đơn hàng" của Manager báo không tải được, khung "Bồi thường giao trễ" không hiện: `GET /api/manager/order-actions?…` và `/api/manager/compensations?…` trả `400 unexpected_query` vì cổng chặn query string trong `retailops/http/public.py` chưa cho phép hai route này. Lỗi có từ W5 (2026-11-05) cho `order-actions`. Sửa trong PR #84 (merge `349484a`) kèm test quét `web/app.js`; deploy [`42765141424`](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/42765141424), image `sha256:fce32728cd6fc67083d442fec34cfa858d4a1adc4be18af65b29a56c63e95c4d`, xanh; hai route trả 401 khi chưa đăng nhập, route khác vẫn 400.
+- Vòng voucher trọn trên production: Manager duyệt `SIM-O-ST-013` (trễ 72 giờ, 50.000 VNĐ cố định, không có ô sửa mệnh giá) → `requested`; `export-voucher-requests` in một dòng `voucher.requested` không có dữ liệu cá nhân; sàn ảo trên máy Claude phát `VCH-L9N2TCKNWM` (`issued: 1`); `import-events --rebase-clock now` → `errors: 0`, voucher 50.000 VNĐ hạn 2026-12-10, đề xuất `issued`. Lần nhập đầu lỗi "Cannot access the configured data or credential file" vì phiên SSM còn `umask 077` từ bước tạo khóa nên tệp tạm `0600`; `chmod 0644` thì chạy.
+- `seed-account-orders --all-customers --no-notices`: nạp mẫu 3 đơn cho `C-001` và `cust_c104…`; bỏ qua `cust_2f1b…` (đã có đơn) và `CG-d9b82ffe` (tombstone). `order_recipients`: 6 dòng, cả 6 có ba cột dạng `r1gcm1:v1:…`, 0 dòng giống bản rõ, `phone_masked` dạng `0123.xxx.558`, `retention_until` có ở 4 đơn đã giao.
+- Chưa kiểm tay: khách xem người nhận của đơn mình, AI chỉ nhận số đã che, Staff xem bản đầy đủ có audit (`admin_audit_log` chưa có dòng `recipient.reveal`). Các phần này có test PostgreSQL thật trên CI.
+
+**Backup và thời hạn giữ:**
+
+| Tệp | Vị trí | Giữ tới |
+|---|---|---|
+| `pre-w6-1b-2-20261110T051527Z.dump` | `/opt/retailops/backups/` | xóa ngày 2027-01-31 |
+| `recipient-key-v1-20261110T040755Z.tgz` | `/root/retailops-recipient-key-backups/` | xóa ngày 2027-01-31 |
+
+`RETAILOPS_DEPLOY_ENABLED` để `false` (tắt lúc 06:13:20Z).
+
+**Còn mở:**
+- F22: sửa lệnh reset chỉ chặn tombstone trùng đơn hoặc khách của nguồn, rồi reset trước 2026-12-15 để đơn mẫu `-02` trễ đúng tuần bảo vệ và 131 đơn cửa hàng có người nhận mã hóa.
+- Smoke tay phần xem người nhận và audit `recipient.reveal`.
+- Đề xuất bồi thường của `SIM-O-F6E2B615-03` (tài khoản Tu Luong) để nguyên, dùng cho demo trọn vòng phía khách.
+- `DEMO_VOUCHER_LOOP.md`: thêm `umask 022` và `chmod 0644` cho tệp tạm trên EC2.
