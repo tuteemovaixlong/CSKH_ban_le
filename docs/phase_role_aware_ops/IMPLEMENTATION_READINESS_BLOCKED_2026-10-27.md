@@ -636,3 +636,26 @@ Ghi chú không chặn: Tool Inspector bỏ 3 tool đọc trước đây đượ
 - Kho mới 14 tài liệu, khoảng 15,6 KB, 27 chunk. Chạy thử offline phần điểm vector với 18 câu hỏi ở mục 2.4 của handoff: 18/18 có tài liệu mong đợi trong 3 kết quả đầu sau hai bộ lọc của `KnowledgeTool`.
 
 **Kết luận:** W6.2 **READY** để thực thi theo [W6.2 execution handoff](W6_2_EXECUTION_HANDOFF_2026-11-10.md) khi owner merge PR chứa §22 và kho chính sách mới. Deploy, nạp tri thức cho tenant production và reset dữ liệu demo cần owner duyệt riêng theo mục 6 của handoff. Readiness tổng thể vẫn `BLOCKED` cho W6.3 trở đi; W6.3 cần handoff riêng.
+
+### 2026-11-10 W6.3 readiness review
+
+> **Phạm vi:** một lượt readiness review cho W6.3, chỉ BLOCKER/MAJOR, đối chiếu dòng W6.3 và mục 3 của [W6 backlog](W6_BACKLOG_2026-11-06.md), `khoa_luan/05_thiet_ke_bo_danh_gia.md` và `khoa_luan/eval_pack/` với code trên `main` tại `349484a` cộng kho chính sách của W6.2. Repo chưa có ca nào của bộ 250 ca: không có `evals/suites/`, model độc lập chưa sinh bộ nào.
+
+| ID | Mức | Vấn đề | Đóng bằng |
+|---|---|---|---|
+| `W63-RR-01` | BLOCKER | **`eval_pack` dùng dữ liệu đã bị gỡ.** Bản 2026-11-06 mô tả khách `C-001`, đơn `O-101`, `O-702`, `O-202` và kết quả tool viết cứng; từ W6.1b-1 dữ liệu demo là đơn sàn ảo `SIM-O-…` của các khách `SIM-C-…`, nạp từ `data/demo_events/`. Ca sinh từ bản cũ sẽ không chạy được | W6.3-D5: `eval_pack` bản 2; khối dữ liệu của `03` do script sinh, CI kiểm đồng bộ |
+| `W63-RR-02` | MAJOR | `03` mục 5 chép 9 tài liệu cũ; sau W6.2 kho có 14 tài liệu. Danh sách "không có bằng chứng" của S03, S12 và ca hotline của S07 không còn đúng: kho đã có thời gian hoàn tiền, đồng kiểm, hóa đơn VAT, giờ làm việc | `05` bản 2 viết lại tình huống con; khối `knowledge` sinh từ `data/knowledge/` |
+| `W63-RR-03` | MAJOR | **Runner thiếu cấu hình thí nghiệm (F6):** không chạy lặp, không có pass^k, không chọn được `legacy`, không tắt được thinking, không đổi được ngân sách ngữ cảnh, truy hồi luôn giả lập với điểm 0,9 | W6.3 handoff hàng 2 |
+| `W63-RR-04` | MAJOR | Thinking chỉ bật cho cả server qua `--default-chat-template-kwargs` của vLLM; cấu hình C cần tắt theo từng request. Cấu hình D cần ngân sách lịch sử theo cửa sổ 8k và vLLM chạy `--max-model-len 8192`; hiện ngân sách là hằng số chỉnh cho 16k | Hai cấu hình mới có mặc định giữ nguyên hành vi; `RETAILOPS_MAX_MODEL_LEN` trong notebook vLLM |
+| `W63-RR-05` | MAJOR | `check_eval_dataset.py` chỉ nhận đúng hai tệp hồi quy cũ với số ca cố định; không kiểm `meta`, `customer`, hạn mức của `05`, hay đoạn `knowledge` có đúng nguyên văn không | W6.3 handoff hàng 1 |
+| `W63-RR-06` | MAJOR | Đường chèn lệnh qua mô tả sản phẩm của AgentDojo không làm được: runner không ghi đè được dữ liệu sản phẩm theo từng ca; không có cách chấm riêng `utility` và `attack_success` | `overrides.product_descriptions`, `attack_not`, `attack_tools_not_called` |
+| `W63-RR-07` | MAJOR | Chưa có script thống kê bootstrap, McNemar; `evals/qrels/policy_qrels_v1.json` gắn với `benchmark_250` cũ, không đo được truy hồi trên kho mới | W6.3 handoff hàng 3, 4 |
+| `W63-RR-08` | MAJOR | 4 ca mẫu của `06_vi_du.jsonl` dùng dữ liệu cũ và không được CI chạy | W6.3 handoff hàng 6, 7 |
+
+**Ghi chú không chặn:**
+- `khoa_luan/05_thiet_ke_bo_danh_gia.md` mục 2, 3, 5 còn ghi 150 ca, 11 bộ và seed `C-001`; phần đầu tệp đã ghi 250 ca. Sửa khi viết Chương 4.
+- `evals/scenarios/benchmark_250.jsonl` và `evals/batches/B01–B10` là bộ một lượt cũ do DeepSeek sinh, giữ làm tài liệu lịch sử (W6.3-D7).
+- Runner đã chạy được `RETAILOPS_AGENT_MODE=legacy` ở tầng ứng dụng; chỉ thiếu cờ và kiểm rằng `legacy` không dùng với gateway giả.
+- Dữ liệu demo được dời mốc sao cho sự kiện mới nhất trùng thời điểm nạp, nên số ngày tương đối của đơn, và do đó điều kiện 7, 15, 90 ngày, không đổi theo ngày chạy.
+
+**Kết luận:** phần code của W6.3 **READY** để thực thi theo [W6.3 execution handoff](W6_3_EXECUTION_HANDOFF_2026-11-10.md) khi owner merge PR chứa §23 và `eval_pack` bản 2; executor là Codex, song song với W6.2. Phần dữ liệu bắt đầu sau khi phần code merge, theo mục 7 của handoff. Readiness tổng thể vẫn `BLOCKED` cho W6.4 trở đi.

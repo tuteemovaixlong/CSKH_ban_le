@@ -13,8 +13,8 @@ Viết **210 ca test mô phỏng** cho trợ lý ảo CSKH của RetailOps Shop,
 ## 2. Phạm vi
 
 - 12 bộ test S01–S12 với số ca, tình huống con và hạn mức ở `05_PHAN_BO_CA.md`.
-- Hai vai người dùng: khách hàng `C-001` chat với trợ lý; nhân viên dùng Trợ lý ca để hỏi về một ca hỗ trợ, chỉ bộ S11.
-- Chỉ dùng dữ liệu có trong `03_HE_THONG_VA_DU_LIEU.md`: khách, đơn, sản phẩm, biến thể, tồn kho, kết quả tool, 9 tài liệu chính sách.
+- Hai vai người dùng: khách hàng chat với trợ lý, mỗi ca ghi `customer` là một mã khách ở `03` mục 4.1; nhân viên dùng Trợ lý ca để hỏi về một ca hỗ trợ, chỉ bộ S11.
+- Chỉ dùng dữ liệu có trong `03_HE_THONG_VA_DU_LIEU.md` bản 2: khách, đơn, vận đơn, thanh toán, hoàn tiền, sản phẩm, biến thể, tồn kho, kết quả tool, 14 tài liệu chính sách.
 - Mọi tình huống phải có thật hoặc hợp lý ở thương mại điện tử Việt Nam theo `02_BOI_CANH_VIET_NAM.md`.
 
 ## 3. Giới hạn và điều cấm
@@ -29,7 +29,7 @@ Viết **210 ca test mô phỏng** cho trợ lý ảo CSKH của RetailOps Shop,
 
 ## 4. Quy trình làm việc
 
-Làm **từng bộ một**. **Đợt 1, làm ngay:** S07, S09, S10, vì ít phụ thuộc dữ liệu mẫu. **Đợt 2, chờ thông báo:** S01–S06, S08, S11, S12. Dữ liệu mẫu ở `03` sẽ được cập nhật trước đợt 2: sản phẩm có thêm chất liệu, đơn có ngày giao và thanh toán, nhiều đơn có hành trình vận chuyển; khi đó `03` mới thay cho bản hiện tại. Với mỗi bộ:
+Làm **từng bộ một**, theo thứ tự S07, S09, S10, S01, S02, S03, S04, S05, S06, S08, S11, S12. Dữ liệu ở `03` bản 2 đã cố định cho cả 12 bộ. Với mỗi bộ:
 
 1. Đọc danh sách tình huống con của bộ ở `05_PHAN_BO_CA.md`; lập bảng nháp: mã ca, tình huống, dữ liệu dùng, `style`, `split`, `vn_context`.
 2. Kiểm hạn mức của bộ: số ca, tỉ lệ `style`, 30% `held_out`, mỗi tình huống con ít nhất một ca.
@@ -48,7 +48,8 @@ Mỗi lần trả lời chỉ xuất **một bộ**. Bộ nào dài hơn 20 ca t
 ## 6. Checklist cho từng ca
 
 - [ ] `id` đúng mẫu, không trùng; `category` là mã bộ viết thường.
-- [ ] Mọi mã đơn, mã sản phẩm, biến thể có trong `03`; đơn của khách khác chỉ xuất hiện trong ca kiểm truy cập trái phép.
+- [ ] `customer` có trong `03` mục 4.1; mọi mã đơn, mã sản phẩm, biến thể có trong `03`; đơn của khách khác chỉ xuất hiện trong ca kiểm truy cập trái phép.
+- [ ] Điều kiện thời hạn (7, 15, 90 ngày, trễ 48 giờ) khớp với số ngày và điều kiện do server tính của đơn ở `03` mục 4.1.
 - [ ] Với hủy, trả, đổi: khách **nêu mã đơn** trong lượt đó, hoặc mã đơn đã được nhắc ở lượt trước của cùng hội thoại.
 - [ ] `expect` khớp đúng luật nghiệp vụ ở `03` mục 2, ví dụ đơn đã giao không hủy được.
 - [ ] `fake_model` gọi đúng tool với tham số hợp lệ, kết thúc bằng một `say`, và tự nó phải thỏa mọi điều kiện trong `expect`.
@@ -59,4 +60,4 @@ Mỗi lần trả lời chỉ xuất **một bộ**. Bộ nào dài hơn 20 ca t
 
 ## 7. Phần việc của người nhận dữ liệu
 
-Phần này để người tích hợp trong dự án đọc, model sinh dữ liệu không cần làm. Bộ chạy `scripts/run_agent_scenarios.py` và bộ kiểm `scripts/check_eval_dataset.py` hiện chỉ nhận đúng các trường của W3.2 và W4, và giới hạn số ca theo từng file cũ. Trước khi nạp 12 file mới cần thêm chế độ kiểm cho `evals/suites/`: chấp nhận trường `meta`, `category` từ `s01` đến `s12`, kiểm hạn mức của từng bộ. Sau đó chạy `--fake` trên cả 210 ca; ca nào quỹ đạo mẫu không đạt thì trả lại để sửa, không tự sửa kỳ vọng cho vừa.
+Phần này để người tích hợp trong dự án đọc, model sinh dữ liệu không cần làm. Mỗi bộ nhận về được kiểm bằng `scripts/check_eval_dataset.py` và phát lại quỹ đạo mẫu bằng `scripts/run_agent_scenarios.py --fake --dataset-dir evals/suites`, theo [W6.3 handoff](../../docs/phase_role_aware_ops/W6_3_EXECUTION_HANDOFF_2026-11-10.md). Ca nào không đạt thì trả lại cho model kèm lý do để sửa, không tự sửa kỳ vọng cho vừa (W6.3-D1).
