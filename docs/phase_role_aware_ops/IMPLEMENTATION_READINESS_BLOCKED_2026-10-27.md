@@ -562,3 +562,21 @@ Ghi chú không chặn: Tool Inspector bỏ 3 tool đọc trước đây đượ
 - `Caddyfile.maintenance` trên host còn bản ngày 2026-11-05, chưa có khối `@internal_routes` và dòng import admin; không dùng `switch-maintenance.sh` khi reset cho tới khi chép lại từ image.
 
 **Kết luận:** W6.1b-2 **READY** để thực thi theo [W6.1b-2 execution handoff](W6_1B_2_EXECUTION_HANDOFF_2026-11-09.md) khi owner merge §21. Reset dữ liệu và deploy cần owner duyệt riêng theo mục 6 của handoff. Readiness tổng thể vẫn `BLOCKED` cho W6.2 trở đi.
+
+### 2026-11-10 W6.1b-2 verification and merge record
+
+**Kiểm chứng.** PR #80 của Argon, nhánh `feat/phase-r1-w6-1b-2`, theo [W6.1b-2 handoff](W6_1B_2_EXECUTION_HANDOFF_2026-11-09.md) và §21. Hai vòng kiểm chứng:
+
+| Vòng | Head | Kết quả |
+|---|---|---|
+| 1 | `07df51c` | Đạt mục 0–9: không đổi schema; `cryptography==46.0.5` ghim hash cùng `cffi`, `pycparser`, `typing_extensions`; AES-256-GCM, nonce 12 byte, AAD gồm tenant, đơn, trường, `key_id`, khóa con HKDF riêng cho mã hóa và cho HMAC tra số điện thoại; production thiếu khóa thì từ chối `order.created` có người nhận; tool và model chỉ nhận bản đã che; xem bản đầy đủ cần lý do, Staff phải giữ ca có gắn đơn, audit ghi trước khi trả dữ liệu; bồi thường cố định 48 giờ và 50.000 VNĐ, API duyệt từ chối trường mệnh giá, duyệt bằng cập nhật có điều kiện; khóa chống trùng tất định; reset tắt và bật lại trigger chỉ-ghi-thêm trong cùng giao dịch, xóa tệp bằng chứng sau commit; 3 kịch bản hồi quy mới, không nới kịch bản cũ. **MAJOR:** thông báo mốc vận chuyển phát lại khi nhập hàng loạt, nên sau reset tài khoản đã có hội thoại nhận một loạt thông báo cũ; `DEMO_VOUCHER_LOOP.md` cho khách chọn `SIM-O-ST-013` vốn thuộc khách giả lập không đăng nhập được, trong khi đơn trễ duy nhất của tài khoản thật là đơn mẫu `-02`, chỉ trễ quá 48 giờ sau khoảng 120 giờ kể từ lúc nạp. **Không chặn:** che số điện thoại người nhận lộ 7 trên 10 chữ số như cách che số shipper; ngoài production, thiếu tệp khóa thì dùng khóa tạm trong bộ nhớ. |
+| 2 | `7e07617` | Hai MAJOR đóng: `--no-notices` cho `import-events` và `seed-account-orders`, chỉ chặn 3 mốc vận chuyển, giữ thông báo trễ hạn và voucher, test FAIL trước khi sửa; tài liệu demo yêu cầu nạp ít nhất 5 ngày trước buổi demo, dùng đơn `-02` của tài khoản demo, có lệnh kiểm trước đề xuất `proposed`; RUNBOOK kiểm `tableowner` trước reset. Lượt CI đầu đỏ đúng một test `test_http_headroom` (P99 `GET /api/session` 144 ms, F19), chạy lại xanh. |
+
+**Đã kiểm độc lập và đạt:** CI 6/6 trên `7e07617`; 4 bộ test PostgreSQL thật của mục 1, 4, 5, 8 chạy không skip; cục bộ 24 test W6.1b-2 OK (4 skip PostgreSQL), test W6.1b-1 và `test_conversation` OK, kiểm docs, deploy, notebook, eval đạt; số đơn trễ thật trong dữ liệu demo được tính lại từ `data/demo_events/`.
+
+**Merge:** owner duyệt, PR #80 merge vào `main` tại `04db5e0` ngày 2026-11-10. Workflow deploy tự bỏ qua vì cờ deploy đang tắt.
+
+**Còn mở:**
+- F21: vòng quét trễ hạn mở lại giao dịch ghi mỗi 15 giây cho cả đơn đã có đề xuất và thông báo; ghi trong [W6 backlog](W6_BACKLOG_2026-11-06.md).
+- Deploy W6.1b-2 theo mục 6 của handoff: tạo khóa `retailops_recipient_key_v1` và backup riêng, chép `compose.postgres.yaml`, `Caddyfile`, `Caddyfile.maintenance` từ image, rollout, dừng web để reset rồi nhập lại với `--no-notices`, smoke. Nạp dữ liệu ít nhất 5 ngày trước buổi demo voucher.
+- Lệnh kiểm trước buổi demo dùng `list_manager_compensations` với giới hạn mặc định 50 dòng; quá 50 đề xuất thì có thể không thấy đơn của tài khoản demo.
