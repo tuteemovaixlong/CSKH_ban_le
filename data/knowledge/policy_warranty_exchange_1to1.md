@@ -1,13 +1,19 @@
-# Chính sách bảo hành và đổi mới 1-1 tận nhà
+# Chính sách bảo hành, đổi mới 1-1 tận nhà
 
-Chính sách bảo hành và đổi mới áp dụng cho các sản phẩm thời trang và gia dụng chính hãng của RetailOps.
+Tài liệu giả lập của RetailOps Demo, không phải cam kết thương mại thực tế.
 
-## 1. Phạm vi bảo hành
-- Sản phẩm gặp lỗi từ nhà sản xuất hoặc do va đập trong quá trình vận chuyển: bung đường may chỉ, kẹt hoặc gãy khóa kéo YKK, rách vải lót, phụ kiện móp méo.
-- Thời hạn bảo hành: 90 ngày kể từ ngày khách hàng ký nhận hàng thành công từ bưu tá.
+## Phạm vi bảo hành
 
-## 2. Quy trình đổi mới 1-1 tận nhà (Door-to-door Exchange)
-- Khách hàng cung cấp ảnh hoặc video chụp rõ vị trí lỗi (unboxing photo/video) qua cổng chat.
-- Trợ lý AI xác thực thời hạn bảo hành và tạo Phiếu Đề Xuất Đổi Mới 1-1.
-- Chuyên viên CSKH xác nhận duyệt đề xuất trên hệ thống.
-- Bưu tá sẽ mang sản phẩm mới 100% nguyên seal đến tận nhà khách và thu hồi lại sản phẩm lỗi mang về kho. Khách hàng không cần phải mang ra bưu cục. Toàn bộ chi phí vận chuyển 2 chiều do shop chi trả 100%.
+Bảo hành lỗi do nhà sản xuất hoặc do va đập khi vận chuyển: bung đường may, kẹt hoặc gãy khóa kéo, rách vải lót, phụ kiện móp méo. Không bảo hành hư hỏng do sử dụng sai cách, giặt sai hướng dẫn hoặc hao mòn thông thường.
+
+## Thời hạn bảo hành
+
+Thời hạn bảo hành mặc định là **90 ngày kể từ ngày giao**. Một số sản phẩm có thời hạn bảo hành riêng ghi trong thông tin sản phẩm, có sản phẩm không bảo hành. Hệ thống tự tính đơn còn hạn bảo hành hay không và còn bao nhiêu ngày; trợ lý đọc kết quả đó, không tự tính.
+
+## Cách gửi yêu cầu bảo hành, đổi mới 1-1
+
+Khách mô tả lỗi; trợ lý mở biểu mẫu đổi sản phẩm cùng loại trong khung chat. Khách chọn lý do, đính kèm ảnh hoặc video thấy rõ vị trí lỗi rồi bấm gửi. Nhân viên cửa hàng xem bằng chứng rồi duyệt hoặc từ chối; trợ lý không tự xác nhận bảo hành và không hứa trước kết quả.
+
+## Sau khi yêu cầu bảo hành được duyệt
+
+Shipper mang sản phẩm mới cùng loại đến tận nhà và thu hồi sản phẩm lỗi; khách không phải mang ra bưu cục. Shop trả toàn bộ phí vận chuyển 2 chiều. Mẫu đó hết hàng thì nhân viên liên hệ khách để chọn mẫu khác hoặc hoàn tiền.

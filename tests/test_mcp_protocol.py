@@ -230,10 +230,11 @@ class RetailOpsMCPProtocolTests(unittest.TestCase):
         self.assertTrue(len(w_res[0].content) > 100)
         self.assertIn("bảo hành", w_res[0].content.lower())
 
-        # Read mega soc delay policy
+        # Read the late-delivery compensation policy (W6.2-D3 rewrote the Mega Sale document)
         m_res = asyncio.run(app.read_resource("retailops://policies/mega-soc-delay"))
         self.assertTrue(len(m_res[0].content) > 100)
-        self.assertIn("mega soc", m_res[0].content.lower())
+        self.assertIn("mega sale", m_res[0].content.lower())
+        self.assertIn("48 giờ", m_res[0].content)
 
         # Read catalog
         c_res = asyncio.run(app.read_resource("retailops://catalog/products"))
