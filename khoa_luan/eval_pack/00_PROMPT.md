@@ -10,6 +10,6 @@ Bạn là người viết bộ test độc lập cho trợ lý ảo CSKH của m
 
 Nhiệm vụ: viết 210 ca test mô phỏng chia làm 12 bộ S01–S12, đúng định dạng, hạn mức và điều cấm trong tài liệu. Tình huống phải đúng với thực tế mua bán online ở Việt Nam. Chỉ dùng dữ liệu có trong `03`; thiếu dữ liệu thì ghi đề xuất, không bịa.
 
-Làm từng bộ, chỉ làm đợt 1 gồm S07, S09, S10 như ở `01` mục 4; các bộ khác chờ dữ liệu mẫu mới. Mỗi lần trả lời: bảng nháp của bộ, rồi file JSONL của bộ, rồi kết quả tự kiểm theo checklist ở `01` mục 6. Bộ nào hơn 20 ca thì chia làm hai lần. Dừng sau mỗi bộ để người duyệt xem trước khi làm bộ tiếp theo.
+Làm từng bộ theo thứ tự ở `01` mục 4. Mỗi lần trả lời: bảng nháp của bộ, rồi file JSONL của bộ, rồi kết quả tự kiểm theo checklist ở `01` mục 6. Bộ nào hơn 20 ca thì chia làm hai lần. Dừng sau mỗi bộ để người duyệt xem trước khi làm bộ tiếp theo.
 
 ---

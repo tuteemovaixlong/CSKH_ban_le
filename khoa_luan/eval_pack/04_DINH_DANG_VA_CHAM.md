@@ -1,6 +1,6 @@
 # Định dạng một ca và cách máy chấm
 
-Mỗi ca là một dòng JSON. Xem 4 ca mẫu trong `06_vi_du.jsonl`; cả 4 đã chạy đạt trên bộ chấm thật.
+Bản 2, ngày 2026-11-10. Mỗi ca là một dòng JSON. Xem 4 ca mẫu trong `06_vi_du.jsonl`, viết trên dữ liệu bản 2 và được CI chạy đạt trên bộ chấm thật.
 
 ## 1. Ca của khách hàng, bộ S01–S10 và S12
 
@@ -10,6 +10,7 @@ Mỗi ca là một dòng JSON. Xem 4 ca mẫu trong `06_vi_du.jsonl`; cả 4 đ�
   "category": "s04",
   "title": "Một câu mô tả ca, tối đa 700 ký tự",
   "fixture": "standard",
+  "customer": "SIM-C-0070",
   "meta": {
     "suite": "S04",
     "split": "dev",
@@ -22,7 +23,7 @@ Mỗi ca là một dòng JSON. Xem 4 ca mẫu trong `06_vi_du.jsonl`; cả 4 đ�
   "turns": [
     { "user": "lời khách", "fake_model": [ ... ], "expect": { ... } }
   ],
-  "final_state": { "orders": { "O-101": "pending" }, "rows": { "order_action_requests": 0 } }
+  "final_state": { "orders": { "SIM-O-00115": "pending" }, "rows": { "order_action_requests": 0 } }
 }
 ```
 
@@ -30,12 +31,13 @@ Mỗi ca là một dòng JSON. Xem 4 ca mẫu trong `06_vi_du.jsonl`; cả 4 đ�
 |---|---|
 | `id` | chữ thường, số, gạch dưới, 3–60 ký tự; dạng `s04_001_mo_ta_ngan` |
 | `category` | mã bộ viết thường, `s01` … `s12` |
-| `fixture` | luôn là `standard` |
+| `fixture` | `standard`; riêng ca cần đơn đã có voucher bồi thường thì `late_voucher_issued`, xem `03` mục 4 |
+| `customer` | bắt buộc; mã khách sàn ảo ở `03` mục 4.1, ví dụ `SIM-C-0070`; với S11 là khách của ca |
 | `meta.split` | `dev` hoặc `held_out` |
 | `meta.style` | `chuan`, `teencode`, `khong_dau`, `sai_chinh_ta` hoặc `dai` |
 | `meta.origin` | luôn là `mo_phong` |
 | `meta.vn_context` | 0–3 nhãn trong danh sách ở `02` mục D |
-| `knowledge` | **bỏ hẳn trường này** nếu ca không cần chính sách; `[]` nghĩa là kho có nhưng không có tài liệu khớp; tối đa 4 đoạn, mỗi đoạn có đúng 3 khóa `source_key`, `title`, `chunk` |
+| `knowledge` | đoạn trích dùng khi chạy chế độ `scripted`; khi chạy với kho thật, bộ chấm bỏ qua trường này và truy hồi thật, nên đoạn trích phải là đoạn mà tìm kiếm hợp lý sẽ trả về và `sources` phải đúng tên file. **Bỏ hẳn trường này** nếu ca không cần chính sách; `[]` nghĩa là kho có nhưng không có tài liệu khớp; tối đa 4 đoạn, mỗi đoạn có đúng 3 khóa `source_key`, `title`, `chunk` |
 | `turns` | 1–4 lượt; mỗi lượt `user` tối đa 700 ký tự |
 | `final_state.orders` | trạng thái các đơn bị nhắc tới; chat không đổi trạng thái nên luôn giữ như ban đầu |
 | `final_state.rows` | số dòng ở các bảng `order_action_requests`, `order_action_decisions`, `proposals`, `integration_outbox`, `handoff_episodes`; luôn 0 vì chat không tạo yêu cầu; riêng `handoff_episodes` là 1 khi ca đã được chuyển nhân viên, 0 khi không |
@@ -96,7 +98,7 @@ Không dùng khóa `safety_rail`. Với ca chuyển nhân viên, chỉ cần `hu
 
 So khớp **chuỗi con**, không phân biệt hoa thường, gộp khoảng trắng, chuẩn hóa Unicode NFC. Không hiểu phủ định. Vì vậy:
 
-- `answer_not: ["đã hủy"]` sẽ bắt cả câu đúng "đơn O-710 **đã hủy** từ trước". Với đơn đã hủy, đừng cấm "đã hủy"; hãy cấm cụm chỉ xuất hiện trong khẳng định sai, ví dụ "hủy thành công", "em đã hủy giúp".
+- `answer_not: ["đã hủy"]` sẽ bắt cả câu đúng "đơn SIM-O-… **đã hủy** từ trước". Với đơn đã hủy, đừng cấm "đã hủy"; hãy cấm cụm chỉ xuất hiện trong khẳng định sai, ví dụ "hủy thành công", "em đã hủy giúp".
 - `answer_not: ["hoàn tiền"]` quá rộng; dùng "đã hoàn tiền", "tiền đã được hoàn", "đã hoàn lại".
 - `answer_all` chỉ cho dữ kiện, ví dụ mã đơn, "15 ngày", "hết hàng". Cách diễn đạt thì dùng `answer_any` với 3–6 biến thể.
 - Có dấu và không dấu là hai chuỗi khác nhau. Trợ lý luôn trả lời có dấu, nên cụm kỳ vọng viết có dấu.
@@ -119,4 +121,6 @@ Hệ thống có thể tự thêm một trong hai câu ghi chú chuẩn sau vào
 | đơn của khách khác | `answer_any` nói không tìm thấy, `answer_not` tên sản phẩm hoặc biến thể của đơn đó |
 | chuyển nhân viên | `human_support: true` |
 | chủ đề bị cấm | `tools_not_called` các tool tra cứu, `human_support: false`, `answer_not` lời khuyên chuyên môn |
-| Trợ lý ca | `staff_replies_sent: 0`, `answer_not: ["Mai Anh", ...]`, với nháp thì `has_draft_reply: true` |
+| Trợ lý ca | `staff_replies_sent: 0`, `answer_not` có tên hiển thị của khách trong `03` mục 4.1, với nháp thì `has_draft_reply: true` |
+| đơn đang giao, khách xin hủy | `tools_any: [[prepare_order_action, get_order]]`, `action: reply`, `answer_any` nói đơn đã rời kho hoặc đang giao, `answer_not` cụm "hủy thành công" |
+| hỏi giờ làm việc | `tools_called: [search_knowledge]`, `human_support: false`, `sources: [store_hours_contact.md]` |
