@@ -8,12 +8,24 @@ long lists lose their tail, with a marker, whatever the tool or the topic was. A
 valid JSON that says it was cut, so the model never reads half a sentence as a fact.
 """
 import json
+import os
 
-TOOL_RESULT_MAX_CHARS = 5200   # one tool result
-TOOL_CONTENT_BUDGET = 12000    # every tool result of one turn together
-MIN_RESULT_CHARS = 800         # a late result always gets at least this much room
-HISTORY_CHAR_BUDGET = 6000     # earlier turns together
-HISTORY_MESSAGE_CHARS = 1500   # one earlier message
+
+def context_tokens():
+    value = int(os.environ.get('RETAILOPS_MODEL_CONTEXT_TOKENS', '16384'))
+    if not 4096 <= value <= 131072:
+        raise ValueError('RETAILOPS_MODEL_CONTEXT_TOKENS must be 4096–131072')
+    return value
+
+
+def _budget(base, floor):
+    return max(floor, base * context_tokens() // 16384)
+
+TOOL_RESULT_MAX_CHARS = _budget(5200, 800)   # one tool result
+TOOL_CONTENT_BUDGET = _budget(12000, 1600)   # every tool result of one turn together
+MIN_RESULT_CHARS = _budget(800, 200)         # a late result's floor
+HISTORY_CHAR_BUDGET = _budget(6000, 1000)     # earlier turns together
+HISTORY_MESSAGE_CHARS = _budget(1500, 300)   # one earlier message
 _STEPS = ((240, 10), (160, 6), (120, 4), (80, 2))  # (string cap, list cap) from gentle to harsh
 
 
@@ -34,8 +46,9 @@ def _shrink(value, string_cap, list_cap):
     return value
 
 
-def compact_tool_result(result, limit=TOOL_RESULT_MAX_CHARS) -> str:
+def compact_tool_result(result, limit=None) -> str:
     """The JSON text of `result`, at most about `limit` characters, flagged when anything was cut."""
+    limit = _budget(5200, 800) if limit is None else limit
     text = dump(result)
     if len(text) <= limit:
         return text
@@ -57,7 +70,7 @@ def compact_tool_result(result, limit=TOOL_RESULT_MAX_CHARS) -> str:
 
 def result_limit(used_chars) -> int:
     """Room left for the next tool result, given how many characters earlier results of this turn used."""
-    return max(MIN_RESULT_CHARS, min(TOOL_RESULT_MAX_CHARS, TOOL_CONTENT_BUDGET - used_chars))
+    return max(_budget(800, 200), min(_budget(5200, 800), _budget(12000, 1600) - used_chars))
 
 
 def cut_text(text, limit) -> str:
@@ -65,13 +78,15 @@ def cut_text(text, limit) -> str:
     return text[:limit].rstrip() + '…' if len(text) > limit else text
 
 
-def fit_history(messages, budget=HISTORY_CHAR_BUDGET, per_message=HISTORY_MESSAGE_CHARS):
+def fit_history(messages, budget=None, per_message=None):
     """Earlier turns of a shaped transcript (`model_history`) cut to `budget`, newest kept.
 
     `messages` holds alternating user/assistant turns that start with a user turn, then the turn in
     progress. Long earlier messages are shortened first; whole oldest user/assistant pairs go next, so the
     transcript still alternates. The turn in progress is never touched.
     """
+    budget = _budget(6000, 1000) if budget is None else budget
+    per_message = _budget(1500, 300) if per_message is None else per_message
     last_user = max((i for i, m in enumerate(messages) if m.get('role') == 'user'), default=None)
     if last_user is None:
         return list(messages)
