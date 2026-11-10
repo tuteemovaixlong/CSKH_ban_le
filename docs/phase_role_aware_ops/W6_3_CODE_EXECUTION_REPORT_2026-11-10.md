@@ -13,7 +13,7 @@ Phạm vi theo handoff W6.3 mục 2 hàng 1–7 và owner decisions §23.
 | 4 | `scripts/eval_retrieval.py`, `tests/test_r1_w6_3_postgres.py` | DONE: PostgreSQL thật đạt, không skip |
 | 5 | `scripts/build_eval_pack.py`, `tests/test_r1_w6_3_build_pack.py`, bốn khối sinh trong `khoa_luan/eval_pack/03_HE_THONG_VA_DU_LIEU.md` | DONE: tool thật, dữ liệu demo runner, thời gian tương đối, phát hiện lệch |
 | 6 | `khoa_luan/eval_pack/06_vi_du.jsonl` | DONE: giữ bốn tình huống, đổi khách/đơn/chính sách sang dữ liệu mới; fake 4/4 |
-| 7 | `.github/workflows/ci.yml`, `.github/workflows/ops-console.yml`, `evals/suites/README.md`, `evals/README.md`, `notebooks/colab_vllm_l4.py`, notebook sinh `notebooks/colab_agent.ipynb`, log W1 cột Codex | DONE: các bước code/tài liệu hoàn tất; kết quả CI cuối ở PR |
+| 7 | `.github/workflows/ci.yml`, `.github/workflows/ops-console.yml`, `evals/suites/README.md`, `evals/README.md`, `notebooks/colab_vllm_l4.py`, notebook sinh `notebooks/colab_agent.ipynb`, `docs/phase_role_aware_ops/W6_3_CODE_EXECUTION_REPORT_2026-11-10.md`, log W1 cột Codex | DONE: các bước code/tài liệu hoàn tất; kết quả CI cuối ở PR |
 
 ## Bằng chứng test trước, FAIL trước sửa
 
