@@ -61,8 +61,10 @@
 
 ## Bước 4 (3:00 – 4:15) — Operator nhập `voucher.issued` vào RetailOps trên EC2
 
-1. Lưu nội dung `/tmp/voucher_issued.jsonl` lên `/tmp/voucher_issued.jsonl` trên **EC2**, rồi chạy lệnh nhập chuẩn:
+1. Lưu nội dung `/tmp/voucher_issued.jsonl` lên `/tmp/voucher_issued.jsonl` trên **EC2**, rồi chạy lệnh nhập chuẩn. Container `web` không chạy bằng root, nên tệp tạm phải đọc được: nếu phiên SSM từng chạy `umask 077` (ví dụ lúc tạo khóa), tệp sẽ là `0600` và lệnh nhập báo "Cannot access the configured data or credential file" (gặp ngày 2026-11-10).
    ```bash
+   umask 022
+   chmod 0644 /tmp/voucher_issued.jsonl
    "${cweb[@]}" run --rm --no-deps \
      -v /tmp/voucher_issued.jsonl:/tmp/voucher_issued.jsonl:ro \
      --entrypoint python web \
