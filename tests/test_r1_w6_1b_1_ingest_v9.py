@@ -1310,24 +1310,24 @@ class Item1ContractV2AndRetireV1Tests(unittest.TestCase):
                 with self.assertRaises(ContractValidationError):
                     validate_event_v2(bad_ev)
 
-    def test_voucher_issued_validates_v2_but_returns_422_unsupported_in_w6_1b_1(self) -> None:
+    def test_voucher_issued_validates_v2_and_records_unmatched_in_imported_events(self) -> None:
         import copy
         from retailops.integration.contract import ensure_w6_1b_1_supported_event, validate_event_v2
         from retailops.integration.ingest import IntegrationIngestService
 
         vch = copy.deepcopy(self.samples["voucher.issued"])
         validate_event_v2(vch, allow_requests=False)
-        with self.assertRaises(ApiError) as err1:
-            ensure_w6_1b_1_supported_event("voucher.issued")
-        self.assertEqual((err1.exception.status, err1.exception.code), (422, "unsupported_event_type"))
+        ensure_w6_1b_1_supported_event("voucher.issued")
 
         with tempfile.TemporaryDirectory() as tmp:
             sessions = PersistentSessions(Path(tmp))
             sessions.provision_tenant("shop-demo", "Shop Demo", seed_demo=False)
             svc = IntegrationIngestService(sessions, digest_key=b"test-digest-key-32-bytes-minimum!!")
-            with self.assertRaises(ApiError) as err2:
-                svc.ingest_event(vch, tenant_id="shop-demo", connector_source_system="marketplace_sim")
-            self.assertEqual((err2.exception.status, err2.exception.code), (422, "unsupported_event_type"))
+            res = svc.ingest_event(vch, tenant_id="shop-demo", connector_source_system="marketplace_sim")
+            self.assertTrue(res.success)
+            with sessions.business_store("shop-demo").connection() as db:
+                self.assertEqual(db.execute("SELECT COUNT(*) AS c FROM imported_events").fetchone()["c"], 1)
+                self.assertEqual(db.execute("SELECT COUNT(*) AS c FROM vouchers").fetchone()["c"], 0)
 
     def test_v1_sales_retired_and_retailops_never_imports_marketplace_sim(self) -> None:
         import ast
@@ -1505,7 +1505,13 @@ class Item2ConnectorAndComposeSecretsTests(unittest.TestCase):
         partial_map["order"] = {"pending": "pending", "shipping": "shipping"}  # omit 'delivered'
         mgr.add_connector("shop-demo", source_system="marketplace_sim", status_mapping=partial_map)
 
-        svc = IntegrationIngestService(self.sessions, digest_key=b"digest-key-at-least-32-bytes-ok!")
+        from retailops.integration.recipient_crypto import RecipientKeyring
+
+        svc = IntegrationIngestService(
+            self.sessions,
+            digest_key=b"digest-key-at-least-32-bytes-ok!",
+            recipient_keyring=RecipientKeyring.from_raw_keys({"v1": b"recipient-key-at-least-32-bytes!"}, "v1"),
+        )
         svc.ingest_event(
             {
                 "contract": "retailops-integration-v2",
@@ -1582,10 +1588,13 @@ class Item2ConnectorAndComposeSecretsTests(unittest.TestCase):
 
         secret_marker = "TOPSECRET_CONNECTOR_KEY_VALUE_32B_XYZ987654"
         digest_marker = "TOPSECRET_DIGEST_KEY_VALUE_32B_ABC123456789"
+        recipient_marker = "TOPSECRET_RECIPIENT_KEY_VALUE_32B_DEF999888"
         conn_key_file = self.secrets_dir / "retailops_connector_marketplace_sim"
         digest_key_file = self.secrets_dir / "retailops_event_digest_key"
+        recipient_key_file = self.secrets_dir / "retailops_recipient_key_v1"
         conn_key_file.write_text(secret_marker + "\n", encoding="utf-8")
         digest_key_file.write_text(digest_marker + "\n", encoding="utf-8")
+        recipient_key_file.write_text(recipient_marker + "\n", encoding="utf-8")
 
         cli_env = {
             **os.environ,
@@ -1594,6 +1603,7 @@ class Item2ConnectorAndComposeSecretsTests(unittest.TestCase):
             "RETAILOPS_STORAGE_BACKEND": "sqlite",
             "RETAILOPS_CONNECTOR_SECRETS_DIR": str(self.secrets_dir),
             "RETAILOPS_EVENT_DIGEST_KEY_FILE": str(digest_key_file),
+            "RETAILOPS_RECIPIENT_KEY_FILE": str(recipient_key_file),
         }
         repo_root = Path(__file__).resolve().parents[1]
 
@@ -1617,6 +1627,7 @@ class Item2ConnectorAndComposeSecretsTests(unittest.TestCase):
         for out_blob in (res_add.stdout, res_add.stderr, res_list.stdout, res_list.stderr, res_check_ok.stdout):
             self.assertNotIn(secret_marker, out_blob)
             self.assertNotIn(digest_marker, out_blob)
+            self.assertNotIn(recipient_marker, out_blob)
 
         # Remove connector key: startup logs one warning (source_system + reason only), /healthz remains 200, check fails non-zero
         conn_key_file.unlink()
@@ -1703,9 +1714,12 @@ class Item3InternalRouteAndImportEventsCliTests(unittest.TestCase):
         self.secrets_dir.mkdir(parents=True, exist_ok=True)
         self.conn_secret = b"connector-hmac-secret-32-bytes-ok!"
         self.digest_secret = b"event-digest-hmac-key-32-bytes-ok!"
+        self.recipient_secret = b"recipient-aes256-key-32-bytes-ok!!"
         (self.secrets_dir / "retailops_connector_marketplace_sim").write_bytes(self.conn_secret + b"\n")
         self.digest_file = self.secrets_dir / "retailops_event_digest_key"
         self.digest_file.write_bytes(self.digest_secret + b"\n")
+        self.recipient_file = self.secrets_dir / "retailops_recipient_key_v1"
+        self.recipient_file.write_bytes(self.recipient_secret + b"\n")
 
         self.sessions = PersistentSessions(self.out_dir / "persistent")
         self.sessions.provision_tenant("shop-demo", "Shop Demo", seed_demo=False)
@@ -1775,6 +1789,7 @@ class Item3InternalRouteAndImportEventsCliTests(unittest.TestCase):
         env_vars = {
             "RETAILOPS_CONNECTOR_SECRETS_DIR": str(self.secrets_dir),
             "RETAILOPS_EVENT_DIGEST_KEY_FILE": str(self.digest_file),
+            "RETAILOPS_RECIPIENT_KEY_FILE": str(self.recipient_file),
         }
         with patch.dict(os.environ, env_vars, clear=False):
             mgr = ConnectorManager(self.sessions)
@@ -1924,6 +1939,8 @@ class Item3InternalRouteAndImportEventsCliTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+        from retailops.integration.recipient_crypto import RecipientKeyring
+
         fixed_now = 1800000000.0
         res1 = import_events_jsonl(
             self.sessions,
@@ -1933,6 +1950,7 @@ class Item3InternalRouteAndImportEventsCliTests(unittest.TestCase):
             rebase_clock="now",
             now_fn=lambda: fixed_now,
             digest_key=self.digest_secret,
+            recipient_keyring=RecipientKeyring.from_raw_keys({"v1": self.recipient_secret}, "v1"),
         )
         self.assertEqual((res1["received"], res1["duplicates"], res1["errors"]), (2, 0, 0))
         expected_offset = fixed_now - iso_vn_to_epoch("2026-10-10T10:00:00+07:00", "occurred_at")
@@ -1954,6 +1972,7 @@ class Item3InternalRouteAndImportEventsCliTests(unittest.TestCase):
             "RETAILOPS_OUTPUT": str(self.out_dir),
             "RETAILOPS_STORAGE_BACKEND": "sqlite",
             "RETAILOPS_EVENT_DIGEST_KEY_FILE": str(self.digest_file),
+            "RETAILOPS_RECIPIENT_KEY_FILE": str(self.recipient_file),
         }
         proc = subprocess.run(
             [
@@ -1997,12 +2016,21 @@ class Item4CanonicalModelAndPiiTests(unittest.TestCase):
     """W6.1b-1 Item 4: canonical writes, sequence monotonicity, non-regression, HMAC digest & PII redaction."""
 
     def setUp(self) -> None:
+        from retailops.integration.recipient_crypto import RecipientKeyring
+
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.digest_key = b"item4-hmac-digest-secret-32-bytes!!"
+        self.recipient_keyring = RecipientKeyring.from_raw_keys(
+            {"v1": b"item4-recipient-aes-key-32-bytes!!"}, "v1"
+        )
         self.sessions = PersistentSessions(self.root / "persistent")
         self.sessions.provision_tenant("shop-demo", "Shop Demo", seed_demo=False)
-        self.service = IntegrationIngestService(self.sessions, digest_key=self.digest_key)
+        self.service = IntegrationIngestService(
+            self.sessions,
+            digest_key=self.digest_key,
+            recipient_keyring=self.recipient_keyring,
+        )
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -2086,8 +2114,10 @@ class Item4CanonicalModelAndPiiTests(unittest.TestCase):
                     self.assertNotIn("0123987654", dumped, tbl)
                     self.assertNotIn("Số 88 Đường Nguyễn Huệ", dumped, tbl)
 
-            # W6.1b-2 tables must remain completely empty
-            for empty_tbl in ("order_recipients", "delivery_compensations", "vouchers"):
+            # W6.1b-2: order_recipients holds 1 encrypted row; voucher/compensation tables stay empty on order.created
+            rec_cnt = db.execute("SELECT COUNT(*) AS c FROM order_recipients").fetchone()["c"]
+            self.assertEqual(rec_cnt, 1, "order_recipients")
+            for empty_tbl in ("delivery_compensations", "vouchers"):
                 cnt = db.execute(f"SELECT COUNT(*) AS c FROM {empty_tbl}").fetchone()["c"]
                 self.assertEqual(cnt, 0, empty_tbl)
 
@@ -2612,14 +2642,18 @@ class Item7ProviderRefundLinkingTests(unittest.TestCase):
         self.secrets_dir.mkdir(parents=True, exist_ok=True)
         self.conn_secret = b"k" * 32
         self.digest_key = b"d" * 32
+        self.recipient_key = b"r" * 32
         (self.secrets_dir / "retailops_connector_marketplace_sim").write_bytes(self.conn_secret)
         self.digest_file = self.root / "digest_key"
         self.digest_file.write_bytes(self.digest_key)
+        self.recipient_file = self.root / "recipient_key"
+        self.recipient_file.write_bytes(self.recipient_key)
         self.env_patcher = patch.dict(
             os.environ,
             {
                 "RETAILOPS_CONNECTOR_SECRETS_DIR": str(self.secrets_dir),
                 "RETAILOPS_EVENT_DIGEST_KEY_FILE": str(self.digest_file),
+                "RETAILOPS_RECIPIENT_KEY_FILE": str(self.recipient_file),
             },
             clear=False,
         )
@@ -2752,30 +2786,34 @@ class Item7ProviderRefundLinkingTests(unittest.TestCase):
         return str(res_ord.order_id), str(res_ord.customer_id)
 
     def test_single_waiting_request_links_updates_status_and_records_system_decision(self) -> None:
+        from retailops.integration.contract import iso_vn_to_epoch
+
+        approval_ts = float(iso_vn_to_epoch("2026-11-08T13:00:00+07:00", "approval_ts"))
         oid, cid = self._seed_delivered_paid_connector_order("SIM-O-REF-1", "SIM-C-REF-1")
-        created = self.store.create_order_action_request(
-            cid,
-            {
-                "order_id": oid,
-                "type": "return",
-                "expected_order_version": 2,
-                "reason_code": "defective_item",
-                "reason_text": "Đường may bị bung chỉ",
-            },
-        )
-        req_id = created["order_action"]["request_id"]
-        ver = created["order_action"]["version"]
-        approved = self.store.transition_order_action_request(
-            req_id, "approve", {"version": ver}, actor=self.manager_actor
-        )
-        ref_req = self.store.request_order_action_refund(
-            req_id, {"version": approved["order_action"]["version"]}, actor=self.manager_actor
-        )
-        decided = self.store.decide_order_action_refund(
-            req_id,
-            {"version": ref_req["order_action"]["version"], "decision": "approved"},
-            actor=self.manager_actor,
-        )
+        with patch.object(self.store, "_now", return_value=approval_ts):
+            created = self.store.create_order_action_request(
+                cid,
+                {
+                    "order_id": oid,
+                    "type": "return",
+                    "expected_order_version": 2,
+                    "reason_code": "defective_item",
+                    "reason_text": "Đường may bị bung chỉ",
+                },
+            )
+            req_id = created["order_action"]["request_id"]
+            ver = created["order_action"]["version"]
+            approved = self.store.transition_order_action_request(
+                req_id, "approve", {"version": ver}, actor=self.manager_actor
+            )
+            ref_req = self.store.request_order_action_refund(
+                req_id, {"version": approved["order_action"]["version"]}, actor=self.manager_actor
+            )
+            decided = self.store.decide_order_action_refund(
+                req_id,
+                {"version": ref_req["order_action"]["version"], "decision": "approved"},
+                actor=self.manager_actor,
+            )
         self.assertEqual(decided["refund_status"], "pending")
         self.assertEqual(decided["refund_decision"], "approved")
 
@@ -2851,23 +2889,29 @@ class Item7ProviderRefundLinkingTests(unittest.TestCase):
 
         # Also verify REFUND_FAILED updates waiting request to 'failed' with system decision
         oid_fail, cid_fail = self._seed_delivered_paid_connector_order("SIM-O-REF-FAIL", "SIM-C-REF-FAIL")
-        c_fail = self.store.create_order_action_request(
-            cid_fail,
-            {
-                "order_id": oid_fail,
-                "type": "return",
-                "expected_order_version": 2,
-                "reason_code": "defective_item",
-                "reason_text": "Lỗi khóa kéo",
-            },
-        )
-        rid_fail = c_fail["order_action"]["request_id"]
-        ap_fail = self.store.transition_order_action_request(
-            rid_fail, "approve", {"version": c_fail["order_action"]["version"]}, actor=self.manager_actor
-        )
-        self.store.request_order_action_refund(
-            rid_fail, {"version": ap_fail["order_action"]["version"]}, actor=self.manager_actor
-        )
+        with patch.object(self.store, "_now", return_value=approval_ts):
+            c_fail = self.store.create_order_action_request(
+                cid_fail,
+                {
+                    "order_id": oid_fail,
+                    "type": "return",
+                    "expected_order_version": 2,
+                    "reason_code": "defective_item",
+                    "reason_text": "Lỗi khóa kéo",
+                },
+            )
+            rid_fail = c_fail["order_action"]["request_id"]
+            ap_fail = self.store.transition_order_action_request(
+                rid_fail, "approve", {"version": c_fail["order_action"]["version"]}, actor=self.manager_actor
+            )
+            rr_fail = self.store.request_order_action_refund(
+                rid_fail, {"version": ap_fail["order_action"]["version"]}, actor=self.manager_actor
+            )
+            self.store.decide_order_action_refund(
+                rid_fail,
+                {"version": rr_fail["order_action"]["version"], "decision": "approved"},
+                actor=self.manager_actor,
+            )
         self._ingest_raw(
             {
                 "contract": "retailops-integration-v2",

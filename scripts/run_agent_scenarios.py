@@ -69,9 +69,13 @@ REFUSAL = ('Chưa có --endpoint nên script không chạy.\n'
 # W6.1b-D12: Scenarios run strictly on data/demo_events/store_events.jsonl with zero hardcoded SQL seed rows.
 FIXTURES = {
     'standard': 'store_events.jsonl',
+    'late_voucher_issued': 'store_events.jsonl+voucher_loop',
 }
 _DEMO_TEMPLATE_CACHE = {}
-COUNTED_TABLES = ('order_action_requests', 'order_action_decisions', 'proposals', 'integration_outbox', 'handoff_episodes')
+COUNTED_TABLES = (
+    'order_action_requests', 'order_action_decisions', 'proposals',
+    'integration_outbox', 'handoff_episodes', 'delivery_compensations', 'vouchers',
+)
 W4_COUNTED_TABLES = COUNTED_TABLES + ('case_assist_turns', 'order_action_evidence')
 _TEMPLATE = re.compile(r'\{\{\s*last_tool\.([A-Za-z0-9_.]+)\s*\}\}')
 _EXIF_CANARY = 'SecretPhoneExif'
@@ -570,6 +574,63 @@ def _provision_demo_template(fixture_name, persistent_sessions_cls):
     template_root = Path(td.name) / 'persistent'
     sessions = persistent_sessions_cls(template_root, data_mode='persistent-demo')
     sessions.provision_tenant('shop-scenarios', 'Shop scenarios', seed_demo=True)
+    if fixture_name == 'late_voucher_issued':
+        from datetime import datetime, timedelta, timezone
+        from retailops.integration.ingest import IntegrationIngestService
+        tz_vn = timezone(timedelta(hours=7))
+        bstore = sessions.business_store('shop-scenarios')
+        bstore.tenant_id = 'shop-scenarios'
+        bstore.customer_ref_key = 'scenario-eval-hmac-secret-key-0123456789abcdef'
+        bstore.scan_late_delivery_compensations()
+        with bstore.connection() as db:
+            comp_row = db.execute(
+                """SELECT dc.compensation_id, o.external_order_id
+                   FROM delivery_compensations dc
+                   JOIN orders o ON o.id = dc.order_id
+                   WHERE dc.status = 'proposed'
+                   ORDER BY o.external_order_id ASC
+                   LIMIT 1"""
+            ).fetchone()
+        if comp_row is None:
+            raise ScenarioError('late_voucher_issued fixture found no late order to compensate')
+        comp_id = str(comp_row['compensation_id'])
+        ext_oid = str(comp_row['external_order_id'])
+        bstore.decide_delivery_compensation(
+            comp_id,
+            decision='approve',
+            actor={'principal_id': 'mgr-eval', 'role': 'manager', 'tenant_id': 'shop-scenarios'},
+            note='Duyệt bồi thường giao trễ cho kịch bản đánh giá',
+        )
+        with bstore.connection() as db:
+            ob_row = db.execute(
+                "SELECT payload_json FROM integration_outbox WHERE event_type = 'voucher.requested' LIMIT 1"
+            ).fetchone()
+        req_env = json.loads(ob_row['payload_json'])
+        now_dt = datetime.fromtimestamp(time.time(), tz=tz_vn)
+        IntegrationIngestService(sessions).ingest_event(
+            {
+                'contract': 'retailops-integration-v2',
+                'event_id': 'evt:voucher:SIM-V-EVAL-0001:1',
+                'event_type': 'voucher.issued',
+                'source_system': 'marketplace_sim',
+                'merchant_id': req_env['merchant_id'],
+                'occurred_at': now_dt.isoformat(timespec='seconds'),
+                'sequence': 1,
+                'data': {
+                    'external_voucher_id': 'SIM-V-EVAL-0001',
+                    'code': 'VCH-W61B2-50K01',
+                    'voucher_type': req_env['data']['voucher_type'],
+                    'value': int(req_env['data']['value']),
+                    'valid_until': (now_dt + timedelta(days=30)).isoformat(timespec='seconds'),
+                    'external_order_id': ext_oid,
+                    'external_customer_id': req_env['data']['external_customer_id'],
+                    'request_ref': comp_id,
+                },
+            },
+            tenant_id='shop-scenarios',
+            received_via='import',
+            digest_key=os.urandom(32),
+        )
     _DEMO_TEMPLATE_CACHE[fixture_name] = td
     return template_root
 

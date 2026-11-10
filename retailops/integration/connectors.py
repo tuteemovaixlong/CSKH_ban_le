@@ -598,11 +598,15 @@ class ConnectorManager:
         return rec, secret_bytes
 
     def check_connectors(self, *, tenant_id: str | None = None) -> dict[str, Any]:
-        """Verify digest key and all enabled connector signing keys without exposing secret bytes."""
+        """Verify digest key, recipient key, and all enabled connector signing keys without exposing secret bytes."""
         digest_key_file = str(
             self.env.get("RETAILOPS_EVENT_DIGEST_KEY_FILE", "") or ""
         ).strip()
         digest_ok, digest_reason = inspect_secret_file(digest_key_file)
+        recipient_key_file = str(
+            self.env.get("RETAILOPS_RECIPIENT_KEY_FILE", "") or ""
+        ).strip()
+        recipient_ok, recipient_reason = inspect_secret_file(recipient_key_file)
         issues: list[dict[str, str]] = []
         if not digest_ok:
             issues.append(
@@ -612,6 +616,16 @@ class ConnectorManager:
                     "source_system": "*",
                     "secret_ref": "retailops_event_digest_key",
                     "reason": digest_reason,
+                }
+            )
+        if not recipient_ok:
+            issues.append(
+                {
+                    "scope": "recipient_key",
+                    "tenant_id": "*",
+                    "source_system": "*",
+                    "secret_ref": "retailops_recipient_key_v1",
+                    "reason": recipient_reason,
                 }
             )
 
@@ -671,6 +685,7 @@ class ConnectorManager:
         return {
             "ok": len(issues) == 0,
             "digest_key_status": digest_reason,
+            "recipient_key_status": recipient_reason,
             "tenants_checked": len(tenant_ids),
             "enabled_connectors_checked": checked_enabled,
             "issues": issues,

@@ -15,11 +15,18 @@ import time
 from typing import Any, Optional
 import uuid
 
+from retailops.business.proactive_notices import emit_proactive_shipment_notice_in_tx
 from retailops.core import ApiError, require
 from retailops.integration.contract import (
     ensure_w6_1b_1_supported_event,
     iso_vn_to_epoch,
     validate_event_v2,
+)
+from retailops.integration.recipient_crypto import (
+    RecipientKeyring,
+    load_recipient_keyring,
+    recompute_product_orders_recipient_retention_in_tx,
+    sync_order_recipient_retention_in_tx,
 )
 
 logger = logging.getLogger("retailops_integration")
@@ -192,6 +199,7 @@ class IntegrationIngestService:
         sessions_or_stores: Any,
         *,
         digest_key: bytes | None = None,
+        recipient_keyring: RecipientKeyring | None = None,
     ) -> None:
         self.sessions = sessions_or_stores
         if hasattr(sessions_or_stores, "control"):
@@ -207,6 +215,16 @@ class IntegrationIngestService:
                 "sessions_or_stores must provide control (IdentityStore) and business_store(tenant_id)."
             )
         self._explicit_digest_key = bytes(digest_key) if digest_key is not None else None
+        self._explicit_recipient_keyring = recipient_keyring
+
+    def _resolve_recipient_keyring(
+        self, override: RecipientKeyring | None = None
+    ) -> RecipientKeyring:
+        if override is not None:
+            return override
+        if self._explicit_recipient_keyring is not None:
+            return self._explicit_recipient_keyring
+        return load_recipient_keyring()
 
     def _resolve_digest_key(self, override: bytes | None = None) -> bytes:
         if override is not None:
@@ -574,10 +592,12 @@ class IntegrationIngestService:
         connector_source_system: str = "marketplace_sim",
         received_via: str = "import",
         digest_key: bytes | None = None,
+        recipient_keyring: RecipientKeyring | None = None,
         expected_merchant_id: str | None = None,
         status_mapping: dict[str, Any] | None = None,
         actor_principal_id: str | None = None,
         rebase_offset_seconds: float = 0.0,
+        suppress_shipment_notices: bool = False,
         _db: Any = None,
         _validated_status_mapping: dict[str, Any] | None = None,
         _skip_tenant_check: bool = False,
@@ -681,8 +701,29 @@ class IntegrationIngestService:
             rebase_offset_seconds
         )
         data = validated["data"]
+        active_recipient_keyring: RecipientKeyring | None = None
+        if event_type == "order.created" and data.get("recipient") is not None:
+            active_recipient_keyring = self._resolve_recipient_keyring(recipient_keyring)
+            if (
+                not os.environ.get("RETAILOPS_RECIPIENT_KEY_FILE", "").strip()
+                and os.environ.get("RETAILOPS_ENV", "").strip().lower()
+                not in ("production", "prod", "live")
+            ):
+                krmap = getattr(self.sessions, "_ephemeral_recipient_keyrings", None)
+                if not isinstance(krmap, dict):
+                    krmap = {}
+                    setattr(self.sessions, "_ephemeral_recipient_keyrings", krmap)
+                krmap[tenant_clean] = active_recipient_keyring
 
         bstore = self.get_bstore(tenant_clean) if _db is None else None
+        if (
+            bstore is not None
+            and active_recipient_keyring is not None
+            and not os.environ.get("RETAILOPS_RECIPIENT_KEY_FILE", "").strip()
+            and os.environ.get("RETAILOPS_ENV", "").strip().lower()
+            not in ("production", "prod", "live")
+        ):
+            bstore._ephemeral_recipient_keyring = active_recipient_keyring
         now = time.time()
         replay_row: dict[str, Any] | None = None
         mapped_ext_customer_id: str | None = None
@@ -941,6 +982,9 @@ class IntegrationIngestService:
                                             v["price"] if v["price"] is not None else data["price"],
                                         ),
                                     )
+                        recompute_product_orders_recipient_retention_in_tx(
+                            db, product_id=ext_pid
+                        )
 
                 elif event_type == "customer.upserted":
                     mapped_ext_customer_id = data["external_customer_id"]
@@ -1161,6 +1205,52 @@ class IntegrationIngestService:
                                 ),
                             )
 
+                        if data.get("recipient") is not None:
+                            assert active_recipient_keyring is not None
+                            enc_rec = active_recipient_keyring.encrypt_recipient_record(
+                                data["recipient"],
+                                tenant_id=tenant_clean,
+                                order_id=result_order_id,
+                            )
+                            db.execute(
+                                """INSERT INTO order_recipients (
+                                       order_id, name_enc, phone_enc, address_line_enc,
+                                       phone_lookup_hmac, ward, district, province, phone_masked,
+                                       created_at, retention_until
+                                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                                   ON CONFLICT(order_id) DO UPDATE SET
+                                       name_enc=excluded.name_enc,
+                                       phone_enc=excluded.phone_enc,
+                                       address_line_enc=excluded.address_line_enc,
+                                       phone_lookup_hmac=excluded.phone_lookup_hmac,
+                                       ward=excluded.ward,
+                                       district=excluded.district,
+                                       province=excluded.province,
+                                       phone_masked=excluded.phone_masked""",
+                                (
+                                    result_order_id,
+                                    enc_rec["name_enc"],
+                                    enc_rec["phone_enc"],
+                                    enc_rec["address_line_enc"],
+                                    enc_rec["phone_lookup_hmac"],
+                                    enc_rec["ward"],
+                                    enc_rec["district"],
+                                    enc_rec["province"],
+                                    enc_rec["phone_masked"],
+                                    occurred_ts,
+                                ),
+                            )
+                            if existing_order is not None and existing_order["status"] in (
+                                "delivered",
+                                "cancelled",
+                            ):
+                                sync_order_recipient_retention_in_tx(
+                                    db,
+                                    order_id=result_order_id,
+                                    status=str(existing_order["status"]),
+                                    transition_ts=occurred_ts,
+                                )
+
                         audit_payload = {
                             "source_system": connector_source,
                             "event_id": event_id,
@@ -1244,6 +1334,32 @@ class IntegrationIngestService:
                                 result_order_id,
                             ),
                         )
+                        sync_order_recipient_retention_in_tx(
+                            db,
+                            order_id=result_order_id,
+                            status=canonical_status,
+                            transition_ts=occurred_ts,
+                            delivered_at=delivered_at_val,
+                        )
+                        if not suppress_shipment_notices and canonical_status == "delivered":
+                            shp_for_deliv = db.execute(
+                                "SELECT shipment_id FROM shipments "
+                                "WHERE order_id = ? ORDER BY updated_at DESC, shipment_id DESC LIMIT 1",
+                                (result_order_id,),
+                            ).fetchone()
+                            if shp_for_deliv is not None and shp_for_deliv["shipment_id"]:
+                                visible_oid = str(ext_oid or result_order_id)
+                                emit_proactive_shipment_notice_in_tx(
+                                    db,
+                                    customer_id=mapped_customer_id,
+                                    shipment_id=str(shp_for_deliv["shipment_id"]),
+                                    milestone="delivered",
+                                    notice_text=(
+                                        f"Thông báo vận đơn: Đơn hàng {visible_oid} đã được giao thành công."
+                                    ),
+                                    order_id=result_order_id,
+                                    now_ts=occurred_ts,
+                                )
 
                 elif event_type == "shipment.updated":
                     ext_oid = data["external_order_id"]
@@ -1413,6 +1529,44 @@ class IntegrationIngestService:
                                 "UPDATE orders SET delivered_at=COALESCE(delivered_at, ?) WHERE id=?",
                                 (occurred_ts, result_order_id),
                             )
+                            ord_after = db.execute(
+                                "SELECT status, delivered_at FROM orders WHERE id=?",
+                                (result_order_id,),
+                            ).fetchone()
+                            if ord_after is not None and ord_after["status"] == "delivered":
+                                sync_order_recipient_retention_in_tx(
+                                    db,
+                                    order_id=result_order_id,
+                                    status="delivered",
+                                    transition_ts=occurred_ts,
+                                    delivered_at=ord_after["delivered_at"],
+                                )
+                        if not suppress_shipment_notices and canonical_status in ("out_for_delivery", "delivery_failed", "delivered"):
+                            visible_oid = str(ext_oid or result_order_id)
+                            tracking_lbl = str(data["tracking_code"] or ext_shp_id)
+                            if canonical_status == "out_for_delivery":
+                                shp_notice_text = (
+                                    f"Thông báo vận đơn: Đơn hàng {visible_oid} đang trên đường giao đến bạn "
+                                    f"(vận đơn {tracking_lbl})."
+                                )
+                            elif canonical_status == "delivery_failed":
+                                shp_notice_text = (
+                                    f"Thông báo vận đơn: Lượt giao đơn hàng {visible_oid} (vận đơn {tracking_lbl}) "
+                                    "chưa thành công. Đơn vị vận chuyển sẽ cập nhật lịch giao tiếp theo hoặc bạn có thể nhắn tin để được hỗ trợ."
+                                )
+                            else:
+                                shp_notice_text = (
+                                    f"Thông báo vận đơn: Đơn hàng {visible_oid} đã được giao thành công."
+                                )
+                            emit_proactive_shipment_notice_in_tx(
+                                db,
+                                customer_id=mapped_customer_id,
+                                shipment_id=shipment_id,
+                                milestone=canonical_status,
+                                notice_text=shp_notice_text,
+                                order_id=result_order_id,
+                                now_ts=occurred_ts,
+                            )
 
                 elif event_type == "payment.updated":
                     ext_oid = data["external_order_id"]
@@ -1518,11 +1672,164 @@ class IntegrationIngestService:
                             )
                         self._recompute_order_payment_status_in_tx(db, result_order_id)
 
+                elif event_type == "voucher.issued":
+                    ext_vid = str(data["external_voucher_id"])
+                    code_val = str(data["code"])
+                    vtype_val = str(data["voucher_type"])
+                    val_int = int(data["value"])
+                    req_ref_raw = data.get("request_ref")
+                    req_ref = str(req_ref_raw).strip() if req_ref_raw is not None else ""
+                    ext_oid_opt = data.get("external_order_id")
+                    result_ext_order_id = str(ext_oid_opt) if ext_oid_opt is not None else None
+                    imp_total_val = val_int
+                    imp_currency_val = "VND"
+
+                    comp_row = (
+                        db.execute(
+                            """SELECT * FROM delivery_compensations
+                               WHERE request_id = ? OR compensation_id = ?
+                               ORDER BY compensation_id ASC
+                               LIMIT 1""",
+                            (req_ref, req_ref),
+                        ).fetchone()
+                        if req_ref
+                        else None
+                    )
+                    matched_ord_row = None
+                    if comp_row is not None and str(comp_row["status"]) == "requested":
+                        cand_ord = db.execute(
+                            "SELECT * FROM orders WHERE id = ?",
+                            (str(comp_row["order_id"]),),
+                        ).fetchone()
+                        if (
+                            cand_ord is not None
+                            and str(cand_ord["source_system"]) == envelope_source
+                            and (
+                                ext_oid_opt is None
+                                or str(cand_ord["external_order_id"] or "") == str(ext_oid_opt)
+                            )
+                        ):
+                            matched_ord_row = cand_ord
+
+                    if comp_row is not None and matched_ord_row is not None:
+                        comp_id_str = str(comp_row["compensation_id"])
+                        upd_comp = db.execute(
+                            """UPDATE delivery_compensations
+                               SET status = 'issued'
+                               WHERE compensation_id = ?
+                                 AND status = 'requested'""",
+                            (comp_id_str,),
+                        )
+                        if upd_comp.rowcount == 1:
+                            result_order_id = str(matched_ord_row["id"])
+                            result_ext_order_id = matched_ord_row["external_order_id"]
+                            mapped_customer_id = str(matched_ord_row["customer_id"])
+                            if data.get("external_customer_id"):
+                                mapped_ext_customer_id = str(data["external_customer_id"])
+                            imp_status_val = "issued"
+                            result_total = val_int
+                            _insert_imported_event_row()
+
+                            valid_until_ts = (
+                                float(iso_vn_to_epoch(data["valid_until"], "data.valid_until"))
+                                + float(rebase_offset_seconds)
+                                if data.get("valid_until")
+                                else None
+                            )
+                            det_voucher_id = (
+                                "vch_"
+                                + hashlib.sha256(
+                                    f"{envelope_source}\x00{ext_vid}".encode("utf-8")
+                                ).hexdigest()[:24]
+                            )
+                            db.execute(
+                                """INSERT INTO vouchers (
+                                       voucher_id, source_system, external_voucher_id,
+                                       customer_id, order_id, compensation_id,
+                                       code, voucher_type, value, valid_until, issued_at
+                                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                   ON CONFLICT(source_system, external_voucher_id) DO NOTHING""",
+                                (
+                                    det_voucher_id,
+                                    envelope_source,
+                                    ext_vid,
+                                    mapped_customer_id,
+                                    result_order_id,
+                                    comp_id_str,
+                                    code_val,
+                                    vtype_val,
+                                    val_int,
+                                    valid_until_ts,
+                                    occurred_ts,
+                                ),
+                            )
+                            audit_vch = json.dumps(
+                                {
+                                    "voucher_id": det_voucher_id,
+                                    "external_voucher_id": ext_vid,
+                                    "compensation_id": comp_id_str,
+                                    "voucher_type": vtype_val,
+                                    "value": val_int,
+                                    "event_id": event_id,
+                                },
+                                ensure_ascii=False,
+                            )
+                            db.execute(
+                                "INSERT INTO business_events(customer_id, created_at, kind, order_id, payload) VALUES (?, ?, ?, ?, ?)",
+                                (
+                                    mapped_customer_id,
+                                    occurred_ts,
+                                    "voucher_issued",
+                                    result_order_id,
+                                    audit_vch,
+                                ),
+                            )
+                            ship_key_vch = (
+                                str(comp_row["shipment_id"]).strip()
+                                if comp_row["shipment_id"]
+                                else ""
+                            )
+                            if not ship_key_vch:
+                                shp_vch_row = db.execute(
+                                    "SELECT shipment_id FROM shipments "
+                                    "WHERE order_id = ? ORDER BY updated_at DESC, shipment_id DESC LIMIT 1",
+                                    (result_order_id,),
+                                ).fetchone()
+                                if shp_vch_row is not None and shp_vch_row["shipment_id"]:
+                                    ship_key_vch = str(shp_vch_row["shipment_id"]).strip()
+                            if not ship_key_vch:
+                                ship_key_vch = result_order_id
+                            visible_oid_vch = str(result_ext_order_id or result_order_id)
+                            val_fmt = f"{val_int:,}".replace(",", ".")
+                            vch_desc = (
+                                f"giảm {val_fmt} VNĐ"
+                                if vtype_val == "amount"
+                                else "miễn phí vận chuyển"
+                            )
+                            emit_proactive_shipment_notice_in_tx(
+                                db,
+                                customer_id=mapped_customer_id,
+                                shipment_id=ship_key_vch,
+                                milestone="voucher_issued",
+                                notice_text=(
+                                    f"Thông báo ưu đãi: Đơn hàng {visible_oid_vch} đã được phát hành "
+                                    f"mã voucher bồi thường {code_val} ({vch_desc})."
+                                ),
+                                order_id=result_order_id,
+                                now_ts=occurred_ts,
+                            )
+                        else:
+                            imp_status_val = "ignored_unmatched_request"
+                            _insert_imported_event_row()
+                    else:
+                        imp_status_val = "ignored_unmatched_request"
+                        _insert_imported_event_row()
+
                 elif event_type == "refund.updated":
                     ext_oid = data["external_order_id"]
                     result_ext_order_id = ext_oid
                     ord_row = db.execute(
-                        "SELECT id, customer_id FROM orders "
+                        "SELECT id, customer_id, amount FROM orders "
                         "WHERE source_system=? AND external_order_id=?",
                         (connector_source, ext_oid),
                     ).fetchone()
@@ -1534,6 +1841,7 @@ class IntegrationIngestService:
                     )
                     result_order_id = str(ord_row["id"])
                     mapped_customer_id = str(ord_row["customer_id"])
+                    order_requested_cap = int(ord_row["amount"] or 0)
 
                     provider = data["provider"]
                     refund_ref = data["provider_refund_ref"]
@@ -1547,7 +1855,7 @@ class IntegrationIngestService:
                     result_total = amount
 
                     existing_ref = db.execute(
-                        "SELECT refund_id, order_id, status, request_id FROM refunds "
+                        "SELECT refund_id, order_id, status, request_id, initiated_at FROM refunds "
                         "WHERE provider=? AND provider_refund_ref=?",
                         (provider, refund_ref),
                     ).fetchone()
@@ -1641,10 +1949,13 @@ class IntegrationIngestService:
                             else (occurred_ts if canonical_status == "completed" else None)
                         )
                         target_req: dict[str, Any] | None = None
+                        linked_request_id: str | None = None
                         if existing_ref is not None and existing_ref["request_id"]:
+                            # W6.1b-2-D5: Once linked, never relink to another request.
+                            linked_request_id = str(existing_ref["request_id"])
                             linked_row = db.execute(
                                 "SELECT * FROM order_action_requests WHERE request_id = ?",
-                                (existing_ref["request_id"],),
+                                (linked_request_id,),
                             ).fetchone()
                             if linked_row is not None:
                                 target_req = dict(linked_row)
@@ -1656,10 +1967,54 @@ class IntegrationIngestService:
                                 (result_order_id,),
                             ).fetchall()
                             if len(waiting_rows) == 1:
-                                target_req = dict(waiting_rows[0])
-                        linked_request_id = (
-                            str(target_req["request_id"]) if target_req is not None else None
-                        )
+                                cand = dict(waiting_rows[0])
+                                is_approved_waiting = (
+                                    cand["status"] in ("approved", "received", "inspected", "completed")
+                                    and cand["refund_status"] == "pending"
+                                    and cand["refund_decision"] == "approved"
+                                )
+                                if is_approved_waiting:
+                                    req_ref_row = db.execute(
+                                        "SELECT COALESCE(SUM(amount), 0) AS req_sum FROM refunds "
+                                        "WHERE request_id = ? AND status <> 'failed' "
+                                        "AND NOT (provider = ? AND provider_refund_ref = ?)",
+                                        (cand["request_id"], provider, refund_ref),
+                                    ).fetchone()
+                                    req_ref_sum = int(req_ref_row["req_sum"] or 0) if req_ref_row else 0
+                                    cand_total_refund = (
+                                        amount if canonical_status == "failed" else (req_ref_sum + amount)
+                                    )
+                                    amount_ok = (
+                                        amount <= order_requested_cap
+                                        and cand_total_refund <= order_requested_cap
+                                    )
+                                    dec_row = db.execute(
+                                        """SELECT MAX(created_at) AS approved_at
+                                           FROM order_action_decisions
+                                           WHERE request_id = ?
+                                             AND (action = 'refund_approve' OR refund_decision = 'approved')""",
+                                        (cand["request_id"],),
+                                    ).fetchone()
+                                    approved_at_raw = dec_row["approved_at"] if dec_row is not None else None
+                                    if approved_at_raw is None:
+                                        approved_at_raw = (
+                                            cand.get("reviewed_at")
+                                            or cand.get("updated_at")
+                                            or cand.get("created_at")
+                                        )
+                                    effective_init_ts = (
+                                        float(existing_ref["initiated_at"])
+                                        if (
+                                            existing_ref is not None
+                                            and data["initiated_at"] is None
+                                            and existing_ref["initiated_at"] is not None
+                                        )
+                                        else float(init_ts)
+                                    )
+                                    ts_ok = effective_init_ts > float(approved_at_raw)
+                                    if amount_ok and ts_ok:
+                                        target_req = cand
+                                        linked_request_id = str(cand["request_id"])
                         if existing_ref is None:
                             db.execute(
                                 """INSERT INTO refunds (

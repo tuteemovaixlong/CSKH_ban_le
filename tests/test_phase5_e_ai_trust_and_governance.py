@@ -1640,6 +1640,7 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
             "payment_method": None,
             "payment_status": "unpaid",
             "ship_to_area": None,
+            "recipient": None,
         }
         code_nd_list, nd_list_res, _ = _wsgi_call(web, "GET", "/api/orders", cookie=cookie_non_demo)
         self.assertEqual(code_nd_list, 200)
@@ -1665,7 +1666,8 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
         )
         self.assertEqual(code_nd_foc, 200)
         self.assertNotIn("display_name", nd_foc_res["order"])
-        self.assertEqual(nd_foc_res["order"], expected_non_demo_123456)
+        expected_focus_123456 = {k: v for k, v in expected_non_demo_123456.items() if k != "recipient"}
+        self.assertEqual(nd_foc_res["order"], expected_focus_123456)
 
         # 3. Tool/Catalog SSOT: P-602 is Quần tây đen hàn quốc (520000), P-604 is Bộ xếp hình gỗ cho bé (price=None)
         p602 = bstore.get_product("P-602")

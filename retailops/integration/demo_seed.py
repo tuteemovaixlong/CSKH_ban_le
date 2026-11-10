@@ -6,6 +6,7 @@ Never imports ``marketplace_sim``.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from functools import lru_cache
 import hashlib
 import json
@@ -18,15 +19,17 @@ from retailops.integration.connectors import load_default_status_mapping
 from retailops.integration.contract import validate_event_v2
 from retailops.integration.ingest import IntegrationIngestService
 from retailops.integration.intake import compute_jsonl_rebase_offset
+from retailops.integration.recipient_crypto import RecipientKeyring
 
 DEMO_EVENTS_DIR = ROOT / "data" / "demo_events"
 STORE_EVENTS_PATH = DEMO_EVENTS_DIR / "store_events.jsonl"
 ACCOUNT_TEMPLATE_PATH = DEMO_EVENTS_DIR / "account_template.jsonl"
 MANIFEST_PATH = DEMO_EVENTS_DIR / "manifest.json"
 
-# Ephemeral per-process random key used strictly for internal demo seeding when
-# RETAILOPS_EVENT_DIGEST_KEY_FILE is not configured in local/test environments.
+# Ephemeral per-process random keys used strictly for internal demo seeding when
+# RETAILOPS_EVENT_DIGEST_KEY_FILE / RETAILOPS_RECIPIENT_KEY_FILE are not configured in local/test environments.
 _EPHEMERAL_DEMO_DIGEST_KEY = os.urandom(32)
+_EPHEMERAL_DEMO_RECIPIENT_KEYRING = RecipientKeyring({"v1": os.urandom(32)}, active_key_id="v1")
 
 
 class _InMemoryControlAdapter:
@@ -100,6 +103,35 @@ def _resolve_demo_digest_key(svc: IntegrationIngestService) -> bytes:
     return _EPHEMERAL_DEMO_DIGEST_KEY
 
 
+def _resolve_demo_recipient_keyring(
+    svc: IntegrationIngestService, bstore: Any = None, *, sessions: Any = None
+) -> RecipientKeyring:
+    if os.environ.get("RETAILOPS_RECIPIENT_KEY_FILE", "").strip():
+        return svc._resolve_recipient_keyring()
+    if os.environ.get("RETAILOPS_ENV", "").strip().lower() in ("production", "prod", "live"):
+        return svc._resolve_recipient_keyring()
+    tid = str(getattr(bstore, "tenant_id", None) or "default") if bstore is not None else "default"
+    if bstore is not None:
+        bstore._ephemeral_recipient_keyring = _EPHEMERAL_DEMO_RECIPIENT_KEYRING
+    sref = getattr(bstore, "_sessions_ref", None) if bstore is not None else None
+    ref_sess = sref() if callable(sref) else None
+    for sess_obj in (ref_sess, sessions):
+        if sess_obj is None:
+            continue
+        krmap = getattr(sess_obj, "_ephemeral_recipient_keyrings", None)
+        if not isinstance(krmap, dict):
+            krmap = {}
+            sess_obj._ephemeral_recipient_keyrings = krmap
+        krmap[tid] = _EPHEMERAL_DEMO_RECIPIENT_KEYRING
+        apps_map = getattr(sess_obj, "apps", None)
+        if isinstance(apps_map, Mapping):
+            for app_entry in apps_map.values():
+                cached_store = getattr(app_entry, "store", None)
+                if cached_store is not None and str(getattr(cached_store, "tenant_id", None) or "default") == tid:
+                    cached_store._ephemeral_recipient_keyring = _EPHEMERAL_DEMO_RECIPIENT_KEYRING
+    return _EPHEMERAL_DEMO_RECIPIENT_KEYRING
+
+
 @lru_cache(maxsize=4)
 def _load_prevalidated_store_events(
     path_str: str,
@@ -126,6 +158,7 @@ def seed_demo_store_events(
     *,
     sessions: Any = None,
     jsonl_path: Path | None = None,
+    no_notices: bool = False,
 ) -> dict[str, Any]:
     """Import ``data/demo_events/store_events.jsonl`` into ``bstore`` with ``rebase_clock='now'``."""
     target_path = Path(jsonl_path or STORE_EVENTS_PATH)
@@ -135,6 +168,7 @@ def seed_demo_store_events(
 
     svc = IntegrationIngestService(sess)
     digest_key = _resolve_demo_digest_key(svc)
+    recipient_keyring = _resolve_demo_recipient_keyring(svc, bstore, sessions=sess)
     validated_mapping = load_default_status_mapping("marketplace_sim")
     rebase_offset = (float(bstore._now()) - max_ts) if max_ts is not None else 0.0
 
@@ -190,7 +224,9 @@ def seed_demo_store_events(
                 connector_source_system="marketplace_sim",
                 received_via="import",
                 digest_key=digest_key,
+                recipient_keyring=recipient_keyring,
                 rebase_offset_seconds=rebase_offset,
+                suppress_shipment_notices=bool(no_notices),
                 _db=db,
                 _validated_status_mapping=validated_mapping,
                 _skip_tenant_check=True,
@@ -287,6 +323,7 @@ def seed_demo_account_orders(
     sessions: Any = None,
     db: Any = None,
     template_path: Path | None = None,
+    no_notices: bool = False,
 ) -> list[str]:
     """Instantiate the 3-order ``account_template.jsonl`` for ``customer_id`` via Item 4's write path."""
     cid = str(customer_id or "").strip()
@@ -297,6 +334,7 @@ def seed_demo_account_orders(
     tenant_id = str(getattr(bstore, "tenant_id", None) or "default")
     svc = IntegrationIngestService(sess)
     digest_key = _resolve_demo_digest_key(svc)
+    recipient_keyring = _resolve_demo_recipient_keyring(svc, bstore, sessions=sess)
     validated_mapping = load_default_status_mapping("marketplace_sim")
 
     def _check_already_populated(conn: Any) -> tuple[bool, str]:
@@ -363,7 +401,9 @@ def seed_demo_account_orders(
                 connector_source_system="marketplace_sim",
                 received_via="import",
                 digest_key=digest_key,
+                recipient_keyring=recipient_keyring,
                 rebase_offset_seconds=rebase_offset,
+                suppress_shipment_notices=bool(no_notices),
                 _db=conn,
                 _validated_status_mapping=validated_mapping,
                 _skip_tenant_check=True,
@@ -389,3 +429,97 @@ def seed_demo_account_orders(
             svc._ensure_mapping(tenant_id, "marketplace_sim", ext_c, mapped_c)
 
     return created_oids
+
+
+def seed_all_customer_account_orders(
+    sessions: Any,
+    *,
+    tenant_id: str,
+    dry_run: bool = False,
+    no_notices: bool = False,
+) -> dict[str, Any]:
+    """Seed the 3-order sample template for every active customer membership lacking orders (W6.1b-2-D9)."""
+    tenant_clean = str(tenant_id or "").strip()
+    sessions.control.tenant(tenant_clean)
+    is_dry = bool(dry_run)
+
+    with sessions.control.connection() as id_db:
+        mem_rows = id_db.execute(
+            """SELECT id, principal_id, customer_id
+               FROM memberships
+               WHERE tenant_id = ? AND role = 'customer' AND active = 1
+               ORDER BY id ASC""",
+            (tenant_clean,),
+        ).fetchall()
+
+    seen_cids: set[str] = set()
+    customer_entries: list[dict[str, str]] = []
+    for row in mem_rows:
+        cid = str(row["customer_id"] or "").strip()
+        if not cid or cid in seen_cids:
+            continue
+        seen_cids.add(cid)
+        customer_entries.append(
+            {
+                "membership_id": str(row["id"]),
+                "principal_id": str(row["principal_id"]),
+                "customer_id": cid,
+            }
+        )
+
+    bstore = sessions.business_store(tenant_clean)
+    eligible_customers: list[dict[str, str]] = []
+    skipped_customers: list[dict[str, str]] = []
+
+    with bstore.connection() as db:
+        has_tomb_tbl = bstore._tombstone_table_exists(db)
+        for entry in customer_entries:
+            cid = entry["customer_id"]
+            if has_tomb_tbl and db.execute(
+                "SELECT 1 FROM order_purge_tombstones WHERE customer_id = ? LIMIT 1",
+                (cid,),
+            ).fetchone() is not None:
+                skipped_customers.append({**entry, "reason": "tombstone"})
+                continue
+            if db.execute(
+                "SELECT 1 FROM orders WHERE customer_id = ? LIMIT 1",
+                (cid,),
+            ).fetchone() is not None:
+                skipped_customers.append({**entry, "reason": "already_has_orders"})
+                continue
+            eligible_customers.append(entry)
+
+    seeded_accounts_count = 0
+    orders_created_count = 0
+    seeded_details: list[dict[str, Any]] = []
+    if not is_dry:
+        for entry in eligible_customers:
+            created_oids = seed_demo_account_orders(
+                bstore,
+                entry["customer_id"],
+                sessions=sessions,
+                no_notices=bool(no_notices),
+            )
+            if created_oids:
+                seeded_accounts_count += 1
+                orders_created_count += len(created_oids)
+                seeded_details.append(
+                    {
+                        **entry,
+                        "order_ids": created_oids,
+                    }
+                )
+
+    return {
+        "result": "SEED_ACCOUNT_ORDERS_DRY_RUN" if is_dry else "SEED_ACCOUNT_ORDERS_OK",
+        "tenant_id": tenant_clean,
+        "dry_run": is_dry,
+        "total_customer_members": len(customer_entries),
+        "eligible_count": len(eligible_customers),
+        "eligible_customers": eligible_customers,
+        "skipped_count": len(skipped_customers),
+        "skipped_customers": skipped_customers,
+        "seeded_accounts_count": 0 if is_dry else seeded_accounts_count,
+        "orders_created_count": 0 if is_dry else orders_created_count,
+        "seeded_accounts": [] if is_dry else seeded_details,
+    }

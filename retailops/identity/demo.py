@@ -270,6 +270,7 @@ class GuestSessions:
             'resolved_inactivity': 0,
             'resolved_completed': 0,
             'evidence_purged': 0,
+            'compensations_proposed': 0,
             'outbox_published': 0,
             'outbox_retried': 0,
             'outbox_dead': 0,
@@ -286,11 +287,17 @@ class GuestSessions:
                 store.case_timer_config = self.case_timer_config
             res = store.process_due_case_timers(now=now)
             ev_res = store.purge_expired_evidence(now=now) if hasattr(store, 'purge_expired_evidence') else {}
+            comp_res = (
+                store.scan_late_delivery_compensations(now=now)
+                if hasattr(store, 'scan_late_delivery_compensations')
+                else {}
+            )
             ob_res = store.process_outbox_batch(now=now) if hasattr(store, 'process_outbox_batch') else {}
             totals['tenants'] += 1
             for k in ('reminded', 'resolved_inactivity', 'resolved_completed'):
                 totals[k] += int(res.get(k, 0))
             totals['evidence_purged'] += int(ev_res.get('purged', 0))
+            totals['compensations_proposed'] += int(comp_res.get('proposed', 0))
             totals['outbox_published'] += int(ob_res.get('published', 0))
             totals['outbox_retried'] += int(ob_res.get('retried', 0))
             totals['outbox_dead'] += int(ob_res.get('dead', 0))

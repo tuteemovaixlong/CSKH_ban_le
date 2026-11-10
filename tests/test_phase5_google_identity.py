@@ -166,12 +166,17 @@ class Phase5GoogleIdentityTests(unittest.TestCase):
     def test_google_login_preserves_existing_imported_orders_and_never_recreates_purged_orders(self):
         """Google login preserves existing/imported orders and never recreates tombstoned or deleted orders."""
         from retailops.integration.ingest import IntegrationIngestService
+        from retailops.integration.recipient_crypto import RecipientKeyring
 
         tenant_id = "preserve-orders-shop"
         bstore = self.sessions.provision_tenant(tenant_id, "Preserve Orders Shop", seed_demo=False)
         web = PublicWeb("https://retailops.example.com", self.sessions)
         ingest_svc = IntegrationIngestService(
-            self.sessions, digest_key=b"test-digest-key-32-bytes-minimum!!"
+            self.sessions,
+            digest_key=b"test-digest-key-32-bytes-minimum!!",
+            recipient_keyring=RecipientKeyring.from_raw_keys(
+                {"v1": b"test-recipient-key-32-bytes-min!"}, "v1"
+            ),
         )
 
         # 1. Imported order customer: login -> link external customer -> import v2 order -> re-login

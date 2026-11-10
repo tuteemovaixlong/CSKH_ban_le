@@ -23,8 +23,16 @@ _PII_KEYS = (
     'customer_phone',
     'shipping_address',
     'address',
+    'address_line',
     'email',
     'ordered_at_backfilled',
+    'name_enc',
+    'phone_enc',
+    'address_line_enc',
+    'phone_lookup_hmac',
+    'recipient_name',
+    'recipient_phone',
+    'recipient_address',
 )
 
 
@@ -113,6 +121,8 @@ def _fallback_order_details(order, product, *, now_ts=None):
             else None
         ),
         'refund': None,
+        'recipient': None,
+        'vouchers': [],
         'eligibility': eligibility,
         'as_of': eligibility['as_of'],
     }
@@ -174,6 +184,8 @@ class BoundTools:
             'payment': details['payment'],
             'delivery': details['delivery'],
             'address': None,
+            'recipient': details.get('recipient'),
+            'vouchers': details.get('vouchers') or [],
             'refund': details['refund'],
             'eligibility': details['eligibility'],
             'as_of': details['as_of'],

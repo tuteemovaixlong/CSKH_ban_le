@@ -51,12 +51,16 @@ from retailops.core import ApiError
 from retailops.http.public import PublicWeb
 from retailops.identity.persistent import PersistentSessions
 from retailops.integration.ingest import IntegrationIngestService
+from retailops.integration.recipient_crypto import RecipientKeyring
 from retailops.knowledge.repository import KnowledgeRepository
 from retailops.knowledge.tool import KnowledgeTool
 from scripts.postgres_test_guard import require_disposable_postgres_test_target
 
 DSN = os.environ.get("RETAILOPS_TEST_DATABASE_URL", "")
 TEST_DIGEST_KEY = b"test-digest-key-32-bytes-minimum!!"
+TEST_RECIPIENT_KEYRING = RecipientKeyring.from_raw_keys(
+    {"v1": b"test-recipient-key-32-bytes-min!"}, "v1"
+)
 
 
 def _make_p5d_order_created(
@@ -302,6 +306,11 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         self.addCleanup(legacy_mode.stop)
         self.temp_dir = tempfile.TemporaryDirectory()
         self.directory = Path(self.temp_dir.name)
+        rcp_key_file = self.directory / "recipient_key_v1"
+        rcp_key_file.write_bytes(b"test-recipient-key-32-bytes-min!")
+        rcp_env = patch.dict(os.environ, {"RETAILOPS_RECIPIENT_KEY_FILE": str(rcp_key_file)})
+        rcp_env.start()
+        self.addCleanup(rcp_env.stop)
         self.gateway = MockDisputeChatGateway()
         self.sessions = PersistentSessions(
             self.directory,
@@ -318,7 +327,9 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         self.sessions.provision_tenant(self.other_tenant_id, "Other Synthetic Shop", seed_demo=False).seed_catalog()
 
         # Integration v2 ingest service
-        self.adapter = IntegrationIngestService(self.sessions, digest_key=TEST_DIGEST_KEY)
+        self.adapter = IntegrationIngestService(
+            self.sessions, digest_key=TEST_DIGEST_KEY, recipient_keyring=TEST_RECIPIENT_KEYRING
+        )
 
         # Public web layer
         self.origin = "https://retailops.example.com"
@@ -1001,7 +1012,9 @@ class Phase5ComplaintE2ETests(unittest.TestCase):
         self.assertEqual(data["order"]["version"], 1)
 
         # 3. Replay v2 import event through IntegrationIngestService
-        restarted_adapter = IntegrationIngestService(restarted_sessions, digest_key=TEST_DIGEST_KEY)
+        restarted_adapter = IntegrationIngestService(
+            restarted_sessions, digest_key=TEST_DIGEST_KEY, recipient_keyring=TEST_RECIPIENT_KEYRING
+        )
         replay_event = self.imported_event
         replay_res = restarted_adapter.ingest_event(
             replay_event, tenant_id=self.tenant_id, connector_source_system="pos_online"
@@ -1694,7 +1707,9 @@ class Phase5ComplaintPgvectorTests(unittest.TestCase):
         self.cust1_id = resolved1["customer_id"]
 
         # Link external customer and import v2 order in Tenant A
-        adapter_a = IntegrationIngestService(self.sessions, digest_key=TEST_DIGEST_KEY)
+        adapter_a = IntegrationIngestService(
+            self.sessions, digest_key=TEST_DIGEST_KEY, recipient_keyring=TEST_RECIPIENT_KEYRING
+        )
         adapter_a.link_external_customer(
             tenant_id=self.tenant_a,
             source_system="pos_online",

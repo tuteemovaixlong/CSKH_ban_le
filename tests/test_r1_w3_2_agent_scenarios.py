@@ -67,7 +67,7 @@ def all_steps(selected):
 class DatasetFormatTests(unittest.TestCase):
     def test_the_shipped_dataset_passes_the_format_check(self):
         cases = scenarios()
-        self.assertEqual(len(cases), 29)
+        self.assertEqual(len(cases), 32)
         self.assertEqual({c['category'] for c in cases}, set(checker.W32_CATEGORIES))
         raw = DATASET.read_text(encoding='utf-8')
         self.assertIsNone(checker.LEGACY_SEED_ORDER_ID.search(raw))
@@ -77,7 +77,10 @@ class DatasetFormatTests(unittest.TestCase):
         for situation in ('lookup_delivered_order_status', 'cancel_pending_order_opens_form', 'return_delivered_order_opens_form',
                           'exchange_to_another_size', 'exchange_to_another_colour', 'cancel_delivered_order_refused',
                           'follow_up_target_chosen_in_chat_keeps_the_order', 'off_topic_general_question_is_tool_free',
-                          'policy_return_window_is_cited', 'human_request_goes_straight_to_staff'):
+                          'policy_return_window_is_cited', 'human_request_goes_straight_to_staff',
+                          'late_order_without_voucher_escalates_without_promise',
+                          'order_with_issued_voucher_quotes_exact_code',
+                          'recipient_phone_query_returns_masked_only'):
             self.assertIn(situation, ids)
 
     def test_the_lists_of_the_format_check_follow_the_code(self):

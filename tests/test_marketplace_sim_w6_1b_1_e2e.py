@@ -65,8 +65,8 @@ class MarketplaceSimContractBridgeTests(unittest.TestCase):
                 ev = json.loads(line)
                 validated = validate_event_v2(ev, allow_requests=False)
                 seen_types.add(validated["event_type"])
-            # 7 loại sự kiện W6.1b-1 từ init + run + 13 story đều có mặt và vượt qua bộ kiểm
-            self.assertEqual(seen_types, set(W6_1B_1_SUPPORTED_EVENT_TYPES))
+            # 7 loại sự kiện trước khi phát voucher từ init + run + 13 story đều có mặt và vượt qua bộ kiểm
+            self.assertEqual(seen_types, set(INBOUND_EVENT_TYPES) - {"voucher.issued"})
 
             # Phát thêm voucher.issued qua ingest_voucher_requests để kiểm đủ cả 8 loại inbound
             req_example = json.loads(
@@ -143,14 +143,17 @@ class MarketplaceSimContractBridgeTests(unittest.TestCase):
             secrets_dir.mkdir(parents=True, exist_ok=True)
             conn_key_file = secrets_dir / "retailops_connector_marketplace_sim"
             digest_key_file = secrets_dir / "retailops_event_digest_key"
+            recipient_key_file = secrets_dir / "retailops_recipient_key_v1"
             conn_key_file.write_text("sim-loopback-hmac-secret-32-bytes-ok!!\n", encoding="utf-8")
             digest_key_file.write_text("sim-loopback-digest-key-32-bytes-ok!!\n", encoding="utf-8")
+            recipient_key_file.write_text("sim-loopback-recipient-key-32-bytes-ok!\n", encoding="utf-8")
 
             sessions = PersistentSessions(root / "persistent")
             sessions.provision_tenant("shop-demo", "Shop Demo", seed_demo=False)
             env_vars = {
                 "RETAILOPS_CONNECTOR_SECRETS_DIR": str(secrets_dir),
                 "RETAILOPS_EVENT_DIGEST_KEY_FILE": str(digest_key_file),
+                "RETAILOPS_RECIPIENT_KEY_FILE": str(recipient_key_file),
             }
             with patch.dict(os.environ, env_vars, clear=False):
                 ConnectorManager(sessions).add_connector(
@@ -225,7 +228,12 @@ class MarketplaceSimContractBridgeTests(unittest.TestCase):
                 elif et == "refund.updated":
                     exp_refunds.add((d["provider"], d["provider_refund_ref"]))
 
+            from retailops.integration.recipient_crypto import RecipientKeyring
+
             digest_key = b"w6-1b-1-item4-e2e-digest-secret-32b!!"
+            recipient_keyring = RecipientKeyring.from_raw_keys(
+                {"v1": b"w6-1b-1-item4-e2e-rcp-secret-32b!"}, "v1"
+            )
             sessions = PersistentSessions(root / "persistent")
             sessions.provision_tenant("shop-e2e", "Shop E2E", seed_demo=False)
 
@@ -235,6 +243,7 @@ class MarketplaceSimContractBridgeTests(unittest.TestCase):
                 source_system="marketplace_sim",
                 jsonl_path=export_file,
                 digest_key=digest_key,
+                recipient_keyring=recipient_keyring,
             )
             self.assertEqual(
                 (imp_res["received"], imp_res["duplicates"], imp_res["errors"]),
@@ -267,7 +276,11 @@ class MarketplaceSimContractBridgeTests(unittest.TestCase):
                     db.execute("SELECT COUNT(*) AS c FROM imported_events").fetchone()["c"],
                     total_exported,
                 )
-                for empty_tbl in ("order_recipients", "delivery_compensations", "vouchers"):
+                self.assertEqual(
+                    db.execute("SELECT COUNT(*) AS c FROM order_recipients").fetchone()["c"],
+                    len(exp_orders),
+                )
+                for empty_tbl in ("delivery_compensations", "vouchers"):
                     self.assertEqual(
                         db.execute(f"SELECT COUNT(*) AS c FROM {empty_tbl}").fetchone()["c"],
                         0,

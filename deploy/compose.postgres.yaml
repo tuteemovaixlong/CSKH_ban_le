@@ -9,10 +9,12 @@ services:
       RETAILOPS_DATABASE_URL_FILE: /run/secrets/retailops_database_url
       RETAILOPS_CONNECTOR_SECRETS_DIR: /run/secrets
       RETAILOPS_EVENT_DIGEST_KEY_FILE: /run/secrets/retailops_event_digest_key
+      RETAILOPS_RECIPIENT_KEY_FILE: /run/secrets/retailops_recipient_key_v1
     secrets:
       - retailops_database_url
       - retailops_connector_marketplace_sim
       - retailops_event_digest_key
+      - retailops_recipient_key_v1
     depends_on:
       postgres: {condition: service_healthy}
   postgres:
@@ -52,5 +54,7 @@ secrets:
     file: ./integration-secrets/retailops_connector_marketplace_sim
   retailops_event_digest_key:
     file: ./integration-secrets/retailops_event_digest_key
+  retailops_recipient_key_v1:
+    file: ./integration-secrets/retailops_recipient_key_v1
 volumes:
   postgres_data:

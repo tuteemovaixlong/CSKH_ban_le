@@ -166,10 +166,12 @@ def import_events_jsonl(
     source_system: str,
     jsonl_path: str | Path,
     rebase_clock: str | None = None,
+    no_notices: bool = False,
     now_fn: Callable[[], float] = time.time,
     actor_principal_id: str = "operator",
     actor_role: str = "operator",
     digest_key: bytes | None = None,
+    recipient_keyring: Any = None,
     record_audit: bool = True,
 ) -> dict[str, Any]:
     """Import a JSONL file of v2 events through the canonical write path without signature checks."""
@@ -187,7 +189,9 @@ def import_events_jsonl(
     if not path.is_file():
         raise ApiError(404, "events_file_not_found", f"Không tìm thấy tệp JSONL: '{path}'.")
 
-    svc = IntegrationIngestService(sessions, digest_key=digest_key)
+    svc = IntegrationIngestService(
+        sessions, digest_key=digest_key, recipient_keyring=recipient_keyring
+    )
     resolved_digest_key = svc._resolve_digest_key()
 
     mgr = ConnectorManager(sessions)
@@ -261,6 +265,7 @@ def import_events_jsonl(
                     digest_key=resolved_digest_key,
                     actor_principal_id=actor_principal_id,
                     rebase_offset_seconds=rebase_offset_seconds,
+                    suppress_shipment_notices=bool(no_notices),
                     _db=db,
                     _validated_status_mapping=validated_mapping,
                     _skip_tenant_check=True,

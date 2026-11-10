@@ -19,6 +19,7 @@ import test_persistent_identity as fixtures
 from retailops.core import ApiError
 from retailops.identity.postgres import PostgresSessions
 from retailops.integration.ingest import IntegrationIngestService
+from retailops.integration.recipient_crypto import RecipientKeyring
 from retailops.storage import cli as database_cli
 from retailops.storage.pg_repositories import PostgresBusinessStore, PostgresIdentityStore
 from retailops.storage.pg_schema import initialize
@@ -28,6 +29,9 @@ from scripts.postgres_test_guard import require_disposable_postgres_test_target
 DSN = os.environ.get('RETAILOPS_TEST_DATABASE_URL', '')
 P5C_BUSINESS_TABLES = ('order_items', 'imported_events')
 TEST_DIGEST_KEY = b'test-digest-key-32-bytes-minimum!!'
+TEST_RECIPIENT_KEYRING = RecipientKeyring.from_raw_keys(
+    {'v1': b'test-recipient-key-32-bytes-min!'}, 'v1'
+)
 
 
 def make_pg_order_created(
@@ -106,7 +110,9 @@ class PostgresSalesImportTests(unittest.TestCase):
         store_a.seed_catalog()
         store_b = self.sessions.provision_tenant('shop-b', 'Cửa hàng B', seed_demo=False)
         store_b.seed_catalog()
-        self.service = IntegrationIngestService(self.sessions, digest_key=TEST_DIGEST_KEY)
+        self.service = IntegrationIngestService(
+            self.sessions, digest_key=TEST_DIGEST_KEY, recipient_keyring=TEST_RECIPIENT_KEYRING
+        )
         self.control = self.sessions.control
         self.bstore = self.sessions.business_store(self.tenant)
 

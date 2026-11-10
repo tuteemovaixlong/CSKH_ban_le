@@ -9,6 +9,7 @@ Nothing in this module is pre-computed or persisted to database tables.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import hashlib
 import math
 import time
 from typing import Any, Mapping
@@ -21,11 +22,28 @@ VN_TZ = timezone(timedelta(hours=7))
 # - data/knowledge/returns.md: 7 days from delivery
 # - data/knowledge/policy_size_exchange_twoway.md: 15 days from delivery
 # - Default store warranty policy: 90 days default (overridden by products.warranty_days)
+# - W6.1b-2-D7 fixed late-delivery compensation policy: >48h past promised_delivery_by -> 50,000 VND voucher
 RETURN_WINDOW_DAYS = 7
 SIZE_EXCHANGE_WINDOW_DAYS = 15
 DEFAULT_WARRANTY_DAYS = 90
+LATE_DELIVERY_COMPENSATION_THRESHOLD_HOURS = 48
+LATE_DELIVERY_COMPENSATION_VOUCHER_TYPE = "amount"
+LATE_DELIVERY_COMPENSATION_VOUCHER_VND = 50000
 SECONDS_PER_DAY = 86400.0
 SECONDS_PER_HOUR = 3600.0
+
+
+def deterministic_compensation_id(
+    order_id: str,
+    shipment_id: str | None,
+    reason: str = "late_delivery",
+) -> str:
+    """Return deterministic compensation_id from (order_id, shipment_id, reason) per W6.1b-2-D6."""
+    oid = str(order_id or "").strip()
+    sid = str(shipment_id or "").strip()
+    rsn = str(reason or "late_delivery").strip()
+    digest = hashlib.sha256(f"{oid}\x00{sid}\x00{rsn}".encode("utf-8")).hexdigest()[:32]
+    return f"comp_{digest}"
 
 
 def _finite_float(value: Any) -> float | None:

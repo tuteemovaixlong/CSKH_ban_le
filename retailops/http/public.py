@@ -102,7 +102,7 @@ class PublicWeb:
         runner = getattr(self.sessions, 'run_case_timers_once', None)
         if callable(runner):
             return runner(now=now)
-        return {'reminded': 0, 'resolved_inactivity': 0, 'resolved_completed': 0, 'tenants': 0}
+        return {'reminded': 0, 'resolved_inactivity': 0, 'resolved_completed': 0, 'compensations_proposed': 0, 'tenants': 0}
 
     def __call__(self, environ, start_response):
         extra, mime = [], 'application/json; charset=utf-8'

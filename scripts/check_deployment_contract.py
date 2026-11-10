@@ -28,8 +28,13 @@ def check_integration_secrets_contract():
     dockerfile = text("Dockerfile")
     dockerignore = text(".dockerignore")
 
-    # 1. Both integration secrets declared as file: under ./integration-secrets/
-    for secret_name in ("retailops_connector_marketplace_sim", "retailops_event_digest_key"):
+    # 1. Integration secrets declared as file: under ./integration-secrets/
+    integration_secrets = (
+        "retailops_connector_marketplace_sim",
+        "retailops_event_digest_key",
+        "retailops_recipient_key_v1",
+    )
+    for secret_name in integration_secrets:
         pattern = re.compile(
             rf"(?m)^  {re.escape(secret_name)}:\s*\n    file:\s*\./integration-secrets/{re.escape(secret_name)}\s*$"
         )
@@ -38,9 +43,9 @@ def check_integration_secrets_contract():
                 f"deploy/compose.postgres.yaml must declare file secret '{secret_name}' under ./integration-secrets/"
             )
 
-    # 2. web service receives both secrets via secrets:
+    # 2. web service receives all integration secrets via secrets:
     web_section = pg_compose.split("  postgres:", 1)[0]
-    for secret_name in ("retailops_connector_marketplace_sim", "retailops_event_digest_key"):
+    for secret_name in integration_secrets:
         if not re.search(rf"(?m)^\s*-\s*{re.escape(secret_name)}\s*$", web_section):
             raise SystemExit(
                 f"deploy/compose.postgres.yaml web service must mount '{secret_name}' via secrets:"
@@ -59,14 +64,14 @@ def check_integration_secrets_contract():
                     f"{cname} must never bind-mount a directory onto /run/secrets: {stripped}"
                 )
 
-    # 4. Connector and digest env vars must only point to paths under /run/secrets (never inline secret values)
+    # 4. Connector, digest, and recipient key env vars must only point to paths under /run/secrets (never inline secret values)
     for cname, content in (
         ("deploy/compose.postgres.yaml", pg_compose),
         ("deploy/compose.public.yaml", pub_compose),
         ("deploy/compose.api.yaml", api_compose),
     ):
         for line in content.splitlines():
-            m = re.match(r"^\s*(RETAILOPS_(?:CONNECTOR|EVENT_DIGEST)[A-Z0-9_]*)\s*:\s*(.+?)\s*$", line)
+            m = re.match(r"^\s*(RETAILOPS_(?:CONNECTOR|EVENT_DIGEST|RECIPIENT)[A-Z0-9_]*)\s*:\s*(.+?)\s*$", line)
             if m:
                 key, val = m.group(1), m.group(2).strip().strip("\"'")
                 if not val.startswith("/run/secrets"):
@@ -77,6 +82,7 @@ def check_integration_secrets_contract():
         "deploy/compose.postgres.yaml",
         "RETAILOPS_CONNECTOR_SECRETS_DIR: /run/secrets",
         "RETAILOPS_EVENT_DIGEST_KEY_FILE: /run/secrets/retailops_event_digest_key",
+        "RETAILOPS_RECIPIENT_KEY_FILE: /run/secrets/retailops_recipient_key_v1",
     )
 
     # 5. Dockerfile copies data/connectors and data/demo_events, never copies integration-secrets; .dockerignore forbids integration-secrets/

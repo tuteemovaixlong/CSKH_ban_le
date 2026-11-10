@@ -24,8 +24,12 @@ from retailops.business.store import BusinessStore
 from retailops.core import ApiError
 from retailops.identity.persistent import PersistentSessions
 from retailops.integration.ingest import IntegrationIngestService
+from retailops.integration.recipient_crypto import RecipientKeyring
 
 TEST_DIGEST_KEY = b"test-digest-key-32-bytes-minimum!!"
+TEST_RECIPIENT_KEYRING = RecipientKeyring.from_raw_keys(
+    {"v1": b"test-recipient-key-32-bytes-min!"}, "v1"
+)
 
 
 def make_v2_order_created(
@@ -92,7 +96,9 @@ class Phase5SalesSimulatorImportTests(unittest.TestCase):
         self.sessions = PersistentSessions(self.directory, data_mode="persistent-demo")
         self.tenant_id = "shop-alpha-01"
         self.sessions.provision_tenant(self.tenant_id, "Shop Alpha", seed_demo=True)
-        self.service = IntegrationIngestService(self.sessions, digest_key=TEST_DIGEST_KEY)
+        self.service = IntegrationIngestService(
+            self.sessions, digest_key=TEST_DIGEST_KEY, recipient_keyring=TEST_RECIPIENT_KEYRING
+        )
 
     def tearDown(self):
         self.temp_dir.cleanup()

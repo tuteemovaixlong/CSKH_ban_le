@@ -2126,7 +2126,14 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
         self.assertEqual(rem_oids, ['O-819125', 'O-819127'])
 
         from retailops.integration.ingest import IntegrationIngestService
-        pg_ingest = IntegrationIngestService(self.sessions, digest_key=b'test-digest-key-32-bytes-minimum!!')
+        from retailops.integration.recipient_crypto import RecipientKeyring
+        pg_ingest = IntegrationIngestService(
+            self.sessions,
+            digest_key=b'test-digest-key-32-bytes-minimum!!',
+            recipient_keyring=RecipientKeyring.from_raw_keys(
+                {'v1': b'test-recipient-key-32-bytes-min!'}, 'v1'
+            ),
+        )
         pg_purged_evt = {
             'contract': 'retailops-integration-v2',
             'event_id': 'pg-evt-replay-purged-819126',

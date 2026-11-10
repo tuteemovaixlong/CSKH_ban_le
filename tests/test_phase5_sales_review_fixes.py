@@ -16,10 +16,14 @@ from unittest.mock import MagicMock, patch
 from retailops.core import ApiError
 from retailops.identity.persistent import PersistentSessions
 from retailops.integration.ingest import IntegrationIngestService
+from retailops.integration.recipient_crypto import RecipientKeyring
 from retailops.storage import pg_schema
 
 TENANT = "shop-alpha-01"
 TEST_DIGEST_KEY = b"test-digest-key-32-bytes-minimum!!"
+TEST_RECIPIENT_KEYRING = RecipientKeyring.from_raw_keys(
+    {"v1": b"test-recipient-key-32-bytes-min!"}, "v1"
+)
 
 
 def make_order_created(
@@ -101,7 +105,9 @@ class SalesReviewBase(unittest.TestCase):
         self.sessions = PersistentSessions(Path(self.temp_dir.name), data_mode="persistent-demo")
         self.bstore = self.sessions.provision_tenant(TENANT, "Shop Alpha", seed_demo=False)
         self.bstore.seed_catalog()
-        self.service = IntegrationIngestService(self.sessions, digest_key=TEST_DIGEST_KEY)
+        self.service = IntegrationIngestService(
+            self.sessions, digest_key=TEST_DIGEST_KEY, recipient_keyring=TEST_RECIPIENT_KEYRING
+        )
         self.control = self.sessions.control
 
     def rows(self, sql, params=()):
