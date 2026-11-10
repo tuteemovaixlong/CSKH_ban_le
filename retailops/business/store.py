@@ -3218,8 +3218,34 @@ class BusinessStore:
                     if r["status"] == "delivered" and r["delivered_at"] is not None
                     else now_ts
                 )
-                if ref_ts > float(prom_val):
-                    candidate_ids.append(str(r["id"]))
+                if ref_ts <= float(prom_val):
+                    continue
+                oid_c = str(r["id"])
+                # F21: skip orders with nothing left to do so each background tick does not
+                # reopen a write transaction (and the tenant lock) for already-handled orders.
+                if db.execute(
+                    "SELECT 1 FROM delivery_compensations WHERE order_id = ? AND reason = 'late_delivery' LIMIT 1",
+                    (oid_c,),
+                ).fetchone() is not None:
+                    continue
+                late_hours_est = (ref_ts - float(prom_val)) / 3600.0
+                if late_hours_est <= float(LATE_DELIVERY_COMPENSATION_THRESHOLD_HOURS):
+                    ship_c = db.execute(
+                        "SELECT shipment_id FROM shipments WHERE order_id = ? ORDER BY updated_at DESC, shipment_id DESC LIMIT 1",
+                        (oid_c,),
+                    ).fetchone()
+                    notice_key_c = str(ship_c["shipment_id"]) if ship_c is not None else oid_c
+                    has_notice = db.execute(
+                        "SELECT 1 FROM agent_turns WHERE request_id = ? LIMIT 1",
+                        (f"sys-notice-{notice_key_c}-late_delivery",),
+                    ).fetchone() is not None
+                    has_conversation = db.execute(
+                        "SELECT 1 FROM conversations c JOIN orders o ON o.customer_id = c.customer_id WHERE o.id = ? LIMIT 1",
+                        (oid_c,),
+                    ).fetchone() is not None
+                    if has_notice or not has_conversation:
+                        continue
+                candidate_ids.append(oid_c)
 
         proposed_count = 0
         notices_emitted = 0
