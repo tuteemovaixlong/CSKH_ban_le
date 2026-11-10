@@ -597,6 +597,7 @@ class IntegrationIngestService:
         status_mapping: dict[str, Any] | None = None,
         actor_principal_id: str | None = None,
         rebase_offset_seconds: float = 0.0,
+        suppress_shipment_notices: bool = False,
         _db: Any = None,
         _validated_status_mapping: dict[str, Any] | None = None,
         _skip_tenant_check: bool = False,
@@ -1340,7 +1341,7 @@ class IntegrationIngestService:
                             transition_ts=occurred_ts,
                             delivered_at=delivered_at_val,
                         )
-                        if canonical_status == "delivered":
+                        if not suppress_shipment_notices and canonical_status == "delivered":
                             shp_for_deliv = db.execute(
                                 "SELECT shipment_id FROM shipments "
                                 "WHERE order_id = ? ORDER BY updated_at DESC, shipment_id DESC LIMIT 1",
@@ -1540,7 +1541,7 @@ class IntegrationIngestService:
                                     transition_ts=occurred_ts,
                                     delivered_at=ord_after["delivered_at"],
                                 )
-                        if canonical_status in ("out_for_delivery", "delivery_failed", "delivered"):
+                        if not suppress_shipment_notices and canonical_status in ("out_for_delivery", "delivery_failed", "delivered"):
                             visible_oid = str(ext_oid or result_order_id)
                             tracking_lbl = str(data["tracking_code"] or ext_shp_id)
                             if canonical_status == "out_for_delivery":

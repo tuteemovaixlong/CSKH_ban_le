@@ -83,6 +83,11 @@ def add_parser(commands):
     imp_ev.add_argument('--file', type=Path, required=True, help='Path to JSONL events file.')
     imp_ev.add_argument('--rebase-clock', choices=('now',), default=None,
                         help="Shift event timestamps by (import_now - latest_occurred_at).")
+    imp_ev.add_argument(
+        '--no-notices',
+        action='store_true',
+        help='Suppress proactive shipment milestone notices (out_for_delivery, delivery_failed, delivered) during batch import.',
+    )
     purge_leg = sub.add_parser(
         'purge-legacy-demo',
         help='Remove legacy retailops_seed orders that have no linked order_action_requests.',
@@ -120,6 +125,11 @@ def add_parser(commands):
                            help='Confirm seeding sample orders for all eligible customer memberships in the tenant.')
     seed_acct.add_argument('--dry-run', action='store_true',
                            help='Report eligible vs skipped customer accounts without mutating.')
+    seed_acct.add_argument(
+        '--no-notices',
+        action='store_true',
+        help='Suppress proactive shipment milestone notices (out_for_delivery, delivery_failed, delivered) when seeding sample orders.',
+    )
 
 
 def run(args):
@@ -176,6 +186,7 @@ def run(args):
             source_system=args.source_system,
             jsonl_path=args.file,
             rebase_clock=args.rebase_clock,
+            no_notices=bool(getattr(args, 'no_notices', False)),
         )
 
     if action == 'purge-legacy-demo':
@@ -335,6 +346,7 @@ def run(args):
             sessions,
             tenant_id=tenant_clean,
             dry_run=bool(args.dry_run),
+            no_notices=bool(getattr(args, 'no_notices', False)),
         )
         if not args.dry_run:
             cache = getattr(sessions, 'tool_caches', {}).get(tenant_clean)

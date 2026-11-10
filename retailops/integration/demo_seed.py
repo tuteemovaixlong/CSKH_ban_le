@@ -158,6 +158,7 @@ def seed_demo_store_events(
     *,
     sessions: Any = None,
     jsonl_path: Path | None = None,
+    no_notices: bool = False,
 ) -> dict[str, Any]:
     """Import ``data/demo_events/store_events.jsonl`` into ``bstore`` with ``rebase_clock='now'``."""
     target_path = Path(jsonl_path or STORE_EVENTS_PATH)
@@ -225,6 +226,7 @@ def seed_demo_store_events(
                 digest_key=digest_key,
                 recipient_keyring=recipient_keyring,
                 rebase_offset_seconds=rebase_offset,
+                suppress_shipment_notices=bool(no_notices),
                 _db=db,
                 _validated_status_mapping=validated_mapping,
                 _skip_tenant_check=True,
@@ -321,6 +323,7 @@ def seed_demo_account_orders(
     sessions: Any = None,
     db: Any = None,
     template_path: Path | None = None,
+    no_notices: bool = False,
 ) -> list[str]:
     """Instantiate the 3-order ``account_template.jsonl`` for ``customer_id`` via Item 4's write path."""
     cid = str(customer_id or "").strip()
@@ -400,6 +403,7 @@ def seed_demo_account_orders(
                 digest_key=digest_key,
                 recipient_keyring=recipient_keyring,
                 rebase_offset_seconds=rebase_offset,
+                suppress_shipment_notices=bool(no_notices),
                 _db=conn,
                 _validated_status_mapping=validated_mapping,
                 _skip_tenant_check=True,
@@ -432,6 +436,7 @@ def seed_all_customer_account_orders(
     *,
     tenant_id: str,
     dry_run: bool = False,
+    no_notices: bool = False,
 ) -> dict[str, Any]:
     """Seed the 3-order sample template for every active customer membership lacking orders (W6.1b-2-D9)."""
     tenant_clean = str(tenant_id or "").strip()
@@ -493,6 +498,7 @@ def seed_all_customer_account_orders(
                 bstore,
                 entry["customer_id"],
                 sessions=sessions,
+                no_notices=bool(no_notices),
             )
             if created_oids:
                 seeded_accounts_count += 1
