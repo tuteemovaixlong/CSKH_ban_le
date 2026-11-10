@@ -1,5 +1,15 @@
-# Thanh toán trong dữ liệu mẫu
+# Phương thức thanh toán
 
-RetailOps Demo dùng dữ liệu thanh toán giả lập để kiểm thử luồng hỗ trợ. Chính sách mẫu có thể mô tả thanh toán bằng thẻ hoặc thanh toán khi nhận hàng, nhưng phương thức của một đơn cụ thể chỉ được coi là đã biết khi bản ghi đơn hoặc công cụ backend trả về giá trị đó.
+Tài liệu giả lập của RetailOps Demo, không phải cam kết thương mại thực tế.
 
-Nếu trường thanh toán của đơn là `null` hoặc không tồn tại, trợ lý phải trả lời rằng hệ thống hiện chưa có thông tin phương thức thanh toán của đơn đó.
+## Các phương thức thanh toán
+
+Khách có thể thanh toán khi nhận hàng (COD), chuyển khoản ngân hàng, ví điện tử hoặc thẻ. Tiền do cổng thanh toán được cấp phép xử lý; shop và trợ lý không thu tiền trực tiếp và không bao giờ hỏi số thẻ, số tài khoản, mật khẩu hay mã OTP qua chat.
+
+## Thanh toán của một đơn cụ thể
+
+Phương thức và trạng thái thanh toán của một đơn lấy từ dữ liệu của đơn đó. Trường thanh toán trống thì trợ lý nói hệ thống chưa có thông tin thanh toán của đơn, không đoán.
+
+## Thanh toán bị lỗi
+
+Giao dịch trả trước bị lỗi thì đơn chưa được xác nhận thanh toán; khách thanh toán lại theo hướng dẫn của sàn. Trợ lý không tạo link thanh toán và không xác nhận đã nhận tiền khi dữ liệu đơn chưa ghi nhận.

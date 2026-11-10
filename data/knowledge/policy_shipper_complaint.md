@@ -1,12 +1,15 @@
-# Chính sách xử lý bưu tá cập nhật ảo và khiếu nại giao vận
+# Chính sách khiếu nại giao hàng và shipper
 
-Chính sách này áp dụng cho các đơn hàng vận chuyển qua các đối tác SPX Express, Giao Hàng Nhanh (GHN), Giao Hàng Tiết Kiệm (GHTK).
+Tài liệu giả lập của RetailOps Demo, không phải cam kết thương mại thực tế. Áp dụng cho ba hãng vận chuyển mô phỏng: hãng mô phỏng theo GHN, FastShip Nội Địa (mô phỏng) và VietExpress Liên Tỉnh (mô phỏng).
 
-## 1. Trường hợp bưu tá cập nhật ảo
-Khi khách hàng phản ánh ở nhà nhưng bưu tá cập nhật lý do "Khách không nghe máy", "Không liên lạc được", hoặc "Khách hẹn lại ngày giao":
-- Hệ thống hỗ trợ tra cứu trực tiếp thông tin bưu tá phụ trách (Họ tên, Số điện thoại) và bưu cục quản lý tuyến giao.
-- Shop chủ động nhận trách nhiệm điều phối và kích hoạt lệnh khiếu nại khẩn cấp lên bưu cục.
-- Yêu cầu bưu tá hoặc bưu cục phân công giao lại ngay trong ca chiều (trước 18:00 cùng ngày) mà không thu thêm bất kỳ phụ phí nào.
+## Shipper báo giao thất bại nhưng khách vẫn ở nhà
 
-## 2. Minh bạch thông tin
-Trợ lý AI cần cung cấp minh bạch thông tin shipper và thời gian dự kiến giao lại để khách hàng an tâm, không để khách hàng phải tự liên hệ tổng đài hãng vận chuyển.
+Khách phản ánh mình ở nhà nhưng vận đơn ghi "không liên lạc được", "khách không nghe máy" hay "khách hẹn lại": trợ lý tra hành trình vận đơn để đối chiếu, ghi nhận phản ánh và đề nghị chuyển nhân viên. Nhân viên cửa hàng làm việc với hãng vận chuyển để yêu cầu giao lại; giao lại không thu thêm phí. Trợ lý không tự gửi khiếu nại tới hãng vận chuyển và không hứa giờ giao lại cụ thể.
+
+## Số lần giao hàng và chuyển hoàn
+
+Mỗi vận đơn được giao tối đa 3 lần. Sau 3 lần giao thất bại, hàng được chuyển hoàn về kho và đơn không giao tiếp nữa. Đơn đã thanh toán trước bị chuyển hoàn được hoàn tiền theo chính sách hoàn tiền.
+
+## Thông tin shipper
+
+Trợ lý chỉ thấy số điện thoại shipper ở dạng đã che, nên không cung cấp số điện thoại đầy đủ của shipper. Khách theo dõi đơn bằng mã vận đơn và tên hãng vận chuyển do trợ lý tra được. Chỉ hành trình do dữ liệu vận đơn trả về mới là trạng thái thực tế của đơn.

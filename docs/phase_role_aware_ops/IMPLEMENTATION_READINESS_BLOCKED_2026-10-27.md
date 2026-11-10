@@ -613,3 +613,26 @@ Ghi chú không chặn: Tool Inspector bỏ 3 tool đọc trước đây đượ
 - Smoke tay phần xem người nhận và audit `recipient.reveal`.
 - Đề xuất bồi thường của `SIM-O-F6E2B615-03` (tài khoản Tu Luong) để nguyên, dùng cho demo trọn vòng phía khách.
 - `DEMO_VOUCHER_LOOP.md`: thêm `umask 022` và `chmod 0644` cho tệp tạm trên EC2.
+
+### 2026-11-10 W6.2 readiness review
+
+> **Phạm vi:** một lượt readiness review cho W6.2, chỉ BLOCKER/MAJOR, đối chiếu dòng W6.2 của [W6 backlog](W6_BACKLOG_2026-11-06.md) với code trên `main` tại `349484a`, sau khi W6.1b-2 đã lên production. Rào an toàn được kiểm bằng cách gọi `safety_gate` thật với 30 câu ở mục 2.1 của handoff: **15 câu cho kết quả sai** trên code hiện tại.
+
+| ID | Mức | Vấn đề | Đóng bằng |
+|---|---|---|---|
+| `W62-RR-01` | BLOCKER | **Rào khách bức xúc bắt nhầm danh từ "kiện" (F23).** Regex `(?<!điều )\bkiện\b` khớp cả "kiện hàng", "bưu kiện", "phụ kiện", "linh kiện", "sự kiện", "2 kiện". Câu hỏi giao hàng rất thường gặp như "kiện hàng của tôi đang ở đâu?" bị chặn trước model, khách nhận câu "cảnh báo đỏ" và ca bị chuyển Quản lý ở chế độ nghiêm | W6.2-D1, handoff mục 1 |
+| `W62-RR-02` | MAJOR | **F1 xác nhận.** "tôi sẽ khởi kiện shop", "tôi sẽ thuê luật sư kiện shop" nhận câu từ chối "không thể đưa ra lời khuyên pháp lý" vì rào chủ đề cấm chạy trước; "gặp nhau ở tòa nhé", "I will sue your shop" lọt qua mọi rào; từ `illegal` chặn câu hỏi quyền lợi tiếng Anh | W6.2-D2 |
+| `W62-RR-03` | MAJOR | **Câu hỏi giờ trực bị chuyển nhân viên (F24).** "Mấy giờ shop có nhân viên trực?" khớp từ khóa "nhân viên trực" của rào gặp nhân viên; tài liệu giờ làm việc mới sẽ không bao giờ được dùng | W6.2-D1, handoff mục 1 |
+| `W62-RR-04` | MAJOR | **F2 rộng hơn 3 tài liệu.** 6/9 tài liệu hứa việc hệ thống không làm: AI tự phát voucher; AI tạo "Phiếu Đề Xuất" đổi size, đổi mới; đưa khách họ tên và số điện thoại bưu tá, "kích hoạt khiếu nại" lên bưu cục; đơn `pending` hủy được nhưng không nhắc đơn `shipping`; tên hãng và kho thật (SPX, GHTK, Kho BN Mega SOC) không khớp ba hãng mô phỏng | W6.2-D3: Claude viết lại trong PR handoff, owner duyệt khi merge |
+| `W62-RR-05` | MAJOR | **`knowledge ingest` không tắt tài liệu cũ.** `replace_document` chỉ thêm hoặc cập nhật; tệp bị đổi tên hay xóa vẫn `active=1` trong DB nên câu hứa sai cũ vẫn tra được sau khi nạp lại | W6.2-D5 |
+| `W62-RR-06` | MAJOR | **C3 chưa có bằng chứng.** Nạp tri thức là lệnh tay theo từng tenant, không chạy khi deploy hay khi tạo tenant; repo và biên bản không ghi lần nào nạp cho tenant production. Nguyên nhân "0 kết quả" của biên bản W4 nhiều khả năng là chưa nạp, nhưng phải kiểm trước khi nạp | Handoff mục 6 bước 3, 4 |
+| `W62-RR-07` | MAJOR | **F22 xác nhận:** `reset_marketplace_demo` đưa mọi dòng `order_purge_tombstones` vào `blocking_tombstones` | W6.2-D4 |
+| `W62-RR-08` | MAJOR | Notebook Colab nhúng nguyên văn `data/knowledge/*.md`; đổi kho chính sách mà không sinh lại notebook làm `build_agent_notebook.py --check` đỏ | Đã sinh lại notebook trong PR handoff |
+
+**Ghi chú không chặn:**
+- **F25.** `purge-demo-order` ghi tombstone theo `orders.id`, còn lệnh nhập kiểm tombstone theo `external_order_id`. Với đơn sàn ảo, `id` là `ord_…` khác mã sàn, nên một đơn sàn ảo bị gỡ riêng sẽ được tạo lại khi nhập lại tệp sự kiện. Chưa dùng lệnh này cho đơn sàn ảo; ghi vào backlog, không làm trong W6.2.
+- `khoa_luan/eval_pack/03_HE_THONG_VA_DU_LIEU.md` mục 5 còn chép nguyên văn 9 tài liệu cũ; W6.3 sinh lại theo kho mới trước khi viết các bộ đánh giá phụ thuộc chính sách.
+- Rào an toàn và bộ nhận diện dọa kiện mới vẫn là định tuyến theo từ khóa (F4); sai số còn lại đo bằng bộ S07 của W6.3.
+- Kho mới 14 tài liệu, khoảng 15,6 KB, 27 chunk. Chạy thử offline phần điểm vector với 18 câu hỏi ở mục 2.4 của handoff: 18/18 có tài liệu mong đợi trong 3 kết quả đầu sau hai bộ lọc của `KnowledgeTool`.
+
+**Kết luận:** W6.2 **READY** để thực thi theo [W6.2 execution handoff](W6_2_EXECUTION_HANDOFF_2026-11-10.md) khi owner merge PR chứa §22 và kho chính sách mới. Deploy, nạp tri thức cho tenant production và reset dữ liệu demo cần owner duyệt riêng theo mục 6 của handoff. Readiness tổng thể vẫn `BLOCKED` cho W6.3 trở đi; W6.3 cần handoff riêng.
