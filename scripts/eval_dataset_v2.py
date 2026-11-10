@@ -10,6 +10,12 @@ TOTALS = [26, 18, 30, 20, 26, 22, 16, 18, 26, 10, 22, 16]
 SIMULATED = [26, 18, 30, 13, 20, 14, 11, 16, 20, 10, 16, 16]
 HELD_OUT = [8, 5, 9, 4, 6, 4, 3, 5, 6, 3, 5, 5]
 STYLES = dict(chuan=.4, teencode=.2, khong_dau=.15, sai_chinh_ta=.15, dai=.1)
+# eval_pack/02 section D; also available in the packaged CI image without thesis files.
+VN_CONTEXT = set('cod dong_kiem giao_that_bai cap_nhat_ao bom_hang giao_cham mega_sale voucher '
+                 'nghi_tet hoan_tien_cham hoan_vi_ngan_hang doi_size_thoi_trang khac_anh_livestream '
+                 'hang_loi mop_meo_van_chuyen thieu_phu_kien nghi_hang_gia giao_sai lua_dao_gia_danh '
+                 'otp_link_gia bao_mat_du_lieu kenh_zalo_facebook hoa_don_vat dat_nham '
+                 'buc_xuc_doa_boc_phot doa_kien khieu_nai_san'.split())
 
 
 @lru_cache(maxsize=1)
@@ -59,10 +65,8 @@ def validate_case(case, suite=None):
     check(meta['style'] in STYLES, 'meta.style')
     check(meta['origin'] in {'mo_phong', 'tau2_retail', 'agentdojo'}, 'meta.origin')
     c._text(meta['source_note'], f'{name}.meta.source_note', 700)
-    tags_text = (ROOT / 'khoa_luan/eval_pack/02_BOI_CANH_VIET_NAM.md').read_text(encoding='utf-8').split('## D.')[1].split('## Nguồn')[0]
-    tags = set(re.findall(r'`([a-z_0-9]+)`', tags_text)) - {'vn_context'}
     check(isinstance(meta['vn_context'], list) and len(meta['vn_context']) <= 3
-          and all(isinstance(t, str) and t in tags for t in meta['vn_context'])
+          and all(isinstance(t, str) and t in VN_CONTEXT for t in meta['vn_context'])
           and len(set(meta['vn_context'])) == len(meta['vn_context']), 'meta.vn_context')
     if meta['origin'] != 'mo_phong':
         upstream = meta.get('upstream')

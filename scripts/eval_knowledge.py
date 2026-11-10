@@ -17,7 +17,7 @@ class RealKnowledge:
         from retailops.knowledge.repository import KnowledgeRepository
         from retailops.knowledge.chunking import read_directory
         require_disposable_postgres_test_target(self.dsn, psycopg.conninfo.conninfo_to_dict)
-        self.store = PostgresBusinessStore(self.dsn, 'eval-w63-' + uuid.uuid4().hex, create=True)
+        self.store = PostgresBusinessStore(self.dsn, uuid.uuid4().hex, create=True)
         try:
             self.repository = KnowledgeRepository(self.store)
             self.ingest_report = self.repository.ingest(read_directory(ROOT / 'data/knowledge'))

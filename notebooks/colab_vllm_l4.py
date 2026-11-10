@@ -33,9 +33,6 @@ VLLM_PACKAGE = "vllm==0.32.0"
 TEMPLATE_URL = f"https://raw.githubusercontent.com/vllm-project/vllm/v{VLLM_VERSION}/examples/tool_chat_template_gemma4.jinja"
 TEMPLATE_SHA256 = "afdbb2abe3667ccde95cc2f86919f05370339399bab5f750950a4390523b8927"
 MAX_IMAGES_PER_REQUEST = 3
-MAX_MODEL_LEN = int(os.environ.get("RETAILOPS_MAX_MODEL_LEN", "16384"))
-if not 4096 <= MAX_MODEL_LEN <= 131072:
-    raise ValueError("RETAILOPS_MAX_MODEL_LEN must be 4096–131072")
 
 print(f"Đang cài đặt {VLLM_PACKAGE}, plugin lượng tử hóa và pyngrok...", flush=True)
 subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", "pip"], check=False)
@@ -117,6 +114,10 @@ def build_vllm_server_command(
     port=8001,
     max_images=MAX_IMAGES_PER_REQUEST,
 ):
+    import os
+    max_model_len = int(os.environ.get("RETAILOPS_MAX_MODEL_LEN", "16384"))
+    if not 4096 <= max_model_len <= 131072:
+        raise ValueError("RETAILOPS_MAX_MODEL_LEN must be 4096–131072")
     clean_key = (api_key or "").strip()
     if not re.fullmatch(r"[A-Za-z0-9_.-]{32,256}", clean_key):
         raise RuntimeError(
@@ -139,7 +140,7 @@ def build_vllm_server_command(
         "--disable-uvicorn-access-log",
         "--limit-mm-per-prompt", mm_limit_json,
         "--gpu-memory-utilization", "0.88",
-        "--max-model-len", str(MAX_MODEL_LEN),
+        "--max-model-len", str(max_model_len),
         "--kv-cache-dtype", "fp8",
         "--enable-prefix-caching",
         "--trust-remote-code",

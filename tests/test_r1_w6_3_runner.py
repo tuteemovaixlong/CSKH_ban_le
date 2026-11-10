@@ -123,3 +123,16 @@ class ExperimentTests(unittest.TestCase):
         for args in (['--fake', '--agent-mode', 'legacy'], ['--fake', '--context-tokens', '2048']):
             with self.subTest(args=args), self.assertRaises(SystemExit):
                 runner.main(args, out=io.StringIO())
+
+    def test_vllm_max_model_len_default_and_override_without_running_notebook(self):
+        import ast
+        import re
+        source = runner.ROOT / 'notebooks/colab_vllm_l4.py'
+        function = next(n for n in ast.parse(source.read_text(encoding='utf-8')).body
+                        if isinstance(n, ast.FunctionDef) and n.name == 'build_vllm_server_command')
+        namespace = dict(json=json, re=re, MAX_IMAGES_PER_REQUEST=3)
+        exec(compile(ast.Module(body=[function], type_ignores=[]), str(source), 'exec'), namespace)
+        for setting, expected in [('', '16384'), ('8192', '8192')]:
+            with patch.dict(os.environ, {'RETAILOPS_MAX_MODEL_LEN': setting} if setting else {}, clear=True):
+                command = namespace['build_vllm_server_command']('python', 'fake-model', 'fp8', 'template', 'k' * 32)
+                self.assertEqual(command[command.index('--max-model-len') + 1], expected)
