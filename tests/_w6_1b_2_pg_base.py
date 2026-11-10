@@ -1,7 +1,7 @@
 """Shared real-PostgreSQL test harness for Phase R1 W6.1b-2 (Items 1, 4, 5, 8).
 
-Never skips when running in GitHub Actions CI (`GITHUB_ACTIONS=true`); skips locally
-only when `RETAILOPS_TEST_DATABASE_URL` is unset.
+Never skips in CI jobs that set `RETAILOPS_REQUIRE_PG_TESTS=1` (`ci.yml` offline, `ops-console.yml`
+postgres); skips elsewhere, such as the deploy workflow, when `RETAILOPS_TEST_DATABASE_URL` is unset.
 """
 from __future__ import annotations
 
@@ -13,11 +13,11 @@ from pathlib import Path
 from typing import Any
 
 DSN = os.environ.get("RETAILOPS_TEST_DATABASE_URL", "").strip()
-IN_GITHUB_ACTIONS = os.environ.get("GITHUB_ACTIONS", "").strip().lower() == "true"
+REQUIRE_PG_TESTS = os.environ.get("RETAILOPS_REQUIRE_PG_TESTS", "").strip() == "1"
 
 
 def pg_test_enabled() -> bool:
-    return bool(DSN) or IN_GITHUB_ACTIONS
+    return bool(DSN) or REQUIRE_PG_TESTS
 
 
 class RealPostgresW61b2Base(unittest.TestCase):
@@ -27,7 +27,7 @@ class RealPostgresW61b2Base(unittest.TestCase):
     def setUpClass(cls) -> None:
         if not DSN:
             raise AssertionError(
-                "RETAILOPS_TEST_DATABASE_URL must be set in CI; PostgreSQL tests for W6.1b-2 must never skip on CI."
+                "RETAILOPS_TEST_DATABASE_URL must be set when RETAILOPS_REQUIRE_PG_TESTS=1; PostgreSQL tests for W6.1b-2 must not skip in that job."
             )
         import psycopg
         from scripts.postgres_test_guard import require_disposable_postgres_test_target
