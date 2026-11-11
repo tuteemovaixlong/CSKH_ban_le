@@ -718,3 +718,35 @@ Ghi chú không chặn: Tool Inspector bỏ 3 tool đọc trước đây đượ
 - `test_r1_w4_media_pipeline` (2 test) và `test_r1_w6_1b_1_ingest_v9` (1 test) đặt ngày giao cố định (`1785000000`, tức 2026-07-25, và `1762580000`) rồi tạo yêu cầu trả hàng; nay quá 7 ngày nên bị 409. Claude đổi sang ngày tương đối với giờ chạy test (giao 1 ngày trước, đặt 2 ngày trước), không đổi ý định của test.
 
 Claude đẩy bản gỡ này vào nhánh của PR theo lệnh của owner. Cục bộ: hồi quy W3.2 32/32, test hoàn tiền thủ công và test media item3 đạt; test media item4 lỗi trên máy Windows của Claude cả trên `main` cũ nên chỉ kiểm được trên CI.
+
+### 2026-11-11 W6.2 and W6.2.1 production deploy record
+
+> **Phạm vi:** deploy chung W6.2 (PR #88) và W6.2.1 (PR #91) từ `main` tại `69bd777`, theo mục 6 của [W6.2 handoff](W6_2_EXECUTION_HANDOFF_2026-11-10.md) và mục 5 của [W6.2.1 handoff](W6_2_1_EXECUTION_HANDOFF_2026-11-11.md). Không migration, không khóa mới, không sửa tệp compose trên host, không reset dữ liệu demo.
+
+**EC2 trước deploy.** Owner bật lại instance sau khi tắt từ 2026-11-10; IP công khai đổi từ `100.26.48.5` sang `54.91.237.225`. Đĩa trống 42 GB; web, admin, PostgreSQL, ClamAV healthy trên image `sha256:fce32728…` (W6.1b-2); `deployed.env` và `public.env` không chứa `RETAILOPS_MODEL_ENABLE_THINKING` hay `RETAILOPS_MODEL_CONTEXT_TOKENS`; `integration-secrets/` đủ 3 khóa.
+
+**Rollout.** Owner duyệt; Claude bật `RETAILOPS_DEPLOY_ENABLED`, chạy workflow [`42977788010`](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/42977788010) trên `69bd777`, tắt cờ lúc 07:32:22Z. 1.133 test chạy hai lần đều OK; `PUBLIC_WEB_ROLLOUT_OK`, 2 lần `LIVE_E2E_SMOKE_OK`, `ADMIN_CONSOLE_SMOKE_OK`. Script rollout tự đổi host `retailops.100-26-48-5.sslip.io` thành `retailops.54-91-237-225.sslip.io` và host admin thành `admin-retailops.54-91-237-225.sslip.io` (hotfix W6.1b-1.1). Image mới `sha256:2d788b202b86d7a5e01615079f3467c0a7d701605c5ff67ddc4baccace7cfde6`; web, admin healthy; `connector check` trả `CONNECTOR_CHECK_OK`, khóa digest và khóa người nhận `ok`; `/healthz` 200. Owner thêm host mới vào Google OAuth.
+
+**C3, kho tri thức trước khi nạp.** `knowledge list` cho tenant `browser-demo-20260908014853`: **0 tài liệu**; `knowledge search` với "đổi size": 0 kết quả. Kho chính sách của tenant production **chưa từng được nạp**: lệnh nạp là bước operator chạy tay theo tenant, không chạy khi deploy hay khi tạo tenant. Đây là nguyên nhân của "search_knowledge trả 0 tài liệu" ở biên bản W4 và câu "chưa có trích dẫn từ kho chính sách" ở các lượt smoke trước. Kết quả lưu ở `/root/kb_before_<ts>.json` trên EC2.
+
+**Nạp tri thức.** `knowledge ingest --prune`: `KNOWLEDGE_INGESTED`, 14 tài liệu, 27 chunk, `changed` 14, `deactivated` rỗng, model `feature-hash-v1`; sau đó 14/14 tài liệu `active`.
+
+**18 câu truy hồi** của mục 2.4 W6.2 handoff qua `knowledge search --limit 3`: **18/18** có tài liệu mong đợi, cả 18 ở hạng 1.
+
+**Smoke trên trình duyệt**, tài khoản Google khách của owner, model `deepseek-flash`:
+
+| Tin nhắn | Kết quả |
+|---|---|
+| kiện hàng của tôi đang ở đâu? | model gọi `track_shipment`, trả hành trình đơn đang giao; không chuyển nhân viên (F23) |
+| Tôi có quyền trả hàng không? | gọi `get_order`, `search_knowledge`; trả lời theo chính sách có trích dẫn `[KB:…]` của `returns.md`, nói đơn đang giao nên hạn trả chưa bắt đầu (W6.2-D2) |
+| Mấy giờ shop có nhân viên trực? | 8:00–21:00 có trích dẫn `store_hours_contact.md`, gọi thêm `get_current_time`; không chuyển nhân viên (F24) |
+| tao khởi kiện chết mẹ mày | rào `extreme_rage`, `human_reason` "SOP 5: Khách đe dọa khởi kiện hoặc đưa ra tòa (Strict Mode)" (F1) |
+| gọi luật sư kiện cho sập tiệm luôn | rào `extreme_rage`; lý do chung "bức xúc cực độ" vì cụm "sập tiệm" khớp trước; hành vi đúng |
+
+Chưa thử trên production: câu hóa đơn VAT, câu dọa kiện ngầm của W6.2.1, trả hàng quá 7 ngày (đơn mẫu `-03` của owner giao ngày 2026-11-09, còn trong hạn). Ba trường hợp này có test riêng chạy trên CI; kết quả tool chặn quá hạn thấy trong `eval_pack/03`.
+
+**Còn mở:**
+- Khung "Quá trình suy luận" vẫn hiện mã nội bộ `ord_…` cho khách (F20, W6.6).
+- Hai ca chuyển nhân viên tạo khi smoke phải được đóng trước lượt reset dữ liệu demo.
+- Reset dữ liệu demo theo W6.2-D4: tuần trước 2026-12-15.
+- EC2 tắt sau lượt này; lần bật sau IP có thể đổi lần nữa.

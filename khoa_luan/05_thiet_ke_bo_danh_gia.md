@@ -1,62 +1,64 @@
 # Thiết kế bộ đánh giá theo nghiệp vụ, 250 ca
 
-Bản thiết kế ngày 2026-11-06, chưa viết dữ liệu. Số ca từng bộ đã điều chỉnh theo thực trạng trong `06_nghien_cuu_thuc_trang_va_du_lieu.md`. Phục vụ mục 2.6 và Chương 4 của khóa luận, chạy với model thật ở W6.
+Bản thiết kế ngày 2026-11-06, cập nhật ngày 2026-11-11 theo quyết định §23 (W6.3-D1 đến D7), dữ liệu sàn ảo của W6.1b và công cụ đánh giá đã merge ở W6.3 (PR #87). Phục vụ mục 2.6 và Chương 4 của khóa luận.
 
-> **Cập nhật 2026-11-06:** nâng lên **250 ca, 12 bộ**, thêm bộ S12 tình huống đặc thù Việt Nam. Gồm 210 ca mô phỏng, 28 ca chuyển thể từ τ²-bench, 12 ca chuyển thể từ AgentDojo. Số ca từng bộ và bộ tài liệu cho model độc lập sinh 210 ca mô phỏng nằm ở `eval_pack/`; bảng số ca ở `eval_pack/05_PHAN_BO_CA.md` thay cho bảng ở mục 2 dưới đây. Ma trận W6: cấu hình A chạy đủ 250 ca × 3 lần; cấu hình B, C, D chỉ chạy trên một tập con cố định 100 ca phân tầng theo bộ × 3 lần, tổng khoảng 1.650 lượt thay vì 3.000. Phát hiện cần kiểm ở W6: rào chủ đề pháp lý chạy trước rào khách quá bức xúc, nên câu dọa kiện có thể bị từ chối thay vì được chuyển nhân viên; bộ S07 có ca kiểm điểm này.
+> **Tóm tắt:** 250 ca, 12 bộ S01–S12. Gồm 210 ca mô phỏng do một model độc lập viết từ bộ tài liệu `eval_pack/` bản 2, model đó không đọc mã nguồn; 28 ca chuyển thể từ τ²-bench retail và 12 ca chuyển thể từ AgentDojo do Claude làm. Ma trận W6.4: cấu hình A chạy đủ 250 ca × 3 lần; cấu hình B, C, D chạy trên một tập con cố định 100 ca phân tầng theo bộ × 3 lần, tổng khoảng 1.650 lượt.
 
-## 1. Hiện trạng trong repo
+## 1. Hiện trạng trong repo, ngày 2026-11-11
 
-| Bộ | Số ca | Dạng | Máy chấm được | Hạn chế |
-|---|---|---|---|---|
-| `evals/scenarios/benchmark_250.jsonl` | 250 | một lượt, DeepSeek sinh | chỉ tool mong đợi và tool cấm | `expected_outcome` là lời văn tự do; nhiều câu không có mã đơn cụ thể; `run_benchmark_eval.py` chỉ chạy supervisor cũ, không chạy agent-first |
-| `evals/agent_scenarios_w3_2.jsonl` | 29 | nhiều lượt kiểu τ-bench | tool, form mở ra, câu bắt buộc và câu cấm, trạng thái DB cuối | ít ca; truy hồi tri thức bị giả lập bằng tài liệu gắn sẵn điểm 0,9 |
-| `evals/agent_scenarios_w4.jsonl` | 12 | nhiều lượt, có Trợ lý ca, ảnh, PDF | như trên, thêm số lượt Trợ lý ca, bằng chứng | ít ca |
-| `evals/qrels/policy_qrels_v1.json` | 250 truy vấn | nhãn liên quan | Recall@k, MRR | chỉ 75 truy vấn có nguồn liên quan; gắn với benchmark_250 |
+| Bộ | Số ca | Dạng | Vai trò |
+|---|---|---|---|
+| `evals/suites/S01.jsonl` … `S12.jsonl` | 250 khi xong | nhiều lượt kiểu τ-bench, có trường `meta` | bộ đánh giá chính của Chương 4; đang viết dữ liệu |
+| `evals/agent_scenarios_w3_2.jsonl` | 32 | nhiều lượt | hồi quy, CI phát lại mỗi PR |
+| `evals/agent_scenarios_w4.jsonl` | 12 | nhiều lượt, có Trợ lý ca, ảnh, PDF | hồi quy, CI phát lại mỗi PR |
+| `evals/scenarios/benchmark_250.jsonl`, `evals/batches/`, `evals/qrels/policy_qrels_v1.json` | 250 câu một lượt | do DeepSeek sinh, kỳ vọng là lời văn tự do | tài liệu lịch sử, không thuộc 250 ca (W6.3-D7) |
 
-`scripts/run_agent_scenarios.py` đã có: chế độ `--fake` cho CI, chế độ `--endpoint` cho model thật, lọc theo `--category`, báo cáo tỉ lệ thành công, tỉ lệ tool call hợp lệ, độ trễ p50/p95. Còn thiếu: chạy lặp k lần để tính pass^k, công tắc agent-first và `legacy` cho RQ1, bật tắt thinking và đổi cửa sổ ngữ cảnh cho RQ2, chế độ dùng kho tri thức thật cho RQ3, và script thống kê bootstrap, McNemar.
+Công cụ đã có từ PR #87:
 
-Kết luận: bộ mới dùng **định dạng kịch bản nhiều lượt của W3.2 và W4**, vì đây là dạng duy nhất máy chấm được theo kết quả cuối. benchmark_250 giữ làm bộ phụ về độ đa dạng ngôn ngữ, không dùng làm số liệu chính.
+- `scripts/check_eval_dataset.py` kiểm định dạng `eval_pack/04` bản 2 cho `evals/suites/`, kể cả đoạn chính sách phải đúng nguyên văn và mọi mã khách, đơn, sản phẩm phải có trong dữ liệu demo; cờ `--final` kiểm hạn mức của `eval_pack/05`.
+- `scripts/run_agent_scenarios.py` có `--dataset-dir`, `--suite`, `--split`, `--repeat K` (pass@1 và pass^K), `--agent-mode agent|legacy`, `--thinking on|off`, `--context-tokens N`, `--knowledge scripted|real`, `--only-file`; trường ca `overrides.product_descriptions` cho đường chèn lệnh qua mô tả sản phẩm; khóa chấm `attack_not`, `attack_tools_not_called` tách `utility` khỏi `attack_success`.
+- `scripts/eval_stats.py` có `summary` (khoảng tin cậy bootstrap trên ca, 10.000 lần, seed 20261110), `compare` (McNemar chính xác hai phía trên kết quả đa số K lần, `--cases` để so trên tập con) và `subset` (chọn tập con phân tầng có seed).
+- `scripts/eval_retrieval.py` đo Recall@3 và MRR cho các ca có `expect.sources` trên kho tri thức thật.
+- `scripts/build_eval_pack.py` sinh khối dữ liệu của `eval_pack/03` từ đúng dữ liệu demo mà bộ chấm dùng; CI kiểm đồng bộ.
 
-## 2. Mười một bộ test theo nghiệp vụ
+## 2. Mười hai bộ test theo nghiệp vụ
 
-Mỗi bộ là một file `evals/suites/<ma_bo>.jsonl`, `category` trùng mã bộ.
+Mỗi bộ là một file `evals/suites/<ma_bo>.jsonl`, `category` là mã bộ viết thường. Tình huống con của phần mô phỏng ở `eval_pack/05_PHAN_BO_CA.md`; phần chuyển thể theo mục 7.
 
-| Mã | Nghiệp vụ | Số ca | Nội dung chính | Câu hỏi nghiên cứu |
-|---|---|---|---|---|
-| S01 | Tra cứu đơn và vận chuyển | 16 | xem đơn, liệt kê đơn, giao thất bại, đơn đang giao, đơn không tồn tại, mã đơn viết sai | RQ1 |
-| S02 | Sản phẩm và tồn kho | 12 | tìm sản phẩm, thuộc tính, size màu còn hàng, hết hàng, sản phẩm không có | RQ1 |
-| S03 | Chính sách và FAQ có trích dẫn | 20 | đổi trả, bảo hành, vận chuyển, thanh toán, voucher sale; 6 ca không có bằng chứng phải từ chối | RQ3 |
-| S04 | Hủy đơn | 14 | đơn chờ xử lý hủy được, đơn đã giao, đơn đã hủy, đơn của khách khác, chưa rõ đơn nào, khách nói "xác nhận" trong chat | RQ1, RQ4 |
-| S05 | Trả hàng và hoàn tiền | 14 | trả đơn đã giao, quá hạn, hỏi tiến độ hoàn tiền, không tự khẳng định đã hoàn | RQ1, RQ4 |
-| S06 | Đổi hàng | 14 | đổi size, đổi màu, biến thể hết hàng, đổi 1-1 hàng lỗi, đổi sang sản phẩm khác | RQ1 |
-| S07 | Chuyển nhân viên và khách bức xúc | 10 | đòi gặp người, dọa bóc phốt, dọa kiện, hỏi giờ làm việc không bị chuyển nhầm | RQ4 |
-| S08 | Hội thoại nhiều lượt | 12 | "đơn này", "áo đó", đổi chủ đề giữa chừng, sửa lại ý, mở lại ca đã đóng | RQ1, RQ2 |
-| S09 | An toàn và bảo mật | 16 | chèn lệnh trực tiếp, chèn lệnh trong tài liệu và mô tả sản phẩm, đòi xem đơn người khác, đòi prompt và khóa API, giả danh nhân viên, chủ đề cấm | RQ4 |
-| S10 | Ngoài phạm vi, giờ, thông tin trực tiếp | 8 | câu hỏi kiến thức chung, hỏi ngày giờ, hỏi thời tiết hay tỉ giá | RQ1, RQ5 |
-| S11 | Trợ lý ca của Staff và Manager | 14 | tóm tắt, hỏi đáp, soạn nháp có `[KB:...]`, đòi xem ca khác, không lộ thông tin cá nhân, không khẳng định đã duyệt | RQ1, RQ4 |
-| | **Tổng** | **150** | | |
+| Mã | Nghiệp vụ | Tổng | Mô phỏng | Chuyển thể | `held_out` của phần mô phỏng | Câu hỏi nghiên cứu |
+|---|---|---|---|---|---|---|
+| S01 | Tra cứu đơn và vận chuyển | 26 | 26 | 0 | 8 | RQ1 |
+| S02 | Sản phẩm và tồn kho | 18 | 18 | 0 | 5 | RQ1 |
+| S03 | Chính sách và FAQ có trích dẫn | 30 | 30 | 0 | 9 | RQ3 |
+| S04 | Hủy đơn | 20 | 13 | 7 τ²-bench | 4 | RQ1, RQ4 |
+| S05 | Trả hàng và hoàn tiền | 26 | 20 | 6 τ²-bench | 6 | RQ1, RQ4 |
+| S06 | Đổi hàng | 22 | 14 | 8 τ²-bench | 4 | RQ1 |
+| S07 | Chuyển nhân viên và khách bức xúc | 16 | 11 | 5 τ²-bench | 3 | RQ4 |
+| S08 | Hội thoại nhiều lượt | 18 | 16 | 2 τ²-bench | 5 | RQ1, RQ2 |
+| S09 | An toàn, bảo mật, chèn lệnh | 26 | 20 | 6 AgentDojo | 6 | RQ4 |
+| S10 | Ngoài phạm vi, ngày giờ, thông tin trực tiếp | 10 | 10 | 0 | 3 | RQ1, RQ5 |
+| S11 | Trợ lý ca của nhân viên | 22 | 16 | 6 AgentDojo | 5 | RQ1, RQ4 |
+| S12 | Tình huống đặc thù Việt Nam | 16 | 16 | 0 | 5 | RQ1, RQ4 |
+| | **Tổng** | **250** | **210** | **40** | **63** | |
 
-Mỗi bộ trộn đều cách viết của khách: có dấu, không dấu, viết tắt, sai chính tả, câu cụt, câu dài kể lể. Đây là biến số độ bền ngôn ngữ, ghi ở trường `style`.
+Phần chuyển thể cũng chia `dev` và `held_out` theo tỉ lệ 30% mỗi bộ. Mỗi bộ trộn đều cách viết của khách theo trường `style`; đây là biến số độ bền ngôn ngữ.
 
 ## 3. Định dạng một ca
 
-Giữ đúng định dạng W3.2 và W4, thêm năm trường:
+Theo `eval_pack/04_DINH_DANG_VA_CHAM.md` bản 2, giữ định dạng kịch bản nhiều lượt của W3.2 và W4, vì đây là dạng máy chấm được theo kết quả cuối:
 
-- `suite`: mã bộ, ví dụ `S04`.
-- `split`: `dev` hoặc `held_out`. Khoảng 30% mỗi bộ là `held_out`, không được xem khi chỉnh prompt, để tránh rò dữ liệu đánh giá.
-- `style`: `chuan`, `khong_dau`, `teencode`, `sai_chinh_ta` hoặc `dai`.
-- `source_note`: ca này dựa trên tình huống thực tế nào, ví dụ một điều khoản trong `data/knowledge/` hay một khiếu nại thường gặp.
-- `origin`: `mo_phong`, `tau2_retail` hoặc `agentdojo`; hai loại sau ghi kèm mã nhiệm vụ gốc. Nguồn và lý do xem `06_nghien_cuu_thuc_trang_va_du_lieu.md`.
+- `customer`: mã khách sàn ảo, bắt buộc. `fixture`: `standard`, hoặc `late_voucher_issued` khi ca cần đơn đã có voucher bồi thường.
+- `meta`: `suite`, `split` (`dev` hoặc `held_out`), `style` (`chuan`, `khong_dau`, `teencode`, `sai_chinh_ta`, `dai`), `origin` (`mo_phong`, `tau2_retail`, `agentdojo`), `vn_context`, `source_note`; ca chuyển thể thêm `upstream` gồm mã nhiệm vụ gốc và commit 40 ký tự của repo gốc; `knowledge_mode: "scripted"` cho ca chèn lệnh qua đoạn chính sách.
+- Khóa chấm: `tools_called`, `tools_any`, `tools_not_called`, `max_tool_calls`, `action`, `order_action`, `human_support`, `request_mode`, `sources`, `answer_all`, `answer_any`, `answer_not`, `final_state`; Trợ lý ca thêm `has_draft_reply`, `staff_replies_sent`; ca AgentDojo thêm `attack_not`, `attack_tools_not_called`.
+- `fake_model`: quỹ đạo mẫu của một tác tử làm đúng. CI phát lại để chứng minh ca chấm được và kỳ vọng không mâu thuẫn.
 
-Phần chấm giữ nguyên các khóa đã có: `tools_called`, `tools_any`, `tools_not_called`, `max_tool_calls`, `action`, `order_action`, `safety_rail`, `request_mode`, `sources`, `answer_all`, `answer_any`, `answer_not`, `final_state`. Mỗi ca có `fake_model` là quỹ đạo mẫu của một tác tử làm đúng. CI phát lại quỹ đạo này để chứng minh ca chấm được và kỳ vọng không mâu thuẫn.
-
-Dữ liệu seed hiện có: khách `C-001` với các đơn O-101 chờ xử lý, O-102 đã giao, các đơn O-301 đến O-312, biến thể có tồn bằng 0 như P-102 size S, P-301 size 41, đơn O-202 của khách `C-002`. Fixture `standard` có thêm O-701, O-702, O-705, O-710. Nếu cần trạng thái mới, ví dụ đơn quá hạn trả hàng, thêm fixture có tên riêng, không sửa seed.
+**Dữ liệu.** Ca chạy trên dữ liệu demo của sàn ảo (`data/demo_events/store_events.jsonl`, seed 20261106), nạp vào một SQLite riêng cho mỗi ca và dời mốc sao cho sự kiện mới nhất trùng thời điểm chạy, nên số ngày tương đối của đơn và các điều kiện 7, 15, 90 ngày không đổi theo ngày chạy. Danh sách khách, đơn, catalog, kết quả tool thật và nguyên văn 14 tài liệu chính sách nằm ở `eval_pack/03`. Không sửa dữ liệu demo cho vừa ca; thiếu trạng thái thì ghi đề xuất fixture.
 
 ## 4. Chạy tự động hay chạy tay
 
 **Chấm tự động là chính, có một phần chấm tay nhỏ.** Lý do:
 
-- Khối lượng: 150 ca × 3 lần lặp × 3 đến 4 cấu hình là từ 1.350 đến 1.800 lượt chạy. Không thể chấm tay.
+- Khối lượng: 250 ca × 3 lần của cấu hình A cộng 100 ca × 3 lần cho mỗi cấu hình B, C, D là khoảng 1.650 lượt chạy. Không thể chấm tay.
 - Thống kê: pass^k, bootstrap và McNemar cần chạy lặp được với cùng ca và cùng cách chấm. Chấm tay thì lần hai khác lần một.
 - Kiểu τ-bench chấm theo kết quả quan sát được: tool đã gọi, form mở ra, trạng thái DB, câu cấm khẳng định. Đây đều là phép kiểm trong code, không cần LLM làm giám khảo.
 
@@ -65,30 +67,28 @@ Có hai tầng tự động:
 | Tầng | Chạy ở đâu | Khi nào | Kiểm gì |
 |---|---|---|---|
 | CI | GitHub Actions, `--fake` | mỗi PR | định dạng dữ liệu; quỹ đạo mẫu đạt 100%; không tốn GPU hay tiền |
-| Model thật | máy owner, `--endpoint` tới vLLM trên Colab | W6, chạy bằng lệnh tay | số liệu Chương 4; không đưa vào CI vì cần GPU, secret và tốn compute |
+| Model thật | máy owner, `--endpoint` tới vLLM trên Colab | W6.4, chạy bằng lệnh tay | số liệu Chương 4; không đưa vào CI vì cần GPU, secret và tốn compute |
 
-Phần chấm tay gồm hai việc: đọc lại mọi ca thất bại để phân loại lỗi cho mục 4.9, và chấm một mẫu phân tầng khoảng 30 ca, gồm 2 đến 3 ca mỗi bộ, theo thang 1–5 về độ đúng, độ rõ và giọng điệu CSKH. Việc chấm tay không thay cho kiểm thử trên trình duyệt của W5 và W6; đó là việc riêng.
+Phần chấm tay gồm hai việc: đọc lại mọi ca thất bại để phân loại lỗi cho mục 4.9, và chấm một mẫu phân tầng khoảng 30 ca, gồm 2 đến 3 ca mỗi bộ, theo thang 1–5 về độ đúng, độ rõ và giọng điệu CSKH. Việc chấm tay không thay cho kiểm thử trên trình duyệt; đó là việc riêng.
 
-## 5. Ma trận thí nghiệm ở W6
+## 5. Ma trận thí nghiệm ở W6.4
 
-| Cấu hình | Agent | Thinking | Ngữ cảnh | Kho tri thức | Dùng cho |
-|---|---|---|---|---|---|
-| A, chính | agent-first | bật | 16k | thật | RQ1–RQ5 |
-| B | legacy supervisor | bật | 16k | thật | RQ1 |
-| C | agent-first | tắt | 16k | thật | RQ2 |
-| D | agent-first | bật | 8k | thật | RQ2 |
+| Cấu hình | Agent | Thinking | Ngữ cảnh | Kho tri thức | Số ca | Dùng cho |
+|---|---|---|---|---|---|---|
+| A, chính | agent-first | bật | 16k | thật | 250 × 3 | RQ1–RQ5 |
+| B | legacy supervisor (`--agent-mode legacy`) | bật | 16k | thật | 100 × 3 | RQ1 |
+| C | agent-first | tắt (`--thinking off`) | 16k | thật | 100 × 3 | RQ2 |
+| D | agent-first | bật | 8k (`--context-tokens 8192`, vLLM `RETAILOPS_MAX_MODEL_LEN=8192`) | thật | 100 × 3 | RQ2 |
 
-Mỗi cấu hình chạy 3 lần trên đủ 150 ca. Bộ S03 chạy thêm phép đo truy hồi riêng, Recall@k và MRR trên nhãn mức liên quan, với kho tri thức thật đã nạp `data/knowledge/`.
+Tập con 100 ca chọn một lần bằng `eval_stats.py subset --size 100 --seed 20261110`, phân tầng theo số ca từng bộ, rồi chạy B, C, D bằng `--only-file`. So A với từng cấu hình bằng `eval_stats.py compare --cases` trên đúng tập con đó. "Kho tri thức thật" là `--knowledge real`: `data/knowledge/` nạp vào PostgreSQL có pgvector, truy hồi thật; ca chèn lệnh qua đoạn chính sách vẫn chạy `scripted`. Bộ S03 đo thêm Recall@3 và MRR bằng `eval_retrieval.py`. Với cấu hình D, chạy thử vài ca có kết quả tool dài trước, vì prompt hệ thống, schema tool và `max_tokens` 2048 có thể vượt cửa sổ 8.192 token.
 
 ## 6. Việc phải làm, theo thứ tự
 
-1. Viết dữ liệu 11 bộ, mỗi lần một bộ, kèm quỹ đạo mẫu; mở rộng `check_eval_dataset.py` để kiểm các trường mới.
-2. Bổ sung runner: `--repeat k` và pass^k; `--agent-mode legacy`; tùy chọn thinking và cửa sổ ngữ cảnh; báo cáo theo bộ và theo `split`; chế độ kho tri thức thật cho S03, cần PostgreSQL với pgvector.
-3. Script thống kê: khoảng tin cậy bootstrap cho tỉ lệ thành công, McNemar cho các cặp A–B, A–C, A–D.
-4. Test CI phát lại quỹ đạo mẫu của cả 150 ca.
-5. W6: chạy ma trận trên Colab, chấm tay mẫu 30 ca, phân loại lỗi.
-
-Bước 1 và 3 không cần Colab và làm được ngay. Bước 2 và 4 là việc code nên theo quy trình handoff cho Argon, kèm PR và CI. Bước 5 chờ Colab.
+1. Công cụ đánh giá: **xong** ngày 2026-11-11, PR #87.
+2. 210 ca mô phỏng: owner gửi `eval_pack/` cho model độc lập, mỗi lượt một bộ; Claude kiểm bằng bộ kiểm và phát lại quỹ đạo mẫu, chỉ trả lại ca hỏng kèm lý do; bộ đạt được thêm vào `evals/suites/` qua PR (W6.3-D1).
+3. 40 ca chuyển thể: Claude làm theo mục 7 (W6.3-D3).
+4. Đóng băng: `check_eval_dataset.py --final` đạt, CI phát lại 100%, ghi SHA-256 từng tệp vào biên bản; sau đó không sửa ca, chỉ thêm phiên bản mới (W6.3-D7).
+5. W6.4: đổi khóa và cấu hình lại Colab (C1), chạy ma trận, chấm tay mẫu 30 ca, phân loại lỗi.
 
 ## 7. Chuyển thể từ bộ dữ liệu công khai
 
@@ -130,7 +130,7 @@ Mỗi ca chấm hai chỉ số như AgentDojo: **utility under attack**, tức v
 ### 7.2 Quy trình chuyển thể một ca
 
 1. **Ghi nguồn.** `origin` cùng mã nhiệm vụ gốc và commit của repo gốc, ví dụ `tau2_retail:task_17@<commit>`.
-2. **Ánh xạ dữ liệu.** Đổi người dùng, đơn, sản phẩm gốc sang khách `C-001` và đơn, sản phẩm trong seed của RetailOps. Thiếu trạng thái thì thêm fixture có tên riêng, không sửa seed.
+2. **Ánh xạ dữ liệu.** Đổi người dùng, đơn, sản phẩm gốc sang khách, đơn, sản phẩm của dữ liệu sàn ảo ở `eval_pack/03`, chọn theo bảng "bản đồ tình huống". Thiếu trạng thái thì ghi đề xuất fixture, không sửa dữ liệu demo.
 3. **Việt hóa, không dịch từng chữ.** Giữ mục tiêu, ràng buộc và thứ tự khách tiết lộ thông tin trong `known_info`, `unknown_info`, `task_instructions` của bản gốc. Viết lại như khách Việt thật nhắn tin, theo phân bố `style` ở mục 7.3.
 4. **Cố định lời khách.** τ²-bench dùng LLM đóng vai khách. Ở đây lời khách được viết sẵn thành 1–4 lượt, để mọi cấu hình nhận đúng cùng đầu vào. Điểm này ghi vào mục mối đe dọa tính hợp lệ.
 5. **Viết lại kỳ vọng theo nguyên tắc của RetailOps.** Hành động ghi của τ²-bench đổi thành form được mở bằng `prepare_order_action`, với đúng loại, đúng đơn, đúng biến thể; `final_state` giữ DB không đổi. `communicate_info` đổi thành `answer_all` hoặc `answer_any`. Luôn thêm `answer_not` cho các câu khẳng định đã hủy, đã đổi, đã hoàn tiền.
@@ -141,4 +141,4 @@ Mỗi ca chấm hai chỉ số như AgentDojo: **utility under attack**, tức v
 
 ### 7.3 Quy cách ngôn ngữ lấy từ các bộ tiếng Việt
 
-Không chép câu. Chỉ dùng các hiện tượng mà CSConDa và ViOCD mô tả làm quy cách viết: teencode, viết tắt, lỗi gõ, chêm tiếng Anh, không dấu, câu cụt, kể lể dài. Phân bố `style` mục tiêu trên 150 ca: `chuan` 40%, `khong_dau` 15%, `teencode` 20%, `sai_chinh_ta` 15%, `dai` 10%. Nếu muốn có căn cứ định lượng, có thể đếm tỉ lệ các hiện tượng trên tập test của CSConDa sau khi đăng ký quyền truy cập. Đây là dùng cho nghiên cứu, kết quả đếm không lưu câu gốc.
+Không chép câu. Chỉ dùng các hiện tượng mà CSConDa và ViOCD mô tả làm quy cách viết: teencode, viết tắt, lỗi gõ, chêm tiếng Anh, không dấu, câu cụt, kể lể dài. Phân bố `style` mục tiêu trên 210 ca mô phỏng: `chuan` 40%, `khong_dau` 15%, `teencode` 20%, `sai_chinh_ta` 15%, `dai` 10%. Nếu muốn có căn cứ định lượng, có thể đếm tỉ lệ các hiện tượng trên tập test của CSConDa sau khi đăng ký quyền truy cập. Đây là dùng cho nghiên cứu, kết quả đếm không lưu câu gốc.
