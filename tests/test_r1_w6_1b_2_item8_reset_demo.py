@@ -495,7 +495,7 @@ class _ResetDemoSuiteMixin:
             )
             self.assertEqual(imp_vouch.returncode, 0, msg=imp_vouch.stderr)
 
-            # 6. Guard B: Tombstone in order_purge_tombstones blocks reset and is NOT deleted
+            # 6. W6.2-D4: an unrelated tombstone is informational and is preserved.
             with bstore.connection(write=True) as db:
                 db.execute(
                     """INSERT INTO order_purge_tombstones(
@@ -522,27 +522,9 @@ class _ResetDemoSuiteMixin:
             )
             self.assertEqual(dry_tomb.returncode, 0, msg=dry_tomb.stderr)
             dry_tomb_json = json.loads(dry_tomb.stdout)
-            self.assertEqual(len(dry_tomb_json["blocking_tombstones"]), 1)
-
-            counts_with_tomb = self._snapshot_counts(sessions, tenant_id)
-            real_tomb = self._run_cli(
-                [
-                    *cli_db_prefix,
-                    "reset-marketplace-demo",
-                    "--tenant",
-                    tenant_id,
-                    "--source-system",
-                    "marketplace_sim",
-                ],
-                env_extra=base_env,
-            )
-            self.assertNotEqual(real_tomb.returncode, 0)
-            self.assertEqual(self._snapshot_counts(sessions, tenant_id), counts_with_tomb)
+            self.assertEqual(dry_tomb_json["blocking_tombstones"], [])
+            self.assertEqual([t["order_id"] for t in dry_tomb_json["unrelated_tombstones"]], ["ord_tombstone_guard_1"])
             self.assertTrue(ev_disk_path.is_file())
-
-            # Remove temporary test tombstone to run the clean reset flow
-            with bstore.connection(write=True) as db:
-                db.execute("DELETE FROM order_purge_tombstones WHERE order_id = 'ord_tombstone_guard_1'")
 
             # 7. Clean dry-run reports exact counts & mutates nothing
             pre_reset_counts = self._snapshot_counts(sessions, tenant_id)
@@ -597,7 +579,7 @@ class _ResetDemoSuiteMixin:
             post_reset_counts = self._snapshot_counts(sessions, tenant_id)
             for tbl in BUSINESS_RESET_TABLES:
                 self.assertEqual(post_reset_counts[tbl], 0, f"Expected {tbl} == 0 after reset")
-            self.assertEqual(post_reset_counts["order_purge_tombstones"], 0)
+            self.assertEqual(post_reset_counts["order_purge_tombstones"], 1)
             for tbl in PRESERVED_BUSINESS_TABLES:
                 self.assertEqual(post_reset_counts[tbl], pre_reset_counts[tbl], f"Expected {tbl} preserved")
             self.assertEqual(
