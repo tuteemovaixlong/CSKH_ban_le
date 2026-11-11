@@ -8,9 +8,9 @@ from retailops_conversation import normalize
 
 from agent_protocol import classify_user_text
 from retailops.guardrails.sentiment import analyze_sentiment
-from retailops.guardrails.topic_filter import check_topic_safety, is_read_only_lookup_intent
+from retailops.guardrails.topic_filter import is_read_only_lookup_intent
 from retailops.workflow.state import MultiAgentState, WorkerType
-from retailops.workflow.safety import EXTREME_RAGE_KEYWORDS, HUMAN_REQUEST_KEYWORDS
+from retailops.workflow.safety import HUMAN_REPLY, HUMAN_REQUEST_KEYWORDS, SafetyVerdict, hours_inquiry_text, safety_gate
 
 # The rails shared with the customer agent live in retailops.workflow.safety; the two phrases below are
 # legacy-only routing hints that the agent-first loop deliberately does not carry.
@@ -65,61 +65,33 @@ def run_supervisor(state: MultiAgentState) -> MultiAgentState:
     folded = normalize(last_user_msg)
     plural_orders = bool(re.search(r'\b(cac don|tat ca (cac )?don|liet ke don|kiem tra don)\b', folded))
 
-    # 1. Guardrail: Topic Safety (Forbidden domains)
-    topic_result = check_topic_safety(last_user_msg)
-    if not topic_result.is_safe:
-        state["intent"] = "forbidden_topic"
-        state["next_worker"] = "direct_response"
-        reply = {"role": "assistant", "content": topic_result.refusal_message}
-        state["messages"].append(reply)
-        state["fresh"].append(reply)
-        state["complete"] = True
-        state["subagent_history"].append("supervisor:forbidden_refusal")
-        return state
-
-    # 2. Guardrail: Sentiment & Frustration Analysis (SOP 5)
+    # Both customer entry points use the same ordered safety rails.
     sentiment_result = analyze_sentiment(last_user_msg)
     state["sentiment"] = sentiment_result.sentiment
     state["strict_mode"] = sentiment_result.strict_mode_required
     read_only_lookup = is_read_only_lookup_intent(last_user_msg)
-
-    # Check if asking general operating hours or policy about human agents
-    is_hours_inquiry = any(w in lower_msg for w in ["khung giờ", "giờ làm việc", "mấy giờ đến mấy giờ", "khi nào có", "kênh hotline"])
-
-    # Extreme anger or boycott / platform report threat trigger (SOP 5)
-    is_extreme_rage = (not read_only_lookup) and (
-        any(kw in lower_msg for kw in EXTREME_RAGE_KEYWORDS) or bool(re.search(r'(?<!điều )\bkiện\b', lower_msg))
-    )
-    if is_extreme_rage:
-        state["intent"] = "dispute_complaint"
-        state["next_worker"] = "human_escalation"
-        state["requires_human"] = True
-        state["strict_mode"] = True
-        state["human_reason"] = "SOP 5: Khách hàng bức xúc cực độ / đe dọa bóc phốt / khiếu nại sàn TMĐT (Strict Mode)"
-        reply = {
-            "role": "assistant",
-            "content": "Dạ shop thành thật xin lỗi vì trải nghiệm rất không tốt vừa qua của anh/chị! Shop hoàn toàn hiểu sự bức xúc của anh/chị và xin cam kết chịu trách nhiệm xử lý thỏa đáng 100%. Em đã gửi cảnh báo đỏ trực tiếp đến Quản lý cửa hàng để tiếp nhận và gọi lại hỗ trợ anh/chị ngay lập tức ạ!"
-        }
+    is_hours_inquiry = hours_inquiry_text(last_user_msg)
+    verdict = safety_gate(last_user_msg)
+    # Preserve the two legacy-only exchange routing hints.
+    if verdict is None and not read_only_lookup and any(
+            kw in lower_msg for kw in ("đổi giúp đc ko shop", "đổi giúp được không shop")):
+        verdict = SafetyVerdict("human_request", HUMAN_REPLY,
+            human_reason="SOP 6: Khách hàng bấm nút hoặc yêu cầu gặp trực tiếp nhân viên tư vấn")
+    if verdict is not None:
+        forbidden = verdict.rail == "forbidden_topic"
+        state["intent"] = "forbidden_topic" if forbidden else "dispute_complaint"
+        state["next_worker"] = "direct_response" if forbidden else "human_escalation"
+        if verdict.human_reason:
+            state["requires_human"] = True
+            state["human_reason"] = verdict.human_reason
+        state["strict_mode"] = verdict.strict_mode or state["strict_mode"]
+        reply = {"role": "assistant", "content": verdict.reply}
         state["messages"].append(reply)
         state["fresh"].append(reply)
         state["complete"] = True
-        state["subagent_history"].append("supervisor:escalate_extreme_rage")
-        return state
-
-    # 3. Check for Explicit Human Escalation Request (SOP 6)
-    if not read_only_lookup and not is_hours_inquiry and any(kw in lower_msg for kw in HUMAN_ESCALATION_KEYWORDS):
-        state["intent"] = "dispute_complaint"
-        state["next_worker"] = "human_escalation"
-        state["requires_human"] = True
-        state["human_reason"] = "SOP 6: Khách hàng bấm nút hoặc yêu cầu gặp trực tiếp nhân viên tư vấn"
-        reply = {
-            "role": "assistant",
-            "content": "Dạ em đã ghi nhận yêu cầu của anh/chị và đang kết nối tới nhân viên tư vấn trực ca. Nhân viên sẽ phản hồi lại anh/chị trong ít phút nữa nhé ạ!"
-        }
-        state["messages"].append(reply)
-        state["fresh"].append(reply)
-        state["complete"] = True
-        state["subagent_history"].append("supervisor:escalate_human")
+        history_tag = {"forbidden_topic": "forbidden_refusal", "extreme_rage": "escalate_extreme_rage",
+                       "human_request": "escalate_human"}[verdict.rail]
+        state["subagent_history"].append("supervisor:" + history_tag)
         return state
 
     import unicodedata

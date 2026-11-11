@@ -114,6 +114,8 @@ def add_parser(commands):
     )
     rst_demo.add_argument('--tenant', required=True, help='Target tenant ID.')
     rst_demo.add_argument('--source-system', required=True, help='Marketplace source_system (e.g. marketplace_sim).')
+    rst_demo.add_argument('--reimport-file', type=Path,
+                          help='Validate JSONL events to re-import and include their order IDs in tombstone checks.')
     rst_demo.add_argument('--dry-run', action='store_true',
                           help='Report per-table row counts, evidence files, tombstones, and open cases without mutating.')
     seed_acct = sub.add_parser(
@@ -296,7 +298,8 @@ def run(args):
             sessions = PersistentSessions(pers_dir)
         tenant_clean = str(args.tenant or '').strip()
         bstore = sessions.business_store(tenant_clean)
-        report = bstore.reset_marketplace_demo(args.source_system, dry_run=bool(args.dry_run))
+        report = bstore.reset_marketplace_demo(args.source_system, dry_run=bool(args.dry_run),
+                                              reimport_file=args.reimport_file)
         if not args.dry_run:
             cache = getattr(sessions, 'tool_caches', {}).get(tenant_clean)
             if cache is not None and hasattr(cache, 'clear'):

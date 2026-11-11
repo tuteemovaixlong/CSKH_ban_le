@@ -56,13 +56,34 @@ class KnowledgeRepository:
                 "checksum": digest, "changed": previous is None or previous["checksum"] != digest,
                 "embedding_model": MODEL_ID}
 
-    def ingest(self, documents):
+    def ingest(self, documents, *, prune=False):
         reports = [self.replace_document(doc.source_key, doc.title, doc.source_uri, doc.content,
                                          {"format": doc.source_key.rsplit(".", 1)[-1].lower()})
                    for doc in documents]
+        sources = [item["source_key"] for item in reports]
+        deactivated = []
+        if prune:
+            incoming = set(sources)
+            with self.store.connection(write=True) as db:
+                self._require_schema(db)
+                deactivated = [row["source_key"] for row in db.execute(
+                    "SELECT source_key FROM knowledge_documents WHERE active=1 ORDER BY source_key").fetchall()
+                    if row["source_key"] not in incoming]
+                now = time.time()
+                db.executemany("UPDATE knowledge_documents SET active=0, updated_at=? WHERE source_key=? AND active=1",
+                               [(now, key) for key in deactivated])
         return {"documents": len(reports), "chunks": sum(item["chunks"] for item in reports),
                 "changed": sum(bool(item["changed"]) for item in reports), "embedding_model": MODEL_ID,
-                "sources": [item["source_key"] for item in reports]}
+                "sources": sources, "deactivated": deactivated}
+
+    def list_documents(self):
+        """Inspect active and inactive documents without dropping retained chunks."""
+        with self.store.connection() as db:
+            self._require_schema(db)
+            rows = db.execute("""SELECT d.source_key,d.title,d.active,d.checksum,d.updated_at,
+                (SELECT COUNT(*) FROM knowledge_chunks c WHERE c.document_id=d.id) AS chunks
+                FROM knowledge_documents d ORDER BY d.source_key""").fetchall()
+        return [dict(row) for row in rows]
 
     def search(self, query, limit=5):
         if not isinstance(query, str) or not 1 <= len(query.strip()) <= 500:

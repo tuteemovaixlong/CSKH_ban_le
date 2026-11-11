@@ -753,43 +753,43 @@ def check_inventory(product_id: str, size: str = "", color: str = "") -> dict:
 # ---------------------------------------------------------------------------
 @app.tool()
 def search_knowledge(query: str, top_k: int = 3) -> dict:
-    """Truy vấn cơ sở tri thức chính sách đổi trả, bảo hành 90 ngày, bồi hoàn nghẽn kho Mega SOC và khiếu nại shipper."""
+    """Truy vấn chính sách đổi size 15 ngày, bảo hành 90 ngày, voucher giao trễ và khiếu nại shipper mô phỏng."""
     q_clean = query.strip().lower()
 
     docs = [
         {
             "id": "kb_warranty_90d",
-            "title": "Chính sách bảo hành và đổi mới 1-1 tận nhà (90 ngày)",
+            "title": "Chính sách bảo hành, đổi mới 1-1 tận nhà",
             "category": "warranty",
-            "content": _load_text_file("data/knowledge/policy_warranty_exchange_1to1.md", "Bảo hành 90 ngày lỗi bung chỉ, kẹt khóa YKK. Đổi mới 1-1 tận nhà miễn phí ship."),
+            "content": _load_text_file("data/knowledge/policy_warranty_exchange_1to1.md", "Tài liệu giả lập của RetailOps Demo. Bảo hành lỗi sản xuất mặc định 90 ngày từ ngày giao, tùy sản phẩm. Khách gửi yêu cầu kèm bằng chứng; nhân viên duyệt rồi mới đổi mới 1-1, shop chịu phí vận chuyển hai chiều."),
             "keywords": ["bảo hành", "hư", "hỏng", "rách", "bung chỉ", "kẹt khóa", "khóa kéo", "lỗi", "90 ngày", "đổi mới 1-1"]
         },
         {
             "id": "kb_mega_soc_delay",
-            "title": "Chính sách hỗ trợ và đền bù nghẽn kho Mega SOC >48h",
+            "title": "Chính sách bồi thường giao hàng trễ, kể cả mùa Mega Sale",
             "category": "shipping_delay",
-            "content": _load_text_file("data/knowledge/policy_mega_sale_delay_voucher.md", "Đơn trễ quá 48h so với thời hạn cam kết được đề xuất bồi thường voucher 50.000đ sau khi nhân viên duyệt và sàn phát mã."),
-            "keywords": ["chậm", "trễ", "nghẽn", "soc", "mega soc", "48h", "voucher đền bù", "bồi thường", "bắc ninh"]
+            "content": _load_text_file("data/knowledge/policy_mega_sale_delay_voucher.md", "Tài liệu giả lập của RetailOps Demo. Đơn trễ quá 48 giờ so với hạn cam kết được hệ thống đề xuất voucher 50.000 VNĐ, hạn 30 ngày. Nhân viên duyệt và sàn phát mã; trợ lý chỉ thông báo mã đã ghi nhận trong dữ liệu đơn."),
+            "keywords": ["chậm", "trễ", "giao trễ", "hạn cam kết", "48h", "48 giờ", "voucher đền bù", "bồi thường"]
         },
         {
             "id": "kb_size_exchange",
-            "title": "Chính sách đổi size 2 chiều tận nhà trong 7 ngày",
+            "title": "Chính sách đổi size, đổi màu 2 chiều tận nhà",
             "category": "exchange",
-            "content": _load_text_file("data/knowledge/policy_size_exchange_twoway.md", "Đổi size tận nhà trong 7 ngày. Shipper giao size mới và thu hồi size cũ đồng thời."),
-            "keywords": ["đổi size", "chật", "rộng", "không vừa", "đổi hàng", "7 ngày", "đổi mẫu"]
+            "content": _load_text_file("data/knowledge/policy_size_exchange_twoway.md", "Tài liệu giả lập của RetailOps Demo. Đổi size, màu cùng sản phẩm trong 15 ngày từ ngày giao, còn tem nhãn, chưa giặt, chưa làm bẩn. Khách gửi yêu cầu rồi chờ nhân viên duyệt. Lần đổi đầu miễn phí vận chuyển hai chiều; từ lần thứ hai khách trả phí theo biểu phí."),
+            "keywords": ["đổi size", "chật", "rộng", "không vừa", "đổi hàng", "15 ngày", "đổi mẫu"]
         },
         {
             "id": "kb_shipper_complaint",
-            "title": "Quy trình xử lý shipper báo giao hàng ảo / không liên lạc được",
+            "title": "Chính sách khiếu nại giao hàng và shipper",
             "category": "shipper_complaint",
-            "content": _load_text_file("data/knowledge/policy_shipper_complaint.md", "Shipper báo không nghe máy nhưng không có cuộc gọi: yêu cầu bưu cục điều phối giao lại ngay trong ngày."),
+            "content": _load_text_file("data/knowledge/policy_shipper_complaint.md", "Tài liệu giả lập của RetailOps Demo. Shipper báo không liên lạc được nhưng khách ở nhà: tra cứu vận đơn, ghi nhận phản ánh và chuyển nhân viên. Trợ lý không tự gửi khiếu nại tới hãng, không hứa giao lại trong ngày, không cung cấp số điện thoại đầy đủ của shipper."),
             "keywords": ["báo ảo", "shipper không gọi", "chưa nhận được hàng mà báo giao", "không liên lạc được", "khiếu nại shipper"]
         },
         {
             "id": "kb_cancellation",
             "title": "Chính sách hủy đơn hàng",
             "category": "cancellation",
-            "content": _load_text_file("data/knowledge/cancellation.md", "Đơn hàng trạng thái pending được phép hủy trực tiếp trên giao diện."),
+            "content": _load_text_file("data/knowledge/cancellation.md", "Tài liệu giả lập của RetailOps Demo. Chỉ đơn pending được gửi yêu cầu hủy bằng biểu mẫu rồi chờ nhân viên duyệt. Đơn shipping không hủy được. Tin nhắn và trợ lý không tự hủy đơn; chỉ xác nhận đã hủy khi dữ liệu đơn ghi cancelled."),
             "keywords": ["hủy đơn", "hủy hàng", "cancel", "không mua nữa"]
         }
     ]
@@ -1212,20 +1212,22 @@ def get_warranty_policy_resource() -> str:
     if not content:
         content = (
             "# Chính sách bảo hành 90 ngày RetailOps\n\n"
-            "- Áp dụng cho mọi lỗi đường may chỉ, kẹt khóa YKK trong vòng 90 ngày kể từ ngày nhận hàng.\n"
-            "- Miễn phí đổi mới 1-1 tận nhà, bưu tá giao hàng mới và thu hồi hàng cũ đồng thời.\n"
+            "Tài liệu giả lập của RetailOps Demo.\n"
+            "- Bảo hành lỗi sản xuất mặc định 90 ngày từ ngày giao, tùy thời hạn của sản phẩm và điều kiện hệ thống tính.\n"
+            "- Khách gửi yêu cầu kèm bằng chứng; sau khi nhân viên duyệt mới đổi mới 1-1, shop chịu phí hai chiều.\n"
         )
     return content
 
 
 @app.resource("retailops://policies/mega-soc-delay")
 def get_mega_soc_delay_resource() -> str:
-    """Resource: Quy định xử lý và đề xuất bồi thường khi đơn hàng nghẽn kho phân loại Mega SOC >48h."""
+    """Resource: Chính sách bồi thường giao trễ quá 48 giờ bằng voucher."""
     content = _load_text_file("data/knowledge/policy_mega_sale_delay_voucher.md")
     if not content:
         content = (
-            "# Quy định bồi hoàn nghẽn kho Mega SOC\n\n"
-            "- Đơn hàng trễ quá 48h so với thời hạn cam kết được đề xuất bồi thường 50.000đ sau khi nhân viên duyệt.\n"
+            "# Chính sách bồi thường giao trễ bằng voucher\n\n"
+            "Tài liệu giả lập của RetailOps Demo.\n"
+            "- Đơn trễ quá 48 giờ so với hạn cam kết được hệ thống đề xuất voucher 50.000 VNĐ, hạn 30 ngày, chờ nhân viên duyệt.\n"
             "- Mã voucher chỉ được thông báo tới khách hàng sau khi sàn phát hành và ghi nhận vào hệ thống.\n"
         )
     return content
@@ -1250,7 +1252,7 @@ def retail_copilot_assistant(customer_intent: str = "general") -> str:
         f"Mục tiêu hỗ trợ khách hàng hiện tại: {customer_intent}\n\n"
         "Quy tắc nghiệp vụ cốt lõi:\n"
         "1. Luôn tra cứu thực tế vận đơn qua `track_shipment` trước khi trả lời về tình trạng đơn hàng.\n"
-        "2. Nếu đơn bị trễ hạn cam kết > 48h hoặc nghẽn kho Mega SOC, thông cảm và hướng dẫn chuyển nhân viên kiểm tra đề xuất bồi thường; tuyệt đối không tự nêu mã voucher khi dữ liệu chưa có.\n"
+        "2. Nếu đơn trễ quá 48 giờ so với hạn cam kết, thông cảm và hướng dẫn chuyển nhân viên kiểm tra đề xuất voucher 50.000 VNĐ; chỉ thông báo mã khi dữ liệu đã ghi nhận voucher do sàn phát hành.\n"
         "3. Nếu phát hiện giao hàng thất bại hoặc khách phản ánh shipper chưa gọi, hỗ trợ ghi nhận và chuyển nhân viên xử lý.\n"
         "4. Nếu khách hỏi đổi size hoặc bảo hành lỗi sản xuất, kiểm tra điều kiện đơn và hướng dẫn tạo yêu cầu đổi trả.\n"
         "5. Giữ thái độ đồng cảm, trung thực, chuyên nghiệp, xoa dịu khách hàng hiệu quả."

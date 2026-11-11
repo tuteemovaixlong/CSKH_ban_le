@@ -1489,11 +1489,29 @@ class BusinessStore:
                 "retained_orders": retained,
             }
 
-    def reset_marketplace_demo(self, source_system: str, *, dry_run: bool = False) -> dict:
+    def reset_marketplace_demo(self, source_system: str, *, dry_run: bool = False, reimport_file=None) -> dict:
         """Atomically remove all canonical orders & child rows of ``source_system`` (W6.1b-2-D9)."""
         from retailops.integration.connectors import validate_source_system_name
 
         src = validate_source_system_name(source_system)
+        reimport_order_ids: set[str] = set()
+        if reimport_file is not None:
+            from retailops.integration.contract import validate_event_v2
+
+            # Validate the entire file before opening any write transaction.
+            line_number = 0
+            try:
+                with Path(reimport_file).open(encoding="utf-8") as stream:
+                    for line_number, line in enumerate(stream, 1):
+                        if not line.strip():
+                            continue
+                        event = validate_event_v2(json.loads(line))
+                        external_id = event["data"].get("external_order_id")
+                        if external_id:
+                            reimport_order_ids.add(external_id)
+            except (OSError, UnicodeError, ValueError, ApiError) as exc:
+                raise ApiError(400, "invalid_reimport_file",
+                               f"Không đọc được tệp sự kiện JSONL hợp lệ (dòng {line_number}).") from exc
         tenant_clean = str(getattr(self, "tenant_id", None) or "default").strip() or "default"
         is_dry = bool(dry_run)
 
@@ -1501,9 +1519,9 @@ class BusinessStore:
         deleted_counts: dict[str, int] = {}
 
         with self.connection(write=not is_dry) as conn:
-            blocking_tombstones: list[dict] = []
+            tombstones: list[dict] = []
             if self._tombstone_table_exists(conn):
-                blocking_tombstones = [
+                tombstones = [
                     {
                         "order_id": str(r["order_id"]),
                         "tenant_id": str(r["tenant_id"]),
@@ -1587,6 +1605,9 @@ class BusinessStore:
             ).fetchall()
             target_order_set = {str(r["id"]) for r in ord_rows}
             target_ext_order_set = {str(r["external_order_id"]) for r in ord_rows if r["external_order_id"]}
+            relevant_order_ids = target_order_set | target_ext_order_set | reimport_order_ids
+            blocking_tombstones = [r for r in tombstones if r["order_id"] in relevant_order_ids]
+            unrelated_tombstones = [r for r in tombstones if r["order_id"] not in relevant_order_ids]
 
             target_req_set = {
                 str(r["request_id"])
@@ -1949,6 +1970,7 @@ class BusinessStore:
             "deleted_evidence_files": deleted_evidence_files,
             "failed_evidence_files": failed_evidence_files,
             "blocking_tombstones": blocking_tombstones,
+            "unrelated_tombstones": unrelated_tombstones,
             "open_cases": open_cases,
             "open_handoffs": open_handoffs,
         }

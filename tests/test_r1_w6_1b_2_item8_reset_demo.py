@@ -502,7 +502,7 @@ class _ResetDemoSuiteMixin:
                            order_id, tenant_id, customer_id, product_id, status, amount,
                            snapshot_name, variant, reason, operator_id, purged_at,
                            pre_counts_json, post_counts_json
-                       ) VALUES (?, ?, 'cust_acct_1', 'P-101', 'cancelled', 299000,
+                       ) VALUES (?, ?, 'retired_legacy_customer', 'P-101', 'cancelled', 299000,
                                  'Áo thun Essential', 'Trắng · Size L', 'test_tombstone',
                                  'op_1', ?, '{}', '{}')""",
                     ("ord_tombstone_guard_1", tenant_id, now_ts),
@@ -543,6 +543,8 @@ class _ResetDemoSuiteMixin:
                     tenant_id,
                     "--source-system",
                     "marketplace_sim",
+                    "--reimport-file",
+                    str(demo_jsonl),
                     "--dry-run",
                 ],
                 env_extra=base_env,
@@ -567,6 +569,8 @@ class _ResetDemoSuiteMixin:
                     tenant_id,
                     "--source-system",
                     "marketplace_sim",
+                    "--reimport-file",
+                    str(demo_jsonl),
                 ],
                 env_extra=base_env,
             )
