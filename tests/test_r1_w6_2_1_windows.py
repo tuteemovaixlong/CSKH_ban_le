@@ -1,6 +1,13 @@
 """W6.2.1-D1: tool and direct HTTP enforce server-computed order windows."""
 import unittest
+import sys
+from pathlib import Path
 from unittest.mock import patch
+
+# Match the existing suites' support for both discovery and tests.<module> invocation.
+_TESTS_DIR = str(Path(__file__).resolve().parent)
+if _TESTS_DIR not in sys.path:
+    sys.path.insert(0, _TESTS_DIR)
 
 from retailops.business.application import Application
 from retailops_conversation import Catalog

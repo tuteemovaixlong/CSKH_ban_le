@@ -1,5 +1,11 @@
 """W6.2.1-D3 implicit litigation: semantic cue combinations, not sentence exceptions."""
 import unittest
+import sys
+from pathlib import Path
+
+_TESTS_DIR = str(Path(__file__).resolve().parent)
+if _TESTS_DIR not in sys.path:
+    sys.path.insert(0, _TESTS_DIR)
 
 from retailops.workflow.safety import SUE_REASON, safety_gate
 from test_r1_w6_2_safety import SAFETY_CASES
