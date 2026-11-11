@@ -68,7 +68,7 @@ jobs:
           RETAILOPS_ALLOW_DESTRUCTIVE_TEST_DATABASE: "1"
         run: |
           python3 scripts/prepare_test_pgvector.py
-          python3 -m unittest tests.test_r1_w6_1b_1_ingest_v9 tests.test_r1_w6_1b_1_1_ui_d8_v9 tests.test_r1_w6_1b_2_item1_recipients_ingest tests.test_r1_w6_1b_2_item4_compensations tests.test_r1_w6_1b_2_item5_voucher_loop tests.test_r1_w6_1b_2_item8_reset_demo -v
+          python3 -m unittest tests.test_r1_w6_1b_1_ingest_v9 tests.test_r1_w6_1b_1_1_ui_d8_v9 tests.test_r1_w6_1b_2_item1_recipients_ingest tests.test_r1_w6_1b_2_item4_compensations tests.test_r1_w6_1b_2_item5_voucher_loop tests.test_r1_w6_1b_2_item8_reset_demo tests.test_r1_w6_2_reset tests.test_r1_w6_2_knowledge -v
           python3 scripts/check_ops_console.py
           python3 scripts/check_account_usage_quota.py
           python3 -m py_compile deploy/admin-console.py deploy/publish_and_activate.py
