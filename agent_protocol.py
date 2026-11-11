@@ -8,6 +8,9 @@ MAX_MESSAGES = 40
 # for the tool schemas and the answer even at about 2.6 characters per token.
 CONTEXT_TOKENS = 16384
 MAX_CHARACTERS = 36000
+# W6.2's rights rule plus two maximum-length server focus IDs needs 6,079 characters.
+# This per-system bound does not change the total transcript or serving-window budgets.
+MAX_SYSTEM_CHARACTERS = 6400
 # Customer agent budget (W3.2-D10): per chat turn, plus a wall-clock cap for the whole turn.
 MAX_MODEL_CALLS = 6
 MAX_TOOL_CALLS = 10
@@ -374,7 +377,7 @@ def validate_messages(messages):
     first_idx = 0
     if messages[0].get('role') == 'system':
         sys_content = messages[0].get('content', '')
-        if not isinstance(sys_content, str) or not 1 <= len(sys_content.strip()) <= 6000:
+        if not isinstance(sys_content, str) or not 1 <= len(sys_content.strip()) <= MAX_SYSTEM_CHARACTERS:
             raise ProtocolError('Invalid system prompt')
         if len(messages) < 2 or not isinstance(messages[1], dict) or messages[1].get('role') != 'user':
             raise ProtocolError('History starting with system must be followed by a user turn')

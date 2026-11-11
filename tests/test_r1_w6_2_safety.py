@@ -1,7 +1,7 @@
 """W6.2-D2: shared rails, fake-gateway application and legacy supervisor."""
 import unittest
 
-from agent_protocol import SYSTEM
+from agent_protocol import SYSTEM, ProtocolError, agent_system, validate_messages
 from retailops.guardrails.topic_filter import FORBIDDEN_TOPICS
 from retailops.workflow.safety import safety_gate
 from retailops.workflow.supervisor import run_supervisor
@@ -75,6 +75,12 @@ class SafetyTableTests(unittest.TestCase):
         lines = SYSTEM.splitlines()
         policy_line = next(i for i, line in enumerate(lines) if line.startswith("For store policies, returns, shipping guidance"))
         self.assertEqual(lines[policy_line + 1], RIGHTS_RULE)
+
+    def test_long_focus_prompt_is_valid_and_oversized_prompt_is_rejected(self):
+        focused = agent_system({"order_id": "O-" + "9" * 61, "product_id": "P-" + "9" * 61})
+        validate_messages([{"role": "system", "content": focused}, {"role": "user", "content": "đơn này"}])
+        with self.assertRaises(ProtocolError):
+            validate_messages([{"role": "system", "content": "x" * 6401}, {"role": "user", "content": "hi"}])
 
     def test_legacy_supervisor_uses_same_rails(self):
         for text, expected in (("tôi sẽ khởi kiện shop", "extreme_rage"), ("kiện hàng của tôi đang ở đâu?", None), ("Mấy giờ shop có nhân viên trực?", None)):
