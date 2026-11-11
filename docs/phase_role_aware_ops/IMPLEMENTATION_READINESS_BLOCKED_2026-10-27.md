@@ -768,3 +768,25 @@ Chưa thử trên production: câu hóa đơn VAT, câu dọa kiện ngầm củ
 **Ghi chú không chặn:** `s07_007`, `s07_008` cấm các chuỗi "090", "098", "028", "024" để chặn số điện thoại bịa; chuỗi này có thể khớp mã đơn như `SIM-O-00098`, nhưng hai khách của ca không có đơn đó. Model viết ca cùng họ Google với model chạy ở W6.4 (Gemma); thông tin vẫn cách ly hoàn toàn, chỉ ghi vào mục giới hạn của Chương 4 và kiểm các cụm `answer_any` đủ rộng khi nhận từng bộ.
 
 **Kết luận:** S07 nhận, chờ thêm vào `evals/suites/` sau khi [W6.3.1](W6_3_1_HOTFIX_HANDOFF_2026-11-11.md) merge và phát lại đạt 11/11. Model độc lập làm tiếp S09.
+
+### 2026-11-11 W6.3.1 verification and merge record
+
+> **Phạm vi:** kiểm chứng PR #94 (W6.3.1, Codex, nhánh `phase-r1-w6-3-1`, head `330fd67`) theo mục 2 của [W6.3.1 hotfix handoff](W6_3_1_HOTFIX_HANDOFF_2026-11-11.md). Báo cáo của executor: `W6_3_1_EXECUTION_REPORT_2026-11-11.md`.
+
+| Kiểm | Kết quả |
+|---|---|
+| CI trên `330fd67` | 6/6 xanh; unittest Linux 1.144/1.144 |
+| Phạm vi | 9 tệp; S07 không bị commit, SHA-256 tệp gốc không đổi |
+| F28 | `validate_tool` chỉ nới `reason` của `request_human_support` lên 1.000 ký tự; tham số khác giữ giới hạn cũ |
+| F29 | số trong mã như `SIM-O-00115` không tính là số ngày; câu thời hạn được giữ khi số ngày nằm trong tập server vừa trả, hoặc không có số mà có cờ điều kiện hay mốc giao |
+| Runner | chỉ bỏ qua quỹ đạo thừa khi lượt không gọi model; báo cáo ghi `rail_answered` |
+| Test cũ bị đổi | `test_postgres`: lý do dài nay chuyển được, có thêm lượt thông báo hệ thống, test tìm đúng lượt và kiểm thêm `escalated_to_human`; `test_r1_w3_2_answer_check`: thêm bằng chứng chuyển thành công cho câu xác nhận chuyển nhân viên. Không nới điều kiện nào |
+| S07 phát lại | 11/11 (trước sửa 5/11) |
+| Hồi quy, ca mẫu | 32/32, 4/4 |
+| 14 câu thử mới cho `answer_check` | 14/14 đúng kỳ vọng |
+
+**Ghi chú không chặn:** câu "Đơn đã được chuyển cho nhân viên giao hàng…" bị cắt như khẳng định chuyển nhân viên không căn cứ, vì cụm "nhân viên giao hàng"; câu cùng ý với "đơn vị vận chuyển" hay "bưu cục" được giữ.
+
+**Merge.** Owner duyệt; Claude merge ngày 2026-11-11 với `--match-head-commit 330fd67`, merge commit `af1a016`. **Chưa deploy:** EC2 đang tắt nên không khách nào bị ảnh hưởng; deploy W6.3.1 ở lần bật EC2 kế tiếp, smoke thêm câu xin đổi địa chỉ phải tạo ca thật ở Staff Desk.
+
+**S07 vào bộ đánh giá:** `evals/suites/S07.jsonl` thêm nguyên byte, SHA-256 `a8cb07fb…`; bảng nguồn gốc ở `evals/suites/README.md`. Tiến độ: 11/250 ca.
