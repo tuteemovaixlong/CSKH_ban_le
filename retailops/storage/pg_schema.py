@@ -874,6 +874,7 @@ IDENTITY_DDL.extend(P5C_IDENTITY_DDL)
 
 
 CACHE_DDL = [
+    # Unused table; the live cache is in memory in retailops/business/cache.py (W6.2/F5).
     '''CREATE TABLE IF NOT EXISTS semantic_cache (
         id TEXT PRIMARY KEY, query_text TEXT NOT NULL, query_hash TEXT NOT NULL,
         embedding retailops_extensions.vector(384) NOT NULL, response_json TEXT NOT NULL,

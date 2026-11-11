@@ -14,10 +14,10 @@ FORBIDDEN_TOPICS = {
     },
     "legal": {
         "patterns": [
-            r"\b(luật sư|khởi kiện|tòa án|vi hiến|hình sự|tội phạm|lách luật|hối lộ|tham nhũng)\b",
-            r"\b(lawyer|lawsuit|attorney|court|criminal|bribe|illegal)\b"
+            r"\b(luật sư|tòa án|vi hiến|hình sự|tội phạm|lách luật|hối lộ|tham nhũng)\b",
+            r"\b(lawyer|attorney|court|criminal|bribe)\b"
         ],
-        "refusal": "Dạ em chỉ có thể tư vấn các chính sách bán hàng và đổi trả của shop, không thể đưa ra lời khuyên pháp lý. Anh/chị có câu hỏi nào về sản phẩm hay đơn hàng của shop không ạ?"
+        "refusal": "Dạ em không tư vấn được về thủ tục pháp lý hay luật sư ạ. Em có thể kiểm tra giúp anh/chị chính sách đổi trả, bảo hành, hoàn tiền của shop cho đơn hàng của mình; nếu anh/chị muốn, em chuyển nhân viên hỗ trợ trực tiếp ạ."
     },
     "politics_religion": {
         "patterns": [
@@ -651,13 +651,14 @@ class TopicFilterResult:
     refusal_message: str | None = None
 
 
-def check_topic_safety(text: str) -> TopicFilterResult:
+def check_topic_safety(text: str, *, categories=None) -> TopicFilterResult:
     """Check whether the user input touches on forbidden domains."""
     if not text:
         return TopicFilterResult(is_safe=True)
 
     lower = text.lower()
-    for category, details in FORBIDDEN_TOPICS.items():
+    for category in FORBIDDEN_TOPICS if categories is None else categories:
+        details = FORBIDDEN_TOPICS[category]
         for pattern in details["patterns"]:
             if re.search(pattern, lower):
                 return TopicFilterResult(

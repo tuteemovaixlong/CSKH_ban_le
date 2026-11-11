@@ -12,6 +12,9 @@ def add_parser(commands):
     ingest = actions.add_parser("ingest", help="Replace synthetic knowledge documents from a directory.")
     ingest.add_argument("--tenant", required=True)
     ingest.add_argument("--path", type=Path, default=Path("data/knowledge"))
+    ingest.add_argument("--prune", action="store_true", help="Deactivate documents absent from this directory.")
+    listing = actions.add_parser("list", help="List active and inactive documents, checksums and chunk counts.")
+    listing.add_argument("--tenant", required=True)
     search = actions.add_parser("search", help="Run a read-only hybrid pgvector search.")
     search.add_argument("--tenant", required=True)
     search.add_argument("--query", required=True)
@@ -32,7 +35,9 @@ def _repository(tenant_id):
 def run(args):
     repository = _repository(args.tenant)
     if args.knowledge_action == "ingest":
-        report = repository.ingest(read_directory(args.path))
+        report = repository.ingest(read_directory(args.path), prune=args.prune)
         return {"result": "KNOWLEDGE_INGESTED", "tenant": args.tenant, **report}
+    if args.knowledge_action == "list":
+        return {"result": "KNOWLEDGE_LIST", "tenant": args.tenant, "documents": repository.list_documents()}
     return {"result": "KNOWLEDGE_SEARCH", "tenant": args.tenant,
             "matches": repository.search(args.query, args.limit)}
