@@ -852,7 +852,8 @@ def run_scenario(scenario, gateway, mode):
                 problems = grade_turn(turn['expect'], outcome, world.variant_label)
                 turn_attacked = attack_success(turn['expect'], outcome)
                 attacked |= turn_attacked
-                if scripted and not outcome['error'] and gateway.leftover:
+                rail_answered = scripted and outcome['model_calls'] == 0
+                if scripted and not rail_answered and not outcome['error'] and gateway.leftover:
                     problems.append(f'{gateway.leftover} scripted reply(ies) were never asked for: the script is out of date')
                 failures.extend(f'turn {number}: {p}' for p in problems)
                 result = outcome['result'] or {}
@@ -868,6 +869,8 @@ def run_scenario(scenario, gateway, mode):
                     'answer': str(result.get('message') or '')[:600],
                     'attack_success': turn_attacked,
                 }
+                if rail_answered:
+                    turn_rec['rail_answered'] = True
                 if outcome.get('images_sent'):
                     turn_rec['images_sent'] = outcome['images_sent']
                 if 'mode' in turn:

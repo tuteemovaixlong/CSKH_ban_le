@@ -28,4 +28,34 @@ Tệp test mới dùng dữ liệu tổng hợp. Lượt chạy nháp đầu ph�
 
 ## Kết quả cuối
 
-Đang thực thi; kết quả kiểm tra và PR được ghi sau khi hoàn tất.
+| Hàng | Trạng thái | Tệp và hành vi |
+|---|---|---|
+| 1 | DONE | `agent_protocol.py`: chỉ `request_human_support.reason` nhận 1–1.000 ký tự. `retailops/workflow/answer_check.py`: ghi nhận `escalated_to_human` trong tool của lượt, cắt khẳng định đã chuyển không có căn cứ và thêm đúng câu ghi chú; giữ câu hỏi/đề nghị. Test mới ở `tests/test_r1_w6_3_1_hotfix.py`; fixture acknowledgement cũ ở `tests/test_r1_w3_2_answer_check.py` được bổ sung kết quả chuyển thành công theo D1, các assertion giữ nguyên. |
+| 2 | DONE | `answer_check.py`: thu bốn trường số ngày, ba cờ điều kiện thời hạn và ba mốc giao; chỉ miễn trích dẫn cho dữ kiện thời hạn đủ bằng chứng, giữ nguyên yêu cầu trích dẫn phí/giao nhận. Bỏ qua chữ số nằm trong ID định danh, để `SIM-O-1` không bị hiểu thành số ngày (đúng hai ví dụ không có số ngày trong handoff). Không thêm luật riêng cho S07. |
+| 3 | DONE | `scripts/run_agent_scenarios.py`: ở fake, lượt không gọi model bỏ kiểm bước thừa và ghi `rail_answered: true`; `grade_turn` và `grade_final_state` giữ nguyên. Ca tổng hợp vẫn hỏng khi đòi `get_order`; lượt model thật sự chạy vẫn lỗi khi thừa bước. |
+| 4 | DONE | S07 sau sửa **11 pass, 0 fail, 0 skip / 11**, 13 lượt, tool hợp lệ 15/15; không còn ca hỏng. SHA-256 tệp gốc và bản tạm không đổi. |
+
+`notebooks/colab_agent.ipynb` được sinh lại từ nguồn, không chỉnh tay.
+
+| Lệnh kiểm | Pass | Fail | Skip | Ghi chú |
+|---|---:|---:|---:|---|
+| Test W6.3.1 cô lập sau sửa | 10 | 0 | 0 | 10 test method; mọi subtest đạt |
+| `python -m unittest discover -s tests -q` | pending | pending | pending | Đang chạy toàn bộ |
+| JS theo `ci.yml`, Node v24.22.1 | 11 | 0 | 0 | Gồm public session mặc định và persistent |
+| `node --check web/*.js` | 3 | 0 | 0 | Từng tệp bằng Node thật |
+| `python scripts/build_agent_notebook.py --check` | 1 | 0 | 0 | `AGENT_NOTEBOOK_SOURCE_SYNC_OK` |
+| `python scripts/build_eval_pack.py --check` | 1 | 0 | 0 | `EVAL_PACK_OK` |
+| `python scripts/check_docs_contract.py` | 1 | 0 | 0 | Cả bốn mục hợp đồng đạt |
+| `python scripts/check_deployment_contract.py` | 1 | 0 | 0 | `DEPLOYMENT_CONTRACT_OK` |
+| `python scripts/check_live_e2e_contract.py` | 1 | 0 | 0 | Chỉ kiểm hợp đồng, không chạy live-e2e |
+| `python scripts/check_eval_dataset.py` | 74 | 0 | 0 | 30 baseline + 32 W3.2 + 12 W4 hợp lệ |
+| `check_eval_dataset.py <temp S07 dir>` | 11 | 0 | 0 | Trước sửa, không sửa dữ liệu |
+| Runner fake W3.2 | 32 | 0 | 0 | 35 lượt |
+| Runner fake W4 | 12 | 0 | 0 | 14 lượt |
+| Runner fake `khoa_luan/eval_pack/06_vi_du.jsonl` | 4 | 0 | 0 | 4 lượt |
+| Runner fake S07 sau sửa | 11 | 0 | 0 | 13 lượt; trước sửa 5 pass / 6 fail |
+| `git diff --check` | 1 | 0 | 0 | Không lỗi khoảng trắng |
+
+Lượt W4 đầu chạy bằng Python 3.10.7 thiếu `pypdfium2`, dừng sau 1 ca pass với `ModuleNotFoundError`. Đã dùng đúng thư viện `pypdfium2==5.14.0` có sẵn trong runtime của app (trùng phiên bản đã ghim ở repo), sao chép package vào thư mục tạm và đặt `PYTHONPATH` chỉ cho lệnh kiểm để chạy W4 đạt 12/12. Không cài dependency mới, không sửa requirements.
+
+PR và kết quả CI: đang mở và theo dõi; sẽ ghi kết quả cuối trước khi dừng. Không merge, không deploy; không sửa suite/hồi quy, prompt, rào an toàn hoặc kho chính sách. Không truy cập production hay model thật.

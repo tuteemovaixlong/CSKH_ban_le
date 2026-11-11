@@ -1,6 +1,6 @@
 """The final answer, checked in code before it reaches the customer (W3.2-D3, W3.2-D11).
 
-The model writes the answer; this module only removes two kinds of sentence that the evidence of the turn
+The model writes the answer; this module only removes kinds of sentence that the evidence of the turn
 does not support, and says so once:
 
 * a promise about the shop's policy on fees, pick-up/delivery or deadlines (an exchange "miễn phí", "tận nhà",
@@ -8,6 +8,7 @@ does not support, and says so once:
 * a claim that the shop or the system has already cancelled, exchanged, returned or refunded something, or
   has already sent a request, when no tool of this turn shows it. The chat never changes an order: a request
   exists only after the customer picks a reason and presses the separate confirmation button.
+* a claim that a conversation or request was transferred to human support without a successful tool result.
 
 The rules read the wording of the answer, never the customer's message, and name no situation: they look for
 what a sentence promises and for what the tools of the turn show. Questions, hedges ("chưa có thông tin") and
@@ -22,6 +23,8 @@ POLICY_NOTE = ('Phần phí, giao nhận và thời hạn em chưa có trích d�
                'nên chưa thể xác nhận ạ.')
 CLAIM_NOTE = ('Em chưa thực hiện thay đổi nào trên đơn qua chat: yêu cầu hủy, đổi hoặc trả chỉ được gửi '
               'khi anh/chị chọn lý do và bấm nút xác nhận ạ.')
+HANDOFF_NOTE = ('Em chưa chuyển được cuộc trò chuyện cho nhân viên; anh/chị nhắn '
+                '"gặp nhân viên" để em thử lại ạ.')
 
 _CITATION = re.compile(r'\[KB:[^\]\r\n]*\]', re.IGNORECASE)
 _CITATION_ONLY = re.compile(r'^\s*(?:\[KB:[^\]\r\n]*\]\s*)+[.!?…]*\s*$', re.IGNORECASE)
@@ -59,12 +62,25 @@ _CLAIMS = (
                r'(?:hủy|huỷ|đổi|trả hàng|hoàn tiền)\s+thành công'),
 )
 _CANCEL_WORDS = re.compile(r'hủy|huỷ')
+_HANDOFF_CLAIM = re.compile(
+    r'(?:đã|vừa)\s+(?:được\s+)?(?:[^.!?\n]{0,120}?\s+)?chuyển\b'
+    r'[^.!?\n]{0,120}?(?:cho|sang|tới|đến)\s+(?:nhân viên|bộ phận|người thật|cskh)')
+_CONDITIONAL = re.compile(r'\bnếu\b')
+# Digits inside opaque order/product IDs are identifiers, not a number of days.
+_FACT_ID = re.compile(r'\b[a-z][a-z0-9]*(?:[-_][a-z0-9]+)+\b', re.IGNORECASE)
+_DAY_FIELDS = ('return_window_days', 'size_exchange_window_days', 'warranty_window_days', 'warranty_days')
+_WINDOW_FIELDS = ('within_return_window', 'within_size_exchange_window', 'within_warranty')
+_DELIVERY_FIELDS = ('promised_delivery_by', 'estimated_delivery_at', 'latest_estimated_delivery_at')
 
 
 @dataclass(frozen=True)
 class Evidence:
     cancelled: bool = False                              # a tool of this turn shows a cancelled order
     warranty_days: frozenset = field(default_factory=frozenset)
+    deadline_days: frozenset = field(default_factory=frozenset)
+    has_window: bool = False
+    has_delivery_date: bool = False
+    escalated_to_human: bool = False
 
 
 @dataclass(frozen=True)
@@ -80,15 +96,22 @@ class AnswerCheck:
 
 def tool_evidence(messages) -> Evidence:
     """What the tool results of this turn establish, read from their JSON."""
-    cancelled, warranty = False, set()
+    cancelled, warranty, deadlines = False, set(), set()
+    has_window, has_delivery_date, escalated = False, False, False
 
     def walk(value):
-        nonlocal cancelled
+        nonlocal cancelled, has_window, has_delivery_date, escalated
         if isinstance(value, dict):
             if value.get('status') == 'cancelled' and 'id' in value:
                 cancelled = True
             if value.get('order_status') == 'cancelled':
                 cancelled = True
+            escalated |= value.get('status') == 'escalated_to_human'
+            has_window |= any(isinstance(value.get(key), bool) for key in _WINDOW_FIELDS)
+            has_delivery_date |= any(bool(value.get(key)) for key in _DELIVERY_FIELDS)
+            for key in _DAY_FIELDS:
+                if type(value.get(key)) is int:
+                    deadlines.add(value[key])
             days = value.get('warranty_days')
             if isinstance(days, int) and not isinstance(days, bool):
                 warranty.add(days)
@@ -104,7 +127,8 @@ def tool_evidence(messages) -> Evidence:
                 walk(json.loads(message['content']))
             except ValueError:
                 continue
-    return Evidence(cancelled=cancelled, warranty_days=frozenset(warranty))
+    return Evidence(cancelled=cancelled, warranty_days=frozenset(warranty), deadline_days=frozenset(deadlines),
+                    has_window=has_window, has_delivery_date=has_delivery_date, escalated_to_human=escalated)
 
 
 def _fragments(text):
@@ -130,8 +154,10 @@ def _uncited_policy_promise(sentence, evidence) -> bool:
     if _FEE.search(plain) or _LOGISTICS.search(plain):
         return True
     if _DEADLINE.search(plain):
-        numbers = {int(n) for n in re.findall(r'\d+', plain)}
-        return not (numbers and numbers <= evidence.warranty_days)  # "bảo hành 90 ngày" read from get_product is fine
+        numbers = {int(n) for n in re.findall(r'\d+', _FACT_ID.sub(' ', plain))}
+        if numbers:
+            return not numbers <= evidence.deadline_days
+        return not (evidence.has_window or evidence.has_delivery_date)
     return False
 
 
@@ -144,16 +170,26 @@ def _unfounded_claim(sentence, evidence) -> bool:
     return True
 
 
+def _unfounded_handoff(sentence, evidence) -> bool:
+    plain = _CITATION.sub(' ', sentence).lower()
+    return bool(not evidence.escalated_to_human and not sentence.rstrip().endswith('?')
+                and not _CONDITIONAL.search(plain) and not _HEDGE.search(plain) and _HANDOFF_CLAIM.search(plain))
+
+
 def check_final_answer(text, messages=None) -> AnswerCheck:
     """`text` without the sentences the evidence of the turn does not support, plus one note per kind removed."""
     if not isinstance(text, str) or not text.strip():
         return AnswerCheck(text or '')
     evidence = tool_evidence(messages)
-    kept_lines, dropped_policy, dropped_claims, orphan_refs = [], 0, 0, []
+    kept_lines, dropped_policy, dropped_claims, dropped_handoffs, orphan_refs = [], 0, 0, 0, []
     for line in unicodedata.normalize('NFC', text).split('\n'):
         kept = []
         for sentence, separator in _fragments(line):
-            if _uncited_policy_promise(sentence, evidence):
+            if _unfounded_handoff(sentence, evidence):
+                dropped_claims += 1
+                dropped_handoffs += 1
+                orphan_refs.extend(_CITATION.findall(sentence))
+            elif _uncited_policy_promise(sentence, evidence):
                 dropped_policy += 1
             elif _unfounded_claim(sentence, evidence):
                 dropped_claims += 1
@@ -165,7 +201,8 @@ def check_final_answer(text, messages=None) -> AnswerCheck:
         return AnswerCheck(text)
     body = '\n'.join(kept_lines)
     body = re.sub(r'\n{3,}', '\n\n', body).strip()
-    notes = [note for note, count in ((POLICY_NOTE, dropped_policy), (CLAIM_NOTE, dropped_claims)) if count]
+    notes = [note for note, count in ((POLICY_NOTE, dropped_policy), (CLAIM_NOTE, dropped_claims - dropped_handoffs),
+                                    (HANDOFF_NOTE, dropped_handoffs)) if count]
     if orphan_refs:
         notes[-1] += ' ' + ' '.join(dict.fromkeys(orphan_refs))  # a removed sentence must not strand its citation
     return AnswerCheck('\n\n'.join(part for part in (body, *notes) if part), dropped_policy, dropped_claims)
