@@ -62,6 +62,10 @@ class HandoffTests(AgentFixture):
             with self.subTest(text=text):
                 self.assertFalse(check_final_answer(text).changed)
 
+    def test_hedge_after_a_completed_transfer_does_not_prove_it(self):
+        self.assertEqual(check_final_answer(
+            'Em đã chuyển yêu cầu cho nhân viên nhưng chưa có phản hồi ạ.').text, HANDOFF_NOTE)
+
 
 class DeadlineTests(unittest.TestCase):
     def test_server_deadline_facts_survive_only_with_tool_evidence(self):

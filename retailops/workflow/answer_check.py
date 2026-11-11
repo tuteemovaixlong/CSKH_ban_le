@@ -65,7 +65,6 @@ _CANCEL_WORDS = re.compile(r'hủy|huỷ')
 _HANDOFF_CLAIM = re.compile(
     r'(?:đã|vừa)\s+(?:được\s+)?(?:[^.!?\n]{0,120}?\s+)?chuyển\b'
     r'[^.!?\n]{0,120}?(?:cho|sang|tới|đến)\s+(?:nhân viên|bộ phận|người thật|cskh)')
-_CONDITIONAL = re.compile(r'\bnếu\b')
 # Digits inside opaque order/product IDs are identifiers, not a number of days.
 _FACT_ID = re.compile(r'\b[a-z][a-z0-9]*(?:[-_][a-z0-9]+)+\b', re.IGNORECASE)
 _DAY_FIELDS = ('return_window_days', 'size_exchange_window_days', 'warranty_window_days', 'warranty_days')
@@ -173,7 +172,7 @@ def _unfounded_claim(sentence, evidence) -> bool:
 def _unfounded_handoff(sentence, evidence) -> bool:
     plain = _CITATION.sub(' ', sentence).lower()
     return bool(not evidence.escalated_to_human and not sentence.rstrip().endswith('?')
-                and not _CONDITIONAL.search(plain) and not _HEDGE.search(plain) and _HANDOFF_CLAIM.search(plain))
+                and _HANDOFF_CLAIM.search(plain))
 
 
 def check_final_answer(text, messages=None) -> AnswerCheck:

@@ -18,6 +18,8 @@
 
 Tệp test mới dùng dữ liệu tổng hợp. Lượt chạy nháp đầu phát hiện tên bảng fixture sai (`handoffs`); đã sửa thành `handoff_episodes` và chạy lại như kết quả trên trước khi sửa mã nguồn.
 
+Rà soát bổ sung hàng 1: viết `test_hedge_after_a_completed_transfer_does_not_prove_it` và chạy riêng thấy `Ran 1 test`, `FAILED (failures=1)`: câu `Em đã chuyển yêu cầu cho nhân viên nhưng chưa có phản hồi ạ.` vẫn được giữ do hedge phía sau. Sau đó bỏ miễn trừ hedge trong kiểm khẳng định chuyển người; câu hỏi/đề nghị không có khẳng định hoàn tất vẫn được giữ. Bộ mới cuối cùng **11 pass, 0 fail, 0 skip**; bộ `answer_check` cũ **23 pass, 0 fail, 0 skip**.
+
 ## Hàng 4 — S07 trước sửa
 
 - Chỉ sao chép byte từ `E:/hệ thống/S07.jsonl` vào `%TEMP%/w631-s07/S07.jsonl`; không đọc để sửa ca, không đưa vào Git.
@@ -39,7 +41,8 @@ Tệp test mới dùng dữ liệu tổng hợp. Lượt chạy nháp đầu ph�
 
 | Lệnh kiểm | Pass | Fail | Skip | Ghi chú |
 |---|---:|---:|---:|---|
-| Test W6.3.1 cô lập sau sửa | 10 | 0 | 0 | 10 test method; mọi subtest đạt |
+| Test W6.3.1 cô lập sau sửa | 11 | 0 | 0 | 11 test method; mọi subtest đạt |
+| `unittest discover -s tests -p test_r1_w3_2_answer_check.py -q` | 23 | 0 | 0 | Bộ cũ giữ nguyên assertion, thêm bằng chứng chuyển thành công cho fixture |
 | `python -m unittest discover -s tests -q` | pending | pending | pending | Đang chạy toàn bộ |
 | JS theo `ci.yml`, Node v24.22.1 | 11 | 0 | 0 | Gồm public session mặc định và persistent |
 | `node --check web/*.js` | 3 | 0 | 0 | Từng tệp bằng Node thật |
@@ -58,4 +61,4 @@ Tệp test mới dùng dữ liệu tổng hợp. Lượt chạy nháp đầu ph�
 
 Lượt W4 đầu chạy bằng Python 3.10.7 thiếu `pypdfium2`, dừng sau 1 ca pass với `ModuleNotFoundError`. Đã dùng đúng thư viện `pypdfium2==5.14.0` có sẵn trong runtime của app (trùng phiên bản đã ghim ở repo), sao chép package vào thư mục tạm và đặt `PYTHONPATH` chỉ cho lệnh kiểm để chạy W4 đạt 12/12. Không cài dependency mới, không sửa requirements.
 
-PR và kết quả CI: đang mở và theo dõi; sẽ ghi kết quả cuối trước khi dừng. Không merge, không deploy; không sửa suite/hồi quy, prompt, rào an toàn hoặc kho chính sách. Không truy cập production hay model thật.
+PR: [#94](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/94), base `main`, head `phase-r1-w6-3-1`. CI đang theo dõi; sẽ ghi kết quả cuối trước khi dừng. Không merge, không deploy; không sửa suite/hồi quy, prompt, rào an toàn hoặc kho chính sách. Không truy cập production hay model thật.
