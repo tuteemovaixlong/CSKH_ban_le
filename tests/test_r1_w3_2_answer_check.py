@@ -69,6 +69,8 @@ class FinalAnswerCheckTests(unittest.TestCase):
         self.assertEqual(tool_evidence(messages).warranty_days, frozenset({90}))
 
     def test_order_facts_and_plain_acknowledgements_stay(self):
+        # A completed handoff acknowledgement needs successful evidence from this turn (W6.3.1-D1).
+        messages = [tool_message('request_human_support', {'status': 'escalated_to_human'})]
         for text in ('Đơn dự kiến giao trong 2 ngày nữa ạ.',
                      'Tổng giá trị đơn hàng là 299.000 ₫.',
                      'Em đã mở bảng chọn lý do trên màn hình, anh/chị chọn lý do rồi bấm xác nhận nhé.',
@@ -78,7 +80,7 @@ class FinalAnswerCheckTests(unittest.TestCase):
                      'Em chưa thể hủy đơn qua chat.',
                      'Sản phẩm này tặng kèm quà miễn phí ạ.'):
             with self.subTest(text=text):
-                self.assertFalse(check_final_answer(text).changed)
+                self.assertFalse(check_final_answer(text, messages).changed)
 
     def test_claims_of_changes_the_server_did_not_make_are_removed(self):
         for claim in ('Em đã hủy đơn O-101 cho anh/chị rồi ạ.',

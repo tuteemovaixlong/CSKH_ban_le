@@ -299,7 +299,8 @@ def validate_tool(name, arguments):
     if not TOOL_REQUIRED_ARGUMENTS[name].issubset(arguments) or not set(arguments).issubset(TOOL_ARGUMENTS[name]):
         raise ProtocolError('Unknown tool or invalid argument fields')
     for key, value in arguments.items():
-        if not isinstance(value, str) or not value.strip() or len(value) > (200 if key in ('query', 'target_variant') else 64):
+        limit = 1000 if name == 'request_human_support' and key == 'reason' else (200 if key in ('query', 'target_variant') else 64)
+        if not isinstance(value, str) or not value.strip() or len(value) > limit:
             raise ProtocolError('Invalid tool argument value')
     if name == 'prepare_order_action':
         act_type = arguments.get('action_type', 'cancel').strip()

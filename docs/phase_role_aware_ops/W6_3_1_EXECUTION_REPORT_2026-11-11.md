@@ -1,0 +1,84 @@
+# W6.3.1 execution report — 2026-11-11
+
+## Nguồn và nhánh
+
+- Đã chạy `git fetch origin`; nhánh `phase-r1-w6-3-1` tạo bằng `git switch --no-track -c phase-r1-w6-3-1 origin/main` tại `1bb9dab9ffafc248df813da241cb0d14993752b5`, trong worktree riêng.
+- `origin/main` tại thời điểm fetch chưa có handoff W6.3.1 hoặc §25. Đã đọc trực tiếp nguyên văn hai tệp tại worktree nhánh tài liệu `docs/r1-w6-3-1-hotfix-handoff`, commit `8e9c26bfc43df5d94ca91d27aa44d97d67eb133c`; thực thi theo chỉ thị owner trong chat này. Không nhập các thay đổi tài liệu đó vào nhánh thực thi.
+
+## Bằng chứng test-first, trước khi sửa production code
+
+`python -m unittest discover -s tests -p test_r1_w6_3_1_hotfix.py -v`:
+`Ran 10 tests in 4.834s`, `FAILED (failures=18)` (18 assertion/subtest thất bại, 0 error; 4 test method pass, 6 fail, 0 skip).
+
+| Hàng | Test và lỗi quan sát trên code chưa sửa |
+|---|---|
+| 1 | `test_reason_lengths_create_real_handoffs`, lengths 65/300/1000: `AssertionError: None != 'escalated_to_human'`. Length 1 đã tạo `handoff_episodes` thật. `test_unfounded_handoff_claims_need_success_this_turn`: câu `Em đã chuyển cuộc trò chuyện cho nhân viên ạ.` vẫn còn thay vì ghi chú khi tool lỗi. |
+| 2 | `test_server_deadline_facts_survive_only_with_tool_evidence`: cả ba câu dữ kiện trong handoff bị thay bằng `POLICY_NOTE`. `test_each_deadline_field_and_false_eligibility_is_evidence`: `AssertionError: True is not false` cho các trường số ngày/cờ mới. |
+| 3 | `test_rail_can_leave_two_steps_unused`: `AssertionError: False is not true : ['turn 1: 2 scripted reply(ies) were never asked for: the script is out of date']`. Test yêu cầu `get_order` vẫn lỗi và cũng bị báo thừa bước. |
+
+Tệp test mới dùng dữ liệu tổng hợp. Lượt chạy nháp đầu phát hiện tên bảng fixture sai (`handoffs`); đã sửa thành `handoff_episodes` và chạy lại như kết quả trên trước khi sửa mã nguồn.
+
+Rà soát bổ sung hàng 1: viết `test_hedge_after_a_completed_transfer_does_not_prove_it` và chạy riêng thấy `Ran 1 test`, `FAILED (failures=1)`: câu `Em đã chuyển yêu cầu cho nhân viên nhưng chưa có phản hồi ạ.` vẫn được giữ do hedge phía sau. Sau đó bỏ miễn trừ hedge trong kiểm khẳng định chuyển người; câu hỏi/đề nghị không có khẳng định hoàn tất vẫn được giữ. Bộ mới cuối cùng **11 pass, 0 fail, 0 skip**; bộ `answer_check` cũ **23 pass, 0 fail, 0 skip**.
+
+## Hàng 4 — S07 trước sửa
+
+- Chỉ sao chép byte từ `E:/hệ thống/S07.jsonl` vào `%TEMP%/w631-s07/S07.jsonl`; không đọc để sửa ca, không đưa vào Git.
+- SHA-256 gốc: `a8cb07fbb35eb6f336d762204b69b555db4390e06dd71132865218be1b37c72a`.
+- `python scripts/check_eval_dataset.py <temp-dir>`: 11 ca hợp lệ.
+- `python scripts/run_agent_scenarios.py --fake --dataset-dir <temp-dir> --out <temp-report>`: **5 pass, 6 fail, 0 skip / 11 ca**, 13 lượt; khớp số Claude đo.
+- Ca hỏng: `s07_001`, `s07_002`, `s07_003`, `s07_004`, `s07_005`, `s07_011`. Hai ca lỗi bước chưa dùng; bốn ca lỗi chuyển người, `s07_002` còn mất dữ kiện vận chuyển do answer check.
+
+## Kết quả cuối
+
+| Hàng | Trạng thái | Tệp và hành vi |
+|---|---|---|
+| 1 | DONE | `agent_protocol.py`: chỉ `request_human_support.reason` nhận 1–1.000 ký tự. `retailops/workflow/answer_check.py`: ghi nhận `escalated_to_human` trong tool của lượt, cắt khẳng định đã chuyển không có căn cứ và thêm đúng câu ghi chú; giữ câu hỏi/đề nghị. Test mới ở `tests/test_r1_w6_3_1_hotfix.py`; fixture acknowledgement cũ ở `tests/test_r1_w3_2_answer_check.py` được bổ sung kết quả chuyển thành công theo D1, các assertion giữ nguyên. `tests/test_postgres.py` chọn đúng lượt trả lời theo request ID khi thông báo handoff xuất hiện trước (chi tiết CI bên dưới). |
+| 2 | DONE | `answer_check.py`: thu bốn trường số ngày, ba cờ điều kiện thời hạn và ba mốc giao; chỉ miễn trích dẫn cho dữ kiện thời hạn đủ bằng chứng, giữ nguyên yêu cầu trích dẫn phí/giao nhận. Bỏ qua chữ số nằm trong ID định danh, để `SIM-O-1` không bị hiểu thành số ngày (đúng hai ví dụ không có số ngày trong handoff). Không thêm luật riêng cho S07. |
+| 3 | DONE | `scripts/run_agent_scenarios.py`: ở fake, lượt không gọi model bỏ kiểm bước thừa và ghi `rail_answered: true`; `grade_turn` và `grade_final_state` giữ nguyên. Ca tổng hợp vẫn hỏng khi đòi `get_order`; lượt model thật sự chạy vẫn lỗi khi thừa bước. |
+| 4 | DONE | S07 sau sửa **11 pass, 0 fail, 0 skip / 11**, 13 lượt, tool hợp lệ 15/15; không còn ca hỏng. SHA-256 tệp gốc và bản tạm không đổi. |
+
+`notebooks/colab_agent.ipynb` được sinh lại từ nguồn, không chỉnh tay.
+
+| Lệnh kiểm | Pass | Fail | Skip | Ghi chú |
+|---|---:|---:|---:|---|
+| Test W6.3.1 cô lập sau sửa | 11 | 0 | 0 | 11 test method; mọi subtest đạt |
+| `unittest discover -s tests -p test_r1_w3_2_answer_check.py -q` | 23 | 0 | 0 | Bộ cũ giữ nguyên assertion, thêm bằng chứng chuyển thành công cho fixture |
+| `python -m unittest discover -s tests -q` (môi trường có PDF) | 1057 | 1 | 86 | 1.144 test, 0 error; fail duy nhất P99 `/api/session` 51,093800 ms > 50 ms |
+| JS theo `ci.yml`, Node v24.22.1 | 11 | 0 | 0 | Gồm public session mặc định và persistent |
+| `node --check web/*.js` | 3 | 0 | 0 | Từng tệp bằng Node thật |
+| `python scripts/build_agent_notebook.py --check` | 1 | 0 | 0 | `AGENT_NOTEBOOK_SOURCE_SYNC_OK` |
+| `python scripts/build_eval_pack.py --check` | 1 | 0 | 0 | `EVAL_PACK_OK` |
+| `python scripts/check_docs_contract.py` | 1 | 0 | 0 | Cả bốn mục hợp đồng đạt |
+| `python scripts/check_deployment_contract.py` | 1 | 0 | 0 | `DEPLOYMENT_CONTRACT_OK` |
+| `python scripts/check_live_e2e_contract.py` | 1 | 0 | 0 | Chỉ kiểm hợp đồng, không chạy live-e2e |
+| `python scripts/check_eval_dataset.py` | 74 | 0 | 0 | 30 baseline + 32 W3.2 + 12 W4 hợp lệ |
+| `check_eval_dataset.py <temp S07 dir>` | 11 | 0 | 0 | Trước sửa, không sửa dữ liệu |
+| Runner fake W3.2 | 32 | 0 | 0 | 35 lượt |
+| Runner fake W4 | 12 | 0 | 0 | 14 lượt |
+| Runner fake `khoa_luan/eval_pack/06_vi_du.jsonl` | 4 | 0 | 0 | 4 lượt |
+| Runner fake S07 sau sửa | 11 | 0 | 0 | 13 lượt; trước sửa 5 pass / 6 fail |
+| `git diff --check` | 1 | 0 | 0 | Không lỗi khoảng trắng |
+
+Lượt W4 đầu chạy bằng Python 3.10.7 thiếu `pypdfium2`, dừng sau 1 ca pass với `ModuleNotFoundError`. Đã dùng đúng thư viện `pypdfium2==5.14.0` có sẵn trong runtime của app (trùng phiên bản đã ghim ở repo), sao chép package vào thư mục tạm và đặt `PYTHONPATH` chỉ cho lệnh kiểm để chạy W4 đạt 12/12. Không cài dependency mới, không sửa requirements.
+
+Unittest đầy đủ lượt đầu (thiếu PDF): `Ran 1140 tests in 541.087s`, `FAILED (failures=2, errors=3, skipped=86)`. Trong 3 error có 1 lỗi `setUpClass` của W4 (không tính vào `testsRun`), nên số test method đạt là 1.050; 2 method fail, 2 method error, 86 method skip, cộng 1 lỗi khởi tạo lớp. Hai fail là kiểm số attachment migration; hai error method và lỗi lớp đều do không nạp được PDF. Sau khi dùng package có sẵn, chạy lại đúng lệnh đầy đủ: `Ran 1144 tests in 570.572s`, `FAILED (failures=1, skipped=86)`; mọi lỗi PDF đã hết, chỉ còn P99 Windows 51,094 ms. Không sửa code/fixture/ngưỡng đo P99. Lượt này có đủ 11 test W6.3.1 và 23 test answer check đều đạt; PostgreSQL thật được kiểm trên CI.
+
+PR: [#94](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/94), base `main`, head `phase-r1-w6-3-1`. **DONE hàng 1–4; không có blocker W6.3.1.** Không merge, không deploy; không sửa suite/hồi quy, prompt, rào an toàn hoặc kho chính sách. Không truy cập production hay model thật.
+
+CI commit `4be468f`: 5 job đạt, `offline` thất bại đúng 1 test trên **1.144 test (1.143 pass, 1 fail, 0 error, 0 skip)**. Lỗi `test_phase5_e_postgres_governance_and_ai_boundaries` tại `tests/test_postgres.py:1471`: test chọn `turns[0]`, nay đó là thông báo hệ thống do lý do dài đã tạo handoff thật. Đã sửa test chọn lượt theo `request_id` cụ thể, giữ nguyên toàn bộ assertion về nội dung/sanitization/replay và thêm assertion handoff thành công cùng thông báo hệ thống tồn tại. Không sửa application hay rào an toàn. Các test W6.3.1 trong lượt CI này đều đạt. [CI lỗi trước chỉnh fixture](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/42992384135).
+
+Commit `28e76c1` sửa fixture nhưng chưa sinh lại notebook nên job `colab-python313` báo `Notebook is stale`. Đã sinh lại bằng script và commit `c13db0a`; kiểm `build_agent_notebook.py --check` đạt.
+
+## CI cuối và điểm dừng
+
+**Commit mã nguồn cuối `c13db0a08a0cf88b6d6ea856ba77037ee72a1aa5`: 6 pass, 0 fail, 0 skip / 6 job.**
+
+- [CI](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/42993928553): `offline`, `colab-python313`, `clamav-smoke` đều SUCCESS.
+- [Ops Console](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/42993928476): `portable (ubuntu-24.04)`, `portable (windows-latest)`, `postgres` đều SUCCESS.
+- Native unittest với PostgreSQL/pgvector thật: **1.144 pass, 0 fail, 0 error, 0 skip**, `Ran 1144 tests in 428.415s`, `OK`.
+- Unittest trong image: **1.119 pass, 0 fail, 0 error, 25 skip / 1.144 test**, `Ran 1144 tests in 415.398s`, `OK (skipped=25)`.
+- Cả hai môi trường chạy đạt đủ 11 test W6.3.1; test PostgreSQL canary/replay đã đạt sau chỉnh fixture, không skip.
+- Artifact P99 native: `/healthz` **0,823423 ms**, `/api/session` **40,658520 ms**, mỗi endpoint 1.000 mẫu; cả hai đạt SLO 50 ms. Artifact `headroom-p99-artifact-466c67136645e0ffd72d0dfcb7761d7f63a1e01d` của CI trên.
+- Kiểm image/helpers, HTTPS cookie qua CA tạm, packaged resolve-targets SQLite/PostgreSQL đều đạt; không có model thật hay tài nguyên production.
+
+Sau kết quả này chỉ commit báo cáo này và thêm **dòng 033** trong cột Codex của `W1_EXECUTION_LOG_2026-10-31.md`; không sửa dòng cũ hoặc mã nguồn. CI nêu trên gắn với commit mã nguồn, không nhận là kết quả CI của commit tài liệu được tạo sau đó. Kiểm hợp đồng tài liệu, notebook/eval-pack và `git diff --check` lần chốt đều đạt. Dừng sau báo cáo, không merge; owner quyết định merge/deploy và smoke sau đó theo handoff.
