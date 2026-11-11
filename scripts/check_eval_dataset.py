@@ -26,6 +26,9 @@ FORBIDDEN_FRAGMENTS = (
 
 
 import sys
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from scripts.eval_dataset_v2 import validate_case, validate_suites
 
 def load_cases(target_path=None):
     target = Path(target_path) if target_path else DATASET
@@ -479,7 +482,21 @@ def is_w4_scenario_dataset(target_path, scenarios):
 
 
 def main():
-    target = sys.argv[1] if len(sys.argv) > 1 else None
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('target', nargs='?')
+    parser.add_argument('--final', action='store_true')
+    args = parser.parse_args()
+    target = args.target
+    if target and (Path(target).is_dir() or Path(target).name == '06_vi_du.jsonl' or Path(target).name.startswith('S')):
+        if Path(target).is_dir():
+            cases = validate_suites(target, final=args.final)
+        else:
+            cases = load_cases(target)
+            for case in cases:
+                validate_case(case, Path(target).stem if Path(target).name.startswith('S') else None)
+        print('EVAL_DATASET_OK', Path(target).name, 'cases=' + str(len(cases)))
+        return
     if target and Path(target).name.startswith('agent_scenarios'):
         scenarios = load_cases(target)
         counts = validate_w4(scenarios) if is_w4_scenario_dataset(target, scenarios) else validate_w32(scenarios)
@@ -496,6 +513,9 @@ def main():
         w4_scenarios = load_w4_scenarios()
         w4_counts = validate_w4(w4_scenarios)
         print('EVAL_DATASET_OK', W4_DATASET.name, 'scenarios=' + str(len(w4_scenarios)), 'categories=' + json.dumps(dict(sorted(w4_counts.items())), sort_keys=True))
+        suites = ROOT / 'evals/suites'
+        if suites.is_dir() or args.final:
+            validate_suites(suites, final=args.final)
 
 
 if __name__ == '__main__':

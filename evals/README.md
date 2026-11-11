@@ -89,3 +89,66 @@ The last form is for the **owner** with the real model (the "Endpoint API OpenAI
 the script refuses to run. The report gives the success rate, the valid tool-call rate (a known tool with arguments that
 pass the schema; business refusals count as valid) and the latency p50/p95 per customer turn. Nothing outside the
 temporary store is read or written.
+
+
+## W6.3 — bộ công cụ đánh giá bản 2
+
+Chỉ dùng dữ liệu giả lập. CI phát lại quỹ đạo mẫu bằng `--fake`. Phần code W6.3
+không chạy model thật; các lệnh endpoint dưới đây dành cho owner ở W6.4.
+Không đặt hai biến thí nghiệm mới trên production.
+
+```sh
+python scripts/check_eval_dataset.py
+python scripts/check_eval_dataset.py evals/suites --final
+python scripts/build_eval_pack.py
+python scripts/build_eval_pack.py --check
+python scripts/run_agent_scenarios.py --fake --dataset khoa_luan/eval_pack/06_vi_du.jsonl
+python scripts/run_agent_scenarios.py --fake --dataset-dir evals/suites --repeat 3 --out fake.json
+```
+
+Ma trận A–D của W6 backlog mục 3: A chạy 250 ca; B/C/D chạy cùng tập con cố định
+100 ca do owner chọn, không phải 100 ca đầu hay một tập con lấy ngẫu nhiên mỗi lần.
+Dùng lệnh `subset` tạo danh sách 100 mã ca một lần với seed cố định. Lệnh phân bổ
+số ca theo tỉ lệ từng bộ bằng phần dư lớn nhất (Hamilton); hòa phần dư thì ưu tiên
+mã bộ tăng dần, rồi lấy mẫu ngẫu nhiên trong mỗi bộ. Cùng dữ liệu và seed cho cùng
+kết quả; đầu vào thiếu 100 ca thì báo lỗi. Đóng băng file danh sách cùng hash dữ liệu.
+`compare --cases` lấy giao của danh sách và hai báo cáo, báo rõ mã bị loại; không có
+ca chung thì từ chối. Kiểm SHA-256 dữ liệu vẫn bắt buộc. Không cần chạy lại A trên
+tập con chỉ để so sánh với B/C/D. Không sửa ca.
+
+```sh
+python scripts/eval_stats.py subset --size 100 --seed 20261110 evals/suites > subset_100.txt
+# Các khóa endpoint đọc từ biến/file có sẵn, không ghi vào lệnh hay báo cáo.
+# Kho real yêu cầu RETAILOPS_TEST_DATABASE_URL và RETAILOPS_ALLOW_DESTRUCTIVE_TEST_DATABASE=1
+# trỏ đúng PostgreSQL dùng một lần trên loopback như CI (xem scripts/postgres_test_guard.py).
+python scripts/run_agent_scenarios.py --endpoint "$ENDPOINT" --dataset-dir evals/suites --agent-mode agent --thinking on --context-tokens 16384 --knowledge real --repeat 3 --out A.json
+python scripts/run_agent_scenarios.py --endpoint "$ENDPOINT" --dataset-dir evals/suites --only-file subset_100.txt --agent-mode legacy --thinking on --context-tokens 16384 --knowledge real --repeat 3 --out B.json
+python scripts/run_agent_scenarios.py --endpoint "$ENDPOINT" --dataset-dir evals/suites --only-file subset_100.txt --agent-mode agent --thinking off --context-tokens 16384 --knowledge real --repeat 3 --out C.json
+# Owner khởi động lại vLLM với RETAILOPS_MAX_MODEL_LEN=8192 cho D.
+python scripts/run_agent_scenarios.py --endpoint "$ENDPOINT" --dataset-dir evals/suites --only-file subset_100.txt --agent-mode agent --thinking on --context-tokens 8192 --knowledge real --repeat 3 --out D.json
+python scripts/eval_stats.py summary A.json B.json C.json D.json
+python scripts/eval_stats.py compare A.json B.json --cases subset_100.txt
+python scripts/eval_stats.py compare A.json C.json --cases subset_100.txt
+python scripts/eval_stats.py compare A.json D.json --cases subset_100.txt
+python scripts/eval_retrieval.py --dataset evals/suites/S03.jsonl --out retrieval.json
+```
+
+Có thể lọc `--suite S03 S11` và `--split held_out`; `--repeat` nhận 1–5.
+`--agent-mode legacy` cần `--endpoint`. `--thinking default` không gửi thêm trường;
+`on/off` gửi `chat_template_kwargs.enable_thinking`. `--context-tokens` nhận
+4096–131072, mặc định 16384. Các ngân sách ký tự co giãn theo N/16384 với mức sàn;
+ở mặc định giữ nguyên 5200/12000/800/6000/1500. Giới hạn bảo vệ giao thức hiện có vẫn áp dụng.
+
+Chế độ `real` nạp toàn bộ `data/knowledge/` đúng một lần mỗi lượt chạy vào schema
+PostgreSQL riêng và xóa schema khi xong. Ca có `meta.knowledge_mode: "scripted"`
+luôn dùng đoạn của ca. `overrides.product_descriptions` chỉ đổi SQLite tạm của ca.
+`expect.attack_not` và `expect.attack_tools_not_called` đo `attack_success` riêng,
+không làm đổi điểm `utility`. Báo cáo giữ từng lần chạy, metadata, lỗi, token,
+tool, độ trễ, cấu hình, hash file và tổng hợp theo suite/split/style/origin.
+
+`pass_at_1` là trung bình tỉ lệ đạt từng ca; `pass_power_k` là tỉ lệ ca đạt mọi lần.
+Bootstrap 95% lấy mẫu trên ca 10.000 lần với seed 20261110, giữ các lần chạy của một
+ca cùng nhau. McNemar ghép mã ca, dùng đa số nghiêm ngặt; hòa với K chẵn tính không đạt.
+Không có `--cases`, báo cáo khác tập ca bị từ chối. Hash dữ liệu khác nhau luôn bị từ chối.
+`--only-file FILE` đọc UTF-8 (có thể có BOM), mỗi dòng một mã; file rỗng, mã lạ hoặc
+mã trùng bị từ chối. Dùng cùng `--only` thì hợp hai danh sách trước khi lọc bộ/split.
