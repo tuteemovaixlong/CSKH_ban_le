@@ -750,3 +750,21 @@ Chưa thử trên production: câu hóa đơn VAT, câu dọa kiện ngầm củ
 - Hai ca chuyển nhân viên tạo khi smoke phải được đóng trước lượt reset dữ liệu demo.
 - Reset dữ liệu demo theo W6.2-D4: tuần trước 2026-12-15.
 - EC2 tắt sau lượt này; lần bật sau IP có thể đổi lần nữa.
+
+### 2026-11-11 S07 first suite check
+
+> **Phạm vi:** bộ S07 (11 ca, "Chuyển nhân viên và khách bức xúc") do model độc lập viết từ `eval_pack` bản 2. Owner dùng Gemini 4 Carbon trên Google AI Studio, phiên mới chỉ đọc 7 tệp của `eval_pack`, tách hẳn khỏi Antigravity và repo. Claude kiểm trên `main` tại `1bb9dab`, tệp do owner lưu ở `E:/hệ thống/S07.jsonl`, chưa commit.
+
+**Bộ kiểm định dạng:** `check_eval_dataset.py` với thư mục tạm chứa S07: `EVAL_DATASET_OK suites cases=11`. Đúng `customer`, mã đơn có thật và đúng chủ, đoạn chính sách đúng nguyên văn `store_hours_contact.md`, 3/11 `held_out`, phân bố `style` trong ±10 điểm phần trăm, 2 ca nhiều lượt. Đọc từng ca theo nghiệp vụ: hợp lý; nhãn `cod` của `s07_004` đúng (`SIM-O-00113` COD chưa trả); không cần trả lại model.
+
+**Phát lại quỹ đạo mẫu (`--fake`): 5/11.** Sáu ca hỏng do hệ thống, không do ca:
+
+| Nguyên nhân | Ca | Ghi |
+|---|---|---|
+| **F28**: `validate_tool` giới hạn `reason` của `request_human_support` ở 64 ký tự; lời gọi bị `tool_not_allowed`, không tạo ca, model vẫn nói "đã chuyển" | `s07_002` lượt 2, `s07_004` lượt 2, `s07_005`, `s07_011` | Lỗi đang có trên production; `s07_009` đạt vì lý do chỉ 50 ký tự |
+| **F29**: `answer_check` cắt câu "đơn SIM-O-ST-002 đang trên đường vận chuyển qua GHN và vẫn trong thời hạn giao dự kiến" vì có "thời hạn", mất cả mã đơn | `s07_002` lượt 1 | Thử thêm: "còn trong hạn trả hàng", "còn hạn đổi size 15 ngày" cũng bị cắt dù `get_order` vừa trả các cờ đó |
+| Runner: lượt do rào an toàn trả lời bị báo "scripted reply(ies) were never asked for" | `s07_001` (rào gặp nhân viên), `s07_003` (rào bức xúc) | Mọi kỳ vọng khác của lượt đều đạt |
+
+**Ghi chú không chặn:** `s07_007`, `s07_008` cấm các chuỗi "090", "098", "028", "024" để chặn số điện thoại bịa; chuỗi này có thể khớp mã đơn như `SIM-O-00098`, nhưng hai khách của ca không có đơn đó. Model viết ca cùng họ Google với model chạy ở W6.4 (Gemma); thông tin vẫn cách ly hoàn toàn, chỉ ghi vào mục giới hạn của Chương 4 và kiểm các cụm `answer_any` đủ rộng khi nhận từng bộ.
+
+**Kết luận:** S07 nhận, chờ thêm vào `evals/suites/` sau khi [W6.3.1](W6_3_1_HOTFIX_HANDOFF_2026-11-11.md) merge và phát lại đạt 11/11. Model độc lập làm tiếp S09.

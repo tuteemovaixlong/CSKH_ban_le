@@ -534,3 +534,13 @@ Owner chốt ngày 2026-11-11 khi Claude kiểm chứng PR #87 và thấy F26: s
 | W6.2.1-D1 | **Server chặn theo thời hạn.** Tool `prepare_order_action` và bước tạo yêu cầu đều từ chối khi quá hạn, với mã lý do riêng: trả hàng quá 7 ngày kể từ ngày giao; đổi sang biến thể khác quá 15 ngày; đổi cùng biến thể do lỗi quá thời hạn bảo hành của sản phẩm. Trả hàng quá hạn nhưng còn bảo hành thì kết quả gợi ý đổi cùng biến thể nếu hàng lỗi. Form trên web chỉ đưa các loại đổi mà server cho phép. Đơn đã giao nhưng thiếu ngày giao thì không chặn theo thời hạn, để nhân viên quyết. Yêu cầu đang mở và quyết định của nhân viên không bị ảnh hưởng. | Làm rõ W6.1b-D9 "điều kiện do server tính"; owner chọn 2026-11-11 |
 | W6.2.1-D2 | **Làm sau W6.2, deploy chung một lượt với W6.2.** W6.2.1 sửa `retailops/business/store.py` như W6.2, nên chỉ bắt đầu khi W6.2 đã merge. Bộ tài liệu `eval_pack` chỉ phát hành cho model độc lập sau khi W6.2.1 merge, để kết quả tool trong `03` đã đúng luật thời hạn. | Mới |
 | W6.2.1-D3 | **Gộp dọa kiện ngầm vào W6.2.1.** Câu đe dọa pháp lý không có chữ "kiện", như nhờ luật sư làm việc với shop hay bảo shop chờ giấy triệu tập của tòa, được chuyển nhân viên như dọa kiện; câu hỏi pháp lý không nhắm vào shop vẫn bị từ chối khéo theo W6.2-D2. Owner chọn sửa trước buổi bảo vệ thay vì chờ số liệu W6.4. | Mở rộng W6.2-D2; owner chọn 2026-11-11 |
+
+## 25. W6.3.1 owner decisions (2026-11-11)
+
+Owner chọn ngày 2026-11-11 viết handoff sửa ba lỗi Claude tìm thấy khi kiểm bộ S07 đầu tiên ([biên bản](IMPLEMENTATION_READINESS_BLOCKED_2026-10-27.md#2026-11-11-s07-first-suite-check)). Các mục dưới là mặc định đề xuất kèm [W6.3.1 hotfix handoff](W6_3_1_HOTFIX_HANDOFF_2026-11-11.md), owner chấp nhận khi merge bản ghi này.
+
+| ID | Quyết định | Thay thế |
+|---|---|---|
+| W6.3.1-D1 | **Chuyển nhân viên không được thất bại âm thầm (F28).** `reason` của `request_human_support` nhận tới 1.000 ký tự, bằng giới hạn `comment` của kho lưu. Câu trả lời nói đã chuyển cho nhân viên mà không tool nào của lượt chuyển thành công thì bị cắt, kèm câu ghi chú mời khách nhắn lại. | Mới |
+| W6.3.1-D2 | **Dữ kiện thời hạn có nguồn từ tool không bị cắt (F29).** Câu về thời hạn trả, đổi, bảo hành hay mốc giao được giữ khi số ngày trong câu là số server vừa trả, hoặc câu không có số và tool của lượt có cờ điều kiện thời hạn hay mốc giao. Lời hứa về phí và giao nhận vẫn phải có trích dẫn. | Làm rõ W3.2-D11 |
+| W6.3.1-D3 | **Lượt do rào an toàn trả lời không bị coi là quỹ đạo lỗi thời.** Ở chế độ `--fake`, bước quỹ đạo chưa dùng của lượt không gọi model thì bỏ qua; mọi kỳ vọng vẫn được chấm. Ca do model độc lập viết không phải đoán rào nào sẽ bắt. | Làm rõ W6.3-D1 |
