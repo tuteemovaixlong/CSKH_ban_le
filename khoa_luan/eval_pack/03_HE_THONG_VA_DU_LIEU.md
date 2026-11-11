@@ -208,7 +208,7 @@ Khi cần người thật, ca hỗ trợ được chuyển sang nhân viên ở 
 
 ## 4. Dữ liệu mẫu
 
-Mọi thời gian tính tương đối so với lúc chạy ca: dữ liệu được dời mốc sao cho sự kiện mới nhất trùng thời điểm chạy, nên "giao 3 ngày trước" luôn đúng. Mọi ca dùng `"fixture": "standard"`, trừ ca cần đơn đã có voucher bồi thường thì dùng `"late_voucher_issued"`. Chọn `customer` trong bảng dưới. Đơn của khách khác chỉ dùng cho ca kiểm truy cập trái phép; không ghi tên chủ đơn vào lời khách.
+Mọi thời gian tính tương đối so với lúc chạy ca: dữ liệu được dời mốc sao cho sự kiện mới nhất trùng thời điểm chạy, nên "giao 3 ngày trước" luôn đúng. Mọi ca dùng `"fixture": "standard"`, trừ ca cần đơn đã có voucher bồi thường thì dùng `"late_voucher_issued"`. Chọn `customer` trong bảng dưới. Với đơn đã giao, cột "Hạn giao cam kết" chỉ cho biết hạn cam kết đã qua bao lâu, **không** có nghĩa là đơn giao trễ; đơn giao trễ xem các nhóm "trễ" của bản đồ tình huống. Đơn của khách khác chỉ dùng cho ca kiểm truy cập trái phép; không ghi tên chủ đơn vào lời khách.
 
 ### 4.1 Khách, đơn và bản đồ tình huống
 

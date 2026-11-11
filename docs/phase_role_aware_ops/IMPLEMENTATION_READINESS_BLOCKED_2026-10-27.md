@@ -659,3 +659,25 @@ Ghi chú không chặn: Tool Inspector bỏ 3 tool đọc trước đây đượ
 - Dữ liệu demo được dời mốc sao cho sự kiện mới nhất trùng thời điểm nạp, nên số ngày tương đối của đơn, và do đó điều kiện 7, 15, 90 ngày, không đổi theo ngày chạy.
 
 **Kết luận:** phần code của W6.3 **READY** để thực thi theo [W6.3 execution handoff](W6_3_EXECUTION_HANDOFF_2026-11-10.md) khi owner merge PR chứa §23 và `eval_pack` bản 2; executor là Codex, song song với W6.2. Phần dữ liệu bắt đầu sau khi phần code merge, theo mục 7 của handoff. Readiness tổng thể vẫn `BLOCKED` cho W6.4 trở đi.
+
+### 2026-11-11 W6.3 code verification and merge record
+
+> **Phạm vi:** kiểm chứng phần code W6.3 của Codex theo mục 2 của [W6.3 handoff](W6_3_EXECUTION_HANDOFF_2026-11-10.md), PR #87, hai lượt: commit `21e68d7` ngày 2026-11-10 và lượt sửa `8370bef` ngày 2026-11-11. Báo cáo của executor: `W6_3_CODE_EXECUTION_REPORT_2026-11-10.md`.
+
+**Lượt 1 (`21e68d7`).** CI 6/6 xanh; không đụng tệp của W6.2; hai cấu hình mới giữ đúng mặc định (ở 16384 mọi ngân sách bằng số cũ, không đặt biến thì request không đổi, không module nào import cứng các hằng số); McNemar `b=10, c=2` cho p ≈ 0,0386; bộ kiểm v2 bắt được đoạn chính sách bị thêm chữ. Ba điểm phải sửa:
+- `03` nặng 680.365 byte, 20.634 dòng vì mỗi đơn và mỗi kết quả tool là JSON đầy đủ; model độc lập không đọc chính xác được.
+- Bản đồ tình huống ghi "đã hoàn tiền: Không có" vì bộ sinh đọc `refund.status` thay vì `refund_summary`. Claude ghi nhầm là 28 đơn do đếm trùng các đơn xuất hiện ở cả hai khối; số đúng trên fixture `standard` là 18.
+- `eval_stats.py compare` từ chối hai báo cáo khác tập ca, nên chưa so được A (250 ca) với B, C, D (100 ca); thiếu sót này do handoff, không phải do executor.
+
+**Lượt 2 (`8370bef`).** `03` còn 112.110 byte, 1.073 dòng: bảng 128 đơn mỗi đơn một dòng, kết quả tool rút gọn; nhóm "đã hoàn tiền" 18 đơn, "hoàn tiền thất bại hoặc đang chờ" 4 đơn; thêm `eval_stats.py subset`, `compare --cases`, runner `--only-file`. Claude tính lại phân bổ tập con 100 ca theo phần dư lớn nhất, ra 11, 7, 12, 8, 11, 9, 6, 7, 10, 4, 9, 6, khớp kết quả của executor. `build_eval_pack.py --check` đạt; 21 test W6.3 đạt cục bộ, 2 test PostgreSQL chạy thật trên CI. CI 6/6 xanh trên `8370bef`; unittest Linux 1.095 pass, 0 fail, 0 skip.
+
+**Merge.** Owner duyệt; Claude merge ngày 2026-11-11 với `--match-head-commit 8370bef`, merge commit `b313587`.
+
+**Phát hiện mới, không thuộc PR #87 (F26).** Kết quả tool thật trong `03` cho thấy `prepare_order_action` mở form trả hàng cho `SIM-O-00001` đã giao 28,6 ngày dù `within_return_window: false`. Cờ thời hạn chỉ được tính và trả về, không chặn ở tool cũng như ở bước tạo yêu cầu. Owner chọn server chặn theo thời hạn ([§24](W0_OWNER_DECISION_DELTA_2026-10-29.md#24-w621-owner-decisions-2026-11-11)); việc sửa là [W6.2.1](W6_2_1_EXECUTION_HANDOFF_2026-11-11.md), làm sau W6.2, deploy chung.
+
+**Ghi chú không chặn:**
+- Cả fixture `standard` chỉ có một đơn chờ xử lý (`SIM-O-00115` của `SIM-C-0070`); các ca hủy đơn chờ xử lý dùng chung đơn này, ca "hủy hai đơn chờ xử lý" vào `de_xuat_fixture.md`.
+- Với đơn đã giao, cột "Hạn giao cam kết" trong `03` cho biết hạn cam kết đã qua bao lâu, không có nghĩa là giao trễ; phần viết tay của `03` mục 4 đã thêm câu giải thích.
+- Cấu hình D: với ngân sách 8k, prompt hệ thống và schema tool cộng `max_tokens` 2048 có thể vượt `--max-model-len 8192` ở ca có kết quả tool dài; W6.4 chạy thử vài ca dài trước khi chạy cả tập con.
+
+**Kết luận:** phần code W6.3 **xong**. Phần dữ liệu bắt đầu khi W6.2.1 merge, theo W6.2.1-D2.
