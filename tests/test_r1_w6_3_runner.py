@@ -11,6 +11,19 @@ from scripts import run_agent_scenarios as runner
 
 
 class ExperimentTests(unittest.TestCase):
+    def test_only_file_filters_and_unknown_ids_fail(self):
+        cases = runner.load_dataset()[:2]
+        with tempfile.TemporaryDirectory() as tmp:
+            selected, output = Path(tmp) / 'only.txt', Path(tmp) / 'report.json'
+            selected.write_text('\ufeff' + cases[1]['id'] + '\n\n', encoding='utf-8')
+            self.assertEqual(runner.main(['--fake', '--only-file', str(selected), '--out', str(output)], out=io.StringIO()), 0)
+            report = json.loads(output.read_text(encoding='utf-8'))
+            self.assertEqual([r['id'] for r in report['scenarios']], [cases[1]['id']])
+            selected.write_text('unknown_id\n', encoding='utf-8')
+            self.assertEqual(runner.main(['--fake', '--only-file', str(selected)], out=io.StringIO()), 2)
+            selected.write_text('', encoding='utf-8')
+            self.assertEqual(runner.main(['--fake', '--only-file', str(selected)], out=io.StringIO()), 2)
+
     def test_new_cli_options(self):
         args = runner.build_parser().parse_args(['--fake', '--repeat', '3', '--thinking', 'off',
               '--context-tokens', '8192', '--knowledge', 'scripted', '--dataset-dir', 'evals/suites',

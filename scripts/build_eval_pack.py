@@ -50,6 +50,62 @@ def fenced(value, aliases):
     return '```json\n' + json.dumps(clean(value, aliases), ensure_ascii=False, indent=2, sort_keys=True) + '\n```'
 
 
+def markdown_row(values):
+    return '| ' + ' | '.join(str(v if v is not None else '—').replace('|', '\\|').replace('\r', '').replace('\n', '<br>')
+                              for v in values) + ' |'
+
+
+def eligibility_text(eligibility):
+    """Format server verdicts; remaining days are the server's window minus its elapsed days."""
+    elapsed = eligibility['days_since_delivery']
+    parts = ['hủy: ' + ('có' if eligibility['can_self_service_cancel'] else 'không')]
+    for label, allowed_key, window_key in (
+        ('trả', 'within_return_window', 'return_window_days'),
+        ('đổi size', 'within_size_exchange_window', 'size_exchange_window_days'),
+        ('bảo hành', 'within_warranty', 'warranty_window_days'),
+    ):
+        allowed = eligibility[allowed_key]
+        verdict = ('còn ' + f'{max(0, eligibility[window_key] - elapsed):.1f}' + ' ngày'
+                   if allowed is True and elapsed is not None else 'chưa rõ' if allowed is None else 'không')
+        parts.append(f'{label}: {verdict}')
+    return '; '.join(parts)
+
+
+def refund_groups(summary):
+    summary = summary or {}
+    groups = []
+    if summary.get('latest_status') == 'completed' or (summary.get('refunded_total') or 0) > 0:
+        groups.append('đã hoàn tiền')
+    if summary.get('latest_status') in {'failed', 'pending', 'initiated', 'processing', 'requested'}:
+        groups.append('hoàn tiền thất bại hoặc đang chờ')
+    return groups
+
+
+def tool_sample(tool, arguments, result):
+    """Keep the real verdict and 3–5 decisive fields, never repeat a complete order."""
+    sample = dict(tool=tool, arguments=arguments, eligible=result.get('eligible'),
+                  reason_code=(result.get('ineligible_reason') or {}).get('code') or result.get('error'))
+    if tool == 'prepare_order_action':
+        e = result['eligibility']
+        sample.update(order_status=result['order']['status'], days_since_delivery=e['days_since_delivery'],
+                      window_days=dict(return_days=e['return_window_days'], size_days=e['size_exchange_window_days'],
+                                       warranty_days=e['warranty_window_days']),
+                      within_windows=dict(return_allowed=e['within_return_window'], size_allowed=e['within_size_exchange_window'],
+                                          warranty_allowed=e['within_warranty']),
+                      transaction_performed=result.get('transaction_performed'))
+    elif tool == 'track_shipment':
+        shipment = result.get('shipment') or {}
+        sample.update(carrier=shipment.get('carrier'), status=shipment.get('status'),
+                      delivery_attempts=shipment.get('delivery_attempts'), current_area=shipment.get('current_area'),
+                      events=[{k: e.get(k) for k in ('status', 'occurred_at', 'current_area') if k in e}
+                              for e in shipment.get('events', [])])
+    elif tool == 'check_inventory':
+        sample.update({k: v for k, v in result.items() if k in {'product_id', 'size', 'color', 'stock', 'in_stock'}})
+    else:
+        sample.update(status=result.get('status'), message=result.get('message'))
+    return sample
+
+
 def generate():
     from scripts.run_agent_scenarios import _provision_demo_template, _DEMO_TEMPLATE_CACHE
     from scripts.eval_dataset_v2 import demo_ids
@@ -82,9 +138,11 @@ def generate():
                 items = [dict(r) for r in db.execute('SELECT * FROM order_items ORDER BY order_id,product_id,variant_name')]
                 shipments = {r['order_id']: dict(r) for r in db.execute('SELECT * FROM shipments ORDER BY external_shipment_id')}
                 failed_shipments = {r[0] for r in db.execute("SELECT DISTINCT shipment_id FROM shipment_events WHERE status IN ('failed','delivery_failed')")}
+                refund_amounts = {r['order_id']: r['amount'] for r in db.execute(
+                    'SELECT order_id,amount FROM refunds ORDER BY COALESCE(completed_at,initiated_at),refund_id')}
             groups = {label: [] for label in ('chờ xử lý', 'đang giao đúng hạn', 'trễ chưa quá 48 giờ', 'trễ quá 48 giờ',
                       'đã giao trong 7 ngày', '8–15 ngày', '16–90 ngày', 'quá 90 ngày', 'đã hủy', 'giao thất bại',
-                      'chuyển hoàn', 'đã hoàn tiền', 'có voucher bồi thường (late_voucher_issued)')}
+                      'chuyển hoàn', 'đã hoàn tiền', 'hoàn tiền thất bại hoặc đang chờ', 'có voucher bồi thường (late_voucher_issued)')}
             customer_lines, tool_samples = [], []
             representatives = {}
             for order in orders:
@@ -107,26 +165,39 @@ def generate():
                 if shipment.get('status') in {'failed', 'delivery_failed'} or shipment.get('shipment_id') in failed_shipments:
                     labels.append('giao thất bại')
                 if shipment.get('status') in {'returning', 'returned', 'return_to_sender'}: labels.append('chuyển hoàn')
-                if isinstance(detail.get('refund'), dict) and detail['refund'].get('status') == 'completed':
-                    labels.append('đã hoàn tiền')
+                labels.extend(refund_groups(detail.get('refund_summary')))
                 for label in labels:
                     groups[label].append(oid)
                     representatives.setdefault(label, order)
                 order_items = [{k: item[k] for k in ('product_id', 'product_title', 'variant_name', 'quantity', 'unit_price', 'subtotal')}
                                for item in items if item['order_id'] == order['id']]
-                row = dict(customer=aliases[cid], customer_name=customers[cid], order=detail, items=order_items,
-                           days_since_order=round((NOW - order['ordered_at']) / 86400, 2),
-                           days_since_delivery=eligibility['days_since_delivery'],
-                           hours_to_promised_delivery=round((order['promised_delivery_by'] - NOW) / 3600, 2) if order['promised_delivery_by'] else None,
-                           carrier=shipment.get('carrier'), shipment_status=shipment.get('status'),
-                           delivery_attempts=shipment.get('delivery_attempts', 0))
-                customer_lines.append(f'#### {aliases[cid]} · {oid}\n\n' + fenced(row, aliases))
+                product_text = '; '.join(f"{i['product_id']} {i['product_title']} ×{i['quantity']} · {i['variant_name']}" for i in order_items)
+                hours = (order['promised_delivery_by'] - NOW) / 3600 if order['promised_delivery_by'] else None
+                promised = ('còn ' if hours >= 0 else 'quá ') + f'{abs(hours):.1f} giờ' if hours is not None else '—'
+                refund = detail.get('refund_summary') or {}
+                refund_amount = (refund.get('refunded_total') or refund.get('pending_total') or refund_amounts.get(order['id'], 0))
+                voucher_text = '; '.join(f"{v['code']} ({v.get('value', 0)})" for v in detail.get('vouchers', [])) or '—'
+                customer_lines.append(markdown_row([
+                    aliases[cid], customers[cid], oid, product_text, order['amount'], order['shipping_fee'],
+                    f"{order['payment_method']}/{order['payment_status']}", order['status'],
+                    f"{(NOW - order['ordered_at']) / 86400:.1f}",
+                    f"{eligibility['days_since_delivery']:.1f}" if eligibility['days_since_delivery'] is not None else '—',
+                    promised, f"{shipment.get('carrier', '—')}/{shipment.get('status', '—')}/{shipment.get('delivery_attempts', 0)}",
+                    f"{refund['latest_status']}/{refund_amount}" if refund else '—',
+                    voucher_text, eligibility_text(eligibility)]))
             for label, order in representatives.items():
                 oid = order['external_order_id']
                 tool = BoundTools(store, Catalog(store=store), order['customer_id'], {}, {}, user_text=oid)
-                results = {action: tool('prepare_order_action', {'order_id': oid, 'action_type': action}) for action in ('cancel', 'return', 'exchange')}
-                results['track_shipment'] = tool('track_shipment', {'order_id': oid})
-                tool_samples.append(f'#### {label} · {oid}\n\n' + fenced(results, aliases))
+                samples = []
+                for action in ('cancel', 'return', 'exchange'):
+                    arguments = {'order_id': oid, 'action_type': action}
+                    samples.append(tool_sample('prepare_order_action', arguments, tool('prepare_order_action', arguments)))
+                # Only one journey per shipping state; other groups keep the decisive eligibility fields.
+                if label in {'đang giao đúng hạn', 'giao thất bại', 'đã giao trong 7 ngày'}:
+                    arguments = {'order_id': oid}
+                    samples.append(tool_sample('track_shipment', arguments, tool('track_shipment', arguments)))
+                tool_samples.append(f'#### {label} · {oid}\n\n```json\n' + '\n'.join(
+                    json.dumps(clean(sample, aliases), ensure_ascii=False, separators=(',', ':')) for sample in samples) + '\n```')
             foreign = next(o for o in orders if o['customer_id'] != orders[0]['customer_id'])
             tools = BoundTools(store, Catalog(store=store), orders[0]['customer_id'], {}, {}, user_text=foreign['external_order_id'])
             from retailops.core import ApiError
@@ -134,21 +205,36 @@ def generate():
                 foreign_result = tools('get_order', {'order_id': foreign['external_order_id']})
             except ApiError as exc:
                 foreign_result = {'error': exc.code, 'status': exc.status, 'message': str(exc)}
-            tool_samples.append('#### Tra đơn của khách khác\n\n' + fenced(foreign_result, aliases))
+            tool_samples.append('#### Tra đơn của khách khác\n\n' + fenced(tool_sample('get_order', {'order_id': foreign['external_order_id']}, foreign_result), aliases))
             with store.connection() as db:
                 empty = dict(db.execute('SELECT * FROM product_variants WHERE stock=0 ORDER BY product_id,id LIMIT 1').fetchone())
-            tool_samples.append('#### Biến thể hết hàng\n\n' + fenced(tools('check_inventory', {k: empty[k] for k in ('product_id', 'size', 'color')}), aliases))
+            arguments = {k: empty[k] for k in ('product_id', 'size', 'color')}
+            tool_samples.append('#### Biến thể hết hàng\n\n' + fenced(tool_sample('check_inventory', arguments, tools('check_inventory', arguments)), aliases))
             late = stores['late_voucher_issued']
             with late.connection() as db:
                 vouchers = [dict(r) for r in db.execute('SELECT v.*,o.external_order_id FROM vouchers v JOIN orders o ON o.id=v.order_id ORDER BY o.external_order_id')]
             groups['có voucher bồi thường (late_voucher_issued)'] = [v['external_order_id'] for v in vouchers]
-            customer_lines.append('### Voucher trong fixture late_voucher_issued\n\n' + fenced(vouchers, aliases))
-            customer_lines.insert(0, '### Bản đồ tình huống\n\n| Nhóm | Mã đơn |\n|---|---|\n' + '\n'.join(f'| {label} | {", ".join(ids) or "Không có"} |' for label, ids in groups.items()))
+            voucher_lines = ['### Voucher trong fixture late_voucher_issued',
+                             '| Mã đơn | Mã voucher | Mệnh giá | Hết hạn |', '|---|---|---:|---|']
+            voucher_lines.extend(markdown_row([v['external_order_id'], v['code'], v['value'], relative(v['valid_until'])]) for v in vouchers)
+            headers = ['Khách', 'Tên hiển thị', 'Mã đơn', 'Sản phẩm × số lượng · biến thể', 'Tổng tiền', 'Phí ship',
+                       'Thanh toán (phương thức/trạng thái)', 'Trạng thái đơn', 'Đặt cách đây (ngày)', 'Giao cách đây (ngày)',
+                       'Hạn giao cam kết', 'Vận chuyển (hãng/trạng thái/số lần giao)', 'Hoàn tiền (trạng thái/số tiền)',
+                       'Voucher', 'Điều kiện do server tính']
+            order_table = '\n'.join([markdown_row(headers), markdown_row(['---'] * len(headers)), *customer_lines])
+            group_table = '### Bản đồ tình huống\n\n| Nhóm | Mã đơn |\n|---|---|\n' + '\n'.join(
+                f'| {label} | {", ".join(ids) or "Không có"} |' for label, ids in groups.items() if ids or label != 'hoàn tiền thất bại hoặc đang chờ')
+            customer_lines = [group_table, '### Đơn hàng (fixture standard)\n\nSố tiền: VNĐ. Thời gian: tương đối với bây giờ; — là chưa có. '
+                              'Điều kiện lấy từ server; số ngày còn lại = cửa sổ server − số ngày từ giao do server tính. '
+                              'Hạn giao là khoảng cách tới bây giờ, kể cả đơn đã giao.\n\n' + order_table, '\n'.join(voucher_lines)]
             catalog = []
             for product in sorted(store.list_products(), key=lambda p: p['id']):
                 with store.connection() as db:
                     variants = [dict(r) for r in db.execute('SELECT * FROM product_variants WHERE product_id=? ORDER BY id', (product['id'],))]
-                catalog.append(f"#### {product['id']} · {product['name']}\n\n" + fenced(dict(product=product, variants=variants), aliases))
+                attributes = {k: product.get(k) for k in ('id', 'name', 'price', 'warranty_days', 'description', 'material', 'care')}
+                catalog.append(f"#### {product['id']} · {product['name']}\n\n" + fenced(attributes, aliases) + '\n\n'
+                               + '\n'.join([markdown_row(['Biến thể', 'Size', 'Màu', 'Giá', 'Tồn']), markdown_row(['---'] * 5)]
+                                           + [markdown_row([v['variant_name'], v['size'], v['color'], v['price'], v['stock']]) for v in variants]))
             knowledge = '\n\n'.join(f'### {p.name}\n\n' + p.read_text(encoding='utf-8').rstrip() for p in sorted(KNOWLEDGE.glob('*.md')))
             return dict(tool_results='\n\n'.join(tool_samples), customers_orders='\n\n'.join(customer_lines),
                         catalog='\n\n'.join(catalog), knowledge=knowledge)

@@ -108,23 +108,28 @@ python scripts/run_agent_scenarios.py --fake --dataset-dir evals/suites --repeat
 
 Ma trận A–D của W6 backlog mục 3: A chạy 250 ca; B/C/D chạy cùng tập con cố định
 100 ca do owner chọn, không phải 100 ca đầu hay một tập con lấy ngẫu nhiên mỗi lần.
-Đặt `SUBSET_IDS` thành 100 mã ca đã đóng băng; dùng cùng danh sách để lấy báo cáo
-A trên tập con (`A100.json`) trước khi so sánh McNemar với B/C/D. Không sửa ca.
+Dùng lệnh `subset` tạo danh sách 100 mã ca một lần với seed cố định. Lệnh phân bổ
+số ca theo tỉ lệ từng bộ bằng phần dư lớn nhất (Hamilton); hòa phần dư thì ưu tiên
+mã bộ tăng dần, rồi lấy mẫu ngẫu nhiên trong mỗi bộ. Cùng dữ liệu và seed cho cùng
+kết quả; đầu vào thiếu 100 ca thì báo lỗi. Đóng băng file danh sách cùng hash dữ liệu.
+`compare --cases` lấy giao của danh sách và hai báo cáo, báo rõ mã bị loại; không có
+ca chung thì từ chối. Kiểm SHA-256 dữ liệu vẫn bắt buộc. Không cần chạy lại A trên
+tập con chỉ để so sánh với B/C/D. Không sửa ca.
 
 ```sh
+python scripts/eval_stats.py subset --size 100 --seed 20261110 evals/suites > subset_100.txt
 # Các khóa endpoint đọc từ biến/file có sẵn, không ghi vào lệnh hay báo cáo.
 # Kho real yêu cầu RETAILOPS_TEST_DATABASE_URL và RETAILOPS_ALLOW_DESTRUCTIVE_TEST_DATABASE=1
 # trỏ đúng PostgreSQL dùng một lần trên loopback như CI (xem scripts/postgres_test_guard.py).
 python scripts/run_agent_scenarios.py --endpoint "$ENDPOINT" --dataset-dir evals/suites --agent-mode agent --thinking on --context-tokens 16384 --knowledge real --repeat 3 --out A.json
-python scripts/run_agent_scenarios.py --endpoint "$ENDPOINT" --dataset-dir evals/suites --only $SUBSET_IDS --agent-mode agent --thinking on --context-tokens 16384 --knowledge real --repeat 3 --out A100.json
-python scripts/run_agent_scenarios.py --endpoint "$ENDPOINT" --dataset-dir evals/suites --only $SUBSET_IDS --agent-mode legacy --thinking on --context-tokens 16384 --knowledge real --repeat 3 --out B.json
-python scripts/run_agent_scenarios.py --endpoint "$ENDPOINT" --dataset-dir evals/suites --only $SUBSET_IDS --agent-mode agent --thinking off --context-tokens 16384 --knowledge real --repeat 3 --out C.json
+python scripts/run_agent_scenarios.py --endpoint "$ENDPOINT" --dataset-dir evals/suites --only-file subset_100.txt --agent-mode legacy --thinking on --context-tokens 16384 --knowledge real --repeat 3 --out B.json
+python scripts/run_agent_scenarios.py --endpoint "$ENDPOINT" --dataset-dir evals/suites --only-file subset_100.txt --agent-mode agent --thinking off --context-tokens 16384 --knowledge real --repeat 3 --out C.json
 # Owner khởi động lại vLLM với RETAILOPS_MAX_MODEL_LEN=8192 cho D.
-python scripts/run_agent_scenarios.py --endpoint "$ENDPOINT" --dataset-dir evals/suites --only $SUBSET_IDS --agent-mode agent --thinking on --context-tokens 8192 --knowledge real --repeat 3 --out D.json
-python scripts/eval_stats.py summary A.json A100.json B.json C.json D.json
-python scripts/eval_stats.py compare A100.json B.json
-python scripts/eval_stats.py compare A100.json C.json
-python scripts/eval_stats.py compare A100.json D.json
+python scripts/run_agent_scenarios.py --endpoint "$ENDPOINT" --dataset-dir evals/suites --only-file subset_100.txt --agent-mode agent --thinking on --context-tokens 8192 --knowledge real --repeat 3 --out D.json
+python scripts/eval_stats.py summary A.json B.json C.json D.json
+python scripts/eval_stats.py compare A.json B.json --cases subset_100.txt
+python scripts/eval_stats.py compare A.json C.json --cases subset_100.txt
+python scripts/eval_stats.py compare A.json D.json --cases subset_100.txt
 python scripts/eval_retrieval.py --dataset evals/suites/S03.jsonl --out retrieval.json
 ```
 
@@ -144,4 +149,6 @@ tool, độ trễ, cấu hình, hash file và tổng hợp theo suite/split/styl
 `pass_at_1` là trung bình tỉ lệ đạt từng ca; `pass_power_k` là tỉ lệ ca đạt mọi lần.
 Bootstrap 95% lấy mẫu trên ca 10.000 lần với seed 20261110, giữ các lần chạy của một
 ca cùng nhau. McNemar ghép mã ca, dùng đa số nghiêm ngặt; hòa với K chẵn tính không đạt.
-Báo cáo khác tập ca hoặc hash dữ liệu không so sánh được.
+Không có `--cases`, báo cáo khác tập ca bị từ chối. Hash dữ liệu khác nhau luôn bị từ chối.
+`--only-file FILE` đọc UTF-8 (có thể có BOM), mỗi dòng một mã; file rỗng, mã lạ hoặc
+mã trùng bị từ chối. Dùng cùng `--only` thì hợp hai danh sách trước khi lọc bộ/split.

@@ -1063,6 +1063,7 @@ def build_parser():
     parser.add_argument('--dataset', default=str(DEFAULT_DATASET), metavar='PATH',
                         help='scenario file (default: evals/agent_scenarios_w3_2.jsonl)')
     parser.add_argument('--only', nargs='+', metavar='ID', help='run only these scenario ids')
+    parser.add_argument('--only-file', type=Path, help='UTF-8 file with one scenario ID per line')
     parser.add_argument('--dataset-dir', type=Path)
     parser.add_argument('--suite', nargs='+', choices=[f'S{i:02d}' for i in range(1, 13)])
     parser.add_argument('--split', choices=('dev', 'held_out'))
@@ -1137,12 +1138,20 @@ def main(argv=None, *, out=None):
     except (ValueError, AssertionError, OSError) as err:
         print(f'Không chạy được: {err}', file=sys.stderr)
         return 2
-    if args.only:
-        unknown = sorted(set(args.only) - {s['id'] for s in scenarios})
+    selected = set(args.only or [])
+    if args.only_file:
+        from scripts.eval_stats import read_case_ids
+        try:
+            selected.update(read_case_ids(args.only_file))
+        except (ValueError, OSError) as err:
+            print(f'Không chạy được: {err}', file=sys.stderr)
+            return 2
+    if selected:
+        unknown = sorted(selected - {s['id'] for s in scenarios})
         if unknown:
             print(f'Không có kịch bản: {", ".join(unknown)}', file=sys.stderr)
             return 2
-        scenarios = [s for s in scenarios if s['id'] in args.only]
+        scenarios = [s for s in scenarios if s['id'] in selected]
     if args.category:
         scenarios = [s for s in scenarios if s['category'] in args.category]
     if args.suite:

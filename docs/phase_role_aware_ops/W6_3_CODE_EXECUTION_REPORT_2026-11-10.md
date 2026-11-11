@@ -1,5 +1,120 @@
 # W6.3 — báo cáo thực thi phần code (2026-11-10)
 
+## Cập nhật theo kiểm chứng Claude — 2026-11-11
+
+Phần này là báo cáo hiện tại, thay các kích thước và kết quả chạy ngày 2026-11-10 ở
+phần lịch sử bên dưới. Sửa tiếp PR #87 trên nhánh `phase-r1-w6-3`, không mở PR mới.
+
+| Yêu cầu | Tệp sửa | Trạng thái |
+|---|---|---|
+| 1. Tài liệu gọn | `scripts/build_eval_pack.py`, `tests/test_r1_w6_3_build_pack.py`, bốn khối GENERATED của `khoa_luan/eval_pack/03_HE_THONG_VA_DU_LIEU.md` | DONE |
+| 2. Nhóm hoàn tiền | `scripts/build_eval_pack.py`, `tests/test_r1_w6_3_build_pack.py`, khối `customers_orders` | DONE |
+| 3. Tập con phân tầng | `scripts/eval_stats.py`, `scripts/run_agent_scenarios.py`, `tests/test_r1_w6_3_stats.py`, `tests/test_r1_w6_3_runner.py`, `evals/README.md` | DONE |
+| Đồng bộ và báo cáo | notebook sinh `notebooks/colab_agent.ipynb`, báo cáo này, dòng 030 cột Codex của log W1 | DONE |
+
+### Dữ liệu được rút gọn
+
+Tệp `03` giảm từ **680.365 byte / 20.634 dòng** xuống **112.110 byte / 1.073 dòng**
+(UTF-8, dưới mục tiêu 120 KB). Test kiểm toàn tệp sinh dưới **150.000 byte** trên
+checkout có tài liệu; trong image không chứa luận văn, vẫn kiểm kích thước các khối sinh.
+128 đơn được giữ đủ, mỗi đơn đúng một dòng bảng Markdown với 15 cột owner yêu cầu.
+Các trường hoàn tiền/voucher trống ghi `—`, không suy diễn là đã hoàn hay đã phát.
+Số ngày đặt/giao và số ngày còn lại dùng một chữ số thập phân. Quyết định đủ điều
+kiện lấy nguyên từ server; số ngày còn lại chỉ định dạng bằng cửa sổ server trừ
+số ngày sau giao do server tính. `tool_results` chỉ giữ tên tool, tham số, verdict,
+mã lý do và 3–5 trường quyết định; không nhúng toàn bộ đơn. Catalog cũng chuyển
+biến thể thành bảng, giữ đủ giá, bảo hành, chất liệu, cách giặt và tồn kho.
+
+| Khối | Byte UTF-8 | Dòng | Trích đoạn |
+|---|---:|---:|---|
+| tool_results | 18.272 | 141 | `"tool":"prepare_order_action"`, `"eligible":false`, `"reason_code":"order_not_pending"` |
+| customers_orders | 46.915 | 158 | `hủy: có; trả: không; đổi size: không; bảo hành: không` |
+| catalog | 14.671 | 400 | `P-101 · Áo thun Essential`, biến thể `Trắng · Size XL`, tồn `0` |
+| knowledge | 20.593 | 287 | `# Chính sách hủy đơn hàng` |
+
+Phần viết tay của `03` giữ nguyên; tất cả thay đổi nằm giữa bốn cặp marker sinh.
+Bốn ví dụ và 44 ca hồi quy không đổi trong lượt sửa này.
+
+### Nhóm hoàn tiền
+
+Phân nhóm từ `refund_summary`: `latest_status == completed` **hoặc**
+`refunded_total > 0` thuộc “đã hoàn tiền”. Trạng thái failed/pending/processing
+có nhóm riêng “hoàn tiền thất bại hoặc đang chờ”; một đơn có thể thuộc cả hai
+nhóm nếu có hoàn một phần rồi lần mới thất bại. Có test dữ liệu tổng hợp cho trường hợp đó.
+
+Đối chiếu trực tiếp fixture standard từ demo runner của nhánh hiện tại:
+**18 dòng completed / 18 đơn**, **2 failed**, **1 pending**, **1 processing**.
+Do đó bản đồ sinh liệt kê **18 đơn đã hoàn**, **4 đơn thất bại/đang chờ**;
+con số 28 trong nhận xét không khớp snapshot dữ liệu hiện tại. Không chỉnh dữ liệu
+giả lập để ép thành 28. Test yêu cầu nhóm completed có ít nhất một mã đơn.
+
+### Tập con W6.4
+
+```sh
+python scripts/eval_stats.py subset --size 100 --seed 20261110 evals/suites > subset_100.txt
+python scripts/run_agent_scenarios.py --fake --dataset-dir evals/suites --only-file subset_100.txt
+python scripts/eval_stats.py compare A.json B.json --cases subset_100.txt
+```
+
+Lệnh subset in đúng một mã mỗi dòng, chọn ngẫu nhiên trong từng bộ sau khi phân
+bổ theo tỉ lệ bằng phần dư lớn nhất (Hamilton), hòa thì mã bộ tăng dần. Sắp ID
+trước khi lấy mẫu để không phụ thuộc thứ tự dòng; cùng seed/dữ liệu cho cùng danh sách.
+Test tổng hợp 250 ca cho phân bổ 100 ca S01–S12 là
+`11,7,12,8,11,9,6,7,10,4,9,6`; seed khác chọn ca khác.
+`compare --cases` chỉ so giao của danh sách với cả hai báo cáo, báo rõ các ID bị loại,
+từ chối giao rỗng và vẫn bắt buộc hash dữ liệu khớp. Không có `--cases` giữ kiểm
+cùng tập ca. `--only-file` nhận UTF-8 có BOM, bỏ dòng trống, từ chối file rỗng,
+ID trùng hoặc không có trong dataset; nếu dùng cùng `--only` thì hợp hai danh sách.
+
+### Kiểm tra lại mục 4
+
+Viết test trước sửa: bốn bài mới trên bản cũ chạy `Ran 4 tests`,
+`FAILED (failures=1, errors=3)`: kích thước `680365 not less than 150000`,
+CLI chưa biết `subset`, `--cases`, `--only-file`. Log cục bộ:
+`artifacts/w6_3_revision/red.txt`. Sau triển khai, bộ mục tiêu build/stats/runner:
+**20 pass, 0 fail, 0 skip**. Test phân bổ đã sửa đáp án tie-break bằng phép chia
+phần dư nguyên: S05 nhận 11 và S12 nhận 6, không đổi thuật toán để ép kết quả sai.
+
+| Lệnh / nhóm (lượt sửa 2026-11-11) | Pass | Fail/error | Skip |
+|---|---:|---:|---:|
+| `python -m unittest discover -s tests -q` | 1013 | 1 fail, 1 error | 80 |
+| Test mục tiêu `test_r1_w6_3_build_pack`, `test_r1_w6_3_stats`, `test_r1_w6_3_runner` | 20 | 0 | 0 |
+| Test kích thước/bảng/nhóm hoàn tiền sau chỉnh kiểm tra image không chứa luận văn | 1 | 0 | 0 |
+| Node: 11 lượt JS theo ci.yml, thêm Ops Console UI, 3 syntax check web/*.js | 15 | 0 | 0 |
+| `python scripts/build_agent_notebook.py --check` | 1 | 0 | 0 |
+| `python scripts/build_eval_pack.py --check` | 1 | 0 | 0 |
+| `python scripts/check_docs_contract.py` | 1 | 0 | 0 |
+| `python scripts/check_deployment_contract.py` | 1 | 0 | 0 |
+| `python scripts/check_live_e2e_contract.py` | 1 | 0 | 0 |
+| `python scripts/check_eval_dataset.py` | 1 | 0 | 0 |
+| Runner fake hai tệp hồi quy | 32 + 12 | 0 | 0 |
+| Runner fake `06_vi_du.jsonl` | 4 | 0 | 0 |
+| Runner fake suites rỗng, `--min-success-rate 1.0` | 0 ca, exit 0 | 0 | 0 |
+| `git diff --check` | 1 | 0 | 0 |
+
+Unittest cục bộ chạy 1095 bài trong 616.243 giây. Fail duy nhất là bài cô lập package
+quét vào worktree cũ dưới `.claude/worktrees` như lượt trước. Error duy nhất là
+`test_waitress_real_http_chat_saturation_headroom` timeout ở HTTP request loopback
+(timeout 5 giây), không phải assertion chấm dữ liệu/tool/subset. Không sửa hoặc bỏ
+hai bài đó; CI checkout sạch kiểm lại cả unittest/pgvector và image với ngưỡng nguyên bản.
+80 skip cục bộ gồm hai bài PostgreSQL W6.3; trạng thái PostgreSQL thật và CI trên đầu
+nhánh cuối được ghi riêng trong mô tả PR khi hoàn tất, không suy diễn skip thành pass.
+
+Log cục bộ: `artifacts/w6_3_revision/unittest.txt`, `focused.txt`, `checks.json`,
+`node.json`, các báo cáo fake `w32.json`, `w4.json`, `examples.json`.
+
+
+PR hiện tại: https://github.com/tuteemovaixlong/CSKH_ban_le/pull/87.
+Kết quả CI trên đầu nhánh cuối được cập nhật trong mô tả và tab Checks của PR.
+Không sửa các tệp W6.2, không thêm/sửa ca trong `evals/suites/`, không gọi model thật,
+không migration/thêm thư viện, không đổi secret/variable/api.env, không deploy hay merge.
+`git fetch origin` xác nhận origin/main vẫn là `7b0356d`, chưa cần merge W6.2.
+
+---
+
+## Lịch sử thực thi lần đầu — 2026-11-10
+
+
 Nhánh `phase-r1-w6-3` từ `origin/main` tại `7b0356d`, không theo dõi main.
 Phạm vi theo handoff W6.3 mục 2 hàng 1–7 và owner decisions §23.
 
