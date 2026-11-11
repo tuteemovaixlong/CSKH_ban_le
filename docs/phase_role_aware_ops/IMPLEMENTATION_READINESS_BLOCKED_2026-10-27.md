@@ -698,3 +698,23 @@ Ghi chú không chặn: Tool Inspector bỏ 3 tool đọc trước đây đượ
 **Hai câu lọt (F27):** "tui sẽ nhờ luật sư làm việc với shop" nhận câu từ chối pháp lý (câu này có mời chuyển nhân viên); "shop cứ chờ giấy triệu tập của tòa nhé" đi thẳng vào model. Owner chọn gộp vào W6.2.1 hàng 5 theo W6.2.1-D3.
 
 **Kết luận:** W6.2 **đạt** trên `main`. Deploy W6.2 chờ W6.2.1 merge để chạy chung một lượt.
+
+### 2026-11-11 W6.2.1 verification record
+
+> **Phạm vi:** kiểm chứng PR #91 (W6.2.1, Codex, nhánh `phase-r1-w6-2-1`, head `1f3dcb2`) theo mục 2 của [W6.2.1 handoff](W6_2_1_EXECUTION_HANDOFF_2026-11-11.md). Báo cáo của executor: `W6_2_1_EXECUTION_REPORT_2026-11-11.md`; executor báo hàng 1, 2, 3, 5 DONE, hàng 4 BLOCKED, CI 4/6.
+
+| Kiểm | Kết quả |
+|---|---|
+| Tool `prepare_order_action` | dùng đúng cờ thời hạn server đã tính; cờ `null` không chặn; `size_exchange_window_expired` chỉ khi biến thể đích khác biến thể hiện tại; luôn trả `allowed_exchange_kinds` với `exchange` |
+| Bước tạo yêu cầu | 409 `return_window_expired`, `size_exchange_window_expired`, `warranty_expired` qua `_order_eligibility_in_tx` tại thời điểm tạo |
+| `eval_pack/03` sinh lại | `SIM-O-00001` (giao 28,6 ngày): `return` là `eligible: false`, `return_window_expired`; `exchange` vẫn mở được, chỉ còn đổi cùng biến thể |
+| Form web | chỉ đưa loại đổi có trong `allowed_exchange_kinds` |
+| Bảng W6.2 30 câu, bảng W6.2.1 8 câu | 30/30, 8/8 |
+| 14 câu thử mới cho dọa kiện ngầm, không có trong handoff | 14/14 |
+| Test `test_r1_w6_2_1_*`, `test_r1_w6_2_safety` cục bộ | đạt |
+
+**Hàng 4 BLOCKED là hệ quả đúng của luật mới, không phải lỗi code.** 6 lỗi CI đến từ kỳ vọng và fixture cũ:
+- Kịch bản hồi quy `exchange_to_another_colour` dùng `SIM-O-00039` đã giao 19,4 ngày mà vẫn chờ form đổi màu. **Claude quyết định** đổi kịch bản sang `SIM-O-00084` của `SIM-C-0052` (P-103 Xanh Nhạt · Size M, giao 6 ngày) đổi sang Trắng · Size M, giữ nguyên ý định kiểm "đổi màu, giữ size", tiêu đề và các điều kiện chấm. Số kịch bản vẫn 44.
+- `test_r1_w4_media_pipeline` (2 test) và `test_r1_w6_1b_1_ingest_v9` (1 test) đặt ngày giao cố định (`1785000000`, tức 2026-07-25, và `1762580000`) rồi tạo yêu cầu trả hàng; nay quá 7 ngày nên bị 409. Claude đổi sang ngày tương đối với giờ chạy test (giao 1 ngày trước, đặt 2 ngày trước), không đổi ý định của test.
+
+Claude đẩy bản gỡ này vào nhánh của PR theo lệnh của owner. Cục bộ: hồi quy W3.2 32/32, test hoàn tiền thủ công và test media item3 đạt; test media item4 lỗi trên máy Windows của Claude cả trên `main` cũ nên chỉ kiểm được trên CI.

@@ -1,6 +1,7 @@
 """Phase R1 W4 media pipeline tests: Item 2 (W4-D6) chat attachment sanitization and zero-base64 history."""
 from __future__ import annotations
 
+import time
 import base64
 import hashlib
 import io
@@ -468,7 +469,7 @@ class PhaseR1W4Item3ImageProjectionAndHumanFallbackTests(unittest.TestCase):
         store = provision_legacy_unit_tenant(sessions, "shop-fb", "Shop Fallback")
         store.add_customer("C-STAFFFB", "Staff Fallback")
         with store.connection(write=True) as db:
-            db.execute("UPDATE orders SET status = 'delivered', delivered_at = ? WHERE id = 'O-102'", (1_785_000_000.0,))
+            db.execute("UPDATE orders SET status = 'delivered', delivered_at = ? WHERE id = 'O-102'", (time.time() - 86400.0,))
 
         def issue_cookie(pid: str, name: str, cust_id: str, role: str) -> str:
             mid = sessions.create_member("shop-fb", pid, name, cust_id, role)
@@ -782,7 +783,7 @@ class PhaseR1W4Item4PdfAndClamAVTests(unittest.TestCase):
         sessions.malware_scanner = fake_scanner
         store.malware_scanner = fake_scanner
         with store.connection(write=True) as db:
-            db.execute("UPDATE orders SET status = 'delivered', delivered_at = ? WHERE id = 'O-102'", (1_785_000_000.0,))
+            db.execute("UPDATE orders SET status = 'delivered', delivered_at = ? WHERE id = 'O-102'", (time.time() - 86400.0,))
 
         mid = sessions.create_member("shop-pdf", "p-pdf-c1", "Cust PDF", "C-001", "customer")
         tok = secrets.token_urlsafe(32)

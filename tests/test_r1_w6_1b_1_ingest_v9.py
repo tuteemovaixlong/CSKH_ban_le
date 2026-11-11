@@ -3079,8 +3079,9 @@ class Item7ProviderRefundLinkingTests(unittest.TestCase):
                    ) VALUES (
                        'O-MANUAL-1', 'C-MANUAL-1', 'P-101', 'retailops_seed', 'O-MANUAL-1',
                        'Áo sơ mi lụa công sở', 'Trắng · Size M', 259000, 'delivered',
-                       1762500000.0, 1, 'bank_transfer', 'paid', 0, 1, 1762580000.0
-                   )"""
+                       ?, 1, 'bank_transfer', 'paid', 0, 1, ?
+                   )""",
+                (time.time() - 172800.0, time.time() - 86400.0),
             )
         c_man = self.store.create_order_action_request(
             "C-MANUAL-1",
