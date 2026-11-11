@@ -886,6 +886,24 @@ function collectText(node) {
   assert.equal(samePayload.reason_code, 'defective_item');
   assert.ok(!('target_variant_id' in samePayload), 'a same-variant exchange sends no target variant');
 
+  // W6.2.1: preparation limits exchange kinds; an omitted field keeps the legacy choices above.
+  await run('chooseReason("O-102", "exchange", "other_variant", null, ["same_variant"])');
+  const warrantyCard = get('messages').children.at(-1).children.find(c => c?.className?.includes('order-action-card'));
+  const warrantyKinds = warrantyCard.querySelectorAll('select').find(s => s.className === 'order-action-kind-select');
+  assert.deepEqual(warrantyKinds.children.map(o => o.value), ['return', 'exchange:same_variant']);
+  assert.equal(warrantyKinds.value, 'exchange:same_variant');
+  assert.equal(warrantyCard.querySelectorAll('div').find(d => d.className.includes('order-action-target')).hidden, true);
+
+  await run('chooseReason("O-102", "exchange", "same_variant", null, ["other_variant"])');
+  const sizeCard = get('messages').children.at(-1).children.find(c => c?.className?.includes('order-action-card'));
+  const sizeKinds = sizeCard.querySelectorAll('select').find(s => s.className === 'order-action-kind-select');
+  assert.deepEqual(sizeKinds.children.map(o => o.value), ['return', 'exchange:other_variant']);
+  assert.equal(sizeKinds.value, 'exchange:other_variant');
+
+  await run('chooseReason("O-102", "exchange", null, null, [])');
+  const noKindsCard = get('messages').children.at(-1).children.find(c => c?.className?.includes('order-action-card'));
+  assert.deepEqual(noKindsCard.querySelectorAll('select').find(s => s.className === 'order-action-kind-select').children.map(o => o.value), ['return']);
+
   // Customer receives system_order_action status notice in chat!
   mockTranscriptResponse = {
     conversation: { id: 'fixture-conversation' },

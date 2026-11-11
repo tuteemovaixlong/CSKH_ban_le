@@ -67,7 +67,7 @@ Khi cần người thật, ca hỗ trợ được chuyển sang nhân viên ở 
 
 ```json
 {"tool":"prepare_order_action","arguments":{"order_id":"SIM-O-00001","action_type":"cancel"},"eligible":false,"reason_code":"order_not_pending","order_status":"delivered","days_since_delivery":28.63,"window_days":{"return_days":7,"size_days":15,"warranty_days":90},"within_windows":{"return_allowed":false,"size_allowed":false,"warranty_allowed":true},"transaction_performed":false}
-{"tool":"prepare_order_action","arguments":{"order_id":"SIM-O-00001","action_type":"return"},"eligible":true,"reason_code":null,"order_status":"delivered","days_since_delivery":28.63,"window_days":{"return_days":7,"size_days":15,"warranty_days":90},"within_windows":{"return_allowed":false,"size_allowed":false,"warranty_allowed":true},"transaction_performed":false}
+{"tool":"prepare_order_action","arguments":{"order_id":"SIM-O-00001","action_type":"return"},"eligible":false,"reason_code":"return_window_expired","order_status":"delivered","days_since_delivery":28.63,"window_days":{"return_days":7,"size_days":15,"warranty_days":90},"within_windows":{"return_allowed":false,"size_allowed":false,"warranty_allowed":true},"transaction_performed":false}
 {"tool":"prepare_order_action","arguments":{"order_id":"SIM-O-00001","action_type":"exchange"},"eligible":true,"reason_code":null,"order_status":"delivered","days_since_delivery":28.63,"window_days":{"return_days":7,"size_days":15,"warranty_days":90},"within_windows":{"return_allowed":false,"size_allowed":false,"warranty_allowed":true},"transaction_performed":false}
 ```
 
@@ -75,7 +75,7 @@ Khi cần người thật, ca hỗ trợ được chuyển sang nhân viên ở 
 
 ```json
 {"tool":"prepare_order_action","arguments":{"order_id":"SIM-O-00005","action_type":"cancel"},"eligible":false,"reason_code":"order_not_pending","order_status":"delivered","days_since_delivery":27.01,"window_days":{"return_days":7,"size_days":15,"warranty_days":90},"within_windows":{"return_allowed":false,"size_allowed":false,"warranty_allowed":true},"transaction_performed":false}
-{"tool":"prepare_order_action","arguments":{"order_id":"SIM-O-00005","action_type":"return"},"eligible":true,"reason_code":null,"order_status":"delivered","days_since_delivery":27.01,"window_days":{"return_days":7,"size_days":15,"warranty_days":90},"within_windows":{"return_allowed":false,"size_allowed":false,"warranty_allowed":true},"transaction_performed":false}
+{"tool":"prepare_order_action","arguments":{"order_id":"SIM-O-00005","action_type":"return"},"eligible":false,"reason_code":"return_window_expired","order_status":"delivered","days_since_delivery":27.01,"window_days":{"return_days":7,"size_days":15,"warranty_days":90},"within_windows":{"return_allowed":false,"size_allowed":false,"warranty_allowed":true},"transaction_performed":false}
 {"tool":"prepare_order_action","arguments":{"order_id":"SIM-O-00005","action_type":"exchange"},"eligible":true,"reason_code":null,"order_status":"delivered","days_since_delivery":27.01,"window_days":{"return_days":7,"size_days":15,"warranty_days":90},"within_windows":{"return_allowed":false,"size_allowed":false,"warranty_allowed":true},"transaction_performed":false}
 {"tool":"track_shipment","arguments":{"order_id":"SIM-O-00005"},"eligible":null,"reason_code":null,"carrier":"VIETEXPRESS_SIM","status":"delivered","delivery_attempts":1,"current_area":"Bưu cục phát TP. Nha Trang, TP. Nha Trang, Khánh Hòa","events":[{"status":"created","occurred_at":"690.35 giờ trước"},{"status":"created","occurred_at":"688.35 giờ trước"},{"status":"picked_up","occurred_at":"687.35 giờ trước"},{"status":"in_transit","occurred_at":"685.35 giờ trước"},{"status":"in_transit","occurred_at":"681.35 giờ trước"},{"status":"in_transit","occurred_at":"664.35 giờ trước"},{"status":"out_for_delivery","occurred_at":"656.35 giờ trước"},{"status":"delivery_failed","occurred_at":"654.35 giờ trước"},{"status":"out_for_delivery","occurred_at":"650.35 giờ trước"},{"status":"delivered","occurred_at":"648.35 giờ trước"}]}
 ```
@@ -108,7 +108,7 @@ Khi cần người thật, ca hỗ trợ được chuyển sang nhân viên ở 
 
 ```json
 {"tool":"prepare_order_action","arguments":{"order_id":"SIM-O-00012","action_type":"cancel"},"eligible":false,"reason_code":"order_not_pending","order_status":"delivered","days_since_delivery":25.19,"window_days":{"return_days":7,"size_days":15,"warranty_days":365},"within_windows":{"return_allowed":false,"size_allowed":false,"warranty_allowed":true},"transaction_performed":false}
-{"tool":"prepare_order_action","arguments":{"order_id":"SIM-O-00012","action_type":"return"},"eligible":true,"reason_code":null,"order_status":"delivered","days_since_delivery":25.19,"window_days":{"return_days":7,"size_days":15,"warranty_days":365},"within_windows":{"return_allowed":false,"size_allowed":false,"warranty_allowed":true},"transaction_performed":false}
+{"tool":"prepare_order_action","arguments":{"order_id":"SIM-O-00012","action_type":"return"},"eligible":false,"reason_code":"return_window_expired","order_status":"delivered","days_since_delivery":25.19,"window_days":{"return_days":7,"size_days":15,"warranty_days":365},"within_windows":{"return_allowed":false,"size_allowed":false,"warranty_allowed":true},"transaction_performed":false}
 {"tool":"prepare_order_action","arguments":{"order_id":"SIM-O-00012","action_type":"exchange"},"eligible":true,"reason_code":null,"order_status":"delivered","days_since_delivery":25.19,"window_days":{"return_days":7,"size_days":15,"warranty_days":365},"within_windows":{"return_allowed":false,"size_allowed":false,"warranty_allowed":true},"transaction_performed":false}
 ```
 
@@ -116,7 +116,7 @@ Khi cần người thật, ca hỗ trợ được chuyển sang nhân viên ở 
 
 ```json
 {"tool":"prepare_order_action","arguments":{"order_id":"SIM-O-00054","action_type":"cancel"},"eligible":false,"reason_code":"order_not_pending","order_status":"delivered","days_since_delivery":14.89,"window_days":{"return_days":7,"size_days":15,"warranty_days":180},"within_windows":{"return_allowed":false,"size_allowed":true,"warranty_allowed":true},"transaction_performed":false}
-{"tool":"prepare_order_action","arguments":{"order_id":"SIM-O-00054","action_type":"return"},"eligible":true,"reason_code":null,"order_status":"delivered","days_since_delivery":14.89,"window_days":{"return_days":7,"size_days":15,"warranty_days":180},"within_windows":{"return_allowed":false,"size_allowed":true,"warranty_allowed":true},"transaction_performed":false}
+{"tool":"prepare_order_action","arguments":{"order_id":"SIM-O-00054","action_type":"return"},"eligible":false,"reason_code":"return_window_expired","order_status":"delivered","days_since_delivery":14.89,"window_days":{"return_days":7,"size_days":15,"warranty_days":180},"within_windows":{"return_allowed":false,"size_allowed":true,"warranty_allowed":true},"transaction_performed":false}
 {"tool":"prepare_order_action","arguments":{"order_id":"SIM-O-00054","action_type":"exchange"},"eligible":true,"reason_code":null,"order_status":"delivered","days_since_delivery":14.89,"window_days":{"return_days":7,"size_days":15,"warranty_days":180},"within_windows":{"return_allowed":false,"size_allowed":true,"warranty_allowed":true},"transaction_performed":false}
 ```
 
@@ -158,8 +158,8 @@ Khi cần người thật, ca hỗ trợ được chuyển sang nhân viên ở 
 
 ```json
 {"tool":"prepare_order_action","arguments":{"order_id":"SIM-O-ST-012","action_type":"cancel"},"eligible":false,"reason_code":"order_not_pending","order_status":"delivered","days_since_delivery":100.0,"window_days":{"return_days":7,"size_days":15,"warranty_days":90},"within_windows":{"return_allowed":false,"size_allowed":false,"warranty_allowed":false},"transaction_performed":false}
-{"tool":"prepare_order_action","arguments":{"order_id":"SIM-O-ST-012","action_type":"return"},"eligible":true,"reason_code":null,"order_status":"delivered","days_since_delivery":100.0,"window_days":{"return_days":7,"size_days":15,"warranty_days":90},"within_windows":{"return_allowed":false,"size_allowed":false,"warranty_allowed":false},"transaction_performed":false}
-{"tool":"prepare_order_action","arguments":{"order_id":"SIM-O-ST-012","action_type":"exchange"},"eligible":true,"reason_code":null,"order_status":"delivered","days_since_delivery":100.0,"window_days":{"return_days":7,"size_days":15,"warranty_days":90},"within_windows":{"return_allowed":false,"size_allowed":false,"warranty_allowed":false},"transaction_performed":false}
+{"tool":"prepare_order_action","arguments":{"order_id":"SIM-O-ST-012","action_type":"return"},"eligible":false,"reason_code":"return_window_expired","order_status":"delivered","days_since_delivery":100.0,"window_days":{"return_days":7,"size_days":15,"warranty_days":90},"within_windows":{"return_allowed":false,"size_allowed":false,"warranty_allowed":false},"transaction_performed":false}
+{"tool":"prepare_order_action","arguments":{"order_id":"SIM-O-ST-012","action_type":"exchange"},"eligible":false,"reason_code":"exchange_window_expired","order_status":"delivered","days_since_delivery":100.0,"window_days":{"return_days":7,"size_days":15,"warranty_days":90},"within_windows":{"return_allowed":false,"size_allowed":false,"warranty_allowed":false},"transaction_performed":false}
 ```
 
 #### trễ quá 48 giờ · SIM-O-ST-013

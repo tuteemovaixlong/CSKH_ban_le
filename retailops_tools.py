@@ -274,7 +274,8 @@ class BoundTools:
                     'note': 'These are current focused records, not permission to change them.'}
         if name in ('prepare_order_action', 'prepare_cancellation'):
             if not self.can_cancel:
-                return {'error': 'permission_denied', 'message': 'This account can view orders but cannot request order actions.'}
+                return {'error': 'permission_denied', 'message': 'This account can view orders but cannot request order actions.',
+                        **({'allowed_exchange_kinds': []} if args.get('action_type') == 'exchange' else {})}
             if name == 'prepare_cancellation':
                 action_type, target_text = 'cancel', None
             else:
@@ -288,6 +289,8 @@ class BoundTools:
             if ambiguous is not None:
                 self.prepared_order_action = None
                 self.cancel_order = None
+                if action_type == 'exchange':
+                    ambiguous['allowed_exchange_kinds'] = []
                 return ambiguous
             if not is_order_confirmed(order, self.confirmed_orders):
                 self.prepared_order_action = None
@@ -297,6 +300,7 @@ class BoundTools:
                     'internal_order_id': order['id'],
                     'external_order_id': order['external_order_id'],
                     'action_type': action_type,
+                    **({'allowed_exchange_kinds': []} if action_type == 'exchange' else {}),
                     'eligible': False,
                     'ineligible_reason': {
                         'code': 'order_not_confirmed',
@@ -335,7 +339,22 @@ class BoundTools:
             elif action_type != 'cancel' and order['status'] != 'delivered':
                 ineligible = {'code': 'order_not_delivered',
                               'message': f"Only a delivered order can be returned or exchanged; this order is {order['status']}."}
-            eligible = ineligible is None
+            # These are the authoritative read-time flags, not a second calculation of elapsed days.
+            windows = order.get('eligibility') or {}
+            window_unknown = order['status'] == 'delivered' and all(
+                windows.get(key) is None for key in ('within_return_window', 'within_size_exchange_window', 'within_warranty'))
+            allowed_exchange_kinds = [kind for kind, flag in (
+                ('other_variant', 'within_size_exchange_window'), ('same_variant', 'within_warranty'))
+                if order['status'] == 'delivered' and windows.get(flag) is not False]
+            suggested_action = None
+            if ineligible is None and action_type == 'return' and windows.get('within_return_window') is False:
+                ineligible = {'code': 'return_window_expired',
+                              'message': 'The server reports that the return window has expired; do not open a return form.'}
+                if windows.get('within_warranty') is True:
+                    suggested_action = 'exchange_same_variant_if_defective'
+            if ineligible is None and action_type == 'exchange' and not allowed_exchange_kinds:
+                ineligible = {'code': 'exchange_window_expired',
+                              'message': 'Both the size-exchange and product-warranty windows have expired; do not open an exchange form.'}
             reason_options = [
                 {'code': e['code'], 'label': e['label'], 'requires_text': e['requires_text']}
                 for e in reason_catalog().options(action_type, role='customer')
@@ -346,6 +365,9 @@ class BoundTools:
                 matches = match_variants(options['variants'], target_text) if target_text else []
                 if len(matches) == 1:
                     exchange_kind, target_variant_id = 'other_variant', matches[0]['id']
+                    if not matches[0]['is_current'] and 'other_variant' not in allowed_exchange_kinds and ineligible is None:
+                        ineligible = {'code': 'size_exchange_window_expired',
+                                      'message': 'The server reports that the window for swapping to another variant has expired. Only allowed_exchange_kinds remain available.'}
                 exchange_view = {
                     'product_id': options['product_id'],
                     'current_variant': order.get('variant'),
@@ -359,12 +381,14 @@ class BoundTools:
                     'note': 'Stock is information for the customer and staff; it never decides whether a request '
                             'may be made. The customer picks the target on the form.',
                 }
+            eligible = ineligible is None
             if eligible:
                 self.prepared_order_action = {
                     'order': order,
                     'action_type': action_type,
                     'exchange_kind': exchange_kind,
                     'target_variant_id': target_variant_id,
+                    **({'allowed_exchange_kinds': allowed_exchange_kinds} if action_type == 'exchange' else {}),
                 }
                 self.cancel_order = order if action_type == 'cancel' else None
             else:
@@ -372,6 +396,8 @@ class BoundTools:
                 self.cancel_order = None
             if eligible:
                 next_step = 'A request form is open on the customer\'s screen: they pick a reason and press the separate confirmation button.'
+                if window_unknown and action_type in ('return', 'exchange'):
+                    next_step += ' The delivery date is unknown; do not infer that a window has expired. Staff decide after review.'
             elif handoff_recommended:
                 next_step = (
                     'Explain clearly that an order already in shipping status cannot open a self-service cancellation '
@@ -380,6 +406,8 @@ class BoundTools:
                 )
             else:
                 next_step = ineligible['message']
+                if suggested_action:
+                    next_step += ' If the item is defective, offer a same-variant warranty exchange instead; do not promise approval.'
             result = {
                 'order': order,
                 'order_id': order['external_order_id'],
@@ -399,6 +427,12 @@ class BoundTools:
             }
             if exchange_view is not None:
                 result['exchange'] = exchange_view
+            if action_type == 'exchange':
+                result['allowed_exchange_kinds'] = allowed_exchange_kinds
+            if action_type in ('return', 'exchange') and window_unknown:
+                result['window_unknown'] = True
+            if suggested_action:
+                result['suggested_action'] = suggested_action
             return result
         if name in ('clear_cancellation', 'reset_cancellation', 'clear_order_action'):
             self.cancel_order = None

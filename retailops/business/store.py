@@ -6838,6 +6838,16 @@ class BusinessStore:
                 "order_not_eligible",
                 "Yêu cầu trả hoặc đổi hàng chỉ áp dụng cho đơn đã giao (delivered).",
             )
+            eligibility = self._order_eligibility_in_tx(db, order, now=now_ts)
+            if action_type == 'return':
+                require(eligibility['within_return_window'] is not False, 409, 'return_window_expired',
+                        'Đơn đã quá thời hạn trả hàng. Nếu sản phẩm bị lỗi và còn bảo hành, anh/chị có thể gửi yêu cầu đổi cùng biến thể.')
+            elif exchange_kind == 'other_variant':
+                require(eligibility['within_size_exchange_window'] is not False, 409, 'size_exchange_window_expired',
+                        'Đơn đã quá thời hạn đổi sang biến thể khác. Vui lòng kiểm tra điều kiện bảo hành nếu sản phẩm bị lỗi.')
+            else:
+                require(eligibility['within_warranty'] is not False, 409, 'warranty_expired',
+                        'Sản phẩm không còn trong thời hạn bảo hành nên không thể gửi yêu cầu đổi cùng biến thể.')
 
         target_variant_label = None
         if action_type == "exchange" and exchange_kind == "other_variant":
