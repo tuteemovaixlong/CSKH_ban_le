@@ -1464,8 +1464,12 @@ class PostgresTests(workflows.WorkflowCases, unittest.TestCase):
 
         t_code, t_body = api_result(app_ai1, 'C-001', 'GET', f'/api/conversations/{cid_ai1}/messages')
         self.assertEqual(t_code, 200)
-        persisted_msgs = json.loads(t_body['turns'][0]['messages'])
-        persisted_res = json.loads(t_body['turns'][0]['result'])
+        # W6.3.1 accepts this long reason: the real handoff inserts a system notice before the model turn.
+        self.assertEqual(res_ai1['human_support']['status'], 'escalated_to_human')
+        self.assertTrue(any(t['request_id'].startswith('sys-notice-handoff-') for t in t_body['turns']))
+        persisted_turn = next(t for t in t_body['turns'] if t['request_id'] == 'req_pg_ai1_canary_0001')
+        persisted_msgs = json.loads(persisted_turn['messages'])
+        persisted_res = json.loads(persisted_turn['result'])
         assistant_msgs = [m for m in persisted_msgs if m.get('role') == 'assistant']
         self.assertTrue(assistant_msgs)
         self.assertEqual(assistant_msgs[-1]['content'], res_ai1['message'])
