@@ -114,6 +114,10 @@ def build_vllm_server_command(
     port=8001,
     max_images=MAX_IMAGES_PER_REQUEST,
 ):
+    import os
+    max_model_len = int(os.environ.get("RETAILOPS_MAX_MODEL_LEN", "16384"))
+    if not 4096 <= max_model_len <= 131072:
+        raise ValueError("RETAILOPS_MAX_MODEL_LEN must be 4096–131072")
     clean_key = (api_key or "").strip()
     if not re.fullmatch(r"[A-Za-z0-9_.-]{32,256}", clean_key):
         raise RuntimeError(
@@ -136,7 +140,7 @@ def build_vllm_server_command(
         "--disable-uvicorn-access-log",
         "--limit-mm-per-prompt", mm_limit_json,
         "--gpu-memory-utilization", "0.88",
-        "--max-model-len", "16384",
+        "--max-model-len", str(max_model_len),
         "--kv-cache-dtype", "fp8",
         "--enable-prefix-caching",
         "--trust-remote-code",

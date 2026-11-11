@@ -513,6 +513,11 @@ class OpenRouterAgent:
                        allowed_tools=(None if system_override is not None else allowed_tools),
                        extra_tool_names=extra_names),
                    'stream': False, 'max_tokens': 2048, 'temperature': 0.2}
+        thinking = os.environ.get('RETAILOPS_MODEL_ENABLE_THINKING', '').strip().lower()
+        if thinking:
+            if thinking not in ('true', 'false'):
+                raise ValueError('RETAILOPS_MODEL_ENABLE_THINKING must be true or false')
+            payload['chat_template_kwargs'] = {'enable_thinking': thinking == 'true'}
         custom_endpoint = self._explicit_endpoint if self.is_custom else os.getenv('RETAILOPS_API_ENDPOINT', '').strip()
         if custom_endpoint:
             if tools and allow_tools:
