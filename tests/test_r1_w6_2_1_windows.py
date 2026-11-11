@@ -117,7 +117,7 @@ class ToolWindowTests(WindowFixture):
                     self.assertNotIn('order_action', result)
                 else:
                     self.assertEqual(result['action'], 'choose_order_action_reason')
-                    self.assertEqual(result['order_action']['allowed_exchange_kinds'], ['same_variant'])
+                    self.assertEqual(result['allowed_exchange_kinds'], ['same_variant'])
 
 
 class ApiWindowTests(WindowFixture):

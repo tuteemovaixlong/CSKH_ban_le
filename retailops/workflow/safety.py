@@ -45,6 +45,9 @@ _SUE_TARGET = re.compile(r"\bkiện\s+(?:shop|cửa hàng|bên bạn|các ngư�
 _SUE_INTENT = re.compile(
     r"\b(?:khởi kiện|thưa kiện|kiện cáo|ra tòa|gặp nhau ở tòa|sue|lawsuit)\b"
     r"|\b(?:tôi|tao|mình|sẽ|đi|phải|muốn)\s+kiện\b")
+_LEGAL_ACTION = re.compile(r"\b(?:luật sư|tòa(?: án)?|giấy triệu tập|đơn kiện|khởi tố)\b")
+_SHOP_TARGET = re.compile(r"\b(?:shop|cửa hàng|bên bạn|bên em|các người|công ty)\b")
+_LEGAL_THREAT_SIGNAL = re.compile(r"\b(?:sẽ|cứ chờ|liên hệ|gửi thư)\b|\bđể\b[\s\S]*?\blàm việc\b")
 SUE_REASON = "SOP 5: Khách đe dọa khởi kiện hoặc đưa ra tòa (Strict Mode)"
 
 
@@ -52,9 +55,12 @@ def litigation_text(text):
     """Separate litigation from retail nouns and procedural questions without a target."""
     lower = _PARCEL_NOUNS.sub(" ", (text or "").lower())
     has_litigation = bool(_LITIGATION.search(lower))
-    targets_shop = bool(_SUE_TARGET.search(lower))
-    procedure = has_litigation and not targets_shop and bool(_LEGAL_PROCEDURE.search(lower))
-    threat = not procedure and bool(_SUE_TARGET.search(lower) or _SUE_INTENT.search(lower))
+    legal_action = bool(_LEGAL_ACTION.search(lower))
+    targets_shop = bool(_SUE_TARGET.search(lower)) or (legal_action and bool(_SHOP_TARGET.search(lower)))
+    procedure = (has_litigation or legal_action) and not targets_shop and bool(_LEGAL_PROCEDURE.search(lower))
+    implicit_threat = legal_action and (targets_shop or bool(_LEGAL_THREAT_SIGNAL.search(lower)))
+    threat = not procedure and bool(_SUE_TARGET.search(lower) or _SUE_INTENT.search(lower) or implicit_threat)
+    procedure = procedure or (legal_action and not threat)
     return threat, procedure
 
 RAGE_REPLY = (

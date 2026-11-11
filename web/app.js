@@ -1104,7 +1104,7 @@ function variantStockText(variant) {
   return stockLabels[variant.stock_status] || stockLabels.unknown;
 }
 
-async function chooseReason(id, requestedType = null, requestedExchangeKind = null, requestedTargetVariantId = null) {
+async function chooseReason(id, requestedType = null, requestedExchangeKind = null, requestedTargetVariantId = null, allowedExchangeKinds = null) {
   if (!canCancel) { message('Tài khoản của bạn có quyền xem; không được tạo yêu cầu hủy.', 'assistant', 'interface'); return; }
   if (!(await loadReasonCatalog())) {
     message('Chưa tải được danh mục lý do yêu cầu. Bạn thử lại sau một lát nhé.', 'assistant', 'interface');
@@ -1112,6 +1112,8 @@ async function chooseReason(id, requestedType = null, requestedExchangeKind = nu
   }
   const result = await api('/api/conversations/' + conversationId + '/focus', {order_id: id});
   const order = result.order; showContext(result.context); selected = order.id; await refresh();
+  const allowedKinds = ['other_variant', 'same_variant'].filter(kind =>
+    !Array.isArray(allowedExchangeKinds) || allowedExchangeKinds.includes(kind));
   let actionType = 'cancel';
   let exchangeKind = null;
   if (order.status === 'pending') {
@@ -1119,6 +1121,10 @@ async function chooseReason(id, requestedType = null, requestedExchangeKind = nu
   } else if (order.status === 'delivered') {
     actionType = (requestedType === 'exchange' || requestedType === 'return') ? requestedType : 'return';
     exchangeKind = actionType === 'exchange' ? (requestedExchangeKind === 'same_variant' ? 'same_variant' : 'other_variant') : null;
+    if (actionType === 'exchange' && !allowedKinds.includes(exchangeKind)) {
+      exchangeKind = allowedKinds[0] || null;
+      if (!exchangeKind) actionType = 'return';
+    }
   } else {
     message('Đơn ' + id + ' ' + (statuses[order.status] || order.status).toLowerCase() + ', không đủ điều kiện tạo yêu cầu.');
     return;
@@ -1228,6 +1234,7 @@ async function chooseReason(id, requestedType = null, requestedExchangeKind = nu
       ['exchange:other_variant', 'Đổi hàng · ' + exchangeKindLabels.other_variant + ' (màu, size, kiểu…)'],
       ['exchange:same_variant', 'Đổi hàng · ' + exchangeKindLabels.same_variant + ' (hàng lỗi)']
     ]) {
+      if (val.startsWith('exchange:') && !allowedKinds.includes(val.split(':')[1])) continue;
       const opt = el('option', '', lbl);
       opt.value = val;
       kindSelect.append(opt);
@@ -1789,7 +1796,8 @@ async function send(text, requestId = crypto.randomUUID(), retry = false, attach
       result.order.id,
       result.order_action?.action_type || (result.action === 'choose_cancel_reason' ? 'cancel' : 'return'),
       result.order_action?.exchange_kind || null,
-      result.order_action?.target_variant_id || null
+      result.order_action?.target_variant_id || null,
+      result.allowed_exchange_kinds
     );
   } else await refresh();
   renderSidebarConversations().catch(() => {});
