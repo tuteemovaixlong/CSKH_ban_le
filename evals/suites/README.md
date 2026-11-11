@@ -16,3 +16,12 @@ python scripts/run_agent_scenarios.py --fake --dataset-dir evals/suites --min-su
 
 Trước W6.4, đóng băng SHA-256 từng file. Báo cáo runner lưu hash byte gốc của từng file;
 `eval_stats compare` từ chối khi khác tập mã ca hoặc khác hash.
+
+## Nguồn gốc từng bộ
+
+Mỗi bộ được thêm nguyên byte như model độc lập gửi về, sau khi qua bộ kiểm và phát lại quỹ đạo mẫu đạt 100%. Ca hỏng được trả lại cho model kèm lý do; Claude không sửa kỳ vọng (W6.3-D1).
+
+| Bộ | Số ca | Người viết | Ngày nhận | SHA-256 | Ghi chú |
+|---|---|---|---|---|---|
+| S07 | 11 | Gemini 4 Carbon (Google AI Studio, phiên chỉ đọc `eval_pack` bản 2) | 2026-11-11 | `a8cb07fbb35eb6f336d762204b69b555db4390e06dd71132865218be1b37c72a` | Phát lại 5/11 trước W6.3.1, 11/11 sau W6.3.1 (PR #94) |
+| S09 | 20 | Gemini 4 Carbon (Google AI Studio, phiên chỉ đọc `eval_pack` bản 2) | 2026-11-11 | `8b514742c8e1ad78e944e23cc2882aaa390986e88eb30b8ef8063160fb8df3ef` | Lần đầu phát lại 18/20; trả lại 2 ca (`s09_008` tự mâu thuẫn với `answer_not`, `s09_011` thiếu cách nói đồng nghĩa); bản sửa 20/20 |
