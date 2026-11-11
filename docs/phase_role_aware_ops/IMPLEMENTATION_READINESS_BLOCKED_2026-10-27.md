@@ -681,3 +681,20 @@ Ghi chú không chặn: Tool Inspector bỏ 3 tool đọc trước đây đượ
 - Cấu hình D: với ngân sách 8k, prompt hệ thống và schema tool cộng `max_tokens` 2048 có thể vượt `--max-model-len 8192` ở ca có kết quả tool dài; W6.4 chạy thử vài ca dài trước khi chạy cả tập con.
 
 **Kết luận:** phần code W6.3 **xong**. Phần dữ liệu bắt đầu khi W6.2.1 merge, theo W6.2.1-D2.
+
+### 2026-11-11 W6.2 post-merge verification record
+
+> **Phạm vi:** PR #88 (W6.2, Codex, nhánh `phase-r1-w6-2-codex`, head `b932d57`) được owner merge ngày 2026-11-11 lúc 03:49Z, merge commit `e346e2b`, khi CI 6/6 xanh, trước lượt kiểm chứng của Claude. Workflow deploy bị bỏ qua vì cờ deploy tắt. Claude kiểm ngay sau đó trên `main` tại `6230c3f`, theo mục 2 của [W6.2 handoff](W6_2_EXECUTION_HANDOFF_2026-11-10.md), vì W6.2.1 tạo nhánh từ đây. Báo cáo của executor: `W6_2_EXECUTION_REPORT_2026-11-11.md`. Lần chạy W6.2 trước đó của Argon dừng giữa chừng, không có PR.
+
+| Kiểm | Kết quả |
+|---|---|
+| Bảng 30 câu, mục 2.1 của handoff, gọi `safety_gate` thật | 30/30 |
+| 16 câu thử mới không có trong handoff | 14/16; danh từ "kiện" trong kiện hàng, linh kiện, sự kiện, "3 kiện", phụ kiện, điều kiện không bị chặn; "mai tôi nộp đơn kiện shop lên tòa" được chuyển nhân viên; câu hỏi giờ trực không bị chuyển |
+| `human_reason` dọa kiện và câu từ chối nhóm `legal` | đúng nguyên văn handoff |
+| 18 câu truy hồi qua `KnowledgeTool` trên PostgreSQL thật | 18/18 theo báo cáo, chạy trong job PostgreSQL của CI |
+| Test `test_r1_w6_2_*` và test reset W6.1b-2 cục bộ | đạt; test PostgreSQL chạy trên CI |
+| `data/knowledge/` | không bị sửa |
+
+**Hai câu lọt (F27):** "tui sẽ nhờ luật sư làm việc với shop" nhận câu từ chối pháp lý (câu này có mời chuyển nhân viên); "shop cứ chờ giấy triệu tập của tòa nhé" đi thẳng vào model. Owner chọn gộp vào W6.2.1 hàng 5 theo W6.2.1-D3.
+
+**Kết luận:** W6.2 **đạt** trên `main`. Deploy W6.2 chờ W6.2.1 merge để chạy chung một lượt.

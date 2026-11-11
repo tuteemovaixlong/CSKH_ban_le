@@ -527,9 +527,10 @@ Owner chốt W6.3 ngày 2026-11-10, cùng ngày phát hành W6.2 handoff. W6.3-D
 
 ## 24. W6.2.1 owner decisions (2026-11-11)
 
-Owner chốt ngày 2026-11-11 khi Claude kiểm chứng PR #87 và thấy F26: server mở form trả, đổi hàng cho đơn đã quá thời hạn. W6.2.1-D1 do owner chọn trực tiếp; W6.2.1-D2 là mặc định đề xuất kèm [W6.2.1 handoff](W6_2_1_EXECUTION_HANDOFF_2026-11-11.md), owner chấp nhận khi merge bản ghi này.
+Owner chốt ngày 2026-11-11 khi Claude kiểm chứng PR #87 và thấy F26: server mở form trả, đổi hàng cho đơn đã quá thời hạn. W6.2.1-D1 và D3 do owner chọn trực tiếp; W6.2.1-D2 là mặc định đề xuất kèm [W6.2.1 handoff](W6_2_1_EXECUTION_HANDOFF_2026-11-11.md), owner chấp nhận khi merge bản ghi này.
 
 | ID | Quyết định | Thay thế |
 |---|---|---|
 | W6.2.1-D1 | **Server chặn theo thời hạn.** Tool `prepare_order_action` và bước tạo yêu cầu đều từ chối khi quá hạn, với mã lý do riêng: trả hàng quá 7 ngày kể từ ngày giao; đổi sang biến thể khác quá 15 ngày; đổi cùng biến thể do lỗi quá thời hạn bảo hành của sản phẩm. Trả hàng quá hạn nhưng còn bảo hành thì kết quả gợi ý đổi cùng biến thể nếu hàng lỗi. Form trên web chỉ đưa các loại đổi mà server cho phép. Đơn đã giao nhưng thiếu ngày giao thì không chặn theo thời hạn, để nhân viên quyết. Yêu cầu đang mở và quyết định của nhân viên không bị ảnh hưởng. | Làm rõ W6.1b-D9 "điều kiện do server tính"; owner chọn 2026-11-11 |
 | W6.2.1-D2 | **Làm sau W6.2, deploy chung một lượt với W6.2.** W6.2.1 sửa `retailops/business/store.py` như W6.2, nên chỉ bắt đầu khi W6.2 đã merge. Bộ tài liệu `eval_pack` chỉ phát hành cho model độc lập sau khi W6.2.1 merge, để kết quả tool trong `03` đã đúng luật thời hạn. | Mới |
+| W6.2.1-D3 | **Gộp dọa kiện ngầm vào W6.2.1.** Câu đe dọa pháp lý không có chữ "kiện", như nhờ luật sư làm việc với shop hay bảo shop chờ giấy triệu tập của tòa, được chuyển nhân viên như dọa kiện; câu hỏi pháp lý không nhắm vào shop vẫn bị từ chối khéo theo W6.2-D2. Owner chọn sửa trước buổi bảo vệ thay vì chờ số liệu W6.4. | Mở rộng W6.2-D2; owner chọn 2026-11-11 |
