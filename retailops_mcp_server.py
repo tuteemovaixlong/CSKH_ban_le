@@ -776,7 +776,7 @@ def search_knowledge(query: str, top_k: int = 3) -> dict:
             "title": "Chính sách đổi size, đổi màu 2 chiều tận nhà",
             "category": "exchange",
             "content": _load_text_file("data/knowledge/policy_size_exchange_twoway.md", "Tài liệu giả lập của RetailOps Demo. Đổi size, màu cùng sản phẩm trong 15 ngày từ ngày giao, còn tem nhãn, chưa giặt, chưa làm bẩn. Khách gửi yêu cầu rồi chờ nhân viên duyệt. Lần đổi đầu miễn phí vận chuyển hai chiều; từ lần thứ hai khách trả phí theo biểu phí."),
-            "keywords": ["đổi size", "chật", "rộng", "không vừa", "đổi hàng", "15 ngày", "đổi mẫu"]
+            "keywords": ["đổi size", "chật", "rộng", "không vừa", "đổi hàng", "15 ngày", "đổi màu"]
         },
         {
             "id": "kb_shipper_complaint",

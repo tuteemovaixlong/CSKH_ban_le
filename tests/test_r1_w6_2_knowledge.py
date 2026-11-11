@@ -91,7 +91,8 @@ class KnowledgePostgresW62Tests(RealPostgresW61b2Base):
         before = {r["source_key"]: r for r in repo.list_documents()}
         self.assertEqual(self.command("ingest", "--path", str(second))["deactivated"], [])
         self.assertTrue(all(r["active"] == 1 for r in repo.list_documents()))
-        self.assertEqual({r["source_key"] for r in repo.search("zebracobalt discontinued policy") if r["score"] > .15}, {"old.md", "removed.md"})
+        # Use the fixture's unique term: shared words such as "policy" legitimately match keep.md too.
+        self.assertEqual({r["source_key"] for r in KnowledgeTool(self.store).search("zebracobalt")["results"]}, {"old.md", "removed.md"})
         self.assertEqual(self.command("ingest", "--path", str(second), "--prune")["deactivated"], ["old.md", "removed.md"])
         listed = self.command("list")["documents"]
         self.assertEqual(len(listed), 4)
@@ -103,6 +104,7 @@ class KnowledgePostgresW62Tests(RealPostgresW61b2Base):
                 self.assertEqual(row["checksum"], before[row["source_key"]]["checksum"])
                 self.assertGreater(row["chunks"], 0)
         self.assertTrue({r["source_key"] for r in repo.search("zebracobalt discontinued policy")} <= {"keep.md", "renamed.md"})
+        self.assertEqual(KnowledgeTool(self.store).search("zebracobalt")["results"], [])
         self.assertEqual(self.command("ingest", "--path", str(second), "--prune")["deactivated"], [])
         repo.ingest(read_directory(first))
         self.assertTrue(all(r["active"] == 1 for r in repo.list_documents()))
