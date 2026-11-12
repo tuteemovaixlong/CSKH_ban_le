@@ -111,6 +111,12 @@ class RetailRoutingTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertEqual(classify_user_text(f"algorithm {token}"), "general")
 
+    def test_sac_explanation_context_preserves_existing_general_behavior(self):
+        for text in ("giải thích ngắn SAC", "giải thích kỹ sac", "explain SAC", "explain briefly SAC"):
+            with self.subTest(text=text):
+                self.assertEqual(classify_user_text(text), "general")
+        self.assertRetail("giải thích ngắn SAC cho san pham P-101")
+
     def test_bare_sac_and_sach_do_not_force_general_mode(self):
         for text in ("sac day mat bao lau", "mau sac nao", "chinh sach the nao"):
             with self.subTest(text=text):

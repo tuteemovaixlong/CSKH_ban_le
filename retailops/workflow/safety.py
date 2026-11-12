@@ -27,7 +27,7 @@ HUMAN_REQUEST_KEYWORDS = [
 
 EXTREME_RAGE_KEYWORDS = [
     "bóc phốt", "tẩy chay", "báo công an", "sập tiệm",
-    "quay clip đăng tiktok", "quay clip", "livestream",
+    "quay clip đăng tiktok",
     "đăng bài tố cáo", "đăng bài facebook", "đăng facebook tố cáo", "báo cơ quan chức năng",
     "đồ vô trách nhiệm", "làm ăn chụp giật", "chửi cho các người", "ăn cướp",
     "khiếu nại lên sàn", "khiếu nại sàn", "báo sàn", "báo lên sàn",
@@ -35,6 +35,11 @@ EXTREME_RAGE_KEYWORDS = [
     "hiệp hội bảo vệ người tiêu dùng", "tố cáo khắp nơi", "không tự chịu nổi", "đăng tiktok bóc phốt",
     "quay clip tiktok bóc phốt", "đăng lên các hội nhóm mua sắm",
 ]
+
+_PUBLIC_MEDIA = re.compile(r"\b(?:livestream|quay clip)\b")
+_PUBLIC_THREAT = re.compile(
+    r"\b(?:bóc phốt|tố cáo|cho mọi người biết|cho cả mạng biết|bêu)\b"
+    r"|\bđăng(?:\s+lên)?\s+(?:mạng|facebook|tiktok|(?:các\s+)?hội nhóm)\b")
 
 _HOURS_QUESTION = ("khung giờ", "giờ làm việc", "mấy giờ", "giờ trực", "khi nào có", "kênh hotline")
 _CONNECT_REQUEST = re.compile(r"\b(?:gặp|chuyển|kết nối|gọi|nối máy)\b")
@@ -101,7 +106,9 @@ def extreme_rage_text(text, *, read_only: bool | None = None) -> bool:
     lower = (text or "").lower()
     if read_only is None:
         read_only = is_read_only_lookup_intent(text)
-    return (not read_only) and (any(kw in lower for kw in EXTREME_RAGE_KEYWORDS) or litigation_text(text)[0])
+    public_threat = bool(_PUBLIC_MEDIA.search(lower) and _PUBLIC_THREAT.search(lower))
+    return (not read_only) and (any(kw in lower for kw in EXTREME_RAGE_KEYWORDS)
+                               or public_threat or litigation_text(text)[0])
 
 
 def safety_gate(text) -> SafetyVerdict | None:
