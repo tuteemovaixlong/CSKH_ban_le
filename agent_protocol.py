@@ -138,7 +138,10 @@ _RETAIL_TERMS = (
     'sản phẩm', 'product', 'catalog', 'sku',
     'cửa hàng', 'chính sách', 'policy', 'hủy đơn', 'cancel', 'đổi trả', 'hoàn tiền', 'refund',
     'giao hàng', 'shipping', 'thanh toán', 'payment', 'khách hàng', 'customer',
+    'don hang', 'ma don', 'san pham', 'con hang', 'het hang', 'giao hang', 'phi ship',
+    'doi tra', 'doi size', 'hoan tien', 'bao hanh', 'thanh toan', 'van don',
 )
+_RETAIL_PRODUCT_ID = re.compile(r'\bp-[0-9]{3}\b')
 _TIME_TERMS = (
     'mấy giờ', 'bao nhiêu giờ', 'hôm nay ngày', 'ngày bao nhiêu', 'hôm nay là ngày', 'thứ mấy',
     'current time', 'what time', "today's date", 'date today',
@@ -148,12 +151,15 @@ _LIVE_TERMS = (
     'giá vàng', 'giá bitcoin', 'stock price', 'market price',
 )
 _GENERAL_TERMS = (
-    'thuật toán', 'algorithm', 'soft actor-critic', 'soft actor critic', ' sac', 'sac ',
+    'thuật toán', 'algorithm', 'soft actor-critic', 'soft actor critic',
     'reinforcement learning', 'học tăng cường', 'machine learning', 'học máy', 'deep learning',
     'mạng nơ-ron', 'neural network', 'transformer', 'lập trình', 'programming', 'python',
     'javascript', 'toán', 'mathematics', 'đạo hàm', 'calculus', 'xác suất', 'probability',
     'lịch sử', 'history', 'ngôn ngữ', 'language', 'database', 'sql', 'sorting', 'sắp xếp',
 )
+# An explicit explanation request still identifies the algorithm; bare "sac" does not.
+_SAC_EXPLANATION = re.compile(
+    r'\b(?:giải thích|explain)(?:\s+(?:ngắn(?: gọn)?|kỹ|chi tiết|briefly))?\s+sac\b')
 _DEEP_TERMS = (
     'giải thích kỹ', 'giải thích chi tiết', 'phân tích kỹ', 'phân tích sâu', 'chi tiết', 'deep dive',
     'walk through', 'từng bước', 'step by step', 'pseudocode', 'công thức', 'equation', 'derivation',
@@ -244,9 +250,10 @@ def _contains_any(text, terms):
 
 def classify_user_text(text):
     text = ' ' + _fold(text) + ' '
-    if _contains_any(text, _RETAIL_TERMS) or _contains_any(text, _TIME_TERMS) or _contains_any(text, _LIVE_TERMS):
+    if (_RETAIL_PRODUCT_ID.search(text) or _contains_any(text, _RETAIL_TERMS)
+            or _contains_any(text, _TIME_TERMS) or _contains_any(text, _LIVE_TERMS)):
         return 'retail'
-    if _contains_any(text, _GENERAL_TERMS):
+    if _contains_any(text, _GENERAL_TERMS) or _SAC_EXPLANATION.search(text):
         return 'general'
     return None
 
