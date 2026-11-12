@@ -57,6 +57,8 @@ _HEDGE = re.compile(
 _DONE_VERBS = (r'(?:hủy|huỷ)(?:\s+đơn)?|đổi(?!\s+ý)\s+(?:sang|mới|hàng|size|màu|cho)|trả hàng|hoàn tiền|hoàn trả|'
                r'gửi yêu cầu|tạo yêu cầu|lập yêu cầu|xác nhận (?:hủy|huỷ|đổi|trả)|xử lý xong|'
                r'thay đổi (?:đơn|trạng thái)|cập nhật (?:đơn|trạng thái)')
+# Returning a shipment and completing/finishing something are not monetary refunds.
+_REFUND_COMPLETION = r'hoàn\b(?!\s+(?:về\s+(?:kho|shop|cửa\s+hàng|người\s+gửi)|tất|thiện|chỉnh)\b)'
 _CLAIMS = (
     re.compile(r'(?:em|shop|bên em|hệ thống|mình|cửa hàng|chúng em)\s+(?:đã|vừa)\s+(?:xong\s+)?(?:' + _DONE_VERBS + ')'),
     re.compile(r'(?:đơn|đơn hàng)[^.!?\n]{0,40}\b(?:đã|vừa)\s+(?:được\s+)?'
@@ -64,10 +66,10 @@ _CLAIMS = (
     re.compile(r'yêu cầu[^.!?\n]{0,40}\b(?:đã|vừa)\s+(?:được\s+)?(?:gửi|tạo|duyệt|chấp nhận|xử lý xong)'),
     re.compile(r'(?:đã|vừa)\s+(?:được\s+)?(?:hủy|huỷ|hoàn tiền)\s+(?:thành công|xong)|'
                r'(?:hủy|huỷ|đổi|trả hàng|hoàn tiền)\s+thành công'),
-    re.compile(r'(?:đã|vừa)\s+được\s+hoàn\b'),
+    re.compile(r'(?:đã|vừa)\s+được\s+' + _REFUND_COMPLETION),
 )
 _CANCEL_WORDS = re.compile(r'hủy|huỷ')
-_REFUND_WORDS = re.compile(r'hoàn tiền|hoàn trả|(?<=được )hoàn\b')
+_REFUND_WORDS = re.compile(r'hoàn tiền|hoàn trả|(?<=được )' + _REFUND_COMPLETION)
 _OTHER_DONE_ACTION = re.compile(r'(?:và|đồng thời|cũng)\s+(?:(?:đã|vừa)\s+)?(?:được\s+)?(?:' + _DONE_VERBS + ')')
 _HANDOFF_CLAIM = re.compile(
     r'(?:đã|vừa)\s+(?:được\s+)?(?:[^.!?\n]{0,120}?\s+)?chuyển\b'
