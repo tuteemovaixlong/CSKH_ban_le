@@ -112,6 +112,39 @@ class RefundTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(check_final_answer(text, messages(self.REFUNDED)).text, text)
 
+    def test_returned_shipments_and_completion_are_not_refund_claims(self):
+        returned = messages({'order_status': 'cancelled', 'payment_status': 'unpaid',
+                             'refund_summary': None, 'shipment': {'status': 'returned'}})
+        delivered = messages({'order_status': 'delivered', 'payment_status': 'paid'})
+        cases = (
+            ('Đơn SIM-O-00027 đã được hoàn về kho sau 3 lần giao không thành công ạ.', returned),
+            ('Hàng đã được hoàn về kho của shop ạ.', returned),
+            ('Việc giao hàng đã được hoàn tất vào hôm qua ạ.', delivered),
+        )
+        for text, evidence in cases:
+            with self.subTest(text=text):
+                self.assertEqual(check_final_answer(text, evidence).text, text)
+
+    def test_non_refund_continuations_after_da_or_vua_are_preserved(self):
+        evidence = messages({'order_status': 'delivered', 'payment_status': 'paid'})
+        for tense in ('đã', 'vừa'):
+            for continuation in ('về kho', 'về shop', 'về cửa hàng', 'về người gửi',
+                                 'tất', 'thiện', 'chỉnh'):
+                text = f'Hàng {tense} được hoàn {continuation} ạ.'
+                with self.subTest(tense=tense, continuation=continuation):
+                    self.assertEqual(check_final_answer(text, evidence).text, text)
+
+    def test_refund_to_wallet_account_and_success_still_need_completed_evidence(self):
+        pending = messages({'payment_status': 'paid', 'refund_summary': {
+            'latest_status': 'pending', 'refunded_total': 0}})
+        for tense in ('đã', 'vừa'):
+            for continuation in ('về ví của anh/chị', 'về tài khoản của anh/chị', 'thành công'):
+                text = f'Khoản 490.000đ {tense} được hoàn {continuation} ạ.'
+                with self.subTest(tense=tense, continuation=continuation):
+                    self.assertEqual(check_final_answer(text, pending).text, CLAIM_NOTE)
+                    self.assertEqual(check_final_answer(text).text, CLAIM_NOTE)
+                    self.assertEqual(check_final_answer(text, messages(self.REFUNDED)).text, text)
+
 
 class DeadlineProductNumbersTests(unittest.TestCase):
     EVIDENCE = {'warranty_window_days': 365, 'return_window_days': 7, 'size_exchange_window_days': 15,
