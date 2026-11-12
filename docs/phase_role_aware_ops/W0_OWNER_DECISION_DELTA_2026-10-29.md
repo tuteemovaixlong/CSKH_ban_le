@@ -544,3 +544,13 @@ Owner chọn ngày 2026-11-11 viết handoff sửa ba lỗi Claude tìm thấy k
 | W6.3.1-D1 | **Chuyển nhân viên không được thất bại âm thầm (F28).** `reason` của `request_human_support` nhận tới 1.000 ký tự, bằng giới hạn `comment` của kho lưu. Câu trả lời nói đã chuyển cho nhân viên mà không tool nào của lượt chuyển thành công thì bị cắt, kèm câu ghi chú mời khách nhắn lại. | Mới |
 | W6.3.1-D2 | **Dữ kiện thời hạn có nguồn từ tool không bị cắt (F29).** Câu về thời hạn trả, đổi, bảo hành hay mốc giao được giữ khi số ngày trong câu là số server vừa trả, hoặc câu không có số và tool của lượt có cờ điều kiện thời hạn hay mốc giao. Lời hứa về phí và giao nhận vẫn phải có trích dẫn. | Làm rõ W3.2-D11 |
 | W6.3.1-D3 | **Lượt do rào an toàn trả lời không bị coi là quỹ đạo lỗi thời.** Ở chế độ `--fake`, bước quỹ đạo chưa dùng của lượt không gọi model thì bỏ qua; mọi kỳ vọng vẫn được chấm. Ca do model độc lập viết không phải đoán rào nào sẽ bắt. | Làm rõ W6.3-D1 |
+
+## 26. W6.3.2 owner decisions (2026-11-12)
+
+Owner chọn ngày 2026-11-12 viết handoff sửa hai lỗi Claude tìm thấy khi kiểm phần 1 bộ S01 ([biên bản](IMPLEMENTATION_READINESS_BLOCKED_2026-10-27.md#2026-11-12-s01-part-1-check)). Các mục dưới là mặc định đề xuất kèm [W6.3.2 hotfix handoff](W6_3_2_HOTFIX_HANDOFF_2026-11-12.md), owner chấp nhận khi merge bản ghi này.
+
+| ID | Quyết định | Thay thế |
+|---|---|---|
+| W6.3.2-D1 | **Phí ship và số tiền của đơn lấy từ tool không bị cắt (F30).** Câu chỉ nói "phí ship", "phí vận chuyển", "phí giao" được giữ khi có số tiền và mọi số tiền trong câu là số tool của lượt vừa trả (`shipping_fee`, `amount`, `refunded_total`, `pending_total`). Câu miễn phí, chịu phí, phí đổi, trả, hoàn và câu phí không có số vẫn phải có trích dẫn. | Làm rõ W3.2-D11, W6.3.1-D2 |
+| W6.3.2-D2 | **Trạng thái hoàn tiền có nguồn từ tool không bị coi là khẳng định không căn cứ (F31).** Khi tool của lượt cho thấy đơn đã hoàn tiền (`payment_status` refunded/partially_refunded, hoặc hoàn tiền completed), câu nói đơn đã được hoàn tiền được giữ, như câu nói đơn đã hủy khi tool cho thấy đơn đã hủy. Hoàn tiền đang chờ và câu kèm khẳng định khác vẫn bị cắt. | Làm rõ W3.2-D3 |
+| W6.3.2-D3 | **Quỹ đạo mẫu chỉ dùng mã có trong dữ liệu demo.** Bộ kiểm giữ quy tắc chặn `order_id`, `product_id` ngoài dữ liệu demo trong `fake_model`. Ca mã sai, mã thiếu viết quỹ đạo mẫu bằng `list_orders` hoặc hỏi lại; kỳ vọng vẫn cho model thật gọi tool với mã sai. | Làm rõ W6.3-D1 |
