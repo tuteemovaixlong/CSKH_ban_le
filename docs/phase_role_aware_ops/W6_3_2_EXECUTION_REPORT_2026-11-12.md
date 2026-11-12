@@ -93,3 +93,74 @@ Commit test-first `66c5e1c`, sửa đầu `546fba1`, mã nguồn cuối `7100daa
 **DONE hàng 1–4; không có blocker hotfix.** Cục bộ còn một fail do worktree cũ; cùng bài đạt trên snapshot sạch và CI native/image. Kết quả CI 6/6 ở trên gắn với commit mã nguồn cuối `7100daa`; commit tài liệu báo cáo + dòng 034 được tạo sau kết quả này, không nhận kết quả này là CI của commit tài liệu đó. Sau khi ghi báo cáo và log, chạy lại hợp đồng tài liệu/build checks và `git diff --check`, commit/push tài liệu trên nhánh PR và dừng để owner review.
 
 Tuân thủ mục Cấm: không merge/push main/force-push/rebase/reset/stash; không đổi variable/secret; không chạy deploy/live-e2e; không EC2/SSM/production DB/Colab/LLM thật/dữ liệu khách hàng; không thêm thư viện; không sửa hoặc commit S01/suite/hồi quy. Không đổi POLICY_NOTE/CLAIM_NOTE, rào, system prompt hay kho knowledge. Owner quyết định merge và các bước triển khai/smoke sau đó.
+
+## Lượt 2 (sửa sau kiểm chứng)
+
+Phạm vi theo chỉ dẫn trực tiếp của owner: chỉ sửa regression W6.3.2-D2 do mẫu mới `(?:đã|vừa)\s+được\s+hoàn\b` coi việc hoàn hàng về kho và hoàn tất giao hàng là hoàn tiền. Owner xác nhận không có mục 6 “Lượt 2” trong handoff và không yêu cầu nhập một thay đổi khác vào nhánh.
+
+### Test-first và bằng chứng FAIL
+
+Trên code hiện tại `671ed85`, chỉ thêm ba test method trong `tests/test_r1_w6_3_2_hotfix.py`, chưa sửa application. Lệnh:
+
+```text
+python -m unittest discover -s tests -p test_r1_w6_3_2_hotfix.py -v
+Ran 13 tests in 0.011s
+FAILED (failures=17)
+```
+
+Theo method: **11 pass, 2 fail, 0 error, 0 skip**; 17 subtest FAIL. Log `%TEMP%/w632-r2-red.txt`; commit test-only **`ebeb6f0`**, trước commit sửa **`1f137cb`**.
+
+- `test_returned_shipments_and_completion_are_not_refund_claims`: cả ba câu owner nêu bị thay bằng `CLAIM_NOTE`, ví dụ `AssertionError: 'Em chưa thực hiện thay đổi nào trên đơn ...' != 'Đơn SIM-O-00027 đã được hoàn về kho sau 3 lần giao không thành công ạ.'`; hai câu còn lại là `Hàng đã được hoàn về kho của shop ạ.` và `Việc giao hàng đã được hoàn tất vào hôm qua ạ.`. Hai câu hoàn kho dùng tool có `order_status: cancelled`, `payment_status: unpaid`, `refund_summary: null`, shipment `returned`; câu giao hàng dùng `delivered`, `paid`.
+- `test_non_refund_continuations_after_da_or_vua_are_preserved`: 14 subtest FAIL cho `đã`/`vừa` kết hợp bảy tiếp nối `về kho`, `về shop`, `về cửa hàng`, `về người gửi`, `tất`, `thiện`, `chỉnh`.
+- `test_refund_to_wallet_account_and_success_still_need_completed_evidence` đã PASS trước sửa: `Khoản 490.000đ đã được hoàn về ví của anh/chị ạ.` và các biến thể về tài khoản/thành công vẫn bị cắt khi pending hoặc thiếu tool; có bằng chứng refunded thì được giữ.
+
+### Thay đổi và trạng thái
+
+**DONE phần regression:** `retailops/workflow/answer_check.py` dùng chung `_REFUND_COMPLETION` với negative lookahead loại đúng bảy tiếp nối owner chỉ định, cả tại `_CLAIMS` và `_REFUND_WORDS`. Hoàn về ví, về tài khoản, hoàn thành công và hoàn trả vẫn đi qua kiểm bằng chứng hoàn tiền. Không thay đổi quy tắc khác, ghi chú trả khách hoặc dữ liệu đánh giá. `notebooks/colab_agent.ipynb` sinh lại từ nguồn/test bằng script, không truy cập Colab.
+
+Sau sửa: **13 pass, 0 fail, 0 error, 0 skip** của W6.3.2; giữ cả `Đơn đã được hoàn trả rồi ạ.` và `Đơn đã được hoàn thành công ạ.` khi có bằng chứng, cắt khi pending/thiếu tool. Bộ answer check cũ **23/23**, W6.3.1 **11/11**.
+
+| Lệnh chạy lại trong Lượt 2 | Pass | Fail | Skip | Ghi chú |
+|---|---:|---:|---:|---|
+| `python -m unittest discover -s tests -p test_r1_w6_3_2_hotfix.py -v` | 13 | 0 | 0 | Test-first FAIL phía trên |
+| `python -m unittest discover -s tests -p test_r1_w3_2_answer_check.py -q` | 23 | 0 | 0 | Giữ nguyên test cũ |
+| `python -m unittest discover -s tests -p test_r1_w6_3_1_hotfix.py -q` | 11 | 0 | 0 | Giữ nguyên test cũ |
+| `python -m unittest discover -s tests -q` | 1070 | 1 | 86 | 1.157 method, 0 error, 547.452s; lỗi quét worktree cũ |
+| JS theo `ci.yml`, Node thật v24.22.1 | 11 | 0 | 0 | Gồm public session persistent |
+| `node --check` từng tệp `web/*.js` | 3 | 0 | 0 | Không đổi JS |
+| `python scripts/build_agent_notebook.py --check` | 1 | 0 | 0 | Đã sinh lại notebook |
+| `python scripts/build_eval_pack.py --check` | 1 | 0 | 0 | Không đổi eval pack |
+| `python scripts/check_docs_contract.py` | 1 | 0 | 0 | 4/4 mục hợp đồng |
+| `python scripts/check_deployment_contract.py` | 1 | 0 | 0 | Chỉ kiểm hợp đồng |
+| `python scripts/check_live_e2e_contract.py` | 1 | 0 | 0 | Không chạy live-e2e |
+| `python scripts/check_eval_dataset.py` | 74 | 0 | 0 | Giữ nguyên dữ liệu |
+| `python scripts/check_eval_dataset.py evals/suites` | 41 | 0 | 0 | Giữ nguyên suite |
+| `python scripts/check_eval_dataset.py <temp S01 dir>` | 26 | 0 | 0 | Giữ nguyên bản tạm từ lượt trước |
+| Runner `--fake --min-success-rate 1.0` | 32 | 0 | 0 | 35 lượt |
+| Runner `--fake --dataset evals/agent_scenarios_w4.jsonl --min-success-rate 1.0` | 12 | 0 | 0 | 14 lượt |
+| Runner `--fake --dataset khoa_luan/eval_pack/06_vi_du.jsonl --min-success-rate 1.0` | 4 | 0 | 0 | 4 lượt |
+| Runner `--fake --dataset-dir evals/suites --min-success-rate 1.0` | 41 | 0 | 0 | 47 lượt |
+| Runner `--fake --dataset-dir <temp S01 dir> --min-success-rate 1.0` | 26 | 0 | 0 | 31 lượt, 52/52 tool-call hợp lệ |
+| `git diff --check` | 1 | 0 | 0 | Không lỗi khoảng trắng |
+
+S01 nguồn và bản tạm vẫn có SHA-256 `865094b62d9c92f66a1380c58c765607feb2378211b2d21c4cfc1226c8f6d53f`; không sửa hoặc commit S01. Dùng package PDF đã có sẵn qua cùng `PYTHONPATH` của lượt trước, không thêm thư viện. JSON runner cục bộ có tiền tố `%TEMP%/w632-r2-`; full unittest `%TEMP%/w632-r2-full.txt`.
+
+Full unittest Lượt 2: `Ran 1157 tests in 547.452s`, `FAILED (failures=1, skipped=86)`, exit 1. Fail duy nhất là `test_item10_package_isolation_and_image_exclusion` tại `tests/test_marketplace_sim_stories_and_send.py:524`, quét vào `.claude/worktrees/cai-nay-la-sao-bddcef/tests/test_marketplace_sim_contract.py` như lượt trước. Trên snapshot sạch tạo từ `git archive 1f137cb`, nguyên bài đạt **1 pass, 0 fail, 0 skip**, `1.230s`. Không sửa test hoặc dời worktree chứa S01. P99 cục bộ `/api/session` **46,238900 ms**, `/healthz` **23,649500 ms**, đạt ngưỡng 50 ms giữ nguyên.
+
+### Nhánh, PR và CI của Lượt 2
+
+Đã push thường hai commit `ebeb6f0`, `1f137cb` vào **`phase-r1-w6-3-2`**, không force-push. Khi đọc lại GitHub sau push, PR [#98](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/98) đã ở trạng thái **MERGED**, head đã merge là `671ed85`. Vì vậy các commit Lượt 2 nằm trên cùng nhánh nhưng không thể thêm vào diff của PR #98 đã merge; không có CI mới cho `1f137cb` qua PR đó. Kết quả CI xanh của `671ed85` không phải kết quả Lượt 2. Executor không thực hiện merge; đã báo tình trạng và chờ owner quyết định PR mới hay chỉ bàn giao nhánh.
+
+Owner chọn mở PR mới từ nhánh hiện tại. Đã mở [PR #100](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/100), base `main`, head `phase-r1-w6-3-2`, mã nguồn `1f137cb33eb3d39f57a01f1aeb91647c0f0e5fdb`. Fetch xác nhận `origin/main` ở `810004b` (merge PR #98); không merge main vào nhánh, không rebase. CI Lượt 2 được kiểm trên PR #100, không dùng kết quả PR #98 thay thế.
+
+**CI mã nguồn Lượt 2 `1f137cb`: 6 pass, 0 fail, 0 skip / 6 job.**
+
+- [CI](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/43208181180): `offline`, `colab-python313`, `clamav-smoke` SUCCESS, **3/3 job**.
+- [Ops Console](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/43208181217): portable Ubuntu/Windows và PostgreSQL SUCCESS, **3/3 job**.
+- Native unittest với PostgreSQL/pgvector thật: `Ran 1157 tests in 404.451s`, `OK`: **1.157 pass, 0 fail, 0 error, 0 skip**.
+- Unittest trong image: `Ran 1157 tests in 453.257s`, `OK (skipped=25)`: **1.132 pass, 0 fail, 0 error, 25 skip**. Đủ 13 test W6.3.2 đều `ok` ở cả hai lượt.
+- P99 native: `/healthz` **1,028 ms**, `/api/session` **6,495 ms**; kiểm toàn vẹn artifact SUCCESS, SHA checkout merge thử `8da14b92ead6e8a2549acaa5ef65e9dc970db776`. Đây là checkout CI của PR mở, executor không merge PR. Kiểm image/helpers và HTTPS/cookie qua CA tạm đều đạt. Log cục bộ `%TEMP%/w632-r2-ci-offline.log`.
+
+**DONE Lượt 2; không có blocker regression.** Một fail cục bộ do quét worktree cũ được giữ nguyên trong báo cáo; cùng bài đạt trên snapshot sạch và CI. Kết quả CI trên gắn với mã nguồn `1f137cb`, trước commit tài liệu báo cáo Lượt 2 và dòng 035 W1 log; không nhận kết quả đó là CI của commit tài liệu sau. Sau commit/push tài liệu trên cùng nhánh, dừng để owner kiểm chứng và quyết định merge PR #100.
+
+Mục Cấm tiếp tục được tuân thủ; không sửa hoặc chạy thêm bất kỳ tác vụ production/deploy/live-e2e/LLM thật nào.
