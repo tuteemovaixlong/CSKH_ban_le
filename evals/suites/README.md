@@ -19,10 +19,10 @@ Trước W6.4, đóng băng SHA-256 từng file. Báo cáo runner lưu hash byte
 
 ## Nguồn gốc từng bộ
 
-Mỗi bộ được thêm nguyên byte như model độc lập gửi về, sau khi qua bộ kiểm và phát lại quỹ đạo mẫu đạt 100%. Ca hỏng được trả lại cho model kèm lý do; Claude không sửa kỳ vọng (W6.3-D1).
+Mỗi bộ được thêm nguyên byte như model độc lập gửi về, sau khi qua bộ kiểm và phát lại quỹ đạo mẫu đạt 100%. Ca hỏng, hoặc ca có kỳ vọng chấm hỏng được câu trả lời đúng, được trả lại cho model kèm lý do; model gửi lại nguyên dòng, Claude thay đúng dòng đó và không tự sửa kỳ vọng (W6.3-D1).
 
 | Bộ | Số ca | Người viết | Ngày nhận | SHA-256 | Ghi chú |
 |---|---|---|---|---|---|
-| S07 | 11 | Gemini 4 Carbon (Google AI Studio, phiên chỉ đọc `eval_pack` bản 2) | 2026-11-11 | `a8cb07fbb35eb6f336d762204b69b555db4390e06dd71132865218be1b37c72a` | Phát lại 5/11 trước W6.3.1, 11/11 sau W6.3.1 (PR #94) |
-| S09 | 20 | Gemini 4 Carbon (Google AI Studio, phiên chỉ đọc `eval_pack` bản 2) | 2026-11-11 | `8b514742c8e1ad78e944e23cc2882aaa390986e88eb30b8ef8063160fb8df3ef` | Lần đầu phát lại 18/20; trả lại 2 ca (`s09_008` tự mâu thuẫn với `answer_not`, `s09_011` thiếu cách nói đồng nghĩa); bản sửa 20/20 |
+| S07 | 11 | Gemini 4 Carbon (Google AI Studio, phiên chỉ đọc `eval_pack` bản 2) | 2026-11-11, sửa 2026-11-12 | `ccb9015e583dbca8dd217a8eb6f7c82e94e1f75fe4d907a549ae33fe20b92be9` | Phát lại 5/11 trước W6.3.1, 11/11 sau W6.3.1 (PR #94). Ngày 2026-11-12 model thay `answer_not` của `s07_006` ("nghỉ Chủ nhật" khớp câu đúng "không nghỉ Chủ nhật"); bản đầu `a8cb07fb…` |
+| S09 | 20 | Gemini 4 Carbon (Google AI Studio, phiên chỉ đọc `eval_pack` bản 2) | 2026-11-11, sửa 2026-11-12 | `81ce8d9d19b9cbd0b0530a9ae5754d59c66ec72aaaaf36b884826e95e4e368ff` | Lần đầu phát lại 18/20; trả lại 2 ca (`s09_008` tự mâu thuẫn với `answer_not`, `s09_011` thiếu cách nói đồng nghĩa); bản sửa 20/20. Ngày 2026-11-12 model thay `answer_not` của `s09_006`, `s09_015`, `s09_020` vì câu từ chối đúng nhắc lại lời khách ("em không thể xác nhận mã VCH-VIP-500K") khớp cụm cấm; bản trước `8b514742…` |
 | S10 | 10 | Gemini 4 Carbon (Google AI Studio, phiên chỉ đọc `eval_pack` bản 2) | 2026-11-12 | `01562bc4e6241172481f6e43a4b556ce6278212836d20fb8af14b7302a53404b` | Lần đầu phát lại 10/10; trả lại 3 ca (`s10_008`, `s10_009`, `s10_010`) vì `answer_not` khớp được câu trả lời đúng ("không cung cấp mã OTP", "sau khi đặt hàng thành công"); bản sửa chỉ đổi 3 danh sách đó, 10/10 |
