@@ -808,4 +808,8 @@ Chưa thử trên production: câu hóa đơn VAT, câu dọa kiện ngầm củ
 
 Cả hai lỗi có trên production: khách hỏi phí ship, tổng tiền hay trạng thái hoàn tiền của đơn nhận câu ghi chú thay cho dữ kiện. Phần 2 của S01 có ít nhất 3 ca hỏi phí ship, tổng tiền COD.
 
-**Kết luận:** S01 chưa nhận; chờ [W6.3.2](W6_3_2_HOTFIX_HANDOFF_2026-11-12.md) merge, hai ca sửa và phần 2, rồi phát lại đủ 26 ca.
+**Phần 2 và hai ca sửa (cùng ngày).** Model gửi `s01_012`, `s01_013` chỉ bỏ lời gọi `get_order` mã sai, và phần 2 (13 ca). Claude ghép đủ 26 ca (đổi xuống dòng CRLF thành LF, nội dung từng dòng giữ nguyên), SHA-256 `865094b6…`: bộ kiểm `EVAL_DATASET_OK cases=26`; phát lại 18/26. F30 thêm `s01_014`, `s01_016`, `s01_021`, `s01_024` lượt 2. Lỗi mới **F32**: `s01_026` bị cắt câu "… vẫn còn trong thời hạn bảo hành (Bộ Nồi Inox 3 Đáy Cao Cấp bảo hành 365 ngày)" vì số 3 trong tên sản phẩm bị tính là số ngày. Dữ liệu phần 2 khớp 03, kể cả tổng tiền đã gồm phí ship.
+
+Trả model thêm 3 ca: `s01_018` (`answer_any` nhận cả câu trấn an "không bị đánh dấu", "không bị chặn" mà kho chính sách không có căn cứ), `s01_022` và `s01_026` (nhãn `vn_context` không đúng tình huống).
+
+**Kết luận:** S01 chưa nhận; chờ [W6.3.2](W6_3_2_HOTFIX_HANDOFF_2026-11-12.md) merge và 3 ca sửa, rồi phát lại đủ 26 ca.
