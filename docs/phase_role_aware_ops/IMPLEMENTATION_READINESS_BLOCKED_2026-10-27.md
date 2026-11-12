@@ -839,4 +839,6 @@ Trả model 3 điểm nhỏ (`s02_010`, `s02_016` thiếu cách nói đồng ngh
 
 **S03 phần 1 (15 ca).** Bộ kiểm đạt; chính sách đúng ở 11 ca có trích dẫn. 4 ca không bằng chứng (tích điểm, trả góp, hỏa tốc, đổi trả tại cửa hàng offline) và 4 chủ đề dự kiến của phần 2 đã được đối chiếu: 14 tài liệu không có thông tin. Phát lại 11/15, giống nhau trên `main` và #98. Bốn ca hỏng do câu `say` nêu chính sách ở câu thứ hai mà không có trích dẫn, nên bị cắt đúng thiết kế W3.2-D11: `s03_002`, `s03_005`, `s03_007`, `s03_009`. Trả model, thêm quy tắc mỗi câu chính sách một trích dẫn.
 
+**S03 phần 2 và 4 ca sửa (cùng ngày).** Model thêm trích dẫn đúng 4 câu; phần 2 (15 ca) đủ 30 ca, SHA-256 bản ghép (LF) `0bc3b70a…`. Bộ kiểm đạt; phát lại 29/30. Ca hỏng `s03_028` cũng do F34: "chinh sach" viết không dấu chứa " sac", nên mọi câu hỏi chính sách không dấu bị đẩy sang chế độ không có tool. Đã bổ sung vào W6.3.3.
+
 **Quyết định.** Owner chọn tách F33, F34 thành [W6.3.3](W6_3_3_HOTFIX_HANDOFF_2026-11-12.md) (§27), làm sau khi #98 merge. S02 chờ W6.3.3; S01 chờ #98.
