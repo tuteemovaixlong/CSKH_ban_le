@@ -68,7 +68,7 @@ _CLAIMS = (
 )
 _CANCEL_WORDS = re.compile(r'hủy|huỷ')
 _REFUND_WORDS = re.compile(r'hoàn tiền|hoàn trả|(?<=được )hoàn\b')
-_DONE_ACTION = re.compile(_DONE_VERBS)
+_OTHER_DONE_ACTION = re.compile(r'(?:và|đồng thời|cũng)\s+(?:(?:đã|vừa)\s+)?(?:được\s+)?(?:' + _DONE_VERBS + ')')
 _HANDOFF_CLAIM = re.compile(
     r'(?:đã|vừa)\s+(?:được\s+)?(?:[^.!?\n]{0,120}?\s+)?chuyển\b'
     r'[^.!?\n]{0,120}?(?:cho|sang|tới|đến)\s+(?:nhân viên|bộ phận|người thật|cskh)')
@@ -212,11 +212,11 @@ def _unfounded_claim(sentence, evidence) -> bool:
     if sentence.rstrip().endswith('?') or not any(pattern.search(plain) for pattern in _CLAIMS):
         return False
     if evidence.refunded and _REFUND_WORDS.search(plain):
-        remaining = _REFUND_WORDS.sub(' ', plain)
+        remaining = _REFUND_WORDS.sub('ghi nhận', plain)
         if evidence.cancelled:
             remaining = _CANCEL_WORDS.sub(' ', remaining)
         # A refund fact does not also establish an exchange, return or request submission.
-        return bool(_DONE_ACTION.search(remaining) or any(pattern.search(remaining) for pattern in _CLAIMS))
+        return bool(_OTHER_DONE_ACTION.search(remaining) or any(pattern.search(remaining) for pattern in _CLAIMS))
     if evidence.cancelled and _CANCEL_WORDS.search(plain):
         return False  # an order record of this turn says it is cancelled: that is a fact, not a promise
     return True

@@ -106,6 +106,12 @@ class RefundTests(unittest.TestCase):
         self.assertEqual(check_final_answer('Em đã hoàn tiền cho anh/chị rồi ạ.').text, CLAIM_NOTE)
         self.assertEqual(check_final_answer('Đơn của anh/chị đã được hoàn tiền thành công.').text, CLAIM_NOTE)
 
+    def test_refund_context_is_not_another_completed_action(self):
+        for text in ('Đơn đã được hoàn tiền sau khi trả hàng ạ.',
+                     'Đơn đã được hoàn tiền cho yêu cầu đổi size ạ.'):
+            with self.subTest(text=text):
+                self.assertEqual(check_final_answer(text, messages(self.REFUNDED)).text, text)
+
 
 class DeadlineProductNumbersTests(unittest.TestCase):
     EVIDENCE = {'warranty_window_days': 365, 'return_window_days': 7, 'size_exchange_window_days': 15,
