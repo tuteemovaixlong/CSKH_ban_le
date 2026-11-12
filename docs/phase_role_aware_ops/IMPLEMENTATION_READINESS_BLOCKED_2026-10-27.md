@@ -813,3 +813,32 @@ Cả hai lỗi có trên production: khách hỏi phí ship, tổng tiền hay t
 Trả model thêm 3 ca: `s01_018` (`answer_any` nhận cả câu trấn an "không bị đánh dấu", "không bị chặn" mà kho chính sách không có căn cứ), `s01_022` và `s01_026` (nhãn `vn_context` không đúng tình huống).
 
 **Kết luận:** S01 chưa nhận; chờ [W6.3.2](W6_3_2_HOTFIX_HANDOFF_2026-11-12.md) merge và 3 ca sửa, rồi phát lại đủ 26 ca.
+
+### 2026-11-12 S02 check and W6.3.2 first verification
+
+> **Phạm vi:** kiểm chứng lượt 1 PR #98 (W6.3.2, Codex, nhánh `phase-r1-w6-3-2`, head `671ed85`); kiểm bộ S02 (18 ca) và S03 phần 1 (15 ca) do Gemini 4 Carbon viết trong phiên AI Studio mới, mở từ S02 vì phiên cũ đã dài khoảng 200k token. Tệp owner lưu ở `E:/hệ thống/`, chưa commit.
+
+**PR #98, lượt 1: chưa đạt.**
+
+| Kiểm | Kết quả |
+|---|---|
+| S01 bản cuối (26 ca, đã gồm 3 ca model sửa) | 26/26 (trước sửa 18/26) |
+| `evals/suites` | 41/41 |
+| Test `answer_check`, hotfix W6.3.1, W6.3.2 | 23/23 và 21/21 |
+| Notebook | đồng bộ |
+| 15 câu thử thêm của Claude | 12/15 đúng: số tiền, size giày, "hoàn tiền và đổi size", hoàn tiền đang chờ, số ngày sai |
+| **Regression** | mẫu mới `(đã\|vừa)\s+được\s+hoàn` trong `_CLAIMS` cắt ba câu `main` đang giữ: "Đơn SIM-O-00027 đã được hoàn về kho sau 3 lần giao không thành công ạ.", "Hàng đã được hoàn về kho của shop ạ.", "Việc giao hàng đã được hoàn tất vào hôm qua ạ." |
+
+Trả Codex sửa regression trên cùng nhánh, trong phạm vi W6.3.2-D2. Handoff liệt kê "đã được hoàn" mà không nói rõ phải loại "hoàn về kho", "hoàn tất".
+
+**S02 (18 ca), SHA-256 tệp thô `1bcceb90…`.** Dữ liệu khớp `eval_pack/03`: giá, chất liệu, cách giặt, thuộc tính trống của P-503 và P-604, tồn kho từng biến thể, bảo hành 60, 180, 365 ngày. Bộ kiểm đạt. Phát lại trên `main` 14/18, trên #98 16/18 (F32 làm hỏng `s02_015`, `s02_016`). Hai lỗi hệ thống mới, cả hai trên production:
+- **F33:** `"livestream"`, `"quay clip"` đứng riêng trong từ khóa bức xúc; tin hỏi hàng sau khi xem livestream bị chuyển nhân viên kèm câu "cảnh báo đỏ" (`s02_010`).
+- **F34:** tin không dấu có "sac" ("mau sac", "sac pin") khớp từ khóa chủ đề chung, bị đẩy sang chế độ không có tool; mã `P-xxx` không là tín hiệu bán lẻ (`s02_013`).
+
+Trả model 3 điểm nhỏ (`s02_010`, `s02_016` thiếu cách nói đồng nghĩa; `s02_018` kiểm nội dung khách không hỏi); bản sửa đúng phạm vi. Bản 2 (LF) SHA-256 `35cd5b0d…`, trên `main` vẫn 14/18 với đúng 4 ca hệ thống.
+
+**S03 phần 1 (15 ca).** Bộ kiểm đạt; chính sách đúng ở 11 ca có trích dẫn. 4 ca không bằng chứng (tích điểm, trả góp, hỏa tốc, đổi trả tại cửa hàng offline) và 4 chủ đề dự kiến của phần 2 đã được đối chiếu: 14 tài liệu không có thông tin. Phát lại 11/15, giống nhau trên `main` và #98. Bốn ca hỏng do câu `say` nêu chính sách ở câu thứ hai mà không có trích dẫn, nên bị cắt đúng thiết kế W3.2-D11: `s03_002`, `s03_005`, `s03_007`, `s03_009`. Trả model, thêm quy tắc mỗi câu chính sách một trích dẫn.
+
+**S03 phần 2 và 4 ca sửa (cùng ngày).** Model thêm trích dẫn đúng 4 câu; phần 2 (15 ca) đủ 30 ca, SHA-256 bản ghép (LF) `0bc3b70a…`. Bộ kiểm đạt; phát lại 29/30. Ca hỏng `s03_028` cũng do F34: "chinh sach" viết không dấu chứa " sac", nên mọi câu hỏi chính sách không dấu bị đẩy sang chế độ không có tool. Đã bổ sung vào W6.3.3.
+
+**Quyết định.** Owner chọn tách F33, F34 thành [W6.3.3](W6_3_3_HOTFIX_HANDOFF_2026-11-12.md) (§27), làm sau khi #98 merge. S02 chờ W6.3.3; S01 chờ #98.

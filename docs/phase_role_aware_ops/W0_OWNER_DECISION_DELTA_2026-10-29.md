@@ -555,3 +555,12 @@ Owner chọn ngày 2026-11-12 viết handoff sửa ba lỗi Claude tìm thấy k
 | W6.3.2-D2 | **Trạng thái hoàn tiền có nguồn từ tool không bị coi là khẳng định không căn cứ (F31).** Khi tool của lượt cho thấy đơn đã hoàn tiền (`payment_status` refunded/partially_refunded, hoặc hoàn tiền completed), câu nói đơn đã được hoàn tiền được giữ, như câu nói đơn đã hủy khi tool cho thấy đơn đã hủy. Hoàn tiền đang chờ và câu kèm khẳng định khác vẫn bị cắt. | Làm rõ W3.2-D3 |
 | W6.3.2-D3 | **Quỹ đạo mẫu chỉ dùng mã có trong dữ liệu demo.** Bộ kiểm giữ quy tắc chặn `order_id`, `product_id` ngoài dữ liệu demo trong `fake_model`. Ca mã sai, mã thiếu viết quỹ đạo mẫu bằng `list_orders` hoặc hỏi lại; kỳ vọng vẫn cho model thật gọi tool với mã sai. | Làm rõ W6.3-D1 |
 | W6.3.2-D4 | **Chữ số trong tên sản phẩm, size, số lượng không phải số ngày (F32).** Câu thời hạn chỉ so các số đi ngay trước đơn vị thời gian (ngày, tuần, tháng, năm, giờ) với tập số ngày tool trả; câu không có số như vậy theo quy tắc không có số của W6.3.1-D2. | Làm rõ W6.3.1-D2 |
+
+## 27. W6.3.3 owner decisions (2026-11-12)
+
+Owner chọn ngày 2026-11-12 tách hai lỗi Claude tìm thấy khi kiểm bộ S02 ra khỏi W6.3.2 ([biên bản](IMPLEMENTATION_READINESS_BLOCKED_2026-10-27.md#2026-11-12-s02-check-and-w632-first-verification)). Các mục dưới là mặc định đề xuất kèm [W6.3.3 hotfix handoff](W6_3_3_HOTFIX_HANDOFF_2026-11-12.md), owner chấp nhận khi merge bản ghi này.
+
+| ID | Quyết định | Thay thế |
+|---|---|---|
+| W6.3.3-D1 | **"livestream", "quay clip" chỉ là bức xúc khi đi cùng ý đe dọa công khai (F33).** Hai chữ này đứng riêng không kích hoạt rào bức xúc; đi cùng bóc phốt, tố cáo, đăng lên mạng, "cho mọi người biết" thì vẫn chuyển nhân viên như cũ. | Làm rõ W6.2-D1 |
+| W6.3.3-D2 | **Tín hiệu bán lẻ thắng từ khóa chủ đề chung khi chọn chế độ (F34).** Mã sản phẩm `P-xxx`, mã đơn `SIM-O-` và cụm bán lẻ viết không dấu tính là tín hiệu bán lẻ; bỏ từ viết tắt đứng riêng "sac" khỏi danh sách chủ đề chung. | Mới |
