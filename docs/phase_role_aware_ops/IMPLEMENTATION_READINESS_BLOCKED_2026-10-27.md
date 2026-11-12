@@ -790,3 +790,26 @@ Chưa thử trên production: câu hóa đơn VAT, câu dọa kiện ngầm củ
 **Merge.** Owner duyệt; Claude merge ngày 2026-11-11 với `--match-head-commit 330fd67`, merge commit `af1a016`. **Chưa deploy:** EC2 đang tắt nên không khách nào bị ảnh hưởng; deploy W6.3.1 ở lần bật EC2 kế tiếp, smoke thêm câu xin đổi địa chỉ phải tạo ca thật ở Staff Desk.
 
 **S07 vào bộ đánh giá:** `evals/suites/S07.jsonl` thêm nguyên byte, SHA-256 `a8cb07fb…`; bảng nguồn gốc ở `evals/suites/README.md`. Tiến độ: 11/250 ca.
+
+### 2026-11-12 S01 part 1 check
+
+> **Phạm vi:** phần 1 bộ S01 (13 ca, "Tra cứu đơn và vận chuyển") do Gemini 4 Carbon viết, tệp owner lưu ở `E:/hệ thống/ai_studio_code (3).txt`, SHA-256 `fbf8e1fb…`, chưa commit. Claude kiểm trên `main` tại `202d0a6`. Trước đó S10 (10 ca) được nhận và 4 ca S07, S09 được model sửa `answer_not` vì câu từ chối đúng nhắc lại lời khách khớp cụm cấm; cả hai nằm trong PR #96, phát lại 41/41, CI 6/6 xanh.
+
+**Dữ liệu:** mã khách, chủ đơn, số tiền, phí ship, hãng vận chuyển, trạng thái và đoạn chính sách của 13 ca khớp `eval_pack/03`.
+
+**Bộ kiểm định dạng:** dừng ở `s01_012`: `fake_model` gọi `get_order` với `SIM-O-99999`; `s01_013` gọi với `"112"`. Bộ kiểm chặn mã ngoài dữ liệu demo. Bỏ lời gọi đó, chỉ giữ `list_orders`, thì cả hai ca qua bộ kiểm và phát lại đạt. Trả model sửa (W6.3.2-D3).
+
+**Phát lại 11 ca còn lại: 8/11.** Ba ca hỏng do hệ thống:
+
+| Nguyên nhân | Ca | Câu bị cắt |
+|---|---|---|
+| **F30**: `_FEE` coi "phí ship" của đơn là lời hứa chính sách | `s01_001`, `s01_003` lượt 2 | "tổng thanh toán 380.000 VNĐ (đã gồm 30.000 VNĐ phí ship…)"; "phí vận chuyển là 30.000 VNĐ" |
+| **F31**: `_CLAIMS` cắt câu đã hoàn tiền dù `refund_summary` completed | `s01_010` | "… 3.820.000 VNĐ … đã được ghi nhận hoàn tiền thành công", thay bằng câu "Em chưa thực hiện thay đổi nào…" |
+
+Cả hai lỗi có trên production: khách hỏi phí ship, tổng tiền hay trạng thái hoàn tiền của đơn nhận câu ghi chú thay cho dữ kiện. Phần 2 của S01 có ít nhất 3 ca hỏi phí ship, tổng tiền COD.
+
+**Phần 2 và hai ca sửa (cùng ngày).** Model gửi `s01_012`, `s01_013` chỉ bỏ lời gọi `get_order` mã sai, và phần 2 (13 ca). Claude ghép đủ 26 ca (đổi xuống dòng CRLF thành LF, nội dung từng dòng giữ nguyên), SHA-256 `865094b6…`: bộ kiểm `EVAL_DATASET_OK cases=26`; phát lại 18/26. F30 thêm `s01_014`, `s01_016`, `s01_021`, `s01_024` lượt 2. Lỗi mới **F32**: `s01_026` bị cắt câu "… vẫn còn trong thời hạn bảo hành (Bộ Nồi Inox 3 Đáy Cao Cấp bảo hành 365 ngày)" vì số 3 trong tên sản phẩm bị tính là số ngày. Dữ liệu phần 2 khớp 03, kể cả tổng tiền đã gồm phí ship.
+
+Trả model thêm 3 ca: `s01_018` (`answer_any` nhận cả câu trấn an "không bị đánh dấu", "không bị chặn" mà kho chính sách không có căn cứ), `s01_022` và `s01_026` (nhãn `vn_context` không đúng tình huống).
+
+**Kết luận:** S01 chưa nhận; chờ [W6.3.2](W6_3_2_HOTFIX_HANDOFF_2026-11-12.md) merge và 3 ca sửa, rồi phát lại đủ 26 ca.
