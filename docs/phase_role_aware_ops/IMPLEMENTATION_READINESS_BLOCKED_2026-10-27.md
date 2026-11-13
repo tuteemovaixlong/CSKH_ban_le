@@ -842,3 +842,29 @@ Trả model 3 điểm nhỏ (`s02_010`, `s02_016` thiếu cách nói đồng ngh
 **S03 phần 2 và 4 ca sửa (cùng ngày).** Model thêm trích dẫn đúng 4 câu; phần 2 (15 ca) đủ 30 ca, SHA-256 bản ghép (LF) `0bc3b70a…`. Bộ kiểm đạt; phát lại 29/30. Ca hỏng `s03_028` cũng do F34: "chinh sach" viết không dấu chứa " sac", nên mọi câu hỏi chính sách không dấu bị đẩy sang chế độ không có tool. Đã bổ sung vào W6.3.3.
 
 **Quyết định.** Owner chọn tách F33, F34 thành [W6.3.3](W6_3_3_HOTFIX_HANDOFF_2026-11-12.md) (§27), làm sau khi #98 merge. S02 chờ W6.3.3; S01 chờ #98.
+
+### 2026-11-13 W6.3.2 second verification, W6.3.3 verification and suites S01 to S06
+
+> **Phạm vi:** kiểm chứng lượt 2 của W6.3.2 (PR #100) và W6.3.3 (PR #101); nhận các bộ S01 đến S06 do model độc lập viết. Theo yêu cầu owner ngày 2026-11-12, tài liệu và bộ ca được đẩy theo batch; bản ghi này gộp các việc từ 2026-11-12 đến 2026-11-13.
+
+**W6.3.2.** PR #98 được owner merge ngày 2026-11-12 (`810004b`) trước lượt kiểm thứ hai, nên `main` mang regression của lượt 1 trong khoảng ba giờ (11:14Z đến 14:08Z); không deploy, EC2 tắt. Codex sửa trên cùng nhánh, mở PR #100 vì #98 đã đóng. Lượt 2 đạt:
+- 15/15 câu thử của lượt 1, gồm ba câu "hoàn về kho", "hoàn tất" mà #98 cắt nhầm;
+- 7/8 câu thử mới: hoàn về ví hay tài khoản khi đang chờ vẫn bị cắt, khi đã hoàn xong thì được giữ;
+- S01 26/26, `evals/suites` 41/41, hồi quy 32/32.
+
+Ghi chú không chặn: "Đơn đã được hoàn về **cho** người gửi" vẫn bị cắt, vì mẫu loại trừ chỉ có "về người gửi". CI của hai commit tài liệu cuối không khởi động được do hết phút GitHub Actions của repo private; commit mã `1f137cb` đã xanh 6/6. Owner chuyển repo sang public tạm thời đến khoảng 2026-12-01 để CI chạy được; trước đó Claude quét toàn bộ 744 commit, không thấy khóa hay dữ liệu thật. Merge #100 `9e36e2d` sau khi CI xanh 6/6.
+
+**W6.3.3.** Codex đẩy nhánh `phase-r1-w6-3-3` (`162d2a9`); công cụ GitHub của Codex chờ owner bấm gửi nên Claude mở PR #101. Kiểm chứng đạt:
+- F33: 8 câu bình thường có "livestream", "quay clip" không bị chặn; 6 câu đe dọa vẫn bị chặn;
+- F34: 9 câu không dấu (kể cả "chinh sach", "sac du pin") ra `retail`; 5 câu về SAC vẫn ra `general`;
+- S01 26/26, S02 18/18, S03 30/30, `evals/suites` 41/41, hồi quy 32/32, ca mẫu 4/4.
+
+CI 6/6 xanh, merge `ebdbfa9`. W6.3.1, W6.3.2, W6.3.3 chưa deploy, chờ lần bật EC2 tới.
+
+**Bộ ca S01 đến S06 (121 ca).** Mỗi bộ qua bộ kiểm v2 và phát lại 100% trên `ebdbfa9`. Claude đối chiếu từng ca với `eval_pack/03`: chủ đơn, trạng thái, số ngày còn hạn trả, đổi, bảo hành, trạng thái hoàn tiền, biến thể và tồn kho. Ca trả lại cho model và SHA-256 ghi ở `evals/suites/README.md`. Tổng 162/250 ca.
+
+**Hành vi hệ thống phát hiện khi kiểm, chưa sửa:**
+- Form hủy, trả, đổi chỉ mở cho đơn khách gõ mã trong tin nhắn, hoặc đơn đang được focus (`retailops_tools.confirmed_orders_for`, chặn N01 trong `application.py`). `list_orders` không tạo focus; xem một sản phẩm khác thì xóa focus đơn. Luật 2 của `eval_pack/03` viết "đơn đó đã được nhắc trong hội thoại", rộng hơn code; đề xuất sửa câu chữ ở lần cập nhật `eval_pack` sau, không sửa code.
+- Chat không bao giờ đặt `exchange_kind: same_variant`; khách chọn trên form. `eval_pack/04` (bảng trường `order_action` và mẫu kỳ vọng) gợi ý ngược lại; các ca S06 đã viết theo hành vi thật.
+- Đơn đã quá 15 ngày nhưng còn bảo hành: `prepare_order_action` đổi hàng có `target_variant`, kể cả trùng biến thể cũ, bị từ chối; không có `target_variant` thì form mở. Model thật mà truyền mô tả biến thể cho đổi 1-1 sau ngày 15 sẽ bị từ chối oan; theo dõi ở W6.4.
+- Khi `search_knowledge` trả về đoạn, câu trả lời bắt buộc trích dẫn (`knowledge_citation_missing`). Ở W6.4 với kho thật, câu hỏi không có bằng chứng có thể kéo về đoạn liên quan xa; câu trả lời trung thực mà không trích dẫn sẽ lỗi. Theo dõi khi đo.
