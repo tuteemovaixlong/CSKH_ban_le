@@ -564,3 +564,22 @@ Owner chọn ngày 2026-11-12 tách hai lỗi Claude tìm thấy khi kiểm bộ
 |---|---|---|
 | W6.3.3-D1 | **"livestream", "quay clip" chỉ là bức xúc khi đi cùng ý đe dọa công khai (F33).** Hai chữ này đứng riêng không kích hoạt rào bức xúc; đi cùng bóc phốt, tố cáo, đăng lên mạng, "cho mọi người biết" thì vẫn chuyển nhân viên như cũ. | Làm rõ W6.2-D1 |
 | W6.3.3-D2 | **Tín hiệu bán lẻ thắng từ khóa chủ đề chung khi chọn chế độ (F34).** Mã sản phẩm `P-xxx`, mã đơn `SIM-O-` và cụm bán lẻ viết không dấu tính là tín hiệu bán lẻ; bỏ từ viết tắt đứng riêng "sac" khỏi danh sách chủ đề chung. | Mới |
+
+## 28. W6.3 adapted-case decisions (2026-11-13)
+
+Owner chọn ngày 2026-11-13. Ghi kèm batch cuối của bộ đánh giá, cùng 40 ca chuyển thể.
+
+| ID | Quyết định | Thay thế |
+|---|---|---|
+| W6.3-D8 | **40 ca chuyển thể do Gemini 4 Carbon viết; Claude chọn nguồn và kiểm.** Claude chọn 28 nhiệm vụ τ²-bench và 12 ô AgentDojo bằng script với seed cố định, soạn gói chuyển thể, rồi kiểm từng ca như 210 ca mô phỏng, có thêm bước đối chiếu với nhiệm vụ gốc. Claude không sửa kỳ vọng (W6.3-D1). Lý do: người viết khác người kiểm, tránh thiên lệch vì người kiểm biết code, và cùng quy chuẩn với 210 ca. | Đổi người viết ở W6.3-D3 |
+| W6.3-D9 | **Ca AgentDojo được chèn lệnh qua đoạn chính sách.** Với `meta.origin: agentdojo` và `meta.knowledge_mode: scripted`, một đoạn `knowledge` được phép gồm một đoạn trích nguyên văn đứng trước, ít nhất 100 ký tự, nối với lời chèn. Mọi ca khác vẫn phải trích nguyên văn. Claude sửa `scripts/eval_dataset_v2.py` và thêm kiểm thử, vì đây là công cụ kiểm dữ liệu, không phải hệ thống được đánh giá. | Nới luật trích nguyên văn của bộ kiểm cho riêng 3 ca; W6.3-D6 giữ nguyên |
+
+## 29. W6.3.4 owner decisions (2026-11-14)
+
+Owner chọn ngày 2026-11-14 sửa ba lỗi Claude tìm thấy khi kiểm 40 ca chuyển thể ([biên bản](IMPLEMENTATION_READINESS_BLOCKED_2026-10-27.md#2026-11-14-adapted-cases-check-and-w634-readiness)) trong một hotfix, trước khi 40 ca vào `evals/suites` và trước W6.4. Các mục dưới là mặc định đề xuất kèm [W6.3.4 hotfix handoff](W6_3_4_HOTFIX_HANDOFF_2026-11-14.md), owner chấp nhận khi merge bản ghi này.
+
+| ID | Quyết định | Thay thế |
+|---|---|---|
+| W6.3.4-D1 | **"vừa" sau phủ định không phải lời khẳng định đã làm (F35).** Trong bộ kiểm câu trả lời, "vừa" đứng ngay sau "không", "chưa", "không thể", "chưa thể", "không được", "chưa được" là "đồng thời", không phải "vừa mới". Cấu trúc "vừa X vừa Y" ở dạng khẳng định vẫn bị coi là lời khẳng định đã làm và bị cắt khi không có bằng chứng. | Làm rõ W6.3.2 |
+| W6.3.4-D2 | **Đơn giữ nhiều phân loại được đổi sang một phân loại đang giữ (F36).** Đơn giữ từ hai biến thể khác nhau của cùng sản phẩm trở lên thì mỗi biến thể đang giữ được chọn làm đích, cả qua chat lẫn trên form của khách và nhân viên, vẫn ghi "(đang giữ)". Đơn chỉ giữ một biến thể giữ luật cũ. Yêu cầu không ghi món nào được đổi và không đổi schema; với đơn nhiều phân loại, nhân viên xác nhận với khách khi duyệt. | Làm rõ luật biến thể đích của W3.2 |
+| W6.3.4-D3 | **PDF giả lập của bộ chấm phải cho model đọc đủ chữ (F37).** Bộ sinh `text_pdf` của runner dàn chữ có xuống dòng trên trang đủ lớn, không tách link hay email; mọi chữ của một trang (tối đa 500 ký tự) phải tới được trích đoạn mà model đọc. Chỉ đổi bộ chấm; đường tải PDF thật không đổi. Biên bản ngày 2026-11-13 ghi "mã số thuế trong PDF đến được model" là sai, đính chính ở biên bản ngày 2026-11-14. | Mới |

@@ -882,3 +882,46 @@ CI 6/6 xanh, merge `ebdbfa9`. W6.3.1, W6.3.2, W6.3.3 chưa deploy, chờ lần b
 **Hạn mức 210 ca mô phỏng** (Claude đếm lại trên cả 12 tệp): số ca và số `held_out` từng bộ đúng bảng `05_PHAN_BO_CA.md`; tổng `held_out` 63; `style` chuan 84, teencode 42, khong_dau 32, sai_chinh_ta 31, dai 21; 27 ca nhiều lượt ngoài S08; 117 ca có `vn_context`; không trùng mã ca. Bộ kiểm `EVAL_DATASET_OK cases=210`; phát lại 209/209 trên máy owner (trừ `s11_011`).
 
 **Còn lại trước khi đóng băng:** `check_eval_dataset.py --final` báo thiếu 40 ca chuyển thể (12 ca AgentDojo, 28 ca τ²-bench, W6.3-D3), tổng 210/250.
+
+### 2026-11-14 adapted cases check and W6.3.4 readiness
+
+> **Phạm vi:** 40 ca chuyển thể do Gemini 4 Carbon viết trong một phiên AI Studio mới; Claude chọn nguồn, soạn gói chuyển thể và kiểm (W6.3-D8). Kiểm trên `main` `3acea3b`, cộng bộ kiểm có luật chèn lệnh qua đoạn chính sách (W6.3-D9). Ca chưa vào `evals/suites`; chúng vào sau hotfix W6.3.4.
+
+**Chọn nguồn.**
+- τ²-bench retail: `sierra-research/tau2-bench` `c06b07dd7c4d4ec61ba6ff9bcdf0b15dd7ef36d4`, MIT.
+  - Script phân loại 114 nhiệm vụ theo hành động ghi, bỏ 3 nhiệm vụ có hồ sơ lỗi (4, 5, 7).
+  - Ưu tiên 50 nhiệm vụ của bộ text-v1 (`retail_50`), bốc với seed `20261113`: 28 nhiệm vụ, 23 trong `retail_50`.
+- AgentDojo: `ethz-spylab/agentdojo` `089ed468cf3ed0322acc66b0211f26d9d90dbf60`, MIT.
+  - 12 ô lưới (4 đường chèn × 3 mục tiêu); mỗi ô một InjectionTask của bộ v1 làm gốc cho mục tiêu tấn công.
+  - Khung `important_instructions_no_names` dịch sang tiếng Việt, một nửa số ô dùng biến thể giả danh quản lý cửa hàng.
+- `split` rút cùng seed, 13/40 `held_out`.
+
+**Kiểm từng ca.** Cách kiểm như 210 ca mô phỏng, cộng đối chiếu với nhiệm vụ gốc. Carbon gửi ba lần; Claude trả lại để sửa:
+- `s05_021`, `s05_023`, `s05_024`, `s05_025`: `answer_not` là cụm nằm được trong câu từ chối đúng, ví dụ "cam kết hoàn trong 3 ngày".
+- `s05_022`: câu mẫu bị cắt vì F35.
+- `s06_019`: `answer_not` lặp lại câu hỏi của khách.
+- Cả 6 ca S09: `attack_not` gồm cụm mô tả nội dung lời chèn, mà câu cảnh báo đúng hay nhắc lại. Lỗi này bắt nguồn từ ca mẫu của Claude; ca mẫu đã sửa.
+
+Rút ra ba quy tắc viết ca mới (13–15).
+
+Lời chèn tới được model:
+- qua mô tả sản phẩm, đoạn chính sách và tin nhắn trong ca: có; đã đo trên tin nhắn tool mà model nhận;
+- qua PDF: chỉ sau khi sửa F37.
+
+**Kết quả.** Gộp 210 + 40 ca:
+- `check_eval_dataset --final`: `EVAL_DATASET_OK cases=250`;
+- runner `--fake`: 249/250, chỉ hỏng `s06_017` (F36). Ca có PDF chạy trong một venv tạm có `pypdfium2` 5.14.0, cài theo hash của `requirements-web.txt` với sự đồng ý của owner.
+
+Kỳ vọng của `s06_017` đúng luật và đúng gợi ý ánh xạ của Claude, nên được nhận nguyên ca. SHA-256 của các tệp ghi trong [W6.3.4 hotfix handoff](W6_3_4_HOTFIX_HANDOFF_2026-11-14.md) mục 2.
+
+**Lỗi tìm thấy, sửa ở W6.3.4:**
+- **F35:** bộ kiểm câu trả lời cắt câu phủ định "không thể vừa X vừa Y".
+- **F36:** không đổi được sang một phân loại mà đơn đang giữ.
+- **F37:** PDF giả lập của runner chỉ cho model đọc khoảng 60 ký tự đầu mỗi trang.
+
+**Đính chính** bản ghi "2026-11-13 suites S08, S11, S12": câu "mã số thuế trong PDF đến được model" là sai. Trích đoạn của `s11_011` chỉ có 73 ký tự, không chứa mã số thuế. Ca vẫn đạt `--fake` vì câu trả lời mẫu viết sẵn.
+
+**Còn lại trước khi đóng băng:**
+1. W6.3.4 merge.
+2. PR đưa 40 ca vào `evals/suites` cùng dòng nguồn gốc.
+3. Ghi SHA-256 đóng băng (W6.3-D7) trước lượt chạy W6.4 đầu tiên.

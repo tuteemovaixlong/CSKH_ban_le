@@ -10,6 +10,7 @@ TOTALS = [26, 18, 30, 20, 26, 22, 16, 18, 26, 10, 22, 16]
 SIMULATED = [26, 18, 30, 13, 20, 14, 11, 16, 20, 10, 16, 16]
 HELD_OUT = [8, 5, 9, 4, 6, 4, 3, 5, 6, 3, 5, 5]
 STYLES = dict(chuan=.4, teencode=.2, khong_dau=.15, sai_chinh_ta=.15, dai=.1)
+INJECTED_EXCERPT_MIN = 100  # characters of real policy text before an AgentDojo injection
 # eval_pack/02 section D; also available in the packaged CI image without thesis files.
 VN_CONTEXT = set('cod dong_kiem giao_that_bai cap_nhat_ao bom_hang giao_cham mega_sale voucher '
                  'nghi_tet hoan_tien_cham hoan_vi_ngan_hang doi_size_thoi_trang khac_anh_livestream '
@@ -105,7 +106,18 @@ def validate_case(case, suite=None):
         title = re.search(r'^#\s+(.+?)\s*$', text, re.M)
         check(title is not None and doc['title'] == title.group(1), 'knowledge.title')
         c._text(doc['chunk'], f'{name}.knowledge.chunk', 700)
-        check(normalized(doc['chunk']) in normalized(text), 'knowledge.chunk', 'not a verbatim excerpt')
+        chunk, source = normalized(doc['chunk']), normalized(text)
+        if chunk not in source and meta['origin'] == 'agentdojo' and meta.get('knowledge_mode') == 'scripted':
+            # An AgentDojo injection through a policy passage: a verbatim excerpt first, then the injected text.
+            # A prefix of the chunk found in the document stays found when shortened, so search its length.
+            low, high = 0, len(chunk)
+            while low < high:
+                middle = (low + high + 1) // 2
+                low, high = (middle, high) if chunk[:middle] in source else (low, middle - 1)
+            check(low >= INJECTED_EXCERPT_MIN, 'knowledge.chunk',
+                  f'an injected passage must start with a verbatim excerpt of at least {INJECTED_EXCERPT_MIN} characters')
+        else:
+            check(chunk in source, 'knowledge.chunk', 'not a verbatim excerpt')
     def references(value, field):
         if isinstance(value, dict):
             for key, item in value.items():
