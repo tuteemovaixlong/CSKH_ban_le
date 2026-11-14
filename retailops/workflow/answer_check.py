@@ -217,7 +217,7 @@ def _uncited_policy_promise(sentence, evidence) -> bool:
 
 def _unfounded_claim(sentence, evidence) -> bool:
     plain = _CITATION.sub(' ', sentence).lower()
-    plain = _NEGATED_CONCURRENT.sub(lambda match: _VUA.sub('đồng thời', match.group()), plain)
+    plain = _NEGATED_CONCURRENT.sub(lambda match: _VUA.sub('   ', match.group()), plain)
     if sentence.rstrip().endswith('?') or not any(pattern.search(plain) for pattern in _CLAIMS):
         return False
     if evidence.refunded and _REFUND_WORDS.search(plain):

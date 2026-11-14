@@ -21,7 +21,7 @@ Thực hiện đúng thứ tự: viết test hàng 1 → chạy FAIL → sửa h
 
 | Hàng | Lệnh test trước sửa | Kết quả trước | Kết quả sau |
 |---|---|---|---|
-| 1 | `python -m unittest discover -s tests -p test_r1_w6_3_4_answer_check.py -v` | 3 method: 1 pass, 2 fail, 0 error/skip; **10 subtest FAIL** | **3 pass, 0 fail/error/skip** |
+| 1 | `python -m unittest discover -s tests -p test_r1_w6_3_4_answer_check.py -v` | 3 method: 1 pass, 2 fail, 0 error/skip; **10 subtest FAIL** | **4 pass, 0 fail/error/skip** sau test tương tác bổ sung bên dưới |
 | 2 | `python -m unittest discover -s tests -p test_r1_w6_3_4_exchange.py -v` | 6 method: 1 pass, 4 fail, 1 error, 0 skip; **8 failure records + 1 error** | **6 pass, 0 fail/error/skip** |
 | 2 JS | `node tests/test_r1_w6_3_4_exchange_ui.js` | **2 pass, 2 fail, 0 skip**, form khách và nhân viên đều khóa biến thể đang giữ | **4 pass, 0 fail/skip** |
 | 3 | `python -m unittest discover -s tests -p test_r1_w6_3_4_pdf.py -v` | 3 method fail, 0 pass/error/skip; **7 subtest FAIL** | **3 pass, 0 fail/error/skip** |
@@ -65,7 +65,18 @@ FAILED (failures=7)
 
 Test PDF dùng projection thật với `include_pixels=False`, so toàn bộ nội dung sau gộp khoảng trắng: 1 trang ×500 ký tự và 3 trang ×500 ký tự; có nhiều đoạn, link, email, dấu ngoặc/backslash, chữ Latin-1 và từ dài không ngắt. Sinh hai lần cho byte giống nhau. Không đổi `retailops/business/evidence.py`, helper PDF trong `tests/test_r1_w4_media_pipeline.py` hoặc giới hạn 1.500 ký tự của Trợ lý ca.
 
-Test cũ bổ trợ đã chạy: answer-check **26/26** (23 cũ + 3 mới), W6.3.1 + W6.3.2 **24/24**, exchange service W3.2 **23/23**, 0 fail/error/skip.
+Test cũ bổ trợ đã chạy: answer-check cuối **27/27** (23 cũ + 4 mới), W6.3.1 + W6.3.2 **24/24**, exchange service W3.2 **23/23**, 0 fail/error/skip.
+
+### Test tương tác F35 bổ sung trước bản sửa cuối
+
+Rà soát khi chờ CI thấy việc thay token “vừa” bằng “đồng thời” trong bản kiểm nội bộ có thể tạo khớp `_OTHER_DONE_ACTION` giả khi có bằng chứng hoàn tiền. Đã thêm test **trước khi sửa cách che token**, chạy trên bản đó: `Ran 4 tests`, **3 pass, 1 fail, 0 error/skip** (`row1-refund-before.log`):
+
+```text
+FAIL: test_negation_does_not_create_an_extra_action_after_a_proven_refund
+AssertionError: 'Em chưa thực hiện thay đổi nào trên đơn qua chat: ...' != 'Shop đã hoàn tiền cho đơn SIM-O-00091, nhưng đơn không thể vừa đổi size vừa trả hàng ạ.'
+```
+
+Sau đó mới đổi phần che “vừa” thành ba khoảng trắng, giữ nguyên chiều dài chuỗi và không tạo từ khóa của mẫu khác. Không thay mẫu `_CLAIMS`, `_OTHER_DONE_ACTION` hay quy tắc bằng chứng hoàn tiền. Test mới và answer-check cũ cuối **27/27**, W6.3.1/W6.3.2 **24/24**. Notebook đã sinh lại. Toàn bộ runner và full unittest trên snapshot sạch của bản cuối được kiểm lại; kết quả bổ sung ở mục 5/6.
 
 ## 3. Hàng 4: nguồn, SHA-256 và kết quả
 
@@ -282,7 +293,7 @@ Chạy lại nguyên bài trên snapshot sạch của đúng nguồn hiện tạ
 
 ## 6. PR và CI
 
-PENDING: đang chuẩn bị commit/push nhánh `phase-r1-w6-3-4` và mở PR; chưa tuyên bố CI xanh. Sẽ cập nhật URL, head commit và kết quả CI sau khi có bằng chứng.
+[PR #105](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/105) đã mở từ `phase-r1-w6-3-4` vào `main` và gắn vào chat. Nhánh theo dõi `origin/phase-r1-w6-3-4`, không theo dõi main. Đang kiểm lại bản bổ sung tương tác F35; sẽ ghi head và kết quả CI cuối sau khi có bằng chứng. Không merge.
 
 ## 7. Ranh giới bàn giao
 

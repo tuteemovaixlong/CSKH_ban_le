@@ -1,4 +1,5 @@
 """W6.3.4-D1: negated concurrency must not look like completed work."""
+import json
 import unittest
 
 from retailops.workflow.answer_check import CLAIM_NOTE, check_final_answer
@@ -24,6 +25,12 @@ class NegatedConcurrencyTests(unittest.TestCase):
             text = f'Đơn SIM-O-00079 {prefix} vừa đổi size vừa hoàn tiền ạ.'
             with self.subTest(prefix=prefix):
                 self.assertEqual(check_final_answer(text, []).text, text)
+
+    def test_negation_does_not_create_an_extra_action_after_a_proven_refund(self):
+        text = ('Shop đã hoàn tiền cho đơn SIM-O-00091, nhưng đơn không thể '
+                'vừa đổi size vừa trả hàng ạ.')
+        messages = [{'role': 'tool', 'content': json.dumps({'payment_status': 'refunded'})}]
+        self.assertEqual(check_final_answer(text, messages).text, text)
 
     def test_unsupported_completed_actions_are_still_cut(self):
         for text in (
