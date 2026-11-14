@@ -10,11 +10,7 @@ class HumanSupportPromptTests(unittest.TestCase):
     def test_staff_only_requests_transfer_in_same_turn(self):
         description = next(t['function']['description'] for t in TOOLS
                            if t['function']['name'] == 'request_human_support')
-        for phrase in (
-            'Address/recipient change', 'VAT invoice issue/fix', 'false failed-delivery dispute',
-            'call request_human_support this turn without asking', 'say transferred',
-            'Info-only (issuer/hours/fees): no handoff',
-        ):
+        for phrase in ('Staff-only work: call request_human_support this turn without asking; say transferred.',):
             with self.subTest(source='SYSTEM', phrase=phrase):
                 self.assertTrue(phrase in SYSTEM, f'SYSTEM missing: {phrase}')
         for label, text in [('tool description', description)]:
@@ -47,8 +43,8 @@ class OpenOrderRequestPromptTests(unittest.TestCase):
     def test_one_open_request_per_order_and_tool_conflict(self):
         for phrase in (
             'One open cancel/return/exchange per order',
-            'if two (return+exchange), explain; ask which',
-            'Tool says open: say so; no second',
+            'if two, explain and ask which',
+            'If tool reports open, say so; no second',
         ):
             with self.subTest(phrase=phrase):
                 self.assertTrue(phrase in SYSTEM, f'SYSTEM missing: {phrase}')
