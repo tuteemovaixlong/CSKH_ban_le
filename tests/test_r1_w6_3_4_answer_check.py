@@ -41,6 +41,9 @@ class NegatedConcurrencyTests(unittest.TestCase):
             'Yêu cầu trả hàng của anh/chị vừa được gửi ạ.',
             'Shop vừa hoàn tiền cho đơn SIM-O-00091 rồi ạ.',
             'Đơn chưa thể vừa trả hàng vừa đổi size, nhưng em vừa hủy đơn cho anh/chị rồi ạ.',
+            # Only the negated "vừa … vừa" pair is masked; a third "vừa" in the same run-on clause is a claim.
+            'Đơn không thể vừa đổi vừa trả và em vừa hủy đơn SIM-O-00115 rồi ạ.',
+            'Em không thể vừa đổi vừa trả nên em vừa hủy đơn SIM-O-00115 rồi ạ.',
         ):
             with self.subTest(text=text):
                 result = check_final_answer(text, [])

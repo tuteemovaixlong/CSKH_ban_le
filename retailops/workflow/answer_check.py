@@ -69,10 +69,11 @@ _CLAIMS = (
     re.compile(r'(?:đã|vừa)\s+được\s+' + _REFUND_COMPLETION),
 )
 # In a negated clause, "vừa X vừa Y" means concurrent actions, not recent completion.
-# Only mask "vừa" for the claim check; keep other claims and the customer's wording intact.
+# Mask only that pair (the "vừa" after the negation and the next one in the clause) for the claim check;
+# a later "vừa" joined by "và"/"nên" is still a claim. Other claims and the customer's wording stay intact.
 _NEGATED_CONCURRENT = re.compile(
     r'\b(?:không|chưa)(?:\s+(?:thể|được))?\s+vừa\b'
-    r'(?:(?!\b(?:nhưng|song)\b)[^,;:.!?\n])*')
+    r'(?:(?:(?!\b(?:nhưng|song)\b)[^,;:.!?\n])*?\bvừa\b)?')
 _VUA = re.compile(r'\bvừa\b')
 _CANCEL_WORDS = re.compile(r'hủy|huỷ')
 _REFUND_WORDS = re.compile(r'hoàn tiền|hoàn trả|(?<=được )' + _REFUND_COMPLETION)

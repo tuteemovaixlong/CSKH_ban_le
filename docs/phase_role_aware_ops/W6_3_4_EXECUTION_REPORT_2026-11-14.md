@@ -352,3 +352,28 @@ Commit chốt báo cáo sau **9296cce** chỉ cập nhật tài liệu và dòng
 Không phát hiện thêm chỗ chặn biến thể đích hay mẫu câu ngoài phạm vi đã được kiểm chứng cần quyết định mới. Giữ nguyên các suite trong `evals/suites/`, 44 ca hồi quy, nguồn ca chuyển thể và điều kiện chấm; không thay `eval_pack`, prompt, knowledge, schema, đường tải PDF thật hay giới hạn Trợ lý ca. Không cài/thêm thư viện, đổi secret/variable, chạy workflow deploy/live-e2e, truy cập EC2/SSM/DB production/Colab/LLM thật/dữ liệu khách. Không merge, push main, force-push, rebase, reset hay stash.
 
 **Bốn hàng DONE** theo kiểm tra mục 2. Owner quyết định merge sau một lượt kiểm chứng của Claude theo mục 5 handoff; không thực hiện deploy/smoke production trong lượt này.
+
+## 8. Bổ sung sau kiểm chứng của Claude (2026-11-14)
+
+Claude kiểm PR #105 tại `e86531a` theo mục 5 handoff. Kết quả: đạt mọi tiêu chí của mục 2, gồm 250/250, bằng chứng F35 6/6, ba excerpt PDF chứa đủ chuỗi `attack_not`, và 83 test liên quan.
+
+Có một lỗ hổng F35 nằm ngoài các câu mà handoff liệt kê. `_NEGATED_CONCURRENT` che mọi chữ "vừa" từ sau dấu hiệu phủ định tới dấu câu hoặc "nhưng/song". Vì vậy, một lời khẳng định nối tiếp bằng "và" hoặc "nên" mà không có dấu phẩy sẽ không còn bị cắt. `main` trước đó vẫn cắt câu này:
+
+- "Đơn không thể vừa đổi vừa trả và em vừa hủy đơn SIM-O-00115 rồi ạ."
+- "Em không thể vừa đổi vừa trả nên em vừa hủy đơn SIM-O-00115 rồi ạ."
+
+Owner chọn để Claude sửa nhỏ trên cùng nhánh:
+
+- Regex giờ chỉ che đúng cặp: chữ "vừa" sau dấu hiệu phủ định và chữ "vừa" kế tiếp trong cùng mệnh đề. Không đổi mẫu nào khác của `answer_check`.
+- Thêm hai câu trên vào `test_unsupported_completed_actions_are_still_cut`.
+- Test viết trước. Trên mã chưa sửa: 4 method, 3 pass, 1 fail, 2 subtest FAIL. Sau khi sửa: answer-check W6.3.4, W3.2, W6.3.1 và W6.3.2 đạt 51/51.
+- Notebook sinh lại bằng `python scripts/build_agent_notebook.py`.
+
+Sau khi sửa, Claude chạy lại các lệnh sau, tất cả 0 fail:
+
+- `build_agent_notebook.py --check`, `build_eval_pack.py --check`, ba contract docs/deployment/live-e2e;
+- validator mặc định, `evals/suites` (210 ca) và 250 ca ghép `--final`;
+- runner `--fake` cho hồi quy 32/32 và 12/12, `06_vi_du` 4/4, `evals/suites` 210/210, 250 ca ghép 250/250, bằng chứng F35 6/6;
+- `git diff --check`.
+
+Full unittest cục bộ `python -m unittest discover -s tests -q`: 1183 method, **1097 pass, 0 fail, 0 error, 86 skip** (454,5 s). Kết quả CI của commit này xem ở PR #105.
