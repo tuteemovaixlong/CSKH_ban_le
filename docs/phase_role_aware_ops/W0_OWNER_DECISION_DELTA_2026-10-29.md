@@ -583,3 +583,17 @@ Owner chọn ngày 2026-11-14 sửa ba lỗi Claude tìm thấy khi kiểm 40 ca
 | W6.3.4-D1 | **"vừa" sau phủ định không phải lời khẳng định đã làm (F35).** Trong bộ kiểm câu trả lời, "vừa" đứng ngay sau "không", "chưa", "không thể", "chưa thể", "không được", "chưa được" là "đồng thời", không phải "vừa mới". Cấu trúc "vừa X vừa Y" ở dạng khẳng định vẫn bị coi là lời khẳng định đã làm và bị cắt khi không có bằng chứng. | Làm rõ W6.3.2 |
 | W6.3.4-D2 | **Đơn giữ nhiều phân loại được đổi sang một phân loại đang giữ (F36).** Đơn giữ từ hai biến thể khác nhau của cùng sản phẩm trở lên thì mỗi biến thể đang giữ được chọn làm đích, cả qua chat lẫn trên form của khách và nhân viên, vẫn ghi "(đang giữ)". Đơn chỉ giữ một biến thể giữ luật cũ. Yêu cầu không ghi món nào được đổi và không đổi schema; với đơn nhiều phân loại, nhân viên xác nhận với khách khi duyệt. | Làm rõ luật biến thể đích của W3.2 |
 | W6.3.4-D3 | **PDF giả lập của bộ chấm phải cho model đọc đủ chữ (F37).** Bộ sinh `text_pdf` của runner dàn chữ có xuống dòng trên trang đủ lớn, không tách link hay email; mọi chữ của một trang (tối đa 500 ký tự) phải tới được trích đoạn mà model đọc. Chỉ đổi bộ chấm; đường tải PDF thật không đổi. Biên bản ngày 2026-11-13 ghi "mã số thuế trong PDF đến được model" là sai, đính chính ở biên bản ngày 2026-11-14. | Mới |
+
+## 30. W6.3.5 owner decisions (2026-11-14)
+
+Owner chọn ngày 2026-11-14 sửa hai chỗ hệ thống chưa nói với model, cùng giới hạn thời gian của workflow, trong một hotfix trước W6.4. Cả ba được tìm thấy khi deploy W6.3.1–W6.3.4 và smoke trên production ([biên bản](IMPLEMENTATION_READINESS_BLOCKED_2026-10-27.md#2026-11-14-w631-to-w634-production-deploy-record)).
+
+`khoa_luan/eval_pack/03_HE_THONG_VA_DU_LIEU.md` mục 2 là đặc tả hành vi của hệ thống mà model độc lập đọc khi viết ca. Luật 6 và luật 11 ở đó chưa có trong system prompt hay mô tả tool, nên model đang chạy không biết hai luật này. Hotfix sửa hệ thống cho khớp đặc tả; không sửa ca (W6.3-D7), không sửa `eval_pack`.
+
+Các mục dưới là mặc định đề xuất kèm [W6.3.5 hotfix handoff](W6_3_5_HOTFIX_HANDOFF_2026-11-14.md).
+
+| ID | Quyết định | Thay thế |
+|---|---|---|
+| W6.3.5-D1 | **Chuyển nhân viên ngay khi việc vượt khả năng của chat (F39).** Khách yêu cầu một việc chỉ nhân viên làm được thì trợ lý gọi `request_human_support` ngay trong lượt đó, không hỏi lại trước khi chuyển, rồi nói đã chuyển. Ba việc theo luật 11: đổi địa chỉ hoặc người nhận của đơn; xuất hoặc sửa hóa đơn VAT; khiếu nại shipper báo giao thất bại sai. Câu hỏi thông tin (ai xuất hóa đơn, giờ nhân viên trực, phí ship) không phải yêu cầu chuyển. Ghi vào system prompt và mô tả tool `request_human_support`; không thêm tool, không thêm rào cứng, không đổi kho chính sách. | Bổ sung luật chuyển người của W6.2 |
+| W6.3.5-D2 | **Mỗi đơn chỉ có một yêu cầu đang mở (F40).** System prompt nói rõ: một đơn chỉ có một yêu cầu hủy, trả hoặc đổi đang mở tại một thời điểm. Khách muốn vừa trả vừa đổi trên một đơn thì trợ lý giải thích luật này và mời khách chọn một. Khi tool báo đơn đã có yêu cầu mở, trợ lý nói như vậy, không mở yêu cầu thứ hai. Server giữ nguyên cách chặn hiện có. | Mới |
+| W6.3.5-D3 | **Nới giới hạn thời gian của workflow (F41).** `timeout-minutes` của job deploy trong `deploy-ec2.yml` từ 20 lên 40; job `offline` trong `ci.yml` từ 18 lên 30. Không đổi bước nào khác của workflow. | Mới |
