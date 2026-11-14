@@ -239,7 +239,8 @@ Python **3.10.7**, Node thật **v24.22.1**, `pypdfium2` **5.14.0** có sẵn t�
 
 | Lệnh | Pass | Fail | Error | Skip | Ghi chú |
 |---|---:|---:|---:|---:|---|
-| `python -m unittest discover -s tests -q` | 1095 | 1 | 0 | 86 | Tổng 1182 method; số failure/error records và chi tiết bên dưới |
+| `python -m unittest discover -s tests -q` — lượt đầu trong workspace | 1095 | 1 | 0 | 86 | Tổng 1182 method; số failure/error records và chi tiết bên dưới |
+| `python -m unittest discover -s tests -q` — bản cuối, snapshot sạch `9296cce` | **1097** | **0** | **0** | **86** | **1183 method, 434.864s**, exit 0; `final-unittest.log` |
 | `python scripts/build_agent_notebook.py --check` | 1 | 0 | 0 | 0 |  |
 | `python scripts/build_eval_pack.py --check` | 1 | 0 | 0 | 0 |  |
 | `python scripts/check_docs_contract.py` | 1 | 0 | 0 | 0 |  |
@@ -291,9 +292,60 @@ Fail duy nhất ở `test_item10_package_isolation_and_image_exclusion`: `ROOT.r
 
 Chạy lại nguyên bài trên snapshot sạch của đúng nguồn hiện tại (archive base + overlay các tệp đổi), tại `%TEMP%/w634-clean-mkwrthmt`: `python -m unittest test_marketplace_sim_stories_and_send.MarketplaceSimIsolationTests.test_item10_package_isolation_and_image_exclusion -v`, với `PYTHONPATH=tests`: **1 pass, 0 fail/error/skip**, 2.000s (`isolated-failure.log`). Kết quả này không thay số liệu full. PostgreSQL và các dependency/dịch vụ tùy chọn chưa có được báo skip đúng điều kiện test; không truy cập DB production. Chờ CI Linux cho toàn bộ dịch vụ test cô lập.
 
+Sau bản sửa tương tác F35, một lượt dựng snapshot bị sai do archive base cũ rồi chỉ overlay phần chưa commit, bỏ sót các tệp hotfix đã commit. Lượt đó chạy **1174 method: 1087 pass, 1 fail notebook stale, 0 error, 86 skip**, 484.893s (`invalid-base-snapshot-unittest.log`); **không dùng để nghiệm thu nguồn hiện tại**. Không sửa nguồn hoặc nới test vì lỗi dựng snapshot này.
+
+Đã dựng lại trực tiếp bằng `git archive HEAD` tại **9296cce1b61f72134dbd8edf9c76e92ed9e73b4c**, snapshot `%TEMP%/w634-clean-odkqfn9j`, kiểm `python scripts/build_agent_notebook.py --check` trước khi chạy full: `AGENT_NOTEBOOK_SOURCE_SYNC_OK`. Lệnh full đúng yêu cầu trên snapshot này cho:
+
+```text
+Ran 1183 tests in 434.864s
+OK (skipped=86)
+```
+
+Tức **1097 pass, 0 fail, 0 error, 86 skip**. Phép đo tải cục bộ cuối: `/api/session` P99 **49.232900 ms**, `/healthz` **25.666500 ms**, mỗi endpoint 1.000 mẫu, ngưỡng 50 ms giữ nguyên. Sau bản sửa F35 cuối cũng đã chạy lại năm lệnh build/contract, hai validator, bốn runner chuẩn, bộ 250 ca và bằng chứng F35: mọi kết quả giữ đúng các số pass/0 fail/0 skip trong bảng, ba PDF đều thấy `attack_not`.
+
 ## 6. PR và CI
 
-[PR #105](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/105) đã mở từ `phase-r1-w6-3-4` vào `main` và gắn vào chat. Nhánh theo dõi `origin/phase-r1-w6-3-4`, không theo dõi main. Đang kiểm lại bản bổ sung tương tác F35; sẽ ghi head và kết quả CI cuối sau khi có bằng chứng. Không merge.
+[PR #105](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/105) đã mở từ `phase-r1-w6-3-4` vào `main` và gắn vào chat. Nhánh theo dõi `origin/phase-r1-w6-3-4`, không theo dõi main. Mã nguồn cuối **9296cce1b61f72134dbd8edf9c76e92ed9e73b4c**, CI kiểm lại **6/6 job xanh**; chi tiết hai lần chạy bên dưới. Không merge.
+
+CI mã nguồn **9296cce**, [run 43570405202](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/43570405202), lần 1: **5 job pass, 1 job fail, 0 job skip**. `colab-python313`, `clamav-smoke`, hai job portable và PostgreSQL Ops Console đạt. Job `offline` hỏng duy nhất ở phép đo tải HTTP:
+
+```text
+FAIL: test_waitress_real_http_chat_saturation_headroom
+AssertionError: 80.53202600001441 not less than or equal to 50.0
+GET /api/session empirical nearest-rank P99 (80.532026ms) exceeded 50.0ms SLO
+Ran 1183 tests in 392.835s
+FAILED (failures=1)
+```
+
+Native CI lần 1: **1182 pass, 1 fail, 0 error, 0 skip**; cả **13/13 test Python W6.3.4 đều `ok`**, Node và notebook check đạt. Các bước image/kiểm cuối sau native unittest chưa chạy; không nhận là đã đạt. Log `ci-9296cce-failed.log` giữ nguyên tại scratch.
+
+Đã chạy lại **chỉ các job CI thất bại**, cùng SHA và giữ nguyên mã/test/ngưỡng: `gh run rerun 43570405202 --failed`. Lần 2 hoàn tất: **6 job pass, 0 fail, 0 skip** tính trên toàn bộ PR; không thay đổi mã hay ngưỡng giữa hai lần CI. Không chạy workflow deploy/live-e2e hay sửa phần HTTP/P99 ngoài phạm vi.
+
+
+### CI lần 2 trên mã nguồn cuối
+
+| Kiểm | Pass | Fail | Error | Skip | Bằng chứng |
+|---|---:|---:|---:|---:|---|
+| Native unittest | 1183 | 0 | 0 | 0 | 1183 test, 292.864s |
+| Unittest trong image | 1158 | 0 | 0 | 25 | 1183 test, 330.739s |
+| Job PR (CI + Ops Console) | 6 | 0 | 0 | 0 | Các job dưới đều SUCCESS |
+
+- [colab-python313](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/43570405202/job/132376147486): **SUCCESS**.
+- [portable (ubuntu-24.04)](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/43570405240/job/132373333020): **SUCCESS**.
+- [portable (windows-latest)](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/43570405240/job/132373332754): **SUCCESS**.
+- [offline](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/43570405202/job/132376146118): **SUCCESS**.
+- [postgres](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/43570405240/job/132373333081): **SUCCESS**.
+- [clamav-smoke](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/43570405202/job/132376178842): **SUCCESS**.
+
+Artifact P99 cùng lần chạy:
+
+```text
+HEADROOM_ARTIFACT_INTEGRITY_OK: 596e427282b12b35fdd61cf2e277b262ee1a11d3 (healthz P99=0.682ms, session P99=19.491ms)
+```
+
+SHA trong artifact là commit merge tạm mà GitHub checkout để kiểm PR, head mã nguồn vẫn là `9296cce`; PR không được merge vào main. Notebook/Node, các runner fake 32/32 + 12/12 + 4/4 + 210/210, kiểm image, proxy HTTPS và artifact integrity đều qua trong job offline. Log đầy đủ `ci-9296cce-attempt2.log`, kết quả job `ci-final-checks.json` trong scratch. Giữ nguyên lịch sử failure P99 của lần 1 ở trên.
+
+Commit chốt báo cáo sau **9296cce** chỉ cập nhật tài liệu và dòng 037; không đổi mã/test/notebook đã được CI kiểm. Kết quả CI ở đây gắn rõ với SHA mã nguồn này; trạng thái head tài liệu mới nhất xem tại PR #105, không suy CI chưa xong thành xanh.
 
 ## 7. Ranh giới bàn giao
 
