@@ -40,15 +40,16 @@ def match_variants(variants, wanted_text) -> list[dict]:
     Each variant dict needs `label`, `size`, `color` and `is_current`. An attribute the customer names
     (a color or a size that some variant of this product really has) must match; an attribute they do
     not name is taken from the variant the order holds, so "màu nâu" on a black size-41 shoe means the
-    brown size-41 one. The variant the order already holds is never a match. Returns [] when the text
-    names no known attribute.
+    brown size-41 one. `can_target` permits a held variant when the order contains multiple distinct
+    variants of this product; absent that flag, the single-variant rule applies. Returns [] when the
+    text names no known attribute.
     """
     words = _words(wanted_text)
     if not words or not variants:
         return []
     for variant in variants:  # a full label quoted back ("Đen · Size L") is the strongest signal
         label = fold_text(variant.get("label"))
-        if label and label in fold_text(wanted_text) and not variant.get("is_current"):
+        if label and label in fold_text(wanted_text) and variant.get("can_target", not variant.get("is_current")):
             return [variant]
     colors = {fold_attribute(v.get("color")) for v in variants} - {None}
     sizes = {fold_attribute(v.get("size")) for v in variants} - {None}
@@ -63,7 +64,7 @@ def match_variants(variants, wanted_text) -> list[dict]:
     want_size = named_size or (fold_attribute(current.get("size")) if current else None)
     matches = []
     for variant in variants:
-        if variant.get("is_current"):
+        if not variant.get("can_target", not variant.get("is_current")):
             continue
         if want_color is not None and fold_attribute(variant.get("color")) != want_color:
             continue

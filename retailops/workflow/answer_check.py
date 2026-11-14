@@ -68,6 +68,13 @@ _CLAIMS = (
                r'(?:hủy|huỷ|đổi|trả hàng|hoàn tiền)\s+thành công'),
     re.compile(r'(?:đã|vừa)\s+được\s+' + _REFUND_COMPLETION),
 )
+# In a negated clause, "vừa X vừa Y" means concurrent actions, not recent completion.
+# Mask only that pair (the "vừa" after the negation and the next one in the clause) for the claim check;
+# a later "vừa" joined by "và"/"nên" is still a claim. Other claims and the customer's wording stay intact.
+_NEGATED_CONCURRENT = re.compile(
+    r'\b(?:không|chưa)(?:\s+(?:thể|được))?\s+vừa\b'
+    r'(?:(?:(?!\b(?:nhưng|song)\b)[^,;:.!?\n])*?\bvừa\b)?')
+_VUA = re.compile(r'\bvừa\b')
 _CANCEL_WORDS = re.compile(r'hủy|huỷ')
 _REFUND_WORDS = re.compile(r'hoàn tiền|hoàn trả|(?<=được )' + _REFUND_COMPLETION)
 _OTHER_DONE_ACTION = re.compile(r'(?:và|đồng thời|cũng)\s+(?:(?:đã|vừa)\s+)?(?:được\s+)?(?:' + _DONE_VERBS + ')')
@@ -211,6 +218,7 @@ def _uncited_policy_promise(sentence, evidence) -> bool:
 
 def _unfounded_claim(sentence, evidence) -> bool:
     plain = _CITATION.sub(' ', sentence).lower()
+    plain = _NEGATED_CONCURRENT.sub(lambda match: _VUA.sub('   ', match.group()), plain)
     if sentence.rstrip().endswith('?') or not any(pattern.search(plain) for pattern in _CLAIMS):
         return False
     if evidence.refunded and _REFUND_WORDS.search(plain):

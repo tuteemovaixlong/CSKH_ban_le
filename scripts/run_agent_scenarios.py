@@ -45,6 +45,7 @@ import re
 import shutil
 import sys
 import tempfile
+import textwrap
 import time
 import unicodedata
 import urllib.parse
@@ -148,14 +149,23 @@ def _make_text_pdf_bytes(page_texts):
     objs = [
         b'<< /Type /Catalog /Pages 2 0 R >>',
         f'<< /Type /Pages /Kids [{kids}] /Count {len(page_texts)} >>'.encode('ascii'),
-        b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+        b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',
     ]
     for idx, txt in enumerate(page_texts):
         c_num = 5 + idx * 2
-        safe = txt.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
-        stream = f'BT /F1 12 Tf 36 120 Td ({safe}) Tj ET'.encode('latin-1', errors='replace')
+        lines = [line for paragraph in txt.split('\n')
+                 for line in (textwrap.wrap(paragraph, width=80, break_long_words=False,
+                                            break_on_hyphens=False) or [''])]
+        # Leave enough room even for wide glyphs and unbroken URLs/words; no text may be clipped.
+        width = max(595, 72 + 11 * max(map(len, lines), default=0))
+        height = max(842, 72 + 13 * len(lines))
+        commands = [f'BT /F1 10 Tf 13 TL 36 {height - 36} Td']
+        for line in lines:
+            safe = line.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
+            commands.append(f'({safe}) Tj T*')
+        stream = ('\n'.join([*commands, 'ET'])).encode('latin-1', errors='replace')
         objs.append(
-            f'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 420 220] '
+            f'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {width} {height}] '
             f'/Resources << /Font << /F1 3 0 R >> >> /Contents {c_num} 0 R >>'.encode('ascii')
         )
         objs.append(f'<< /Length {len(stream)} >>\nstream\n'.encode('ascii') + stream + b'\nendstream')
