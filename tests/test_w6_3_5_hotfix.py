@@ -55,9 +55,14 @@ class OpenOrderRequestPromptTests(unittest.TestCase):
         validate_messages([{'role': 'system', 'content': focused}, {'role': 'user', 'content': 'đơn này'}])
 
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
+@unittest.skipUnless((ROOT / '.github').is_dir(),
+                     'repository workflow files are not shipped in the image; checked on the source tree')
 class WorkflowTimeoutTests(unittest.TestCase):
     def test_deploy_and_offline_timeouts(self):
-        root = Path(__file__).resolve().parents[1]
+        root = ROOT
         for filename, job, minutes in (
             ('deploy-ec2.yml', 'deploy', 40),
             ('ci.yml', 'offline', 30),

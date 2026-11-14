@@ -149,3 +149,5 @@ Hai lỗi tài liệu được sửa trong cùng nhánh, đều không đổi m�
 - con số độ dài với focus tối đa ở mục 2.
 
 Hiệu quả thật của câu `SYSTEM` gọn và mô tả tool mới chỉ kiểm được bằng smoke trên production sau khi deploy (mục 5 handoff).
+
+CI lần 1 trên `003e5cb`: job `offline` đỏ ở lượt unittest chạy trong image (`/app`). `WorkflowTimeoutTests` đọc `.github/workflows/*.yml`, mà image không chứa `.github`, nên báo 2 lỗi `FileNotFoundError`; lượt native vẫn đạt. Claude thêm `skipUnless((ROOT / '.github').is_dir(), …)` theo đúng mẫu của `tests/test_w32_catalog_packaging.py` và sinh lại notebook. Test vẫn chạy trên mã nguồn và CI native, chỉ bỏ qua trong image.
