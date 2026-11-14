@@ -274,6 +274,8 @@ FAILED (failures=1, skipped=86)
 
 ### Kiểm cô lập và giới hạn môi trường
 
+Lượt `git diff --cached --check` đầu: **0 pass, 1 fail, 0 error/skip** (đếm lệnh), phát hiện CRLF của tệp báo cáo mới như trailing whitespace. Tệp đã được chuẩn hóa LF bằng commit bổ sung; kiểm lại cả working diff, staged diff và diff so với `origin/main` trước PR. Không sửa mã hay test cho việc này.
+
 Fail duy nhất ở `test_item10_package_isolation_and_image_exclusion`: `ROOT.rglob('*.py')` đọc cả `.claude/worktrees/cai-nay-la-sao-bddcef/tests/test_marketplace_sim_contract.py` rồi coi là import ngoài phạm vi. Đây là worktree có sẵn, cũng được ghi trong các báo cáo W6.3.2/W6.3.3; không sửa/nới test hoặc dời worktree chứa nguồn ca.
 
 Chạy lại nguyên bài trên snapshot sạch của đúng nguồn hiện tại (archive base + overlay các tệp đổi), tại `%TEMP%/w634-clean-mkwrthmt`: `python -m unittest test_marketplace_sim_stories_and_send.MarketplaceSimIsolationTests.test_item10_package_isolation_and_image_exclusion -v`, với `PYTHONPATH=tests`: **1 pass, 0 fail/error/skip**, 2.000s (`isolated-failure.log`). Kết quả này không thay số liệu full. PostgreSQL và các dependency/dịch vụ tùy chọn chưa có được báo skip đúng điều kiện test; không truy cập DB production. Chờ CI Linux cho toàn bộ dịch vụ test cô lập.
