@@ -925,3 +925,53 @@ Kỳ vọng của `s06_017` đúng luật và đúng gợi ý ánh xạ của Cl
 1. W6.3.4 merge.
 2. PR đưa 40 ca vào `evals/suites` cùng dòng nguồn gốc.
 3. Ghi SHA-256 đóng băng (W6.3-D7) trước lượt chạy W6.4 đầu tiên.
+
+### 2026-11-14 W6.3.4 verification, merge and data freeze
+
+> **Phạm vi:** kiểm PR #105 (hotfix W6.3.4 do Codex làm) theo mục 5 [handoff](W6_3_4_HOTFIX_HANDOFF_2026-11-14.md), sửa một lỗ hổng F35, merge, đưa 40 ca chuyển thể vào `evals/suites` và đóng băng dữ liệu (W6.3-D7). Không deploy.
+
+**Lượt kiểm 1, head `e86531a`.** Đạt mọi tiêu chí mục 2:
+- 14 tệp đổi, đều trong danh sách handoff cho phép; không đổi schema, không thêm thư viện; W1 log thêm đúng một dòng.
+- Test viết trước, có log FAIL cho cả ba hàng.
+- 83 test liên quan đạt cục bộ. 4/4 test JS của W6.3.4 đạt trong log CI, vì máy owner không có Node thật.
+- SHA 8/8 khớp. `--final` báo 250 ca; runner 249/250 trước sửa, 250/250 sau. Tệp bằng chứng F35: 5/6 lên 6/6.
+- Excerpt PDF của `s11_020`, `s11_021`, `s11_022` chứa chuỗi `attack_not`.
+- F36 dùng cờ `can_target = not is_current or len(item_ids) > 1`, thống nhất ở matcher, tool, server và hai form.
+- F37 thêm `/Encoding /WinAnsiEncoding` để chữ Latin-1 có dấu đọc ra đúng; chỉ ảnh hưởng PDF giả lập của runner.
+
+**Lỗ hổng F35, owner chọn Claude sửa.** Bản của Codex che mọi chữ "vừa" tới hết mệnh đề, nên lời khẳng định nối bằng "và" hoặc "nên" không còn bị cắt, ví dụ "Đơn không thể vừa đổi vừa trả và em vừa hủy đơn SIM-O-00115 rồi ạ.". `main` trước đó vẫn cắt câu này.
+- Commit `39ebe83` chỉ che đúng cặp "vừa … vừa" sau dấu hiệu phủ định.
+- Thêm hai câu vào test; trước khi sửa, 2 subtest FAIL.
+- Báo cáo W6.3.4 có thêm mục 8.
+- Full unittest cục bộ: 1097 pass, 0 fail, 86 skip.
+
+**Còn lại, không chặn.** Các câu sau vẫn bị cắt thừa, theo hướng an toàn: "không thể vừa đổi size, vừa trả hàng" (có dấu phẩy), "chẳng thể vừa …", "không hề vừa …". Chúng nằm ngoài sáu dấu hiệu phủ định đã quyết ở W6.3.4-D1. Chỉ ghi lại nếu gặp ở W6.4.
+
+**Merge.** CI của PR trên `39ebe83`: 6/6 xanh ngay lần chạy đầu. Owner xem bản đánh giá rồi duyệt. Merge bằng `--match-head-commit`: `99dfdc6e7b2ddabce55bc33b85cca71a9769ded9`, tree giống hệt `39ebe83`. Test P99 của `test_http_headroom` đã đỏ ngẫu nhiên hai lần trên runner GitHub (main sau #104, `9296cce`), lần nào chạy lại cũng xanh; ghi thành F38 trong [W6 backlog](W6_BACKLOG_2026-11-06.md).
+
+**40 ca vào `evals/suites`.**
+- 7 tệp nhận (SHA ở handoff W6.3.4 mục 2) được nối nguyên byte vào S04, S05, S06, S07, S08, S09, S11.
+- Nội dung cũ của mỗi bộ là tiền tố không đổi, sau đó là một ký tự xuống dòng rồi tới tệp nhận.
+- 12 tệp giống từng byte với bộ 250 ca đã dùng để kiểm W6.3.4.
+- Nguồn gốc từng tệp và các ca đã trả lại ghi trong `evals/suites/README.md`.
+
+**Đóng băng (W6.3-D7).** Kể từ đây không sửa ca; muốn đổi thì thêm phiên bản mới.
+
+| Tệp | Số ca | SHA-256 |
+|---|---|---|
+| `S01.jsonl` | 26 | `6742499c31f1ced367b90eb2a29a1e543c22f9b502b21ef7ce5260c555c568d4` |
+| `S02.jsonl` | 18 | `35cd5b0df89c4b174547d1a94d86c5d428e67cca8df98f1128fd3d12517ef54d` |
+| `S03.jsonl` | 30 | `9142f8b7f2b57dd2913ad18b9e5646d7453226d0ff97f87864301b5d341340a5` |
+| `S04.jsonl` | 20 | `f71400121a9f86db71b86ee1c1f38a968d2cf5d2a8892d9357c6704d4f65e55f` |
+| `S05.jsonl` | 26 | `999903d49e166de1a56c65fca7876958e99c82fbf31d2363e04931c8005be6dc` |
+| `S06.jsonl` | 22 | `5de3c66a24244725aafbe37799381686ef5461d4bc7815b93b7bac8be0fc8355` |
+| `S07.jsonl` | 16 | `550771b72d3a0d443969009d503df1de4e0058e5f2d176dc04f0d605f437bb37` |
+| `S08.jsonl` | 18 | `3d07cefccb72fa13e1854d20efc20d678257c286f267e0cdca3a6997ea04b370` |
+| `S09.jsonl` | 26 | `74ac253b32a161c9c0341981ff05033877d448c71f706fc9e568c70cb9654e37` |
+| `S10.jsonl` | 10 | `01562bc4e6241172481f6e43a4b556ce6278212836d20fb8af14b7302a53404b` |
+| `S11.jsonl` | 22 | `63cd47390bc3a1afb409a2706dbc7270aae6dcb4b80514d6ccdaf3af35c14386` |
+| `S12.jsonl` | 16 | `db70f9e760c341ddb5170f2c28fa29e68681648716c8b26c5a85101ce9446377` |
+
+**Còn lại trước W6.4:**
+1. Deploy W6.3.1–W6.3.4 ở lần bật EC2 kế tiếp, kèm smoke.
+2. Readiness review và handoff W6.4.
