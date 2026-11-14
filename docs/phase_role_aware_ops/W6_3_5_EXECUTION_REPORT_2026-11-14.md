@@ -32,7 +32,7 @@ Escalate conversation to a live human agent when user requests or on severe comp
 
 Giữ nguyên câu shipping: `when an order is in 'shipping' status, explain self-service cancellation is unavailable and offer transfer to human support.` Test giữ kiểm tra câu này, `reason` 1.000 ký tự được chấp nhận, rỗng/1.001 ký tự/đối số lạ bị từ chối.
 
-Theo quyết định owner sau khi kiểm chứng: không tăng `MAX_SYSTEM_CHARACTERS=6400`, không sửa câu SYSTEM cũ. Phần SYSTEM chỉ giữ ý cốt lõi; danh sách ba việc F39 và ngoại lệ câu hỏi thông tin nằm trong mô tả tool. Bản cuối `SYSTEM` = **5.993** ký tự; với hai focus ID dài tối đa 64 ký tự = **6.086/6.400**. Mô tả tool vẫn giữ giải thích đầy đủ.
+Theo quyết định owner sau khi kiểm chứng: không tăng `MAX_SYSTEM_CHARACTERS=6400`, không sửa câu SYSTEM cũ. Phần SYSTEM chỉ giữ ý cốt lõi; danh sách ba việc F39 và ngoại lệ câu hỏi thông tin nằm trong mô tả tool. Bản cuối `SYSTEM` = **5.993** ký tự; không có focus = **6.086**; với hai focus ID dài tối đa 64 ký tự = **6.284/6.400** (đính chính khi Claude kiểm chứng; bản đầu báo cáo ghi nhầm 6.086 cho trường hợp focus tối đa). Mô tả tool vẫn giữ giải thích đầy đủ.
 
 ## 3. Test trước sửa, theo đúng thứ tự
 
@@ -133,3 +133,19 @@ Các chi tiết khác trong mục 2 eval pack chưa được viết tường min
 Nhánh: `phase-r1-w6-3-5`. Commit nguồn ban đầu: `201c154`; sau quyết định owner đã cập nhật prompt cốt lõi, test assertion và notebook. Đang chuẩn bị commit/push nhánh và mở PR; chưa có CI.
 
 Không merge, push main, force-push, rebase, reset hay stash; không đổi secret/variable repo, không chạy workflow deploy/live-e2e; không truy cập EC2/SSM/DB production/Colab/LLM thật/dữ liệu khách. Owner quyết merge; kiểm chứng Claude và smoke production mục 5 handoff thực hiện sau theo quy trình owner.
+
+## 7. Bổ sung sau kiểm chứng của Claude (2026-11-14)
+
+Claude kiểm nhánh `phase-r1-w6-3-5` tại `42fc413` theo mục 5 handoff. Kết quả đạt mọi tiêu chí của mục 2:
+
+- 8 tệp đổi, đúng phạm vi. `SYSTEM` chỉ thêm 2 câu, không sửa câu cũ; mô tả tool `request_human_support` giữ câu cũ và có đủ ba việc cùng ngoại lệ; hai workflow chỉ đổi dòng `timeout-minutes`.
+- 99 test liên quan OK cục bộ (W6.3.5, W3.2 agent loop, W6.2 safety, agent protocol, W6.3.1, W3.2 answer check).
+- Notebook, eval pack, ba contract, `--final` 250 ca và SHA đóng băng 12/12 đều đạt; runner `--fake` 250/250 và 32/32.
+- Độ dài `agent_system` đo lại: 6.086 không focus, 6.162 với focus ngắn, 6.284 với hai focus ID 64 ký tự. Còn trống 116 ký tự dưới giới hạn 6.400.
+
+Hai lỗi tài liệu được sửa trong cùng nhánh, đều không đổi mã hay test:
+
+- tệp báo cáo này được commit dạng CRLF, nên `git diff --check` báo khoảng trắng cuối mọi dòng; đã đổi sang LF;
+- con số độ dài với focus tối đa ở mục 2.
+
+Hiệu quả thật của câu `SYSTEM` gọn và mô tả tool mới chỉ kiểm được bằng smoke trên production sau khi deploy (mục 5 handoff).
