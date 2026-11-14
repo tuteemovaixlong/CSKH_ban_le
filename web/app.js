@@ -1213,10 +1213,10 @@ async function chooseReason(id, requestedType = null, requestedExchangeKind = nu
     for (const variant of variants) {
       const option = el('option', '', variant.label + ' · ' + variantStockText(variant) + (variant.is_current ? ' (đang giữ)' : ''));
       option.value = variant.id;
-      option.disabled = Boolean(variant.is_current);
+      option.disabled = !(variant.can_target ?? !variant.is_current);
       targetSelect.append(option);
     }
-    const wanted = variants.some(v => v.id === requestedTargetVariantId && !v.is_current) ? requestedTargetVariantId : '';
+    const wanted = variants.some(v => v.id === requestedTargetVariantId && (v.can_target ?? !v.is_current)) ? requestedTargetVariantId : '';
     targetSelect.value = wanted;
     targetVariantId = wanted || null;
     targetHint.textContent = variants.length
@@ -3576,10 +3576,10 @@ function renderStaffCaseOrderActions() {
         variants.forEach(v => {
           const opt = el('option', '', `${v.label} · ${variantStockText(v)}${v.is_current ? ' (đang giữ)' : ''}`);
           opt.value = v.id;
-          opt.disabled = Boolean(v.is_current);
+          opt.disabled = !(v.can_target ?? !v.is_current);
           cTargetSel.append(opt);
         });
-        const keep = variants.some(v => v.id === staffConsentDraft.targetVariantId && !v.is_current) ? staffConsentDraft.targetVariantId : '';
+        const keep = variants.some(v => v.id === staffConsentDraft.targetVariantId && (v.can_target ?? !v.is_current)) ? staffConsentDraft.targetVariantId : '';
         cTargetSel.value = keep;
         cTargetSel.disabled = staffOrderActionBusy;
         staffConsentDraft.targetVariantId = keep;

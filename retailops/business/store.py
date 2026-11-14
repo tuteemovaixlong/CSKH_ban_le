@@ -6656,6 +6656,9 @@ class BusinessStore:
                     "stock": int(r["stock"]) if r["stock"] is not None else None,
                     "stock_status": self._stock_status(r["stock"]),
                     "is_current": is_current,
+                    # Two distinct structured variants of this product permit either held target.
+                    # Quantity and ambiguous legacy labels must not relax the single-variant rule.
+                    "can_target": not is_current or len(item_ids) > 1,
                 }
             )
         return base
@@ -6851,8 +6854,8 @@ class BusinessStore:
 
         target_variant_label = None
         if action_type == "exchange" and exchange_kind == "other_variant":
-            # The target must be a variant of this order's own product and differ from the one the order
-            # holds. Stock is deliberately not checked: staff decide when they review (W3.2-D5).
+            # The target must belong to this product and be selectable under W6.3.4-D2.
+            # Stock is deliberately not checked: staff decide when they review (W3.2-D5).
             options = self._exchange_variants_in_tx(db, order)
             require(
                 options["product_id"] is not None,
@@ -6868,7 +6871,7 @@ class BusinessStore:
                 "Biến thể đích không thuộc sản phẩm của đơn hàng.",
             )
             require(
-                not target["is_current"],
+                target["can_target"],
                 400,
                 "target_is_current_variant",
                 "Biến thể đích trùng với biến thể hiện tại của đơn; hãy chọn biến thể khác hoặc đổi cùng biến thể.",

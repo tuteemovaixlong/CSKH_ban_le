@@ -1,4 +1,6 @@
 'use strict';
+// W6.3.4 exchange form regressions run under this existing CI entry point as well.
+require('./test_r1_w6_3_4_exchange_ui.js');
 // Phase R1 W6.1b-2 JS UI contract tests (Item 2 Staff Desk recipient reveal & Customer order detail).
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

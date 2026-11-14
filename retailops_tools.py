@@ -365,7 +365,7 @@ class BoundTools:
                 matches = match_variants(options['variants'], target_text) if target_text else []
                 if len(matches) == 1:
                     exchange_kind, target_variant_id = 'other_variant', matches[0]['id']
-                    if not matches[0]['is_current'] and 'other_variant' not in allowed_exchange_kinds and ineligible is None:
+                    if matches[0]['can_target'] and 'other_variant' not in allowed_exchange_kinds and ineligible is None:
                         ineligible = {'code': 'size_exchange_window_expired',
                                       'message': 'The server reports that the window for swapping to another variant has expired. Only allowed_exchange_kinds remain available.'}
                 exchange_view = {
@@ -373,7 +373,7 @@ class BoundTools:
                     'current_variant': order.get('variant'),
                     'kinds': {'other_variant': 'swap to another variant of the same product (color, size, style)',
                               'same_variant': 'replace the same variant, for a defective item'},
-                    'variants': [{k: v[k] for k in ('id', 'label', 'stock_status', 'is_current')}
+                    'variants': [{k: v[k] for k in ('id', 'label', 'stock_status', 'is_current', 'can_target')}
                                  for v in options['variants']],
                     'requested_target': target_text,
                     'matched_variants': [{'id': v['id'], 'label': v['label'], 'stock_status': v['stock_status']}
