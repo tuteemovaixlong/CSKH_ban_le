@@ -975,3 +975,54 @@ Kỳ vọng của `s06_017` đúng luật và đúng gợi ý ánh xạ của Cl
 **Còn lại trước W6.4:**
 1. Deploy W6.3.1–W6.3.4 ở lần bật EC2 kế tiếp, kèm smoke.
 2. Readiness review và handoff W6.4.
+
+### 2026-11-14 W6.3.1 to W6.3.4 production deploy record
+
+> **Phạm vi:** deploy chung W6.3.1–W6.3.4 từ `main` tại `73b8f0c`, theo mục 5 của bốn hotfix handoff. Từ bản trước (`69bd777`) chỉ đổi mã Python và `web/app.js`. Không migration, không khóa mới, không sửa compose, không nạp lại kho chính sách, không reset dữ liệu demo.
+
+**EC2 trước deploy.**
+- Owner bật lại instance; IP công khai đổi từ `54.91.237.225` sang `54.227.17.73`.
+- Đĩa trống 42 GB. web, admin, PostgreSQL, ClamAV healthy trên image `sha256:2d788b20…` (W6.2 + W6.2.1).
+- `deployed.env`, `public.env` không chứa hai cấu hình thí nghiệm; `integration-secrets/` đủ 3 khóa.
+
+**Rollout.** Owner duyệt. Claude bật `RETAILOPS_DEPLOY_ENABLED` lúc 10:55:33Z và chạy workflow [`43587559102`](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/43587559102) trên `73b8f0c`.
+- 1.183 test OK. Image mới `sha256:da28a2372301981ca8b4dc1fc1ca1de2e4839314005001a580f42f7956b1091e`; baseline runner kích hoạt xong.
+- Script rollout đổi host `retailops.54-91-237-225.sslip.io` thành `retailops.54-227-17-73.sslip.io` rồi bắt đầu đổi image web.
+- GitHub huỷ job lúc 11:16:10Z vì chạm `timeout-minutes: 20` (F41). Lệnh SSM rollout vẫn chạy tiếp trên EC2 và xong.
+- Lệnh chạy nền lẽ ra tắt cờ sau workflow đã lỗi (`gh` exit 4), nên cờ còn bật tới 13:07:01Z, lúc Claude tắt tay. Trong thời gian đó không có push lên `main` và không có lần deploy nào khác. Từ nay Claude kiểm `gh variable list` ngay sau mỗi lần deploy.
+
+**EC2 sau rollout** (owner kiểm qua SSM):
+- host `retailops.54-227-17-73.sslip.io`; `deployed.env`, web và admin đều chạy `da28a237`, healthy;
+- không còn tiến trình deploy; `connector check` exit 0; `/healthz` 200.
+
+**Ba bước workflow chưa kịp chạy.** Owner chạy tay hai bước smoke, đúng lệnh trong `deploy/publish_and_activate.py`:
+- helper `rollout-public-web.sh`, `live-e2e.py`, `admin-console.py` cài lúc 11:14 từ image mới;
+- `LIVE_E2E_SMOKE_OK` lúc 13:12:01Z;
+- admin console: `ADMIN_CONSOLE_SMOKE_OK` (ẩn danh 401, đăng nhập 200, sai mật khẩu 401), `ADMIN_CONSOLE_READY` ở `admin-retailops.54-227-17-73.sslip.io`;
+- `LIVE_E2E_SMOKE_OK` lúc 13:12:45Z.
+
+Bước dọn image cũ được hoãn tới khi smoke trình duyệt xong, để giữ `2d788b20…` phòng khi cần quay lại. Owner thêm host mới vào Google OAuth.
+
+**Smoke trên trình duyệt.** Tài khoản Google khách của owner, model `deepseek-flash`, đơn SIM-O-38588564-02 (đang giao):
+
+| # | Bản | Tin nhắn | Kết quả |
+|---|---|---|---|
+| 1 | W6.3.1 | đơn … nhập nhầm địa chỉ, đổi giúp tôi | **Trượt.** Model gọi `get_order`, `search_knowledge` (0 tài liệu), `track_shipment` rồi hỏi khách có muốn chuyển nhân viên không; không gọi `request_human_support`, không có ca. Đường đi mà F28 sửa chưa được chạy tới. Nguyên nhân là F39 |
+| 2 | W6.3.2 | đơn … phí ship bao nhiêu | Đạt: 40.000₫, khớp tổng 839.000₫ = giá 799.000₫ + ship |
+| 3 | W6.3.2 | đơn … hoàn tiền chưa | Không kiểm được F31: đơn chưa hoàn tiền; trả lời "chưa có khoản hoàn tiền" là đúng |
+| 4 | W6.3.3 | xem livestream thấy áo khoác Everyday, còn size M không | Đạt: trả lời tồn kho, không chuyển nhân viên |
+| 5 | W6.3.3 | ao polo co mau sac nao | Đạt: tìm ra 3 mẫu polo kèm màu |
+| 6 | W6.3.3 | chinh sach doi tra ben shop the nao | Đạt: trả lời có trích dẫn `returns.md`, `shipping_fees.md` |
+| 7 | W6.3.4 | đơn … không thể vừa trả vừa đổi được hả shop | Đạt về F35: câu trả lời không bị thay bằng câu ghi chú. Model nói kho chính sách không có quy định nên không khẳng định; nguyên nhân là F40 |
+| 8 | W6.3.4 | form đổi hàng của đơn giữ hai phân loại | Không kiểm được F36: các đơn của owner chỉ có một phân loại; CI đã kiểm |
+
+**Phát hiện mới**, owner chọn sửa trong hotfix [W6.3.5](W6_3_5_HOTFIX_HANDOFF_2026-11-14.md) trước W6.4 (§30):
+- **F39:** model không biết phải chuyển nhân viên khi việc vượt khả năng của chat.
+- **F40:** model không biết mỗi đơn chỉ có một yêu cầu đang mở.
+- **F41:** giới hạn thời gian của job deploy và job `offline`.
+
+**Còn mở:**
+- Kiểm lại đường đi F28 ở smoke W6.3.5: khách xin đổi địa chỉ phải tạo ca ngay trong lượt.
+- Đóng ca smoke W6.2 ngày 2026-11-11 còn ở Hàng chờ; dọn image `2d788b20…` trên EC2.
+- Khung "Quá trình suy luận" vẫn hiện mã nội bộ (F20, W6.6). Câu trả lời câu 3 còn lộ tên trường như `refund: null`, `delivered_at`.
+- Reset dữ liệu demo theo W6.2-D4: tuần trước 2026-12-15.
