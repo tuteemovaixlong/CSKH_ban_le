@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 from unittest.mock import patch
 
-from agent_protocol import (MAX_CHARACTERS, MAX_MODEL_CALLS, MAX_TOOL_CALLS, SYSTEM, TOOLS, agent_system,
+from agent_protocol import (MAX_CHARACTERS, MAX_MODEL_CALLS, MAX_SYSTEM_CHARACTERS, MAX_TOOL_CALLS, SYSTEM, TOOLS, agent_system,
                             merge_system, model_history, validate_messages)
 from gemma_fakes import FIXTURE_ENDPOINT, FIXTURE_KEY, FIXTURE_MODEL, FakeVllm, chat_reply, gemma_template_error
 from retailops.business.application import Application
@@ -516,7 +516,7 @@ class NoScriptedAnswersTests(unittest.TestCase):
     def test_the_system_prompt_states_principles_not_a_script_for_a_situation(self):
         for scripted in ('SOP', 'Đổi size 2 chiều', 'freeship', 'tận nhà'):
             self.assertNotIn(scripted, SYSTEM)
-        self.assertLess(len(agent_system({'order_id': 'O-1', 'product_id': 'P-1'})), 6000)
+        self.assertLessEqual(len(agent_system({'order_id': 'O-1', 'product_id': 'P-1'})), MAX_SYSTEM_CHARACTERS)
 
 
 if __name__ == '__main__':

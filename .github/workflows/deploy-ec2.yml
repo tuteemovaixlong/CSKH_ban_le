@@ -35,7 +35,7 @@ jobs:
     needs: filter
     if: github.ref == 'refs/heads/main' && vars.RETAILOPS_DEPLOY_ENABLED == 'true' && needs.filter.outputs.deploy_eligible == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 40
     environment: demo
     permissions:
       contents: read
