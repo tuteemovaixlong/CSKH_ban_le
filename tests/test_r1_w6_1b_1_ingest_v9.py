@@ -2941,43 +2941,48 @@ class Item7ProviderRefundLinkingTests(unittest.TestCase):
 
     def test_two_waiting_requests_do_not_link_and_staff_desk_surfaces_warning(self) -> None:
         oid, cid = self._seed_delivered_paid_connector_order("SIM-O-REF-2", "SIM-C-REF-2")
-        # Request 1: return -> approve -> mark_received -> mark_inspected -> complete (closes request) -> request refund (pending)
-        r1 = self.store.create_order_action_request(
-            cid,
-            {
-                "order_id": oid,
-                "type": "return",
-                "expected_order_version": 2,
-                "reason_code": "wrong_item",
-                "reason_text": "Giao nhầm mẫu 1",
-            },
-        )
-        r1_id = r1["order_action"]["request_id"]
-        s1 = self.store.transition_order_action_request(r1_id, "approve", {"version": r1["order_action"]["version"]}, actor=self.manager_actor)
-        s2 = self.store.transition_order_action_request(r1_id, "mark_received", {"version": s1["order_action"]["version"]}, actor=self.manager_actor)
-        s3 = self.store.transition_order_action_request(
-            r1_id,
-            "mark_inspected",
-            {"version": s2["order_action"]["version"], "inspection_outcome": "refund"},
-            actor=self.manager_actor,
-        )
-        s4 = self.store.transition_order_action_request(r1_id, "complete", {"version": s3["order_action"]["version"]}, actor=self.manager_actor)
-        self.store.request_order_action_refund(r1_id, {"version": s4["order_action"]["version"]}, actor=self.manager_actor)
+        # The seeded order was delivered 2026-11-08 12:00 (+07:00); pin the clock inside its 7-day return window,
+        # as the other tests of this class do, so the test does not expire with the wall clock.
+        from retailops.integration.contract import iso_vn_to_epoch
+        approval_ts = float(iso_vn_to_epoch("2026-11-08T13:00:00+07:00", "approval_ts"))
+        with patch.object(self.store, "_now", return_value=approval_ts):
+            # Request 1: return -> approve -> mark_received -> mark_inspected -> complete (closes request) -> request refund (pending)
+            r1 = self.store.create_order_action_request(
+                cid,
+                {
+                    "order_id": oid,
+                    "type": "return",
+                    "expected_order_version": 2,
+                    "reason_code": "wrong_item",
+                    "reason_text": "Giao nhầm mẫu 1",
+                },
+            )
+            r1_id = r1["order_action"]["request_id"]
+            s1 = self.store.transition_order_action_request(r1_id, "approve", {"version": r1["order_action"]["version"]}, actor=self.manager_actor)
+            s2 = self.store.transition_order_action_request(r1_id, "mark_received", {"version": s1["order_action"]["version"]}, actor=self.manager_actor)
+            s3 = self.store.transition_order_action_request(
+                r1_id,
+                "mark_inspected",
+                {"version": s2["order_action"]["version"], "inspection_outcome": "refund"},
+                actor=self.manager_actor,
+            )
+            s4 = self.store.transition_order_action_request(r1_id, "complete", {"version": s3["order_action"]["version"]}, actor=self.manager_actor)
+            self.store.request_order_action_refund(r1_id, {"version": s4["order_action"]["version"]}, actor=self.manager_actor)
 
-        # Request 2 on the SAME order: return -> approve -> request refund (pending) -> now 2 requests wait for refund!
-        r2 = self.store.create_order_action_request(
-            cid,
-            {
-                "order_id": oid,
-                "type": "return",
-                "expected_order_version": 2,
-                "reason_code": "defective_item",
-                "reason_text": "Lỗi phụ kiện đi kèm",
-            },
-        )
-        r2_id = r2["order_action"]["request_id"]
-        t1 = self.store.transition_order_action_request(r2_id, "approve", {"version": r2["order_action"]["version"]}, actor=self.manager_actor)
-        self.store.request_order_action_refund(r2_id, {"version": t1["order_action"]["version"]}, actor=self.manager_actor)
+            # Request 2 on the SAME order: return -> approve -> request refund (pending) -> now 2 requests wait for refund!
+            r2 = self.store.create_order_action_request(
+                cid,
+                {
+                    "order_id": oid,
+                    "type": "return",
+                    "expected_order_version": 2,
+                    "reason_code": "defective_item",
+                    "reason_text": "Lỗi phụ kiện đi kèm",
+                },
+            )
+            r2_id = r2["order_action"]["request_id"]
+            t1 = self.store.transition_order_action_request(r2_id, "approve", {"version": r2["order_action"]["version"]}, actor=self.manager_actor)
+            self.store.request_order_action_refund(r2_id, {"version": t1["order_action"]["version"]}, actor=self.manager_actor)
 
         # Provider sends refund.updated -> ambiguous (2 waiting requests), so request_id stays NULL!
         self._ingest_raw(
@@ -3037,28 +3042,33 @@ class Item7ProviderRefundLinkingTests(unittest.TestCase):
 
     def test_manual_refund_outcome_blocked_409_for_connector_order_and_allowed_for_non_connector(self) -> None:
         oid_conn, cid_conn = self._seed_delivered_paid_connector_order("SIM-O-REF-GUARD", "SIM-C-REF-GUARD")
-        c_conn = self.store.create_order_action_request(
-            cid_conn,
-            {
-                "order_id": oid_conn,
-                "type": "return",
-                "expected_order_version": 2,
-                "reason_code": "defective_item",
-                "reason_text": "Lỗi cúc áo",
-            },
-        )
-        c_conn_id = c_conn["order_action"]["request_id"]
-        ap_conn = self.store.transition_order_action_request(
-            c_conn_id, "approve", {"version": c_conn["order_action"]["version"]}, actor=self.manager_actor
-        )
-        rr_conn = self.store.request_order_action_refund(
-            c_conn_id, {"version": ap_conn["order_action"]["version"]}, actor=self.manager_actor
-        )
-        dr_conn = self.store.decide_order_action_refund(
-            c_conn_id,
-            {"version": rr_conn["order_action"]["version"], "decision": "approved"},
-            actor=self.manager_actor,
-        )
+        # The seeded order was delivered 2026-11-08 12:00 (+07:00); pin the clock inside its 7-day return window,
+        # as the other tests of this class do, so the test does not expire with the wall clock.
+        from retailops.integration.contract import iso_vn_to_epoch
+        approval_ts = float(iso_vn_to_epoch("2026-11-08T13:00:00+07:00", "approval_ts"))
+        with patch.object(self.store, "_now", return_value=approval_ts):
+            c_conn = self.store.create_order_action_request(
+                cid_conn,
+                {
+                    "order_id": oid_conn,
+                    "type": "return",
+                    "expected_order_version": 2,
+                    "reason_code": "defective_item",
+                    "reason_text": "Lỗi cúc áo",
+                },
+            )
+            c_conn_id = c_conn["order_action"]["request_id"]
+            ap_conn = self.store.transition_order_action_request(
+                c_conn_id, "approve", {"version": c_conn["order_action"]["version"]}, actor=self.manager_actor
+            )
+            rr_conn = self.store.request_order_action_refund(
+                c_conn_id, {"version": ap_conn["order_action"]["version"]}, actor=self.manager_actor
+            )
+            dr_conn = self.store.decide_order_action_refund(
+                c_conn_id,
+                {"version": rr_conn["order_action"]["version"], "decision": "approved"},
+                actor=self.manager_actor,
+            )
         self.assertTrue(dr_conn["order_action"]["refund_managed_by_provider"])
         with self.assertRaises(ApiError) as blocked:
             self.store.record_order_action_refund_outcome(
