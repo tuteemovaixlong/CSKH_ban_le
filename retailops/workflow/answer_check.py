@@ -84,6 +84,11 @@ _HANDOFF_CLAIM = re.compile(
     r'[^.!?\n]{0,120}?(?:cho|sang|tới|đến)\s+(?:nhân viên|bộ phận|người thật|cskh)')
 # Digits inside opaque order/product IDs are identifiers, not a number of days.
 _FACT_ID = re.compile(r'\b[a-z][a-z0-9]*(?:[-_][a-z0-9]+)+\b', re.IGNORECASE)
+_LIST_ITEM = re.compile(r'^\s*(?:[-*+]|\d+[.)])\s+')
+_MD_HEADING = re.compile(r'^(#{1,6})\s+(.+?)\s*#*$')
+_BOLD_HEADING = re.compile(r'^\*\*(.+?)\*\*(.*)$')
+_LABEL_SEPARATORS = (' — ', ' – ', ' - ', ': ', ' | ')
+_EMPTY_OR_ORDINAL = re.compile(r'^(?:\d+[.)])?$')
 _TIME_NUMBER = re.compile(r'\b(\d+)\s*(?:ngày|tuần|tháng|năm|giờ)\b')
 _MONEY = re.compile(r'(?<!\w)(\d+(?:[.,]\d+)*)(?:\s*(triệu|nghìn|ngàn|k|vnđ|vnd|đ|₫)(?!\w))?')
 _THOUSANDS = re.compile(r'\d{1,3}(?:[.,]\d{3})+')
@@ -297,6 +302,38 @@ def _unfounded_handoff(sentence, evidence) -> bool:
                 and _HANDOFF_CLAIM.search(plain))
 
 
+def _extract_heading_label(raw: str) -> str:
+    cuts = [raw.find(sep) for sep in _LABEL_SEPARATORS if sep in raw]
+    head = raw[:min(cuts)] if cuts else raw
+    return head.strip(' :–—-')
+
+
+def _heading_replacement(line: str):
+    if _LIST_ITEM.match(line):
+        return None
+    stripped = line.strip()
+    md = _MD_HEADING.match(stripped)
+    if md:
+        label = _extract_heading_label(md.group(2))
+        return f'{md.group(1)} {label}' if label else None
+    bold = _BOLD_HEADING.match(stripped)
+    if bold:
+        bold_text, rest = bold.group(1), bold.group(2)
+        if rest.strip() in ('', ':') or _FACT_ID.search(bold_text):
+            label = _extract_heading_label(bold_text)
+            return f'**{label}**' if label else None
+    return None
+
+
+def _any_sentence_dropped(text: str, evidence) -> bool:
+    return any(
+        _unfounded_handoff(sentence, evidence)
+        or _uncited_policy_promise(sentence, evidence)
+        or _unfounded_claim(sentence, evidence)
+        for sentence, _ in _fragments(text)
+    )
+
+
 def check_final_answer(text, messages=None) -> AnswerCheck:
     """`text` without the sentences the evidence of the turn does not support, plus one note per kind removed."""
     if not isinstance(text, str) or not text.strip():
@@ -304,20 +341,30 @@ def check_final_answer(text, messages=None) -> AnswerCheck:
     evidence = tool_evidence(messages)
     kept_lines, dropped_policy, dropped_claims, dropped_handoffs, orphan_refs = [], 0, 0, 0, []
     for line in unicodedata.normalize('NFC', text).split('\n'):
-        kept = []
+        kept, line_dropped = [], False
         for sentence, separator in _fragments(line):
             if _unfounded_handoff(sentence, evidence):
                 dropped_claims += 1
                 dropped_handoffs += 1
                 orphan_refs.extend(_CITATION.findall(sentence))
+                line_dropped = True
             elif _uncited_policy_promise(sentence, evidence):
                 dropped_policy += 1
+                line_dropped = True
             elif _unfounded_claim(sentence, evidence):
                 dropped_claims += 1
                 orphan_refs.extend(_CITATION.findall(sentence))
+                line_dropped = True
             else:
                 kept.append(sentence + separator)
-        kept_lines.append(''.join(kept).strip() if kept else '')
+        line_text = ''.join(kept).strip() if kept else ''
+        if line_dropped:
+            replacement = _heading_replacement(line)
+            if replacement and not _any_sentence_dropped(replacement, evidence):
+                line_text = replacement
+            elif _EMPTY_OR_ORDINAL.match(re.sub(r'[*#_\s]+', '', line_text)):
+                line_text = ''
+        kept_lines.append(line_text)
     if not (dropped_policy or dropped_claims):
         return AnswerCheck(text)
     body = '\n'.join(kept_lines)

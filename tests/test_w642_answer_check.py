@@ -168,18 +168,18 @@ class Row2TimeEvidenceTests(unittest.TestCase):
 
     def test_derived_time_sentences_kept_with_order_91_and_dropped_without_evidence(self):
         ev = messages(ORDER_91)
-        for line in (
-            '**SIM-O-00091 — trễ hạn 72 giờ, sắp hết hạn trả hàng**',
-            '- Hạn đổi size còn khoảng 10 ngày.',
-            '- Đã giao được 4 ngày, trong hạn trả 7 ngày.',
-            '- Đơn giao hàng trễ, quá hạn 3 ngày.',
+        for line, expected_no_ev in (
+            ('**SIM-O-00091 — trễ hạn 72 giờ, sắp hết hạn trả hàng**', f'**SIM-O-00091**\n\n{POLICY_NOTE}'),
+            ('- Hạn đổi size còn khoảng 10 ngày.', POLICY_NOTE),
+            ('- Đã giao được 4 ngày, trong hạn trả 7 ngày.', POLICY_NOTE),
+            ('- Đơn giao hàng trễ, quá hạn 3 ngày.', POLICY_NOTE),
         ):
             with self.subTest(line=line):
                 res = check_final_answer(line, ev)
                 self.assertFalse(res.changed)
                 self.assertEqual(res.text, line)
                 no_ev = check_final_answer(line)
-                self.assertEqual(no_ev.text, POLICY_NOTE)
+                self.assertEqual(no_ev.text, expected_no_ev)
                 self.assertEqual(no_ev.dropped_policy, 1)
 
     def test_unknown_or_policy_time_numbers_still_dropped_with_order_91(self):
@@ -217,6 +217,86 @@ class Row2TimeEvidenceTests(unittest.TestCase):
             }
         }
         self.assertEqual(tool_evidence(messages(payload)).derived_time, frozenset({20, 70}))
+
+
+class Row3HeadingAndNumberedLineTests(unittest.TestCase):
+    def test_heading_table_examples_without_evidence(self):
+        cases = (
+            ('**SIM-O-38588564-03 — trễ hạn 72 giờ, sắp hết hạn trả hàng**', '**SIM-O-38588564-03**'),
+            ('**1. SIM-O-38588564-02** — Đang giao hàng, quá hạn 54 giờ.', '**1. SIM-O-38588564-02**'),
+            ('### Đổi trả: miễn phí 2 chiều tận nhà', '### Đổi trả'),
+            ('**Miễn phí đổi trả 2 chiều**', ''),
+            ('- **SIM-O-1 — trễ hạn trả hàng 72 giờ**', ''),
+            ('**Phí ship:** 30.000đ', ''),
+        )
+        for line, expected_first_line in cases:
+            with self.subTest(line=line):
+                res = check_final_answer(line)
+                expected = f'{expected_first_line}\n\n{POLICY_NOTE}' if expected_first_line else POLICY_NOTE
+                self.assertEqual(res.text, expected)
+                self.assertEqual(res.dropped_policy, 1)
+                again = check_final_answer(res.text)
+                self.assertFalse(again.changed)
+                self.assertEqual(again.text, res.text)
+
+    def test_smoke_multi_order_response_preserves_order_and_second_heading(self):
+        text = (
+            '**SIM-O-38588564-01 — đơn đúng hạn**\n'
+            '- Giao 05/11, sớm hơn mốc cam kết 06/11.\n\n'
+            '**SIM-O-38588564-03 — trễ hạn 72 giờ, sắp hết hạn trả hàng**\n'
+            '- Cam kết 06/11 nhưng giao 09/11.\n\n'
+            '**SIM-O-38588564-02 — đang giao**\n'
+            '- Đang ở trạm trung chuyển Đà Nẵng.'
+        )
+        res = check_final_answer(text)
+        expected = (
+            '**SIM-O-38588564-01 — đơn đúng hạn**\n'
+            '- Giao 05/11, sớm hơn mốc cam kết 06/11.\n\n'
+            '**SIM-O-38588564-03**\n'
+            '- Cam kết 06/11 nhưng giao 09/11.\n\n'
+            '**SIM-O-38588564-02 — đang giao**\n'
+            '- Đang ở trạm trung chuyển Đà Nẵng.\n\n'
+            f'{POLICY_NOTE}'
+        )
+        self.assertEqual(res.text, expected)
+        self.assertEqual(res.dropped_policy, 1)
+        self.assertEqual(res.text.count(POLICY_NOTE), 1)
+        again = check_final_answer(res.text)
+        self.assertFalse(again.changed)
+        self.assertEqual(again.text, res.text)
+
+    def test_orphan_numbered_item_removed_when_sentence_dropped(self):
+        for line in (
+            '1. Shop miễn phí đổi trả 2 chiều.',
+            '**1. Shop miễn phí đổi trả 2 chiều.**',
+            '2) Thời hạn đổi trả là 30 ngày.',
+        ):
+            with self.subTest(line=line):
+                res = check_final_answer(line)
+                self.assertEqual(res.text, POLICY_NOTE)
+                self.assertEqual(res.dropped_policy, 1)
+                again = check_final_answer(res.text)
+                self.assertFalse(again.changed)
+                self.assertEqual(again.text, res.text)
+
+        kept = check_final_answer('1. Đơn O-701 đã giao. Shop miễn phí đổi trả 2 chiều.')
+        self.assertEqual(kept.text, f'1. Đơn O-701 đã giao.\n\n{POLICY_NOTE}')
+        self.assertEqual(kept.dropped_policy, 1)
+
+    def test_heading_separators_empty_label_and_stranded_citation(self):
+        self.assertEqual(
+            check_final_answer('## SIM-O-00091 | trễ hạn trả hàng 72 giờ ##').text,
+            f'## SIM-O-00091\n\n{POLICY_NOTE}',
+        )
+        self.assertEqual(
+            check_final_answer('** — trễ hạn trả hàng 72 giờ**').text,
+            POLICY_NOTE,
+        )
+        cit = '[KB:0123456789abcdef01234567]'
+        res = check_final_answer(f'**SIM-O-00091 — Em đã hủy đơn rồi {cit}**')
+        self.assertTrue(res.text.startswith('**SIM-O-00091**'))
+        self.assertIn(cit, res.text)
+        self.assertEqual(res.dropped_claims, 1)
 
 
 if __name__ == '__main__':
