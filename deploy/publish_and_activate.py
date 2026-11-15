@@ -152,7 +152,9 @@ fi
         raise SystemExit("ECR returned an invalid image digest")
     pinned = f"{registry}/{repo}@{digest}"
 
-    ssm_run(region, instance, shlex.join(["/opt/retailops/deploy-runner.sh", pinned, region]))
+    # The runner repeats the full unit suite inside the image on the EC2 host (t3.large). With the W6.4.0
+    # tests it ran past the 600 s default (run 43687947850, 2026-11-15); 1200 s still fits the 40-minute job.
+    ssm_run(region, instance, shlex.join(["/opt/retailops/deploy-runner.sh", pinned, region]), execution_timeout=1200)
     print(f"Activated baseline image: {pinned}")
 
     # Install attended helpers from the exact tested release image. Only the public
