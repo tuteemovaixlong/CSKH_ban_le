@@ -21,7 +21,16 @@ class ModelGateways:
 
 def build_gateways(settings: Settings) -> ModelGateways:
     custom = None
-    if settings.custom_enabled:
+    if settings.custom_enabled and settings.custom_api_endpoint:
+        # Same two-layer OpenAI gateway as the API slot, with the custom slot's own endpoint and keys.
+        custom = OpenRouterAgent(
+            settings.custom_api_key,
+            settings.model,
+            tunnel_token=settings.custom_api_tunnel_token,
+            endpoint=settings.custom_api_endpoint,
+            vision=False,
+        )
+    elif settings.custom_enabled:
         custom = RemoteAgent(ModelConfig(model=settings.model, base_url=settings.model_url),
                              allowed_host=settings.allowed_host, token=settings.inference_token)
     api = (

@@ -151,7 +151,10 @@ class Application:
         return event
 
     def providers(self):
-        custom_model = getattr(getattr(self.infer, 'config', None), 'model', 'qwen3.5:4b')
+        custom_model = (getattr(getattr(self.infer, 'config', None), 'model', None)
+                        or getattr(self.infer, 'model', None) or 'qwen3.5:4b')
+        custom_label = ('Custom model · Colab vLLM' if getattr(self.infer, 'is_custom', False)
+                        else 'Custom model · Colab/Ollama')
         api_model = getattr(self.api_infer, 'model', API_MODEL)
         is_anthropic = getattr(self.api_infer, 'is_anthropic', False) or 'claude' in str(api_model).lower()
         is_google = not is_anthropic and (getattr(self.api_infer, 'is_google', False) or 'gemini' in str(api_model).lower())
@@ -169,7 +172,7 @@ class Application:
             api_label = 'API · OpenRouter'
             api_notice = f'API tính phí theo sử dụng, tối đa {self.api_daily_limit} lần thử chat/ngày UTC cho demo. Contributor: nội dung có thể được Meta dùng để cải thiện sản phẩm. Chỉ nhập dữ liệu giả lập.'
         return {'default_provider': self.default_provider, 'providers': [
-            {'id': 'custom', 'label': 'Custom model · Colab/Ollama', 'model': custom_model,
+            {'id': 'custom', 'label': custom_label, 'model': custom_model,
              'configured': self.infer is not None, 'notice': 'Cần phiên model đang chạy. Kết nối được kiểm tra khi gửi tin.'},
             {'id': 'api', 'label': api_label, 'model': api_model,
              'configured': self.api_infer is not None,
