@@ -86,7 +86,7 @@ _FACT_ID = re.compile(r'\b[a-z][a-z0-9]*(?:[-_][a-z0-9]+)+\b', re.IGNORECASE)
 _TIME_NUMBER = re.compile(r'\b(\d+)\s*(?:ngày|tuần|tháng|năm|giờ)\b')
 _MONEY = re.compile(r'(?<!\w)(\d+(?:[.,]\d+)*)(?:\s*(triệu|nghìn|ngàn|k|vnđ|vnd|đ|₫)(?!\w))?')
 _THOUSANDS = re.compile(r'\d{1,3}(?:[.,]\d{3})+')
-_MONEY_FIELDS = ('shipping_fee', 'amount', 'refunded_total', 'pending_total')
+_MONEY_FIELDS = ('shipping_fee', 'amount', 'refunded_total', 'pending_total', 'unit_price', 'subtotal')
 _DAY_FIELDS = ('return_window_days', 'size_exchange_window_days', 'warranty_window_days', 'warranty_days')
 _WINDOW_FIELDS = ('within_return_window', 'within_size_exchange_window', 'within_warranty')
 _DELIVERY_FIELDS = ('promised_delivery_by', 'estimated_delivery_at', 'latest_estimated_delivery_at')
@@ -102,6 +102,7 @@ class Evidence:
     has_window: bool = False
     has_delivery_date: bool = False
     escalated_to_human: bool = False
+    derived_money: frozenset = field(default_factory=frozenset)
 
 
 @dataclass(frozen=True)
@@ -115,9 +116,32 @@ class AnswerCheck:
         return bool(self.dropped_policy or self.dropped_claims)
 
 
+def _items_subtotal(value: dict):
+    items = value.get('items')
+    if not isinstance(items, list) or not items:
+        return None
+    total = 0
+    for item in items:
+        if not isinstance(item, dict) or type(item.get('subtotal')) is not int:
+            return None
+        total += item['subtotal']
+    return total
+
+
+def _order_record_code(value: dict):
+    if type(value.get('amount')) is not int or type(value.get('shipping_fee')) is not int:
+        return None
+    for key in ('id', 'external_order_id'):
+        code = value.get(key)
+        if isinstance(code, str) and code:
+            return code
+    return None
+
+
 def tool_evidence(messages) -> Evidence:
     """What the tool results of this turn establish, read from their JSON."""
     cancelled, refunded, warranty, deadlines, money = False, False, set(), set(), set()
+    derived_money, order_records = set(), {}
     has_window, has_delivery_date, escalated = False, False, False
 
     def walk(value):
@@ -137,6 +161,12 @@ def tool_evidence(messages) -> Evidence:
             for key in _MONEY_FIELDS:
                 if type(value.get(key)) is int:
                     money.add(value[key])
+            items_sub = _items_subtotal(value)
+            if items_sub is not None:
+                derived_money.add(items_sub)
+            order_code = _order_record_code(value)
+            if order_code is not None and order_code not in order_records:
+                order_records[order_code] = (value['amount'], value['shipping_fee'], items_sub)
             escalated |= value.get('status') == 'escalated_to_human'
             has_window |= any(isinstance(value.get(key), bool) for key in _WINDOW_FIELDS)
             has_delivery_date |= any(bool(value.get(key)) for key in _DELIVERY_FIELDS)
@@ -158,9 +188,15 @@ def tool_evidence(messages) -> Evidence:
                 walk(json.loads(message['content']))
             except ValueError:
                 continue
+    if len(order_records) >= 2:
+        derived_money.add(sum(amount for amount, _, _ in order_records.values()))
+        derived_money.add(sum(shipping for _, shipping, _ in order_records.values()))
+        if all(sub is not None for _, _, sub in order_records.values()):
+            derived_money.add(sum(sub for _, _, sub in order_records.values()))
     return Evidence(cancelled=cancelled, refunded=refunded, money_amounts=frozenset(money),
                     warranty_days=frozenset(warranty), deadline_days=frozenset(deadlines),
-                    has_window=has_window, has_delivery_date=has_delivery_date, escalated_to_human=escalated)
+                    has_window=has_window, has_delivery_date=has_delivery_date, escalated_to_human=escalated,
+                    derived_money=frozenset(derived_money))
 
 
 def _fragments(text):
@@ -206,7 +242,7 @@ def _uncited_policy_promise(sentence, evidence) -> bool:
         return True
     if _FEE.search(plain):
         numbers = _money_amounts(plain)
-        if _POLICY_FEE_MATCH.search(plain) or not numbers or not numbers <= evidence.money_amounts:
+        if _POLICY_FEE_MATCH.search(plain) or not numbers or not numbers <= (evidence.money_amounts | evidence.derived_money):
             return True
     if _DEADLINE.search(plain):
         numbers = {int(n) for n in _TIME_NUMBER.findall(_FACT_ID.sub(' ', plain))}
