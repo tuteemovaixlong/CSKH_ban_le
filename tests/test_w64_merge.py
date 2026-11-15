@@ -69,6 +69,8 @@ class MergeTests(unittest.TestCase):
             stats.merge_reports([old])
 
 
+@unittest.skipUnless((runner.ROOT / 'khoa_luan' / 'eval_pack' / '06_vi_du.jsonl').exists(),
+                     'the examples file is not shipped in the image; checked on the source tree')
 class DatasetLabelTests(unittest.TestCase):
     """Shards of one dataset must carry one report label, whatever case each shard starts with."""
 
