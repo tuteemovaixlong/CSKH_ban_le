@@ -316,19 +316,20 @@ def _extract_heading_label(raw: str) -> str:
 
 
 def _heading_replacement(line: str):
+    """(replacement line, label) for a heading line, else None."""
     if _LIST_ITEM.match(line):
         return None
     stripped = line.strip()
     md = _MD_HEADING.match(stripped)
     if md:
         label = _extract_heading_label(md.group(2))
-        return f'{md.group(1)} {label}' if label else None
+        return (f'{md.group(1)} {label}', label) if label else None
     bold = _BOLD_HEADING.match(stripped)
     if bold:
         bold_text, rest = bold.group(1), bold.group(2)
         if rest.strip() in ('', ':') or _FACT_ID.search(bold_text):
             label = _extract_heading_label(bold_text)
-            return f'**{label}**' if label else None
+            return (f'**{label}**', label) if label else None
     return None
 
 
@@ -371,9 +372,10 @@ def check_final_answer(text, messages=None) -> AnswerCheck:
                 orphan_refs.extend(_CITATION.findall(sentence))
         line_text = ''.join(kept).strip() if kept else ''
         if line_details:
-            replacement = _heading_replacement(line)
-            if replacement and not _any_sentence_dropped(replacement, evidence):
-                line_text = replacement
+            heading = _heading_replacement(line)
+            # Only a line that has lost its label is replaced by it; a kept sentence after a surviving label stays.
+            if heading and heading[1] not in line_text and not _any_sentence_dropped(heading[0], evidence):
+                line_text = heading[0]
                 for entry in line_details:
                     entry['heading_label_kept'] = True
             elif _EMPTY_OR_ORDINAL.match(re.sub(r'[*#_\s]+', '', line_text)):

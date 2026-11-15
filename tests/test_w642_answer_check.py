@@ -303,6 +303,22 @@ class Row3HeadingAndNumberedLineTests(unittest.TestCase):
         self.assertIn(cit, res.text)
         self.assertEqual(res.dropped_claims, 1)
 
+    def test_heading_line_whose_label_survives_keeps_its_other_sentences(self):
+        # Found when verifying PR #115: the label replaces the line only when the kept part has lost the label.
+        cases = (
+            ('**SIM-O-1:** Đã giao ngày 05/11. Shop đổi tận nhà miễn phí ạ.', '**SIM-O-1:** Đã giao ngày 05/11.'),
+            ('### SIM-O-1: Đã giao ngày 05/11. Shop đổi tận nhà miễn phí ạ.', '### SIM-O-1: Đã giao ngày 05/11.'),
+        )
+        for line, kept in cases:
+            with self.subTest(line=line):
+                res = check_final_answer(line)
+                self.assertEqual(res.text, f'{kept}\n\n{POLICY_NOTE}')
+                self.assertEqual(res.dropped_policy, 1)
+                self.assertEqual([d['heading_label_kept'] for d in res.details], [False])
+                again = check_final_answer(res.text)
+                self.assertFalse(again.changed)
+                self.assertEqual(again.text, res.text)
+
 
 class Row4DetailsUnitTests(unittest.TestCase):
     def test_five_line_details_order_keys_and_no_leaked_text(self):

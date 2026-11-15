@@ -145,3 +145,14 @@ Cả hai lần chạy `--fake --dataset-dir evals/suites` (mặc định và `--
 
 - **Nhánh:** `phase-r1-w6-4-2`
 - **PR & CI:** PR vào `main` sẽ được mở ngay sau khi commit báo cáo và push nhánh `phase-r1-w6-4-2` (không tự merge; URL PR và trạng thái CI sẽ được báo kèm cho owner khi kết thúc lượt).
+
+## 8. Sửa sau kiểm chứng (Claude, 2026-11-15)
+
+Khi kiểm PR #115, Claude thấy một hồi quy do mục 3.3 của `03_THIET_KE_CHI_TIET.md` ("cả dòng được thay bằng dòng thay thế"): dòng tiêu đề mà nhãn vẫn còn trong phần giữ lại cũng bị thay cả dòng, nên mất câu đúng phía sau.
+
+| Dòng model viết (không có bằng chứng) | `main` `3239454` | `cd1827e` | Sau bản sửa |
+|---|---|---|---|
+| `**SIM-O-1:** Đã giao ngày 05/11. Shop đổi tận nhà miễn phí ạ.` | `**SIM-O-1:** Đã giao ngày 05/11.` | `**SIM-O-1**` | `**SIM-O-1:** Đã giao ngày 05/11.` |
+| `### SIM-O-1: Đã giao ngày 05/11. Shop đổi tận nhà miễn phí ạ.` | `### SIM-O-1: Đã giao ngày 05/11.` | `### SIM-O-1` | `### SIM-O-1: Đã giao ngày 05/11.` |
+
+Owner chọn "Claude sửa nhỏ". Bản sửa: `_heading_replacement` trả thêm nhãn; dòng chỉ được thay bằng nhãn khi nhãn **không còn** trong phần giữ lại. Thêm `test_heading_line_whose_label_survives_keeps_its_other_sentences` (FAIL 2/2 trước khi sửa). 6 ví dụ ở mục 3.3 và mọi test khác giữ nguyên kết quả: `tests.test_w642_answer_check` 25/25, cùng 4 tệp test cũ 51/51 (tổng 76/76); runner giả 250/250 ở 16k và 32k; notebook sinh lại.
