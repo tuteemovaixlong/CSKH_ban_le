@@ -151,6 +151,8 @@ def extract_canary_candidates(user_text: str = "", extra_canaries: list[str] | N
         "GEMINI_API_KEY",
         "RETAILOPS_POSTGRES_PASSWORD",
         "RETAILOPS_INFERENCE_TOKEN",
+        "RETAILOPS_CUSTOM_API_KEY",
+        "RETAILOPS_CUSTOM_API_TUNNEL_TOKEN",
     ):
         val = os.environ.get(env_key, "").strip()
         if len(val) >= 6:

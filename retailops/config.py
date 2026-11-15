@@ -173,6 +173,10 @@ class Settings:
     model_url: str = field(default='', repr=False)
     allowed_host: str = field(default='', repr=False)
     inference_token: str = field(default='', repr=False)
+    # Custom slot on an OpenAI-compatible endpoint (Qwen on Colab vLLM behind ngrok, §32 W6.4-D5a).
+    custom_api_endpoint: str = field(default='', repr=False)
+    custom_api_key: str = field(default='', repr=False)
+    custom_api_tunnel_token: str = field(default='', repr=False)
     api_enabled: bool = False
     api_key: str = field(default='', repr=False)
     api_tunnel_token: str = field(default='', repr=False)
@@ -225,6 +229,19 @@ class Settings:
                 raise ValueError(
                     'RETAILOPS_API_VISION=on requires both RETAILOPS_API_KEY and RETAILOPS_API_TUNNEL_TOKEN.'
                 )
+        if self.custom_api_endpoint:
+            parsed = urlsplit(self.custom_api_endpoint)
+            if (parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password
+                    or parsed.query or parsed.fragment or not parsed.path.endswith('/chat/completions')):
+                raise ValueError('RETAILOPS_CUSTOM_API_ENDPOINT must be an https URL ending in /chat/completions, '
+                                 'without credentials or query.')
+            token_re = r'[A-Za-z0-9_.-]{32,256}'
+            if not re.fullmatch(token_re, self.custom_api_key or '') or not re.fullmatch(
+                    token_re, self.custom_api_tunnel_token or ''):
+                raise ValueError('RETAILOPS_CUSTOM_API_ENDPOINT requires RETAILOPS_CUSTOM_API_KEY and '
+                                 'RETAILOPS_CUSTOM_API_TUNNEL_TOKEN, each a 32–256 character URL-safe value.')
+            if self.custom_api_key == self.custom_api_tunnel_token:
+                raise ValueError('RETAILOPS_CUSTOM_API_KEY and RETAILOPS_CUSTOM_API_TUNNEL_TOKEN must differ.')
         if self.customer_ref_key and len(self.customer_ref_key.strip()) < 16:
             raise ValueError('RETAILOPS_CUSTOMER_REF_KEY must be at least 16 characters.')
         if type(self.port) is not int or not 0 <= self.port <= 65535:
@@ -280,6 +297,9 @@ class Settings:
             model_url=env.get('RETAILOPS_MODEL_URL', ''),
             allowed_host=env.get('RETAILOPS_ALLOWED_HOST', ''),
             inference_token=env.get('RETAILOPS_INFERENCE_TOKEN', ''),
+            custom_api_endpoint=(env.get('RETAILOPS_CUSTOM_API_ENDPOINT') or '').strip(),
+            custom_api_key=secret_value(env, 'RETAILOPS_CUSTOM_API_KEY'),
+            custom_api_tunnel_token=secret_value(env, 'RETAILOPS_CUSTOM_API_TUNNEL_TOKEN'),
             api_enabled=flag(env, 'RETAILOPS_API_ENABLED'),
             api_key=(
                 explicit_api_key
@@ -322,5 +342,6 @@ class Settings:
         return {'version': VERSION, 'interface': self.interface, 'data_mode': self.data_mode,
                 'storage_backend': self.storage_backend,
                 'custom_enabled': self.custom_enabled, 'api_enabled': self.api_enabled,
+                'custom_backend': 'openai_compatible' if self.custom_api_endpoint else 'agent_proxy',
                 'api_vision': self.api_vision,
                 'api_daily_turn_limit': self.api_daily_turn_limit, 'agent_mode': self.agent_mode}
