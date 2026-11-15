@@ -21,10 +21,16 @@ class ShippingFeeTests(unittest.TestCase):
         for text in self.FACTS:
             with self.subTest(text=text):
                 self.assertEqual(check_final_answer(text, messages(self.ORDER)).text, text)
-                self.assertEqual(check_final_answer(text).text, POLICY_NOTE)
+                no_ev = check_final_answer(text)
+                self.assertFalse(no_ev.changed)
+                self.assertEqual(no_ev.text, text)
+                self.assertEqual(no_ev.audit, ({'line': 1, 'rule': 'fee_amount'},))
         text = 'Đơn gồm 2 đôi giày size 43, tổng 1.860.000 VNĐ đã gồm 40.000 VNĐ phí ship ạ.'
         self.assertEqual(check_final_answer(text, messages({'amount': 1860000, 'shipping_fee': 40000})).text, text)
-        self.assertEqual(check_final_answer(text).text, POLICY_NOTE)
+        no_ev = check_final_answer(text)
+        self.assertFalse(no_ev.changed)
+        self.assertEqual(no_ev.text, text)
+        self.assertEqual(no_ev.audit, ({'line': 1, 'rule': 'fee_amount'},))
 
     def test_money_formats_and_ids(self):
         for money in ('30.000', '30,000', '30000', '30k', '30 nghìn', '30 ngàn', '0,03 triệu',
@@ -38,6 +44,11 @@ class ShippingFeeTests(unittest.TestCase):
             self.assertEqual(check_final_answer(text, messages({'shipping_fee': amount})).text, text)
 
     def test_policy_logistics_missing_or_mismatched_money_still_drop(self):
+        audit_only = {
+            'Phí ship đơn này là 20.000đ ạ.',
+            'Phí ship đơn SIM-O-30000 size 43 ×2 ạ.',
+            'Phí ship 30k tổng 400000 ạ.',
+        }
         for text in ('Phí ship đơn này là 20.000đ ạ.', 'Phí ship do shop chịu hoàn toàn.',
                      'Đơn được miễn phí ship ạ.', 'Phí đổi hàng là 30.000đ ạ.',
                      'Phí ship 30k và phí trả hàng 30k ạ.', 'Shop chịu phí ship 30k ạ.',
@@ -46,7 +57,13 @@ class ShippingFeeTests(unittest.TestCase):
                      'Phí ship 30k và giao tận nhà ạ.', 'Phí ship đơn SIM-O-30000 size 43 ×2 ạ.',
                      'Phí ship 30k tổng 400000 ạ.'):
             with self.subTest(text=text):
-                self.assertEqual(check_final_answer(text, messages(self.ORDER)).text, POLICY_NOTE)
+                res = check_final_answer(text, messages(self.ORDER))
+                if text in audit_only:
+                    self.assertFalse(res.changed)
+                    self.assertEqual(res.text, text)
+                    self.assertEqual(res.audit, ({'line': 1, 'rule': 'fee_amount'},))
+                else:
+                    self.assertEqual(res.text, POLICY_NOTE)
 
     def test_money_evidence_walks_all_tool_results_but_rejects_bool_and_non_int(self):
         payload = {'orders': [{'shipping_fee': 30000, 'amount': 380000},
@@ -58,7 +75,10 @@ class ShippingFeeTests(unittest.TestCase):
                 with self.subTest(key=key, value=value):
                     self.assertFalse(tool_evidence(messages({key: value})).money_amounts)
         for role in ('user', 'assistant'):
-            self.assertEqual(check_final_answer(self.FACTS[0], messages(self.ORDER, role)).text, POLICY_NOTE)
+            res = check_final_answer(self.FACTS[0], messages(self.ORDER, role))
+            self.assertFalse(res.changed)
+            self.assertEqual(res.text, self.FACTS[0])
+            self.assertEqual(res.audit, ({'line': 1, 'rule': 'fee_amount'},))
         combined = messages({'shipping_fee': 30000}) + messages({'amount': 380000})
         self.assertEqual(check_final_answer(self.FACTS[0], combined).text, self.FACTS[0])
 
@@ -151,25 +171,37 @@ class DeadlineProductNumbersTests(unittest.TestCase):
                 'within_return_window': False, 'within_size_exchange_window': False, 'within_warranty': True}
 
     def test_only_numbers_before_time_units_are_deadlines(self):
-        for text in (
-            'Hiện đơn đã hết thời hạn trả hàng và đổi size, nhưng vẫn còn trong thời hạn bảo hành (Bộ Nồi Inox 3 Đáy Cao Cấp bảo hành 365 ngày) ạ.',
-            'Giày size 43 ×2 còn thời hạn bảo hành 365 ngày ạ.',
-            'Giày size 43 ×2 còn trong thời hạn trả hàng ạ.',
+        for text, rule in (
+            ('Hiện đơn đã hết thời hạn trả hàng và đổi size, nhưng vẫn còn trong thời hạn bảo hành (Bộ Nồi Inox 3 Đáy Cao Cấp bảo hành 365 ngày) ạ.', 'deadline_number'),
+            ('Giày size 43 ×2 còn thời hạn bảo hành 365 ngày ạ.', 'deadline_number'),
+            ('Giày size 43 ×2 còn trong thời hạn trả hàng ạ.', 'deadline_no_fact'),
         ):
             with self.subTest(text=text):
                 self.assertEqual(check_final_answer(text, messages(self.EVIDENCE)).text, text)
-                self.assertEqual(check_final_answer(text).text, POLICY_NOTE)
+                no_ev = check_final_answer(text)
+                self.assertFalse(no_ev.changed)
+                self.assertEqual(no_ev.text, text)
+                self.assertEqual(no_ev.audit, ({'line': 1, 'rule': rule},))
 
     def test_unknown_time_numbers_and_all_time_units(self):
         for text in ('Bộ Nồi Inox 3 Đáy bảo hành 30 ngày ạ.', 'Shop đổi trong 30 ngày ạ.'):
-            self.assertEqual(check_final_answer(text, messages(self.EVIDENCE)).text, POLICY_NOTE)
+            res = check_final_answer(text, messages(self.EVIDENCE))
+            self.assertFalse(res.changed)
+            self.assertEqual(res.text, text)
+            self.assertEqual(res.audit, ({'line': 1, 'rule': 'deadline_number'},))
         for unit in ('ngày', 'tuần', 'tháng', 'năm', 'giờ'):
             text = f'Shop đổi size 43 trong 7 {unit} ạ.'
             with self.subTest(unit=unit):
                 self.assertEqual(check_final_answer(text, messages(self.EVIDENCE)).text, text)
-                self.assertEqual(check_final_answer(text, messages({'return_window_days': 15})).text, POLICY_NOTE)
-        self.assertEqual(check_final_answer('Shop đổi trong 30 ngày ạ.', messages({
-            'return_window_days': 7, 'size_exchange_window_days': 15, 'warranty_window_days': 90})).text, POLICY_NOTE)
+                mismatch = check_final_answer(text, messages({'return_window_days': 15}))
+                self.assertFalse(mismatch.changed)
+                self.assertEqual(mismatch.text, text)
+                self.assertEqual(mismatch.audit, ({'line': 1, 'rule': 'deadline_number'},))
+        res_30 = check_final_answer('Shop đổi trong 30 ngày ạ.', messages({
+            'return_window_days': 7, 'size_exchange_window_days': 15, 'warranty_window_days': 90}))
+        self.assertFalse(res_30.changed)
+        self.assertEqual(res_30.text, 'Shop đổi trong 30 ngày ạ.')
+        self.assertEqual(res_30.audit, ({'line': 1, 'rule': 'deadline_number'},))
 
 
 if __name__ == '__main__':

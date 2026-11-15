@@ -1,18 +1,24 @@
-"""The final answer, checked in code before it reaches the customer (W3.2-D3, W3.2-D11).
+"""The final answer, checked in code before it reaches the customer (W3.2-D3, W3.2-D11, W6.4-D17).
 
-The model writes the answer; this module only removes kinds of sentence that the evidence of the turn
-does not support, and says so once:
+The model writes the answer; this module blocks four unsupported sentence kinds (removing them and appending a
+once-per-kind note) and audits three numeric/time rule kinds without removing kept sentences or adding notes:
 
-* a promise about the shop's policy on fees, pick-up/delivery or deadlines (an exchange "miễn phí", "tận nhà",
-  "trong 7 ngày") that carries no [KB:...] citation from the policy search of this turn;
-* a claim that the shop or the system has already cancelled, exchanged, returned or refunded something, or
-  has already sent a request, when no tool of this turn shows it. The chat never changes an order: a request
-  exists only after the customer picks a reason and presses the separate confirmation button.
-* a claim that a conversation or request was transferred to human support without a successful tool result.
+Blocking rules (drop sentence and append note):
+* `handoff_claim`: a claim that a conversation or request was transferred to human support without tool evidence.
+* `done_claim`: a claim that the shop or the system has already cancelled, exchanged, returned or refunded
+  something, or has already sent a request, when no tool of this turn shows it. The chat never changes an order:
+  a request exists only after the customer picks a reason and presses the separate confirmation button.
+* `logistics`: a pick-up or home-delivery policy promise without a `[KB:...]` citation from this turn.
+* `policy_fee`: a fee-waiver/return-fee/shop-covered-shipping promise without a `[KB:...]` citation (excluding
+  statements describing a zero-fee order itself when `shipping_fee == 0` and no return context is present).
+
+Audit-only rules (kept verbatim, recorded in `AnswerCheck.audit` with `{line, rule}`):
+* `fee_amount`, `deadline_number`, `deadline_no_fact`: fee amounts or time/deadline claims without matching structured
+  tool evidence or a `[KB:...]` citation.
 
 The rules read the wording of the answer, never the customer's message, and name no situation: they look for
 what a sentence promises and for what the tools of the turn show. Questions, hedges ("chưa có thông tin") and
-sentences that quote a structured tool fact (warranty days, a cancelled order) are left alone.
+sentences that quote a structured tool fact (warranty days, a cancelled order, exact fees/deadlines) are left alone.
 """
 import json
 import math
@@ -32,11 +38,17 @@ _CITATION = re.compile(r'\[KB:[^\]\r\n]*\]', re.IGNORECASE)
 _CITATION_ONLY = re.compile(r'^\s*(?:\[KB:[^\]\r\n]*\]\s*)+[.!?…]*\s*$', re.IGNORECASE)
 _SPLIT = re.compile(r'(?<=[.!?…])(\s+)')
 
+BLOCKING_RULES = ('handoff_claim', 'done_claim', 'logistics', 'policy_fee')
+AUDIT_RULES = ('fee_amount', 'deadline_number', 'deadline_no_fact')
+
 _ORDER_FEE = r'phí (?:ship|vận chuyển|giao)'
 _POLICY_FEE = (
     r'miễn phí|miễn cước|free ?ship|phí (?:đổi|trả|hoàn)|'
     r'không (?:mất|tốn|tính|thu|phải trả) (?:thêm )?(?:phí|cước)|không mất tiền|'
-    r'(?:chịu|trả|hỗ trợ) (?:toàn bộ )?(?:phí|cước)')
+    r'(?:chịu|trả|hỗ trợ) (?:toàn bộ )?(?:phí|cước)|'
+    r'phí (?:ship|vận chuyển|giao(?: hàng)?)[^.!?\n]{0,20}?(?:do\s+)?(?:shop|bên em|cửa hàng|chúng em)\s+(?:chịu|hỗ trợ|trả|bao)')
+_FREE_SHIPPING = re.compile(r'miễn phí (?:ship|vận chuyển|giao hàng)|free ?ship|miễn cước(?: ship| vận chuyển)?')
+_RETURN_CONTEXT = re.compile(r'đổi|trả|hoàn|bảo hành')
 _FEE = re.compile(_ORDER_FEE + '|' + _POLICY_FEE)
 _POLICY_FEE_MATCH = re.compile(_POLICY_FEE)
 _LOGISTICS = re.compile(
@@ -90,6 +102,7 @@ _BOLD_HEADING = re.compile(r'^\*\*(.+?)\*\*(.*)$')
 _LABEL_SEPARATORS = (' — ', ' – ', ' - ', ': ', ' | ')
 _EMPTY_OR_ORDINAL = re.compile(r'^(?:\d+[.)])?$')
 _TIME_NUMBER = re.compile(r'\b(\d+)\s*(?:ngày|tuần|tháng|năm|giờ)\b')
+_NOT_MONEY = re.compile(r'\b\d{4}-\d{1,2}-\d{1,2}\b|\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b|\b\d{1,2}:\d{2}(?::\d{2})?\b|\d{2,4}\*{2,}\d{2,4}')
 _MONEY = re.compile(r'(?<!\w)(\d+(?:[.,]\d+)*)(?:\s*(triệu|nghìn|ngàn|k|vnđ|vnd|đ|₫)(?!\w))?')
 _THOUSANDS = re.compile(r'\d{1,3}(?:[.,]\d{3})+')
 _MONEY_FIELDS = ('shipping_fee', 'amount', 'refunded_total', 'pending_total', 'unit_price', 'subtotal')
@@ -111,6 +124,7 @@ class Evidence:
     escalated_to_human: bool = False
     derived_money: frozenset = field(default_factory=frozenset)
     derived_time: frozenset = field(default_factory=frozenset)
+    zero_shipping_fee: bool = False
 
 
 @dataclass(frozen=True)
@@ -119,6 +133,7 @@ class AnswerCheck:
     dropped_policy: int = 0
     dropped_claims: int = 0
     details: tuple = ()
+    audit: tuple = ()
 
     @property
     def changed(self) -> bool:
@@ -155,10 +170,10 @@ def tool_evidence(messages) -> Evidence:
     """What the tool results of this turn establish, read from their JSON."""
     cancelled, refunded, warranty, deadlines, money = False, False, set(), set(), set()
     derived_money, derived_time, order_records = set(), set(), {}
-    has_window, has_delivery_date, escalated = False, False, False
+    has_window, has_delivery_date, escalated, zero_shipping_fee = False, False, False, False
 
     def walk(value):
-        nonlocal cancelled, refunded, has_window, has_delivery_date, escalated
+        nonlocal cancelled, refunded, has_window, has_delivery_date, escalated, zero_shipping_fee
         if isinstance(value, dict):
             if value.get('status') == 'cancelled' and 'id' in value:
                 cancelled = True
@@ -174,6 +189,7 @@ def tool_evidence(messages) -> Evidence:
             for key in _MONEY_FIELDS:
                 if type(value.get(key)) is int:
                     money.add(value[key])
+            zero_shipping_fee |= type(value.get('shipping_fee')) is int and value['shipping_fee'] == 0
             items_sub = _items_subtotal(value)
             if items_sub is not None:
                 derived_money.add(items_sub)
@@ -225,7 +241,8 @@ def tool_evidence(messages) -> Evidence:
     return Evidence(cancelled=cancelled, refunded=refunded, money_amounts=frozenset(money),
                     warranty_days=frozenset(warranty), deadline_days=frozenset(deadlines),
                     has_window=has_window, has_delivery_date=has_delivery_date, escalated_to_human=escalated,
-                    derived_money=frozenset(derived_money), derived_time=frozenset(derived_time))
+                    derived_money=frozenset(derived_money), derived_time=frozenset(derived_time),
+                    zero_shipping_fee=zero_shipping_fee)
 
 
 def _fragments(text):
@@ -243,9 +260,9 @@ def _fragments(text):
 
 
 def _money_amounts(plain):
-    """Money only: ignore identifiers and bare small product/size/quantity numbers."""
+    """Money only: ignore identifiers, dates/times/masked phones, and bare small product/size/quantity numbers."""
     amounts = set()
-    for match in _MONEY.finditer(_FACT_ID.sub(' ', plain)):
+    for match in _MONEY.finditer(_NOT_MONEY.sub(' ', _FACT_ID.sub(' ', plain))):
         number, unit = match.groups()
         grouped = bool(_THOUSANDS.fullmatch(number))
         if grouped:
@@ -272,8 +289,16 @@ def _policy_rule(sentence, evidence):
     if _FEE.search(plain):
         numbers = _money_amounts(plain)
         if _POLICY_FEE_MATCH.search(plain):
-            return 'policy_fee'
-        if not numbers or not numbers <= (evidence.money_amounts | evidence.derived_money):
+            own_free_shipping = (
+                evidence.zero_shipping_fee
+                and not _RETURN_CONTEXT.search(plain)
+                and not _POLICY_FEE_MATCH.search(_FREE_SHIPPING.sub(' ', plain))
+            )
+            if not own_free_shipping:
+                return 'policy_fee'
+            if numbers and not numbers <= (evidence.money_amounts | evidence.derived_money):
+                return 'fee_amount'
+        elif not numbers or not numbers <= (evidence.money_amounts | evidence.derived_money):
             return 'fee_amount'
     if _DEADLINE.search(plain):
         numbers = {int(n) for n in _TIME_NUMBER.findall(_FACT_ID.sub(' ', plain))}
@@ -337,7 +362,7 @@ def _sentence_drop_info(sentence, evidence):
     if _unfounded_handoff(sentence, evidence):
         return ('handoff', 'handoff_claim')
     policy_rule = _policy_rule(sentence, evidence)
-    if policy_rule:
+    if policy_rule in BLOCKING_RULES:
         return ('policy', policy_rule)
     if _unfounded_claim(sentence, evidence):
         return ('claim', 'done_claim')
@@ -349,17 +374,20 @@ def _any_sentence_dropped(text: str, evidence) -> bool:
 
 
 def check_final_answer(text, messages=None) -> AnswerCheck:
-    """`text` without the sentences the evidence of the turn does not support, plus one note per kind removed."""
+    """`text` without sentences blocked by the evidence of the turn, plus one note per blocking kind removed."""
     if not isinstance(text, str) or not text.strip():
         return AnswerCheck(text or '')
     evidence = tool_evidence(messages)
-    kept_lines, dropped_policy, dropped_claims, dropped_handoffs, orphan_refs, details = [], 0, 0, 0, [], []
+    kept_lines, dropped_policy, dropped_claims, dropped_handoffs, orphan_refs, details, audit = [], 0, 0, 0, [], [], []
     for line_no, line in enumerate(unicodedata.normalize('NFC', text).split('\n'), start=1):
         kept, line_details = [], []
         for sentence, separator in _fragments(line):
             drop = _sentence_drop_info(sentence, evidence)
             if not drop:
                 kept.append(sentence + separator)
+                audit_rule = _policy_rule(sentence, evidence)
+                if audit_rule in AUDIT_RULES:
+                    audit.append({'line': line_no, 'rule': audit_rule})
                 continue
             kind, rule = drop
             line_details.append({'line': line_no, 'kind': kind, 'rule': rule, 'heading_label_kept': False})
@@ -383,11 +411,11 @@ def check_final_answer(text, messages=None) -> AnswerCheck:
             details.extend(line_details)
         kept_lines.append(line_text)
     if not (dropped_policy or dropped_claims):
-        return AnswerCheck(text)
+        return AnswerCheck(text, audit=tuple(audit))
     body = '\n'.join(kept_lines)
     body = re.sub(r'\n{3,}', '\n\n', body).strip()
     notes = [note for note, count in ((POLICY_NOTE, dropped_policy), (CLAIM_NOTE, dropped_claims - dropped_handoffs),
                                     (HANDOFF_NOTE, dropped_handoffs)) if count]
     if orphan_refs:
         notes[-1] += ' ' + ' '.join(dict.fromkeys(orphan_refs))  # a removed sentence must not strand its citation
-    return AnswerCheck('\n\n'.join(part for part in (body, *notes) if part), dropped_policy, dropped_claims, tuple(details))
+    return AnswerCheck('\n\n'.join(part for part in (body, *notes) if part), dropped_policy, dropped_claims, tuple(details), tuple(audit))
