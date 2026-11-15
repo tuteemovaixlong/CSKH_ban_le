@@ -67,3 +67,24 @@ class MergeTests(unittest.TestCase):
         del old['provenance']
         with self.assertRaisesRegex(ValueError, 'provenance'):
             stats.merge_reports([old])
+
+
+class DatasetLabelTests(unittest.TestCase):
+    """Shards of one dataset must carry one report label, whatever case each shard starts with."""
+
+    def test_shards_of_a_mixed_dataset_share_one_label_and_merge(self):
+        dataset = runner.ROOT / 'khoa_luan' / 'eval_pack' / '06_vi_du.jsonl'
+        cases = runner.load_dataset(str(dataset))
+        actor = next(s['id'] for s in cases if 'actor' in s)
+        plain = next(s['id'] for s in cases if 'actor' not in s)
+        reports = []
+        with tempfile.TemporaryDirectory() as td:
+            for i, selected in enumerate(([actor], [plain], [plain, actor])):
+                out = Path(td) / f'{i}.json'
+                code = runner.main(['--fake', '--dataset', str(dataset), '--only', *selected, '--out', str(out)],
+                                   out=io.StringIO())
+                self.assertEqual(code, 0)
+                reports.append(json.loads(out.read_text(encoding='utf-8')))
+        self.assertEqual({r['report'] for r in reports}, {reports[2]['report']})
+        merged = stats.merge_reports(reports[:2])
+        self.assertEqual(merged['summary']['cases'], 2)

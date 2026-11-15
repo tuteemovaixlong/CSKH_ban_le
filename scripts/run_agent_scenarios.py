@@ -1248,6 +1248,8 @@ def main(argv=None, *, out=None):
     os.environ.update(environment)
     try:
         report = run_suite(scenarios, make_gateway, mode, progress=progress, repeat=args.repeat, knowledge=args.knowledge)
+        # Label the dataset, not the first selected case, so every shard of one dataset merges under one label.
+        report['report'] = 'agent_scenarios_w4' if is_w4 else 'agent_scenarios_w3_2'
     finally:
         for k, v in previous.items():
             if v is None:
