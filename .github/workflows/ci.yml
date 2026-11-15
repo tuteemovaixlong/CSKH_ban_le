@@ -22,6 +22,7 @@ jobs:
           python-version: '3.13'
       - name: Verify Colab Python 3.13 binary dependency compatibility
         run: |
+          python -c "from pathlib import Path; compile(Path('notebooks/colab_eval_w64.py').read_text(encoding='utf-8'), 'colab_eval_w64.py', 'exec')"
           python scripts/build_agent_notebook.py --check
           python - <<'PY'
           import re

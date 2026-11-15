@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Case bootstrap and paired exact McNemar statistics, using only Python's standard library."""
 import argparse
+import copy
 import json
 import math
 import random
@@ -121,10 +122,56 @@ def compare(left, right, cases=None):
     return result
 
 
+def merge_reports(reports):
+    """Reject incompatible inputs before recomputing every aggregate from case/run records."""
+    if not reports:
+        raise ValueError('merge requires at least one report')
+    required = {'git_sha', 'model', 'vllm_version', 'sampling', 'context_tokens',
+                'thinking', 'agent_mode', 'knowledge'}
+    def provenance(report):
+        value = report.get('provenance')
+        if not isinstance(value, dict) or not required <= value.keys():
+            raise ValueError('missing or incomplete provenance')
+        return {k: v for k, v in value.items() if k not in ('timestamp', 'started_at', 'finished_at', 'run_at')}
+    first = reports[0]
+    identity = provenance(first)
+    if not first.get('datasets') or not first.get('config'):
+        raise ValueError('missing dataset SHA-256 or runner config')
+    seen, records = set(), []
+    for report in reports:
+        if provenance(report) != identity:
+            raise ValueError('different provenance across shards')
+        if report.get('datasets') != first['datasets']:
+            raise ValueError('different dataset SHA-256 digests across shards')
+        if any(report.get(k) != first.get(k) for k in ('config', 'mode', 'report', 'model')):
+            raise ValueError('different runner config across shards')
+        for row in report['scenarios']:
+            pair = (row['id'], row.get('run'))
+            if not isinstance(pair[0], str) or type(pair[1]) is not int or pair[1] < 1:
+                raise ValueError('invalid case/run in shard')
+            if pair in seen:
+                raise ValueError(f'duplicate case/run pair: {pair}')
+            seen.add(pair)
+            records.append(copy.deepcopy(row))
+    # Importable both from the repo and as `python scripts/eval_stats.py`.
+    try:
+        from scripts.run_agent_scenarios import report_from_records
+    except ModuleNotFoundError:
+        from run_agent_scenarios import report_from_records
+    merged = copy.deepcopy(first)
+    merged.update(report_from_records(sorted(records, key=lambda r: (r['id'], r['run'])), first['mode'], first['report']))
+    merged['dataset']['scenarios'] = len({r['id'] for r in records})
+    merged['merged_shards'] = len(reports)
+    return merged
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('summary').add_argument('reports', nargs='+')
+    merge_parser = commands.add_parser('merge')
+    merge_parser.add_argument('out', type=Path)
+    merge_parser.add_argument('reports', nargs='+')
     compare_parser = commands.add_parser('compare')
     compare_parser.add_argument('a')
     compare_parser.add_argument('b')
@@ -138,6 +185,15 @@ def main(argv=None):
     try:
         if args.command == 'subset':
             print('\n'.join(subset(args.directory, args.size, args.seed)))
+            return 0
+        if args.command == 'merge':
+            merged = merge_reports([read(path) for path in args.reports])
+            # Replace atomically: an interrupted write is never mistaken for a completed report.
+            target = args.out.with_name(args.out.name + '.tmp')
+            with target.open('w', encoding='utf-8', newline='\n') as stream:
+                stream.write(json.dumps(merged, ensure_ascii=False, indent=2) + '\n')
+            target.replace(args.out)
+            print(f'Merged {len(args.reports)} shards into {args.out}')
             return 0
         output = ({path: summary(read(path)) for path in args.reports} if args.command == 'summary'
                   else compare(read(args.a), read(args.b), cases=read_case_ids(args.cases) if args.cases else None))

@@ -147,6 +147,34 @@ def read_provider_secret(name, environ=None):
     return direct
 
 
+SAMPLING_FIELDS = ('temperature', 'top_p', 'top_k', 'presence_penalty', 'max_tokens')
+
+
+def model_sampling(environ=None):
+    """OpenAI-compatible overrides; absence preserves the production payload exactly."""
+    env = os.environ if environ is None else environ
+    result = {'temperature': 0.2, 'max_tokens': 2048}
+    for field in SAMPLING_FIELDS:
+        name = 'RETAILOPS_MODEL_' + field.upper()
+        raw = env.get(name, '').strip()
+        if not raw:
+            continue
+        integer = field in ('top_k', 'max_tokens')
+        bounds = {'temperature': (0, 2), 'top_p': (0, 1), 'presence_penalty': (-2, 2)}
+        description = 'a positive integer' if integer else str(bounds[field])
+        try:
+            value = int(raw) if integer else float(raw)
+            valid = value > 0 if integer else math.isfinite(value) and bounds[field][0] <= value <= bounds[field][1]
+            if field == 'top_p':
+                valid = valid and value > 0
+            if not valid:
+                raise ValueError()
+        except (ValueError, OverflowError):
+            raise ValueError(f'{name} must be {description}' + (' (greater than 0)' if field == 'top_p' else '')) from None
+        result[field] = value
+    return result
+
+
 class OpenRouterAgent:
     ENDPOINT = OPENROUTER_ENDPOINT
 
@@ -513,6 +541,8 @@ class OpenRouterAgent:
                        allowed_tools=(None if system_override is not None else allowed_tools),
                        extra_tool_names=extra_names),
                    'stream': False, 'max_tokens': 2048, 'temperature': 0.2}
+        if not self.is_google:
+            payload.update(model_sampling())
         thinking = os.environ.get('RETAILOPS_MODEL_ENABLE_THINKING', '').strip().lower()
         if thinking:
             if thinking not in ('true', 'false'):

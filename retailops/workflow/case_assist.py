@@ -388,6 +388,7 @@ class CaseAssistBoundTools:
             "product_id": clean.get("product_id") or (product["id"] if product else None),
             "name": clean.get("name"),
             "variant": clean.get("variant"),
+            "items": det.get("items") or [],
             "amount": clean.get("amount"),
             "currency": "VND",
             "status": status,
