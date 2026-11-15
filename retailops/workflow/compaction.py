@@ -20,23 +20,48 @@ TOOL_CONTENT_BUDGET = _budget(12000, 1600)   # every tool result of one turn tog
 MIN_RESULT_CHARS = _budget(800, 200)         # a late result's floor
 HISTORY_CHAR_BUDGET = _budget(6000, 1000)     # earlier turns together
 HISTORY_MESSAGE_CHARS = _budget(1500, 300)   # one earlier message
-_STEPS = ((240, 10), (160, 6), (120, 4), (80, 2))  # (string cap, list cap) from gentle to harsh
+_STRING_CAPS = (240, 160, 120, 80)
+_LIST_CAPS = (10, 6, 4, 2)
+LOW_VALUE_KEYS = ('description', 'image_url', 'images', 'note', 'notes', 'raw', 'metadata', 'as_of', 'source')
 
 
 def dump(value) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(',', ':'))
 
 
-def _shrink(value, string_cap, list_cap):
+def _shrink_strings(value, string_cap):
     if isinstance(value, str):
         return value[:string_cap] + '…' if len(value) > string_cap else value
     if isinstance(value, list):
-        kept = [_shrink(v, string_cap, list_cap) for v in value[:list_cap]]
+        return [_shrink_strings(v, string_cap) for v in value]
+    if isinstance(value, dict):
+        return {k: _shrink_strings(v, string_cap) for k, v in value.items()}
+    return value
+
+
+def _strip_low_value_keys(value, depth=1):
+    if isinstance(value, list):
+        return [_strip_low_value_keys(v, depth + 1) for v in value]
+    if isinstance(value, dict):
+        # Preserve top-level keys (such as list_orders pagination `note`); only strip at depth >= 2.
+        return {
+            k: _strip_low_value_keys(v, depth + 1)
+            for k, v in value.items()
+            if depth < 2 or k not in LOW_VALUE_KEYS
+        }
+    return value
+
+
+def _cap_lists(value, list_cap):
+    if isinstance(value, list):
+        kept = [_cap_lists(v, list_cap) for v in value[:list_cap]]
         if len(value) > list_cap:
-            kept.append(f'…(+{len(value) - list_cap} more)')
+            kept.append(
+                f'…(còn {len(value) - list_cap} mục bị ẩn do giới hạn hiển thị; hỏi hẹp hơn hoặc dùng tool xem chi tiết)'
+            )
         return kept
     if isinstance(value, dict):
-        return {k: _shrink(v, string_cap, list_cap) for k, v in value.items()}
+        return {k: _cap_lists(v, list_cap) for k, v in value.items()}
     return value
 
 
@@ -46,11 +71,28 @@ def compact_tool_result(result, limit=None) -> str:
     text = dump(result)
     if len(text) <= limit:
         return text
-    for string_cap, list_cap in _STEPS:
-        shrunk = _shrink(result, string_cap, list_cap)
+    # Phase A: shrink long strings while keeping all keys and list elements intact.
+    shrunk = result
+    for string_cap in _STRING_CAPS:
+        shrunk = _shrink_strings(result, string_cap)
         if isinstance(shrunk, dict):
             shrunk['_truncated'] = True
         text = dump(shrunk)
+        if len(text) <= limit:
+            return text
+    # Phase B: drop low-value metadata at depth >= 2 while still keeping all list elements.
+    shrunk = _strip_low_value_keys(shrunk, depth=1)
+    if isinstance(shrunk, dict):
+        shrunk['_truncated'] = True
+    text = dump(shrunk)
+    if len(text) <= limit:
+        return text
+    # Phase C: cut list tails only when string shrinking and metadata stripping are insufficient.
+    for list_cap in _LIST_CAPS:
+        capped = _cap_lists(shrunk, list_cap)
+        if isinstance(capped, dict):
+            capped['_truncated'] = True
+        text = dump(capped)
         if len(text) <= limit:
             return text
     preview = dump(result)[: max(0, limit - 160)]

@@ -323,7 +323,10 @@ class CompactionTests(unittest.TestCase):
         data = json.loads(text)
         self.assertLessEqual(len(text), 1500)
         self.assertEqual(data['variants'][0]['label'], 'Biến thể 0')
-        self.assertRegex(data['variants'][-1], r'^…\(\+\d+ more\)$')
+        self.assertRegex(
+            data['variants'][-1],
+            r'^…\(còn \d+ mục bị ẩn do giới hạn hiển thị; hỏi hẹp hơn hoặc dùng tool xem chi tiết\)$',
+        )
 
     def test_the_limit_for_a_late_result_never_drops_below_the_floor(self):
         self.assertEqual(result_limit(0), TOOL_RESULT_MAX_CHARS)
