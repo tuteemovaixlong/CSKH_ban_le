@@ -15,6 +15,7 @@ what a sentence promises and for what the tools of the turn show. Questions, hed
 sentences that quote a structured tool fact (warranty days, a cancelled order) are left alone.
 """
 import json
+import math
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -88,6 +89,7 @@ _MONEY = re.compile(r'(?<!\w)(\d+(?:[.,]\d+)*)(?:\s*(triệu|nghìn|ngàn|k|vnđ
 _THOUSANDS = re.compile(r'\d{1,3}(?:[.,]\d{3})+')
 _MONEY_FIELDS = ('shipping_fee', 'amount', 'refunded_total', 'pending_total', 'unit_price', 'subtotal')
 _DAY_FIELDS = ('return_window_days', 'size_exchange_window_days', 'warranty_window_days', 'warranty_days')
+_DERIVED_TIME_WINDOWS = ('return_window_days', 'size_exchange_window_days', 'warranty_window_days')
 _WINDOW_FIELDS = ('within_return_window', 'within_size_exchange_window', 'within_warranty')
 _DELIVERY_FIELDS = ('promised_delivery_by', 'estimated_delivery_at', 'latest_estimated_delivery_at')
 
@@ -103,6 +105,7 @@ class Evidence:
     has_delivery_date: bool = False
     escalated_to_human: bool = False
     derived_money: frozenset = field(default_factory=frozenset)
+    derived_time: frozenset = field(default_factory=frozenset)
 
 
 @dataclass(frozen=True)
@@ -138,10 +141,14 @@ def _order_record_code(value: dict):
     return None
 
 
+def _is_finite_number(value) -> bool:
+    return type(value) is int or (type(value) is float and math.isfinite(value))
+
+
 def tool_evidence(messages) -> Evidence:
     """What the tool results of this turn establish, read from their JSON."""
     cancelled, refunded, warranty, deadlines, money = False, False, set(), set(), set()
-    derived_money, order_records = set(), {}
+    derived_money, derived_time, order_records = set(), set(), {}
     has_window, has_delivery_date, escalated = False, False, False
 
     def walk(value):
@@ -173,6 +180,22 @@ def tool_evidence(messages) -> Evidence:
             for key in _DAY_FIELDS:
                 if type(value.get(key)) is int:
                     deadlines.add(value[key])
+            late_hours = value.get('late_by_hours')
+            if _is_finite_number(late_hours) and late_hours > 0:
+                derived_time.update((
+                    math.floor(late_hours),
+                    math.ceil(late_hours),
+                    math.floor(late_hours / 24),
+                    math.ceil(late_hours / 24),
+                ))
+            since_delivery = value.get('days_since_delivery')
+            if _is_finite_number(since_delivery) and since_delivery >= 0:
+                derived_time.update((math.floor(since_delivery), math.ceil(since_delivery)))
+                for key in _DERIVED_TIME_WINDOWS:
+                    window = value.get(key)
+                    if type(window) is int and window >= since_delivery:
+                        remaining = window - since_delivery
+                        derived_time.update((math.floor(remaining), math.ceil(remaining)))
             days = value.get('warranty_days')
             if isinstance(days, int) and not isinstance(days, bool):
                 warranty.add(days)
@@ -196,7 +219,7 @@ def tool_evidence(messages) -> Evidence:
     return Evidence(cancelled=cancelled, refunded=refunded, money_amounts=frozenset(money),
                     warranty_days=frozenset(warranty), deadline_days=frozenset(deadlines),
                     has_window=has_window, has_delivery_date=has_delivery_date, escalated_to_human=escalated,
-                    derived_money=frozenset(derived_money))
+                    derived_money=frozenset(derived_money), derived_time=frozenset(derived_time))
 
 
 def _fragments(text):
@@ -247,7 +270,7 @@ def _uncited_policy_promise(sentence, evidence) -> bool:
     if _DEADLINE.search(plain):
         numbers = {int(n) for n in _TIME_NUMBER.findall(_FACT_ID.sub(' ', plain))}
         if numbers:
-            return not numbers <= evidence.deadline_days
+            return not numbers <= (evidence.deadline_days | evidence.derived_time)
         return not (evidence.has_window or evidence.has_delivery_date)
     return False
 

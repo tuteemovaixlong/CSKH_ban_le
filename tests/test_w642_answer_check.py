@@ -159,5 +159,65 @@ class Row1MoneyEvidenceTests(unittest.TestCase):
         self.assertEqual(tool_evidence(messages(payload, 'list_orders')).money_amounts, frozenset({30000, 380000, 500, 1000}))
 
 
+class Row2TimeEvidenceTests(unittest.TestCase):
+    def test_order_91_derived_time_matches_exact_set(self):
+        self.assertEqual(
+            tool_evidence(messages(ORDER_91)).derived_time,
+            frozenset({72, 3, 4, 5, 2, 10, 11, 85, 86}),
+        )
+
+    def test_derived_time_sentences_kept_with_order_91_and_dropped_without_evidence(self):
+        ev = messages(ORDER_91)
+        for line in (
+            '**SIM-O-00091 — trễ hạn 72 giờ, sắp hết hạn trả hàng**',
+            '- Hạn đổi size còn khoảng 10 ngày.',
+            '- Đã giao được 4 ngày, trong hạn trả 7 ngày.',
+            '- Đơn giao hàng trễ, quá hạn 3 ngày.',
+        ):
+            with self.subTest(line=line):
+                res = check_final_answer(line, ev)
+                self.assertFalse(res.changed)
+                self.assertEqual(res.text, line)
+                no_ev = check_final_answer(line)
+                self.assertEqual(no_ev.text, POLICY_NOTE)
+                self.assertEqual(no_ev.dropped_policy, 1)
+
+    def test_unknown_or_policy_time_numbers_still_dropped_with_order_91(self):
+        ev = messages(ORDER_91)
+        for line in (
+            '- Hạn đổi size còn 12 ngày.',
+            'Shop cho đổi trong 30 ngày ạ.',
+        ):
+            with self.subTest(line=line):
+                res = check_final_answer(line, ev)
+                self.assertEqual(res.text, POLICY_NOTE)
+                self.assertEqual(res.dropped_policy, 1)
+
+    def test_invalid_or_zero_late_by_hours_and_days_add_no_time_numbers(self):
+        for bad_late in (0.0, 0, -5.0, None, '72', True, float('nan'), float('inf')):
+            with self.subTest(bad_late=bad_late):
+                self.assertEqual(
+                    tool_evidence(messages({'eligibility': {'late_by_hours': bad_late}})).derived_time,
+                    frozenset(),
+                )
+        for bad_days in (-1.0, None, '4', True, float('nan'), float('inf')):
+            with self.subTest(bad_days=bad_days):
+                self.assertEqual(
+                    tool_evidence(messages({'eligibility': {'days_since_delivery': bad_days, 'return_window_days': 7}})).derived_time,
+                    frozenset(),
+                )
+
+    def test_days_since_delivery_20_with_windows_7_15_90(self):
+        payload = {
+            'eligibility': {
+                'days_since_delivery': 20.0,
+                'return_window_days': 7,
+                'size_exchange_window_days': 15,
+                'warranty_window_days': 90,
+            }
+        }
+        self.assertEqual(tool_evidence(messages(payload)).derived_time, frozenset({20, 70}))
+
+
 if __name__ == '__main__':
     unittest.main()
