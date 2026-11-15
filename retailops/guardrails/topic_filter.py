@@ -616,30 +616,48 @@ def enforce_final_answer_grounding(
                 lower_reply = out_text.lower()
 
     # 4. Prevent false claims of completed order cancellation/mutation during chat
-    false_completion_patterns = (
+    from retailops.workflow.answer_check import tool_evidence
+
+    cancel_patterns = (
         r"\bđã\s+(?:được\s+)?hủy\s+(?:đơn(?:\s+hàng)?\s+(?:O-\d+\s+)?)?thành\s+công\b",
         r"\bđơn\s+hàng\s+(?:O-\d+\s+)?(?:của\s+bạn\s+)?đã\s+được\s+(?:em\s+|hệ\s+thống\s+)?hủy\s+(?:xong|thành\s+công)\b",
         r"\bem\s+đã\s+hủy\s+đơn\s+(?:hàng\s+)?(?:O-\d+\s+)?cho\s+(?:anh/chị|bạn)\b",
-        r"\bđã\s+hoàn\s+tiền\s+thành\s+công\b",
     )
-    if any(re.search(pat, lower_reply) for pat in false_completion_patterns):
+    refund_pattern = r"\bđã\s+hoàn\s+tiền\s+thành\s+công\b"
+    evidence = tool_evidence(messages)
+    cancel_claim = any(re.search(pat, lower_reply) for pat in cancel_patterns) and not evidence.cancelled
+    refund_claim = bool(re.search(refund_pattern, lower_reply)) and not evidence.refunded
+    if cancel_claim or refund_claim:
         inspected_order = None
         for t_name, t_res in tool_Outputs:
             if isinstance(t_res.get("order"), dict) and t_res["order"].get("id"):
                 inspected_order = t_res["order"]
-        if inspected_order:
-            oid = inspected_order.get("id")
+        if cancel_claim:
+            if inspected_order:
+                code = inspected_order.get("external_order_id") or inspected_order.get("id")
+                ostatus = inspected_order.get("status", "pending")
+                out_text = (
+                    f"Dạ qua kênh chat, hệ thống chưa thực hiện hủy đơn hàng {code}; "
+                    f"đơn {code} hiện đang ở trạng thái {ostatus} (chưa bị hủy). "
+                    "Mọi thao tác hủy đơn đều cần tạo đề xuất hợp lệ và được anh/chị bấm xác nhận trực tiếp ạ."
+                )
+            else:
+                out_text = (
+                    "Dạ qua kênh chat, hệ thống chưa thực hiện hủy hoặc thay đổi trạng thái đơn hàng (đơn chưa bị hủy). "
+                    "Mọi thao tác hủy đơn đều cần tạo đề xuất hợp lệ và được anh/chị bấm xác nhận trực tiếp ạ."
+                )
+        elif inspected_order:
+            code = inspected_order.get("external_order_id") or inspected_order.get("id")
             ostatus = inspected_order.get("status", "pending")
             out_text = (
-                f"Dạ qua kênh chat, hệ thống chưa thực hiện hủy đơn hàng {oid}; "
-                f"đơn {oid} hiện đang ở trạng thái {ostatus} (chưa bị hủy) và chưa ghi nhận thông tin giao hàng/địa chỉ "
-                f"(delivery={inspected_order.get('delivery')}, address={inspected_order.get('address')}). "
-                "Mọi thao tác hủy đơn đều cần tạo đề xuất hợp lệ và được anh/chị bấm xác nhận trực tiếp ạ."
+                f"Dạ hệ thống chưa ghi nhận hoàn tiền cho đơn {code}; "
+                f"đơn {code} hiện đang ở trạng thái {ostatus}. "
+                "Tiền hoàn chỉ được xác nhận khi dữ liệu thanh toán của đơn ghi nhận đã hoàn ạ."
             )
         else:
             out_text = (
-                "Dạ qua kênh chat, hệ thống chưa thực hiện hủy hoặc thay đổi trạng thái đơn hàng (đơn chưa bị hủy). "
-                "Mọi thao tác hủy đơn đều cần tạo đề xuất hợp lệ và được anh/chị bấm xác nhận trực tiếp ạ."
+                "Dạ hệ thống chưa ghi nhận hoàn tiền cho đơn này. "
+                "Tiền hoàn chỉ được xác nhận khi dữ liệu thanh toán của đơn ghi nhận đã hoàn ạ."
             )
 
     return out_text

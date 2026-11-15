@@ -6,6 +6,7 @@ import unittest
 
 from retailops.business.application import Application
 from retailops.business.store import BusinessStore
+from retailops.guardrails.topic_filter import enforce_final_answer_grounding
 from retailops.http.routes import api_result
 from retailops.workflow.answer_check import (
     AUDIT_RULES,
@@ -308,6 +309,71 @@ class Row3CaseAssistTests(unittest.TestCase):
         self.assertNotIn('answer_check', res['trace'])
         self.assertNotIn('answer_check_detail', res['trace'])
         self.assertNotIn('answer_check_audit', res['trace'])
+
+
+class Row4SecondGuardTests(unittest.TestCase):
+    def test_cancelled_order_keeps_cancel_completion_reply(self):
+        msgs = _msgs({'order': {'id': 'ord_x', 'external_order_id': 'SIM-O-00091', 'status': 'cancelled'}})
+        reply = 'Đơn SIM-O-00091 đã được hủy thành công ạ.'
+        self.assertEqual(enforce_final_answer_grounding('Đơn hủy chưa?', reply, messages=msgs), reply)
+
+    def test_refunded_order_keeps_refund_completion_reply(self):
+        msgs = _msgs({
+            'order': {'id': 'ord_x', 'external_order_id': 'SIM-O-00091', 'status': 'delivered', 'payment_status': 'refunded'},
+        })
+        reply = 'Dạ đơn đã hoàn tiền thành công ạ.'
+        self.assertEqual(enforce_final_answer_grounding('Hoàn tiền chưa?', reply, messages=msgs), reply)
+
+    def test_pending_order_replaces_false_cancel_with_external_id_and_no_raw_fields(self):
+        msgs = _msgs({'order': {'id': 'ord_x', 'external_order_id': 'SIM-O-00091', 'status': 'pending'}})
+        out = enforce_final_answer_grounding('Hủy giúp tôi', 'Em đã hủy đơn hàng cho anh/chị.', messages=msgs)
+        expected = (
+            'Dạ qua kênh chat, hệ thống chưa thực hiện hủy đơn hàng SIM-O-00091; '
+            'đơn SIM-O-00091 hiện đang ở trạng thái pending (chưa bị hủy). '
+            'Mọi thao tác hủy đơn đều cần tạo đề xuất hợp lệ và được anh/chị bấm xác nhận trực tiếp ạ.'
+        )
+        self.assertEqual(out, expected)
+        self.assertIn('SIM-O-00091', out)
+        self.assertNotIn('ord_', out)
+        self.assertNotIn('delivery=', out)
+        self.assertNotIn('address=', out)
+
+        fallback_msgs = _msgs({'order': {'id': 'O-705', 'status': 'pending'}})
+        out_fallback = enforce_final_answer_grounding('Hủy giúp tôi', 'Em đã hủy đơn hàng cho anh/chị.', messages=fallback_msgs)
+        self.assertIn('O-705', out_fallback)
+        self.assertNotIn('delivery=', out_fallback)
+        self.assertNotIn('address=', out_fallback)
+
+    def test_unrefunded_order_replaces_false_refund_claim(self):
+        msgs = _msgs({'order': {'id': 'ord_x', 'external_order_id': 'SIM-O-00091', 'status': 'delivered'}})
+        out = enforce_final_answer_grounding('Hoàn tiền chưa?', 'Dạ đơn đã hoàn tiền thành công ạ.', messages=msgs)
+        expected = (
+            'Dạ hệ thống chưa ghi nhận hoàn tiền cho đơn SIM-O-00091; '
+            'đơn SIM-O-00091 hiện đang ở trạng thái delivered. '
+            'Tiền hoàn chỉ được xác nhận khi dữ liệu thanh toán của đơn ghi nhận đã hoàn ạ.'
+        )
+        self.assertEqual(out, expected)
+
+    def test_no_order_in_tools_uses_separate_cancel_and_refund_fallbacks_and_cancel_priority(self):
+        out_cancel = enforce_final_answer_grounding('Hủy giúp', 'Em đã hủy đơn hàng cho anh/chị.', messages=[])
+        self.assertEqual(
+            out_cancel,
+            'Dạ qua kênh chat, hệ thống chưa thực hiện hủy hoặc thay đổi trạng thái đơn hàng (đơn chưa bị hủy). '
+            'Mọi thao tác hủy đơn đều cần tạo đề xuất hợp lệ và được anh/chị bấm xác nhận trực tiếp ạ.',
+        )
+        out_refund = enforce_final_answer_grounding('Hoàn tiền', 'Dạ đơn đã hoàn tiền thành công ạ.', messages=[])
+        self.assertEqual(
+            out_refund,
+            'Dạ hệ thống chưa ghi nhận hoàn tiền cho đơn này. '
+            'Tiền hoàn chỉ được xác nhận khi dữ liệu thanh toán của đơn ghi nhận đã hoàn ạ.',
+        )
+        msgs = _msgs({'order': {'id': 'ord_x', 'external_order_id': 'SIM-O-00091', 'status': 'pending'}})
+        out_both = enforce_final_answer_grounding(
+            'Hủy và hoàn tiền',
+            'Em đã hủy đơn hàng cho anh/chị và đã hoàn tiền thành công.',
+            messages=msgs,
+        )
+        self.assertIn('chưa thực hiện hủy đơn hàng SIM-O-00091', out_both)
 
 
 if __name__ == '__main__':

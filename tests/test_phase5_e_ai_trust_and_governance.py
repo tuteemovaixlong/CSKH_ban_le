@@ -756,7 +756,8 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
         )
         self.assertIn("pending", res_o101["message"])
         self.assertIn("chưa bị hủy", res_o101["message"])
-        self.assertIn("delivery=None", res_o101["message"])
+        self.assertNotIn("delivery=", res_o101["message"])
+        self.assertNotIn("address=", res_o101["message"])
         self.assertNotIn("đã được hủy thành công", res_o101["message"])
         self.assertIsNone(res_o101.get("action_proposal"))
 
