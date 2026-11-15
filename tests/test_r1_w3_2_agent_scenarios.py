@@ -393,7 +393,8 @@ class RealModeThroughTheHttpAdapterTests(unittest.TestCase):
         self.assertEqual(len(queue), 0, 'every scripted reply was asked for through HTTP, no more and no fewer')
         self.assertEqual(report['mode'], 'real')
         self.assertEqual(report['summary']['success_rate'], 1.0)
-        self.assertEqual({url for url, _ in vllm.requests}, {FIXTURE_ENDPOINT})
+        self.assertEqual({url for url, _ in vllm.requests},
+                         {FIXTURE_ENDPOINT, 'https://fixture-vllm.example/v1/models', 'https://fixture-vllm.example/version'})
         self.assertTrue(all(headers.get('Authorization') == 'Bearer ' + FIXTURE_KEY for _, headers in vllm.requests))
         self.assertEqual({p['model'] for p in vllm.payloads}, {FIXTURE_MODEL})
         self.assertIsNone(leftover, 'the endpoint is set for the run only')

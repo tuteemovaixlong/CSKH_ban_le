@@ -87,6 +87,12 @@ class FakeVllm:
         self.payloads = []
 
     def _open(self, opener, request, *args, **kwargs):
+        if request.get_method() == 'GET':
+            if request.full_url.endswith('/v1/models'):
+                return _Response(json.dumps({'data': [{'id': FIXTURE_MODEL}]}).encode())
+            if request.full_url.endswith('/version') and getattr(self, 'metadata_version', '0.33.0') is not None:
+                return _Response(json.dumps({'version': getattr(self, 'metadata_version', '0.33.0')}).encode())
+            raise http_error(404, {})
         payload = json.loads(request.data)
         self.payloads.append(payload)
         if self.strict:

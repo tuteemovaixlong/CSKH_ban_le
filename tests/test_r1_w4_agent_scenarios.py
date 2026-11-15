@@ -232,8 +232,10 @@ class W4RealHttpAdapterTwoLayerAuthTests(unittest.TestCase):
 
         # Every HTTP request carried BOTH Item 0 headers (Authorization Bearer + X-RetailOps-Tunnel-Token)
         self.assertGreater(len(vllm.requests), 10)
+        allowed_urls = {FIXTURE_ENDPOINT, 'https://fixture-vllm.example/v1/models', 'https://fixture-vllm.example/version'}
+        self.assertEqual({url for url, _ in vllm.requests}, allowed_urls)
         for url, headers in vllm.requests:
-            self.assertEqual(url, FIXTURE_ENDPOINT)
+            self.assertIn(url, allowed_urls)
             self.assertEqual(headers.get('authorization'), f'Bearer {FIXTURE_KEY}')
             self.assertEqual(headers.get('x-retailops-tunnel-token'), FIXTURE_TUNNEL_TOKEN)
 

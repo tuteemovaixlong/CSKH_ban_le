@@ -2748,6 +2748,11 @@ class BusinessStore:
         """Read DB-backed payment, refund summary, shipment presence, and computed eligibility for one order."""
         now_ts = self._now() if now is None else float(now)
         oid = str(order_dict["id"])
+        items = [dict(r) for r in db.execute(
+            "SELECT product_id, product_title AS name, variant_name AS variant, quantity, unit_price, subtotal "
+            "FROM order_items WHERE order_id = ? "
+            "ORDER BY product_id, variant_name, product_title, unit_price, quantity, subtotal, id", (oid,)
+        ).fetchall()]
         eligibility = self._order_eligibility_in_tx(db, order_dict, now=now_ts)
         pay_rows = db.execute(
             "SELECT payment_id, provider, provider_txn_ref, method, amount, status, created_at, settled_at "
@@ -2862,6 +2867,7 @@ class BusinessStore:
         )
         return {
             "ordered_at": ordered_at_iso,
+            "items": items,
             "payment_method": order_dict.get("payment_method"),
             "payment_status": payment_status,
             "shipping_fee": int(order_dict["shipping_fee"]) if order_dict.get("shipping_fee") is not None else None,

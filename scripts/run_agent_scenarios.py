@@ -34,6 +34,7 @@ import argparse
 import atexit
 import base64
 import contextlib
+from contextvars import ContextVar
 import copy
 import hashlib
 import importlib.util
@@ -73,6 +74,7 @@ FIXTURES = {
     'late_voucher_issued': 'store_events.jsonl+voucher_loop',
 }
 _DEMO_TEMPLATE_CACHE = {}
+_CALL_CONTEXT = ContextVar('eval_call_context', default={})
 COUNTED_TABLES = (
     'order_action_requests', 'order_action_decisions', 'proposals',
     'integration_outbox', 'handoff_episodes', 'delivery_compensations', 'vouchers',
@@ -852,6 +854,7 @@ def run_scenario(scenario, gateway, mode):
     try:
         with world.knowledge_base():
             for number, turn in enumerate(scenario['turns'], start=1):
+                _CALL_CONTEXT.set({**_CALL_CONTEXT.get(), 'case_id': scenario['id'], 'turn': number})
                 if scripted:
                     gateway.load(turn['fake_model'])
                 try:
@@ -976,19 +979,28 @@ def run_suite(scenarios, make_gateway, mode, *, progress=None, repeat=1, knowled
     for index, scenario in enumerate(scenarios, start=1):
         for repetition in range(1, repeat + 1):
             gateway = make_gateway()
-            record = run_scenario(scenario, gateway, mode)
+            token = _CALL_CONTEXT.set({'case_id': scenario['id'], 'run': repetition})
+            try:
+                record = run_scenario(scenario, gateway, mode)
+            finally:
+                _CALL_CONTEXT.reset(token)
             record['run'] = repetition
             record.setdefault('meta', scenario.get('meta', {}))
             records.append(record)
             if progress:
                 progress((index - 1) * repeat + repetition, len(scenarios) * repeat, record)
+    report_kind = 'agent_scenarios_w4' if (scenarios and 'actor' in scenarios[0]) else 'agent_scenarios_w3_2'
+    return report_from_records(records, mode, report_kind)
+
+
+def report_from_records(records, mode, report_kind):
+    """The same aggregation for a sequential run and for merged measurement shards."""
     summary, by_category = summarize(records)
     summary.update(repeated_metrics(records))
     aggregates = {}
     for field in ('suite', 'split', 'style', 'origin'):
         values = sorted({r.get('meta', {}).get(field, r['category'] if field == 'suite' else 'unknown') for r in records})
         aggregates[field] = {v: repeated_metrics([r for r in records if r.get('meta', {}).get(field, r['category'] if field == 'suite' else 'unknown') == v]) for v in values}
-    report_kind = 'agent_scenarios_w4' if (scenarios and 'actor' in scenarios[0]) else 'agent_scenarios_w3_2'
     return {'report': report_kind, 'mode': mode, 'summary': summary, 'by_category': by_category,
             'aggregates': aggregates, 'scenarios': records}
 
@@ -1085,8 +1097,12 @@ def build_parser():
     parser.add_argument('--thinking', choices=('default', 'on', 'off'), default='default')
     parser.add_argument('--context-tokens', type=int, default=16384)
     parser.add_argument('--knowledge', choices=('scripted', 'real'), default='scripted')
+    for field in ('temperature', 'top_p', 'top_k', 'presence_penalty', 'max_tokens'):
+        parser.add_argument('--' + field.replace('_', '-'), default=None,
+                            help='optional OpenAI sampling override for this run')
     parser.add_argument('--category', nargs='+', metavar='NAME', help='run only these categories')
     parser.add_argument('--out', metavar='PATH', help='write the full JSON report here')
+    parser.add_argument('--trace-out', type=Path, help='write one sanitized JSONL record per model call')
     parser.add_argument('--min-success-rate', type=float, default=None, metavar='RATE',
                         help='exit 1 below this success rate (default: 1.0 with --fake, none with --endpoint)')
     parser.add_argument('--verbose', action='store_true', help='print every failed check as it happens')
@@ -1185,21 +1201,49 @@ def main(argv=None, *, out=None):
     environment = {'RETAILOPS_AGENT_MODE': args.agent_mode,
                    'RETAILOPS_MODEL_CONTEXT_TOKENS': str(args.context_tokens),
                    'RETAILOPS_MODEL_ENABLE_THINKING': {'default': '', 'on': 'true', 'off': 'false'}[args.thinking]}
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from retailops_providers import SAMPLING_FIELDS, model_sampling
+    from scripts.eval_telemetry import TraceWriter, git_sha, safe_payload, server_metadata
+    for field in SAMPLING_FIELDS:
+        if getattr(args, field) is not None:
+            environment['RETAILOPS_MODEL_' + field.upper()] = getattr(args, field)
+    try:
+        sampling = model_sampling(dict(os.environ) | environment)
+    except ValueError as err:
+        print(f'Không chạy được: {err}', file=sys.stderr)
+        return 2
     if args.fake:
         mode, make_gateway = 'fake', ScriptedGateway
         model = {'gateway': 'scripted fake gateway'}
+        secrets = ()
+        metadata = {'model': None, 'vllm_version': None}
+        trace = TraceWriter(args.trace_out, _CALL_CONTEXT)
+        if args.trace_out:
+            class TracedScriptedGateway(ScriptedGateway):
+                def chat(self, messages, allow_tools, timeout, **kwargs):
+                    request = {'messages': messages, 'tools': kwargs.get('tool_schemas') or [], **sampling}
+                    return trace.call(request, lambda: super(TracedScriptedGateway, self).chat(
+                        messages, allow_tools, timeout, **kwargs), wire=False)
+            make_gateway = TracedScriptedGateway
     else:
         mode = 'real'
         name = args.model or os.environ.get('RETAILOPS_API_MODEL') or DEFAULT_MODEL
         key = explicit_key or PLACEHOLDER_KEY
         environment['RETAILOPS_API_ENDPOINT'] = endpoint
         model = {'name': name, 'endpoint_host': urllib.parse.urlsplit(endpoint).netloc}
+        secrets = (key, tunnel_token)
+        metadata = server_metadata(endpoint, name, key, tunnel_token)
+        trace = TraceWriter(args.trace_out, _CALL_CONTEXT, secrets)
 
         def make_gateway():
             if str(ROOT) not in sys.path:
                 sys.path.insert(0, str(ROOT))
             from retailops_providers import OpenRouterAgent
-            return OpenRouterAgent(key, name, tunnel_token=tunnel_token, vision=vision_on)
+            class TracedAgent(OpenRouterAgent):
+                def request(self, payload, timeout):
+                    return trace.call(payload, lambda: super(TracedAgent, self).request(payload, timeout))
+            return TracedAgent(key, name, tunnel_token=tunnel_token, vision=vision_on)
     previous = {k: os.environ.get(k) for k in environment}
     os.environ.update(environment)
     try:
@@ -1215,10 +1259,18 @@ def main(argv=None, *, out=None):
     report['dataset'] = {'path': Path(args.dataset).name, 'sha256': dataset_digest(args.dataset), 'scenarios': len(scenarios)} if not args.dataset_dir else {'path': str(args.dataset_dir), 'scenarios': len(scenarios)}
     report['config'] = dict(agent_mode=args.agent_mode, thinking=args.thinking, context_tokens=args.context_tokens,
                             knowledge=args.knowledge, model=args.model or os.environ.get('RETAILOPS_API_MODEL') or DEFAULT_MODEL,
-                            repeat=args.repeat)
+                            repeat=args.repeat, sampling=sampling)
+    report['config']['vision'] = bool(args.fake or vision_on)
+    report['provenance'] = {'git_sha': git_sha(ROOT), **metadata, 'sampling': sampling,
+                            **{k: report['config'][k] for k in ('context_tokens', 'thinking', 'agent_mode', 'knowledge')}}
+    report = safe_payload(report, secrets)
     _print_summary(report, out)
     if args.out:
-        Path(args.out).write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+        target = Path(args.out)
+        temporary = target.with_name(target.name + '.tmp')
+        with temporary.open('w', encoding='utf-8', newline='\n') as stream:
+            stream.write(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
+        temporary.replace(target)
         print(f'Đã ghi báo cáo: {args.out}', file=out)
     threshold = args.min_success_rate if args.min_success_rate is not None else (1.0 if args.fake else None)
     if threshold is not None and report['summary']['cases'] and (report['summary']['success_rate'] or 0) < threshold:
