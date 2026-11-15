@@ -6,8 +6,10 @@ import unittest
 
 from retailops.business.application import Application
 from retailops.business.store import BusinessStore
+from retailops.core import ApiError
 from retailops.guardrails.topic_filter import enforce_final_answer_grounding
 from retailops.http.routes import api_result
+import agent_protocol
 from retailops.workflow.answer_check import (
     AUDIT_RULES,
     BLOCKING_RULES,
@@ -374,6 +376,63 @@ class Row4SecondGuardTests(unittest.TestCase):
             messages=msgs,
         )
         self.assertIn('chưa thực hiện hủy đơn hàng SIM-O-00091', out_both)
+
+
+class Row5ToolsPerStepTests(AgentFixture):
+    def test_max_tools_per_step_constant_and_assistant_message_bounds(self):
+        self.assertEqual(agent_protocol.MAX_TOOLS_PER_STEP, 10)
+        self.assertEqual(agent_protocol.MAX_TOOL_CALLS, 10)
+        self.assertEqual(len(agent_protocol.SYSTEM), 5993)
+
+        ten_calls = [{'function': {'name': 'get_current_time', 'arguments': {}}} for _ in range(10)]
+        parsed = agent_protocol.assistant_message({'message': {'role': 'assistant', 'content': '', 'tool_calls': ten_calls}})
+        self.assertEqual(len(parsed['tool_calls']), 10)
+
+        eleven_calls = [{'function': {'name': 'get_current_time', 'arguments': {}}} for _ in range(11)]
+        with self.assertRaises(agent_protocol.ProtocolError):
+            agent_protocol.assistant_message({'message': {'role': 'assistant', 'content': '', 'tool_calls': eleven_calls}})
+
+    def test_seven_tools_in_single_step_succeed_and_pass_validate_messages(self):
+        model = ScriptedModel(
+            call(
+                ('get_order', {'order_id': 'O-701'}),
+                ('get_order', {'order_id': 'O-702'}),
+                ('get_order', {'order_id': 'O-705'}),
+                ('get_current_time', {}),
+                ('get_product', {'product_id': 'P-102'}),
+                ('get_product', {'product_id': 'P-603'}),
+                ('search_products', {'query': 'áo'}),
+            ),
+            say('Dạ em đã kiểm tra thông tin 3 đơn và sản phẩm cho anh/chị ạ.'),
+        )
+        app = self.app(model)
+        result = self.say(app, 'Kiểm tra giúp em 3 đơn và vài sản phẩm ạ')
+        self.assertEqual(len(result['trace']['tools']), 7)
+        agent_protocol.validate_messages(model.inputs[1])
+
+    def test_six_plus_five_tools_still_hits_turn_budget_exceeded(self):
+        model = ScriptedModel(
+            call(
+                ('get_order', {'order_id': 'O-701'}),
+                ('get_order', {'order_id': 'O-702'}),
+                ('get_order', {'order_id': 'O-705'}),
+                ('get_current_time', {}),
+                ('get_product', {'product_id': 'P-102'}),
+                ('get_product', {'product_id': 'P-603'}),
+            ),
+            call(
+                ('search_products', {'query': 'áo'}),
+                ('search_products', {'query': 'quần'}),
+                ('search_products', {'query': 'giày'}),
+                ('list_orders', {'limit': 5}),
+                ('search_knowledge', {'query': 'đổi hàng'}),
+            ),
+            say('Không tới được đây'),
+        )
+        app = self.app(model)
+        with self.assertRaises(ApiError) as err:
+            self.say(app, 'Tra cứu nhiều thông tin giúp em')
+        self.assertEqual(err.exception.code, 'agent_budget_exceeded')
 
 
 if __name__ == '__main__':
