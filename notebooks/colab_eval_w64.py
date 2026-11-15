@@ -268,12 +268,13 @@ def provision_database(python, repo, env, password):
     quiet(['service', 'postgresql', 'start'])
     if not re.fullmatch('[0-9a-f]{64}', password):
         raise ValueError('Disposable DB password must be a generated 32-byte hex value')
+    # Superuser like the CI service-container user; the DB is loopback-only and disposable.
     sql = ("DROP DATABASE IF EXISTS retailops_test;\nDROP ROLE IF EXISTS retailops_test;\n"
-           f"CREATE ROLE retailops_test LOGIN PASSWORD '{password}';\n"
+           f"CREATE ROLE retailops_test LOGIN SUPERUSER PASSWORD '{password}';\n"
            "CREATE DATABASE retailops_test OWNER retailops_test;\n")
     quiet(['sudo', '-u', 'postgres', 'psql', '-v', 'ON_ERROR_STOP=1'], input=sql, text=True, secrets=(password,))
-    quiet(['sudo', '-u', 'postgres', 'psql', '-v', 'ON_ERROR_STOP=1', '-d', 'retailops_test'],
-          input='CREATE EXTENSION IF NOT EXISTS vector;\n', text=True, secrets=(password,))
+    # As in CI: the app requires pgvector in schema retailops_extensions (retailops/storage/pg_schema.py).
+    quiet([str(python), 'scripts/prepare_test_pgvector.py'], cwd=repo, env=env, secrets=(password,))
 
 
 def pilot_gate(report, traces):

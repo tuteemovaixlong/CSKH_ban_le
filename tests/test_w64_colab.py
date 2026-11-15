@@ -217,3 +217,17 @@ class ColabDiagnosticsTests(unittest.TestCase):
             self.assertIn('ran with [REDACTED]', saved)
             self.assertNotIn(self.SECRET, saved)
             self.assertIn('Traceback: boom', bad_report.with_suffix('.log').read_text(encoding='utf-8'))
+
+
+class ColabDatabaseTests(unittest.TestCase):
+    def test_disposable_database_gets_pgvector_in_the_extensions_schema(self):
+        calls = []
+        with patch.object(colab, 'quiet', side_effect=lambda cmd, **kw: calls.append((cmd, kw))):
+            colab.provision_database('/venv/bin/python', '/repo', {}, 'a' * 64)
+        sql = ''.join(kw.get('input') or '' for _, kw in calls)
+        self.assertIn('SUPERUSER', sql)
+        self.assertNotIn('CREATE EXTENSION', sql)
+        prepare = [kw for cmd, kw in calls if cmd == ['/venv/bin/python', 'scripts/prepare_test_pgvector.py']]
+        self.assertEqual(len(prepare), 1)
+        self.assertEqual(prepare[0].get('cwd'), '/repo')
+        self.assertEqual(prepare[0].get('secrets'), ('a' * 64,))
