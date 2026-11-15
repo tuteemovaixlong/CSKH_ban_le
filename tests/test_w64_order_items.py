@@ -24,6 +24,10 @@ class OrderItemsTests(unittest.TestCase):
             {'product_id': 'P-602', 'name': 'Quần tây đen hàn quốc', 'variant': 'Đen · Size M',
              'quantity': 2, 'unit_price': 520000, 'subtotal': 1040000},
         ]
+        expected_summary = [
+            {'name': item['name'], 'variant': item['variant'], 'quantity': item['quantity'], 'subtotal': item['subtotal']}
+            for item in expected
+        ]
         first = self.tools('get_order', {'order_id': 'SIM-O-00091'})['order']
         case_tools = CaseTools(self.store, Catalog(self.store), case_id='fixture-case',
                                customer_id=self.world.customer_id, conversation_id=self.world.conversation)
@@ -38,7 +42,7 @@ class OrderItemsTests(unittest.TestCase):
         }
         for name, order in results.items():
             with self.subTest(tool=name):
-                self.assertEqual(order.get('items'), expected)
+                self.assertEqual(order.get('items'), expected_summary if name == 'list_orders' else expected)
                 for key in ('name', 'product_id', 'variant'):
                     self.assertEqual(order[key], first[key])
 
@@ -54,7 +58,7 @@ class OrderItemsTests(unittest.TestCase):
     def test_ten_orders_stay_within_existing_model_result_budget(self):
         with self.store.connection(write=True) as db:
             db.execute('UPDATE orders SET customer_id=?', (self.world.customer_id,))
-        result = self.tools('list_orders', {})
+        result = self.tools('list_orders', {'limit': 10})
         self.assertEqual(result['returned_count'], 10)
         text = compact_tool_result(result)
         self.assertLessEqual(len(text), TOOL_RESULT_MAX_CHARS)

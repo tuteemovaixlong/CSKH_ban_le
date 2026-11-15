@@ -119,8 +119,27 @@ def tool(name, description, properties=None, *, required=None):
                            'required': req, 'additionalProperties': False}}}
 
 
+LIST_ORDERS_DESCRIPTION = (
+    "List the authenticated customer's orders as short summaries, newest first: "
+    "5 per call by default (limit up to 20; offset pages through older orders). "
+    "Each summary has both order IDs, status, ordered_at, amount, shipping_fee, "
+    "payment status, delivery dates and item names with quantities. "
+    "Call get_order for payment, delivery, refund and eligibility details. "
+    "When has_more is true, say how many of total_count are shown and offer to "
+    "show more (offset=next_offset) or to narrow down."
+)
+
+INTEGER_ARGUMENTS = {
+    'list_orders': {'limit': (1, 20), 'offset': (0, 10000)},
+}
+
 TOOLS = [
-    tool('list_orders', 'List up to 10 orders belonging to the authenticated customer from the database, including both external_order_id and internal id, ordered_at, payment_method, payment_status, shipping_fee, ship_to_area, promised_delivery_by, refund_summary, and server-computed eligibility.'),
+    tool('list_orders', LIST_ORDERS_DESCRIPTION,
+         {'limit': {'type': 'integer', 'minimum': 1, 'maximum': 20,
+                    'description': 'How many orders to return; default 5.'},
+          'offset': {'type': 'integer', 'minimum': 0,
+                     'description': 'How many of the newest orders to skip; default 0. Use next_offset from the previous call.'}},
+         required=[]),
     tool('get_order', 'Read current database facts for one owned order by external_order_id or internal id (returns both IDs, ordered_at, payment, shipping_fee, ship_to_area, promised_delivery_by, refund_summary, and server-computed eligibility; returns ambiguous_order with candidates if multiple owned orders match).',
          {'order_id': {'type': 'string', 'description': 'Marketplace external_order_id or internal order ID explicitly provided or resolved from this conversation.'}}),
     tool('search_products', 'Find products in the synthetic catalog by name or keyword. Does not report inventory.',
@@ -324,7 +343,21 @@ def validate_tool(name, arguments):
         raise ProtocolError('Unknown tool or invalid argument fields')
     if not TOOL_REQUIRED_ARGUMENTS[name].issubset(arguments) or not set(arguments).issubset(TOOL_ARGUMENTS[name]):
         raise ProtocolError('Unknown tool or invalid argument fields')
+    int_rules = INTEGER_ARGUMENTS.get(name, {})
+    normalized_ints = {}
     for key, value in arguments.items():
+        if key in int_rules:
+            lo, hi = int_rules[key]
+            if isinstance(value, int) and not isinstance(value, bool):
+                num = value
+            elif isinstance(value, str) and value.isascii() and value.isdigit() and len(value) <= 64:
+                num = int(value)
+            else:
+                raise ProtocolError('Invalid tool argument value')
+            if not lo <= num <= hi:
+                raise ProtocolError('Invalid tool argument value')
+            normalized_ints[key] = num
+            continue
         limit = 1000 if name == 'request_human_support' and key == 'reason' else (200 if key in ('query', 'target_variant') else 64)
         if not isinstance(value, str) or not value.strip() or len(value) > limit:
             raise ProtocolError('Invalid tool argument value')
@@ -334,6 +367,9 @@ def validate_tool(name, arguments):
             raise ProtocolError('Invalid tool argument value')
         if arguments.get('target_variant') is not None and act_type != 'exchange':
             raise ProtocolError('Invalid tool argument value')
+    # Only normalize arguments in place after every field check passes so failed validation never partially mutates caller input.
+    if normalized_ints:
+        arguments.update(normalized_ints)
     return arguments
 
 

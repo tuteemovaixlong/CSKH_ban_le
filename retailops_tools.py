@@ -129,6 +129,63 @@ def _fallback_order_details(order, product, *, now_ts=None):
     }
 
 
+_LIST_ORDERS_SUMMARY_KEYS = (
+    'id',
+    'external_order_id',
+    'status',
+    'ordered_at',
+    'name',
+    'product_id',
+    'variant',
+    'amount',
+    'currency',
+    'shipping_fee',
+    'payment_method',
+    'payment_status',
+    'promised_delivery_by',
+    'delivered_at',
+    'items',
+)
+_SUMMARY_ITEM_KEYS = ('name', 'variant', 'quantity', 'subtotal')
+
+
+def _summarize_order_item(item: dict) -> dict:
+    return {key: item[key] for key in _SUMMARY_ITEM_KEYS if key in item}
+
+
+def summarize_order_record(order: dict, keys: tuple[str, ...] = _LIST_ORDERS_SUMMARY_KEYS) -> dict:
+    """Keep only summary keys in exact order without inventing null values; shorten items."""
+    out = {}
+    for key in keys:
+        if key not in order:
+            continue
+        if key == 'items':
+            raw_items = order.get('items') or []
+            out['items'] = [_summarize_order_item(item) for item in raw_items if isinstance(item, dict)]
+        else:
+            out[key] = order[key]
+    return out
+
+
+def _parse_list_orders_int(value) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.isascii() and value.isdigit() and len(value) <= 64:
+        return int(value)
+    return None
+
+
+def _order_recency_key(order: dict):
+    ts = order.get('ordered_at')
+    has_ts = ts is not None and ts != ''
+    try:
+        epoch = float(ts) if has_ts else 0.0
+    except (TypeError, ValueError):
+        has_ts = False
+        epoch = 0.0
+    return (has_ts, epoch, str(order.get('id') or ''))
+
+
 class BoundTools:
     def __init__(self, store, catalog, customer, snapshot, identity, *, can_cancel=True, read_only=False, user_text='',
                  confirmed_orders=None):
@@ -207,17 +264,36 @@ class BoundTools:
         if name == 'search_knowledge':
             return self.knowledge.search(args['query'])
         if name == 'list_orders':
-            orders = self.store.orders(self.customer)
-            sliced = orders[:10]
-            truncated = len(orders) > 10
+            raw_args = {} if args is None else args
+            if not isinstance(raw_args, dict):
+                return {'error': 'invalid_arguments', 'message': 'limit phải từ 1 đến 20; offset phải từ 0 trở lên.'}
+            limit = 5 if 'limit' not in raw_args else _parse_list_orders_int(raw_args['limit'])
+            offset = 0 if 'offset' not in raw_args else _parse_list_orders_int(raw_args['offset'])
+            if limit is None or offset is None or not 1 <= limit <= 20 or offset < 0:
+                return {'error': 'invalid_arguments', 'message': 'limit phải từ 1 đến 20; offset phải từ 0 trở lên.'}
+            orders = sorted(self.store.orders(self.customer), key=_order_recency_key, reverse=True)
+            total_count = len(orders)
+            sliced = orders[offset : offset + limit]
+            returned_count = len(sliced)
+            has_more = offset + returned_count < total_count
             res = {
-                'orders': [self.read_order(o['id'], focus=False) for o in sliced],
-                'truncated': truncated,
-                'returned_count': len(sliced),
-                'total_count': len(orders),
+                'orders': [summarize_order_record(self.read_order(o['id'], focus=False)) for o in sliced],
+                'total_count': total_count,
+                'returned_count': returned_count,
+                'offset': offset,
+                'limit': limit,
+                'has_more': has_more,
+                'truncated': has_more,
             }
-            if truncated:
-                res['note'] = f'Showing {len(sliced)} of {len(orders)} orders; list is truncated and not complete.'
+            if has_more:
+                next_offset = offset + returned_count
+                res['next_offset'] = next_offset
+                res['note'] = (
+                    f'Đang hiện {returned_count}/{total_count} đơn gần nhất. '
+                    f'Gọi lại list_orders với offset={next_offset} để xem tiếp, hoặc get_order để xem chi tiết một đơn.'
+                )
+            elif total_count > 0 and offset >= total_count:
+                res['note'] = f'Không còn đơn nào sau vị trí này; khách có {total_count} đơn.'
             return res
         if name == 'get_order':
             try:
