@@ -890,6 +890,12 @@ def run_scenario(scenario, gateway, mode):
                     turn_rec['assist_mode'] = turn['mode']
                 if result.get('draft_reply'):
                     turn_rec['draft_reply'] = str(result['draft_reply'])[:600]
+                trace = result.get('trace') or {}
+                if trace.get('answer_check'):
+                    turn_rec['answer_check'] = {
+                        **trace['answer_check'],
+                        'detail': list(trace.get('answer_check_detail') or []),
+                    }
                 turns.append(turn_rec)
             failures.extend(f'final state: {p}' for p in grade_final_state(scenario.get('final_state') or {}, world.store))
     finally:

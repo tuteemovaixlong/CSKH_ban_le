@@ -118,6 +118,7 @@ class AnswerCheck:
     text: str
     dropped_policy: int = 0
     dropped_claims: int = 0
+    details: tuple = ()
 
     @property
     def changed(self) -> bool:
@@ -260,24 +261,30 @@ def _money_amounts(plain):
     return amounts
 
 
-def _uncited_policy_promise(sentence, evidence) -> bool:
+def _policy_rule(sentence, evidence):
     plain = _CITATION.sub(' ', sentence).lower()
     if _CITATION.search(sentence) or sentence.rstrip().endswith('?') or _HEDGE.search(plain):
-        return False
+        return None
     if not _POLICY_CONTEXT.search(plain):
-        return False
+        return None
     if _LOGISTICS.search(plain):
-        return True
+        return 'logistics'
     if _FEE.search(plain):
         numbers = _money_amounts(plain)
-        if _POLICY_FEE_MATCH.search(plain) or not numbers or not numbers <= (evidence.money_amounts | evidence.derived_money):
-            return True
+        if _POLICY_FEE_MATCH.search(plain):
+            return 'policy_fee'
+        if not numbers or not numbers <= (evidence.money_amounts | evidence.derived_money):
+            return 'fee_amount'
     if _DEADLINE.search(plain):
         numbers = {int(n) for n in _TIME_NUMBER.findall(_FACT_ID.sub(' ', plain))}
         if numbers:
-            return not numbers <= (evidence.deadline_days | evidence.derived_time)
-        return not (evidence.has_window or evidence.has_delivery_date)
-    return False
+            return None if numbers <= (evidence.deadline_days | evidence.derived_time) else 'deadline_number'
+        return None if (evidence.has_window or evidence.has_delivery_date) else 'deadline_no_fact'
+    return None
+
+
+def _uncited_policy_promise(sentence, evidence) -> bool:
+    return _policy_rule(sentence, evidence) is not None
 
 
 def _unfounded_claim(sentence, evidence) -> bool:
@@ -325,13 +332,19 @@ def _heading_replacement(line: str):
     return None
 
 
+def _sentence_drop_info(sentence, evidence):
+    if _unfounded_handoff(sentence, evidence):
+        return ('handoff', 'handoff_claim')
+    policy_rule = _policy_rule(sentence, evidence)
+    if policy_rule:
+        return ('policy', policy_rule)
+    if _unfounded_claim(sentence, evidence):
+        return ('claim', 'done_claim')
+    return None
+
+
 def _any_sentence_dropped(text: str, evidence) -> bool:
-    return any(
-        _unfounded_handoff(sentence, evidence)
-        or _uncited_policy_promise(sentence, evidence)
-        or _unfounded_claim(sentence, evidence)
-        for sentence, _ in _fragments(text)
-    )
+    return any(_sentence_drop_info(sentence, evidence) is not None for sentence, _ in _fragments(text))
 
 
 def check_final_answer(text, messages=None) -> AnswerCheck:
@@ -339,31 +352,33 @@ def check_final_answer(text, messages=None) -> AnswerCheck:
     if not isinstance(text, str) or not text.strip():
         return AnswerCheck(text or '')
     evidence = tool_evidence(messages)
-    kept_lines, dropped_policy, dropped_claims, dropped_handoffs, orphan_refs = [], 0, 0, 0, []
-    for line in unicodedata.normalize('NFC', text).split('\n'):
-        kept, line_dropped = [], False
+    kept_lines, dropped_policy, dropped_claims, dropped_handoffs, orphan_refs, details = [], 0, 0, 0, [], []
+    for line_no, line in enumerate(unicodedata.normalize('NFC', text).split('\n'), start=1):
+        kept, line_details = [], []
         for sentence, separator in _fragments(line):
-            if _unfounded_handoff(sentence, evidence):
-                dropped_claims += 1
-                dropped_handoffs += 1
-                orphan_refs.extend(_CITATION.findall(sentence))
-                line_dropped = True
-            elif _uncited_policy_promise(sentence, evidence):
-                dropped_policy += 1
-                line_dropped = True
-            elif _unfounded_claim(sentence, evidence):
-                dropped_claims += 1
-                orphan_refs.extend(_CITATION.findall(sentence))
-                line_dropped = True
-            else:
+            drop = _sentence_drop_info(sentence, evidence)
+            if not drop:
                 kept.append(sentence + separator)
+                continue
+            kind, rule = drop
+            line_details.append({'line': line_no, 'kind': kind, 'rule': rule, 'heading_label_kept': False})
+            if kind == 'policy':
+                dropped_policy += 1
+            else:
+                dropped_claims += 1
+                if kind == 'handoff':
+                    dropped_handoffs += 1
+                orphan_refs.extend(_CITATION.findall(sentence))
         line_text = ''.join(kept).strip() if kept else ''
-        if line_dropped:
+        if line_details:
             replacement = _heading_replacement(line)
             if replacement and not _any_sentence_dropped(replacement, evidence):
                 line_text = replacement
+                for entry in line_details:
+                    entry['heading_label_kept'] = True
             elif _EMPTY_OR_ORDINAL.match(re.sub(r'[*#_\s]+', '', line_text)):
                 line_text = ''
+            details.extend(line_details)
         kept_lines.append(line_text)
     if not (dropped_policy or dropped_claims):
         return AnswerCheck(text)
@@ -373,4 +388,4 @@ def check_final_answer(text, messages=None) -> AnswerCheck:
                                     (HANDOFF_NOTE, dropped_handoffs)) if count]
     if orphan_refs:
         notes[-1] += ' ' + ' '.join(dict.fromkeys(orphan_refs))  # a removed sentence must not strand its citation
-    return AnswerCheck('\n\n'.join(part for part in (body, *notes) if part), dropped_policy, dropped_claims)
+    return AnswerCheck('\n\n'.join(part for part in (body, *notes) if part), dropped_policy, dropped_claims, tuple(details))

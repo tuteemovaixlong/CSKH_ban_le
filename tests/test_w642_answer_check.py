@@ -2,8 +2,13 @@
 import copy
 import json
 import unittest
+from unittest.mock import patch
 
+from retailops.business.application import Application
+from retailops.knowledge.repository import KnowledgeRepository
 from retailops.workflow.answer_check import POLICY_NOTE, check_final_answer, tool_evidence
+from scripts import run_agent_scenarios as runner
+from test_r1_w3_2_agent_loop import AgentFixture, ScriptedModel, call, say, tool_data
 
 
 def messages(payload, name='get_order'):
@@ -297,6 +302,150 @@ class Row3HeadingAndNumberedLineTests(unittest.TestCase):
         self.assertTrue(res.text.startswith('**SIM-O-00091**'))
         self.assertIn(cit, res.text)
         self.assertEqual(res.dropped_claims, 1)
+
+
+class Row4DetailsUnitTests(unittest.TestCase):
+    def test_five_line_details_order_keys_and_no_leaked_text(self):
+        lines = [
+            'Shop đổi size tận nhà cho anh/chị ạ.',
+            'Phí ship đơn này là 35.000đ ạ.',
+            'Thời hạn đổi trả là 30 ngày.',
+            'Em đã hủy đơn SIM-O-00115 cho anh/chị rồi ạ.',
+            'Em đã chuyển cuộc trò chuyện cho nhân viên rồi ạ.',
+        ]
+        res = check_final_answer('\n'.join(lines))
+        expected = (
+            {'line': 1, 'kind': 'policy', 'rule': 'logistics', 'heading_label_kept': False},
+            {'line': 2, 'kind': 'policy', 'rule': 'fee_amount', 'heading_label_kept': False},
+            {'line': 3, 'kind': 'policy', 'rule': 'deadline_number', 'heading_label_kept': False},
+            {'line': 4, 'kind': 'claim', 'rule': 'done_claim', 'heading_label_kept': False},
+            {'line': 5, 'kind': 'handoff', 'rule': 'handoff_claim', 'heading_label_kept': False},
+        )
+        self.assertEqual(res.details, expected)
+        self.assertEqual(len(res.details), res.dropped_policy + res.dropped_claims)
+        serialized = json.dumps(res.details, ensure_ascii=False)
+        for item in res.details:
+            self.assertEqual(set(item.keys()), {'line', 'kind', 'rule', 'heading_label_kept'})
+        for line in lines:
+            self.assertNotIn(line, serialized)
+        for forbidden in ('tận nhà', '35.000', '30 ngày', 'SIM-O-00115', 'nhân viên'):
+            self.assertNotIn(forbidden, serialized)
+
+    def test_policy_fee_vs_logistics_hedge_and_deadline_no_fact(self):
+        fee = check_final_answer('Shop miễn phí đổi hàng ạ.')
+        self.assertEqual(fee.details, ({'line': 1, 'kind': 'policy', 'rule': 'policy_fee', 'heading_label_kept': False},))
+
+        two_way = check_final_answer('Shop miễn phí đổi hàng 2 chiều ạ.')
+        self.assertEqual(two_way.details, ({'line': 1, 'kind': 'policy', 'rule': 'logistics', 'heading_label_kept': False},))
+
+        hedged = check_final_answer('Thời hạn đổi trả là bao lâu thì em chưa rõ, em sẽ kiểm tra thêm.')
+        self.assertFalse(hedged.changed)
+        self.assertEqual(hedged.details, ())
+
+        no_fact = check_final_answer('Đơn còn trong thời hạn đổi trả ạ.')
+        self.assertEqual(
+            no_fact.details,
+            ({'line': 1, 'kind': 'policy', 'rule': 'deadline_no_fact', 'heading_label_kept': False},),
+        )
+
+    def test_heading_label_kept_flag_and_unchanged_details_empty(self):
+        heading = check_final_answer('**SIM-O-00091 — trễ hạn 72 giờ, sắp hết hạn trả hàng**')
+        self.assertEqual(
+            heading.details,
+            ({'line': 1, 'kind': 'policy', 'rule': 'deadline_number', 'heading_label_kept': True},),
+        )
+        orphan_list = check_final_answer('1. Shop miễn phí đổi trả 2 chiều.')
+        self.assertEqual(
+            orphan_list.details,
+            ({'line': 1, 'kind': 'policy', 'rule': 'logistics', 'heading_label_kept': False},),
+        )
+        safe = check_final_answer('Đơn SIM-O-00091 đã được giao thành công.')
+        self.assertFalse(safe.changed)
+        self.assertEqual(safe.details, ())
+
+
+class Row4ApplicationTests(AgentFixture):
+    MODES = ('agent', 'legacy')
+
+    def chat(self, mode, model, text):
+        app = Application(self.store_a, {}, infer=model, orchestrator=mode)
+        cid = self.store_a.new_conversation('C-001')['conversation_id']
+        return self.say(app, text, cid)
+
+    def test_application_trace_contains_answer_check_detail_in_both_modes(self):
+        for mode in self.MODES:
+            model = ScriptedModel(
+                call(('get_order', {'order_id': 'O-701'})),
+                say('Đơn O-701 đã giao. Shop sẽ đổi size tận nhà miễn phí 2 chiều cho anh/chị ạ.'),
+            )
+            result = self.chat(mode, model, 'Em muốn đổi size cho đơn O-701')
+            with self.subTest(mode=mode):
+                self.assertEqual(result['trace']['answer_check'], {'dropped_policy_promises': 1, 'dropped_done_claims': 0})
+                self.assertEqual(
+                    result['trace']['answer_check_detail'],
+                    [{'line': 1, 'kind': 'policy', 'rule': 'logistics', 'heading_label_kept': False}],
+                )
+                self.assertNotIn('tận nhà', result['message'])
+                self.assertNotIn('tận nhà', json.dumps(result['trace']['answer_check_detail'], ensure_ascii=False))
+
+    def test_cited_turn_has_no_answer_check_or_detail_in_trace(self):
+        document = {
+            'chunk': 'Đổi hàng miễn phí trong 7 ngày kể từ khi nhận hàng nếu còn nguyên tem mác.',
+            'source_key': 'policies/returns.md',
+            'title': 'Chính sách đổi trả',
+            'score': 0.9,
+        }
+        self.store_a.schema = 'tenant_alpha'
+
+        def cites(msgs):
+            citation = tool_data(msgs)['results'][0]['citation_id']
+            return say(f'Theo chính sách, đổi hàng miễn phí trong 7 ngày kể từ khi nhận hàng [{citation}].')
+
+        for mode in self.MODES:
+            model = ScriptedModel(call(('search_knowledge', {'query': 'chính sách đổi trả'})), cites)
+            with patch.object(KnowledgeRepository, 'search', lambda repo, query, limit=5: [dict(document)]):
+                result = self.chat(mode, model, 'Cho em hỏi chính sách đổi trả của shop')
+            with self.subTest(mode=mode):
+                self.assertNotIn('answer_check', result['trace'])
+                self.assertNotIn('answer_check_detail', result['trace'])
+
+
+class Row4RunnerTests(unittest.TestCase):
+    def test_runner_records_answer_check_only_when_dropped(self):
+        case = copy.deepcopy(runner.load_dataset()[0])
+        case['turns'] = [
+            {
+                'user': 'Đơn SIM-O-00105 có được đổi size tận nhà miễn phí không?',
+                'fake_model': [
+                    {'call': [{'name': 'get_order', 'arguments': {'order_id': 'SIM-O-00105'}}]},
+                    {'say': 'Đơn SIM-O-00105 đã giao. Shop sẽ đổi size tận nhà miễn phí 2 chiều cho anh/chị ạ.'},
+                ],
+                'expect': {'tools_called': ['get_order'], 'action': 'reply'},
+            },
+            {
+                'user': 'Cảm ơn shop, cho mình xem lại trạng thái đơn SIM-O-00105.',
+                'fake_model': [
+                    {'call': [{'name': 'get_order', 'arguments': {'order_id': 'SIM-O-00105'}}]},
+                    {'say': 'Đơn SIM-O-00105 hiện ở trạng thái đã giao ạ.'},
+                ],
+                'expect': {'tools_called': ['get_order'], 'action': 'reply'},
+            },
+        ]
+        case['final_state'] = {}
+        record = runner.run_scenario(case, runner.ScriptedGateway(), 'fake')
+        self.assertTrue(record['passed'], record['failures'])
+        dropped_turn, clean_turn = record['turns']
+        self.assertEqual(
+            dropped_turn['answer_check'],
+            {
+                'dropped_policy_promises': 1,
+                'dropped_done_claims': 0,
+                'detail': [{'line': 1, 'kind': 'policy', 'rule': 'logistics', 'heading_label_kept': False}],
+            },
+        )
+        self.assertNotIn('tận nhà', dropped_turn['answer'])
+        self.assertNotIn('tận nhà', json.dumps(dropped_turn['answer_check'], ensure_ascii=False))
+        self.assertNotIn('answer_check', clean_turn)
 
 
 if __name__ == '__main__':
