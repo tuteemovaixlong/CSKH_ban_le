@@ -15,6 +15,7 @@ what a sentence promises and for what the tools of the turn show. Questions, hed
 sentences that quote a structured tool fact (warranty days, a cancelled order) are left alone.
 """
 import json
+import math
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -83,11 +84,17 @@ _HANDOFF_CLAIM = re.compile(
     r'[^.!?\n]{0,120}?(?:cho|sang|tới|đến)\s+(?:nhân viên|bộ phận|người thật|cskh)')
 # Digits inside opaque order/product IDs are identifiers, not a number of days.
 _FACT_ID = re.compile(r'\b[a-z][a-z0-9]*(?:[-_][a-z0-9]+)+\b', re.IGNORECASE)
+_LIST_ITEM = re.compile(r'^\s*(?:[-*+]|\d+[.)])\s+')
+_MD_HEADING = re.compile(r'^(#{1,6})\s+(.+?)\s*#*$')
+_BOLD_HEADING = re.compile(r'^\*\*(.+?)\*\*(.*)$')
+_LABEL_SEPARATORS = (' — ', ' – ', ' - ', ': ', ' | ')
+_EMPTY_OR_ORDINAL = re.compile(r'^(?:\d+[.)])?$')
 _TIME_NUMBER = re.compile(r'\b(\d+)\s*(?:ngày|tuần|tháng|năm|giờ)\b')
 _MONEY = re.compile(r'(?<!\w)(\d+(?:[.,]\d+)*)(?:\s*(triệu|nghìn|ngàn|k|vnđ|vnd|đ|₫)(?!\w))?')
 _THOUSANDS = re.compile(r'\d{1,3}(?:[.,]\d{3})+')
-_MONEY_FIELDS = ('shipping_fee', 'amount', 'refunded_total', 'pending_total')
+_MONEY_FIELDS = ('shipping_fee', 'amount', 'refunded_total', 'pending_total', 'unit_price', 'subtotal')
 _DAY_FIELDS = ('return_window_days', 'size_exchange_window_days', 'warranty_window_days', 'warranty_days')
+_DERIVED_TIME_WINDOWS = ('return_window_days', 'size_exchange_window_days', 'warranty_window_days')
 _WINDOW_FIELDS = ('within_return_window', 'within_size_exchange_window', 'within_warranty')
 _DELIVERY_FIELDS = ('promised_delivery_by', 'estimated_delivery_at', 'latest_estimated_delivery_at')
 
@@ -102,6 +109,8 @@ class Evidence:
     has_window: bool = False
     has_delivery_date: bool = False
     escalated_to_human: bool = False
+    derived_money: frozenset = field(default_factory=frozenset)
+    derived_time: frozenset = field(default_factory=frozenset)
 
 
 @dataclass(frozen=True)
@@ -109,15 +118,43 @@ class AnswerCheck:
     text: str
     dropped_policy: int = 0
     dropped_claims: int = 0
+    details: tuple = ()
 
     @property
     def changed(self) -> bool:
         return bool(self.dropped_policy or self.dropped_claims)
 
 
+def _items_subtotal(value: dict):
+    items = value.get('items')
+    if not isinstance(items, list) or not items:
+        return None
+    total = 0
+    for item in items:
+        if not isinstance(item, dict) or type(item.get('subtotal')) is not int:
+            return None
+        total += item['subtotal']
+    return total
+
+
+def _order_record_code(value: dict):
+    if type(value.get('amount')) is not int or type(value.get('shipping_fee')) is not int:
+        return None
+    for key in ('id', 'external_order_id'):
+        code = value.get(key)
+        if isinstance(code, str) and code:
+            return code
+    return None
+
+
+def _is_finite_number(value) -> bool:
+    return type(value) is int or (type(value) is float and math.isfinite(value))
+
+
 def tool_evidence(messages) -> Evidence:
     """What the tool results of this turn establish, read from their JSON."""
     cancelled, refunded, warranty, deadlines, money = False, False, set(), set(), set()
+    derived_money, derived_time, order_records = set(), set(), {}
     has_window, has_delivery_date, escalated = False, False, False
 
     def walk(value):
@@ -137,12 +174,34 @@ def tool_evidence(messages) -> Evidence:
             for key in _MONEY_FIELDS:
                 if type(value.get(key)) is int:
                     money.add(value[key])
+            items_sub = _items_subtotal(value)
+            if items_sub is not None:
+                derived_money.add(items_sub)
+            order_code = _order_record_code(value)
+            if order_code is not None and order_code not in order_records:
+                order_records[order_code] = (value['amount'], value['shipping_fee'], items_sub)
             escalated |= value.get('status') == 'escalated_to_human'
             has_window |= any(isinstance(value.get(key), bool) for key in _WINDOW_FIELDS)
             has_delivery_date |= any(bool(value.get(key)) for key in _DELIVERY_FIELDS)
             for key in _DAY_FIELDS:
                 if type(value.get(key)) is int:
                     deadlines.add(value[key])
+            late_hours = value.get('late_by_hours')
+            if _is_finite_number(late_hours) and late_hours > 0:
+                derived_time.update((
+                    math.floor(late_hours),
+                    math.ceil(late_hours),
+                    math.floor(late_hours / 24),
+                    math.ceil(late_hours / 24),
+                ))
+            since_delivery = value.get('days_since_delivery')
+            if _is_finite_number(since_delivery) and since_delivery >= 0:
+                derived_time.update((math.floor(since_delivery), math.ceil(since_delivery)))
+                for key in _DERIVED_TIME_WINDOWS:
+                    window = value.get(key)
+                    if type(window) is int and window >= since_delivery:
+                        remaining = window - since_delivery
+                        derived_time.update((math.floor(remaining), math.ceil(remaining)))
             days = value.get('warranty_days')
             if isinstance(days, int) and not isinstance(days, bool):
                 warranty.add(days)
@@ -158,9 +217,15 @@ def tool_evidence(messages) -> Evidence:
                 walk(json.loads(message['content']))
             except ValueError:
                 continue
+    if len(order_records) >= 2:
+        derived_money.add(sum(amount for amount, _, _ in order_records.values()))
+        derived_money.add(sum(shipping for _, shipping, _ in order_records.values()))
+        if all(sub is not None for _, _, sub in order_records.values()):
+            derived_money.add(sum(sub for _, _, sub in order_records.values()))
     return Evidence(cancelled=cancelled, refunded=refunded, money_amounts=frozenset(money),
                     warranty_days=frozenset(warranty), deadline_days=frozenset(deadlines),
-                    has_window=has_window, has_delivery_date=has_delivery_date, escalated_to_human=escalated)
+                    has_window=has_window, has_delivery_date=has_delivery_date, escalated_to_human=escalated,
+                    derived_money=frozenset(derived_money), derived_time=frozenset(derived_time))
 
 
 def _fragments(text):
@@ -196,24 +261,30 @@ def _money_amounts(plain):
     return amounts
 
 
-def _uncited_policy_promise(sentence, evidence) -> bool:
+def _policy_rule(sentence, evidence):
     plain = _CITATION.sub(' ', sentence).lower()
     if _CITATION.search(sentence) or sentence.rstrip().endswith('?') or _HEDGE.search(plain):
-        return False
+        return None
     if not _POLICY_CONTEXT.search(plain):
-        return False
+        return None
     if _LOGISTICS.search(plain):
-        return True
+        return 'logistics'
     if _FEE.search(plain):
         numbers = _money_amounts(plain)
-        if _POLICY_FEE_MATCH.search(plain) or not numbers or not numbers <= evidence.money_amounts:
-            return True
+        if _POLICY_FEE_MATCH.search(plain):
+            return 'policy_fee'
+        if not numbers or not numbers <= (evidence.money_amounts | evidence.derived_money):
+            return 'fee_amount'
     if _DEADLINE.search(plain):
         numbers = {int(n) for n in _TIME_NUMBER.findall(_FACT_ID.sub(' ', plain))}
         if numbers:
-            return not numbers <= evidence.deadline_days
-        return not (evidence.has_window or evidence.has_delivery_date)
-    return False
+            return None if numbers <= (evidence.deadline_days | evidence.derived_time) else 'deadline_number'
+        return None if (evidence.has_window or evidence.has_delivery_date) else 'deadline_no_fact'
+    return None
+
+
+def _uncited_policy_promise(sentence, evidence) -> bool:
+    return _policy_rule(sentence, evidence) is not None
 
 
 def _unfounded_claim(sentence, evidence) -> bool:
@@ -238,27 +309,79 @@ def _unfounded_handoff(sentence, evidence) -> bool:
                 and _HANDOFF_CLAIM.search(plain))
 
 
+def _extract_heading_label(raw: str) -> str:
+    cuts = [raw.find(sep) for sep in _LABEL_SEPARATORS if sep in raw]
+    head = raw[:min(cuts)] if cuts else raw
+    return head.strip(' :–—-')
+
+
+def _heading_replacement(line: str):
+    """(replacement line, label) for a heading line, else None."""
+    if _LIST_ITEM.match(line):
+        return None
+    stripped = line.strip()
+    md = _MD_HEADING.match(stripped)
+    if md:
+        label = _extract_heading_label(md.group(2))
+        return (f'{md.group(1)} {label}', label) if label else None
+    bold = _BOLD_HEADING.match(stripped)
+    if bold:
+        bold_text, rest = bold.group(1), bold.group(2)
+        if rest.strip() in ('', ':') or _FACT_ID.search(bold_text):
+            label = _extract_heading_label(bold_text)
+            return (f'**{label}**', label) if label else None
+    return None
+
+
+def _sentence_drop_info(sentence, evidence):
+    if _unfounded_handoff(sentence, evidence):
+        return ('handoff', 'handoff_claim')
+    policy_rule = _policy_rule(sentence, evidence)
+    if policy_rule:
+        return ('policy', policy_rule)
+    if _unfounded_claim(sentence, evidence):
+        return ('claim', 'done_claim')
+    return None
+
+
+def _any_sentence_dropped(text: str, evidence) -> bool:
+    return any(_sentence_drop_info(sentence, evidence) is not None for sentence, _ in _fragments(text))
+
+
 def check_final_answer(text, messages=None) -> AnswerCheck:
     """`text` without the sentences the evidence of the turn does not support, plus one note per kind removed."""
     if not isinstance(text, str) or not text.strip():
         return AnswerCheck(text or '')
     evidence = tool_evidence(messages)
-    kept_lines, dropped_policy, dropped_claims, dropped_handoffs, orphan_refs = [], 0, 0, 0, []
-    for line in unicodedata.normalize('NFC', text).split('\n'):
-        kept = []
+    kept_lines, dropped_policy, dropped_claims, dropped_handoffs, orphan_refs, details = [], 0, 0, 0, [], []
+    for line_no, line in enumerate(unicodedata.normalize('NFC', text).split('\n'), start=1):
+        kept, line_details = [], []
         for sentence, separator in _fragments(line):
-            if _unfounded_handoff(sentence, evidence):
-                dropped_claims += 1
-                dropped_handoffs += 1
-                orphan_refs.extend(_CITATION.findall(sentence))
-            elif _uncited_policy_promise(sentence, evidence):
-                dropped_policy += 1
-            elif _unfounded_claim(sentence, evidence):
-                dropped_claims += 1
-                orphan_refs.extend(_CITATION.findall(sentence))
-            else:
+            drop = _sentence_drop_info(sentence, evidence)
+            if not drop:
                 kept.append(sentence + separator)
-        kept_lines.append(''.join(kept).strip() if kept else '')
+                continue
+            kind, rule = drop
+            line_details.append({'line': line_no, 'kind': kind, 'rule': rule, 'heading_label_kept': False})
+            if kind == 'policy':
+                dropped_policy += 1
+            else:
+                dropped_claims += 1
+                if kind == 'handoff':
+                    dropped_handoffs += 1
+                orphan_refs.extend(_CITATION.findall(sentence))
+        line_text = ''.join(kept).strip() if kept else ''
+        if line_details:
+            heading = _heading_replacement(line)
+            # Only a line that has lost its label is replaced by it; a kept sentence after a surviving label stays.
+            if heading and heading[1] not in line_text and not _any_sentence_dropped(heading[0], evidence):
+                line_text = heading[0]
+                for entry in line_details:
+                    entry['heading_label_kept'] = True
+            elif _EMPTY_OR_ORDINAL.match(re.sub(r'[*#_\s]+', '', line_text)):
+                line_text = ''
+            details.extend(line_details)
+        kept_lines.append(line_text)
     if not (dropped_policy or dropped_claims):
         return AnswerCheck(text)
     body = '\n'.join(kept_lines)
@@ -267,4 +390,4 @@ def check_final_answer(text, messages=None) -> AnswerCheck:
                                     (HANDOFF_NOTE, dropped_handoffs)) if count]
     if orphan_refs:
         notes[-1] += ' ' + ' '.join(dict.fromkeys(orphan_refs))  # a removed sentence must not strand its citation
-    return AnswerCheck('\n\n'.join(part for part in (body, *notes) if part), dropped_policy, dropped_claims)
+    return AnswerCheck('\n\n'.join(part for part in (body, *notes) if part), dropped_policy, dropped_claims, tuple(details))
