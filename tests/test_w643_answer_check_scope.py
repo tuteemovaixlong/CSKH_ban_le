@@ -1,6 +1,8 @@
+import copy
 import json
 import unittest
 
+from retailops.business.application import Application
 from retailops.workflow.answer_check import (
     AUDIT_RULES,
     BLOCKING_RULES,
@@ -8,6 +10,8 @@ from retailops.workflow.answer_check import (
     POLICY_NOTE,
     check_final_answer,
 )
+from scripts import run_agent_scenarios as runner
+from test_r1_w3_2_agent_loop import AgentFixture, ScriptedModel, call, say
 
 LIST_2 = {'orders': [
     {'id': 'o2', 'external_order_id': 'SIM-O-38588564-02', 'status': 'shipping', 'ordered_at': '2026-11-09T10:00:00+07:00',
@@ -141,6 +145,82 @@ class Row1AnswerCheckScopeTests(unittest.TestCase):
         second = check_final_answer(res.text, _msgs(LIST_2))
         self.assertFalse(second.changed)
         self.assertEqual(second.text, res.text)
+
+
+class Row2ApplicationTraceTests(AgentFixture):
+    MODES = ('agent', 'legacy')
+
+    def chat(self, mode, model, text):
+        app = Application(self.store_a, {}, infer=model, orchestrator=mode)
+        cid = self.store_a.new_conversation('C-001')['conversation_id']
+        return self.say(app, text, cid)
+
+    def test_audit_recorded_even_when_unchanged_in_both_modes(self):
+        reply = 'Thời hạn đổi trả là 30 ngày.'
+        for mode in self.MODES:
+            result = self.chat(mode, ScriptedModel(say(reply)), 'Thời hạn đổi trả là bao lâu?')
+            with self.subTest(mode=mode):
+                self.assertEqual(result['message'], reply)
+                self.assertNotIn('answer_check', result['trace'])
+                self.assertNotIn('answer_check_detail', result['trace'])
+                self.assertEqual(result['trace']['answer_check_audit'], [{'line': 1, 'rule': 'deadline_number'}])
+
+    def test_blocking_logistics_records_answer_check_and_detail(self):
+        for mode in self.MODES:
+            model = ScriptedModel(
+                call(('get_order', {'order_id': 'O-701'})),
+                say('Đơn O-701 đã giao. Shop sẽ đổi size tận nhà miễn phí 2 chiều cho anh/chị ạ.'),
+            )
+            result = self.chat(mode, model, 'Em muốn đổi size cho đơn O-701')
+            with self.subTest(mode=mode):
+                self.assertEqual(result['trace']['answer_check'], {'dropped_policy_promises': 1, 'dropped_done_claims': 0})
+                self.assertEqual(
+                    result['trace']['answer_check_detail'],
+                    [{'line': 1, 'kind': 'policy', 'rule': 'logistics', 'heading_label_kept': False}],
+                )
+                self.assertNotIn('answer_check_audit', result['trace'])
+
+    def test_clean_turn_has_no_answer_check_or_audit(self):
+        for mode in self.MODES:
+            model = ScriptedModel(
+                call(('get_order', {'order_id': 'O-701'})),
+                say('Đơn O-701 hiện đã được giao rồi ạ.'),
+            )
+            result = self.chat(mode, model, 'Đơn O-701 giao chưa ạ?')
+            with self.subTest(mode=mode):
+                self.assertNotIn('answer_check', result['trace'])
+                self.assertNotIn('answer_check_detail', result['trace'])
+                self.assertNotIn('answer_check_audit', result['trace'])
+
+
+class Row2RunnerAuditTests(unittest.TestCase):
+    def test_runner_records_answer_check_audit_when_present_and_omits_when_clean(self):
+        case = copy.deepcopy(runner.load_dataset()[0])
+        case['turns'] = [
+            {
+                'user': 'Thời hạn đổi trả của shop là bao lâu?',
+                'fake_model': [{'say': 'Thời hạn đổi trả là 30 ngày.'}],
+                'expect': {'action': 'reply'},
+            },
+            {
+                'user': 'Cảm ơn shop nhé.',
+                'fake_model': [{'say': 'Dạ em chào anh/chị ạ.'}],
+                'expect': {'action': 'reply'},
+            },
+        ]
+        case['final_state'] = {}
+        record = runner.run_scenario(case, runner.ScriptedGateway(), 'fake')
+        self.assertTrue(record['passed'], record.get('failures'))
+
+        first_turn, second_turn = record['turns']
+        self.assertNotIn('answer_check', first_turn)
+        self.assertEqual(first_turn['answer_check_audit'], [{'line': 1, 'rule': 'deadline_number'}])
+        dumped = json.dumps(first_turn['answer_check_audit'], ensure_ascii=False)
+        self.assertNotIn('30', dumped)
+        self.assertNotIn('Thời hạn', dumped)
+
+        self.assertNotIn('answer_check', second_turn)
+        self.assertNotIn('answer_check_audit', second_turn)
 
 
 if __name__ == '__main__':

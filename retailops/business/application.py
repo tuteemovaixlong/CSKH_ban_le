@@ -720,6 +720,8 @@ class Application:
                     answer['trace']['answer_check'] = {'dropped_policy_promises': checked.dropped_policy,
                                                        'dropped_done_claims': checked.dropped_claims}
                     answer['trace']['answer_check_detail'] = [dict(d) for d in checked.details]
+                if checked.audit:
+                    answer['trace']['answer_check_audit'] = [dict(a) for a in checked.audit]
 
             leaked, safe_msg = sanitize_output_against_canary_leak(text, answer.get('message', ''))
             if leaked:

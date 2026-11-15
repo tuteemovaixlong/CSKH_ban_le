@@ -896,6 +896,8 @@ def run_scenario(scenario, gateway, mode):
                         **trace['answer_check'],
                         'detail': list(trace.get('answer_check_detail') or []),
                     }
+                if trace.get('answer_check_audit'):
+                    turn_rec['answer_check_audit'] = list(trace['answer_check_audit'])
                 turns.append(turn_rec)
             failures.extend(f'final state: {p}' for p in grade_final_state(scenario.get('final_state') or {}, world.store))
     finally:
