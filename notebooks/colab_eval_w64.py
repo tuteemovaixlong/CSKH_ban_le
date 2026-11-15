@@ -5,6 +5,9 @@ D4 order: examples (4) -> pilot (12, inspect gates) -> A -> B, C -> restart at 8
 -> restart at 16384 for regression-w32 and regression-w4 (vision). Never edit the system between stages.
 After every batch save caches, run STOP, and Disconnect and delete runtime to stop GPU billing.
 Importing this module runs no commands, network, Drive mount or model.
+Diagnostics: vLLM logs to /content/w64_logs (runtime disk only); every shard log is saved redacted next to its
+report; a failed step prints only a redacted output tail; each stage saves vLLM speculative-decoding counters
+(MTP acceptance, throughput) as vllm_metrics-*.json in the stage folder.
 """
 
 # %% [CELL 0] Pure command and shard planning (offline tested); runtime helpers
@@ -87,11 +90,76 @@ def report_complete(path, case_ids, repeat):
         return False
 
 
-def quiet(command, **kwargs):
-    result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **kwargs)
+LOG_TAIL_LINES = 40
+SPEC_METRICS = ('vllm:spec_decode_num_drafts', 'vllm:spec_decode_num_draft_tokens',
+                'vllm:spec_decode_num_accepted_tokens', 'vllm:generation_tokens', 'vllm:prompt_tokens')
+_METRIC_LINE = re.compile(r'^([A-Za-z_:][A-Za-z0-9_:]*)(?:\{[^}]*\})?\s+(\S+)(?:\s+\d+)?$')
+
+
+def redact(text, secrets=()):
+    for secret in sorted((s for s in secrets if s), key=len, reverse=True):
+        text = text.replace(secret, '[REDACTED]')
+    return text
+
+
+def log_tail(path, secrets=(), lines=LOG_TAIL_LINES):
+    try:
+        text = Path(path).read_text(encoding='utf-8', errors='replace')
+    except OSError:
+        return ''
+    return redact('\n'.join(text.splitlines()[-lines:]), secrets)
+
+
+def show_tail(path, secrets=()):
+    print(f'--- last lines of {Path(path).name} (redacted) ---\n' + log_tail(path, secrets))
+
+
+def quiet(command, *, secrets=(), **kwargs):
+    """Run a setup step. On failure show the step name and a redacted output tail, never the full command or SQL."""
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, **kwargs)
     if result.returncode:
-        # CalledProcessError would print the command/SQL. Keep all credentials out of cell output.
-        raise RuntimeError('Setup command failed; inspect the package/runtime configuration') from None
+        output = result.stdout if isinstance(result.stdout, str) else (result.stdout or b'').decode('utf-8', 'replace')
+        step = ' '.join([Path(str(command[0])).name, *(str(part)[:60] for part in command[1:3])])
+        tail = redact('\n'.join(output.splitlines()[-LOG_TAIL_LINES:]), secrets)
+        raise RuntimeError(f'Setup step failed: {step} (exit {result.returncode})\n{tail}') from None
+
+
+def parse_metrics(text):
+    """Sum the listed vLLM Prometheus counters over their label sets; other series are ignored."""
+    totals = {}
+    for line in text.splitlines():
+        match = _METRIC_LINE.match(line.strip())
+        if not match:
+            continue
+        name = match.group(1)[:-len('_total')] if match.group(1).endswith('_total') else match.group(1)
+        if name in SPEC_METRICS:
+            try:
+                totals[name] = totals.get(name, 0.0) + float(match.group(2))
+            except ValueError:
+                continue
+    return totals
+
+
+def metrics_delta(before, after, *, seconds):
+    """MTP acceptance as vLLM reports it: accepted/draft tokens and 1 + accepted/drafts; aggregate tokens/s."""
+    delta = {name: after[name] - before.get(name, 0.0) for name in SPEC_METRICS if name in after}
+    drafts = delta.get('vllm:spec_decode_num_drafts')
+    draft_tokens = delta.get('vllm:spec_decode_num_draft_tokens')
+    accepted = delta.get('vllm:spec_decode_num_accepted_tokens', 0.0)
+    generated = delta.get('vllm:generation_tokens')
+    return {'delta': delta, 'seconds': round(seconds, 3),
+            'draft_acceptance_rate': accepted / draft_tokens if draft_tokens else None,
+            'mean_acceptance_length': 1 + accepted / drafts if drafts else None,
+            'generation_tokens_per_second': generated / seconds if generated is not None and seconds > 0 else None}
+
+
+def fetch_metrics(api_key):
+    try:
+        request = urllib.request.Request('http://127.0.0.1:8001/metrics', headers={'Authorization': 'Bearer ' + api_key})
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return response.read().decode('utf-8', 'replace')
+    except OSError:
+        return ''
 
 
 def stop_process(process):
@@ -112,11 +180,16 @@ def stop_process(process):
         process.wait(timeout=15)
 
 
-def start_server(command, api_key):
+def start_server(command, api_key, log_path=None):
     # vLLM reads VLLM_API_KEY; it is absent from command lines and saved files.
-    # Suppress startup logs as some versions echo server configuration.
-    process = subprocess.Popen(command, env=dict(os.environ, VLLM_API_KEY=api_key),
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    # Its log stays on the runtime disk, never on Drive; cells print only redacted tails of it.
+    stream = Path(log_path).open('ab') if log_path else subprocess.DEVNULL
+    try:
+        process = subprocess.Popen(command, env=dict(os.environ, VLLM_API_KEY=api_key),
+                                   stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
+    finally:
+        if log_path:
+            stream.close()
     CHILDREN.append(process)
     return process
 
@@ -136,10 +209,14 @@ def wait_server(process, api_key, timeout=1500):
     return False
 
 
-def run_shards(jobs, parallel, *, repo, env):
+def run_shards(jobs, parallel, *, repo, env, log_dir=None, secrets=()):
+    """Run shards with at most `parallel` processes. With log_dir, each shard logs to the runtime disk and a
+    redacted copy is saved next to its report (shard-NNN.log); a failed shard raises with its redacted tail."""
     if parallel < 1:
         raise ValueError('P must be positive')
     pending, active, result = list(jobs), [], []
+    if log_dir:
+        Path(log_dir).mkdir(parents=True, exist_ok=True)
     try:
         while pending or active:
             while pending and len(active) < parallel:
@@ -148,18 +225,30 @@ def run_shards(jobs, parallel, *, repo, env):
                 if report_complete(report, ids, repeat):
                     result.append('skipped')
                     continue
-                process = subprocess.Popen(command, cwd=repo, env=env, stdout=subprocess.DEVNULL,
-                                           stderr=subprocess.DEVNULL, start_new_session=True)
+                local_log = Path(log_dir) / (Path(report).stem + '.log') if log_dir else None
+                stream = local_log.open('wb') if local_log else subprocess.DEVNULL
+                try:
+                    process = subprocess.Popen(command, cwd=repo, env=env, stdout=stream,
+                                               stderr=subprocess.STDOUT, start_new_session=True)
+                finally:
+                    if local_log:
+                        stream.close()
                 CHILDREN.append(process)
-                active.append((process, job))
-            for process, job in list(active):
+                active.append((process, job, local_log))
+            for entry in list(active):
+                process, job, local_log = entry
                 status = process.poll()
                 if status is None:
                     continue
-                active.remove((process, job))
+                active.remove(entry)
                 ids, report, trace, command, repeat = job
+                if local_log:
+                    Path(report).with_suffix('.log').write_text(log_tail(local_log, secrets, lines=10**9) + '\n',
+                                                               encoding='utf-8')
                 if status or not report_complete(report, ids, repeat):
-                    raise RuntimeError('Shard did not finish; its trace is saved. Resume this same stage after inspection.')
+                    tail = log_tail(local_log, secrets) if local_log else '(no log)'
+                    raise RuntimeError(f'Shard {Path(report).stem} did not finish (exit {status}); its trace is saved. '
+                                       f'Resume this same stage after inspection. Last lines:\n{tail}')
                 result.append('done')
             if active:
                 time.sleep(.25)
@@ -175,16 +264,16 @@ def provision_database(python, repo, env, password):
     guard = ('import os,psycopg; from scripts.postgres_test_guard import require_disposable_postgres_test_target; '
              'require_disposable_postgres_test_target(os.environ["RETAILOPS_TEST_DATABASE_URL"], '
              'psycopg.conninfo.conninfo_to_dict)')
-    quiet([str(python), '-c', guard], cwd=repo, env=env)
+    quiet([str(python), '-c', guard], cwd=repo, env=env, secrets=(password,))
     quiet(['service', 'postgresql', 'start'])
     if not re.fullmatch('[0-9a-f]{64}', password):
         raise ValueError('Disposable DB password must be a generated 32-byte hex value')
     sql = ("DROP DATABASE IF EXISTS retailops_test;\nDROP ROLE IF EXISTS retailops_test;\n"
            f"CREATE ROLE retailops_test LOGIN PASSWORD '{password}';\n"
            "CREATE DATABASE retailops_test OWNER retailops_test;\n")
-    quiet(['sudo', '-u', 'postgres', 'psql', '-v', 'ON_ERROR_STOP=1'], input=sql, text=True)
+    quiet(['sudo', '-u', 'postgres', 'psql', '-v', 'ON_ERROR_STOP=1'], input=sql, text=True, secrets=(password,))
     quiet(['sudo', '-u', 'postgres', 'psql', '-v', 'ON_ERROR_STOP=1', '-d', 'retailops_test'],
-          input='CREATE EXTENSION IF NOT EXISTS vector;\n', text=True)
+          input='CREATE EXTENSION IF NOT EXISTS vector;\n', text=True, secrets=(password,))
 
 
 def pilot_gate(report, traces):
@@ -210,6 +299,7 @@ if __name__ == '__main__':
     LOCAL_MODEL = Path('/content/models') / MODEL.replace('/', '__')
     DRIVE_MODEL = Path('/content/drive/MyDrive/retailops_models') / MODEL.replace('/', '__')
     VLLM_CACHE = Path.home() / '.cache/vllm'
+    LOGS = Path('/content/w64_logs')            # runtime disk only; never copied to Drive unredacted
     clone_commands(REPO, REPO_SHA)      # fail before mounting Drive or consuming setup time
     if STAGE not in ('examples', 'pilot', 'A', 'B', 'C', 'D', 'regression-w32', 'regression-w4'):
         raise ValueError('Unknown stage')
@@ -249,16 +339,22 @@ if __name__ == '__main__':
     import vllm
     print('GPU:', gpu, '| vLLM:', vllm.__version__)
     API_KEY = secrets.token_urlsafe(32)  # memory only
-    SERVER = start_server(build_vllm_command(LOCAL_MODEL, CTX, GPU_GB, mtp=USE_MTP, max_num_seqs=MAX_NUM_SEQS), API_KEY)
+    LOGS.mkdir(parents=True, exist_ok=True)
+    VLLM_LOG = LOGS / f'vllm-{CTX}.log'
+    SERVER = start_server(build_vllm_command(LOCAL_MODEL, CTX, GPU_GB, mtp=USE_MTP, max_num_seqs=MAX_NUM_SEQS),
+                          API_KEY, VLLM_LOG)
     if not wait_server(SERVER, API_KEY):
         stop_process(SERVER)
+        show_tail(VLLM_LOG, (API_KEY,))
         if not USE_MTP:
             raise RuntimeError('vLLM failed to start')
         USE_MTP = False
         print('Retrying without MTP')
-        SERVER = start_server(build_vllm_command(LOCAL_MODEL, CTX, GPU_GB, mtp=False, max_num_seqs=MAX_NUM_SEQS), API_KEY)
+        SERVER = start_server(build_vllm_command(LOCAL_MODEL, CTX, GPU_GB, mtp=False, max_num_seqs=MAX_NUM_SEQS),
+                              API_KEY, VLLM_LOG)
         if not wait_server(SERVER, API_KEY):
             stop_process(SERVER)
+            show_tail(VLLM_LOG, (API_KEY,))
             raise RuntimeError('vLLM failed without MTP; stop and disconnect runtime')
     print('vLLM ready; MTP:', USE_MTP)
 
@@ -291,6 +387,7 @@ if __name__ == '__main__':
                RETAILOPS_ALLOW_DESTRUCTIVE_TEST_DATABASE='1', RETAILOPS_API_KEY=API_KEY,
                RETAILOPS_API_TUNNEL_TOKEN=secrets.token_urlsafe(32), PYTHONUTF8='1')
     provision_database(PYTHON, REPO, ENV, DB_PASSWORD)
+    SECRETS = (API_KEY, DB_PASSWORD, ENV['RETAILOPS_API_TUNNEL_TOKEN'])  # redaction only; never printed
     print('Pinned repo, runner venv and disposable pgvector DB ready')
 
 
@@ -332,15 +429,28 @@ if __name__ == '__main__':
         jobs.append((ids, report, trace, command, REPEAT))
         reports.append(report)
         traces.append(trace)
-    result = run_shards(jobs, P, repo=REPO, env=ENV)
-    quiet([str(PYTHON), 'scripts/eval_stats.py', 'merge', str(OUT / 'merged.json'), *map(str, reports)], cwd=REPO, env=ENV)
+    metrics_before, started = parse_metrics(fetch_metrics(API_KEY)), time.monotonic()
+    try:
+        result = run_shards(jobs, P, repo=REPO, env=ENV, log_dir=LOGS / RUN_TAG / STAGE, secrets=SECRETS)
+    finally:
+        # Saved per attempt, also after a failed or interrupted stage: MTP acceptance and throughput for D7/D12.
+        page = fetch_metrics(API_KEY)
+        metrics_after = parse_metrics(page)
+        stamp = time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())
+        (OUT / f'vllm_metrics-{stamp}.json').write_text(json.dumps(dict(
+            mtp=USE_MTP, before=metrics_before, after=metrics_after,
+            **metrics_delta(metrics_before, metrics_after, seconds=time.monotonic() - started),
+            raw=[line for line in page.splitlines() if line.startswith(('vllm:spec_decode', 'vllm:generation_tokens'))]),
+            indent=2) + '\n', encoding='utf-8')
+    quiet([str(PYTHON), 'scripts/eval_stats.py', 'merge', str(OUT / 'merged.json'), *map(str, reports)],
+          cwd=REPO, env=ENV, secrets=SECRETS)
     print('Stage complete:', STAGE, '| newly finished:', result.count('done'), '| skipped:', result.count('skipped'))
     if STAGE == 'pilot':
         gate = pilot_gate(json.loads((OUT / 'merged.json').read_text(encoding='utf-8')), traces)
         print('D4 pilot gate:', gate)
         if not gate['proceed']:
             raise RuntimeError('D4 gate failed; stop and ask owner. No next stage runs automatically.')
-    print('Reports and traces saved directly to Drive. Stop and inspect before selecting the next stage.')
+    print('Reports, traces, shard logs and vLLM metrics saved to Drive. Stop and inspect before the next stage.')
 
 
 # %% [CELL 6] Save model, compilation cache and venv only. No environment, logs, SQL or credentials.
@@ -360,6 +470,6 @@ if __name__ == '__main__':
     for process in CHILDREN:
         stop_process(process)
     quiet(['service', 'postgresql', 'stop'])
-    for name in ('API_KEY', 'DB_PASSWORD', 'ENV'):
+    for name in ('API_KEY', 'DB_PASSWORD', 'ENV', 'SECRETS'):
         globals().pop(name, None)
     print('Processes stopped. Runtime -> Disconnect and delete runtime.')

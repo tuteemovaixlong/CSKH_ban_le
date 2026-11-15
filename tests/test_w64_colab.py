@@ -1,6 +1,7 @@
 """W6.4.0 row 5: pure Colab command/resume planning; never starts Colab or a model."""
 import ast
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -118,3 +119,101 @@ class ColabPlanTests(unittest.TestCase):
             with self.assertRaises(KeyboardInterrupt):
                 colab.run_shards([(['x'], Path('r'), Path('t'), ['cmd'], 1)], 1, repo='/repo', env={})
             stop.assert_called_once_with(p)
+
+
+class ColabDiagnosticsTests(unittest.TestCase):
+    """Claude's W6.4.0 follow-up: failures explain themselves and MTP speed is recorded, without leaking secrets."""
+
+    SECRET = 'k' * 24
+
+    def test_redacted_tail_keeps_the_last_lines_only(self):
+        with tempfile.TemporaryDirectory() as td:
+            log = Path(td) / 'vllm.log'
+            log.write_text('\n'.join([f'line {i}' for i in range(100)] + [f'key={self.SECRET}']) + '\n',
+                           encoding='utf-8')
+            tail = colab.log_tail(log, (self.SECRET,), lines=5)
+        self.assertEqual(tail.splitlines(), ['line 96', 'line 97', 'line 98', 'line 99', 'key=[REDACTED]'])
+        self.assertEqual(colab.log_tail(Path(td) / 'missing.log', ()), '')
+
+    def test_failed_setup_step_shows_its_redacted_output(self):
+        script = f'import sys; print("E: Unable to locate package python3.12"); print("pw={self.SECRET}"); sys.exit(3)'
+        with self.assertRaises(RuntimeError) as caught:
+            colab.quiet([sys.executable, '-c', script], secrets=(self.SECRET,))
+        message = str(caught.exception)
+        self.assertIn('exit 3', message)
+        self.assertIn('Unable to locate package python3.12', message)
+        self.assertIn('pw=[REDACTED]', message)
+        self.assertNotIn(self.SECRET, message)
+        with self.assertRaises(RuntimeError) as caught:
+            colab.quiet([sys.executable, '-c', 'import sys; print(sys.stdin.read()); sys.exit(1)'],
+                        input=f"CREATE ROLE x PASSWORD '{self.SECRET}';", text=True, secrets=(self.SECRET,))
+        self.assertNotIn(self.SECRET, str(caught.exception))
+        colab.quiet([sys.executable, '-c', 'print("fine")'])
+
+    def test_vllm_output_goes_to_a_local_log_and_the_key_stays_in_its_environment(self):
+        with tempfile.TemporaryDirectory() as td, patch.object(colab.subprocess, 'Popen') as popen, \
+                patch.object(colab, 'CHILDREN', []):
+            log = Path(td) / 'vllm.log'
+            colab.start_server(['vllm', 'serve', '/model'], self.SECRET, log)
+            kwargs = popen.call_args.kwargs
+            self.assertNotIn(self.SECRET, ' '.join(popen.call_args.args[0]))
+            self.assertEqual(kwargs['env']['VLLM_API_KEY'], self.SECRET)
+            self.assertNotEqual(kwargs['stdout'], colab.subprocess.DEVNULL)
+            self.assertEqual(kwargs['stderr'], colab.subprocess.STDOUT)
+            self.assertTrue(kwargs['start_new_session'])
+            self.assertTrue(log.exists())
+
+    def test_spec_decode_counters_give_acceptance_rate_length_and_throughput(self):
+        def page(drafts, draft_tokens, accepted, generated):
+            labels = '{engine="0",model_name="Qwen/Qwen3.5-9B"}'
+            return '\n'.join([
+                '# HELP vllm:spec_decode_num_drafts_total Number of spec decoding drafts.',
+                '# TYPE vllm:spec_decode_num_drafts_total counter',
+                f'vllm:spec_decode_num_drafts_total{labels} {drafts}',
+                f'vllm:spec_decode_num_drafts_created{labels} 1.7e9',
+                f'vllm:spec_decode_num_draft_tokens_total{labels} {draft_tokens}',
+                f'vllm:spec_decode_num_accepted_tokens_total{labels} {accepted}',
+                f'vllm:spec_decode_num_accepted_tokens_per_pos_total{{engine="0",position="0"}} {accepted}',
+                f'vllm:generation_tokens_total{labels} {generated}',
+                'process_cpu_seconds_total 12.0'])
+        before = colab.parse_metrics(page(10.0, 20.0, 15.0, 100.0))
+        after = colab.parse_metrics(page(110.0, 220.0, 165.0, 1100.0))
+        self.assertEqual(after['vllm:spec_decode_num_drafts'], 110.0)
+        self.assertNotIn('vllm:spec_decode_num_drafts_created', after)
+        summary = colab.metrics_delta(before, after, seconds=50.0)
+        self.assertAlmostEqual(summary['draft_acceptance_rate'], 0.75)
+        self.assertAlmostEqual(summary['mean_acceptance_length'], 2.5)
+        self.assertAlmostEqual(summary['generation_tokens_per_second'], 20.0)
+        no_mtp = colab.metrics_delta({}, colab.parse_metrics('vllm:generation_tokens_total 40'), seconds=4.0)
+        self.assertIsNone(no_mtp['draft_acceptance_rate'])
+        self.assertIsNone(no_mtp['mean_acceptance_length'])
+        self.assertEqual(no_mtp['generation_tokens_per_second'], 10.0)
+
+    def test_shard_logs_are_saved_redacted_and_a_failure_shows_its_tail(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            ok_report, bad_report = root / 'shard-000.json', root / 'shard-001.json'
+            jobs = [(['a'], ok_report, root / 'shard-000.jsonl',
+                     [sys.executable, '-c', f'print("ran with {self.SECRET}")'], 1),
+                    (['b'], bad_report, root / 'shard-001.jsonl',
+                     [sys.executable, '-c', 'import sys; print("Traceback: boom"); sys.exit(2)'], 1)]
+            finished = set()
+            def complete(path, ids, repeat):
+                return path == ok_report and path in finished
+            real_popen = colab.subprocess.Popen
+            def launch(command, **kwargs):
+                process = real_popen(command, **kwargs)
+                process.wait()
+                finished.add(ok_report if 'ran with' in command[-1] else bad_report)
+                return process
+            with patch.object(colab, 'report_complete', side_effect=complete), \
+                    patch.object(colab.subprocess, 'Popen', side_effect=launch), \
+                    patch.object(colab, 'CHILDREN', []), patch.object(colab, 'stop_process'):
+                with self.assertRaises(RuntimeError) as caught:
+                    colab.run_shards(jobs, 1, repo=td, env=None, log_dir=root / 'local', secrets=(self.SECRET,))
+            self.assertIn('shard-001', str(caught.exception))
+            self.assertIn('Traceback: boom', str(caught.exception))
+            saved = ok_report.with_suffix('.log').read_text(encoding='utf-8')
+            self.assertIn('ran with [REDACTED]', saved)
+            self.assertNotIn(self.SECRET, saved)
+            self.assertIn('Traceback: boom', bad_report.with_suffix('.log').read_text(encoding='utf-8'))

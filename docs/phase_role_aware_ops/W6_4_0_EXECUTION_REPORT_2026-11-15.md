@@ -89,6 +89,31 @@ Hai lỗi của full suite đầu có PDF:
 - `test_item10_package_isolation_and_image_exclusion`: `AssertionError: 'marketplace_sim' == 'marketplace_sim'` khi quét vào `.claude/worktrees/cai-nay-la-sao-bddcef/tests/test_marketplace_sim_contract.py` của worktree cũ. Không sửa bài test hay xóa/move worktree. Kiểm bộ nguồn sạch bằng cách sao chép đúng 685 tệp tracked/tệp mới của nhánh vào thư mục tạm ngoài repo, không kèm `.git`, `.claude` hay artifact.
 - `test_real_adapter_sends_both_item0_headers_measures_image_tokens_and_redacts_secrets`: assertion URL chỉ chấp nhận `/v1/chat/completions`, nên GET `/v1/models` mới làm fail. Đổi assertion sang đúng ba URL, giữ toàn bộ kiểm Bearer/tunnel token cho **mọi** request, số ảnh/token và không lọt khóa. Chạy lại hai suite adapter: **43/43**. Đây là thay đổi test để phản ánh GET của hàng 3, không đổi cách chấm ca eval. Snapshot cuối có thêm 3 test bổ sung mới, tổng **1.214 method, 1.128 pass, 86 skip, 0 fail/error**. Đối chiếu 18 tệp mã/test/notebook/CI đã đổi giữa snapshot và checkout cuối: giống byte hoàn toàn.
 
+## Kiểm chứng và bổ sung của Claude (2026-11-15)
+
+Claude kiểm chứng một lượt theo mục 2 handoff trên `184ac87`, trong worktree riêng, không chạm checkout của Codex.
+
+| Kiểm | Kết quả |
+|---|---|
+| `test_w64_*` và adapter W3.2, W4 | 69/69 đạt |
+| notebook, eval pack, docs, deployment, live-e2e contract; `check_eval_dataset.py evals/suites --final` | đều OK; `cases=250` |
+| SHA-256 12 tệp `evals/suites` | 12/12 khớp bảng đóng băng |
+| Fake 250 ca chạy liền, so với 2 shard (`shard_case_ids`) rồi `eval_stats merge` | `by_category`, `aggregates` khớp; `summary` khớp trừ `latency_ms` (hai lần chạy đo thời gian riêng, đúng kỳ vọng); `compare` chạy được; vết 717 dòng bằng `model_calls`; gộp một shard với chính nó bị từ chối |
+| F42 trên Postgres | `PostgresBusinessStore` kế thừa đúng `read_order_details_in_tx`; cột `unit_price`, `subtotal` là BIGINT |
+| Shard song song với `--knowledge real` | mỗi tiến trình tạo schema riêng tên ngẫu nhiên (`RealKnowledge`) và chỉ xóa schema đó, không tranh chấp DB |
+
+**Bổ sung hàng 5 (commit của Claude trên nhánh này).** Bản `184ac87` đẩy output của vLLM, các shard và mọi lệnh cài đặt vào `DEVNULL`. Hệ quả: vLLM không khởi động hay một shard hỏng thì chỉ có câu báo chung, dò lỗi tốn đơn vị điện toán; và không ghi được tỉ lệ chấp nhận MTP mà W6.4-D7 (tốc độ) và D12(h) (mốc trước LoRA) cần. Đã sửa:
+
+- `quiet()`: lỗi thì báo tên bước, mã thoát và 40 dòng output cuối **đã che** các bí mật truyền vào; không in lệnh đầy đủ hay SQL. Các lệnh `psql` và guard truyền mật khẩu DB để che.
+- `start_server()`: log vLLM ghi ra `/content/w64_logs/vllm-<ctx>.log` trên đĩa runtime, không lên Drive; khóa vẫn chỉ nằm trong `VLLM_API_KEY`. Khởi động hỏng thì in đuôi log đã che, trước khi thử lại không MTP.
+- `run_shards(..., log_dir, secrets)`: mỗi shard ghi log trên đĩa runtime; xong hay hỏng đều lưu bản đã che cạnh báo cáo (`shard-NNN.log` trên Drive); shard hỏng báo tên shard, mã thoát và đuôi log.
+- `parse_metrics()`, `metrics_delta()`, `fetch_metrics()`: mỗi lần chạy một bước, CELL 5 lưu `vllm_metrics-<UTC>.json` vào thư mục bước, kể cả khi bước hỏng hay bị ngắt: bộ đếm `spec_decode` trước và sau, tỉ lệ chấp nhận token nháp, độ dài chấp nhận trung bình (cách vLLM tính: 1 + accepted/drafts), token sinh mỗi giây cộng gộp, cùng các dòng gốc của bộ đếm.
+- CELL 7 xóa thêm biến `SECRETS`.
+
+Test viết trước, chạy trên `184ac87` thấy 5 ERROR: `AttributeError: module 'notebooks.colab_eval_w64' has no attribute 'log_tail'`, `... 'parse_metrics'`, `TypeError: Popen.__init__() got an unexpected keyword argument 'secrets'`, `TypeError: run_shards() got an unexpected keyword argument 'log_dir'`, `TypeError: start_server() takes 2 positional arguments but 3 were given`. Sau sửa `test_w64_colab.py` 13/13 đạt. Sinh lại `colab_agent.ipynb` bằng `build_agent_notebook.py` (`AGENT_NOTEBOOK_SOURCE_SYNC_OK`); Python 3.13.15 compile script đạt; toàn bộ `python -m unittest discover -s tests -q`: 1.219 test, 1.133 đạt, 86 skip, 0 fail/error, 514,5 giây (`OK (skipped=86)`).
+
+**Chỉ kiểm được khi chạy thật:** `apt-get install python3.12` phụ thuộc bản Ubuntu của máy Colab. Bước `examples` đầu tiên sẽ cho biết; nếu hỏng, thông báo giờ hiện dòng lỗi của apt.
+
 ## PR và CI
 
 - Nhánh: `phase-r1-w6-4-0`, base `origin/main` `9086714`; không merge, không push main, không force-push/rebase/reset/stash.
