@@ -652,14 +652,17 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
                 )
         listed = bound("list_orders", {})
         self.assertTrue(listed["truncated"])
-        self.assertEqual(listed["returned_count"], 10)
-        self.assertGreater(listed["total_count"], 10)
-        self.assertIn("truncated", listed.get("note", "").lower())
+        self.assertTrue(listed["has_more"])
+        self.assertEqual(listed["next_offset"], 5)
+        self.assertEqual(listed["returned_count"], 5)
+        self.assertGreater(listed["total_count"], 5)
+        self.assertIn("5/13", listed.get("note", ""))
+        self.assertIn("gần nhất", listed.get("note", "").lower())
 
         # End-to-end final assistant response tests for hostile/hallucinating model outputs (R5.2):
         # (a) model fabricates price/stock/warranty for P-604 -> runtime grounding overrides with null disclosure
         # (b) model claims O-101 was already cancelled without confirmation -> runtime grounding corrects to pending (chưa bị hủy)
-        # (c) model omits truncation disclosure on list_orders -> runtime grounding appends 10/13 (truncated=True)
+        # (c) model omits truncation disclosure on list_orders -> runtime grounding appends 5/13 (truncated=True)
         def ai4_hostile_e2e_handler(msgs, tools, timeout):
             tool_msgs = [m for m in msgs if m.get("role") == "tool"]
             if tools and msgs and msgs[-1].get("role") == "user":
@@ -765,7 +768,7 @@ class Phase5EAITrustAndGovernanceTests(unittest.TestCase):
                 "text": "Xem danh sách đơn hàng của tôi",
             },
         )
-        self.assertIn("10/13", res_list["message"])
+        self.assertIn("5/13", res_list["message"])
         self.assertIn("truncated=True", res_list["message"])
 
         snap_after_e2e = self._business_snapshot()

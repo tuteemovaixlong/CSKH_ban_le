@@ -37,7 +37,7 @@ Khi cần người thật, ca hỗ trợ được chuyển sang nhân viên ở 
 
 | Tool | Tham số | Trả về |
 |---|---|---|
-| `list_orders` | không có | tối đa 10 đơn của khách: mã sàn, mã nội bộ, sản phẩm, biến thể, số tiền, trạng thái, ngày đặt, thanh toán, phí ship, khu vực giao, hạn giao cam kết, tóm tắt hoàn tiền |
+| `list_orders` | `limit` (mặc định 5, tối đa 20), `offset` (mặc định 0) | tóm tắt các đơn của khách, mới nhất trước: mã sàn, mã nội bộ, trạng thái, ngày đặt, số tiền, phí ship, thanh toán, ngày giao, các món kèm số lượng; `total_count`, `has_more`, `next_offset`; chi tiết thanh toán, vận chuyển, hoàn tiền, điều kiện xử lý thì xem bằng `get_order` |
 | `get_order` | `order_id`: mã sàn hoặc mã nội bộ | chi tiết một đơn của khách kèm điều kiện hủy, trả, đổi, bảo hành do server tính; đơn không phải của khách hoặc không tồn tại thì báo không tìm thấy; nhiều đơn khớp thì trả `ambiguous_order` kèm danh sách để hỏi lại |
 | `track_shipment` | `order_id` | hãng vận chuyển, mã vận đơn, trạng thái, khu vực hiện tại, thời gian giao dự kiến, số lần giao, hành trình theo thời gian; số điện thoại shipper đã che; đơn chưa bàn giao thì chưa có vận đơn |
 | `search_products` | `query` | sản phẩm khớp tên, từ khóa; không báo tồn kho |
@@ -55,7 +55,7 @@ Khi cần người thật, ca hỗ trợ được chuyển sang nhân viên ở 
 | Tool | Tham số | Trả về |
 |---|---|---|
 | `get_case_transcript` | không có | hội thoại của ca, lý do chuyển người, trích đoạn tệp đính kèm đã làm sạch |
-| `list_case_orders` | không có | đơn của khách trong ca, không kèm thông tin cá nhân |
+| `list_case_orders` | không có | tối đa 20 đơn của khách trong ca dạng tóm tắt (không kèm thông tin cá nhân): mã đơn, trạng thái, ngày đặt/giao, số tiền, phí ship, trạng thái thanh toán, số ngày từ khi giao, thao tác được phép, cờ yêu cầu đang mở, các món kèm số lượng; `count`, `total_count`, `truncated`; chi tiết thanh toán, hoàn tiền, điều kiện và tồn kho xem bằng `get_case_order` |
 | `get_case_order` | `order_id` | một đơn của khách trong ca, kèm sản phẩm và tồn kho biến thể |
 | `list_case_order_actions` | không có | yêu cầu hủy, trả, đổi của ca và lịch sử duyệt |
 | `search_knowledge` | `query` | như trên |
