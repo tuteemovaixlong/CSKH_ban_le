@@ -1026,3 +1026,48 @@ Bước dọn image cũ được hoãn tới khi smoke trình duyệt xong, đ�
 - Đóng ca smoke W6.2 ngày 2026-11-11 còn ở Hàng chờ; dọn image `2d788b20…` trên EC2.
 - Khung "Quá trình suy luận" vẫn hiện mã nội bộ (F20, W6.6). Câu trả lời câu 3 còn lộ tên trường như `refund: null`, `delivered_at`.
 - Reset dữ liệu demo theo W6.2-D4: tuần trước 2026-12-15.
+
+### 2026-11-14 W6.3.5 verification, merge and production deploy record
+
+> **Phạm vi:** kiểm PR #108 (hotfix W6.3.5 do Codex làm) theo mục 5 [handoff](W6_3_5_HOTFIX_HANDOFF_2026-11-14.md), sửa tài liệu và test trên cùng nhánh, merge, deploy lên production, smoke trên trình duyệt. Không migration, không nạp lại kho chính sách.
+
+**Codex hỏi owner giữa chừng.**
+- Assertion `< 6000` ở `tests/test_r1_w3_2_agent_loop.py` chặn việc thêm hai luật. Giới hạn thật là `MAX_SYSTEM_CHARACTERS = 6400`, đặt từ W6.2.
+- Owner cho đổi assertion thành `<= MAX_SYSTEM_CHARACTERS`; không nâng 6.400 và không sửa câu cũ trong `SYSTEM`.
+- Vì `SYSTEM` chỉ còn chỗ cho khoảng 300 ký tự, chi tiết ba việc phải chuyển nhân viên và ngoại lệ câu hỏi thông tin được đặt trong mô tả tool `request_human_support`.
+
+**Lượt kiểm 1, head `42fc413`: đạt mọi tiêu chí mục 2.**
+- 8 tệp, đúng phạm vi. `SYSTEM` chỉ thêm 2 câu ("Staff-only work: …" và "One open cancel/return/exchange per order; …"). Mô tả tool có đủ ba việc của luật 11 và ngoại lệ. Hai workflow chỉ đổi `timeout-minutes` (deploy 40, `offline` 30).
+- 99 test liên quan OK. Notebook, eval pack, ba contract, `--final` 250 ca, SHA đóng băng 12/12 đều đạt. Runner `--fake` 250/250 và 32/32.
+- Độ dài `agent_system`: 6.086 ký tự khi không có focus, 6.284 với hai focus ID 64 ký tự; giới hạn 6.400.
+
+**Claude sửa, owner chọn "Sửa và mở PR":**
+- `003e5cb`: báo cáo đổi sang LF (bản commit dạng CRLF làm `git diff --check` báo lỗi); đính chính con số "6.086 với focus tối đa" thành 6.284; thêm mục 7 kiểm chứng.
+- CI lần 1 trên `003e5cb`: job `offline` đỏ ở lượt unittest chạy trong image. `WorkflowTimeoutTests` đọc `.github`, mà image không chứa thư mục này. `7f2c12c` thêm `skipUnless`, theo mẫu `test_w32_catalog_packaging`.
+- CI lần 2 trên `7f2c12c` đỏ vì F38 (P99 85,5 ms); chạy lại thì 6/6 xanh, gồm cả lượt unittest trong image.
+
+**Merge.** Owner merge lúc 18:00:47Z: `b8c77f3234a96e57d477f23b02c1d6c6e44675fc`, tree giống hệt `7f2c12c`. CI và Ops Console trên `main` xanh.
+
+**Deploy.**
+- EC2 vẫn bật từ lần deploy W6.3.1–W6.3.4; host `retailops.54-227-17-73.sslip.io` không đổi, `/healthz` 200 trước deploy.
+- Claude bật `RETAILOPS_DEPLOY_ENABLED` lúc 18:13:06Z, chạy workflow [`43625351803`](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/43625351803) trên `b8c77f3`, và **tắt cờ lúc 18:13:31Z ngay khi job deploy bắt đầu**; đã kiểm lại cờ là `false`.
+- Job deploy chạy 21 phút (18:13:25–18:34:26Z), dưới giới hạn mới 40 phút; 1.188 test chạy hai lần.
+- Image `sha256:4fd0d344f810e3132676dd1b71cd2f0a290dc80ac5ed7bb4f4a535fe7a8956e0`. Có đủ `PUBLIC_WEB_ROLLOUT_OK`, 2 lần `LIVE_E2E_SMOKE_OK`, `ADMIN_CONSOLE_SMOKE_OK`, `ADMIN_CONSOLE_READY`. Image cũ đã dọn, đĩa trống 42 GB.
+- Sau deploy: `/healthz` 200; `/api/session` và admin console trả 401 khi chưa đăng nhập.
+
+**Smoke trên trình duyệt** (`deepseek-flash`, tài khoản Google khách của owner):
+
+| # | Tin nhắn | Kết quả |
+|---|---|---|
+| 1 | đơn SIM-O-38588564-02 (đang giao) nhập nhầm địa chỉ, đổi giúp tôi | Đạt. `get_order` và `request_human_support` trong cùng lượt, không hỏi trước; tạo ca vào hàng đợi Staff Desk. Câu "đã chuyển" được giữ, `reason` khoảng 110 ký tự được nhận, nên **đường đi F28 của W6.3.1 cũng đã kiểm** |
+| 2 | shop xuất hóa đơn VAT công ty cho đơn SIM-O-38588564-03 (đã giao) được không | Đạt. `get_order`, `search_knowledge`, `request_human_support` trong một bước; chuyển nhân viên kèm chính sách có trích dẫn |
+| 3 | vừa trả vừa đổi size được không | Đạt. Giải thích mỗi đơn chỉ một yêu cầu đang mở, hỏi khách chọn một |
+| 4 | Mấy giờ shop có nhân viên trực? | Đạt. 8:00–21:00 có trích dẫn, không chuyển nhân viên |
+
+Lượt đầu owner dùng nhầm một tài khoản khác, chỉ có đơn `O-819127`, nên câu 2 khi đó không kiểm được: model hỏi lại mã đơn. Lượt sau dùng đúng tài khoản thì đạt.
+
+**Ghi nhận:**
+- Phần suy luận của model hiện nguyên văn luật trong system prompt ("Staff-only work: …") cho khách xem trong khung "Quá trình suy luận". Gộp vào F20, xử lý ở W6.6.
+- Câu trả lời câu 2 vẫn bị nối câu ghi chú "Phần phí, giao nhận và thời hạn em chưa có trích dẫn…", dù các ý chính đều có `[KB:…]`. Nhiều khả năng do câu suy ra từ chính sách đã trích ("Đơn này giao ngày 09/11 nên đang ở sát mốc đó") không có trích dẫn. Xem xét ở W6.5.
+
+**Còn mở:** đóng các ca smoke, kể cả ca ngày 2026-11-11 còn ở Hàng chờ; tắt EC2 khi không dùng.
