@@ -1,8 +1,12 @@
 import copy
 import json
+from pathlib import Path
+import tempfile
 import unittest
 
 from retailops.business.application import Application
+from retailops.business.store import BusinessStore
+from retailops.http.routes import api_result
 from retailops.workflow.answer_check import (
     AUDIT_RULES,
     BLOCKING_RULES,
@@ -11,7 +15,9 @@ from retailops.workflow.answer_check import (
     check_final_answer,
 )
 from scripts import run_agent_scenarios as runner
+from legacy_seed_fixture import seed_legacy_unit_fixture
 from test_r1_w3_2_agent_loop import AgentFixture, ScriptedModel, call, say
+from test_r1_w4_case_assistant import _ScriptedFakeGateway, _make_ctx
 
 LIST_2 = {'orders': [
     {'id': 'o2', 'external_order_id': 'SIM-O-38588564-02', 'status': 'shipping', 'ordered_at': '2026-11-09T10:00:00+07:00',
@@ -221,6 +227,87 @@ class Row2RunnerAuditTests(unittest.TestCase):
 
         self.assertNotIn('answer_check', second_turn)
         self.assertNotIn('answer_check_audit', second_turn)
+
+
+class Row3CaseAssistTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.tmp.name) / 'w643_case_assist.sqlite3'
+        self.store = BusinessStore(self.db_path)
+        self.store._now = lambda: 1_762_200_000.0
+        self.store.tenant_id = 'tenant_w4'
+        self.store.data_root = Path(self.tmp.name) / 'data'
+        seed_legacy_unit_fixture(self.store)
+
+        conv = self.store.new_conversation('C-001', 'custom')
+        self.cid = conv['conversation_id']
+        self.case_id = conv['case_id']
+        self.store.customer_message('C-001', self.cid, 'Cho mình hỏi đơn O-101 đổi size được không?')
+        self.store.request_human_handoff(
+            'C-001',
+            self.cid,
+            reason_code='customer_requested',
+            comment='Khách cần nhân viên tư vấn đơn O-101',
+        )
+        self.staff_ctx = _make_ctx('staff', 'staff_a', customer_id='C-STAFF-A', display_name='Nhân viên A')
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _assist(self, reply_text, mode='summary', question='Tóm tắt ca và soạn nháp giúp em'):
+        gw = _ScriptedFakeGateway([{'role': 'assistant', 'content': reply_text}])
+        app = Application(self.store, {}, infer=gw, role='staff', tenant_id='tenant_w4')
+        api_result(
+            app,
+            'C-STAFF-A',
+            'POST',
+            f'/api/staff/cases/{self.case_id}/claim',
+            body={},
+            context=self.staff_ctx,
+        )
+        st, res = api_result(
+            app,
+            'C-STAFF-A',
+            'POST',
+            f'/api/staff/cases/{self.case_id}/assist',
+            body={'mode': mode, 'question': question},
+            context=self.staff_ctx,
+        )
+        self.assertEqual(st, 200)
+        return res
+
+    def test_internal_note_kept_verbatim_while_draft_reply_is_checked(self):
+        internal_note = 'Ghi chú nội bộ: Shop đổi tận nhà miễn phí cho khách.'
+        raw = (
+            f'{internal_note}\n\n'
+            '<draft_reply>Dạ shop sẽ đổi size tận nhà miễn phí cho anh/chị ạ.</draft_reply>'
+        )
+        res = self._assist(raw, mode='summary')
+        self.assertIn('Shop đổi tận nhà miễn phí cho khách.', res['answer'])
+        self.assertEqual(res['draft_reply'], POLICY_NOTE)
+        self.assertEqual(res['answer'], f'{internal_note}\n\n{POLICY_NOTE}')
+        self.assertEqual(res['trace']['answer_check'], {'dropped_policy_promises': 1, 'dropped_done_claims': 0})
+        self.assertEqual([d['rule'] for d in res['trace']['answer_check_detail']], ['logistics'])
+
+    def test_draft_reply_records_audit_without_dropping_or_altering_clean_answer(self):
+        internal_note = 'Ghi chú nội bộ: Đơn O-101 đang chờ xử lý.'
+        draft = 'Thời hạn đổi trả là 30 ngày.'
+        res = self._assist(f'{internal_note}\n\n<draft_reply>{draft}</draft_reply>', mode='summary')
+        self.assertEqual(res['draft_reply'], draft)
+        self.assertEqual(res['answer'], f'{internal_note}\n\n{draft}')
+        self.assertNotIn('answer_check', res['trace'])
+        self.assertNotIn('answer_check_detail', res['trace'])
+        self.assertEqual(res['trace']['answer_check_audit'], [{'line': 1, 'rule': 'deadline_number'}])
+
+    def test_internal_note_without_draft_tag_not_checked_or_appended_note(self):
+        note = 'Ghi chú cho nhân viên: lỗi giao sai của shop được hoàn cả phí ship ban đầu.'
+        res = self._assist(note, mode='summary')
+        self.assertEqual(res['answer'], note)
+        self.assertIsNone(res['draft_reply'])
+        self.assertNotIn(POLICY_NOTE, res['answer'])
+        self.assertNotIn('answer_check', res['trace'])
+        self.assertNotIn('answer_check_detail', res['trace'])
+        self.assertNotIn('answer_check_audit', res['trace'])
 
 
 if __name__ == '__main__':

@@ -1350,15 +1350,6 @@ class Application:
                     answer.get("trace"),
                 ) from None
 
-            checked = check_final_answer(raw_answer_text, answer.get("messages"))
-            if checked.changed:
-                raw_answer_text = checked.text
-                answer["trace"]["answer_check"] = {
-                    "dropped_policy_promises": checked.dropped_policy,
-                    "dropped_done_claims": checked.dropped_claims,
-                }
-                answer["trace"]["answer_check_detail"] = [dict(d) for d in checked.details]
-
             leaked, safe_text = sanitize_output_against_canary_leak(clean_question, raw_answer_text)
             if leaked:
                 raw_answer_text = safe_text
@@ -1367,7 +1358,15 @@ class Application:
             if draft_reply:
                 draft_checked = check_final_answer(draft_reply, answer.get("messages"))
                 if draft_checked.changed:
+                    clean_answer = clean_answer.replace(draft_reply, draft_checked.text, 1)  # nhân viên thấy đúng bản nháp sẽ gửi
                     draft_reply = draft_checked.text
+                    answer["trace"]["answer_check"] = {
+                        "dropped_policy_promises": draft_checked.dropped_policy,
+                        "dropped_done_claims": draft_checked.dropped_claims,
+                    }
+                    answer["trace"]["answer_check_detail"] = [dict(d) for d in draft_checked.details]
+                if draft_checked.audit:
+                    answer["trace"]["answer_check_audit"] = [dict(a) for a in draft_checked.audit]
                 draft_leaked, safe_draft = sanitize_output_against_canary_leak(clean_question, draft_reply)
                 if draft_leaked:
                     draft_reply = safe_draft
