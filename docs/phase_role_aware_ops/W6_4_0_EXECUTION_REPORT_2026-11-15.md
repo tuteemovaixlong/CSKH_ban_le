@@ -117,6 +117,6 @@ Test viết trước, chạy trên `184ac87` thấy 5 ERROR: `AttributeError: mo
 ## PR và CI
 
 - Nhánh: `phase-r1-w6-4-0`, base `origin/main` `9086714`; không merge, không push main, không force-push/rebase/reset/stash.
-- PR: sẽ cập nhật sau push và tạo PR.
-- CI: chưa chạy; không tuyên bố xanh khi chưa có kết quả.
+- PR: [#110](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/110), Claude mở sau khi push `fc5bbcc`.
+- CI trên `fc5bbcc` (run `43676369060`): 6/6 job xanh, gồm `offline` (10 phút 58 giây; nguồn `Ran 1219 tests`, `OK`; image `Ran 1207 tests`, `OK (skipped=27)`), `postgres`, `colab-python313` (có bước compile `colab_eval_w64.py`), `portable` Ubuntu và Windows, `clamav-smoke`. Commit chỉ cập nhật mục này sẽ chạy CI lại; kết quả cuối xem trên PR.
 - Owner quyết định merge sau một lượt kiểm chứng của Claude theo handoff. `MAX_TOKENS=2048` trong script chỉ là giá trị khởi đầu của bước thử; owner chốt tại D4, dùng nhất quán cho A–D. Script không tự chạy bước tiếp theo.
