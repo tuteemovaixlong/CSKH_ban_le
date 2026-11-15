@@ -8,14 +8,8 @@ long lists lose their tail, with a marker, whatever the tool or the topic was. A
 valid JSON that says it was cut, so the model never reads half a sentence as a fact.
 """
 import json
-import os
 
-
-def context_tokens():
-    value = int(os.environ.get('RETAILOPS_MODEL_CONTEXT_TOKENS', '16384'))
-    if not 4096 <= value <= 131072:
-        raise ValueError('RETAILOPS_MODEL_CONTEXT_TOKENS must be 4096–131072')
-    return value
+from agent_protocol import context_tokens
 
 
 def _budget(base, floor):

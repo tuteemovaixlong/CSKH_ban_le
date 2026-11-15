@@ -1,13 +1,29 @@
 """Versioned native Ollama tool protocol shared by EC2 and the Colab proxy."""
 import json
+import os
 import re
 
 PROTOCOL = 'retailops-agent-v2'
 MAX_MESSAGES = 40
-# The serving window is 16,384 tokens (owner, 2026-11-03; it was 8,192). 36,000 characters of transcript leave room
-# for the tool schemas and the answer even at about 2.6 characters per token.
-CONTEXT_TOKENS = 16384
-MAX_CHARACTERS = 36000
+# The serving window defaults to 16,384 tokens (owner, 2026-11-03; it was 8,192). 36,000 characters of transcript
+# at 16,384 tokens leave room for the tool schemas and the answer even at about 2.6 characters per token.
+
+
+def context_tokens():
+    """Return the configured model context window in tokens (4096-131072)."""
+    value = int(os.environ.get('RETAILOPS_MODEL_CONTEXT_TOKENS', '16384'))
+    if not 4096 <= value <= 131072:
+        raise ValueError('RETAILOPS_MODEL_CONTEXT_TOKENS must be 4096–131072')
+    return value
+
+
+def max_characters():
+    """Return the transcript character budget scaled proportionally to context_tokens()."""
+    return 36000 * context_tokens() // 16384
+
+
+CONTEXT_TOKENS = context_tokens()
+MAX_CHARACTERS = max_characters()
 # W6.2's rights rule plus two maximum-length server focus IDs needs 6,079 characters.
 # This per-system bound does not change the total transcript or serving-window budgets.
 MAX_SYSTEM_CHARACTERS = 6400
@@ -404,7 +420,7 @@ def validate_messages(messages):
         if not isinstance(content, str):
             raise ProtocolError('Invalid content')
         characters += len(content) + len(json.dumps(m.get('tool_calls', []), ensure_ascii=False))
-        if characters > MAX_CHARACTERS:
+        if characters > max_characters():
             raise ProtocolError('Conversation exceeds context budget')
         if role == 'user':
             if expected != 'user' or set(m) - {'role', 'content', 'attachment'} or not 1 <= len(content.strip()) <= 2000:

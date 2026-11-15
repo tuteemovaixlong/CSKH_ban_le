@@ -13,9 +13,9 @@ from typing import TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from agent_protocol import (MAX_CHARACTERS, MAX_MODEL_CALLS, MAX_TOOL_CALLS, PROTOCOL, TURN_TIMEOUT_SECONDS,
-                            ProtocolError, agent_system, assistant_message, model_history, request_mode, sanitize_general_answer,
-                            validate_messages, validate_tool)
+from agent_protocol import (MAX_MODEL_CALLS, MAX_TOOL_CALLS, PROTOCOL, TURN_TIMEOUT_SECONDS,
+                            ProtocolError, agent_system, assistant_message, max_characters, model_history, request_mode,
+                            sanitize_general_answer, validate_messages, validate_tool)
 from retailops_agent import AgentError
 from retailops.business.progress import CANCELLED_MESSAGE
 from retailops.knowledge.citations import CitationError, cited_sources
@@ -145,7 +145,7 @@ def run(gateway, text, history, execute, identity, timeout=TURN_TIMEOUT_SECONDS,
         outgoing = state['messages']
         if mode == 'general' and outgoing[0].get('role') == 'system':
             outgoing = outgoing[1:]  # the tool-free general mode brings its own system text
-        outgoing = fit_transcript(outgoing, MAX_CHARACTERS - 200)
+        outgoing = fit_transcript(outgoing, max_characters() - 200)
         try:
             validate_messages(outgoing)
             trace['model_calls'] += 1
