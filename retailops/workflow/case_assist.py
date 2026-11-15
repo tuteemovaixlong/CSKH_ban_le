@@ -21,6 +21,7 @@ from retailops.business.evidence import project_pdf_for_model
 from retailops.guardrails.topic_filter import contains_canary_or_secret, sanitize_structured_payload
 from retailops.knowledge.tool import KnowledgeTool
 from retailops.order_reasons import reason_catalog
+from retailops_tools import summarize_order_record
 
 CASE_ASSIST_MODES = ("ask", "summary", "draft")
 
@@ -93,6 +94,25 @@ def format_case_assist_user_prompt(mode: str, question: str) -> str:
     return f"[Chế độ: {safe_mode}] {clean_q}".strip()
 
 
+_CASE_ORDER_SUMMARY_KEYS = (
+    "id",
+    "external_order_id",
+    "status",
+    "ordered_at",
+    "name",
+    "product_id",
+    "variant",
+    "amount",
+    "currency",
+    "shipping_fee",
+    "payment_status",
+    "delivered_at",
+    "days_since_delivery",
+    "allowed_action_types",
+    "has_open_order_action",
+    "items",
+)
+
 STAFF_CASE_ASSIST_TOOLS = [
     tool(
         "get_case_transcript",
@@ -100,7 +120,7 @@ STAFF_CASE_ASSIST_TOOLS = [
     ),
     tool(
         "list_case_orders",
-        "READ ONLY: list orders belonging to the customer of the current support case (without customer PII), including delivery age and open order-action summary.",
+        "READ ONLY: list the orders of the current case's customer as short summaries (without customer PII): IDs, status, dates, amount, payment status, delivery age, allowed actions, open-request flag and item names with quantities. Call get_case_order for payment, refund, eligibility and stock details.",
     ),
     tool(
         "get_case_order",
@@ -417,6 +437,12 @@ class CaseAssistBoundTools:
         now_ts = self.store._now() if hasattr(self.store, "_now") else 0.0
         read_details = getattr(self.store, "read_order_details_in_tx", None)
         with self.store.connection() as db:
+            total_count = int(
+                db.execute(
+                    "SELECT COUNT(*) FROM orders WHERE customer_id = ?",
+                    (self.customer_id,),
+                ).fetchone()[0]
+            )
             ord_rows = db.execute(
                 "SELECT * FROM orders WHERE customer_id = ? ORDER BY id ASC LIMIT 20",
                 (self.customer_id,),
@@ -432,18 +458,19 @@ class CaseAssistBoundTools:
             for r in ord_rows:
                 od = dict(r)
                 det = read_details(db, od, now=now_ts) if callable(read_details) else None
-                items.append(
-                    self._format_case_order(
-                        od,
-                        now_ts=now_ts,
-                        has_open_action=(r["id"] in open_oids),
-                        details=det,
-                    )
+                formatted = self._format_case_order(
+                    od,
+                    now_ts=now_ts,
+                    has_open_action=(r["id"] in open_oids),
+                    details=det,
                 )
+                items.append(summarize_order_record(formatted, _CASE_ORDER_SUMMARY_KEYS))
         return {
             "case_id": self.case_id,
             "orders": items,
             "count": len(items),
+            "total_count": total_count,
+            "truncated": total_count > 20,
         }
 
     def _get_case_order(self, order_id: str) -> dict:

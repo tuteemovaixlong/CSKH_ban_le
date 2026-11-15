@@ -42,7 +42,10 @@ class OrderItemsTests(unittest.TestCase):
         }
         for name, order in results.items():
             with self.subTest(tool=name):
-                self.assertEqual(order.get('items'), expected_summary if name == 'list_orders' else expected)
+                self.assertEqual(
+                    order.get('items'),
+                    expected_summary if name in ('list_orders', 'list_case_orders') else expected,
+                )
                 for key in ('name', 'product_id', 'variant'):
                     self.assertEqual(order[key], first[key])
 
