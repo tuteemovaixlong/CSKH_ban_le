@@ -1195,3 +1195,34 @@ Câu ghi chú "Phần phí, giao nhận và thời hạn em chưa có trích d�
 - Lượt đo W6.4 trên L4 với `REPO_SHA` `662cb773bed29c8fc543e21aa54ca2fc29fa5756`, ngữ cảnh 32k (D giữ 8k).
 - F45 (Waitress 8 luồng).
 - Tắt EC2 khi không dùng.
+
+### 2026-11-16 W6.4 lượt đo, tham chiếu DeepSeek và chấm lại W6.4.4 (PR #118)
+
+> **Phạm vi:** lượt đo cơ sở W6.4 trên Colab theo §31, §32 và §33. Owner chạy notebook; Claude chuẩn bị notebook, phân tích, viết công cụ chấm lại (PR #118). Không deploy, không đổi hệ thống. [Báo cáo đo](W6_4_measurement/README.md).
+
+**Lượt đo Qwen3.5-9B** (`REPO_SHA` `662cb773bed29c8fc543e21aa54ca2fc29fa5756`, vLLM 0.33.0, fp8 + MTP, L4, 32k, temperature 1.0 / top_p 0.95 / top_k 20 / presence 1.5).
+- Notebook đổi sang 8 luồng (`--max-num-seqs 8`, 24 phần, ghi `parallel` vào manifest); sửa token tunnel giả của runner (`token_urlsafe(32)`, gateway đòi 32–256 ký tự).
+- Ví dụ 2/4; bước thử 11/12, cổng D4 đạt (tool hợp lệ 100%, `length` 0, timeout 0) → `max_tokens` 2048.
+- Bước A (250 × 3, 80 phút L4): pass@1 46,5%, pass^3 26,0%; tool hợp lệ 99,0%; timeout 7/3.017; p50 29,5 s, p95 75,4 s; MTP chấp nhận 64%, 183 token/s cộng gộp. Ca đạt 0/3: 77, 1/3: 62, 2/3: 46, 3/3: 65.
+- B, C, D và hồi quy không chạy (§33 W6.4-D18).
+
+**Tham chiếu DeepSeek V4.1 Flash** (§33 W6.4-D19): pilot 11/12; A 175/250 = 70,0%; p50 7,3 s; 0,51 USD. Mổ 75 ca hỏng: chấm theo chữ oan 29, chỉ thừa tool 13, hệ thống chặn 14 (F53, F54, F55), lỗi model thật khoảng 19.
+
+**Chấm lại W6.4.4** (§33 W6.4-D20). [Handoff](W6_4_4_regrade_judge/README.md). Claude viết `scripts/eval_regrade.py` (v2, export, import, audit), runner lưu đủ câu trả lời (`answer_complete`), 15 test; CI xanh 6/6; owner merge PR [#118](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/118) lúc 16/11: `76426ad`. Hai phiên Gemini chấm chéo (nhóm A, B); gộp bảo thủ:
+
+| | Chính thức | v2 | Sau xem xét |
+|---|---|---|---|
+| Qwen pass@1 | 46,5% | 47,1% | **57,9%** (hiệu chỉnh theo Carbon) |
+| Qwen pass^3 | 26,0% | 26,4% | **35,2%** |
+| DeepSeek pass@1 | 70,0% | 70,8% | **82,0%** |
+| Tấn công thành công | Qwen 7/36, DeepSeek 5/12 | — | Qwen 7/36 (≥4 làm theo lệnh chèn thật, S11), DeepSeek 1/12 (thực tế 0) |
+
+- Độ khớp nhóm A–B 97–98% (kappa 0,85 / 0,95); đối chứng 57/57.
+- Kiểm định mẫu 39 mục bằng LLM: GLM Flash, rồi Gemini Carbon (khớp DeepSeek 19/19, Qwen 18/20; Carbon phát hiện lật sai `s09_015`#3 → hiệu chỉnh). **Chưa có kiểm định bằng người.**
+- Phát hiện mới: F52–F55 ([backlog](W6_BACKLOG_2026-11-06.md)); lỗi riêng lớn nhất của Qwen là trích dẫn (136 lượt); khoảng cách S12 chủ yếu do quy trình tra cứu, không do bị lừa; điểm yếu an toàn thật ở S11.
+
+**Còn treo (W6.4 tạm dừng, §33 W6.4-D20):**
+- Kiểm định bằng người (owner): `E:\hệ thống\W64_KIEM_DINH_NGUOI_HUONG_DAN.md`.
+- Câu hỏi bổ sung cho 31 lượt lật ở S09/S11/S12 (cận dưới Qwen ≥ 55,1%, DeepSeek ≥ 78,4%).
+- Tiếp theo: W6.7 theo [kế hoạch chốt](W6_7_sft_data/README.md).
+
