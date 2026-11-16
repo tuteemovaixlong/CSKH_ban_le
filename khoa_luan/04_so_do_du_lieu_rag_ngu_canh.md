@@ -1,6 +1,6 @@
 # Sơ đồ dữ liệu, truy hồi tri thức và context engineering
 
-Tài liệu tham chiếu cho Chương 2 và Chương 3. Kiểm tra trên code ngày 2026-11-06, nhánh `main` tại `e13716f`. Sáu sơ đồ đánh số S1–S6, tham chiếu chéo nhau. Mã Mermaid dán vào https://mermaid.live để xuất PNG hoặc SVG chèn vào Word.
+Tài liệu tham chiếu cho Chương 2 và Chương 3. Kiểm tra trên code ngày 2026-11-06, nhánh `main` tại `e13716f`; khối model ở S1 cập nhật ngày 2026-11-15 theo §31 W6.4-D1, D5. Sáu sơ đồ đánh số S1–S6, tham chiếu chéo nhau. Mã Mermaid dán vào https://mermaid.live để xuất PNG hoặc SVG chèn vào Word.
 
 Dùng cho khóa luận: S1 → mục 2.1; S2, S3 → mục 2.5 và 3.4; S4 → mục 2.4 và 3.5; S5 → mục 2.3.4; S6 → mục 2.3.2, 2.3.5 và 3.3.
 
@@ -16,7 +16,7 @@ flowchart TB
   NV["Nhân viên, quản lý<br/>Trợ lý ca ở Staff Desk"] --> HC["Hồ sơ case_assist<br/>5 tool chỉ đọc · S5"]
   HK --> LOOP["Vòng tác tử chung agent.run<br/>model, tool, ngân sách · S6"]
   HC --> LOOP
-  LOOP --> LLM["vLLM trên Colab<br/>Gemma 4 12B, 16k"]
+  LOOP --> LLM["Gateway kiểu OpenAI<br/>đo: Qwen3.5-9B trên vLLM, L4, 16k<br/>demo: DeepSeek qua API"]
   LOOP --> PG["PostgreSQL tenant<br/>nghiệp vụ, lịch sử · S2 S3"]
   LOOP --> RAG["Truy hồi tri thức<br/>pgvector, trích dẫn · S4"]
 ```
@@ -151,7 +151,7 @@ Chi tiết từng bước:
 - **Chấm điểm lai** theo `repository.py`: `score = 0,75 × (1 − khoảng cách cosine) + 0,25 × min(ts_rank_cd, 1)`, lấy top 5.
 - **Lọc và đóng gói** theo `tool.py`: bỏ kết quả có điểm dưới `MIN_SCORE = 0,15` hoặc không có từ chung nào với câu hỏi, vì va chạm băm không phải bằng chứng. Mỗi trích đoạn tối đa 1.100 ký tự, tối đa 3 nguồn, tối đa 2.800 ký tự mỗi lần gọi và 3.600 ký tự mỗi lượt. Mã trích dẫn `KB:` cộng 24 ký tự hex là băm của khóa nguồn và trích đoạn. Không có bằng chứng thì trả `no_evidence` kèm lời dặn không được bịa chính sách.
 - **Kiểm mã trích dẫn** theo `citations.py`: mọi `[KB:...]` phải nằm trong các nguồn trả về ở lượt này; đã tìm được bằng chứng mà câu trả lời không trích thì lỗi `knowledge_citation_missing`. Hàm này kiểm nguồn gốc, không kiểm nội dung có suy ra được từ đoạn trích hay không.
-- **Kiểm câu hứa** theo `answer_check.py`: gỡ câu hứa về phí, giao nhận, thời hạn không có `[KB:...]`, và câu khẳng định đã hủy, đổi, trả, hoàn tiền khi không tool nào của lượt cho thấy điều đó; thay bằng một câu ghi chú.
+- **Kiểm câu hứa** theo `answer_check.py`, theo nguyên tắc "code chỉ chặn điều code biết chắc" (W6.4-D17): xóa câu khẳng định đã hủy, đổi, trả, hoàn tiền hay đã chuyển nhân viên khi không tool nào của lượt cho thấy điều đó, và câu hứa hậu cần (tận nhà, 2 chiều) hay hứa phí (miễn phí, phí đổi trả, shop chịu phí) không có `[KB:...]`; mỗi loại nối một câu ghi chú. Câu có số tiền hay số ngày không khớp dữ liệu tool chỉ được ghi vết (`answer_check_audit`), không bị xóa, vì code không phân biệt chắc được số bịa với năm, số điện thoại hay "3 tháng" thay cho 90 ngày.
 
 ## S5. Context engineering của hai luồng
 
@@ -171,7 +171,7 @@ flowchart TB
 
 Các kỹ thuật, theo `agent_protocol.py`, `workflow/compaction.py`, `business/store.py`:
 - **Ngữ cảnh do server gắn.** Đơn và sản phẩm đang bàn, hoặc `case_id` và chế độ, được server nối vào cuối system prompt. Người dùng không sửa được, nên model không thể tự đổi phạm vi khách hoặc ca.
-- **Định hình lịch sử** bằng `model_history`. Lượt cũ chỉ giữ chữ, bỏ hẳn lời gọi tool và kết quả tool cũ, vì lịch sử không được dùng làm bằng chứng cho trạng thái hiện tại. Hai tin cùng vai được gộp lại, cắt về 2.000 ký tự với tin của người dùng và 7.500 với tin của trợ lý, để luôn xen kẽ người dùng và trợ lý đúng mẫu chat của Gemma. Chỉ lượt đang chạy mới giữ tool call gốc.
+- **Định hình lịch sử** bằng `model_history`. Lượt cũ chỉ giữ chữ, bỏ hẳn lời gọi tool và kết quả tool cũ, vì lịch sử không được dùng làm bằng chứng cho trạng thái hiện tại. Hai tin cùng vai được gộp lại, cắt về 2.000 ký tự với tin của người dùng và 7.500 với tin của trợ lý, để luôn xen kẽ người dùng và trợ lý, đúng yêu cầu của mẫu chat ở nhiều model mở; quy tắc này viết cho Gemma ở thiết kế ban đầu và vẫn giữ với Qwen3.5-9B. Chỉ lượt đang chạy mới giữ tool call gốc.
 - **Chọn lịch sử.** Chat khách lấy 6 lượt gần nhất của hội thoại, bỏ các lượt hệ thống `sys-reminder-`, `sys-oar-`, `sys-notice-`. Khi ca được mở lại, chỉ lấy các lượt từ khi ca hiện tại bắt đầu. Trợ lý ca chỉ lấy 10 lượt của đúng bộ ba cửa hàng, người hỏi và ca, nên hai nhân viên cùng một ca không thấy lịch sử của nhau.
 - **Ngân sách ký tự.** Lịch sử tối đa 6.000 ký tự và 1.500 ký tự mỗi tin; khi vượt thì bỏ cặp cũ nhất. Mỗi kết quả tool tối đa 5.200 ký tự; tổng kết quả tool mỗi lượt 12.000; kết quả đến sau vẫn được ít nhất 800. Nén theo 4 nấc, cắt chuỗi về 240, 160, 120, 80 ký tự và cắt danh sách về 10, 6, 4, 2 phần tử, luôn giữ JSON hợp lệ kèm cờ `_truncated`. Chốt cuối `fit_transcript` thu nhỏ kết quả tool cũ nhất cho tới khi vừa 36.000 ký tự; không đụng system prompt, lời người dùng và lời model.
 - **Phân loại chế độ.** `request_mode` dùng danh sách từ khóa để đưa câu hỏi kiến thức chung hiển nhiên sang chế độ general, không có tool và có system prompt riêng; câu mơ hồ kế thừa chế độ của câu gần nhất. Trợ lý ca luôn ở chế độ bán lẻ.

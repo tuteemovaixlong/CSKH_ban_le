@@ -8,7 +8,7 @@ Bản thiết kế ngày 2026-11-06, cập nhật ngày 2026-11-11 theo quyết 
 
 | Bộ | Số ca | Dạng | Vai trò |
 |---|---|---|---|
-| `evals/suites/S01.jsonl` … `S12.jsonl` | 250 khi xong | nhiều lượt kiểu τ-bench, có trường `meta` | bộ đánh giá chính của Chương 4; đang viết dữ liệu |
+| `evals/suites/S01.jsonl` … `S12.jsonl` | 250 | nhiều lượt kiểu τ-bench, có trường `meta` | bộ đánh giá chính của Chương 4; đóng băng 2026-11-14 (W6.3-D7) |
 | `evals/agent_scenarios_w3_2.jsonl` | 32 | nhiều lượt | hồi quy, CI phát lại mỗi PR |
 | `evals/agent_scenarios_w4.jsonl` | 12 | nhiều lượt, có Trợ lý ca, ảnh, PDF | hồi quy, CI phát lại mỗi PR |
 | `evals/scenarios/benchmark_250.jsonl`, `evals/batches/`, `evals/qrels/policy_qrels_v1.json` | 250 câu một lượt | do DeepSeek sinh, kỳ vọng là lời văn tự do | tài liệu lịch sử, không thuộc 250 ca (W6.3-D7) |
@@ -67,7 +67,7 @@ Có hai tầng tự động:
 | Tầng | Chạy ở đâu | Khi nào | Kiểm gì |
 |---|---|---|---|
 | CI | GitHub Actions, `--fake` | mỗi PR | định dạng dữ liệu; quỹ đạo mẫu đạt 100%; không tốn GPU hay tiền |
-| Model thật | máy owner, `--endpoint` tới vLLM trên Colab | W6.4, chạy bằng lệnh tay | số liệu Chương 4; không đưa vào CI vì cần GPU, secret và tốn compute |
+| Model thật | runner chạy ngay trên máy Colab, `--endpoint` tới vLLM ở `127.0.0.1` (§31 W6.4-D2) | W6.4, chạy bằng `notebooks/colab_eval_w64.py` | số liệu Chương 4; không đưa vào CI vì cần GPU, secret và tốn compute |
 
 Phần chấm tay gồm hai việc: đọc lại mọi ca thất bại để phân loại lỗi cho mục 4.9, và chấm một mẫu phân tầng khoảng 30 ca, gồm 2 đến 3 ca mỗi bộ, theo thang 1–5 về độ đúng, độ rõ và giọng điệu CSKH. Việc chấm tay không thay cho kiểm thử trên trình duyệt; đó là việc riêng.
 
@@ -78,7 +78,7 @@ Phần chấm tay gồm hai việc: đọc lại mọi ca thất bại để ph�
 | A, chính | agent-first | bật | 16k | thật | 250 × 3 | RQ1–RQ5 |
 | B | legacy supervisor (`--agent-mode legacy`) | bật | 16k | thật | 100 × 3 | RQ1 |
 | C | agent-first | tắt (`--thinking off`) | 16k | thật | 100 × 3 | RQ2 |
-| D | agent-first | bật | 8k (`--context-tokens 8192`, vLLM `RETAILOPS_MAX_MODEL_LEN=8192`) | thật | 100 × 3 | RQ2 |
+| D | agent-first | bật | 8k (`--context-tokens 8192`, vLLM `--max-model-len 8192`) | thật | 100 × 3 | RQ2 |
 
 Tập con 100 ca chọn một lần bằng `eval_stats.py subset --size 100 --seed 20261110`, phân tầng theo số ca từng bộ, rồi chạy B, C, D bằng `--only-file`. So A với từng cấu hình bằng `eval_stats.py compare --cases` trên đúng tập con đó. "Kho tri thức thật" là `--knowledge real`: `data/knowledge/` nạp vào PostgreSQL có pgvector, truy hồi thật; ca chèn lệnh qua đoạn chính sách vẫn chạy `scripted`. Bộ S03 đo thêm Recall@3 và MRR bằng `eval_retrieval.py`. Với cấu hình D, chạy thử vài ca có kết quả tool dài trước, vì prompt hệ thống, schema tool và `max_tokens` 2048 có thể vượt cửa sổ 8.192 token.
 
@@ -88,7 +88,7 @@ Tập con 100 ca chọn một lần bằng `eval_stats.py subset --size 100 --se
 2. 210 ca mô phỏng: owner gửi `eval_pack/` cho model độc lập, mỗi lượt một bộ; Claude kiểm bằng bộ kiểm và phát lại quỹ đạo mẫu, chỉ trả lại ca hỏng kèm lý do; bộ đạt được thêm vào `evals/suites/` qua PR (W6.3-D1).
 3. 40 ca chuyển thể: Claude làm theo mục 7 (W6.3-D3).
 4. Đóng băng: `check_eval_dataset.py --final` đạt, CI phát lại 100%, ghi SHA-256 từng tệp vào biên bản; sau đó không sửa ca, chỉ thêm phiên bản mới (W6.3-D7).
-5. W6.4: đổi khóa và cấu hình lại Colab (C1), chạy ma trận, chấm tay mẫu 30 ca, phân loại lỗi.
+5. W6.4: chạy `notebooks/colab_eval_w64.py` trên L4 theo thứ tự có cổng kiểm của §31 W6.4-D4, chấm tay mẫu 30 ca, phân loại lỗi. Việc nối production với Colab (C1) dời sang W6.6 (W6.4-D5).
 
 ## 7. Chuyển thể từ bộ dữ liệu công khai
 

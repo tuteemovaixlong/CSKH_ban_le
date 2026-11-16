@@ -1071,3 +1071,127 @@ Lượt đầu owner dùng nhầm một tài khoản khác, chỉ có đơn `O-8
 - Câu trả lời câu 2 vẫn bị nối câu ghi chú "Phần phí, giao nhận và thời hạn em chưa có trích dẫn…", dù các ý chính đều có `[KB:…]`. Nhiều khả năng do câu suy ra từ chính sách đã trích ("Đơn này giao ngày 09/11 nên đang ở sát mốc đó") không có trích dẫn. Xem xét ở W6.5.
 
 **Còn mở:** đóng các ca smoke, kể cả ca ngày 2026-11-11 còn ở Hàng chờ; tắt EC2 khi không dùng.
+
+### 2026-11-15 W6.4.0 verification, merge and production deploy record
+
+> **Phạm vi:** kiểm W6.4.0 do Codex làm (`184ac87`) theo mục 2 [handoff](W6_4_0_TOOLING_HANDOFF_2026-11-15.md); Claude bổ sung chẩn đoán cho script Colab, mở PR #110, owner merge; sửa test hẹn giờ lộ ra sau merge (PR #111); deploy F42 lên production. Không migration, không nạp lại kho chính sách.
+
+**Codex.** Nhánh `phase-r1-w6-4-0`, commit `184ac87`, 6 hàng DONE offline, báo cáo [W6.4.0 execution report](W6_4_0_EXECUTION_REPORT_2026-11-15.md). Codex không mở được PR vì biểu mẫu GitHub chờ owner bấm Submit.
+
+**Lượt kiểm của Claude trên `184ac87`: đạt mọi tiêu chí mục 2.**
+- F42: cả 6 tool trả đơn đọc `items` qua cùng hàm `read_order_details_in_tx`; `PostgresBusinessStore` kế thừa đúng hàm này, cột `unit_price`, `subtotal` là BIGINT. Test có SIM-O-00091: P-601 ×1 giá 450.000; P-602 ×2 giá 520.000, thành tiền 1.040.000. Kết quả `list_orders` 10 đơn sau compact dài 4.597 ký tự, dưới giới hạn 5.200.
+- Lấy mẫu: không đặt biến thì payload giữ 0.2 / 2048; đường Anthropic và Google không áp dụng.
+- Vết: không lưu header; khóa, chữ `Authorization` và URL mang khóa bị che ở cả vết lẫn báo cáo.
+- Gộp shard: fake 250 ca chạy liền so với 2 shard gộp khớp `by_category`, `aggregates`, `summary` trừ `latency_ms`; vết 717 dòng bằng `model_calls`; gộp trùng bị từ chối.
+- Script Colab: thứ tự, cổng 95% / 2% / 2%, cấu hình B, C, D và vision chỉ ở bước hồi quy khớp W6.4-D4; mỗi tiến trình `--knowledge real` tạo schema riêng tên ngẫu nhiên nên shard song song không tranh chấp DB.
+- 69 test liên quan, ba contract, `--final` 250 ca, SHA đóng băng 12/12 đều đạt.
+
+**Claude bổ sung `fc5bbcc`, owner chọn "Claude sửa nhỏ".** Bản `184ac87` đẩy output của vLLM, các shard và mọi lệnh cài vào `DEVNULL`, nên lỗi khó chẩn đoán và không ghi được tỉ lệ chấp nhận MTP mà W6.4-D7 và D12(h) cần. Bản sửa in đuôi output đã che khi lệnh cài hỏng, ghi log vLLM trên đĩa runtime, lưu log từng shard (bản đã che) lên Drive và lưu `vllm_metrics-*.json` cho mỗi lần chạy một bước. Test viết trước: 5 ERROR trên `184ac87`, 13/13 sau sửa; toàn bộ 1.219 test OK (86 skip). `59055bc` ghi PR và kết quả CI vào báo cáo.
+
+**PR và merge.** Claude mở [#110](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/110). CI xanh 6/6 trên `fc5bbcc` và trên `59055bc`. Owner merge lúc 05:28:51Z: `f37075ab00cd07e323a8bcdc8f424914c3b051e4`, tree giống hệt `59055bc`. Workflow deploy theo push bị bỏ qua vì cờ đang tắt.
+
+**Test hẹn giờ lộ ra sau merge (F43).** CI `offline` trên `main` và job `postgres` của Ops Console đỏ ở 2 test `Item7ProviderRefundLinkingTests`, lỗi `return_window_expired`. Đơn connector trong test ghi cứng ngày giao 2026-11-08 12:00 (+07:00) còn yêu cầu trả tạo theo giờ thật, nên hạn 7 ngày hết lúc 2026-11-15 12:00 (+07:00). Lỗi có từ W6.1b-1, không liên quan W6.4.0, nhưng chặn cả bước unittest của workflow deploy. Claude ghim `store._now` như các test khác cùng lớp, sinh lại notebook, rồi quét toàn bộ test với đồng hồ tua tới 2026-12-23: không còn test nào chạy trong tiến trình bị hết hạn. Owner chọn mở PR: [#111](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/111), commit `43cea9b`. CI xanh 6/6; owner merge lúc 06:58:40Z: `9895e01bd636f5fd5cb4e9843de3e99270e0dc67`.
+
+**Hai lỗi công cụ tìm ra khi chạy thử offline bộ cell Colab, cộng lỗi quá giờ của deploy lần 1: PR [#112](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/112).**
+- Runner đặt nhãn `report` theo ca đầu tiên của từng phần, nên các phần của S11 và tệp ví dụ có nhãn khác nhau và `eval_stats merge` từ chối. Sửa: nhãn theo cả bộ dữ liệu (`is_w4`).
+- `notebooks/colab_eval_w64.py` tạo pgvector ở schema mặc định, trong khi app đòi schema `retailops_extensions`. Sửa: role dùng một lần là superuser như CI, rồi chạy `scripts/prepare_test_pgvector.py`.
+- Deploy lần 1 (run [43687947850](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/43687947850)) dừng ở bước `deploy-runner.sh` trên EC2: bộ test trong image vượt giới hạn SSM mặc định 600 giây khi mới chạy khoảng 40%, không có FAIL hay ERROR; script dừng trước khi ghi `deployed.env`, nên production vẫn ở W6.3.5. Sửa: bước runner được 1.200 giây.
+- CI lần 1 của #112 đỏ vì test nhãn mới đọc tệp ví dụ trong `khoa_luan/`, mà image không chứa; `67666ac` cho test bỏ qua trong image, theo mẫu `7f2c12c`.
+- Test viết trước, thấy FAIL trước khi sửa; CI xanh 6/6 trên `67666ac`. Owner dặn "tự merge luôn"; repo không cho bật auto-merge, nên Claude merge khi owner báo CI xanh: 07:56:51Z, `fdaa2c3edf83cce69783de01ef092d30ad01be24`, tree giống hệt đầu nhánh.
+
+**Colab.** L4 tốn 1,94 đơn vị/giờ, RTX PRO 6000 tốn 10,05; còn 96,27 đơn vị ngày 2026-11-15. Ước lượng W6.4 khoảng 8–10 giờ L4, tức 16–20 đơn vị, trong trần 50 của W6.4-D8. Mọi bước W6.4 dùng `REPO_SHA` `f37075a`, vì #111 chỉ sửa test.
+
+**Deploy.**
+- Giai đoạn 1 qua SSM: IP đổi, host mới `retailops.3-80-52-57.sslip.io` (`public.env` còn `54-227-17-73`); đĩa trống 42 GB; web, admin, PostgreSQL, ClamAV healthy; image `sha256:4fd0d344…` (W6.3.5); không đặt biến model thí nghiệm nào (`grep -c` in 0 ở cả `deployed.env` và `public.env`); `integration-secrets/` đủ 3 tệp.
+- Lần 1 hỏng như mô tả ở #112; cờ bật lúc 07:00:11Z, tắt lúc 07:00:45Z, 13 giây sau khi job bắt đầu.
+- Lần 2: Claude bật `RETAILOPS_DEPLOY_ENABLED` lúc 07:57:14Z, chạy run [43692231354](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/43692231354) trên `fdaa2c3`, **tắt cờ lúc 07:57:44Z**, 14 giây sau khi job deploy bắt đầu; đã kiểm lại cờ là `false`. Job chạy 18 phút 50 giây (07:57:30–08:16:20Z). 1.221 test trên mã nguồn và 1.208 test trong image đều OK.
+- Image `sha256:3848352575a0299c1abfcceb000bdd2036a3f36bf0a866cebe7f47822783e181`. Có đủ `PUBLIC_WEB_ROLLOUT_OK`, 2 lần `LIVE_E2E_SMOKE_OK`, `ADMIN_CONSOLE_SMOKE_OK`, `ADMIN_CONSOLE_READY`. Host chuyển sang `retailops.3-80-52-57.sslip.io`.
+- Sau deploy (owner, SSM): host và image đúng; web, admin, ClamAV, PostgreSQL healthy; `CONNECTOR_CHECK_OK`, `check_exit=0`; kho chính sách `active: 14 / 14`; `healthz=200` (lần đầu ra 404 vì lệnh `curl` bị thừa dấu chấm cuối URL).
+
+**Smoke trên trình duyệt** (`deepseek-flash`, tài khoản Google khách của owner, 3 đơn `SIM-O-38588564-01`, `-02`, `-03`, mỗi đơn 1 món):
+
+| # | Tin nhắn | Kết quả |
+|---|---|---|
+| 1 | liệt kê các đơn của tôi | **Hỏng một phần:** model chỉ thấy 2/3 đơn; suy luận ghi "The list is truncated with +1 more". Thành F44, sửa ở W6.4.1 |
+| 2 | ba đơn gồm những gì, mỗi món giá bao nhiêu | Đạt: đúng món, đơn giá, phí ship, tổng (299.000 + 20.000 = 319.000; 799.000 + 40.000 = 839.000; 399.000 + 30.000 = 429.000). Dữ liệu `items` của F42 chạy đúng trên production; đơn nhiều món đã có CI kiểm |
+| 3 | đơn `-02` phí ship bao nhiêu | Đạt: 40.000 ₫, gọi `get_order` thay vì tin lịch sử |
+
+Câu ghi chú "Phần phí, giao nhận và thời hạn em chưa có trích dẫn…" vẫn bị nối vào câu 1 và câu 3; đã có trong danh sách W6.5.
+
+**Còn mở:** hotfix W6.4.1 (§32 W6.4-D9a, D15) trước lượt đo W6.4; đặt `RETAILOPS_MODEL_CONTEXT_TOKENS=32768` trên production sau khi deploy W6.4.1; owner cập nhật Google OAuth cho host mới nếu chưa làm; tắt EC2 khi không dùng.
+
+### 2026-11-15/16 W6.4.1, ô Custom (#114), W6.4.2, W6.4.3: kiểm chứng, merge, deploy và smoke
+
+> **Phạm vi:** ba hotfix trước lượt đo W6.4 và ô "Custom model" chạy Qwen3.5-9B. Executor là Gemini 4 Hydrogen trong Antigravity (W6.4.3 có Gemini 4 Carbon điều phối); #114 do Claude làm. Claude kiểm mỗi PR một lượt; owner duyệt merge và từng lần deploy. Ba lần deploy, không migration, không nạp lại kho chính sách.
+
+**W6.4.1 — ngữ cảnh 32k, `list_orders` tóm tắt và phân trang (F13, F44; §32 W6.4-D9a, D15).** [Handoff](W6_4_1_context_fix/README.md), [báo cáo Gemini](W6_4_1_EXECUTION_REPORT_2026-11-15.md), PR [#113](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/113).
+- Claude kiểm trên `87b3c9f`: 16 tệp đúng phạm vi; `SYSTEM` không đổi (5.993, focus tối đa 6.284); 161 test liên quan, ba contract, `--final` 250 ca, SHA 12/12 đều đạt.
+- Kiểm độc lập trên fixture 14 đơn: trang đầu 5/5 đơn, 3.165 ký tự, không bị cắt; phân trang đi qua đủ 14 đơn.
+- Runner `--context-tokens 32768`: mỗi kết quả tool 10.400 ký tự, mỗi lượt 24.000, trần tổng 71.800. Với 8192: 2.600 / 6.000 / 17.800. Runner giả 250/250 ở 32k.
+- CI xanh 6/6; owner merge lúc 10:33:42Z ngày 15/11: `e2975fa`.
+
+**#114 — ô Custom chạy endpoint OpenAI (Claude).** Thêm `RETAILOPS_CUSTOM_API_ENDPOINT`, `…_KEY`, `…_TUNNEL_TOKEN`: ô "Custom model · Colab vLLM" dùng `OpenRouterAgent` tới vLLM trên Colab qua tunnel ngrok hai lớp; ô "API" giữ DeepSeek (thay cách chuyển `api.env` qua lại của W6.4-D5a). 8 test mới; CI xanh 6/6; owner merge lúc 11:19:43Z: `3239454`.
+
+**Deploy 1 (W6.4.1 + #114).**
+- Run [43708505779](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/43708505779): cờ bật 11:21:06Z, tắt 11:21:28Z, đã kiểm `false`. Job xong 11:43Z; 1.240 và 1.253 test OK; đủ dấu rollout, 2 live smoke, admin.
+- Image `sha256:c5250ba792a1759f6004e07b9d4571de55853ac704fed4d3a763f178671b16fc`; host không đổi.
+- Kiểm sau deploy đạt. Owner đã thêm 7 biến vào `api.env` trước rollout (32768, `Qwen/Qwen3.5-9B`, endpoint ngrok, hai khóa, concurrency 8, queue timeout 60); container đã nạp.
+- Tunnel trả 404 `ERR_NGROK_3200` vì Colab đã tắt, nên smoke ô Qwen để sau.
+
+**Smoke 1 (ô DeepSeek).**
+- "liệt kê các đơn": đủ 3/3, F44 đã hết. Nhưng mỗi đơn mất một dòng "tiền hàng + phí ship" và bị nối `POLICY_NOTE` (F46).
+- "phân tích cả 3 đơn": số đúng, nhưng mất tiêu đề đơn `-03`, nên dữ kiện của đơn này rơi sang đơn `-01` (F47).
+
+**W6.4.2 — bộ kiểm câu trả lời nhận giá món, số thời gian suy ra; giữ nhãn tiêu đề; ghi chi tiết (§32 W6.4-D16).** [Handoff](W6_4_2_answer_check_fix/README.md), [báo cáo](W6_4_2_EXECUTION_REPORT_2026-11-15.md), PR [#115](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/115).
+- Claude kiểm thấy một hồi quy do chính đặc tả mục 3.3: dòng tiêu đề còn nhãn vẫn bị thay cả dòng, mất câu đúng phía sau.
+- Owner chọn "Claude sửa nhỏ": `5a09877` chỉ thay khi nhãn không còn trong phần giữ lại. 76/76 test; runner giả 250/250 ở 16k và 32k.
+- CI xanh 6/6; merge lúc 15:01:27Z: `ece0b0b`.
+
+**Deploy 2.**
+- Run [43727574040](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/43727574040): cờ 15:01:54–15:02:22Z. Xong 15:24Z; 1.265 và 1.278 test OK.
+- Image `sha256:1034776fe490bbac9419ad0b909d18ad14ea33602da2e02e6c957396f50c9896`; kiểm sau deploy đạt.
+
+**Smoke 2 hỏng cả hai câu.**
+- (a) Model kẻ bảng 3 đơn, cả 3 dòng bị bộ kiểm xóa: năm "2026" trong ngày bị đọc thành số tiền (F49).
+- (b) "phân tích cả 3 đơn" trả HTTP 503 `Too many tool calls in a model step`, vì model xin hơn 4 tool một bước (F48).
+- Owner muốn gỡ bộ kiểm; Claude soạn [tài liệu tham vấn](W6_4_3_answer_check_consult/README.md) và thử hai phương án trên bản sao.
+- Gemini 4 Carbon (AI Studio) đề xuất thu hẹp và tìm thêm F50 (`topic_filter` mục 4 thay câu trả lời đúng về hủy, hoàn tiền) cùng F51 (ghi chú nội bộ của Trợ lý ca bị sửa); Claude kiểm lại trong code.
+- Owner chốt §32 **W6.4-D17**: code chỉ chặn điều code biết chắc; 10 tool mỗi bước, không tràn mềm; 3 luật số chỉ ghi vết; không chấm ngoại tuyến bằng model.
+
+**W6.4.3 — thu hẹp bộ kiểm, sửa bộ kiểm thứ hai và Trợ lý ca, 10 tool mỗi bước (F48–F51).** [Handoff](W6_4_3_answer_check_scope/README.md), [báo cáo](W6_4_3_EXECUTION_REPORT_2026-11-15.md), PR [#116](https://github.com/tuteemovaixlong/CSKH_ban_le/pull/116).
+- Giữa chừng Gemini hỏi về một mock thiếu trường `audit`. Owner chọn thêm trường vào mock thay vì dùng `getattr` trong code production.
+- Claude kiểm trên `4c18a93`:
+  - diff đúng thiết kế; test cũ chỉ đổi "xóa" thành "giữ + ghi vết" đúng bảng cho phép, không bỏ câu thử nào;
+  - 191 test liên quan đạt; bảng 12 dòng và các ca biên đúng;
+  - `SYSTEM` vẫn 5.993 ký tự;
+  - runner giả 250/250 ở 16k và 32k, W3.2 32/32, W4 12/12, ví dụ 4/4. Trên 250 ca chỉ còn 1 lượt bị sửa (`s09_006`, `done_claim`), không lượt nào ghi vết.
+- CI xanh 6/6; merge lúc 01:21:46Z ngày 16/11: `662cb773bed29c8fc543e21aa54ca2fc29fa5756`.
+
+**Deploy 3.**
+- Run [43785857115](https://github.com/tuteemovaixlong/CSKH_ban_le/actions/runs/43785857115): cờ 01:22:08–01:22:41Z, đã kiểm `false`. Xong 01:42Z; 1.286 và 1.299 test OK; đủ dấu rollout, live smoke, admin.
+- Image `sha256:c31411fb1f3e156a8ef17f4b591a006ccee1449801b21e27f9a4e4c63163ef52`.
+- EC2 vừa khởi động lại nên host mới là **`retailops.54-157-63-34.sslip.io`** (admin `admin-retailops.54-157-63-34.sslip.io`).
+- Kiểm sau deploy: web và admin healthy, `CONNECTOR_CHECK_OK`, 14/14, biến môi trường đúng, `healthz=200`.
+
+**Smoke 3 (ô DeepSeek, hội thoại mới): đạt cả ba câu.**
+
+| # | Tin nhắn | Kết quả |
+|---|---|---|
+| 1 | liệt kê các đơn của tôi | 3/3 đơn, đủ tổng tiền, phí ship, ngày "…/2026"; không dòng nào bị xóa, không có câu ghi chú; 4,3 giây |
+| 2 | phân tích cả 3 đơn giúp tôi | HTTP 200, 5 lần gọi model, 17,6 giây, một bước gọi 4 tool. Số liệu đúng: trễ khoảng 68 và 72 giờ; đơn giao 10,8 ngày đã quá hạn trả; đơn giao 6,8 ngày còn khoảng 4 giờ. Có trích dẫn; không hứa voucher khi chưa tra được chính sách |
+| 3 | đơn `SIM-O-38588564-01` đã hoàn tiền chưa | "chưa có hoàn tiền", đúng dữ liệu; không bị bộ kiểm thứ hai thay câu |
+
+Điểm nhỏ để W6.5:
+- lộ tên trường `refund`, `refund_summary` cho khách;
+- xưng "tôi" lẫn "em";
+- `[KB:…]` hiện thô;
+- lần `search_knowledge` thứ ba trong lượt bị chặn;
+- nhãn "Nguồn: custom_api" ở ô DeepSeek;
+- model gọi lại `list_orders` vì lịch sử không giữ lượt tool.
+
+**Còn mở:**
+- Google OAuth cho host mới.
+- Smoke ô Qwen khi bật Colab.
+- Lượt đo W6.4 trên L4 với `REPO_SHA` `662cb773bed29c8fc543e21aa54ca2fc29fa5756`, ngữ cảnh 32k (D giữ 8k).
+- F45 (Waitress 8 luồng).
+- Tắt EC2 khi không dùng.
