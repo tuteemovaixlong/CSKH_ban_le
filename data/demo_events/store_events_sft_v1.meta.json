@@ -1,0 +1,43 @@
+{
+  "seed": 20261201,
+  "days": 30,
+  "merchant_id": "MERCHANT-SIM-001",
+  "counters": {
+    "next_customer_no": 5001,
+    "next_order_no": 50001,
+    "next_shipment_no": 50001,
+    "next_payment_no": 50001,
+    "next_refund_no": 50001,
+    "next_voucher_no": 50001,
+    "next_story_no": 501
+  },
+  "stories": [
+    "giao_dung_han_cod",
+    "dang_trung_chuyen",
+    "cap_nhat_ao_giao_lai",
+    "giao_that_bai_hoan_ve",
+    "nghen_kho_mega_sale",
+    "hoan_tien_cham",
+    "hoan_tien_that_bai",
+    "thanh_toan_that_bai_roi_thanh_cong",
+    "huy_truoc_khi_giao",
+    "doi_size_trong_han",
+    "qua_han_doi_tra",
+    "het_bao_hanh",
+    "giao_tre_han_cam_ket"
+  ],
+  "event_counts_by_type": {
+    "customer.upserted": 92,
+    "order.created": 129,
+    "order.status_changed": 499,
+    "payment.updated": 214,
+    "shipment.updated": 1008,
+    "product.upserted": 20,
+    "refund.updated": 49
+  },
+  "total_events": 2011,
+  "total_orders": 129,
+  "total_customers": 92,
+  "sha256": "18b4e714d5005e3334b6287f9d8c045d19325d821c05ea5c59841d93e72efddb",
+  "build_command": "python scripts/build_sft_fixture.py --out C:/Users/HP/.gemini/antigravity/worktrees/CSKH_ban_le/mighty_ray_coasts_22h48/data/demo_events/store_events_sft_v1.jsonl"
+}
