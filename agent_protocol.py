@@ -30,7 +30,7 @@ MAX_SYSTEM_CHARACTERS = 6400
 # Customer agent budget (W3.2-D10): per chat turn, plus a wall-clock cap for the whole turn.
 MAX_MODEL_CALLS = 6
 MAX_TOOL_CALLS = 10
-MAX_TOOLS_PER_STEP = 4
+MAX_TOOLS_PER_STEP = MAX_TOOL_CALLS  # W6.4-D17: một bước được dùng hết ngân sách tool của lượt
 TURN_TIMEOUT_SECONDS = 110
 # The legacy supervisor graph (RETAILOPS_AGENT_MODE=legacy) keeps the budget it always had.
 LEGACY_MAX_MODEL_CALLS = 4

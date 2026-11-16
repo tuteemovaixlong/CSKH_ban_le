@@ -290,7 +290,8 @@ class RunnerNotesFailuresTests(unittest.TestCase):
         """Switch a code safeguard off and the scenario written for it fails."""
         from retailops.business import application
         with patch.object(application, 'check_final_answer', lambda text, messages=None: type('R', (), {
-                'changed': False, 'text': text, 'dropped_policy': 0, 'dropped_claims': 0})()):
+                'changed': False, 'text': text, 'dropped_policy': 0, 'dropped_claims': 0,
+                'details': (), 'audit': ()})()):
             record = run_one(by_id('policy_uncited_promise_is_removed_by_the_server'))
         self.assertFalse(record['passed'])
         self.assertIn('must not say', ' '.join(record['failures']))

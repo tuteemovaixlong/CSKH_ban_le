@@ -24,6 +24,10 @@ def tool_message(name, payload):
 
 class FinalAnswerCheckTests(unittest.TestCase):
     def test_uncited_policy_promises_are_removed(self):
+        audit_only = {
+            'Anh/chị được đổi hàng trong 7 ngày kể từ khi nhận hàng.': 'deadline_number',
+            'Thời hạn đổi trả là 30 ngày.': 'deadline_number',
+        }
         for promise in ('Shop đổi size tận nhà miễn phí 2 chiều cho anh/chị ạ.',
                         'Anh/chị được đổi hàng trong 7 ngày kể từ khi nhận hàng.',
                         'Phí ship do shop chịu hoàn toàn.',
@@ -32,8 +36,14 @@ class FinalAnswerCheckTests(unittest.TestCase):
                         'Thời hạn đổi trả là 30 ngày.'):
             with self.subTest(promise=promise):
                 checked = check_final_answer(promise)
-                self.assertEqual((checked.dropped_policy, checked.dropped_claims), (1, 0))
-                self.assertEqual(checked.text, POLICY_NOTE)
+                if promise in audit_only:
+                    self.assertFalse(checked.changed)
+                    self.assertEqual((checked.dropped_policy, checked.dropped_claims), (0, 0))
+                    self.assertEqual(checked.text, promise)
+                    self.assertEqual(checked.audit, ({'line': 1, 'rule': audit_only[promise]},))
+                else:
+                    self.assertEqual((checked.dropped_policy, checked.dropped_claims), (1, 0))
+                    self.assertEqual(checked.text, POLICY_NOTE)
 
     def test_the_facts_around_a_removed_promise_stay_in_place(self):
         checked = check_final_answer('Đơn O-701 đã giao ngày 2 tháng này.\nShop miễn phí đổi trả 2 chiều ạ. Anh/chị chọn biến thể trên form nhé.')
@@ -64,8 +74,14 @@ class FinalAnswerCheckTests(unittest.TestCase):
     def test_a_structured_warranty_fact_from_a_tool_is_not_a_promise(self):
         messages = [tool_message('get_product', {'product': {'id': 'P-102', 'warranty_days': 90}})]
         self.assertFalse(check_final_answer('Sản phẩm này được bảo hành 90 ngày ạ.', messages).changed)
-        self.assertTrue(check_final_answer('Sản phẩm này được bảo hành 120 ngày ạ.', messages).changed)
-        self.assertTrue(check_final_answer('Sản phẩm này được bảo hành 90 ngày ạ.').changed)  # no tool shows it
+        wrong = check_final_answer('Sản phẩm này được bảo hành 120 ngày ạ.', messages)
+        self.assertFalse(wrong.changed)
+        self.assertEqual(wrong.text, 'Sản phẩm này được bảo hành 120 ngày ạ.')
+        self.assertEqual(wrong.audit, ({'line': 1, 'rule': 'deadline_number'},))
+        no_tool = check_final_answer('Sản phẩm này được bảo hành 90 ngày ạ.')  # no tool shows it
+        self.assertFalse(no_tool.changed)
+        self.assertEqual(no_tool.text, 'Sản phẩm này được bảo hành 90 ngày ạ.')
+        self.assertEqual(no_tool.audit, ({'line': 1, 'rule': 'deadline_number'},))
         self.assertEqual(tool_evidence(messages).warranty_days, frozenset({90}))
 
     def test_order_facts_and_plain_acknowledgements_stay(self):

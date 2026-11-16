@@ -79,13 +79,20 @@ class Row1MoneyEvidenceTests(unittest.TestCase):
                 self.assertFalse(res.changed)
                 self.assertEqual(res.text, line)
                 no_ev = check_final_answer(line)
-                self.assertEqual(no_ev.text, POLICY_NOTE)
-                self.assertEqual(no_ev.dropped_policy, 1)
+                self.assertFalse(no_ev.changed)
+                self.assertEqual(no_ev.text, line)
+                self.assertEqual(no_ev.dropped_policy, 0)
+                self.assertEqual(no_ev.audit, ({'line': 1, 'rule': 'fee_amount'},))
 
     def test_policy_fee_and_wrong_shipping_amount_still_dropped_with_order_91(self):
         ev = messages(ORDER_91)
+        ship = 'Phí ship đơn này là 35.000đ ạ.'
+        ship_res = check_final_answer(ship, ev)
+        self.assertFalse(ship_res.changed)
+        self.assertEqual(ship_res.text, ship)
+        self.assertEqual(ship_res.dropped_policy, 0)
+        self.assertEqual(ship_res.audit, ({'line': 1, 'rule': 'fee_amount'},))
         for line in (
-            'Phí ship đơn này là 35.000đ ạ.',
             'Phí đổi hàng là 450.000đ ạ.',
             'Shop miễn phí ship đổi size lần đầu ạ.',
         ):
@@ -111,7 +118,10 @@ class Row1MoneyEvidenceTests(unittest.TestCase):
                 res = check_final_answer(line, ev_msgs)
                 self.assertFalse(res.changed)
                 self.assertEqual(res.text, line)
-                self.assertEqual(check_final_answer(line).text, POLICY_NOTE)
+                no_ev = check_final_answer(line)
+                self.assertFalse(no_ev.changed)
+                self.assertEqual(no_ev.text, line)
+                self.assertEqual(no_ev.audit, ({'line': 1, 'rule': 'fee_amount'},))
 
     def test_deduplicates_same_order_across_list_orders_and_get_order(self):
         combined = messages(LIST_3, 'list_orders') + messages(ORDER_91)
@@ -173,19 +183,21 @@ class Row2TimeEvidenceTests(unittest.TestCase):
 
     def test_derived_time_sentences_kept_with_order_91_and_dropped_without_evidence(self):
         ev = messages(ORDER_91)
-        for line, expected_no_ev in (
-            ('**SIM-O-00091 — trễ hạn 72 giờ, sắp hết hạn trả hàng**', f'**SIM-O-00091**\n\n{POLICY_NOTE}'),
-            ('- Hạn đổi size còn khoảng 10 ngày.', POLICY_NOTE),
-            ('- Đã giao được 4 ngày, trong hạn trả 7 ngày.', POLICY_NOTE),
-            ('- Đơn giao hàng trễ, quá hạn 3 ngày.', POLICY_NOTE),
+        for line in (
+            '**SIM-O-00091 — trễ hạn 72 giờ, sắp hết hạn trả hàng**',
+            '- Hạn đổi size còn khoảng 10 ngày.',
+            '- Đã giao được 4 ngày, trong hạn trả 7 ngày.',
+            '- Đơn giao hàng trễ, quá hạn 3 ngày.',
         ):
             with self.subTest(line=line):
                 res = check_final_answer(line, ev)
                 self.assertFalse(res.changed)
                 self.assertEqual(res.text, line)
                 no_ev = check_final_answer(line)
-                self.assertEqual(no_ev.text, expected_no_ev)
-                self.assertEqual(no_ev.dropped_policy, 1)
+                self.assertFalse(no_ev.changed)
+                self.assertEqual(no_ev.text, line)
+                self.assertEqual(no_ev.dropped_policy, 0)
+                self.assertEqual(no_ev.audit, ({'line': 1, 'rule': 'deadline_number'},))
 
     def test_unknown_or_policy_time_numbers_still_dropped_with_order_91(self):
         ev = messages(ORDER_91)
@@ -195,8 +207,10 @@ class Row2TimeEvidenceTests(unittest.TestCase):
         ):
             with self.subTest(line=line):
                 res = check_final_answer(line, ev)
-                self.assertEqual(res.text, POLICY_NOTE)
-                self.assertEqual(res.dropped_policy, 1)
+                self.assertFalse(res.changed)
+                self.assertEqual(res.text, line)
+                self.assertEqual(res.dropped_policy, 0)
+                self.assertEqual(res.audit, ({'line': 1, 'rule': 'deadline_number'},))
 
     def test_invalid_or_zero_late_by_hours_and_days_add_no_time_numbers(self):
         for bad_late in (0.0, 0, -5.0, None, '72', True, float('nan'), float('inf')):
@@ -227,12 +241,12 @@ class Row2TimeEvidenceTests(unittest.TestCase):
 class Row3HeadingAndNumberedLineTests(unittest.TestCase):
     def test_heading_table_examples_without_evidence(self):
         cases = (
-            ('**SIM-O-38588564-03 — trễ hạn 72 giờ, sắp hết hạn trả hàng**', '**SIM-O-38588564-03**'),
-            ('**1. SIM-O-38588564-02** — Đang giao hàng, quá hạn 54 giờ.', '**1. SIM-O-38588564-02**'),
+            ('**SIM-O-38588564-03 — đổi tận nhà miễn phí 2 chiều**', '**SIM-O-38588564-03**'),
+            ('**1. SIM-O-38588564-02** — Đang giao hàng, đổi tận nhà miễn phí 2 chiều.', '**1. SIM-O-38588564-02**'),
             ('### Đổi trả: miễn phí 2 chiều tận nhà', '### Đổi trả'),
             ('**Miễn phí đổi trả 2 chiều**', ''),
-            ('- **SIM-O-1 — trễ hạn trả hàng 72 giờ**', ''),
-            ('**Phí ship:** 30.000đ', ''),
+            ('- **SIM-O-1 — đổi tận nhà miễn phí 2 chiều**', ''),
+            ('**Phí ship:** do shop chịu hoàn toàn.', ''),
         )
         for line, expected_first_line in cases:
             with self.subTest(line=line):
@@ -248,7 +262,7 @@ class Row3HeadingAndNumberedLineTests(unittest.TestCase):
         text = (
             '**SIM-O-38588564-01 — đơn đúng hạn**\n'
             '- Giao 05/11, sớm hơn mốc cam kết 06/11.\n\n'
-            '**SIM-O-38588564-03 — trễ hạn 72 giờ, sắp hết hạn trả hàng**\n'
+            '**SIM-O-38588564-03 — đổi tận nhà miễn phí 2 chiều**\n'
             '- Cam kết 06/11 nhưng giao 09/11.\n\n'
             '**SIM-O-38588564-02 — đang giao**\n'
             '- Đang ở trạm trung chuyển Đà Nẵng.'
@@ -274,7 +288,7 @@ class Row3HeadingAndNumberedLineTests(unittest.TestCase):
         for line in (
             '1. Shop miễn phí đổi trả 2 chiều.',
             '**1. Shop miễn phí đổi trả 2 chiều.**',
-            '2) Thời hạn đổi trả là 30 ngày.',
+            '2) Phí ship do shop chịu hoàn toàn.',
         ):
             with self.subTest(line=line):
                 res = check_final_answer(line)
@@ -290,11 +304,11 @@ class Row3HeadingAndNumberedLineTests(unittest.TestCase):
 
     def test_heading_separators_empty_label_and_stranded_citation(self):
         self.assertEqual(
-            check_final_answer('## SIM-O-00091 | trễ hạn trả hàng 72 giờ ##').text,
+            check_final_answer('## SIM-O-00091 | đổi tận nhà miễn phí 2 chiều ##').text,
             f'## SIM-O-00091\n\n{POLICY_NOTE}',
         )
         self.assertEqual(
-            check_final_answer('** — trễ hạn trả hàng 72 giờ**').text,
+            check_final_answer('** — đổi tận nhà miễn phí 2 chiều**').text,
             POLICY_NOTE,
         )
         cit = '[KB:0123456789abcdef01234567]'
@@ -332,20 +346,30 @@ class Row4DetailsUnitTests(unittest.TestCase):
         res = check_final_answer('\n'.join(lines))
         expected = (
             {'line': 1, 'kind': 'policy', 'rule': 'logistics', 'heading_label_kept': False},
-            {'line': 2, 'kind': 'policy', 'rule': 'fee_amount', 'heading_label_kept': False},
-            {'line': 3, 'kind': 'policy', 'rule': 'deadline_number', 'heading_label_kept': False},
             {'line': 4, 'kind': 'claim', 'rule': 'done_claim', 'heading_label_kept': False},
             {'line': 5, 'kind': 'handoff', 'rule': 'handoff_claim', 'heading_label_kept': False},
         )
+        expected_audit = (
+            {'line': 2, 'rule': 'fee_amount'},
+            {'line': 3, 'rule': 'deadline_number'},
+        )
         self.assertEqual(res.details, expected)
+        self.assertEqual(res.audit, expected_audit)
         self.assertEqual(len(res.details), res.dropped_policy + res.dropped_claims)
+        self.assertIn(lines[1], res.text)
+        self.assertIn(lines[2], res.text)
         serialized = json.dumps(res.details, ensure_ascii=False)
+        audit_serialized = json.dumps(res.audit, ensure_ascii=False)
         for item in res.details:
             self.assertEqual(set(item.keys()), {'line', 'kind', 'rule', 'heading_label_kept'})
+        for item in res.audit:
+            self.assertEqual(set(item.keys()), {'line', 'rule'})
         for line in lines:
             self.assertNotIn(line, serialized)
+            self.assertNotIn(line, audit_serialized)
         for forbidden in ('tận nhà', '35.000', '30 ngày', 'SIM-O-00115', 'nhân viên'):
             self.assertNotIn(forbidden, serialized)
+            self.assertNotIn(forbidden, audit_serialized)
 
     def test_policy_fee_vs_logistics_hedge_and_deadline_no_fact(self):
         fee = check_final_answer('Shop miễn phí đổi hàng ạ.')
@@ -359,17 +383,15 @@ class Row4DetailsUnitTests(unittest.TestCase):
         self.assertEqual(hedged.details, ())
 
         no_fact = check_final_answer('Đơn còn trong thời hạn đổi trả ạ.')
-        self.assertEqual(
-            no_fact.details,
-            ({'line': 1, 'kind': 'policy', 'rule': 'deadline_no_fact', 'heading_label_kept': False},),
-        )
+        self.assertFalse(no_fact.changed)
+        self.assertEqual(no_fact.details, ())
+        self.assertEqual(no_fact.audit, ({'line': 1, 'rule': 'deadline_no_fact'},))
 
     def test_heading_label_kept_flag_and_unchanged_details_empty(self):
         heading = check_final_answer('**SIM-O-00091 — trễ hạn 72 giờ, sắp hết hạn trả hàng**')
-        self.assertEqual(
-            heading.details,
-            ({'line': 1, 'kind': 'policy', 'rule': 'deadline_number', 'heading_label_kept': True},),
-        )
+        self.assertFalse(heading.changed)
+        self.assertEqual(heading.details, ())
+        self.assertEqual(heading.audit, ({'line': 1, 'rule': 'deadline_number'},))
         orphan_list = check_final_answer('1. Shop miễn phí đổi trả 2 chiều.')
         self.assertEqual(
             orphan_list.details,

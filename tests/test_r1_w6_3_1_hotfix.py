@@ -70,15 +70,18 @@ class HandoffTests(AgentFixture):
 class DeadlineTests(unittest.TestCase):
     def test_server_deadline_facts_survive_only_with_tool_evidence(self):
         cases = (
-            ('Đơn SIM-O-1 còn trong hạn trả hàng ạ.', {'eligibility': {'within_return_window': True}}),
+            ('Đơn SIM-O-1 còn trong hạn trả hàng ạ.', {'eligibility': {'within_return_window': True}}, 'deadline_no_fact'),
             ('Đơn SIM-O-1 đang trên đường vận chuyển qua GHN và vẫn trong thời hạn giao dự kiến ạ.',
-             {'shipment': {'promised_delivery_by': '2026-11-12T00:00:00Z'}}),
-            ('Đơn của anh/chị còn hạn đổi size 15 ngày ạ.', {'eligibility': {'size_exchange_window_days': 15}}),
+             {'shipment': {'promised_delivery_by': '2026-11-12T00:00:00Z'}}, 'deadline_no_fact'),
+            ('Đơn của anh/chị còn hạn đổi size 15 ngày ạ.', {'eligibility': {'size_exchange_window_days': 15}}, 'deadline_number'),
         )
-        for text, payload in cases:
+        for text, payload, audit_rule in cases:
             with self.subTest(text=text):
                 self.assertEqual(check_final_answer(text, messages(payload)).text, text)
-                self.assertTrue(check_final_answer(text).changed)
+                no_ev = check_final_answer(text)
+                self.assertFalse(no_ev.changed)
+                self.assertEqual(no_ev.text, text)
+                self.assertEqual(no_ev.audit, ({'line': 1, 'rule': audit_rule},))
 
     def test_each_deadline_field_and_false_eligibility_is_evidence(self):
         for key in ('return_window_days', 'size_exchange_window_days', 'warranty_window_days', 'warranty_days'):
@@ -96,11 +99,19 @@ class DeadlineTests(unittest.TestCase):
     def test_fee_logistics_and_unknown_numbers_still_need_citations(self):
         evidence = messages({'return_window_days': 7, 'size_exchange_window_days': 15,
                              'warranty_days': 90, 'within_return_window': True})
-        for text in ('Shop miễn phí ship đổi size lần đầu ạ.', 'Shop đổi tận nhà trong 15 ngày ạ.',
-                     'Shop cho đổi trong 30 ngày ạ.', 'Shop cho đổi trong 7 đến 30 ngày ạ.'):
+        for text in ('Shop miễn phí ship đổi size lần đầu ạ.', 'Shop đổi tận nhà trong 15 ngày ạ.'):
             with self.subTest(text=text):
                 self.assertTrue(check_final_answer(text, evidence).changed)
-        self.assertTrue(check_final_answer('Thời hạn trả là 1 ngày ạ.', messages({'return_window_days': True})).changed)
+        for text in ('Shop cho đổi trong 30 ngày ạ.', 'Shop cho đổi trong 7 đến 30 ngày ạ.'):
+            with self.subTest(text=text):
+                res = check_final_answer(text, evidence)
+                self.assertFalse(res.changed)
+                self.assertEqual(res.text, text)
+                self.assertEqual(res.audit, ({'line': 1, 'rule': 'deadline_number'},))
+        bool_ev = check_final_answer('Thời hạn trả là 1 ngày ạ.', messages({'return_window_days': True}))
+        self.assertFalse(bool_ev.changed)
+        self.assertEqual(bool_ev.text, 'Thời hạn trả là 1 ngày ạ.')
+        self.assertEqual(bool_ev.audit, ({'line': 1, 'rule': 'deadline_number'},))
 
 
 class RunnerRailTests(unittest.TestCase):
