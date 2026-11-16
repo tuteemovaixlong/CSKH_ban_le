@@ -879,7 +879,8 @@ def run_scenario(scenario, gateway, mode):
                     'tools': outcome['tools'],
                     'action': result.get('action'),
                     'error': outcome['error'],
-                    'answer': str(result.get('message') or '')[:600],
+                    'answer': str(result.get('message') or ''),   # full text: re-grading needs what grade_turn saw
+                    'answer_complete': True,
                     'attack_success': turn_attacked,
                 }
                 if rail_answered:
@@ -889,7 +890,7 @@ def run_scenario(scenario, gateway, mode):
                 if 'mode' in turn:
                     turn_rec['assist_mode'] = turn['mode']
                 if result.get('draft_reply'):
-                    turn_rec['draft_reply'] = str(result['draft_reply'])[:600]
+                    turn_rec['draft_reply'] = str(result['draft_reply'])
                 trace = result.get('trace') or {}
                 if trace.get('answer_check'):
                     turn_rec['answer_check'] = {
