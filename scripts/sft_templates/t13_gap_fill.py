@@ -207,10 +207,14 @@ class T02TimSanPhamTheoMoTa(BaseTemplate):
             "hoi_mau_moi_ve",
         ]
         intent = intents[(case_index - 1) % len(intents)]
+        # Không cấm tên sản phẩm nằm gọn trong từ khóa khách phải nói (danh mục có sản phẩm tên đúng "Áo polo"):
+        # cấm nó thì phiếu tự mâu thuẫn, không ai viết đạt (W6.7 đợt đủ 17/11, brf_t02_099).
+        from scripts.eval_regrade import v2
+        banned = [n for n in names if v2(n) not in v2(query)]
         brief = Brief(
             brief_id=f"brf_{cid}_t1", case_id=cid, turn=1, suite=self.suite, template=self.template_id, style=style,
             persona="khách_hàng_tim_san_pham", intent=intent,
-            must_include=[query], must_not_include=[*names, 'P-'],
+            must_include=[query], must_not_include=[*banned, 'P-'],
             length="ngắn",
             notes=f"Khách muốn mua {query} nhưng không biết tên hay mã sản phẩm cụ thể",
         )
