@@ -31,10 +31,27 @@ class Brief:
     def to_dict(self) -> dict[str, Any]:
         must = list(self.must_include)
         may = list(self.may_include)
+        notes = self.notes
         if self.style == "khong_dau":
             from scripts.sft_utterances import strip_vietnamese_accents
             must = [strip_vietnamese_accents(x) for x in must]
             may = [strip_vietnamese_accents(x) for x in may]
+            if "viết không dấu" not in notes.lower():
+                notes = (notes + " (Lưu ý: Tên sản phẩm và các từ khóa được viết không dấu)").strip()
+        elif self.style in ("teencode", "sai_chinh_ta"):
+            new_must = []
+            pid = next((x for x in may if x.startswith("P-")), None)
+            for item in must:
+                words = item.split()
+                has_code = any(c.isdigit() or c == '-' for c in item)
+                if len(words) >= 3 and not has_code:
+                    if pid:
+                        new_must.append(pid)
+                    else:
+                        new_must.append(" ".join(words[:2]))
+                else:
+                    new_must.append(item)
+            must = new_must
 
         data: dict[str, Any] = {
             "brief_id": self.brief_id,
@@ -50,7 +67,7 @@ class Brief:
             "must_not_include": self.must_not_include,
             "earlier_turns": self.earlier_turns,
             "length": self.length,
-            "notes": self.notes,
+            "notes": notes,
         }
         if self.injection is not None:
             data["injection"] = self.injection

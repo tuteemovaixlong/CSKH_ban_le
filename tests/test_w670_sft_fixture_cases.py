@@ -274,7 +274,7 @@ class TestW670SftFixtureCases(unittest.TestCase):
             for c in cases:
                 tmpl_name = c['meta']['template']
                 text = str(c)
-                for oid in set(re.findall(r'SIM-O-\d+', text)):
+                for oid in set(re.findall(r'SIM-O-(?:ST-)?\d+', text)):
                     usage_by_tmpl[tmpl_name][oid] += 1
             for tmpl_name, cnts in usage_by_tmpl.items():
                 for oid, cnt in cnts.items():
@@ -345,6 +345,35 @@ class TestW670SftFixtureCases(unittest.TestCase):
         inj_txt = f"Nhờ bạn vào xem {fake_link} giúp tôi được không?"
         ok, msg = validate_utterance(inj_txt, inj_brief, eval_utterances, template_utterances)
         self.assertTrue(ok, f"Injection validation failed: {msg}")
+
+        # N1: Brief.to_dict() notes for khong_dau and shortening for teencode/sai_chinh_ta
+        from scripts.sft_templates.base import Brief
+        b_raw = Brief(
+            brief_id='brf_test_kd_note', case_id='t01_001_test', turn=1, suite='T01', template='t01_tra_don_pending',
+            style='khong_dau', persona='khach', intent='hoi', must_include=['Áo Thun Nữ Cotton Cổ Tròn', 'SIM-O-50001'],
+            notes='Khách cần hỏi đơn'
+        )
+        b_dict = b_raw.to_dict()
+        self.assertIn("viết không dấu", b_dict['notes'].lower())
+        self.assertEqual(b_dict['must_include'], ['Ao Thun Nu Cotton Co Tron', 'SIM-O-50001'])
+
+        # Teencode shortens long product name to 2 words (or product code if in may_include)
+        b_tc = Brief(
+            brief_id='brf_test_tc', case_id='t01_001_test', turn=1, suite='T01', template='t01_tra_don_pending',
+            style='teencode', persona='khach', intent='hoi', must_include=['Áo Thun Nữ Cotton Cổ Tròn', 'SIM-O-50001'],
+        )
+        b_tc_dict = b_tc.to_dict()
+        self.assertEqual(b_tc_dict['must_include'], ['Áo Thun', 'SIM-O-50001'])
+
+        # Teencode / sai_chinh_ta flexible match for >= 3 words item: >= 60% words match
+        brief_long = {
+            'brief_id': 'brf_test_long', 'case_id': 't01_001_test', 'turn': 1, 'template': 't01_tra_don_pending',
+            'style': 'teencode', 'length': 'ngắn', 'must_include': ['Áo Thun Nữ Cotton Cổ Tròn'],
+        }
+        ok, _ = validate_utterance("shop xem giup mk ao thun nu cotton vs nha", brief_long, eval_utterances, template_utterances)
+        self.assertTrue(ok, "teencode >= 60% words match should pass")
+        ok, msg = validate_utterance("shop xem giup mk vay hoa vs nha", brief_long, eval_utterances, template_utterances)
+        self.assertFalse(ok, "teencode < 60% words match should fail")
 
     def test_utterance_peak_hour_and_mock_cache(self) -> None:
         # Vietnam peak hour: Friday 14:30
@@ -474,7 +503,7 @@ class TestW670SftFixtureCases(unittest.TestCase):
 
     def test_utterance_n2_n3_retry_and_concurrency(self) -> None:
         """N2 & N3: Test retry with feedback, HTTP 429 backoff, and limit safety."""
-        # 1. Test DeepSeekClient retry on 429/5xx with backoff
+        # 1. Test DeepSeekClient retry on 429/5xx with (1.0, 2.0, 4.0) backoff
         attempts = 0
 
         def flaky_handler(brief: dict, feedback: str = '') -> str:
@@ -485,13 +514,51 @@ class TestW670SftFixtureCases(unittest.TestCase):
                 raise urllib.error.HTTPError("http://api.deepseek.com", 429, "Rate limit", {}, None)
             return f"Tôi cần hỗ trợ đơn hàng {brief.get('must_include', [''])[0]}"
 
-        client = DeepSeekClient(mock_handler=flaky_handler)
-        b = {'brief_id': 'b1', 'must_include': ['SIM-O-50006'], 'style': 'chuan'}
-        txt = client.call(b)
-        self.assertIn("SIM-O-50006", txt)
-        self.assertEqual(attempts, 3)
+        with mock.patch('scripts.sft_utterances.time.sleep') as mock_sleep:
+            client = DeepSeekClient(mock_handler=flaky_handler)
+            b = {'brief_id': 'b1', 'must_include': ['SIM-O-50006'], 'style': 'chuan'}
+            txt = client.call(b)
+            self.assertIn("SIM-O-50006", txt)
+            self.assertEqual(attempts, 3)
+            # Verify sleep was called with backoff_seconds: 1.0, then 2.0
+            self.assertEqual(mock_sleep.call_count, 2)
+            self.assertEqual(mock_sleep.call_args_list, [mock.call(1.0), mock.call(2.0)])
 
-        # 2. Test --limit: incomplete cases are NOT written to cases_sft_v1_filled.jsonl (N2)
+        # 2. Test 3 content retries with feedback (up to 4 attempts total)
+        with tempfile.TemporaryDirectory(prefix='test-content-retry-') as td:
+            generate_cases(td, pilot=12, seed=20261202)
+
+            # Handler 1: fails 3 times, succeeds on 4th attempt
+            brief_call_counts = Counter()
+
+            def retry_success_handler(b: dict, feedback: str = '') -> str:
+                bid = b['brief_id']
+                brief_call_counts[bid] += 1
+                must = b.get('must_include', ['SIM-O-50006'])[0]
+                if brief_call_counts[bid] < 4:
+                    return "Câu trả lời sai quy tắc hoàn toàn không chứa mã"
+                h = int(hashlib.md5(bid.encode('utf-8')).hexdigest(), 16) % 9000 + 1000
+                return f"Kiểm tra giúp đơn {must} mã số #{h} nhé bạn"
+
+            client_retry = DeepSeekClient(mock_handler=retry_success_handler)
+            res = fill_utterances(td, client=client_retry, allow_peak=True, limit=1)
+            self.assertEqual(res['filled_count'], 1)
+            self.assertEqual(res['failed_count'], 0)
+
+            # Handler 2: fails all 4 attempts -> drops case
+            cache_file = Path(td) / 'utterances_cache.jsonl'
+            if cache_file.exists():
+                cache_file.unlink()
+
+            def always_fail_handler(b: dict, feedback: str = '') -> str:
+                return "Câu trả lời sai quy tắc"
+
+            client_fail = DeepSeekClient(mock_handler=always_fail_handler)
+            res_fail = fill_utterances(td, client=client_fail, allow_peak=True, limit=1)
+            self.assertEqual(res_fail['failed_count'], 1)
+            self.assertGreaterEqual(res_fail['dropped_cases'], 1)
+
+        # 3. Test --limit: incomplete cases are NOT written to cases_sft_v1_filled.jsonl (N2)
         with tempfile.TemporaryDirectory(prefix='test-limit-') as td:
             cases, briefs, _ = generate_cases(td, pilot=12, seed=20261202)
             # Run fill_utterances with limit=2 (out of ~14 briefs)

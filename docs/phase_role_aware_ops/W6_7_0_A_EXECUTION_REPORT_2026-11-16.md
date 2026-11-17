@@ -16,7 +16,7 @@
 | 4 | `scripts/run_agent_scenarios.py` | Chỉnh sửa | Tách biệt `TRAIN_FIXTURES = {'sft_v1': ...}` sạch sẽ, giữ nguyên `FIXTURES = {'standard': ..., 'late_voucher_issued': ...}`; nạp `sft_v1` an toàn; thêm nhánh xác thực ca huấn luyện (`t*`) vào `load_dataset` |
 | 5 | `scripts/sft_dataset.py` | Tạo mới / Cập nhật | Bộ kiểm định dạng ca huấn luyện `validate_train_case` và kiểm tra toàn tập `validate_train_set` (kiểm tra tính duy nhất của bộ ba `(template, slot_key, intent)`) |
 | 6 | `scripts/sft_templates/__init__.py` | Tạo mới / Cập nhật | Đăng ký toàn bộ 117 khung ca (1.200 ca, tất cả ≤15 ca/khung) và export `SftView` |
-| 7 | `scripts/sft_templates/base.py` | Tạo mới / Cập nhật | Lớp cơ sở `BaseTemplate`, cấu trúc phiếu yêu cầu lời khách `Brief` (chuẩn hóa `must_include`/`may_include` không dấu khi `style == "khong_dau"`) |
+| 7 | `scripts/sft_templates/base.py` | Tạo mới / Cập nhật | Lớp cơ sở `BaseTemplate`, cấu trúc phiếu yêu cầu lời khách `Brief` (chuẩn hóa `must_include`/`may_include` không dấu khi `style == "khong_dau"`, rút ngắn tên SP dài cho `teencode`/`sai_chinh_ta`) |
 | 8 | `scripts/sft_templates/view.py` | Tạo mới / Cập nhật | Lớp `SftView` phân loại đơn theo cờ `eligibility` từ `read_order`, lọc sạch đoạn miễn trừ trách nhiệm khỏi chunk tri thức, truy xuất biến thể tồn kho động |
 | 9 | `scripts/sft_templates/t01_order_lookup.py` | Tạo mới / Cập nhật | 13 khung tra cứu đơn hàng (100 ca: thêm đơn không thuộc khách, hỏi địa chỉ/SĐT đầy đủ, trạng thái hoàn tiền; chia giao trễ dưới/trên 48h theo cờ `late_by_hours`) |
 | 10 | `scripts/sft_templates/t02_products.py` | Tạo mới / Cập nhật | 9 khung sản phẩm và tồn kho (90 ca: quét biến thể tồn/hết động, 15 sản phẩm không kinh doanh khác nhau) |
@@ -28,12 +28,13 @@
 | 16 | `scripts/sft_templates/t08_multiturn.py` | Tạo mới / Cập nhật | 13 khung hội thoại đa lượt 2–4 lượt (150 ca: gọi `get_order` ở lượt 2, tham chiếu đúng đơn lượt trước, kiểm tra COD vs trả trước) |
 | 17 | `scripts/sft_templates/t09_injections.py` | Tạo mới / Cập nhật | 8 khung chèn lệnh trong chat và từ chối an toàn (80 ca: loại bỏ chuỗi injection khỏi `must_not_include`, xoay vòng đơn người khác) |
 | 18 | `scripts/sft_templates/t10_out_of_scope.py` | Tạo mới / Cập nhật | 4 khung câu hỏi ngoài phạm vi (40 ca: 10 câu hỏi khác nhau cho 10 ca/khung, `must_include` chỉ chứa từ khóa ngắn) |
-| 19 | `scripts/sft_templates/t11_case_assist.py` | Tạo mới / Cập nhật | 14 khung Trợ lý ca (190 ca: thêm `t11_tom_tat_pdf_hoa_don` đính kèm PDF hóa đơn Latin-1; 4 khung chèn lệnh tài liệu 40 ca đều có đính kèm PDF và cảnh báo nhân viên; 4–6 câu hỏi nhân viên viết tay đa dạng xoay vòng) |
+| 19 | `scripts/sft_templates/t11_case_assist.py` | Tạo mới / Cập nhật | 14 khung Trợ lý ca (190 ca: thêm `t11_tom_tat_pdf_hoa_don` đính kèm PDF hóa đơn Latin-1; 4 khung chèn lệnh tài liệu 40/40 ca đều có đính kèm PDF và cảnh báo nhân viên; 4–6 câu hỏi nhân viên viết tay đa dạng xoay vòng) |
 | 20 | `scripts/sft_templates/t12_fraud_context.py` | Tạo mới / Cập nhật | 10 khung bối cảnh lừa đảo & bối cảnh Việt Nam (80 ca: thêm xin Zalo và nghỉ Tết không dữ liệu; gọi `request_human_support` khi cần chuyển người) |
-| 21 | `scripts/sft_cases.py` | Tạo mới / Cập nhật | CLI sinh ca (`generate`) và kiểm tính nhất quán (`check`): assert mỗi khung dùng cùng một đơn ≤ 3 lần; pilot 100 chọn luân phiên phủ 98 khung (≥ 90) và cân bằng đúng 20 ca/giọng (≥ 8/giọng) |
-| 22 | `scripts/sft_utterances.py` | Tạo mới / Cập nhật | Tooling điền lời khách bằng DeepSeek: so sánh không dấu hai phía cho `khong_dau`, ThreadPoolExecutor có khóa đệm, retry lùi số mũ cho HTTP 429/5xx, chỉ ghi ca hoàn chỉnh 100% vào `_filled.jsonl` |
+| 21 | `scripts/sft_cases.py` | Tạo mới / Cập nhật | CLI sinh ca (`generate`) và kiểm tính nhất quán (`check`): assert mỗi khung dùng cùng một đơn ≤ 3 lần (hỗ trợ cả đơn story `SIM-O-ST-*`); pilot 100 chọn luân phiên phủ 98 khung (≥ 90) và cân bằng đúng 20 ca/giọng (≥ 8/giọng) |
+| 22 | `scripts/sft_utterances.py` | Tạo mới / Cập nhật | Tooling điền lời khách bằng DeepSeek: so sánh không dấu hai phía cho `khong_dau`, khớp linh hoạt cho `teencode`/`sai_chinh_ta`, ThreadPoolExecutor có khóa đệm, retry lùi số mũ (1, 2, 4s) cho HTTP 429/5xx, chỉ ghi ca hoàn chỉnh 100% vào `_filled.jsonl` sau khi gọi `validate_train_set` |
 | 23 | `tests/test_w670_sft_fixture_cases.py` | Tạo mới / Cập nhật | Bộ unit test kiểm tra toàn bộ phần A (10 bài test, gồm kiểm tra 7 ngưỡng, eligibility P2, pilot 100 P4, N1-N3, và PDF CI test) |
 | 24 | `docs/phase_role_aware_ops/W6_7_0_A_EXECUTION_REPORT_2026-11-16.md` | Tạo mới / Cập nhật | Báo cáo thực thi phần A chi tiết |
+| 25 | `notebooks/colab_agent.ipynb` | Đồng bộ | Đồng bộ notebook Colab bằng `python scripts/build_agent_notebook.py` |
 
 ---
 
@@ -49,8 +50,17 @@
   - **Tổng số đơn hàng:** 216 đơn
   - **Tổng số khách hàng:** 170 khách
   - **Trùng lặp với dữ liệu đo (`store_events.jsonl`):** 0 mã đơn, 0 mã khách, 0 mã vận đơn trùng lặp.
-  - **Bảng tự kiểm tra 7 ngưỡng trạng thái hiếm qua `read_order`:**
+  
+#### Phân bổ 216 đơn hàng theo trạng thái
+| Trạng thái đơn hàng (`status`) | Số lượng đơn | Tỉ lệ |
+|---|---|---|
+| `delivered` | 156 | 72,2% |
+| `cancelled` | 25 | 11,6% |
+| `shipping` | 19 | 8,8% |
+| `pending` | 16 | 7,4% |
+| **Tổng cộng** | **216** | **100,0%** |
 
+#### Bảng tự kiểm tra 7 ngưỡng trạng thái hiếm qua `read_order`
 | Chỉ tiêu ngưỡng trạng thái hiếm | Ngưỡng tối thiểu yêu cầu | Kết quả thực tế đạt được | Đánh giá |
 |---|---|---|---|
 | Đơn `pending` có thể tự hủy (`can_self_service_cancel`) | ≥ 8 | **16** | ĐẠT |
@@ -61,10 +71,134 @@
 | Đơn hết hạn bảo hành (`within_warranty == False`) | ≥ 6 | **8** | ĐẠT |
 | Đơn hoàn tiền chậm hoặc thất bại (`processing` / `failed`) | ≥ 6 | **17** | ĐẠT |
 
-### 2.2. Kiểm tra giới hạn dùng đơn mỗi khung (P1 & P2)
-- Toàn bộ 1.200 ca được quét qua mã phân tích kiểm tra số lần xuất hiện của từng đơn hàng trong mỗi khung (`scripts/sft_cases.py` có assertion cưỡng chế trong `generate_cases`):
-  - **Số lần tối đa một đơn xuất hiện trong cùng một khung:** **≤ 3 lần** (đạt 100% trên toàn bộ 117 khung).
-  - Không có bất kỳ đơn hàng nào bị sử dụng quá 3 lần trong cùng một khung ca.
+---
+
+### 2.2. Kiểm tra giới hạn dùng đơn mỗi khung và bảng đầy đủ 117 khung (P1, P2)
+Toàn bộ 1.200 ca được quét kiểm tra số lần xuất hiện của từng đơn hàng trong mỗi khung (`scripts/sft_cases.py` có assertion cưỡng chế trong `generate_cases` bắt đúng regex `r'SIM-O-(?:ST-)?\d+'`):
+- **Số lần tối đa một đơn xuất hiện trong cùng một khung:** **≤ 3 lần** (đạt 100% trên toàn bộ 117 khung).
+- Dưới đây là bảng thống kê chi tiết toàn bộ 117 khung ca:
+
+| STT | Khung (Template ID) | Bộ | Số ca | Số đơn / chỗ dữ liệu khác nhau | Tối đa ca/đơn |
+|---|---|---|---|---|---|
+| 1 | `t01_don_khong_thuoc_khach` | T01 | 7 | 7 | 1 |
+| 2 | `t01_giao_tre_duoi_48h` | T01 | 7 | 7 | 1 |
+| 3 | `t01_giao_tre_tren_48h` | T01 | 7 | 7 | 1 |
+| 4 | `t01_hoi_dia_chi_sdt_day_du` | T01 | 8 | 8 | 1 |
+| 5 | `t01_khong_neu_ma_mot_don` | T01 | 8 | 8 | 1 |
+| 6 | `t01_khong_neu_ma_nhieu_don` | T01 | 8 | 8 | 1 |
+| 7 | `t01_liet_ke_don` | T01 | 8 | 8 | 1 |
+| 8 | `t01_tra_don_cancelled` | T01 | 8 | 8 | 1 |
+| 9 | `t01_tra_don_delivered` | T01 | 8 | 8 | 1 |
+| 10 | `t01_tra_don_pending` | T01 | 7 | 7 | 1 |
+| 11 | `t01_tra_don_shipping` | T01 | 8 | 8 | 1 |
+| 12 | `t01_trang_thai_hoan_tien` | T01 | 8 | 8 | 1 |
+| 13 | `t01_van_don_giao_that_bai` | T01 | 8 | 8 | 1 |
+| 14 | `t02_bao_hanh_rieng_san_pham` | T02 | 10 | 1 | 1 |
+| 15 | `t02_chat_lieu_giat_ui_co_du_lieu` | T02 | 10 | 1 | 1 |
+| 16 | `t02_chat_lieu_giat_ui_thieu_du_lieu` | T02 | 10 | 1 | 1 |
+| 17 | `t02_nguon_goc_chinh_hang_khong_du_lieu` | T02 | 10 | 1 | 1 |
+| 18 | `t02_san_pham_khong_co` | T02 | 10 | 10 | 1 |
+| 19 | `t02_so_sanh_hai_mau` | T02 | 10 | 1 | 1 |
+| 20 | `t02_ton_kho_bien_the_con` | T02 | 10 | 10 | 1 |
+| 21 | `t02_ton_kho_bien_the_het_goi_y` | T02 | 10 | 5 | 1 |
+| 22 | `t02_tu_van_size_thieu_bang` | T02 | 10 | 1 | 1 |
+| 23 | `t03_bao_hanh_90_ngay` | T03 | 10 | 10 | 1 |
+| 24 | `t03_dieu_kien_huy` | T03 | 10 | 10 | 1 |
+| 25 | `t03_doi_size_15_ngay` | T03 | 10 | 10 | 1 |
+| 26 | `t03_dong_kiem_cod` | T03 | 10 | 10 | 1 |
+| 27 | `t03_gio_lam_viec_lien_he` | T03 | 10 | 10 | 1 |
+| 28 | `t03_han_tra_7_ngay` | T03 | 10 | 10 | 1 |
+| 29 | `t03_hoa_don_vat` | T03 | 10 | 10 | 1 |
+| 30 | `t03_khong_co_trong_chinh_sach_si` | T03 | 10 | 10 | 1 |
+| 31 | `t03_khong_co_trong_chinh_sach_tet` | T03 | 10 | 10 | 1 |
+| 32 | `t03_phi_ship_tra_doi` | T03 | 10 | 10 | 1 |
+| 33 | `t03_thoi_gian_hoan_tien` | T03 | 10 | 10 | 1 |
+| 34 | `t04_bo_mot_mon` | T04 | 10 | 10 | 1 |
+| 35 | `t04_go_xac_nhan_luot_sau` | T04 | 10 | 10 | 1 |
+| 36 | `t04_huy_chua_xac_nhan_don` | T04 | 10 | 10 | 1 |
+| 37 | `t04_huy_da_giao_chuyen_tra` | T04 | 10 | 10 | 1 |
+| 38 | `t04_huy_dang_giao_tu_choi_nhan` | T04 | 10 | 10 | 1 |
+| 39 | `t04_huy_don_da_huy` | T04 | 10 | 10 | 1 |
+| 40 | `t04_huy_khong_neu_ma_nhieu_don` | T04 | 10 | 1 | 1 |
+| 41 | `t04_huy_pending_doi_y` | T04 | 10 | 10 | 1 |
+| 42 | `t04_huy_pending_mo_bieu_mau` | T04 | 10 | 10 | 1 |
+| 43 | `t04_huy_sau_khi_hoi_tien_trinh` | T04 | 10 | 10 | 1 |
+| 44 | `t05_da_co_yeu_cau_mo` | T05 | 10 | 10 | 1 |
+| 45 | `t05_giao_sai_mau_loi_shop` | T05 | 10 | 10 | 1 |
+| 46 | `t05_hoan_tien_cod_ve_dau` | T05 | 10 | 10 | 1 |
+| 47 | `t05_khach_noi_tra_nhung_muon_doi` | T05 | 10 | 10 | 1 |
+| 48 | `t05_qua_7_ngay_con_bao_hanh` | T05 | 10 | 10 | 1 |
+| 49 | `t05_tra_don_chua_giao` | T05 | 10 | 10 | 1 |
+| 50 | `t05_tra_hang_het_han_bao_hanh` | T05 | 10 | 8 | 2 |
+| 51 | `t05_tra_hang_ly_do_ca_nhan` | T05 | 10 | 10 | 1 |
+| 52 | `t05_tra_hang_phi_ship` | T05 | 10 | 10 | 1 |
+| 53 | `t05_tra_trong_7_ngay` | T05 | 10 | 10 | 1 |
+| 54 | `t06_doi_1_1_loi_trong_90_ngay` | T06 | 10 | 10 | 1 |
+| 55 | `t06_doi_hai_mon_cung_don` | T06 | 10 | 4 | 3 |
+| 56 | `t06_doi_hang_chon_variant` | T06 | 10 | 10 | 1 |
+| 57 | `t06_doi_mau` | T06 | 10 | 10 | 1 |
+| 58 | `t06_doi_qua_15_ngay` | T06 | 10 | 10 | 1 |
+| 59 | `t06_doi_sang_san_pham_khac` | T06 | 10 | 10 | 1 |
+| 60 | `t06_doi_size_chua_giao` | T06 | 10 | 10 | 1 |
+| 61 | `t06_doi_size_con_hang` | T06 | 10 | 10 | 1 |
+| 62 | `t06_doi_size_hai_chieu` | T06 | 10 | 10 | 1 |
+| 63 | `t06_doi_size_het_hang_goi_y` | T06 | 10 | 10 | 1 |
+| 64 | `t07_doa_dang_bai` | T07 | 12 | 1 | 1 |
+| 65 | `t07_doi_gap_nhan_vien` | T07 | 12 | 1 | 1 |
+| 66 | `t07_ngon_ngu_gay_gat` | T07 | 12 | 1 | 1 |
+| 67 | `t07_phan_nan_lap_lai` | T07 | 12 | 1 | 1 |
+| 68 | `t07_xin_hotline_zalo` | T07 | 12 | 1 | 1 |
+| 69 | `t08_bon_luot_doi_size` | T08 | 12 | 12 | 1 |
+| 70 | `t08_chinh_sach_roi_thao_tac` | T08 | 12 | 12 | 1 |
+| 71 | `t08_doi_chu_de_roi_quay_lai` | T08 | 12 | 12 | 1 |
+| 72 | `t08_hai_don_chon_mot_don` | T08 | 12 | 12 | 1 |
+| 73 | `t08_hoi_bao_hanh_roi_mo_doi` | T08 | 12 | 12 | 1 |
+| 74 | `t08_hoi_ton_kho_roi_hoi_size` | T08 | 12 | 1 | 1 |
+| 75 | `t08_huy_roi_hoi_hoan_tien` | T08 | 12 | 12 | 1 |
+| 76 | `t08_kiem_tra_trang_thai_va_phi_ship` | T08 | 6 | 6 | 1 |
+| 77 | `t08_nhieu_don_tham_chieu_don_luc_nay` | T08 | 12 | 12 | 1 |
+| 78 | `t08_san_pham_roi_ve_don` | T08 | 12 | 12 | 1 |
+| 79 | `t08_tra_cuu_giao_hang_roi_hoi_dong_kiem` | T08 | 12 | 12 | 1 |
+| 80 | `t08_tra_don_roi_hoi_phi_ship` | T08 | 12 | 12 | 1 |
+| 81 | `t08_tra_roi_doi_y_doi` | T08 | 12 | 12 | 1 |
+| 82 | `t09_debug_mode_xuat_ds` | T09 | 10 | 1 | 1 |
+| 83 | `t09_gia_admin_xoa_don` | T09 | 10 | 1 | 1 |
+| 84 | `t09_in_system_prompt` | T09 | 10 | 1 | 1 |
+| 85 | `t09_the_he_thong_gia_hoan_tien` | T09 | 10 | 1 | 1 |
+| 86 | `t09_the_he_thong_gia_voucher` | T09 | 10 | 10 | 1 |
+| 87 | `t09_viet_danh_gia_gia` | T09 | 10 | 1 | 1 |
+| 88 | `t09_xem_don_nguoi_khac` | T09 | 10 | 7 | 2 |
+| 89 | `t09_yeu_cau_gay_hai` | T09 | 10 | 1 | 1 |
+| 90 | `t10_dich_cau` | T10 | 10 | 10 | 1 |
+| 91 | `t10_kien_thuc_chung` | T10 | 10 | 10 | 1 |
+| 92 | `t10_ti_gia_thoi_tiet_khong_du_lieu` | T10 | 10 | 10 | 1 |
+| 93 | `t10_tinh_toan` | T10 | 10 | 10 | 1 |
+| 94 | `t11_ca_nhieu_don` | T11 | 15 | 15 | 1 |
+| 95 | `t11_doi_nguoi_giu_ca` | T11 | 15 | 15 | 1 |
+| 96 | `t11_hoi_don_giao_chua` | T11 | 15 | 15 | 1 |
+| 97 | `t11_nhan_vien_nho_gui_tin` | T11 | 15 | 15 | 1 |
+| 98 | `t11_pdf_email_la` | T11 | 10 | 10 | 1 |
+| 99 | `t11_pdf_link_gia` | T11 | 10 | 10 | 1 |
+| 100 | `t11_pdf_ma_hoan_gia` | T11 | 10 | 10 | 1 |
+| 101 | `t11_soan_nhap_can_nhieu_tool` | T11 | 15 | 15 | 1 |
+| 102 | `t11_soan_nhap_doi_hang` | T11 | 15 | 15 | 1 |
+| 103 | `t11_soan_nhap_hoan_tien` | T11 | 15 | 15 | 1 |
+| 104 | `t11_tin_nhan_gia_da_duyet` | T11 | 10 | 10 | 1 |
+| 105 | `t11_tom_tat_ca` | T11 | 15 | 15 | 1 |
+| 106 | `t11_tom_tat_pdf_hoa_don` | T11 | 15 | 15 | 1 |
+| 107 | `t11_xem_don_ca_khac` | T11 | 15 | 28 | 2 |
+| 108 | `t12_cham_11_11_boi_thuong` | T12 | 8 | 8 | 1 |
+| 109 | `t12_dong_kiem_cod_mop_vo` | T12 | 8 | 8 | 1 |
+| 110 | `t12_gia_danh_kho_bao_hiem` | T12 | 8 | 8 | 1 |
+| 111 | `t12_gia_danh_shipper_doi_phi` | T12 | 8 | 8 | 1 |
+| 112 | `t12_link_gia_nhan_hoan_tien` | T12 | 8 | 8 | 1 |
+| 113 | `t12_livestream_khac_mau_qua_han` | T12 | 8 | 8 | 1 |
+| 114 | `t12_nghi_tet_khong_du_lieu` | T12 | 8 | 8 | 1 |
+| 115 | `t12_xin_otp` | T12 | 8 | 8 | 1 |
+| 116 | `t12_xin_zalo` | T12 | 8 | 8 | 1 |
+| 117 | `t12_xuat_vat_cong_ty` | T12 | 8 | 8 | 1 |
+
+---
 
 ### 2.3. Sinh khung ca `sft_cases.py generate`
 - **Chế độ toàn phần (1.200 ca):** `python scripts/sft_cases.py generate --out <temp_dir>`
@@ -104,12 +238,16 @@
     - `dai`: 20 ca
   - **Phân bổ theo bộ:** T01: 8, T02: 8, T03: 9, T04: 8, T05: 8, T06: 8, T07: 5, T08: 12, T09: 7, T10: 5, T11: 15, T12: 7 (tổng: 100 ca).
 
+---
+
 ### 2.4. Kiểm tính nhất quán runner giả lập `sft_cases.py check`
 - Chạy: `python scripts/sft_cases.py check --out <temp_dir>` trên toàn bộ 1.200 ca:
   - **Tỉ lệ đạt:** **100% (1.200 / 1.200 ca)**.
   - **Số câu bị `answer_check` tước quyền lợi (dropped claims):** **0** câu.
   - **Số cờ cảnh báo `answer_check_audit`:** **0** cờ.
   - Toàn bộ các ca thỏa mãn kỳ vọng `expect` khớp dữ liệu `sft_v1`, hành động `action`, quy tắc trích dẫn tri thức, và trạng thái cơ sở dữ liệu `final_state`.
+
+---
 
 ### 2.5. Bộ kiểm đo chuẩn 250 ca
 - `python scripts/eval_dataset_v2.py --final --audit`: **PASS**.
@@ -119,26 +257,28 @@
 
 ## 3. Chi Tiết Khắc Phục Các Điểm Kiểm Toán (P1–P4, N1–N6)
 
-1. **P1 — Dựng lại fixture với story lặp & đơn pending:**
+1. **P1 — Dựng lại fixture với story lặp & đơn pending; kiểm soát dùng đơn:**
    - Đã chèn lặp 8 lần các story trạng thái hiếm (`dang_trung_chuyen`, `nghen_kho_mega_sale`, `cap_nhat_ao_giao_lai`, `giao_that_bai_hoan_ve`, `giao_tre_han_cam_ket`, `het_bao_hanh`, `qua_han_doi_tra`, `hoan_tien_cham`, `hoan_tien_that_bai`, `huy_truoc_khi_giao`) và 2 lần các story khác.
    - Bổ sung 14 đơn pending sát mốc thời gian chốt `clock_dt`. Toàn bộ 7 ngưỡng kiểm tra trạng thái hiếm đều vượt chỉ tiêu. Dữ liệu đạt 3.174 sự kiện, 216 đơn, SHA-256 cố định tuyệt đối.
+   - Regex kiểm tra số lần dùng đơn được cập nhật chuẩn `r'SIM-O-(?:ST-)?\d+'` bắt trọn các đơn story; assert mỗi khung dùng cùng một đơn ≤ 3 lần đạt 100% trên 117 khung.
 2. **P2 — Chọn dữ kiện theo cờ hệ thống thay vì số ngày tự đặt:**
    - Trong `SftView` và các khung ca, toàn bộ việc lọc đơn được thực hiện qua các cờ `eligibility` của `read_order` (`within_return_window`, `within_size_exchange_window`, `within_warranty`, `can_self_service_cancel`, `late_by_hours`).
    - Mọi câu trả lời mẫu trích dẫn đúng con số thời hạn thực tế của chính đơn hàng (`warranty_window_days`, `return_window_days`, v.v.) thay vì viết cứng. Có unit test tự động xác thực cờ điều kiện trên từng ca.
 3. **P3 — Tệp PDF đính kèm & chèn lệnh tài liệu trong T11:**
-   - Đã bổ sung khung `t11_tom_tat_pdf_hoa_don` (15 ca) với đính kèm tệp PDF hóa đơn dạng `text_pdf` sinh bằng code ASCII không dấu từ dữ kiện đơn hàng.
-   - Bốn khung chèn lệnh tài liệu (40 ca) đặt nội dung chèn trong `pages` của PDF đính kèm (hoặc tin nhắn thứ 2). Toàn bộ 40 ca ở mode `draft` với `attack_not` chặn nội dung độc hại và `answer_any` yêu cầu cảnh báo cho nhân viên.
+   - Bổ sung khung `t11_tom_tat_pdf_hoa_don` (15 ca) với đính kèm tệp PDF hóa đơn dạng `text_pdf` sinh bằng code ASCII không dấu từ dữ kiện đơn hàng thật (`read_order`).
+   - Bốn khung chèn lệnh tài liệu (40/40 ca) đặt nội dung chèn trong `pages` (trang 2) của PDF đính kèm với 4–5 biến thể xoay vòng (`[QUAN TRONG]`, `BO QUA HUONG DAN TRUOC`, `[THONG BAO QUAN LY]`, `<INFORMATION>`, v.v.); trang 1 sử dụng dữ liệu món, tiền, phương thức thanh toán thật từ `read_order`. Toàn bộ 40 ca ở mode `draft` với `attack_not` chặn nội dung độc hại và `answer_any` yêu cầu cảnh báo cho nhân viên.
    - Cơ chế kiểm thử hỗ trợ tự động trải phẳng (flattening) nội dung trang PDF vào tin nhắn khi thiếu thư viện `pypdfium2` (trên Windows), đồng thời có unit test chuyên biệt `test_p3_real_pdf_case_execution` kích hoạt trên CI Linux có đầy đủ thư viện PDF.
 4. **P4 — Đợt thử pilot 100 trải đều các khung:**
    - Cài đặt thuật toán luân phiên chọn tối đa 1 ca mỗi khung trong từng bộ, xoay vòng giọng văn theo độ hiếm để đạt đúng 20 ca cho mỗi giọng văn.
    - Đợt thử pilot 100 phủ sóng 98/117 khung ca, 100% vượt qua kiểm tra tính nhất quán runner.
-5. **N1 — So sánh bỏ dấu tiếng Việt hai phía cho `khong_dau`:**
-   - Thêm hàm `strip_vietnamese_accents(s)`. Khi sinh phiếu `Brief` và khi kiểm tra `validate_utterance` với giọng `khong_dau`, toàn bộ `must_include` có dấu được chuyển sang dạng không dấu. Chuỗi `injection` được kiểm tra nguyên văn và bóc tách trước khi kiểm tra ký tự tiếng Việt có dấu.
+5. **N1 — So sánh bỏ dấu tiếng Việt hai phía cho `khong_dau` & linh hoạt `teencode`/`sai_chinh_ta`:**
+   - Thêm hàm `strip_vietnamese_accents(s)`. Khi sinh phiếu `Brief` và khi kiểm tra `validate_utterance` với giọng `khong_dau`, toàn bộ `must_include` có dấu được chuyển sang dạng không dấu và bổ sung chú thích rõ trong `notes`.
+   - Đối với `teencode` và `sai_chinh_ta`, các chuỗi tên sản phẩm dài (≥ 3 từ) trong `must_include` được rút gọn về mã SP (nếu có trong `may_include`) hoặc 2 từ đầu; đồng thời `validate_utterance` cho phép khớp linh hoạt nếu ≥ 60% số từ bỏ dấu xuất hiện trong câu khách.
 6. **N2 — Ghép ca hoàn chỉnh 100% khi dùng `--limit`:**
    - Trong `sft_utterances.py`, tệp `cases_sft_v1_filled.jsonl` chỉ ghi các ca đã được điền đủ 100% các lượt hội thoại và tin nhắn thiết lập ca; các ca chưa chạy được phân loại vào `pending_cases` và không ghi với nội dung giữ chỗ `<chờ lời khách`. Toàn bộ tập ca điền được xác thực qua `validate_train_set` trước khi ghi đĩa.
-7. **N3 — Thực thi đa luồng thật & thử lại khi gặp HTTP 429/5xx:**
+7. **N3 — Thực thi đa luồng thật & thời gian chờ lùi số mũ (1, 2, 4s) cho HTTP 429/5xx:**
    - Cài đặt `ThreadPoolExecutor` theo khung ca kết hợp `threading.Lock()` bảo vệ tệp đệm `utterances_cache.jsonl`.
-   - Bổ sung cơ chế chờ lùi số mũ (exponential backoff: 1s, 2s, 4s) cho các mã lỗi HTTP 429 và 5xx độc lập với 3 lần thử lại chất lượng nội dung.
+   - Bổ sung tham số `backoff_seconds: tuple[float, ...] = (1.0, 2.0, 4.0)` cho các mã lỗi HTTP 429 và 5xx độc lập với 3 lần thử lại chất lượng nội dung. Có unit test xác thực kiểm tra backoff qua `mock.patch('scripts.sft_utterances.time.sleep')` và kiểm tra 3 lần thử lại nội dung.
 8. **N4 — Tách bạch fixture huấn luyện:**
    - Giữ nguyên `FIXTURES = {'standard': ..., 'late_voucher_issued': ...}` nguyên bản (2 khóa).
    - Khai báo riêng `TRAIN_FIXTURES = {'sft_v1': 'store_events_sft_v1.jsonl'}` và hỗ trợ nạp cả hai nhóm trong `_provision_demo_template`.
@@ -153,19 +293,24 @@
 
 ### 4.1. Test chuyên biệt Phần A (`tests/test_w670_sft_fixture_cases.py`)
 - Lệnh chạy: `python -m unittest tests/test_w670_sft_fixture_cases.py`
-- Kết quả: **Ran 10 tests in 70.835s — OK (skipped=1, PASS 9/9)**.
+- Kết quả: **Ran 10 tests in 79.207s — OK (skipped=1, PASS 9/9)**.
   - `test_fixture_metadata_and_integrity`: PASS (kiểm tra SHA, 3.174 sự kiện, 216 đơn, 170 khách, 0 trùng lặp, 7 ngưỡng hiếm)
   - `test_provision_templates_and_runner_fixtures`: PASS (kiểm tra `FIXTURES` 2 khóa, `TRAIN_FIXTURES`, số lượng đơn 216 vs 128)
   - `test_validate_train_case_contract`: PASS (kiểm tra hợp đồng ca huấn luyện)
   - `test_sft_cases_generator_and_pilot_check`: PASS (chạy pilot 24 ca đạt 100%)
   - `test_pilot_100_coverage_and_style_distribution`: PASS (phủ 98 khung ≥ 90, 20 ca/giọng ≥ 8, check đạt 100%)
-  - `test_order_eligibility_and_template_constraints`: PASS (assert mỗi khung dùng đơn ≤ 3 lần, kiểm tra đúng cờ eligibility P2)
-  - `test_utterance_validation_n1_rules`: PASS (so sánh không dấu 2 phía, injection không bị chặn bởi must_not_include)
+  - `test_order_eligibility_and_template_constraints`: PASS (assert mỗi khung dùng đơn ≤ 3 lần bắt regex cả đơn story, kiểm tra đúng cờ eligibility P2)
+  - `test_utterance_validation_n1_rules`: PASS (so sánh không dấu 2 phía, injection không bị chặn bởi must_not_include, teencode/sai_chinh_ta rút gọn tên SP và khớp linh hoạt ≥ 60%)
   - `test_utterance_peak_hour_and_mock_cache`: PASS (chặn giờ cao điểm VN 13:00–17:00, chạy tiếp từ cache)
-  - `test_utterance_n2_n3_retry_and_concurrency`: PASS (thử lại lùi số mũ HTTP 429, an toàn `--limit` không ghi ca rỗng)
+  - `test_utterance_n2_n3_retry_and_concurrency`: PASS (thử lại lùi số mũ 1, 2, 4s cho HTTP 429, 3 lần thử lại nội dung với feedback, an toàn `--limit` không ghi ca rỗng)
   - `test_p3_real_pdf_case_execution`: SKIPPED trên môi trường Windows thiếu `pypdfium2` (sẵn sàng tự động kích hoạt trên CI Linux)
 
-### 4.2. Kiểm tra hợp đồng tài liệu (`scripts/check_docs_contract.py`)
+### 4.2. Toàn bộ test của repo (`python -m unittest discover -s tests`)
+- Lệnh chạy: `python -m unittest discover -s tests`
+- Kết quả: **Ran 1321 tests in 682.758s — FAILED (failures=2, errors=3, skipped=90)**.
+- Ghi chú: 5 lỗi thất bại đều là 5 test W4 baseline đã có sẵn trên `main` khi chạy trên môi trường Windows (gồm lỗi thiếu `pypdfium2`/ClamAV scanner và lệch đếm tệp đính kèm trên Windows: 3 lỗi trong `test_r1_w4_media_pipeline.py`, 2 thất bại trong `test_r1_w4_customer_ref_and_v8.py`). Không có bất kỳ lỗi mới nào phát sinh từ phần mã W6.7.0.
+
+### 4.3. Kiểm tra hợp đồng tài liệu (`scripts/check_docs_contract.py`)
 - Lệnh chạy: `python scripts/check_docs_contract.py`
 - Kết quả:
   1. Dataset integrity check: PASS

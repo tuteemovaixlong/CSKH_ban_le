@@ -48,11 +48,31 @@ def strip_vietnamese_accents(s: str) -> str:
 
 
 def normalize_brief_for_style(brief: dict[str, Any]) -> dict[str, Any]:
-    """Normalize brief requirements based on style: convert must_include/may_include to unaccented if khong_dau."""
+    """Normalize brief requirements based on style: convert must_include/may_include to unaccented if khong_dau, shorten long product names for teencode/sai_chinh_ta."""
     b = dict(brief)
-    if b.get("style") == "khong_dau":
+    style = b.get("style")
+    if style == "khong_dau":
         b["must_include"] = [strip_vietnamese_accents(x) for x in b.get("must_include", [])]
         b["may_include"] = [strip_vietnamese_accents(x) for x in b.get("may_include", [])]
+        notes = b.get("notes", "")
+        if "viết không dấu" not in notes.lower():
+            b["notes"] = (notes + " (Lưu ý: Tên sản phẩm và các từ khóa được viết không dấu)").strip()
+    elif style in ("teencode", "sai_chinh_ta"):
+        must = list(b.get("must_include", []))
+        may = list(b.get("may_include", []))
+        pid = next((x for x in may if x.startswith("P-")), None)
+        new_must = []
+        for item in must:
+            words = item.split()
+            has_code = any(c.isdigit() or c == '-' for c in item)
+            if len(words) >= 3 and not has_code:
+                if pid:
+                    new_must.append(pid)
+                else:
+                    new_must.append(" ".join(words[:2]))
+            else:
+                new_must.append(item)
+        b["must_include"] = new_must
     return b
 
 SYSTEM_PROMPT = """Bạn là người viết lời khách hàng cho bộ dữ liệu chăm sóc khách hàng (CSKH) thương mại điện tử Việt Nam.
@@ -126,8 +146,16 @@ def validate_utterance(
             if item not in txt:
                 return False, f"Thiếu chuỗi bắt buộc '{item}'"
         else:
-            if item.lower() not in txt.lower():
-                return False, f"Thiếu chuỗi bắt buộc '{item}'"
+            if style in ("teencode", "sai_chinh_ta") and len(item.split()) >= 3:
+                # Flexible match: if >= 60% of unaccented words appear in text
+                unacc_item_words = strip_vietnamese_accents(item).lower().split()
+                unacc_txt = strip_vietnamese_accents(txt).lower()
+                matches = sum(1 for w in unacc_item_words if w in unacc_txt)
+                if matches / len(unacc_item_words) < 0.60:
+                    return False, f"Thiếu chuỗi bắt buộc (khớp linh hoạt < 60%): '{item}'"
+            else:
+                if item.lower() not in txt.lower():
+                    return False, f"Thiếu chuỗi bắt buộc '{item}'"
 
     # 1b. injection check if specified in brief
     injection = brief.get("injection")
@@ -182,14 +210,17 @@ class DeepSeekClient:
         model: str = DEFAULT_MODEL,
         api_key: str | None = None,
         mock_handler: Callable[..., str] | None = None,
+        backoff_seconds: tuple[float, ...] = (1.0, 2.0, 4.0),
     ) -> None:
         self.endpoint = endpoint
         self.model = model
         self.api_key = api_key or os.environ.get("DEEPSEEK_API_KEY", "")
         self.mock_handler = mock_handler
+        self.backoff_seconds = backoff_seconds
 
     def call(self, brief: dict[str, Any], feedback: str | None = None) -> str:
-        for retry in range(4):
+        max_retries = len(self.backoff_seconds)
+        for retry in range(max_retries + 1):
             try:
                 if self.mock_handler is not None:
                     sig = inspect.signature(self.mock_handler)
@@ -233,8 +264,8 @@ class DeepSeekClient:
                     parsed = json.loads(choice)
                     return str(parsed.get("user") or "").strip()
             except urllib.error.HTTPError as exc:
-                if exc.code in (429, 500, 502, 503, 504) and retry < 3:
-                    time.sleep(0.05 * (2 ** retry))
+                if exc.code in (429, 500, 502, 503, 504) and retry < max_retries:
+                    time.sleep(self.backoff_seconds[retry])
                     continue
                 err_body = exc.read().decode("utf-8", errors="ignore")
                 raise RuntimeError(f"DeepSeek API HTTP {exc.code}: {err_body}") from exc
@@ -409,6 +440,10 @@ def fill_utterances(
             else:
                 pending_cases.append(cid)
 
+    if filled_cases:
+        from scripts.sft_dataset import validate_train_set
+        validate_train_set(filled_cases)
+
     with open(filled_file, "w", encoding="utf-8") as f:
         for fc in filled_cases:
             f.write(json.dumps(fc, ensure_ascii=False) + "\n")
@@ -470,9 +505,6 @@ def main() -> int:
         print(f"Cases: {res['filled_cases']} complete, {res['dropped_cases']} dropped, {res['pending_cases']} pending.")
         print(f"Report: {res['report_path']}")
         return 0
-
-    parser.print_help()
-    return 1
 
     parser.print_help()
     return 1

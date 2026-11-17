@@ -76,7 +76,7 @@ def generate_cases(
     for c in all_cases:
         tmpl_name = c['meta']['template']
         text = str(c)
-        for oid in set(re.findall(r'SIM-O-\d+', text)):
+        for oid in set(re.findall(r'SIM-O-(?:ST-)?\d+', text)):
             usage_by_tmpl[tmpl_name][oid] += 1
     for tmpl_name, cnts in usage_by_tmpl.items():
         for oid, cnt in cnts.items():
