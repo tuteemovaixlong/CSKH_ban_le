@@ -17,6 +17,7 @@ Mốc trước SFT (W6.4, sau chấm lại W6.4.4, hiệu chỉnh theo kiểm đ
 | 9 | **Sinh dữ liệu Qwen trên A100 40 GB** | fp8 (W8A16) + MTP như lúc đo, `--max-num-seqs` 32, 24–32 runner; đợt thử đo 16/24/32 luồng rồi chốt. Không dùng A100 80 GB (cùng sức tính, đắt hơn 32%) |
 | 10 | **Huấn luyện A100 40 GB; đo lại 250 ca × 3 trên L4** | 80 GB chỉ khi p95 độ dài chuỗi SFT vượt ~16 nghìn token |
 | 11 | **Dữ liệu cửa hàng riêng `sft_v1`** | `marketplace_sim` seed 20261201 (mặc định 20261106) → `data/demo_events/store_events_sft_v1.jsonl`; runner nạp theo `fixture` |
+| 12 | **Lời khách do Muse Glimmer 30B viết** (owner chốt 2026-11-17, §34 W6.7-D1) | Meta, trọng số Apache 2.0, chính sách sử dụng không cấm dùng đầu ra để huấn luyện; tự chạy bản FP8 trên **Colab A100 40 GB** bằng vLLM (`--tool-call-parser muse_glimmer --reasoning-parser muse_glimmer`, `Reasoning strength: low`); mỗi câu gắn nhãn người viết (chính sách mục 3.5: không trình bày đầu ra như do người viết). Tách vai 4 họ model: Gemini Carbon viết 210 ca đo, Glimmer viết lời khách, DeepSeek làm thầy, Qwen học. DeepSeek đối chứng ở đợt thử và viết thay phiếu Glimmer từ chối |
 
 ## 2. Định dạng một ca
 
@@ -28,7 +29,7 @@ Giống hệt `evals/suites/S*.jsonl` (một dòng JSON): `id` (bắt đầu b�
 |---|---|---|---|
 | 1 | Fixture `sft_v1` + runner nạp fixture theo tên | code | máy owner |
 | 2 | 80–120 khung ca → 1.200 ca (`expect`, `final_state`) + phiếu yêu cầu lời khách (ý định, dữ kiện được nhắc, giọng) | code | máy owner |
-| 3 | Viết lời khách (~1.800 câu, gồm các lượt sau) → code kiểm (đúng mã đơn, không lộ đáp án, độ giống với 250 ca dưới ngưỡng) | DeepSeek (đề xuất) | API, ngoài giờ cao điểm |
+| 3 | Viết lời khách (1.406 phiếu, gồm các lượt sau và tin nhắn Trợ lý ca) → code kiểm (đúng mã đơn, không lộ đáp án, độ giống với 250 ca dưới ngưỡng) | **Muse Glimmer 30B** (FP8, vLLM cục bộ); DeepSeek viết thay phiếu bị từ chối | Colab A100 40 GB (~2–4 đơn vị) |
 | 4a | Qwen ×4, `--trace-out` | runner | Colab A100 40 GB |
 | 4b | DeepSeek ×2, `--trace-out` (song song 4a) | runner | Colab CPU |
 | 5 | Xếp tier: code lọc (đạt chính thức + v2, không cờ `answer_check`/audit, không tool trùng, ít tool) → chọn 1–2 ứng viên/ca → Gemini Hydrogen chấm tính nhất quán suy luận–hành động và không bịa (gói ẩn danh, hai nhóm, trích dẫn code kiểm) → tier A/B/C | code + Hydrogen | máy owner |
@@ -55,7 +56,8 @@ Toàn bộ bước 2–6 chạy **thử 100 ca** trước; owner xem tay một m
 
 | Hạng mục | Ước |
 |---|---|
-| DeepSeek: lời khách + 2 lần/ca, ngoài giờ cao điểm | 2–5 USD (số dư 4,42 → nạp thêm ~5 USD) |
+| DeepSeek: 2 lần/ca + đối chứng/dự phòng lời khách, ngoài giờ cao điểm | 2–5 USD (số dư 4,42 → nạp thêm ~5 USD) |
+| Muse Glimmer viết lời khách trên A100 40 GB (đợt thử + 1.406 phiếu) | 2–4 đơn vị |
 | Qwen ×4 trên A100 40 GB (+ đợt thử) | 12–20 đơn vị |
 | Huấn luyện A100 40 GB | 15–25 đơn vị |
 | Đo lại 250 × 3 trên L4 | ~3 đơn vị |
@@ -75,5 +77,5 @@ Toàn bộ bước 2–6 chạy **thử 100 ca** trước; owner xem tay một m
 
 ## 7. Còn chờ owner
 
-1. **Ai viết code** bước 1, 2, 5, 6 (fixture, khung ca, xếp tier, dựng SFT): Claude hay Hydrogen.
-2. **Người viết lời khách**: DeepSeek (đề xuất, sạch điều khoản) hay Gemini Hydrogen.
+1. ~~Ai viết code bước 1, 2, 5, 6~~ — đã chốt: Gemini Carbon điều phối Hydrogen (W6.7.0; phần A merge PR #120 ngày 2026-11-17).
+2. ~~Người viết lời khách~~ — đã chốt 2026-11-17: **Muse Glimmer 30B** (§34 W6.7-D1). Đã loại: Gemini (Carbon đã viết 210 ca đo → trùng giọng giữa tập huấn luyện và tập đo; điều khoản cấm phát triển model cạnh tranh), GLM-5.3 qua Z.ai (Additional Terms 1.f.xii cấm dùng đầu ra để fine-tune model bên ngoài; Terms III.4.f), NVIDIA Nemotron 3 (không hỗ trợ tiếng Việt), DeepSeek làm người viết chính (vừa viết câu hỏi vừa làm thầy → "đá sân nhà").
