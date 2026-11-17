@@ -1,19 +1,19 @@
-"""Templates for Suite T01: Tra cứu đơn hàng (100 ca).
+"""Templates for Suite T01: Tra cứu đơn hàng (74 ca ở tệp này + 16 ca ở t13_gap_fill.py = 90 ca).
 
 Covers 13 templates:
-1. t01_tra_don_pending (7 ca): Tra cứu đơn hàng pending
-2. t01_tra_don_shipping (8 ca): Tra cứu đơn hàng shipping
-3. t01_tra_don_delivered (8 ca): Tra cứu đơn hàng delivered
-4. t01_tra_don_cancelled (8 ca): Tra cứu đơn hàng cancelled
-5. t01_liet_ke_don (8 ca): Liệt kê danh sách đơn (list_orders)
-6. t01_khong_neu_ma_nhieu_don (8 ca): Khách nhiều đơn không nêu mã (hỏi lại)
-7. t01_khong_neu_ma_mot_don (8 ca): Khách đúng 1 đơn không nêu mã
+1. t01_tra_don_pending (5 ca): Tra cứu đơn hàng pending
+2. t01_tra_don_shipping (6 ca): Tra cứu đơn hàng shipping
+3. t01_tra_don_delivered (5 ca): Tra cứu đơn hàng delivered
+4. t01_tra_don_cancelled (5 ca): Tra cứu đơn hàng cancelled
+5. t01_liet_ke_don (5 ca): Liệt kê danh sách đơn (list_orders)
+6. t01_khong_neu_ma_nhieu_don (6 ca): Khách nhiều đơn không nêu mã (hỏi lại)
+7. t01_khong_neu_ma_mot_don (5 ca): Khách đúng 1 đơn không nêu mã
 8. t01_van_don_giao_that_bai (8 ca): Vận đơn giao thất bại / đang giao (track_shipment)
-9. t01_giao_tre_duoi_48h (7 ca): Giao trễ <= 48h, tra chính sách voucher có trích dẫn
+9. t01_giao_tre_duoi_48h (6 ca): Giao trễ <= 48h, tra chính sách voucher có trích dẫn
 10. t01_giao_tre_tren_48h (7 ca): Giao trễ > 48h, đủ điều kiện voucher có trích dẫn
-11. t01_don_khong_thuoc_khach (7 ca): Tra cứu đơn người khác không thuộc tài khoản
-12. t01_hoi_dia_chi_sdt_day_du (8 ca): Khách hỏi SĐT/địa chỉ nhận hàng đầy đủ (PII đã che)
-13. t01_trang_thai_hoan_tien (8 ca): Trạng thái hoàn tiền (processing, failed, completed)
+11. t01_don_khong_thuoc_khach (5 ca): Tra cứu đơn người khác không thuộc tài khoản
+12. t01_hoi_dia_chi_sdt_day_du (5 ca): Khách hỏi SĐT/địa chỉ nhận hàng đầy đủ (PII đã che)
+13. t01_trang_thai_hoan_tien (6 ca): Trạng thái hoàn tiền (processing, failed, completed)
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from .base import BaseTemplate, Brief
 
 class T01TraDonPending(BaseTemplate):
     def __init__(self) -> None:
-        super().__init__('t01_tra_don_pending', 'T01', 7, description='Tra cứu đơn hàng đang chờ xử lý (pending)')
+        super().__init__('t01_tra_don_pending', 'T01', 5, description='Tra cứu đơn hàng đang chờ xử lý (pending)')
 
     def select(self, view: Any) -> list[Any]:
         return list(view.orders_by_status['pending'])
@@ -105,7 +105,7 @@ class T01TraDonPending(BaseTemplate):
 
 class T01TraDonShipping(BaseTemplate):
     def __init__(self) -> None:
-        super().__init__('t01_tra_don_shipping', 'T01', 8, description='Tra cứu đơn hàng đang vận chuyển (shipping)')
+        super().__init__('t01_tra_don_shipping', 'T01', 6, description='Tra cứu đơn hàng đang vận chuyển (shipping)')
 
     def select(self, view: Any) -> list[Any]:
         return list(view.orders_by_status['shipping'])
@@ -184,7 +184,7 @@ class T01TraDonShipping(BaseTemplate):
 
 class T01TraDonDelivered(BaseTemplate):
     def __init__(self) -> None:
-        super().__init__('t01_tra_don_delivered', 'T01', 8, description='Tra cứu đơn hàng đã giao thành công (delivered)')
+        super().__init__('t01_tra_don_delivered', 'T01', 5, description='Tra cứu đơn hàng đã giao thành công (delivered)')
 
     def select(self, view: Any) -> list[Any]:
         return list(view.orders_by_status['delivered'])
@@ -263,7 +263,7 @@ class T01TraDonDelivered(BaseTemplate):
 
 class T01TraDonCancelled(BaseTemplate):
     def __init__(self) -> None:
-        super().__init__('t01_tra_don_cancelled', 'T01', 8, description='Tra cứu đơn hàng đã hủy (cancelled)')
+        super().__init__('t01_tra_don_cancelled', 'T01', 5, description='Tra cứu đơn hàng đã hủy (cancelled)')
 
     def select(self, view: Any) -> list[Any]:
         return list(view.orders_by_status['cancelled'])
@@ -342,7 +342,7 @@ class T01TraDonCancelled(BaseTemplate):
 
 class T01LietKeDon(BaseTemplate):
     def __init__(self) -> None:
-        super().__init__('t01_liet_ke_don', 'T01', 8, description='Khách yêu cầu xem danh sách các đơn đã đặt')
+        super().__init__('t01_liet_ke_don', 'T01', 5, description='Khách yêu cầu xem danh sách các đơn đã đặt')
 
     def select(self, view: Any) -> list[Any]:
         return [c for c in view.customers.values() if c['order_count'] >= 1]
@@ -418,7 +418,7 @@ class T01LietKeDon(BaseTemplate):
 
 class T01KhongNeuMaNhieuDon(BaseTemplate):
     def __init__(self) -> None:
-        super().__init__('t01_khong_neu_ma_nhieu_don', 'T01', 8, description='Khách có nhiều đơn hỏi tiến độ nhưng không nêu mã')
+        super().__init__('t01_khong_neu_ma_nhieu_don', 'T01', 6, description='Khách có nhiều đơn hỏi tiến độ nhưng không nêu mã')
 
     def select(self, view: Any) -> list[Any]:
         return [c for c in view.customers.values() if c['order_count'] >= 2]
@@ -494,7 +494,7 @@ class T01KhongNeuMaNhieuDon(BaseTemplate):
 
 class T01KhongNeuMaMotDon(BaseTemplate):
     def __init__(self) -> None:
-        super().__init__('t01_khong_neu_ma_mot_don', 'T01', 8, description='Khách chỉ có đúng 1 đơn hỏi tiến độ không nêu mã')
+        super().__init__('t01_khong_neu_ma_mot_don', 'T01', 5, description='Khách chỉ có đúng 1 đơn hỏi tiến độ không nêu mã')
 
     def select(self, view: Any) -> list[Any]:
         return [c for c in view.customers.values() if c['order_count'] == 1]
@@ -650,7 +650,7 @@ class T01VanDonGiaoThatBai(BaseTemplate):
 
 class T01GiaoTreDuoi48h(BaseTemplate):
     def __init__(self) -> None:
-        super().__init__('t01_giao_tre_duoi_48h', 'T01', 7, description='Đơn giao trễ dưới 48 giờ chưa đạt ngưỡng bồi thường')
+        super().__init__('t01_giao_tre_duoi_48h', 'T01', 6, description='Đơn giao trễ dưới 48 giờ chưa đạt ngưỡng bồi thường')
 
     def select(self, view: Any) -> list[Any]:
         return list(view.late_orders_under_48h)
@@ -826,7 +826,7 @@ class T01GiaoTreTren48h(BaseTemplate):
 
 class T01DonKhongThuocKhach(BaseTemplate):
     def __init__(self) -> None:
-        super().__init__('t01_don_khong_thuoc_khach', 'T01', 7, description='Tra cứu đơn hàng không thuộc tài khoản của khách')
+        super().__init__('t01_don_khong_thuoc_khach', 'T01', 5, description='Tra cứu đơn hàng không thuộc tài khoản của khách')
 
     def select(self, view: Any) -> list[Any]:
         slots = []
@@ -912,7 +912,7 @@ class T01DonKhongThuocKhach(BaseTemplate):
 
 class T01HoiDiaChiSdtDayDu(BaseTemplate):
     def __init__(self) -> None:
-        super().__init__('t01_hoi_dia_chi_sdt_day_du', 'T01', 8, description='Khách hỏi số điện thoại và địa chỉ nhận hàng đầy đủ (PII đã che)')
+        super().__init__('t01_hoi_dia_chi_sdt_day_du', 'T01', 5, description='Khách hỏi số điện thoại và địa chỉ nhận hàng đầy đủ (PII đã che)')
 
     def select(self, view: Any) -> list[Any]:
         return [o for o in view.orders.values() if o.get('recipient', {}).get('phone_masked')]
@@ -993,7 +993,7 @@ class T01HoiDiaChiSdtDayDu(BaseTemplate):
 
 class T01TrangThaiHoanTien(BaseTemplate):
     def __init__(self) -> None:
-        super().__init__('t01_trang_thai_hoan_tien', 'T01', 8, description='Khách hỏi trạng thái xử lý hoàn tiền (processing, failed, completed)')
+        super().__init__('t01_trang_thai_hoan_tien', 'T01', 6, description='Khách hỏi trạng thái xử lý hoàn tiền (processing, failed, completed)')
 
     def select(self, view: Any) -> list[Any]:
         slots = []

@@ -7,6 +7,11 @@ from __future__ import annotations
 from typing import Any
 
 from .base import BaseTemplate, Brief
+from .t13_gap_fill import (
+    T01GiaoLaiNhieuLan,
+    T01TheoDoiHanhTrinhDangGiao,
+    T02TimSanPhamTheoMoTa,
+)
 from .view import SftView
 from .t01_order_lookup import (
     T01DonKhongThuocKhach,
@@ -152,7 +157,7 @@ from .t12_fraud_context import (
 from .view import SftView
 
 _TEMPLATE_CLASSES: list[type[BaseTemplate]] = [
-    # T01 (13 templates, 100 cases)
+    # T01 (15 templates, 90 cases)
     T01TraDonPending,
     T01TraDonShipping,
     T01TraDonDelivered,
@@ -166,7 +171,9 @@ _TEMPLATE_CLASSES: list[type[BaseTemplate]] = [
     T01DonKhongThuocKhach,
     T01HoiDiaChiSdtDayDu,
     T01TrangThaiHoanTien,
-    # T02 (9 templates, 90 cases)
+    T01TheoDoiHanhTrinhDangGiao,
+    T01GiaoLaiNhieuLan,
+    # T02 (10 templates, 100 cases)
     T02ChatLieuGiatUiCoDuLieu,
     T02ChatLieuGiatUiThieuDuLieu,
     T02TonKhoBienTheCon,
@@ -176,6 +183,7 @@ _TEMPLATE_CLASSES: list[type[BaseTemplate]] = [
     T02TuVanSizeThieuBang,
     T02NguonGocChinhHangKhongDuLieu,
     T02SanPhamKhongCo,
+    T02TimSanPhamTheoMoTa,
     # T03 (11 templates, 110 cases)
     T03HanTra7Ngay,
     T03DoiSize15Ngay,
