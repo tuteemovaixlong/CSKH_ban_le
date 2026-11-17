@@ -25,11 +25,11 @@
 - **`score`**:
   - Tải kết quả qua `eval_regrade.load_run` (`merged.json`, `manifest.json`, `shard-*.jsonl`) và chấm lại từng `(case_id, model, run)` bằng `eval_regrade.regrade_record`.
   - Gắn cờ: `dropped` (có `answer_check`), `audit` (có `answer_check_audit`), `duplicate_tool` (cùng tên tool + cùng tham số chuẩn hóa JSON trong cùng 1 lượt, đọc từ `response.tool_calls` trong vết).
-  - Loại ngay (`rejected`) nếu có lần gọi `finish_reason == "length"` hoặc `response.error`, lượt có `turn["error"]`, thiếu lần gọi `finish_reason == "stop"`, `incomplete_turns`, `attack_success` / `attack_v2`, hoặc không đạt đồng thời `passed_official` và `passed_v2`.
-  - Xếp hạng ứng viên (`A_code` / `B_code`): `qwen` trước `deepseek`; cùng model xếp `A_code` trước `B_code`, ít `tool_calls` hơn, ít `completion_tokens` hơn (từ `response.usage.completion_tokens`, fallback `generated_tokens`), tổng độ dài câu trả lời ngắn hơn, tie-break tất định theo `run` tăng dần.
+  - Loại ngay (`rejected`) nếu có lần gọi `finish_reason == "length"` hoặc `response.error`, lượt có `turn["error"]`, thiếu lần gọi `finish_reason == "stop"`, `incomplete_turns`, `invalid_tool_arguments` (tham số tool không parse được thành JSON `dict`), `attack_success` / `attack_v2`, hoặc không đạt đồng thời `passed_official` và `passed_v2`.
+  - Xếp hạng ứng viên (`A_code` / `B_code`): `qwen` trước `deepseek`; cùng model xếp `A_code` trước `B_code`, ít `tool_calls` hơn, ít `completion_tokens` hơn (từ `response.usage.completion_tokens`, fallback `generated_tokens`), tổng độ dài câu trả lời trong vết (`eval_regrade.model_text`, fallback `regrade`) ngắn hơn, tie-break tất định theo `run` tăng dần.
 - **`export`**:
   - Vòng 1 chọn ứng viên đứng đầu mỗi ca; vòng 2+ (`--round N --after ...`) lọc bỏ ca đã có `Tier A` và lấy ứng viên kế tiếp chưa chấm.
-  - Xuất `packets/batch-NN.jsonl` ẩn danh hoàn toàn (không tên model, không `case_id`, không `run`, không đường dẫn tệp), `item_id` 8 hex tất định theo `--seed`, kết quả tool cắt tối đa 3.000 ký tự, hỗ trợ cả `customer_chat` và `staff_case_assist` (`case_setup.customer_messages`). `map.json` lưu ánh xạ riêng kèm `item["text"]` tổng hợp phần hiển thị để kiểm trích dẫn.
+  - Xuất `packets/batch-NN.jsonl` ẩn danh hoàn toàn (làm sạch `context.title` khỏi `case_id`, `template`, `qwen`/`deepseek`; không xuất `id`/`tool_call_id` trong `steps` dù vẫn dùng nội bộ để ghép đúng `tool_results`; không đường dẫn tệp), ưu tiên `trace_answer` nguyên gốc trong vết (giữ nguyên `<draft_reply>...</draft_reply>` cho `staff_case_assist` không bị nhân đôi), `item_id` 8 hex tất định theo `--seed`, kết quả tool cắt tối đa 3.000 ký tự, hỗ trợ cả `customer_chat` và `staff_case_assist` (`case_setup.customer_messages`). `map.json` lưu ánh xạ riêng kèm `item["text"]` tổng hợp phần hiển thị để kiểm trích dẫn.
 - **`import`**:
   - Dùng lại `eval_regrade.read_verdicts`, `eval_regrade.effective` (`MIN_QUOTE = 8`, `v2`), `eval_regrade.kappa`.
   - Kiểm trích dẫn nguyên văn cho cả `khong_dat`: chỉ giữ `khong_dat` khi `len(v2(quote)) >= 8` và nằm trong `v2(item["text"])`, ngược lại hạ thành `khong_chac`.
@@ -41,7 +41,7 @@
 - Lấy lần gọi model **cuối cùng có `finish_reason == "stop"`** cho mỗi lượt của lượt chạy được chọn trong `shard-*.jsonl`.
 - Định dạng mẫu: `messages` giữ nguyên thứ tự `request.messages` rồi nối thêm `{"role": "assistant", "content": ..., "reasoning_content": ...}`, `tools` giữ nguyên `request.tools`, `meta` gồm `case_id`, `template`, `suite`, `turn`, `source_model`, `run`, `tier`, `style`, `repo_sha`.
 - Trên mọi tin `assistant` trong `request.messages`: đổi `reasoning` → `reasoning_content` (xóa `reasoning`/`reasoning_details` thừa), chuyển `tool_calls[].function.arguments` từ chuỗi JSON sang `dict` (loại mẫu nếu không parse thành `dict` hợp lệ). Không chỉnh sửa hay rút gọn `system`, `user`, `tool`, hoặc `tools`.
-- Chặn rò rỉ và khóa bí mật: loại mẫu có `case_id` bắt đầu bằng `s`/`S`; loại mẫu có lời khách trùng với bất kỳ lời khách nào của 250 ca đo (`evals/suites/S*.jsonl`) qua cả `sft_dataset.normalize_text` và `eval_regrade.v2`; quét chuỗi khóa bí mật (`sk-...`, `Bearer ...`, `AIza...`, `ghp_...`, `hf_...`, `AKIA...`).
+- Chặn rò rỉ và khóa bí mật: loại mẫu có `case_id` bắt đầu bằng `s`/`S`; loại mẫu có lời khách trùng với bất kỳ lời khách nào của 250 ca đo (`evals/suites/S*.jsonl`) qua cả `sft_dataset.normalize_text` và `eval_regrade.v2` (bao gồm cả phần văn bản trước hậu tố `\n\n[Tệp đính kèm: ...]` trong `request.messages`); quét chuỗi khóa bí mật (`sk-...`, `Bearer ...`, `AIza...`, `ghp_...`, `hf_...`, `AKIA...`).
 - Tách `train.jsonl` / `val.jsonl` theo `meta.template` (`max(1, round(n_templates * val_ratio))` khi `n_templates >= 2` và `val_ratio > 0`), bảo đảm 0 khung giao nhau. Xuất `stats.json` và `build_report.md`.
 
 ---
@@ -50,7 +50,7 @@
 
 | Lệnh kiểm tra | Kết quả | Ghi chú |
 |---|---|---|
-| `python -m unittest -v tests/test_w670_sft_select_build.py` | **PASS (4/4)** | Kiểm đủ `score`, `export` vòng 1–3, `import` (trích dẫn `dat`/`khong_dat`, đa lượt, `kappa`), `select` (`--allow-b`), `sft_build` (last `stop`, `reasoning_content`, `arguments` dict/lỗi JSON, tách khung, chặn `s...`, chặn trùng lời khách ca đo, chặn khóa bí mật, `stats.json`) |
+| `python -m unittest -v tests/test_w670_sft_select_build.py` | **PASS (5/5)** | Kiểm đủ `score` (cả `invalid_tool_arguments`), `export` vòng 1–3 (ẩn danh `context.title`, bỏ `id`/`tool_call_id`, giữ nguyên `<draft_reply>` từ vết), `import` (trích dẫn `dat`/`khong_dat`, đa lượt, `kappa`), `select` (`--allow-b`), `sft_build` (last `stop`, `reasoning_content`, `arguments` dict/lỗi JSON, tách khung, chặn `s...`, chặn trùng lời khách ca đo kể cả có hậu tố đính kèm, chặn khóa bí mật, `stats.json`) |
 | `python scripts/build_agent_notebook.py --check` | **PASS** (`AGENT_NOTEBOOK_SOURCE_SYNC_OK`) | Đã chạy lại `build_agent_notebook.py` và xác nhận đồng bộ |
 | `python scripts/check_docs_contract.py` | **PASS** | Dataset integrity, stale Git HEAD, link/markdown rules, AST tool contract đều PASS |
 | `python -m unittest discover -s tests` | **1.229 pass / 90 skip / 2 fail / 4 error** (trên 1.325 test, 701,7s) | 5 lỗi W4 hỏng sẵn trên môi trường Windows thiếu `pypdfium2`/ClamAV và khác biệt đếm attachment V8 (`test_r1_w4_agent_scenarios` 2 error, `test_r1_w4_media_pipeline` 1 error, `test_r1_w4_customer_ref_and_v8` 2 fail) + 1 lỗi socket tạm thời `WinError 10053` ở `test_remote.py` (chạy lại riêng `python -m unittest -v tests/test_remote.py tests/test_w670_sft_select_build.py` → **PASS 17/17**) |

@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import re
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -121,6 +122,22 @@ def _canonical_tool_signature(tc: dict[str, Any]) -> tuple[str, str]:
     return name, norm_args
 
 
+def _has_valid_tool_arguments(tc: dict[str, Any]) -> bool:
+    fn = tc.get('function') if isinstance(tc, dict) else None
+    if not isinstance(fn, dict):
+        return False
+    raw_args = fn.get('arguments')
+    if isinstance(raw_args, dict):
+        return True
+    if isinstance(raw_args, str):
+        try:
+            parsed = json.loads(raw_args)
+        except (ValueError, TypeError):
+            return False
+        return isinstance(parsed, dict)
+    return False
+
+
 def _parse_tool_call_display(tc: dict[str, Any]) -> dict[str, Any]:
     fn = tc.get('function') if isinstance(tc.get('function'), dict) else tc
     name = str(fn.get('name') or tc.get('name') or '')
@@ -134,10 +151,7 @@ def _parse_tool_call_display(tc: dict[str, Any]) -> dict[str, Any]:
         args = {}
     else:
         args = raw_args
-    out: dict[str, Any] = {'name': name, 'arguments': args}
-    if tc.get('id'):
-        out['id'] = tc['id']
-    return out
+    return {'name': name, 'arguments': args}
 
 
 def _evaluate_run_record(
@@ -197,6 +211,8 @@ def _evaluate_run_record(
             tcs = resp.get('tool_calls') or []
             turn_trace_tools += len(tcs)
             for tc in tcs:
+                if not _has_valid_tool_arguments(tc):
+                    reject_reasons.append('invalid_tool_arguments')
                 sig = _canonical_tool_signature(tc)
                 if sig in seen_sigs:
                     flags.append('duplicate_tool')
@@ -228,7 +244,11 @@ def _evaluate_run_record(
     # Deduplicate preserving order
     flags = list(dict.fromkeys(flags))
     reject_reasons = list(dict.fromkeys(reject_reasons))
-    answer_chars = sum(len(str(t.get('text') or '')) for t in regrade['turns'])
+    turns_text = [
+        eval_regrade.model_text(calls, (case_id, run_no, k)) or str(t.get('text') or '')
+        for k, t in enumerate(regrade['turns'], 1)
+    ]
+    answer_chars = sum(len(txt) for txt in turns_text)
 
     if reject_reasons:
         code_tier = 'rejected'
@@ -252,7 +272,7 @@ def _evaluate_run_record(
         'completion_tokens': total_completion_tokens,
         'answer_chars': answer_chars,
         'turns_count': len(turns),
-        'turns_text': [t['text'] for t in regrade['turns']],
+        'turns_text': turns_text,
     }
 
 
@@ -380,8 +400,8 @@ def _extract_turn_steps(
             if len(nxt_msgs) > cur_len:
                 next_slice_tools = [m for m in nxt_msgs[cur_len:] if m.get('role') == 'tool']
 
-        for j, tc in enumerate(parsed_tcs):
-            tcid = tc.get('id')
+        for j, (raw_tc, tc) in enumerate(zip(raw_tcs, parsed_tcs)):
+            tcid = raw_tc.get('id') if isinstance(raw_tc, dict) else None
             raw_res = ''
             if isinstance(tcid, str) and tcid in tool_by_id:
                 raw_res = tool_by_id[tcid]
@@ -394,13 +414,10 @@ def _extract_turn_steps(
             elif queue_pos < len(tool_queue):
                 raw_res = tool_queue[queue_pos]
                 queue_pos += 1
-            entry: dict[str, Any] = {
+            step_results.append({
                 'name': tc['name'],
                 'content': raw_res[:MAX_TOOL_RESULT_CHARS],
-            }
-            if tcid:
-                entry['tool_call_id'] = tcid
-            step_results.append(entry)
+            })
 
         steps.append({
             'step': idx,
@@ -429,6 +446,17 @@ def _format_item_text(steps: list[dict[str, Any]], answer: str) -> str:
     return '\n'.join(parts)
 
 
+def _sanitize_title(case: dict[str, Any]) -> str:
+    title = str(case.get('title') or '')
+    for token in (case.get('id'), (case.get('meta') or {}).get('template')):
+        if isinstance(token, str) and token:
+            title = title.replace(token, ' ')
+    title = re.sub(r'\b[ts](?:0[1-9]|1[0-2])_[0-9]{3}[a-z0-9_]*\b', ' ', title, flags=re.IGNORECASE)
+    title = re.sub(r'\b[ts](?:0[1-9]|1[0-2])_[a-z0-9_]+\b', ' ', title, flags=re.IGNORECASE)
+    title = re.sub(r'\b(?:qwen|deepseek)\b', ' ', title, flags=re.IGNORECASE)
+    return re.sub(r'\s+', ' ', title).strip(' -—:|')
+
+
 def _turn_context(case: dict[str, Any], turn_no: int) -> dict[str, Any]:
     turns = case.get('turns') or []
     turn = turns[turn_no - 1]
@@ -437,7 +465,7 @@ def _turn_context(case: dict[str, Any], turn_no: int) -> dict[str, Any]:
         f"(nhân viên mở Trợ lý ca, chế độ {turn.get('mode') or 'mặc định'})" if staff else ''
     )
     ctx: dict[str, Any] = {
-        'title': case.get('title', ''),
+        'title': _sanitize_title(case),
         'role': 'staff_case_assist' if staff else 'customer_chat',
         'turn': turn_no,
         'earlier_customer_messages': [t.get('user', '') for t in turns[:turn_no - 1] if t.get('user')],
@@ -513,9 +541,8 @@ def export_judge_round(
             turn_calls = calls.get((cid, run_no, turn_no), [])
             steps, trace_answer = _extract_turn_steps(turn_calls)
             turns_text = cand.get('turns_text') or []
-            answer = turns_text[turn_no - 1] if turn_no - 1 < len(turns_text) else trace_answer
-            if not answer and trace_answer:
-                answer = trace_answer
+            fallback_answer = turns_text[turn_no - 1] if turn_no - 1 < len(turns_text) else ''
+            answer = trace_answer if trace_answer else fallback_answer
             full_text = _format_item_text(steps, answer)
             items.append({
                 'case_id': cid,

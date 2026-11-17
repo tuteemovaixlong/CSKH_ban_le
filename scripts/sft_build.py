@@ -96,19 +96,29 @@ def _load_trace_calls(run_dir: Path) -> dict[tuple[Any, Any, Any], list[dict[str
     return calls
 
 
+def _append_user_text(texts: list[str], raw: str) -> None:
+    if not raw.strip():
+        return
+    texts.append(raw)
+    marker = '\n\n[Tệp đính kèm:'
+    if marker in raw:
+        prefix = raw.split(marker, 1)[0].strip()
+        if prefix:
+            texts.append(prefix)
+
+
 def _extract_user_texts(messages: list[dict[str, Any]], case: dict[str, Any], turn_no: int) -> list[str]:
     texts: list[str] = []
     for msg in messages:
         if msg.get('role') != 'user':
             continue
         content = msg.get('content')
-        if isinstance(content, str) and content.strip():
-            texts.append(content)
+        if isinstance(content, str):
+            _append_user_text(texts, content)
         elif isinstance(content, list):
             for part in content:
                 if isinstance(part, dict) and part.get('type') == 'text' and isinstance(part.get('text'), str):
-                    if part['text'].strip():
-                        texts.append(part['text'])
+                    _append_user_text(texts, part['text'])
     turns = case.get('turns') or []
     for idx in range(min(turn_no, len(turns))):
         u = turns[idx].get('user')
