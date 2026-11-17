@@ -59,7 +59,8 @@ class SftView:
             if not int_cid:
                 continue
             tools = BoundTools(self.store, self.catalog, int_cid, {}, {})
-            store_ords = self.store.orders(int_cid)
+            # Mã nội bộ (cust_…/ord_…) sinh ngẫu nhiên mỗi lần dựng kho: sắp theo mã đơn ngoài để bộ sinh ca tất định
+            store_ords = sorted(self.store.orders(int_cid), key=lambda o: str(o.get('external_order_id') or o.get('id')))
             detailed_ords = []
             for so in store_ords:
                 detailed = tools.read_order(so['id'])
