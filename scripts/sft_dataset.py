@@ -119,6 +119,14 @@ def validate_train_case(case: dict[str, Any]) -> dict[str, Any]:
     except ImportError:
         pass
 
+    # Nhãn người viết lời khách (sft_utterances, §34 W6.7-D1) — tùy chọn, có thì phải là list chuỗi
+    if 'utterance_writers' in meta:
+        writers = meta['utterance_writers']
+        check(
+            isinstance(writers, list) and bool(writers) and all(isinstance(w, str) and w for w in writers),
+            'meta.utterance_writers', 'expected non-empty list of writer labels',
+        )
+
     sft_customers, _, _ = sft_v1_demo_ids()
     check(case.get('customer') in sft_customers, 'customer', 'customer not in sft_v1 events')
 
@@ -133,6 +141,7 @@ def validate_train_case(case: dict[str, Any]) -> dict[str, Any]:
     norm['meta'].pop('template', None)
     norm['meta'].pop('slot_key', None)
     norm['meta'].pop('intent', None)
+    norm['meta'].pop('utterance_writers', None)
 
     # If user utterances are placeholders (e.g. empty), eval_dataset_v2 requires text length >= 2
     # Temporarily substitute dummy text if turn['user'] is placeholder to pass structural checks

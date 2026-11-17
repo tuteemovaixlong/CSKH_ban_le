@@ -32,11 +32,16 @@ from scripts.sft_dataset import sft_v1_demo_ids, validate_train_case, validate_t
 from scripts.sft_cases import generate_cases, check_cases
 from scripts.sft_templates import TEMPLATES, SftView
 from scripts.sft_utterances import (
+    ChatClient,
     DeepSeekClient,
+    SYSTEM_PROMPT,
+    UNLABELED_WRITER,
     fill_utterances,
+    is_deepseek_endpoint,
     is_peak_hour,
     jaccard_5gram,
     max_common_substring_len,
+    parse_user_json,
     strip_vietnamese_accents,
     validate_utterance,
 )
@@ -637,6 +642,146 @@ class TestW670SftFixtureCases(unittest.TestCase):
                         c = json.loads(line)
                         # No placeholder text allowed in written cases
                         self.assertNotIn("<chờ lời khách", json.dumps(c, ensure_ascii=False))
+
+    def test_utterance_writer_options_for_self_hosted_glimmer(self) -> None:
+        """§34 W6.7-D1: khóa tùy chọn, dòng system thêm, JSON chịu lỗi, nhãn người viết."""
+        # 1. Đọc JSON chịu hàng rào/chữ thừa; rỗng hoặc thiếu "user" → ValueError
+        self.assertEqual(parse_user_json('{"user": "shop ơi"}'), 'shop ơi')
+        self.assertEqual(parse_user_json('```json\n{"user": "đơn SIM-O-50001"}\n```'), 'đơn SIM-O-50001')
+        self.assertEqual(parse_user_json('Đây là câu: {"user": "a b"} xong.'), 'a b')
+        for bad in (None, '', '   ', 'không có json', '{"text": "x"}'):
+            with self.assertRaises(ValueError):
+                parse_user_json(bad)
+
+        # 2. Giờ cao điểm chỉ áp cho DeepSeek
+        self.assertTrue(is_deepseek_endpoint('https://api.deepseek.com/chat/completions'))
+        self.assertFalse(is_deepseek_endpoint('http://127.0.0.1:8000/v1/chat/completions'))
+        self.assertFalse(is_deepseek_endpoint('https://deepseek.com.example.org/v1'))
+
+        # 3. Tin nhắn: một system ở đầu (có dòng thêm), phản hồi lỗi gộp vào user
+        glimmer = ChatClient(
+            endpoint='http://127.0.0.1:8000/v1/chat/completions',
+            model='glimmer-local',
+            api_key_env=None,
+            system_extra='Reasoning strength: low',
+            json_mode=False,
+            writer_label='muse-glimmer-30b',
+            timeout=180,
+        )
+        brief = {'brief_id': 'b1', 'must_include': ['SIM-O-50006'], 'style': 'chuan'}
+        msgs = glimmer.build_messages(brief, feedback='Thiếu chuỗi bắt buộc')
+        self.assertEqual([m['role'] for m in msgs], ['system', 'user'])
+        self.assertTrue(msgs[0]['content'].startswith('Reasoning strength: low\n\n'))
+        self.assertTrue(msgs[0]['content'].endswith(SYSTEM_PROMPT))
+        self.assertIn('LẦN THỬ TRƯỚC BỊ LỖI: Thiếu chuỗi bắt buộc', msgs[1]['content'])
+        self.assertNotIn('response_format', glimmer.build_payload(brief))
+        self.assertEqual(DeepSeekClient().build_messages(brief)[0]['content'], SYSTEM_PROMPT)
+        self.assertEqual(DeepSeekClient().build_payload(brief)['response_format'], {'type': 'json_object'})
+
+        # 4. HTTP giả: không khóa → không gửi Authorization; khóa lấy từ biến môi trường được chỉ định
+        captured: list = []
+
+        class _Resp:
+            def __init__(self, body: str) -> None:
+                self._body = body.encode('utf-8')
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc) -> bool:
+                return False
+
+            def read(self) -> bytes:
+                return self._body
+
+        def fake_urlopen(req, timeout):
+            captured.append((dict(req.header_items()), json.loads(req.data.decode('utf-8')), timeout))
+            content = '```json\n{"user": "Shop ơi đơn SIM-O-50006 tới đâu rồi"}\n```'
+            return _Resp(json.dumps({'choices': [{'message': {'content': content}}]}))
+
+        with mock.patch('scripts.sft_utterances.urllib.request.urlopen', side_effect=fake_urlopen):
+            self.assertEqual(glimmer.call(brief), 'Shop ơi đơn SIM-O-50006 tới đâu rồi')
+            headers, payload, timeout = captured[-1]
+            self.assertNotIn('Authorization', headers)
+            self.assertEqual(payload['model'], 'glimmer-local')
+            self.assertEqual(timeout, 180.0)
+
+            with mock.patch.dict(os.environ, {'W67_TEST_WRITER_KEY': 'k-test'}, clear=False):
+                keyed = ChatClient(endpoint='https://example.invalid/v1', api_key_env='W67_TEST_WRITER_KEY')
+                keyed.call(brief)
+            self.assertEqual(captured[-1][0].get('Authorization'), 'Bearer k-test')
+
+            with mock.patch.dict(os.environ, {}, clear=True):
+                with self.assertRaises(ValueError):
+                    ChatClient(api_key_env='W67_TEST_MISSING_KEY').call(brief)
+
+        # 5. fill: Glimmer cục bộ không bị chặn giờ cao điểm; nhãn người viết vào cache, meta, báo cáo
+        tz_vn = timezone(timedelta(hours=7))
+        dt_peak = datetime(2026, 11, 20, 14, 30, tzinfo=tz_vn)  # thứ Sáu 14:30
+
+        def writer_mock(b: dict, feedback: str = '') -> str:
+            must = list(b.get('must_include', []))
+            inj = b.get('injection')
+            h = int(hashlib.md5((b['brief_id'] + str(feedback)).encode('utf-8')).hexdigest(), 16) % 9000 + 1000
+            core = ' '.join(must) or 'thông tin đơn hàng'
+            style = b.get('style', 'chuan')
+            if style == 'khong_dau':
+                txt = strip_vietnamese_accents(f'shop kiem tra giup minh {core} ma so {h} nhe')
+            elif style == 'dai':
+                txt = (f'Chào shop, mình nhắn về {core} theo mã tham chiếu #{h}. Mình đã chờ khá lâu rồi '
+                       'và muốn biết rõ tình hình hiện tại ra sao. Nhờ shop kiểm tra giúp mình sớm nhé, cảm ơn nhiều.')
+            else:
+                txt = f'Kiểm tra giúp mình {core} mã số #{h} nhé shop'
+            return f'{txt} {inj}' if inj else txt
+
+        with tempfile.TemporaryDirectory(prefix='test-writer-label-') as td:
+            generate_cases(td, pilot=12, seed=20261202)
+            cache_file = Path(td) / 'utterances_cache.jsonl'
+            briefs = [json.loads(x) for x in (Path(td) / 'briefs_sft_v1.jsonl').read_text(encoding='utf-8').splitlines() if x.strip()]
+
+            # một dòng cache cũ chưa có nhãn (định dạng phần A)
+            first = briefs[0]
+            cache_file.write_text(
+                json.dumps({'brief_id': first['brief_id'], 'user': writer_mock(first)}, ensure_ascii=False) + '\n',
+                encoding='utf-8',
+            )
+
+            local = ChatClient(
+                endpoint='http://127.0.0.1:8000/v1/chat/completions', model='glimmer-local',
+                api_key_env=None, writer_label='muse-glimmer-30b', mock_handler=writer_mock,
+            )
+            res_g = fill_utterances(td, client=local, allow_peak=False, now_fn=lambda: dt_peak, limit=4)
+            self.assertEqual(res_g['writer'], 'muse-glimmer-30b')
+
+            # DeepSeek viết thay phần còn lại (ngoài giờ cao điểm)
+            ds = DeepSeekClient(mock_handler=writer_mock, writer_label='deepseek-flash')
+            res_d = fill_utterances(td, client=ds, allow_peak=True)
+            self.assertEqual(res_d['failed_count'], 0, res_d['failed_brief_ids'])
+            self.assertEqual(res_d['filled_count'], len(briefs))
+
+            records = [json.loads(x) for x in cache_file.read_text(encoding='utf-8').splitlines() if x.strip()]
+            by_writer = Counter(r.get('writer', UNLABELED_WRITER) for r in records)
+            self.assertEqual(by_writer[UNLABELED_WRITER], 1)
+            self.assertEqual(by_writer['muse-glimmer-30b'], res_g['filled_count'] - 1)
+            self.assertEqual(sum(by_writer.values()), len(briefs))
+            self.assertEqual(res_d['writer_counts'], dict(by_writer))
+            for r in records[1:]:
+                self.assertIn(r['model'], ('glimmer-local', 'deepseek-flash'))
+
+            filled = [json.loads(x) for x in (Path(td) / 'cases_sft_v1_filled.jsonl').read_text(encoding='utf-8').splitlines() if x.strip()]
+            self.assertTrue(filled)
+            seen = set()
+            for c in filled:
+                ws = c['meta']['utterance_writers']
+                self.assertTrue(ws)
+                self.assertEqual(ws, sorted(set(ws)))
+                seen.update(ws)
+            self.assertEqual(seen, {UNLABELED_WRITER, 'muse-glimmer-30b', 'deepseek-flash'})
+            validate_train_set(filled)
+
+            report = (Path(td) / 'utterances_report.md').read_text(encoding='utf-8')
+            self.assertIn('`muse-glimmer-30b`', report)
+            self.assertIn('`deepseek-flash`', report)
 
     @unittest.skipUnless(importlib.util.find_spec('pypdfium2') is not None, "pypdfium2 required for real PDF inspection on CI")
     def test_p3_real_pdf_case_execution(self) -> None:
