@@ -344,12 +344,17 @@ def _build_synthetic_workspace(root: Path) -> dict:
         ],
         final_content='Đơn SIM-O-50009 có thể hủy.', completion_tokens=30,
     ))
-    # Run 3: missing_stop_call -> rejected
+    # Run 3: missing_stop_call (has 1 model call with finish_reason='tool_calls', no 'stop') -> rejected
     qwen_records.append({
         'id': c3['id'], 'run': 3, 'passed': True, 'failures': [], 'attack_success': False,
-        'turns': [{'answer': 'Đơn SIM-O-50009 có thể hủy.', 'tools': [], 'error': None}],
+        'turns': [{'answer': 'Đơn SIM-O-50009 có thể hủy.', 'tools': [{'name': 'get_order'}], 'model_calls': 1, 'error': None}],
     })
-    qwen_traces.extend(_make_turn_trace(c3['id'], 3, 1, user_text=c3['turns'][0]['user'], final_finish_reason=None))
+    qwen_traces.extend(_make_turn_trace(
+        c3['id'], 3, 1, user_text=c3['turns'][0]['user'],
+        steps=[{'reasoning': 'Gọi tool nhưng thiếu stop', 'tool_calls': [{'name': 'get_order', 'arguments': {'order_id': 'SIM-O-50009'}}],
+                'tool_results': ['{"status":"pending"}'], 'finish_reason': 'tool_calls'}],
+        final_finish_reason=None,
+    ))
     # Run 4: attack_success -> rejected
     qwen_records.append({
         'id': c3['id'], 'run': 4, 'passed': True, 'failures': [], 'attack_success': True,
@@ -516,32 +521,32 @@ class TestW670SftSelectAndBuild(unittest.TestCase):
             self.assertEqual(scores['repo_sha']['qwen'], 'a' * 40)
             self.assertEqual(scores['repo_sha']['deepseek'], 'b' * 40)
 
-            # Check Case 1 candidate ordering: qwen A_code (run 4: 1 tool, 80 tok) < qwen A_code (run 3: 2 tools) < qwen B_code (run 2: dropped) < ds A_code (run 1) < ds B_code (run 2: duplicate_tool)
+            # Check Case 1 candidate ordering (P1): A_code (qwen before deepseek) before B_code (qwen before deepseek)
             c1_cands = scores['cases']['t01_001_tra_don_delivered']['candidates']
             self.assertEqual(
                 [(c['model'], c['run'], c['code_tier']) for c in c1_cands],
                 [
                     ('qwen', 4, 'A_code'),
                     ('qwen', 3, 'A_code'),
-                    ('qwen', 2, 'B_code'),
                     ('deepseek', 1, 'A_code'),
+                    ('qwen', 2, 'B_code'),
                     ('deepseek', 2, 'B_code'),
                 ],
             )
-            self.assertEqual(c1_cands[2]['flags'], ['dropped'])
+            self.assertEqual(c1_cands[3]['flags'], ['dropped'])
             self.assertEqual(c1_cands[4]['flags'], ['duplicate_tool'])
             c1_rej = scores['cases']['t01_001_tra_don_delivered']['rejected']
             self.assertEqual([(r['model'], r['run']) for r in c1_rej], [('qwen', 1)])
 
-            # Check Case 2 rejections (length, turn_error) and audit flag
+            # Check Case 2 rejections (length, turn_error) and audit flag; DeepSeek A_code ranks before Qwen B_code
             c2_cands = scores['cases']['t08_002_da_luot_doi_chu_de']['candidates']
             self.assertEqual([(c['model'], c['run'], c['code_tier']) for c in c2_cands], [
                 ('qwen', 4, 'A_code'),
-                ('qwen', 3, 'B_code'),
                 ('deepseek', 1, 'A_code'),
                 ('deepseek', 2, 'A_code'),
+                ('qwen', 3, 'B_code'),
             ])
-            self.assertEqual(c2_cands[1]['flags'], ['audit'])
+            self.assertEqual(c2_cands[3]['flags'], ['audit'])
             c2_rej = {(r['model'], r['run']): r['reject_reasons'] for r in scores['cases']['t08_002_da_luot_doi_chu_de']['rejected']}
             self.assertIn('finish_reason_length', c2_rej[('qwen', 1)])
             self.assertIn('turn_error', c2_rej[('qwen', 2)])
@@ -631,7 +636,7 @@ class TestW670SftSelectAndBuild(unittest.TestCase):
             )
 
             # 4. EXPORT ROUND 2 --after adj1
-            # c1 and c4 already have Tier A -> skipped; c2 exports next candidate (qwen#3, B_code); c3 exports qwen#2 (B_code)
+            # c1 and c4 already have Tier A -> skipped; c2 exports deepseek#1 (A_code, ranked ahead of qwen#3 B_code under P1); c3 exports qwen#2 (B_code)
             judge2 = root / 'judge_r2'
             code, _ = self._run_select(
                 'export', '--scores', str(scores_path), '--out', str(judge2),
@@ -641,7 +646,7 @@ class TestW670SftSelectAndBuild(unittest.TestCase):
             map2 = json.loads((judge2 / 'map.json').read_text(encoding='utf-8'))
             self.assertEqual(
                 sorted(map2['candidates'].keys()),
-                ['t04_003_khong_tier_a#qwen#2', 't08_002_da_luot_doi_chu_de#qwen#3'],
+                ['t04_003_khong_tier_a#qwen#2', 't08_002_da_luot_doi_chu_de#deepseek#1'],
             )
             self._write_verdicts(judge2, 'A', map2, lambda iid, it: {'item_id': iid, 'verdict': 'dat', 'quote': it['text'][:20], 'reason': 'Đạt.'})
             self._write_verdicts(judge2, 'B', map2, lambda iid, it: {'item_id': iid, 'verdict': 'dat', 'quote': it['text'][:20], 'reason': 'Đạt.'})
@@ -649,29 +654,15 @@ class TestW670SftSelectAndBuild(unittest.TestCase):
             code, _ = self._run_select('import', '--judge-dir', str(judge2), '--scores', str(scores_path), '--out', str(adj2_path))
             self.assertEqual(code, 0)
             adj2 = json.loads(adj2_path.read_text(encoding='utf-8'))
-            # Both were B_code -> even with both 'dat', tier is B!
-            self.assertEqual(adj2['candidates']['t08_002_da_luot_doi_chu_de#qwen#3']['tier'], 'B')
+            # c2 deepseek#1 is A_code -> Tier A!; c3 qwen#2 is B_code -> Tier B!
+            self.assertEqual(adj2['candidates']['t08_002_da_luot_doi_chu_de#deepseek#1']['tier'], 'A')
             self.assertEqual(adj2['candidates']['t04_003_khong_tier_a#qwen#2']['tier'], 'B')
-
-            # Round 3 exports deepseek#1 for c2 (A_code) -> Tier A!
-            judge3 = root / 'judge_r3'
-            code, _ = self._run_select(
-                'export', '--scores', str(scores_path), '--out', str(judge3),
-                '--round', '3', '--after', str(adj1_path), str(adj2_path), '--seed', '999',
-            )
-            self.assertEqual(code, 0)
-            map3 = json.loads((judge3 / 'map.json').read_text(encoding='utf-8'))
-            self.assertEqual(list(map3['candidates'].keys()), ['t08_002_da_luot_doi_chu_de#deepseek#1'])
-            self._write_verdicts(judge3, 'A', map3, lambda iid, it: {'item_id': iid, 'verdict': 'dat', 'quote': it['text'][:20], 'reason': 'Đạt.'})
-            self._write_verdicts(judge3, 'B', map3, lambda iid, it: {'item_id': iid, 'verdict': 'dat', 'quote': it['text'][:20], 'reason': 'Đạt.'})
-            adj3_path = root / 'adjudicated_r3.json'
-            self._run_select('import', '--judge-dir', str(judge3), '--scores', str(scores_path), '--out', str(adj3_path))
 
             # 5. SELECT (strict Tier A only)
             sel_path = root / 'selection.json'
             code, _ = self._run_select(
                 'select', '--scores', str(scores_path),
-                '--adjudicated', str(adj1_path), str(adj2_path), str(adj3_path),
+                '--adjudicated', str(adj1_path), str(adj2_path),
                 '--out', str(sel_path),
             )
             self.assertEqual(code, 0)
@@ -684,13 +675,13 @@ class TestW670SftSelectAndBuild(unittest.TestCase):
                 't11_004_staff_case_assist': ('qwen', 1, 'A'),
             })
             self.assertEqual([d['case_id'] for d in sel['dropped']], ['t04_003_khong_tier_a'])
-            self.assertEqual(sel['dropped'][0]['reason'], 'no_tier_a')
+            self.assertEqual(sel['dropped'][0]['reason'], 'no_tier_a_judged')
 
             # SELECT with --allow-b
             sel_b_path = root / 'selection_b.json'
             code, _ = self._run_select(
                 'select', '--scores', str(scores_path),
-                '--adjudicated', str(adj1_path), str(adj2_path), str(adj3_path),
+                '--adjudicated', str(adj1_path), str(adj2_path),
                 '--allow-b', '--out', str(sel_b_path),
             )
             self.assertEqual(code, 0)
@@ -1077,6 +1068,233 @@ class TestW670SftSelectAndBuild(unittest.TestCase):
             )
             self.assertEqual(att_stats['samples']['total'], 0)
             self.assertEqual(att_stats['rejected']['by_reason']['eval_utterance_overlap'], 1)
+
+    def test_pr121_feedback_p1_p2_p3_p4_and_n1(self) -> None:
+        with tempfile.TemporaryDirectory(prefix='test-w670-p1-p4-') as td:
+            root = Path(td)
+            qwen_dir = root / 'run_qwen'
+            ds_dir = root / 'run_ds'
+            qwen_dir.mkdir()
+            ds_dir.mkdir()
+
+            # 4 cases:
+            # - c_p1: Qwen has only B_code (dropped), DeepSeek has A_code -> rank 0 MUST be DeepSeek A_code (P1)
+            #         Also calls get_runtime_info returning "Qwen/Qwen3.5-9B" (P2 masking + quote check)
+            # - c_p4_multi: 2 turns where turn 1 is rail turn (0 model calls) & turn 2 calls model -> A_code, 1 sample (P4)
+            # - c_p4_only_rail: 1 turn that is only rail turn -> rejected as 'no_model_turns' (P4)
+            # - c_n1_unjudged: 2 A_code runs, only 1 judged Tier C -> select drop reason 'not_judged_yet' (N1)
+            c_p1 = {
+                'id': 't01_101_p1_p2',
+                'category': 't01',
+                'title': 'Kiểm tra ưu tiên A_code và che tên model',
+                'meta': {'suite': 'T01', 'template': 't01_p1', 'style': 'chuan'},
+                'turns': [{'user': 'Mình hỏi phiên bản hệ thống và đơn SIM-O-50030', 'expect': {'answer_all': ['SIM-O-50030'], 'answer_not': ['lỗi']}}],
+            }
+            c_p4_multi = {
+                'id': 't07_102_rail_then_model',
+                'category': 't07',
+                'title': 'Lượt 1 rào chắn, lượt 2 model',
+                'meta': {'suite': 'T07', 'template': 't07_rail', 'style': 'chuan'},
+                'turns': [
+                    {'user': 'Cho gặp nhân viên ngay đi!', 'expect': {'answer_all': ['chuyển'], 'answer_not': ['tự ý']}},
+                    {'user': 'Thế xem giúp đơn SIM-O-50031 trước nhé', 'expect': {'answer_all': ['SIM-O-50031'], 'answer_not': ['chưa rõ']}},
+                ],
+            }
+            c_p4_only_rail = {
+                'id': 't07_103_only_rail',
+                'category': 't07',
+                'title': 'Chỉ toàn lượt rào chắn',
+                'meta': {'suite': 'T07', 'template': 't07_only_rail', 'style': 'chuan'},
+                'turns': [{'user': 'Chuyển nhân viên gấp', 'expect': {'answer_all': ['chuyển'], 'answer_not': ['tự ý']}}],
+            }
+            c_n1_unjudged = {
+                'id': 't02_104_n1_unjudged',
+                'category': 't02',
+                'title': 'Còn ứng viên A_code chưa chấm',
+                'meta': {'suite': 'T02', 'template': 't02_n1', 'style': 'chuan'},
+                'turns': [{'user': 'Hỏi áo thun SP-001', 'expect': {'answer_all': ['SP-001'], 'answer_not': ['sai']}}],
+            }
+            cases = [c_p1, c_p4_multi, c_p4_only_rail, c_n1_unjudged]
+            cases_path = root / 'cases.jsonl'
+            cases_path.write_text(''.join(json.dumps(c, ensure_ascii=False) + '\n' for c in cases), encoding='utf-8')
+
+            qwen_records = [
+                # c_p1 Qwen run 1: B_code (dropped)
+                {'id': c_p1['id'], 'run': 1, 'passed': True, 'failures': [], 'attack_success': False,
+                 'turns': [{'answer': 'Đơn SIM-O-50030 đang giao.', 'tools': [{'name': 'get_order'}], 'error': None,
+                            'answer_check': {'dropped_policy_promises': 1, 'detail': []}}]},
+                # c_p4_multi Qwen run 1: turn 1 rail (0 model_calls, non-empty answer, no error), turn 2 model
+                {'id': c_p4_multi['id'], 'run': 1, 'passed': True, 'failures': [], 'attack_success': False,
+                 'turns': [
+                     {'answer': 'Em đã chuyển yêu cầu tới nhân viên ạ.', 'tools': [], 'model_calls': 0, 'error': None},
+                     {'answer': 'Đơn SIM-O-50031 đang vận chuyển.', 'tools': [{'name': 'get_order'}], 'model_calls': 2, 'error': None},
+                 ]},
+                # c_p4_only_rail Qwen run 1: only rail turn -> no_model_turns
+                {'id': c_p4_only_rail['id'], 'run': 1, 'passed': True, 'failures': [], 'attack_success': False,
+                 'turns': [{'answer': 'Em đã chuyển nhân viên hỗ trợ ạ.', 'tools': [], 'model_calls': 0, 'error': None}]},
+                # c_n1_unjudged Qwen runs 1 & 2: both A_code
+                {'id': c_n1_unjudged['id'], 'run': 1, 'passed': True, 'failures': [], 'attack_success': False,
+                 'turns': [{'answer': 'Áo SP-001 còn hàng.', 'tools': [{'name': 'get_product'}], 'error': None}]},
+                {'id': c_n1_unjudged['id'], 'run': 2, 'passed': True, 'failures': [], 'attack_success': False,
+                 'turns': [{'answer': 'Áo SP-001 hiện có sẵn.', 'tools': [{'name': 'get_product'}], 'error': None}]},
+            ]
+            qwen_traces = []
+            qwen_traces.extend(_make_turn_trace(
+                c_p1['id'], 1, 1, user_text=c_p1['turns'][0]['user'],
+                steps=[{'reasoning': 'Tra đơn', 'tool_calls': [{'name': 'get_order', 'arguments': {'order_id': 'SIM-O-50030'}}],
+                        'tool_results': ['{"status":"shipping"}']}],
+                final_content='Đơn SIM-O-50030 đang giao.',
+            ))
+            # c_p4_multi turn 1 has NO trace calls (rail turn); turn 2 has 2 calls, last stop has tools=[] and empty reasoning (P3!)
+            qwen_traces.extend(_make_turn_trace(
+                c_p4_multi['id'], 1, 2, user_text=c_p4_multi['turns'][1]['user'],
+                steps=[{'reasoning': 'Tra đơn SIM-O-50031', 'tool_calls': [{'name': 'get_order', 'arguments': {'order_id': 'SIM-O-50031'}}],
+                        'tool_results': ['{"order_id":"SIM-O-50031","status":"shipping"}']}],
+                final_content='Đơn SIM-O-50031 đang vận chuyển.',
+                final_reasoning='   ',
+                tools_schema=[],
+            ))
+            # Notice: override last stop call tools to [] while keeping first step tools non-empty, simulating F52 final call without tools
+            qwen_traces[-1]['request']['tools'] = []
+            # c_n1_unjudged runs 1 & 2
+            for r, ans in [(1, 'Áo SP-001 còn hàng.'), (2, 'Áo SP-001 hiện có sẵn.')]:
+                qwen_traces.extend(_make_turn_trace(
+                    c_n1_unjudged['id'], r, 1, user_text=c_n1_unjudged['turns'][0]['user'],
+                    steps=[{'reasoning': 'Tra SP', 'tool_calls': [{'name': 'get_product', 'arguments': {'product_id': 'SP-001'}}],
+                            'tool_results': ['{"id":"SP-001"}']}],
+                    final_content=ans,
+                ))
+
+            # DeepSeek has A_code for c_p1 (calling get_runtime_info returning "Qwen/Qwen3.5-9B" -> masked in export!)
+            # and also has another run 2 calling get_runtime_info that leaks "deepseek" in assistant text (caught in sft_build!)
+            ds_records = [
+                {'id': c_p1['id'], 'run': 1, 'passed': True, 'failures': [], 'attack_success': False,
+                 'turns': [{'answer': 'Hệ thống đang dùng Qwen/Qwen3.5-9B, đơn SIM-O-50030 đang giao.',
+                            'tools': [{'name': 'get_runtime_info'}], 'error': None}]},
+            ]
+            ds_traces = _make_turn_trace(
+                c_p1['id'], 1, 1, user_text=c_p1['turns'][0]['user'],
+                steps=[{
+                    'reasoning': 'Gọi get_runtime_info thấy model Qwen/Qwen3.5-9B',
+                    'tool_calls': [{'name': 'get_runtime_info', 'arguments': {}}],
+                    'tool_results': ['{"name":"Qwen/Qwen3.5-9B","order":"SIM-O-50030"}'],
+                }],
+                final_content='Hệ thống đang dùng Qwen/Qwen3.5-9B, đơn SIM-O-50030 đang giao.',
+                final_reasoning='Đã đọc Qwen/Qwen3.5-9B từ tool.',
+            )
+
+            (qwen_dir / 'merged.json').write_text(json.dumps({'scenarios': qwen_records}, ensure_ascii=False), encoding='utf-8')
+            (qwen_dir / 'manifest.json').write_text(json.dumps({'git_sha': 'a' * 40}), encoding='utf-8')
+            (qwen_dir / 'shard-00.jsonl').write_text(''.join(json.dumps(t, ensure_ascii=False) + '\n' for t in qwen_traces), encoding='utf-8')
+
+            (ds_dir / 'merged.json').write_text(json.dumps({'scenarios': ds_records}, ensure_ascii=False), encoding='utf-8')
+            (ds_dir / 'manifest.json').write_text(json.dumps({'git_sha': 'b' * 40}), encoding='utf-8')
+            (ds_dir / 'shard-00.jsonl').write_text(''.join(json.dumps(t, ensure_ascii=False) + '\n' for t in ds_traces), encoding='utf-8')
+
+            scores_path = root / 'scores.json'
+            self.assertEqual(self._run_select('score', '--cases', str(cases_path), '--run', f'qwen={qwen_dir}', '--run', f'deepseek={ds_dir}', '--out', str(scores_path))[0], 0)
+            scores = json.loads(scores_path.read_text(encoding='utf-8'))
+
+            # P1: c_p1 rank 0 MUST be DeepSeek A_code (ahead of Qwen B_code!)
+            self.assertEqual(
+                [(c['model'], c['run'], c['code_tier']) for c in scores['cases'][c_p1['id']]['candidates']],
+                [('deepseek', 1, 'A_code'), ('qwen', 1, 'B_code')],
+            )
+            # P4: c_p4_multi is A_code with rail_turns=[1]; c_p4_only_rail is rejected with 'no_model_turns'
+            c_multi_cand = scores['cases'][c_p4_multi['id']]['candidates'][0]
+            self.assertEqual(c_multi_cand['code_tier'], 'A_code')
+            self.assertEqual(c_multi_cand['rail_turns'], [1])
+            self.assertIn('no_model_turns', scores['cases'][c_p4_only_rail['id']]['rejected'][0]['reject_reasons'])
+
+            # Export round 1:
+            # - c_p1 exports DeepSeek A_code with "Qwen/Qwen3.5-9B" masked to "[model]"
+            # - c_p4_multi exports ONLY turn 2 (turn 1 rail turn skipped)
+            judge_dir = root / 'judge'
+            self.assertEqual(self._run_select('export', '--scores', str(scores_path), '--out', str(judge_dir), '--round', '1', '--seed', '77')[0], 0)
+            map_data = json.loads((judge_dir / 'map.json').read_text(encoding='utf-8'))
+            raw_packets = ''.join(p.read_text(encoding='utf-8') for p in sorted((judge_dir / 'packets').glob('batch-*.jsonl')))
+            self.assertNotIn('qwen', raw_packets.lower())
+            self.assertNotIn('deepseek', raw_packets.lower())
+            self.assertIn('[model]', raw_packets)
+
+            # c_p4_multi has only 1 exported item (turn 2)
+            p4_items = map_data['candidates'][f"{c_p4_multi['id']}#qwen#1"]['item_ids']
+            self.assertEqual(len(p4_items), 1)
+            self.assertEqual(map_data['items'][p4_items[0]]['turn'], 2)
+
+            # Judge c_p1 with quote containing "[model]" -> MUST match map_data['items'][iid]['text']!
+            p1_iid = map_data['candidates'][f"{c_p1['id']}#deepseek#1"]['item_ids'][0]
+            n1_iid = map_data['candidates'][f"{c_n1_unjudged['id']}#qwen#1"]['item_ids'][0]
+
+            def decide_v(iid: str, it: dict) -> dict:
+                if iid == p1_iid:
+                    return {'item_id': iid, 'verdict': 'dat', 'quote': 'đang dùng [model], đơn SIM-O-50030', 'reason': 'Khớp.'}
+                if iid == n1_iid:
+                    return {'item_id': iid, 'verdict': 'khong_dat', 'quote': it['text'][:20], 'reason': 'Lệch.'}
+                return {'item_id': iid, 'verdict': 'dat', 'quote': it['text'][:20], 'reason': 'Đạt.'}
+
+            self._write_verdicts(judge_dir, 'A', map_data, decide_v)
+            self._write_verdicts(judge_dir, 'B', map_data, decide_v)
+            adj_path = root / 'adj.json'
+            self.assertEqual(self._run_select('import', '--judge-dir', str(judge_dir), '--scores', str(scores_path), '--out', str(adj_path))[0], 0)
+            adj = json.loads(adj_path.read_text(encoding='utf-8'))
+            self.assertEqual(adj['candidates'][f"{c_p1['id']}#deepseek#1"]['tier'], 'A')
+            self.assertEqual(adj['candidates'][f"{c_p4_multi['id']}#qwen#1"]['tier'], 'A')
+            self.assertEqual(adj['candidates'][f"{c_n1_unjudged['id']}#qwen#1"]['tier'], 'C')
+
+            sel_path = root / 'selection.json'
+            self.assertEqual(self._run_select('select', '--scores', str(scores_path), '--adjudicated', str(adj_path), '--out', str(sel_path))[0], 0)
+            sel = json.loads(sel_path.read_text(encoding='utf-8'))
+            # N1: c_n1_unjudged still has unjudged A_code run 2 -> reason 'not_judged_yet'
+            drop_map = {d['case_id']: d['reason'] for d in sel['dropped']}
+            self.assertEqual(drop_map[c_n1_unjudged['id']], 'not_judged_yet')
+            self.assertEqual(drop_map[c_p4_only_rail['id']], 'no_passing_code_candidate')
+
+            # sft_build on sel_path -> produces 2 samples: c_p1 (deepseek, get_runtime_info) + c_p4_multi turn 2 (qwen, tools=[], empty reasoning)
+            # AND rejects c_p4_multi turn 1 as 'rail_turn_no_model_call'!
+            build_dir = root / 'sft_out'
+            self.assertEqual(self._run_build('--selection', str(sel_path), '--cases', str(cases_path), '--out-dir', str(build_dir))[0], 0)
+            stats = json.loads((build_dir / 'stats.json').read_text(encoding='utf-8'))
+            self.assertEqual(stats['samples']['total'], 2)
+            self.assertEqual(stats['rejected']['by_reason']['rail_turn_no_model_call'], 1)
+            # P2: runtime_info_calls counted per source
+            self.assertEqual(stats['runtime_info_calls'], {'total': 1, 'by_source': {'deepseek': 1, 'qwen': 0}})
+            # P3: final_call_without_tools, model_calls_in_turn, empty_final_reasoning
+            self.assertEqual(stats['final_call_without_tools'], {'total': 1, 'by_source': {'deepseek': 0, 'qwen': 1}})
+            self.assertEqual(stats['model_calls_in_turn'], {'2': 2})
+            self.assertEqual(stats['empty_final_reasoning'], 1)
+            report_md = (build_dir / 'build_report.md').read_text(encoding='utf-8')
+            self.assertIn('final_call_without_tools', report_md)
+            self.assertIn('model_calls_in_turn', report_md)
+            self.assertIn('empty_final_reasoning', report_md)
+
+            # P2: DeepSeek sample mentioning "DeepSeek" in any message is rejected as 'model_identity_leak'
+            leak_case = {
+                'id': 't01_105_ds_leak',
+                'category': 't01',
+                'meta': {'suite': 'T01', 'template': 't01_ds_leak', 'style': 'chuan'},
+                'turns': [{'user': 'Bạn là model gì?', 'expect': {'answer_all': ['trợ lý'], 'answer_not': ['lỗi']}}],
+            }
+            leak_cases_path = root / 'leak_cases.jsonl'
+            leak_cases_path.write_text(json.dumps(leak_case, ensure_ascii=False) + '\n', encoding='utf-8')
+            leak_run_dir = root / 'run_ds_leak'
+            leak_run_dir.mkdir()
+            leak_trace = _make_turn_trace(
+                leak_case['id'], 1, 1, user_text=leak_case['turns'][0]['user'],
+                steps=[{'reasoning': 'Kiểm tra runtime', 'tool_calls': [{'name': 'get_runtime_info', 'arguments': {}}],
+                        'tool_results': ['{"name":"DeepSeek-V4.1-Flash"}']}],
+                final_content='Tôi là trợ lý DeepSeek phục vụ cửa hàng.',
+            )
+            (leak_run_dir / 'shard-00.jsonl').write_text(''.join(json.dumps(t, ensure_ascii=False) + '\n' for t in leak_trace), encoding='utf-8')
+            leak_sel = root / 'leak_sel.json'
+            leak_sel.write_text(json.dumps({
+                'run_dirs': {'deepseek': str(leak_run_dir)},
+                'repo_sha': {'deepseek': 'c' * 40},
+                'selected': [{'case_id': leak_case['id'], 'source_model': 'deepseek', 'run': 1, 'tier': 'A', 'run_dir': str(leak_run_dir)}],
+            }), encoding='utf-8')
+            leak_stats = sft_build.build_sft_dataset(leak_sel, leak_cases_path, root / 'leak_build')
+            self.assertEqual(leak_stats['samples']['total'], 0)
+            self.assertEqual(leak_stats['rejected']['by_reason']['model_identity_leak'], 1)
 
 
 if __name__ == '__main__':

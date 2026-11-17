@@ -27,6 +27,7 @@ from scripts import eval_regrade  # noqa: E402
 
 MODEL_PRIORITY = {'qwen': 0, 'deepseek': 1}
 TIER_PRIORITY = {'A_code': 0, 'B_code': 1}
+MODEL_NAME_RE = re.compile(r'(?i)\b(?:qwen|deepseek)[\w./:-]*')
 MAX_TOOL_RESULT_CHARS = 3000
 DEFAULT_SEED = 20261203
 DEFAULT_BATCH_SIZE = 25
@@ -182,6 +183,7 @@ def _evaluate_run_record(
     total_tool_calls = 0
     total_completion_tokens = 0
     has_any_trace_tokens = False
+    rail_turns: list[int] = []
 
     for k, turn in enumerate(turns, 1):
         if turn.get('error'):
@@ -192,40 +194,48 @@ def _evaluate_run_record(
             flags.append('audit')
 
         turn_calls = calls.get((case_id, run_no, k), [])
+        n_model_calls = len(turn_calls) if turn_calls else int(turn.get('model_calls') or 0)
+        turn_answer = str(turn.get('answer') or turn.get('draft_reply') or '').strip()
         seen_sigs: set[tuple[str, str]] = set()
         has_stop = False
         turn_trace_tools = 0
         turn_trace_tokens = 0
         turn_has_trace_tokens = False
 
-        for c in turn_calls:
-            resp = c.get('response') or {}
-            fr = resp.get('finish_reason')
-            if fr == 'length':
-                reject_reasons.append('finish_reason_length')
-            if resp.get('error'):
-                reject_reasons.append('trace_error')
-            if fr == 'stop':
-                has_stop = True
+        if n_model_calls == 0:
+            if not turn.get('error') and turn_answer:
+                rail_turns.append(k)
+            elif not turn.get('error'):
+                reject_reasons.append('missing_stop_call')
+        else:
+            for c in turn_calls:
+                resp = c.get('response') or {}
+                fr = resp.get('finish_reason')
+                if fr == 'length':
+                    reject_reasons.append('finish_reason_length')
+                if resp.get('error'):
+                    reject_reasons.append('trace_error')
+                if fr == 'stop':
+                    has_stop = True
 
-            tcs = resp.get('tool_calls') or []
-            turn_trace_tools += len(tcs)
-            for tc in tcs:
-                if not _has_valid_tool_arguments(tc):
-                    reject_reasons.append('invalid_tool_arguments')
-                sig = _canonical_tool_signature(tc)
-                if sig in seen_sigs:
-                    flags.append('duplicate_tool')
-                seen_sigs.add(sig)
+                tcs = resp.get('tool_calls') or []
+                turn_trace_tools += len(tcs)
+                for tc in tcs:
+                    if not _has_valid_tool_arguments(tc):
+                        reject_reasons.append('invalid_tool_arguments')
+                    sig = _canonical_tool_signature(tc)
+                    if sig in seen_sigs:
+                        flags.append('duplicate_tool')
+                    seen_sigs.add(sig)
 
-            usage = resp.get('usage') or {}
-            ct = usage.get('completion_tokens')
-            if isinstance(ct, (int, float)) and not isinstance(ct, bool):
-                turn_trace_tokens += int(ct)
-                turn_has_trace_tokens = True
+                usage = resp.get('usage') or {}
+                ct = usage.get('completion_tokens')
+                if isinstance(ct, (int, float)) and not isinstance(ct, bool):
+                    turn_trace_tokens += int(ct)
+                    turn_has_trace_tokens = True
 
-        if not has_stop:
-            reject_reasons.append('missing_stop_call')
+            if not has_stop:
+                reject_reasons.append('missing_stop_call')
 
         merged_tools_count = len(turn.get('tools') or [])
         total_tool_calls += turn_trace_tools if turn_trace_tools > 0 else merged_tools_count
@@ -234,6 +244,9 @@ def _evaluate_run_record(
             has_any_trace_tokens = True
         else:
             total_completion_tokens += int(turn.get('generated_tokens') or 0)
+
+    if turns and len(rail_turns) == len(turns):
+        reject_reasons.append('no_model_turns')
 
     if not has_any_trace_tokens and total_completion_tokens == 0 and record.get('generated_tokens'):
         total_completion_tokens = int(record['generated_tokens'])
@@ -272,14 +285,16 @@ def _evaluate_run_record(
         'completion_tokens': total_completion_tokens,
         'answer_chars': answer_chars,
         'turns_count': len(turns),
+        'rail_turns': rail_turns,
         'turns_text': turns_text,
     }
 
 
 def _candidate_sort_key(cand: dict[str, Any]) -> tuple[Any, ...]:
+    """Order: Qwen A_code -> DeepSeek A_code -> Qwen B_code -> DeepSeek B_code, then metrics."""
     return (
-        MODEL_PRIORITY.get(cand['model'], 99),
         TIER_PRIORITY.get(cand['code_tier'], 99),
+        MODEL_PRIORITY.get(cand['model'], 99),
         cand['tool_calls'],
         cand['completion_tokens'],
         cand['answer_chars'],
@@ -446,6 +461,17 @@ def _format_item_text(steps: list[dict[str, Any]], answer: str) -> str:
     return '\n'.join(parts)
 
 
+def _mask_model_names(value: Any) -> Any:
+    """Recursively mask model family names (qwen/deepseek variants) to preserve blind judging."""
+    if isinstance(value, str):
+        return MODEL_NAME_RE.sub('[model]', value)
+    if isinstance(value, list):
+        return [_mask_model_names(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _mask_model_names(v) for k, v in value.items()}
+    return value
+
+
 def _sanitize_title(case: dict[str, Any]) -> str:
     title = str(case.get('title') or '')
     for token in (case.get('id'), (case.get('meta') or {}).get('template')):
@@ -537,13 +563,19 @@ def export_judge_round(
         cand_key = f'{cid}#{model}#{run_no}'
         cand_item_indices: list[int] = []
 
+        rail_turns = set(cand.get('rail_turns') or [])
         for turn_no in range(1, len(case.get('turns') or []) + 1):
+            if turn_no in rail_turns:
+                continue
             turn_calls = calls.get((cid, run_no, turn_no), [])
             steps, trace_answer = _extract_turn_steps(turn_calls)
             turns_text = cand.get('turns_text') or []
             fallback_answer = turns_text[turn_no - 1] if turn_no - 1 < len(turns_text) else ''
             answer = trace_answer if trace_answer else fallback_answer
-            full_text = _format_item_text(steps, answer)
+            masked_context = _mask_model_names(_turn_context(case, turn_no))
+            masked_steps = _mask_model_names(steps)
+            masked_answer = _mask_model_names(answer)
+            full_text = _mask_model_names(_format_item_text(masked_steps, masked_answer))
             items.append({
                 'case_id': cid,
                 'model': model,
@@ -552,9 +584,9 @@ def export_judge_round(
                 'code_tier': cand['code_tier'],
                 'rank': cand['rank'],
                 'candidate_key': cand_key,
-                'context': _turn_context(case, turn_no),
-                'steps': steps,
-                'answer': answer,
+                'context': masked_context,
+                'steps': masked_steps,
+                'answer': masked_answer,
                 'text': full_text,
             })
             cand_item_indices.append(len(items) - 1)
@@ -741,7 +773,12 @@ def _pct_str(val: float | None) -> str:
     return '-' if val is None else f'{100.0 * val:.1f}%'
 
 
-def _describe_drop_reason(case_entry: dict[str, Any], allow_b: bool) -> tuple[str, list[str]]:
+def _describe_drop_reason(
+    case_entry: dict[str, Any],
+    allow_b: bool,
+    adjudicated_by_cand: dict[tuple[str, str, int], dict[str, Any]],
+) -> tuple[str, list[str]]:
+    cid = case_entry['case_id']
     candidates = case_entry.get('candidates') or []
     rejected = case_entry.get('rejected') or []
     if not candidates and not rejected:
@@ -751,7 +788,12 @@ def _describe_drop_reason(case_entry: dict[str, Any], allow_b: bool) -> tuple[st
         return 'no_passing_code_candidate', reasons
     if allow_b:
         return 'no_tier_a_or_b', []
-    return 'no_tier_a', []
+    any_judged = any((cid, c['model'], int(c['run'])) in adjudicated_by_cand for c in candidates)
+    a_code_cands = [c for c in candidates if c.get('code_tier') == 'A_code']
+    unjudged_a = any((cid, c['model'], int(c['run'])) not in adjudicated_by_cand for c in a_code_cands)
+    if not any_judged or unjudged_a:
+        return 'not_judged_yet', []
+    return 'no_tier_a_judged', []
 
 
 def select_candidates(
@@ -827,12 +869,13 @@ def select_candidates(
                 'run_dir': scores_data['run_dirs'][model],
                 'repo_sha': (scores_data.get('repo_sha') or {}).get(model),
                 'turns_count': int(case_entry.get('turns_count') or chosen.get('turns_count') or 1),
+                'rail_turns': list(chosen.get('rail_turns') or []),
                 'tool_calls': chosen['tool_calls'],
                 'completion_tokens': chosen['completion_tokens'],
                 'answer_chars': chosen['answer_chars'],
             })
         else:
-            reason, detail = _describe_drop_reason(case_entry, allow_b)
+            reason, detail = _describe_drop_reason(case_entry, allow_b, adjudicated_by_cand)
             dropped.append({
                 'case_id': cid,
                 'template': case_entry.get('template', ''),

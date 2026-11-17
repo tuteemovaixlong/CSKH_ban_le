@@ -96,6 +96,57 @@ def _load_trace_calls(run_dir: Path) -> dict[tuple[Any, Any, Any], list[dict[str
     return calls
 
 
+def _load_merged_turns(run_dir: Path) -> dict[tuple[str, int], list[dict[str, Any]]]:
+    merged_path = run_dir / 'merged.json'
+    if not merged_path.is_file():
+        return {}
+    merged = json.loads(merged_path.read_text(encoding='utf-8'))
+    out: dict[tuple[str, int], list[dict[str, Any]]] = {}
+    for rec in merged.get('scenarios') or []:
+        cid = rec.get('id')
+        run_no = rec.get('run')
+        if isinstance(cid, str) and isinstance(run_no, int):
+            out[(cid, run_no)] = list(rec.get('turns') or [])
+    return out
+
+
+def _is_merged_rail_turn(
+    merged_turns: dict[tuple[str, int], list[dict[str, Any]]],
+    case_id: str,
+    run_no: int,
+    turn_no: int,
+) -> bool:
+    turns = merged_turns.get((case_id, run_no))
+    if not turns or turn_no > len(turns):
+        return False
+    turn = turns[turn_no - 1]
+    if turn.get('error'):
+        return False
+    if int(turn.get('model_calls') or 0) != 0:
+        return False
+    return bool(str(turn.get('answer') or turn.get('draft_reply') or '').strip())
+
+
+def _sample_calls_tool(sample: dict[str, Any], tool_name: str) -> bool:
+    for msg in sample.get('messages') or []:
+        if msg.get('role') != 'assistant':
+            continue
+        for tc in msg.get('tool_calls') or []:
+            fn = tc.get('function') if isinstance(tc, dict) else None
+            if isinstance(fn, dict) and fn.get('name') == tool_name:
+                return True
+    return False
+
+
+def _count_model_calls_in_turn(sample: dict[str, Any]) -> int:
+    msgs = sample.get('messages') or []
+    last_user_idx = -1
+    for idx, msg in enumerate(msgs):
+        if msg.get('role') == 'user':
+            last_user_idx = idx
+    return sum(1 for msg in msgs[last_user_idx + 1:] if msg.get('role') == 'assistant')
+
+
 def _append_user_text(texts: list[str], raw: str) -> None:
     if not raw.strip():
         return
@@ -208,6 +259,7 @@ def build_sft_dataset(
     eval_v1, eval_v2 = load_eval_utterance_sets(eval_suites_dir)
 
     trace_cache: dict[Path, dict[tuple[Any, Any, Any], list[dict[str, Any]]]] = {}
+    merged_cache: dict[Path, dict[tuple[str, int], list[dict[str, Any]]]] = {}
     kept: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
 
@@ -237,9 +289,26 @@ def build_sft_dataset(
 
         n_turns = len(case.get('turns') or [])
         case_meta = case.get('meta') or {}
+        rail_turns = set(entry.get('rail_turns') or [])
 
         for turn_no in range(1, n_turns + 1):
             turn_calls = calls.get((cid, run_no, turn_no), [])
+            if turn_no in rail_turns:
+                rejected.append({
+                    'case_id': cid, 'model': model, 'run': run_no, 'turn': turn_no,
+                    'reason': 'rail_turn_no_model_call',
+                })
+                continue
+            if not turn_calls:
+                if rdir not in merged_cache:
+                    merged_cache[rdir] = _load_merged_turns(rdir)
+                if _is_merged_rail_turn(merged_cache[rdir], cid, run_no, turn_no):
+                    rejected.append({
+                        'case_id': cid, 'model': model, 'run': run_no, 'turn': turn_no,
+                        'reason': 'rail_turn_no_model_call',
+                    })
+                    continue
+
             stop_calls = [c for c in turn_calls if (c.get('response') or {}).get('finish_reason') == 'stop']
             if not stop_calls:
                 rejected.append({
@@ -269,6 +338,14 @@ def build_sft_dataset(
                 'content': '' if final_content is None else str(final_content),
                 'reasoning_content': '' if final_reasoning is None else str(final_reasoning),
             })
+
+            # P2: Reject DeepSeek samples that mention "deepseek" in any message
+            if model == 'deepseek' and 'deepseek' in json.dumps(norm_msgs, ensure_ascii=False).lower():
+                rejected.append({
+                    'case_id': cid, 'model': model, 'run': run_no, 'turn': turn_no,
+                    'reason': 'model_identity_leak',
+                })
+                continue
 
             tools = copy.deepcopy(req.get('tools') or [])
             sample_meta = {
@@ -350,6 +427,20 @@ def build_sft_dataset(
     for cid in {s['meta']['case_id'] for s in kept}:
         turns_per_case[str(len(cases_by_id[cid].get('turns') or []))] += 1
 
+    sources_list = sorted(set(src_counts) | {'qwen', 'deepseek'})
+    runtime_info_by_src = Counter(
+        s['meta']['source_model'] for s in kept if _sample_calls_tool(s, 'get_runtime_info')
+    )
+    no_tools_by_src = Counter(
+        s['meta']['source_model'] for s in kept if len(s.get('tools') or []) == 0
+    )
+    model_calls_dist = Counter(str(_count_model_calls_in_turn(s)) for s in kept)
+    empty_reasoning_by_src = Counter(
+        s['meta']['source_model']
+        for s in kept
+        if not str((s['messages'][-1] if s.get('messages') else {}).get('reasoning_content') or '').strip()
+    )
+
     reject_counts = Counter(r['reason'] for r in rejected)
 
     stats = {
@@ -375,6 +466,17 @@ def build_sft_dataset(
         'by_source': by_source,
         'by_turn_index': dict(sorted(turn_idx_counts.items(), key=lambda kv: int(kv[0]))),
         'by_case_turns': dict(sorted(turns_per_case.items(), key=lambda kv: int(kv[0]))),
+        'runtime_info_calls': {
+            'total': sum(runtime_info_by_src.values()),
+            'by_source': {m: runtime_info_by_src.get(m, 0) for m in sources_list},
+        },
+        'final_call_without_tools': {
+            'total': sum(no_tools_by_src.values()),
+            'by_source': {m: no_tools_by_src.get(m, 0) for m in sources_list},
+        },
+        'model_calls_in_turn': dict(sorted(model_calls_dist.items(), key=lambda kv: int(kv[0]))),
+        'empty_final_reasoning': sum(empty_reasoning_by_src.values()),
+        'empty_final_reasoning_by_source': {m: empty_reasoning_by_src.get(m, 0) for m in sources_list},
         'char_length': _length_stats(char_lengths),
         'estimated_tokens': _length_stats(est_tokens),
         'chars_per_token_estimate': CHARS_PER_TOKEN,
@@ -428,6 +530,17 @@ def _render_build_report(stats: dict[str, Any]) -> str:
         lines.append('| (trống) | 0 | 0 | 0 |')
 
     lines += [
+        '',
+        '## Chỉ số cấu trúc lượt & F52',
+        '',
+        f'- Số mẫu gọi `get_runtime_info`: **{stats["runtime_info_calls"]["total"]}** '
+        f'(theo nguồn: {stats["runtime_info_calls"]["by_source"]})',
+        f'- Số mẫu lần gọi `stop` cuối không có `tools` (`final_call_without_tools`): '
+        f'**{stats["final_call_without_tools"]["total"]}** '
+        f'(theo nguồn: {stats["final_call_without_tools"]["by_source"]})',
+        f'- Phân bố số lần gọi model trong lượt (`model_calls_in_turn`): {stats["model_calls_in_turn"]}',
+        f'- Số mẫu `reasoning_content` cuối rỗng (`empty_final_reasoning`): **{stats["empty_final_reasoning"]}** '
+        f'(theo nguồn: {stats["empty_final_reasoning_by_source"]})',
         '',
         '## Độ dài mẫu và ước lượng token (`chars / 3.2`)',
         '',
