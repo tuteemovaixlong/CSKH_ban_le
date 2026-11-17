@@ -24,6 +24,22 @@ from scripts.sft_templates import TEMPLATES, BaseTemplate, Brief, SftView
 
 DEFAULT_SEED = 20261202
 
+# Trần số lần gọi tool mỗi lượt = mức CHỐNG VÒNG LẶP, không phải đường đi tối thiểu (owner 17/11, theo hướng
+# "grade the outcome, not the path" của Anthropic "Demystifying evals for AI agents"). 250 ca đo cho dư 2–6 tool;
+# khung SFT từng đặt dư 0 nên pilot DeepSeek trượt 20/27 lý do chỉ vì tra thêm 1–2 lần. Dạy dùng tool tiết kiệm
+# do phần B lo (sft_select ưu tiên lượt ít tool/token; cờ duplicate_tool), không do bộ chấm.
+TOOL_CAP_SLACK = 3
+
+
+def relax_tool_caps(case: dict[str, Any]) -> None:
+    """max_tool_calls >= số tool kỳ vọng (tools_called + 1 nếu có tools_any) + TOOL_CAP_SLACK; trần khung lớn hơn thì giữ."""
+    for turn in case.get('turns') or []:
+        expect = turn.get('expect') or {}
+        if 'max_tool_calls' not in expect:
+            continue
+        needed = len(expect.get('tools_called') or []) + (1 if expect.get('tools_any') else 0)
+        expect['max_tool_calls'] = max(int(expect['max_tool_calls']), needed + TOOL_CAP_SLACK)
+
 
 def generate_cases(
     out_dir: Path | str,
@@ -69,6 +85,9 @@ def generate_cases(
             case, briefs = tmpl.build(slot, rng, case_idx, style, view=view)
             all_cases.append(case)
             all_briefs.extend(b.to_dict() for b in briefs)
+
+    for c in all_cases:
+        relax_tool_caps(c)
 
     # Assert each template uses any single order at most 3 times
     import re

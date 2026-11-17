@@ -29,7 +29,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 
 from scripts.sft_dataset import sft_v1_demo_ids, validate_train_case, validate_train_set
-from scripts.sft_cases import generate_cases, check_cases
+from scripts.sft_cases import TOOL_CAP_SLACK, generate_cases, check_cases
 from scripts.sft_templates import TEMPLATES, SftView
 from scripts.sft_utterances import (
     ChatClient,
@@ -270,7 +270,9 @@ class TestW670SftFixtureCases(unittest.TestCase):
         """W6.7 đợt đủ (Colab 17/11, manifest trên Drive w67_utterances/33de659/full): bộ ca và phiếu
         phải tái lập đúng từng byte từ repo. Đổi khung làm đổi bộ dữ liệu → cập nhật SHA ở đây có chủ đích."""
         archived = {
-            'cases_sft_v1.jsonl': 'c2ebefbb95208ecd636a59e05b428aa851860d5ffc98c374d6560927e0c9bbb7',
+            # v2 (17/11 khuya): trần tool nới thành mức chống vòng lặp (relax_tool_caps); v1 là c2ebefbb…
+            'cases_sft_v1.jsonl': 'e5bbe61c56fa0665ebd4c5f21722b6cbb7433ede4d40360e8d0397c9fae01138',
+            # phiếu không đổi → 1.406 câu Glimmer đã viết vẫn dùng nguyên
             'briefs_sft_v1.jsonl': '5dcb600aea03c4271d5f2d0d48caf66014348494eafe1b313d920520e2133846',
         }
         with tempfile.TemporaryDirectory(prefix='test-sft-archive-') as td:
@@ -280,6 +282,12 @@ class TestW670SftFixtureCases(unittest.TestCase):
                 data = (Path(td) / name).read_bytes()
                 self.assertNotIn(b'\r\n', data, f'{name} must be written with LF on every OS')
                 self.assertEqual(hashlib.sha256(data).hexdigest(), sha, f'{name} differs from the archived W6.7 dataset')
+            # Trần tool = mức chống vòng lặp: dư ít nhất TOOL_CAP_SLACK so với số tool kỳ vọng, như bộ đo (dư 2–6)
+            for c in cases:
+                for t in c['turns']:
+                    e = t['expect']
+                    needed = len(e.get('tools_called') or []) + (1 if e.get('tools_any') else 0)
+                    self.assertGreaterEqual(e['max_tool_calls'], needed + TOOL_CAP_SLACK, c['id'])
             fixed = next(b for b in briefs if b['brief_id'] == 'brf_t02_099_t02_tim_san_pham_theo_mo_ta_t1')
             self.assertEqual(fixed['must_include'], ['áo polo'])
             self.assertNotIn('Áo polo', fixed['must_not_include'])
