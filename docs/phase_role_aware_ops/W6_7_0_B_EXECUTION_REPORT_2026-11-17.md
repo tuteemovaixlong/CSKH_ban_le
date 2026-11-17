@@ -55,6 +55,17 @@
 | `python scripts/check_docs_contract.py` | **PASS** | Dataset integrity, stale Git HEAD, link/markdown rules, AST tool contract đều PASS |
 | `python -m unittest discover -s tests` | **1.229 pass / 90 skip / 2 fail / 4 error** (trên 1.325 test, 701,7s) | 5 lỗi W4 hỏng sẵn trên môi trường Windows thiếu `pypdfium2`/ClamAV và khác biệt đếm attachment V8 (`test_r1_w4_agent_scenarios` 2 error, `test_r1_w4_media_pipeline` 1 error, `test_r1_w4_customer_ref_and_v8` 2 fail) + 1 lỗi socket tạm thời `WinError 10053` ở `test_remote.py` (chạy lại riêng `python -m unittest -v tests/test_remote.py tests/test_w670_sft_select_build.py` → **PASS 17/17**) |
 
+### 3.1. Kết quả kiểm tra lại sau khi merge `origin/main` (`8fe6a63`, PR #123)
+
+- Đã merge `origin/main` (`8fe6a63`, bổ sung `meta.utterance_writers` và tùy chọn writer cho Muse Glimmer) vào `phase-r1-w6-7-0-b` bằng merge commit thường (`3aa7c33`) và dựng lại `notebooks/colab_agent.ipynb` bằng `python scripts/build_agent_notebook.py`.
+- Bổ sung `"utterance_writers": ["muse_glimmer"]` vào `meta` của ca giả trong `tests/test_w670_sft_select_build.py` để xác nhận `sft_select` + `sft_build` tương thích hoàn toàn với định dạng ca sau PR #123.
+
+| Lệnh kiểm tra sau merge `8fe6a63` | Kết quả | Ghi chú |
+|---|---|---|
+| `python -m unittest -v tests.test_w670_sft_fixture_cases tests.test_w670_sft_select_build` | **OK (16 pass / 1 skip / 0 fail, 17 tests, 70,29s)** | 1 skip là `test_p3_real_pdf_case_execution` do thiếu `pypdfium2` trên Windows; toàn bộ 5/5 test phần B và test Muse Glimmer phần A đều PASS |
+| `python scripts/check_docs_contract.py` | **PASS** | 4/4 kiểm tra hợp lệ |
+| `python scripts/build_agent_notebook.py --check` | **`AGENT_NOTEBOOK_SOURCE_SYNC_OK`** | Notebook Colab đồng bộ sau cập nhật test |
+
 ---
 
 ## 4. Kết Quả Chạy Mẫu Trên Dữ Liệu Giả Của Test

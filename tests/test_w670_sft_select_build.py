@@ -124,7 +124,14 @@ def _build_synthetic_workspace(root: Path) -> dict:
         'title': 'Tra cứu đơn hàng đã giao',
         'fixture': 'sft_v1',
         'customer': 'SIM-C-5001',
-        'meta': {'suite': 'T01', 'split': 'train', 'style': 'chuan', 'origin': 'sinh_sft', 'template': 't01_tra_don_delivered'},
+        'meta': {
+            'suite': 'T01',
+            'split': 'train',
+            'style': 'chuan',
+            'origin': 'sinh_sft',
+            'template': 't01_tra_don_delivered',
+            'utterance_writers': ['muse_glimmer'],
+        },
         'turns': [
             {
                 'user': 'Kiểm tra giúp mình đơn hàng SIM-O-50006 đã giao chưa nhé',
