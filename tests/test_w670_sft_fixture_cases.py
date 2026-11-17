@@ -322,6 +322,42 @@ class TestW670SftFixtureCases(unittest.TestCase):
                 elif tmpl in ('t12_xuat_vat_cong_ty', 't12_xin_zalo', 't12_nghi_tet_khong_du_lieu'):
                     self.assertEqual(o.get('status'), 'delivered', f"{tmpl} order {oid} not delivered")
 
+    def test_gap_fill_templates_tracking_and_product_search(self) -> None:
+        """Gap fill after PR #120: more track_shipment / search_products cases, suite totals 90 / 100, facts from tools."""
+        from scripts.sft_templates import TEMPLATES
+        from scripts.sft_templates.t13_gap_fill import _tool, _track
+
+        view = SftView()
+        with tempfile.TemporaryDirectory(prefix='test-gap-fill-') as td:
+            cases, _, _ = generate_cases(td, pilot=None, seed=20261202)
+        suites = Counter(c['meta']['suite'] for c in cases)
+        self.assertEqual(len(cases), 1200)
+        self.assertEqual((suites['T01'], suites['T02']), (90, 100))
+        tools = Counter(n for c in cases for t in c['turns'] for n in t['expect'].get('tools_called', []))
+        self.assertGreaterEqual(tools['track_shipment'], 34)
+        self.assertGreaterEqual(tools['search_products'], 15)
+
+        for c in cases:
+            tmpl = c['meta']['template']
+            if tmpl == 't01_theo_doi_hanh_trinh_dang_giao':
+                shipment = _track(view, view.orders[c['meta']['slot_key']])['shipment']
+                self.assertEqual(shipment['status'], 'in_transit')
+                areas = c['turns'][0]['expect']['answer_any'][0]
+                self.assertTrue(all(a in shipment['current_area'] for a in areas), (tmpl, areas))
+            elif tmpl == 't01_giao_lai_nhieu_lan':
+                shipment = _track(view, view.orders[c['meta']['slot_key']])['shipment']
+                self.assertEqual(shipment['status'], 'delivered')
+                self.assertGreaterEqual(int(shipment['delivery_attempts']), 1)
+            elif tmpl == 't02_tim_san_pham_theo_mo_ta':
+                names = c['turns'][0]['expect']['answer_any'][0]
+                self.assertTrue(names and all(n in {p['name'] for p in view.catalog.products.values()} for n in names))
+
+        # A "not sold" query must not be one a better search would answer with a real product.
+        tool = _tool(view, next(iter(view.customers.values()))['internal_customer_id'])
+        for slot in TEMPLATES['t02_san_pham_khong_co'].select(view):
+            first_word_pair = ' '.join(slot['query'].split()[:2])
+            self.assertEqual(tool('search_products', {'query': first_word_pair}).get('products') or [], [], slot['query'])
+
     def test_utterance_validation_n1_rules(self) -> None:
         """N1: Utterance validation rules: accents stripped on both sides for khong_dau, injection handling."""
         brief_kd = {

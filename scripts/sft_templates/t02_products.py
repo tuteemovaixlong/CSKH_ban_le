@@ -622,13 +622,12 @@ class T02SanPhamKhongCo(BaseTemplate):
         super().__init__('t02_san_pham_khong_co', 'T02', 10, description='Khách tìm kiếm sản phẩm hoàn toàn không tồn tại trong catalog')
 
     def select(self, view: Any) -> list[Any]:
+        # Không dùng truy vấn gần với sản phẩm có thật (máy hút bụi P-506, nồi chiên P-507): trợ lý tốt tìm lại bằng từ ngắn hơn sẽ thấy hàng.
         return [
             {'query': 'giày patin trẻ em 4 bánh', 'non_pid': 'P-999'},
             {'query': 'bàn chải điện siêu âm', 'non_pid': 'P-998'},
-            {'query': 'máy hút bụi mini cầm tay', 'non_pid': 'P-997'},
             {'query': 'áo phao bơi cứu sinh', 'non_pid': 'P-996'},
             {'query': 'kính bơi chống sương mù', 'non_pid': 'P-995'},
-            {'query': 'nồi chiên không dầu điện tử', 'non_pid': 'P-994'},
             {'query': 'tai nghe chống ồn bluetooth', 'non_pid': 'P-993'},
             {'query': 'đồng hồ thông minh thể thao', 'non_pid': 'P-992'},
             {'query': 'máy cạo râu tự động', 'non_pid': 'P-991'},
