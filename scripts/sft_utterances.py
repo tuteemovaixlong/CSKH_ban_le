@@ -108,11 +108,19 @@ Quy tắc bắt buộc:
 """
 
 
+# Giờ cao điểm DeepSeek (giá ×2), theo https://api-docs.deepseek.com/quick_start/pricing (kiểm 2026-11-17):
+# "01:00 - 04:00 and 06:00 - 10:00 UTC, Monday through Friday, excluding Chinese public holidays"
+# = 08:00–11:00 và 13:00–17:00 giờ VN (UTC+7). Ngày lễ Trung Quốc không tính ở đây (chặn thừa, an toàn).
+PEAK_WINDOWS_VN = ((8, 11), (13, 17))
+PEAK_WINDOWS_TEXT = "08:00–11:00 và 13:00–17:00 thứ Hai–thứ Sáu, giờ VN"
+
+
 def is_peak_hour(now_dt: datetime | None = None) -> bool:
     tz_vn = timezone(timedelta(hours=7))
     dt = now_dt or datetime.now(tz_vn)
-    # Vietnam time: Monday - Friday (0..4), 13:00 to 17:00 (hours 13, 14, 15, 16)
-    return dt.weekday() < 5 and 13 <= dt.hour < 17
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(tz_vn)
+    return dt.weekday() < 5 and any(start <= dt.hour < end for start, end in PEAK_WINDOWS_VN)
 
 
 def is_deepseek_endpoint(endpoint: str) -> bool:
@@ -409,7 +417,7 @@ def fill_utterances(
     current_dt = now_fn() if now_fn else None
     if not allow_peak and is_deepseek_endpoint(getattr(llm, "endpoint", "")) and is_peak_hour(current_dt):
         raise RuntimeError(
-            "Đang trong giờ cao điểm của DeepSeek (13:00–17:00 ngày thường, giờ VN). "
+            f"Đang trong giờ cao điểm của DeepSeek ({PEAK_WINDOWS_TEXT}). "
             "Dừng để tránh lỗi nghẽn và chi phí cao, trừ khi truyền flag --allow-peak."
         )
 
