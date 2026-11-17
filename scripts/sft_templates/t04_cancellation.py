@@ -228,12 +228,18 @@ class T04BoMotMon(BaseTemplate):
         ext_oid = slot['external_order_id']
         cust_id = slot['external_customer_id']
         status = slot['status']
+        intent = f"yeu_cau_huy_rieng_mot_mon_{case_index}"
+        note_variants = [
+            f"Khách hỏi đơn {ext_oid} muốn hủy bớt 1 món trong đơn được không",
+            f"Khách liên hệ muốn bỏ bớt một sản phẩm khỏi đơn {ext_oid} đã đặt",
+        ]
+        note = note_variants[case_index % len(note_variants)]
 
         brief = Brief(
             brief_id=f"brf_{cid}_t1", case_id=cid, turn=1, suite=self.suite, template=self.template_id, style=style,
-            persona="khách_hàng_muon_bo_mon", intent="yeu_cau_huy_rieng_mot_mon",
+            persona="khách_hàng_muon_bo_mon", intent=intent,
             must_include=[ext_oid], must_not_include=["không thể hủy riêng từng món"], length="vừa",
-            notes=f"Khách hỏi đơn {ext_oid} muốn hủy bớt 1 món trong đơn được không",
+            notes=note,
         )
 
         if status == 'shipping':
@@ -245,7 +251,7 @@ class T04BoMotMon(BaseTemplate):
                 'answer_any': [['hủy riêng', 'từng món', 'đang vận chuyển', 'đang giao', 'từ chối nhận']],
                 'answer_not': ['đã hủy thành công', 'chưa có thông tin'],
             }
-            fake_reply = f"Dạ hệ thống hiện không hỗ trợ hủy riêng từng sản phẩm trong cùng một đơn hàng ạ. Đơn hàng {ext_oid} hiện đang được vận chuyển nên không thể tự hủy trên hệ thống được nữa. Khi shipper giao tới, anh/chị có thể từ chối nhận toàn bộ kiện hàng hoặc nhận rồi gửi yêu cầu trả hàng cho món không muốn lấy nhé ạ."
+            fake_reply = f"Dạ hệ thống hiện không hỗ trợ hủy riêng từng sản phẩm trong cùng một đơn hàng ạ. Đơn hàng {ext_oid} hiện đang được vận chuyển nên không thể tự hủy trên hệ thống được nữa. Khi shipper giao tới, anh/chị có thể từ chối nhận toàn bộ kiện hàng hoặc nhận hàng rồi gửi yêu cầu trả hàng trong vòng 7 ngày theo quy định nhé ạ."
         else:
             title = f'Bỏ một món trong đơn pending {ext_oid}'
             expect = {
@@ -259,7 +265,11 @@ class T04BoMotMon(BaseTemplate):
 
         case = {
             'id': cid, 'category': 't04', 'title': title, 'fixture': 'sft_v1', 'customer': cust_id,
-            'meta': {'suite': 'T04', 'split': 'train', 'style': style, 'origin': 'sinh_sft', 'template': self.template_id, 'source_note': f'T04 cancel single item {ext_oid}', 'vn_context': []},
+            'meta': {
+                'suite': 'T04', 'split': 'train', 'style': style, 'origin': 'sinh_sft',
+                'template': self.template_id, 'slot_key': ext_oid, 'intent': intent,
+                'source_note': f'T04 cancel single item {ext_oid}', 'vn_context': []
+            },
             'turns': [
                 {
                     'user': f"<chờ lời khách: muốn bỏ 1 món trong đơn {ext_oid}>",

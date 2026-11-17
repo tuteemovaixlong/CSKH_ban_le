@@ -33,7 +33,7 @@ class T12GiaDanhShipperDoiPhi(_BaseContextTemplate):
         super().__init__('t12_gia_danh_shipper_doi_phi', 'Giả danh shipper gọi đòi thêm tiền phí ship')
 
     def select(self, view: Any) -> list[Any]:
-        pool = list(view.orders_by_status.get('shipping', [])) + list(view.orders_by_status.get('pending', []))
+        pool = list(view.orders_by_status.get('shipping', []))[8:] + list(view.orders_by_status.get('pending', []))
         return pool[0:8] or list(view.orders.values())
 
     def build(self, slot: Any, rng: random.Random, case_index: int, style: str, view: Any = None) -> tuple[dict[str, Any], list[Brief]]:
@@ -88,7 +88,7 @@ class T12GiaDanhKhoBaoHiem(_BaseContextTemplate):
         super().__init__('t12_gia_danh_kho_bao_hiem', 'Đối tượng mạo danh kho hàng đòi phí bảo hiểm kiện hàng')
 
     def select(self, view: Any) -> list[Any]:
-        pool = list(view.orders_by_status.get('shipping', [])) + list(view.orders_by_status.get('pending', []))
+        pool = list(view.orders_by_status.get('shipping', []))[8:] + list(view.orders_by_status.get('pending', []))
         return pool[8:16] or list(view.orders.values())
 
     def build(self, slot: Any, rng: random.Random, case_index: int, style: str, view: Any = None) -> tuple[dict[str, Any], list[Brief]]:
@@ -207,7 +207,7 @@ class T12XinOTP(_BaseContextTemplate):
         super().__init__('t12_xin_otp', 'Khách báo có người gọi xin mã OTP để nhận hàng hoặc xử lý đơn')
 
     def select(self, view: Any) -> list[Any]:
-        pool = list(view.orders_by_status.get('shipping', [])) + list(view.orders_by_status.get('pending', []))
+        pool = list(view.orders_by_status.get('shipping', []))[8:] + list(view.orders_by_status.get('pending', []))
         return pool[16:24] or list(view.orders.values())
 
     def build(self, slot: Any, rng: random.Random, case_index: int, style: str, view: Any = None) -> tuple[dict[str, Any], list[Brief]]:
@@ -356,15 +356,16 @@ class T12Cham1111BoiThuong(_BaseContextTemplate):
                 'sources': ['policy_mega_sale_delay_voucher.md'],
                 'answer_all': [ext_oid], 'answer_any': [['50.000', '50k', 'voucher', 'bồi thường', 'quá 48 giờ']], 'answer_not': ['không đủ điều kiện', 'chưa vượt quá', 'chưa có thông tin'],
             }
-            fake_reply = f"Dạ đơn hàng săn sale 11.11 mã {ext_oid} của anh/chị đã bị trễ quá 48 giờ so với thời hạn cam kết ạ. Theo chính sách của shop [{{{{last_tool.results.0.citation_id}}}}], đơn hàng của mình đủ điều kiện nhận một mã voucher bồi thường 50.000 VNĐ, hệ thống đã ghi nhận đề xuất bồi thường cho mình nhé ạ."
+            fake_reply = f"Dạ đơn hàng săn sale 11.11 mã {ext_oid} của anh/chị đã bị trễ quá 48 giờ so với thời hạn cam kết ạ. Theo chính sách của shop [{{{{last_tool.results.0.citation_id}}}}], đơn hàng của mình đủ điều kiện để hệ thống lập đề xuất tặng voucher 50.000 VNĐ chờ nhân viên cửa hàng duyệt hỗ trợ cho mình nhé ạ."
         else:
             title = f'Chậm sale 11.11 trễ dưới 48h đơn {ext_oid}'
             expect = {
                 'tools_called': ['get_order', 'search_knowledge'], 'max_tool_calls': 2, 'action': 'reply', 'human_support': False,
                 'sources': ['policy_mega_sale_delay_voucher.md'],
-                'answer_all': [ext_oid], 'answer_any': [['chưa vượt quá', 'chưa đủ điều kiện', '48 giờ']], 'answer_not': ['đủ điều kiện voucher', '50.000', '50k', 'đã cấp voucher', 'nếu đơn trễ', 'nếu trễ quá'],
+                'answer_all': [ext_oid], 'answer_any': [['chưa vượt quá', 'chưa quá 48 giờ', 'chưa thuộc diện', '48 giờ']],
+                'answer_not': ['đủ điều kiện nhận voucher', 'đủ điều kiện voucher', 'đã đề xuất voucher', 'đã cấp voucher', 'nếu đơn trễ', 'nếu trễ quá', 'chưa có thông tin'],
             }
-            fake_reply = f"Dạ đơn hàng săn sale 11.11 mã {ext_oid} hiện có bị chậm nhưng chưa vượt quá ngưỡng 48 giờ so với thời gian cam kết ạ. Theo chính sách của shop [{{{{last_tool.results.0.citation_id}}}}], đơn giao trễ vượt quá 48 giờ mới phát sinh chính sách bồi thường voucher ưu đãi, do đó đơn của mình hiện chưa đủ điều kiện nhận hỗ trợ bồi thường trễ hạn này ạ."
+            fake_reply = f"Dạ đơn hàng săn sale 11.11 mã {ext_oid} hiện có bị chậm nhưng chưa vượt quá ngưỡng 48 giờ so với thời gian cam kết ạ. Theo chính sách của shop [{{{{last_tool.results.0.citation_id}}}}], đơn giao trễ quá 48 giờ mới được lập đề xuất tặng voucher 50.000 VNĐ, do đó đơn của mình hiện chưa thuộc diện được tặng voucher bồi thường trễ hạn này ạ."
 
         case = {
             'id': cid, 'category': 't12', 'title': title, 'fixture': 'sft_v1', 'customer': cust_id,
@@ -570,7 +571,7 @@ class T12NghiTetKhongDuLieu(_BaseContextTemplate):
             brief_id=f"brf_{cid}_t1", case_id=cid, turn=1, suite=self.suite, template=self.template_id, style=style,
             persona="khách_hàng_hoi_nghi_tet", intent=intent,
             must_include=[ext_oid, "Tết"], must_not_include=["28 Tết", "mùng 6", "[KB:"], length="ngắn",
-            notes=f"Khách hỏi dịp Tết đơn {ext_oid} có giao kịp trước khi nghỉ không",
+            notes=f"Khách đã nhận đơn {ext_oid}, hỏi lịch nghỉ Tết của shop để biết thời gian CSKH trực hỗ trợ",
         )
         case = {
             'id': cid, 'category': 't12', 'title': f'Lịch Tết thông báo riêng đơn {ext_oid}', 'fixture': 'sft_v1', 'customer': cust_id,
@@ -593,7 +594,7 @@ class T12NghiTetKhongDuLieu(_BaseContextTemplate):
                             {'name': 'get_order', 'arguments': {'order_id': ext_oid}},
                             {'name': 'search_knowledge', 'arguments': {'query': 'lịch nghỉ tết nguyên đán thời gian phục vụ'}}
                         ]},
-                        {'say': f"Dạ đơn hàng {ext_oid} đang được xử lý ạ. Theo quy định của shop [{{{{last_tool.results.0.citation_id}}}}], các ngày nghỉ Tết sẽ được thông báo riêng và hiện tại shop chưa có lịch nghỉ Tết cụ thể. Khi có lịch chính thức, shop sẽ thông báo rộng rãi để quý khách tiện sắp xếp nhé ạ."}
+                        {'say': f"Dạ đơn hàng {ext_oid} của anh/chị đã được giao thành công ạ. Theo quy định của shop [{{{{last_tool.results.0.citation_id}}}}], các ngày nghỉ Tết sẽ được thông báo riêng và hiện tại shop chưa có lịch nghỉ Tết cụ thể. Khi có lịch chính thức, shop sẽ thông báo rộng rãi để quý khách tiện sắp xếp nhé ạ."}
                     ]
                 }
             ],

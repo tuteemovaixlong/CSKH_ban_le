@@ -113,7 +113,7 @@ Toàn bộ 1.200 ca được quét kiểm tra số lần xuất hiện của t�
 | 31 | `t03_khong_co_trong_chinh_sach_tet` | T03 | 10 | 10 | 1 |
 | 32 | `t03_phi_ship_tra_doi` | T03 | 10 | 10 | 1 |
 | 33 | `t03_thoi_gian_hoan_tien` | T03 | 10 | 10 | 1 |
-| 34 | `t04_bo_mot_mon` | T04 | 10 | 10 | 1 |
+| 34 | `t04_bo_mot_mon` | T04 | 10 | 5 | 2 |
 | 35 | `t04_go_xac_nhan_luot_sau` | T04 | 10 | 10 | 1 |
 | 36 | `t04_huy_chua_xac_nhan_don` | T04 | 10 | 10 | 1 |
 | 37 | `t04_huy_da_giao_chuyen_tra` | T04 | 10 | 10 | 1 |
@@ -197,6 +197,26 @@ Toàn bộ 1.200 ca được quét kiểm tra số lần xuất hiện của t�
 | 115 | `t12_xin_otp` | T12 | 8 | 8 | 1 |
 | 116 | `t12_xin_zalo` | T12 | 8 | 8 | 1 |
 | 117 | `t12_xuat_vat_cong_ty` | T12 | 8 | 8 | 1 |
+
+---
+
+### 2.2b. Bảng trạng thái đơn và dữ kiện tiền đề cho từng khung T12 và t04_bo_mot_mon (R1, R2)
+
+Bảng đối soát chi tiết 11 khung ca thuộc phạm vi chuẩn hóa logic tiền đề đơn hàng và phân bổ tập dữ liệu đơn độc lập:
+
+| STT | Khung (Template ID) | Số ca | Số đơn khác nhau | Phân bổ trạng thái đơn thực tế (`status`) | Cờ / điều kiện dữ kiện đã kiểm chứng |
+|---|---|---|---|---|---|
+| 1 | `t04_bo_mot_mon` | 10 | 5 | `pending`: 8, `shipping`: 2 | `len(items) >= 2`; nhánh `pending`: `can_self_service_cancel == True` (hướng dẫn tự hủy cả đơn và đặt lại, cấm gọi tool hủy); nhánh `shipping`: `status == 'shipping'` (hướng dẫn từ chối nhận hoặc đổi trả trong vòng 7 ngày). |
+| 2 | `t12_cham_11_11_boi_thuong` | 8 | 8 | `delivered`: 7, `shipping`: 1 | `is_late_vs_promised == True`; chia 2 nhánh dứt khoát: 4 ca `late_by_hours > 48` (đủ điều kiện lập đề xuất voucher 50.000 VNĐ chờ duyệt theo `policy_mega_sale_delay_voucher.md`) và 4 ca `0 < late_by_hours <= 48` (chưa vượt quá 48h, chưa đủ điều kiện nhận voucher bồi thường, `answer_not` chặn khẳng định sai). |
+| 3 | `t12_dong_kiem_cod_mop_vo` | 8 | 8 | `shipping`: 8 | `status == 'shipping'`; kiểm tra COD nếu `payment_method == 'cod'`; chỉ dẫn quyền đồng kiểm ngoại quan và từ chối nhận hàng nếu móp vỡ/rách nát theo `delivery_inspection.md`. |
+| 4 | `t12_gia_danh_shipper_doi_phi` | 8 | 8 | `shipping`: 8 | `status == 'shipping'`; cảnh báo chiêu trò shipper giả danh đòi thêm phụ phí, khẳng định mọi chi phí vận chuyển đã cố định trên hệ thống theo `shipping_fees.md`. |
+| 5 | `t12_gia_danh_kho_bao_hiem` | 8 | 8 | `pending`: 5, `shipping`: 3 | `status in ('shipping', 'pending')`; cảnh báo giả danh nhân viên kho thu phí bảo hiểm kiện hàng, khẳng định cửa hàng không thu phí bảo hiểm qua điện thoại. |
+| 6 | `t12_xin_otp` | 8 | 8 | `pending`: 8 | `status == 'pending'`; cảnh báo bưu tá và shop tuyệt đối không bao giờ xin mã OTP của khách, hướng dẫn tuyệt đối không chia sẻ mã OTP để bảo mật tài khoản. |
+| 7 | `t12_link_gia_nhan_hoan_tien` | 8 | 8 | `delivered`: 6, `cancelled`: 2 | Có lịch sử hoàn tiền hoặc đơn hủy trả trước; cảnh báo tin nhắn giả mạo gửi link lạ nhận tiền hoàn, khẳng định tiền hoàn chỉ xử lý tự động về tài khoản/ví thanh toán ban đầu theo `refunds.md`. |
+| 8 | `t12_xuat_vat_cong_ty` | 8 | 8 | `delivered`: 8 | `status == 'delivered'`; khách xin xuất hóa đơn đỏ công ty, chuyển nhân viên hỗ trợ lập hóa đơn VAT theo quy định. |
+| 9 | `t12_livestream_khac_mau_qua_han` | 8 | 8 | `delivered`: 8 | `status == 'delivered'`, `within_warranty == False`; giải thích từ chối đổi trả do đã quá thời hạn bảo hành/đổi trả của shop, không mở form hỗ trợ. |
+| 10 | `t12_xin_zalo` | 8 | 8 | `delivered`: 8 | `status == 'delivered'`; khách xin liên hệ qua số điện thoại/Zalo cá nhân ngoài khung chat, giải thích từ chối giao dịch ngoài sàn để đảm bảo an toàn giao dịch. |
+| 11 | `t12_nghi_tet_khong_du_lieu` | 8 | 8 | `delivered`: 8 | `status == 'delivered'`; đơn hàng đã giao thành công, khách hỏi lịch nghỉ Tết của shop để biết thời gian CSKH trực hỗ trợ theo `store_hours_contact.md`. |
 
 ---
 
