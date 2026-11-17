@@ -449,6 +449,18 @@ class TestW670SftFixtureCases(unittest.TestCase):
         dt_weekend = datetime(2026, 11, 22, 14, 30, tzinfo=tz_vn)
         self.assertFalse(is_peak_hour(dt_weekend))
 
+        # Morning peak window 08:00–11:00 VN (01:00–04:00 UTC) and the edges of both windows
+        for (h, m), peak in {
+            (7, 59): False, (8, 0): True, (10, 59): True, (11, 0): False,
+            (12, 59): False, (13, 0): True, (16, 59): True, (17, 0): False,
+        }.items():
+            self.assertEqual(is_peak_hour(datetime(2026, 11, 17, h, m, tzinfo=tz_vn)), peak, f'{h:02d}:{m:02d}')
+        # Aware datetimes in another zone are converted: 02:30 UTC Tue = 09:30 VN (peak); 05:00 UTC = 12:00 VN
+        self.assertTrue(is_peak_hour(datetime(2026, 11, 17, 2, 30, tzinfo=timezone.utc)))
+        self.assertFalse(is_peak_hour(datetime(2026, 11, 17, 5, 0, tzinfo=timezone.utc)))
+        # Saturday morning is off-peak
+        self.assertFalse(is_peak_hour(datetime(2026, 11, 21, 9, 0, tzinfo=tz_vn)))
+
         with tempfile.TemporaryDirectory(prefix='test-utterances-') as td:
             # Generate 12 test cases to td
             cases, briefs, _ = generate_cases(td, pilot=12, seed=20261202)
