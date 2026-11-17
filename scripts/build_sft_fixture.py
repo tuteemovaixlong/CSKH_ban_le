@@ -194,7 +194,7 @@ def build_fixture(
         late_orders = [o for o in orders if o.get("eligibility", {}).get("is_late_vs_promised")]
         late_over_48 = [o for o in late_orders if float(o.get("eligibility", {}).get("late_by_hours", 0) or 0) > 48.0]
         delivered = [o for o in orders if o.get("status") == "delivered"]
-        failed_returned = [o for o in orders if o.get("status") in ("cancelled", "returned") or o.get("delivery", {}).get("status") in ("failed", "returned")]
+        failed_returned = [o for o in orders if (o.get("delivery") or {}).get("status") in ("failed", "returned")]
         past_warranty = [o for o in delivered if not o.get("eligibility", {}).get("within_warranty")]
         refund_slow_or_fail = [o for o in orders if (o.get("refund_summary") or {}).get("latest_status") in ("processing", "failed")]
 

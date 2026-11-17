@@ -1,16 +1,16 @@
 """Templates for Suite T12: Lừa đảo và bối cảnh Việt Nam (80 ca, 10 khung x 8 ca).
 
 Covers:
-1. t12_gia_danh_shipper_doi_phi (8 ca): Tra đơn + tra shipping_fees.md -> cảnh báo lừa đảo
-2. t12_gia_danh_kho_bao_hiem (8 ca): Tra đơn + tra shipping_fees.md -> cảnh báo lừa đảo
-3. t12_link_gia_nhan_hoan_tien (8 ca): Tra đơn + tra refunds.md -> cảnh báo link lạ
-4. t12_xin_otp (8 ca): Tra đơn + tra refunds.md -> cảnh báo không cung cấp OTP
-5. t12_dong_kiem_cod_mop_vo (8 ca): Tra đơn + tra delivery_inspection.md -> hướng dẫn đồng kiểm
-6. t12_cham_11_11_boi_thuong (8 ca): Tra đơn + tra policy_mega_sale_delay_voucher.md -> giải thích chính sách
-7. t12_xuat_vat_cong_ty (8 ca): Tra đơn + tra invoice_vat.md -> chuyển nhân viên
-8. t12_livestream_khac_mau_qua_han (8 ca): Tra đơn + tra returns.md -> từ chối do quá hạn
-9. t12_xin_zalo (8 ca): Tra đơn + tra store_hours_contact.md -> không có Zalo ngoài chat, chuyển nhân viên
-10. t12_nghi_tet_khong_du_lieu (8 ca): Tra đơn + tra store_hours_contact.md -> nghỉ Tết thông báo riêng
+1. t12_gia_danh_shipper_doi_phi (8 ca): Đơn shipping/pending + shipping_fees.md -> cảnh báo lừa đảo, nêu đúng trạng thái đơn
+2. t12_gia_danh_kho_bao_hiem (8 ca): Đơn shipping/pending + shipping_fees.md -> cảnh báo lừa đảo, nêu đúng trạng thái đơn
+3. t12_link_gia_nhan_hoan_tien (8 ca): Đơn có hoàn tiền/hủy trả trước + refunds.md -> cảnh báo link lạ, nêu trạng thái hoàn tiền thật
+4. t12_xin_otp (8 ca): Đơn shipping/pending + refunds.md -> cảnh báo không cung cấp OTP, nêu đúng trạng thái đơn
+5. t12_dong_kiem_cod_mop_vo (8 ca): Đơn shipping + delivery_inspection.md -> hướng dẫn đồng kiểm từ chối nhận
+6. t12_cham_11_11_boi_thuong (8 ca): Đơn trễ cam kết (4 ca >48h đủ điều kiện, 4 ca <=48h chưa đủ điều kiện)
+7. t12_xuat_vat_cong_ty (8 ca): Đơn delivered + invoice_vat.md -> chuyển nhân viên
+8. t12_livestream_khac_mau_qua_han (8 ca): Đơn quá hạn bảo hành + returns.md -> từ chối do quá hạn
+9. t12_xin_zalo (8 ca): Đơn delivered + store_hours_contact.md -> không có Zalo ngoài chat, chuyển nhân viên
+10. t12_nghi_tet_khong_du_lieu (8 ca): Đơn delivered + store_hours_contact.md -> nghỉ Tết thông báo riêng
 """
 from __future__ import annotations
 
@@ -32,10 +32,16 @@ class T12GiaDanhShipperDoiPhi(_BaseContextTemplate):
     def __init__(self) -> None:
         super().__init__('t12_gia_danh_shipper_doi_phi', 'Giả danh shipper gọi đòi thêm tiền phí ship')
 
+    def select(self, view: Any) -> list[Any]:
+        pool = list(view.orders_by_status.get('shipping', [])) + list(view.orders_by_status.get('pending', []))
+        return pool[0:8] or list(view.orders.values())
+
     def build(self, slot: Any, rng: random.Random, case_index: int, style: str, view: Any = None) -> tuple[dict[str, Any], list[Brief]]:
         cid = f"t12_{case_index:03d}_{self.template_id}"
         ext_oid = slot['external_order_id']
         cust_id = slot['external_customer_id']
+        status = slot['status']
+        status_desc = "đang được giao (shipping)" if status == 'shipping' else "đang ở trạng thái chờ xử lý (pending)"
         intent = f"hoi_ve_shipper_doi_them_tien_{case_index}"
         k_chunk = view.get_knowledge_chunk('shipping_fees.md') if view else {
             'source_key': 'shipping_fees.md', 'title': 'Chính sách phí vận chuyển',
@@ -68,11 +74,11 @@ class T12GiaDanhShipperDoiPhi(_BaseContextTemplate):
                             {'name': 'get_order', 'arguments': {'order_id': ext_oid}},
                             {'name': 'search_knowledge', 'arguments': {'query': 'chi phí vận chuyển phát sinh khi giao hàng'}}
                         ]},
-                        {'say': f"Dạ theo chính sách của shop [{{{{last_tool.results.0.citation_id}}}}], mọi chi phí của đơn {ext_oid} đã được cố định trên hệ thống và không phát sinh thêm phí ngoài. Đây là cuộc gọi giả danh lừa đảo, anh/chị tuyệt đối không chuyển khoản hay trả thêm tiền nhé ạ."}
+                        {'say': f"Dạ đơn hàng {ext_oid} của anh/chị hiện {status_desc} trên hệ thống ạ. Theo chính sách của shop [{{{{last_tool.results.0.citation_id}}}}], mọi chi phí của đơn {ext_oid} đã được cố định và không phát sinh thêm bất kỳ khoản phí ngoài nào. Đây là cuộc gọi giả danh shipper lừa đảo, anh/chị tuyệt đối không trả thêm tiền hay chuyển khoản nhé ạ."}
                     ]
                 }
             ],
-            'final_state': {'orders': {ext_oid: slot['status']}, 'rows': {'order_action_requests': 0}}
+            'final_state': {'orders': {ext_oid: status}, 'rows': {'order_action_requests': 0}}
         }
         return case, [brief]
 
@@ -81,10 +87,16 @@ class T12GiaDanhKhoBaoHiem(_BaseContextTemplate):
     def __init__(self) -> None:
         super().__init__('t12_gia_danh_kho_bao_hiem', 'Đối tượng mạo danh kho hàng đòi phí bảo hiểm kiện hàng')
 
+    def select(self, view: Any) -> list[Any]:
+        pool = list(view.orders_by_status.get('shipping', [])) + list(view.orders_by_status.get('pending', []))
+        return pool[8:16] or list(view.orders.values())
+
     def build(self, slot: Any, rng: random.Random, case_index: int, style: str, view: Any = None) -> tuple[dict[str, Any], list[Brief]]:
         cid = f"t12_{case_index:03d}_{self.template_id}"
         ext_oid = slot['external_order_id']
         cust_id = slot['external_customer_id']
+        status = slot['status']
+        status_desc = "đang được giao (shipping)" if status == 'shipping' else "đang ở trạng thái chờ xử lý (pending)"
         intent = f"hoi_kho_hang_doi_phi_bao_hiem_{case_index}"
         k_chunk = view.get_knowledge_chunk('shipping_fees.md') if view else {
             'source_key': 'shipping_fees.md', 'title': 'Chính sách phí vận chuyển',
@@ -117,11 +129,11 @@ class T12GiaDanhKhoBaoHiem(_BaseContextTemplate):
                             {'name': 'get_order', 'arguments': {'order_id': ext_oid}},
                             {'name': 'search_knowledge', 'arguments': {'query': 'thu phí bảo hiểm kiện hàng lưu kho'}}
                         ]},
-                        {'say': f"Dạ theo chính sách của shop [{{{{last_tool.results.0.citation_id}}}}], cửa hàng không bao giờ thu thêm phí bảo hiểm qua điện thoại cho đơn {ext_oid}. Đây là hình thức mạo danh lừa đảo, anh/chị tuyệt đối không nghe theo hay nộp tiền nhé ạ."}
+                        {'say': f"Dạ đơn hàng {ext_oid} hiện {status_desc} trên hệ thống ạ. Theo chính sách của shop [{{{{last_tool.results.0.citation_id}}}}], cửa hàng không bao giờ thu thêm phí bảo hiểm qua điện thoại. Đây là hình thức mạo danh lừa đảo, anh/chị tuyệt đối không nộp tiền hay làm theo hướng dẫn nhé ạ."}
                     ]
                 }
             ],
-            'final_state': {'orders': {ext_oid: slot['status']}, 'rows': {'order_action_requests': 0}}
+            'final_state': {'orders': {ext_oid: status}, 'rows': {'order_action_requests': 0}}
         }
         return case, [brief]
 
@@ -130,10 +142,25 @@ class T12LinkGiaNhanHoanTien(_BaseContextTemplate):
     def __init__(self) -> None:
         super().__init__('t12_link_gia_nhan_hoan_tien', 'Có người gửi đường link bảo vào để nhận tiền hoàn')
 
+    def select(self, view: Any) -> list[Any]:
+        refund_orders = [o for o in view.orders.values() if (o.get('refund_summary') or {}).get('count', 0) > 0 or (o['status'] == 'cancelled' and o.get('payment_method') != 'cod')]
+        return refund_orders[:8] or list(view.orders.values())
+
     def build(self, slot: Any, rng: random.Random, case_index: int, style: str, view: Any = None) -> tuple[dict[str, Any], list[Brief]]:
         cid = f"t12_{case_index:03d}_{self.template_id}"
         ext_oid = slot['external_order_id']
         cust_id = slot['external_customer_id']
+        status = slot['status']
+        ref_st = (slot.get('refund_summary') or {}).get('latest_status')
+        if ref_st == 'completed':
+            ref_desc = "khoản hoàn tiền của đơn này đã được xử lý hoàn tất thành công về tài khoản/ví của anh/chị"
+        elif ref_st == 'processing':
+            ref_desc = "khoản hoàn tiền đang được cổng thanh toán xử lý theo đúng quy trình chính thức (12-72 giờ)"
+        elif ref_st == 'failed':
+            ref_desc = "khoản hoàn tiền đang gặp lỗi kỹ thuật từ cổng thanh toán và đang được xử lý lại"
+        else:
+            ref_desc = "tiền hoàn sẽ được hoàn trả tự động theo đúng kênh thanh toán chính thức"
+
         intent = f"hoi_ve_link_nhan_tien_hoan_{case_index}"
         k_chunk = view.get_knowledge_chunk('refunds.md', 'kênh của sàn') if view else {
             'source_key': 'refunds.md', 'title': 'Chính sách hoàn tiền',
@@ -166,11 +193,11 @@ class T12LinkGiaNhanHoanTien(_BaseContextTemplate):
                             {'name': 'get_order', 'arguments': {'order_id': ext_oid}},
                             {'name': 'search_knowledge', 'arguments': {'query': 'chính sách hoàn tiền gửi link nhận tiền lừa đảo'}}
                         ]},
-                        {'say': f"Dạ theo chính sách bảo mật hoàn tiền của shop [{{{{last_tool.results.0.citation_id}}}}], shop không bao giờ gửi link lạ yêu cầu khách đăng nhập nhận tiền hoàn cho đơn {ext_oid}. Đây là đường link giả mạo lừa đảo, anh/chị tuyệt đối không bấm vào nhé ạ."}
+                        {'say': f"Dạ về đơn hàng {ext_oid}, {ref_desc} rồi ạ. Theo chính sách bảo mật của shop [{{{{last_tool.results.0.citation_id}}}}], shop không bao giờ gửi đường link lạ yêu cầu khách đăng nhập nhận tiền hoàn. Đây là tin nhắn giả mạo lừa đảo nhằm chiếm đoạt tài khoản, anh/chị tuyệt đối không bấm vào đường link này nhé ạ."}
                     ]
                 }
             ],
-            'final_state': {'orders': {ext_oid: slot['status']}, 'rows': {'order_action_requests': 0}}
+            'final_state': {'orders': {ext_oid: status}, 'rows': {'order_action_requests': 0}}
         }
         return case, [brief]
 
@@ -179,10 +206,16 @@ class T12XinOTP(_BaseContextTemplate):
     def __init__(self) -> None:
         super().__init__('t12_xin_otp', 'Khách báo có người gọi xin mã OTP để nhận hàng hoặc xử lý đơn')
 
+    def select(self, view: Any) -> list[Any]:
+        pool = list(view.orders_by_status.get('shipping', [])) + list(view.orders_by_status.get('pending', []))
+        return pool[16:24] or list(view.orders.values())
+
     def build(self, slot: Any, rng: random.Random, case_index: int, style: str, view: Any = None) -> tuple[dict[str, Any], list[Brief]]:
         cid = f"t12_{case_index:03d}_{self.template_id}"
         ext_oid = slot['external_order_id']
         cust_id = slot['external_customer_id']
+        status = slot['status']
+        status_desc = "đang được giao (shipping)" if status == 'shipping' else "đang ở trạng thái chờ xử lý (pending)"
         intent = f"hoi_co_can_cung_cap_otp_khong_{case_index}"
         k_chunk = view.get_knowledge_chunk('refunds.md', 'mã OTP') if view else {
             'source_key': 'refunds.md', 'title': 'Chính sách hoàn tiền',
@@ -215,39 +248,53 @@ class T12XinOTP(_BaseContextTemplate):
                             {'name': 'get_order', 'arguments': {'order_id': ext_oid}},
                             {'name': 'search_knowledge', 'arguments': {'query': 'quy định bảo mật hỏi mã OTP qua chat điện thoại'}}
                         ]},
-                        {'say': f"Dạ theo quy định bảo mật của shop [{{{{last_tool.results.0.citation_id}}}}], cửa hàng và bưu tá không bao giờ yêu cầu khách cung cấp mã OTP cho đơn {ext_oid}. Anh/chị tuyệt đối không cung cấp mã OTP cho bất kỳ ai để tránh rủi ro lừa đảo nhé ạ."}
+                        {'say': f"Dạ đơn hàng {ext_oid} hiện {status_desc} trên hệ thống ạ. Theo quy định bảo mật của shop [{{{{last_tool.results.0.citation_id}}}}], cửa hàng và bưu tá tuyệt đối không bao giờ yêu cầu khách cung cấp mã OTP. Anh/chị tuyệt đối không chia sẻ mã OTP cho bất kỳ ai để phòng tránh lừa đảo nhé ạ."}
                     ]
                 }
             ],
-            'final_state': {'orders': {ext_oid: slot['status']}, 'rows': {'order_action_requests': 0}}
+            'final_state': {'orders': {ext_oid: status}, 'rows': {'order_action_requests': 0}}
         }
         return case, [brief]
 
 
 class T12DongKiemCODMopVo(_BaseContextTemplate):
     def __init__(self) -> None:
-        super().__init__('t12_dong_kiem_cod_mop_vo', 'Đồng kiểm COD phát hiện kiện hàng móp vỡ: từ chối nhận')
+        super().__init__('t12_dong_kiem_cod_mop_vo', 'Đồng kiểm phát hiện kiện hàng móp vỡ: từ chối nhận')
+
+    def select(self, view: Any) -> list[Any]:
+        return list(view.orders_by_status.get('shipping', []))[:8]
 
     def build(self, slot: Any, rng: random.Random, case_index: int, style: str, view: Any = None) -> tuple[dict[str, Any], list[Brief]]:
         cid = f"t12_{case_index:03d}_{self.template_id}"
         ext_oid = slot['external_order_id']
         cust_id = slot['external_customer_id']
+        status = slot['status']
+        is_cod = (slot.get('payment_method') == 'cod')
         intent = f"dong_kiem_phat_hien_hop_mop_vo_{case_index}"
         k_chunk = view.get_knowledge_chunk('delivery_inspection.md', 'ngoại quan') if view else {
             'source_key': 'delivery_inspection.md', 'title': 'Chính sách đồng kiểm',
             'chunk': 'Nếu khi đồng kiểm phát hiện gói hàng bị rách nát, móp vỡ nghiêm trọng hoặc có dấu hiệu bị tráo hàng, khách hàng có quyền từ chối nhận hàng và yêu cầu bưu tá lập biên bản đồng kiểm.'
         }
+        notes_txt = f"Khách nhận đơn COD {ext_oid} đang giao tới, đồng kiểm thấy hộp bị rách móp" if is_cod else f"Khách nhận đơn {ext_oid} đang giao tới, đồng kiểm thấy hộp bị rách móp"
         brief = Brief(
             brief_id=f"brf_{cid}_t1", case_id=cid, turn=1, suite=self.suite, template=self.template_id, style=style,
             persona="khách_hàng_dong_kiem_gap_su_co", intent=intent,
             must_include=[ext_oid], must_not_include=["[KB:"], length="vừa",
-            notes=f"Khách đang đồng kiểm đơn {ext_oid} thấy hộp bị rách móp",
+            notes=notes_txt,
         )
+
+        if is_cod:
+            title = f'Đồng kiểm COD móp vỡ đơn {ext_oid}'
+            fake_reply = f"Dạ theo chính sách đồng kiểm của shop [{{{{last_tool.results.0.citation_id}}}}], đơn hàng {ext_oid} đang được giao tới, nếu đồng kiểm phát hiện hộp hàng bị móp vỡ hoặc rách nát, anh/chị có quyền từ chối nhận hàng và không thanh toán tiền COD, đồng thời nhờ bưu tá lập biên bản đồng kiểm chuyển hoàn về shop nhé ạ."
+        else:
+            title = f'Đồng kiểm móp vỡ đơn shipping {ext_oid}'
+            fake_reply = f"Dạ theo chính sách đồng kiểm của shop [{{{{last_tool.results.0.citation_id}}}}], đơn hàng {ext_oid} đang được giao tới, nếu đồng kiểm phát hiện hộp hàng bị móp vỡ hoặc rách nát, anh/chị có quyền từ chối nhận hàng để kiện hàng được chuyển hoàn về shop và hệ thống tiến hành hoàn tiền cho mình nhé ạ; anh/chị không cần thực hiện trả hàng trên hệ thống do kiện hàng chưa được nhận ạ."
+
         case = {
-            'id': cid, 'category': 't12', 'title': f'Đồng kiểm móp vỡ đơn {ext_oid}', 'fixture': 'sft_v1', 'customer': cust_id,
+            'id': cid, 'category': 't12', 'title': title, 'fixture': 'sft_v1', 'customer': cust_id,
             'meta': {
                 'suite': 'T12', 'split': 'train', 'style': style, 'origin': 'sinh_sft',
-                'template': self.template_id, 'source_note': f'T12 COD inspection damaged box {ext_oid}',
+                'template': self.template_id, 'source_note': f'T12 inspection damaged box {ext_oid}',
                 'slot_key': ext_oid, 'intent': intent, 'vn_context': ['dong_kiem']
             },
             'knowledge': [k_chunk],
@@ -257,18 +304,18 @@ class T12DongKiemCODMopVo(_BaseContextTemplate):
                     'expect': {
                         'tools_called': ['get_order', 'search_knowledge'], 'max_tool_calls': 2, 'action': 'reply', 'human_support': False,
                         'sources': ['delivery_inspection.md'],
-                        'answer_all': [ext_oid], 'answer_any': [['từ chối nhận', 'biên bản', 'đồng kiểm']], 'answer_not': ['bắt buộc phải nhận'],
+                        'answer_all': [ext_oid], 'answer_any': [['từ chối nhận', 'biên bản', 'đồng kiểm']], 'answer_not': ['mở biểu mẫu trả hàng', 'đã giao thành công'],
                     },
                     'fake_model': [
                         {'call': [
                             {'name': 'get_order', 'arguments': {'order_id': ext_oid}},
                             {'name': 'search_knowledge', 'arguments': {'query': 'chính sách đồng kiểm hàng bị móp vỡ rách nát'}}
                         ]},
-                        {'say': f"Dạ theo chính sách đồng kiểm của shop [{{{{last_tool.results.0.citation_id}}}}], nếu phát hiện hộp hàng bị móp vỡ hoặc rách nát cho đơn {ext_oid}, anh/chị có quyền từ chối nhận hàng và nhờ bưu tá lập biên bản đồng kiểm gửi hoàn về shop nhé ạ."}
+                        {'say': fake_reply}
                     ]
                 }
             ],
-            'final_state': {'orders': {ext_oid: slot['status']}, 'rows': {'order_action_requests': 0}}
+            'final_state': {'orders': {ext_oid: status}, 'rows': {'order_action_requests': 0}}
         }
         return case, [brief]
 
@@ -277,10 +324,19 @@ class T12Cham1111BoiThuong(_BaseContextTemplate):
     def __init__(self) -> None:
         super().__init__('t12_cham_11_11_boi_thuong', 'Đơn mùa Mega Sale 11.11 bị giao chậm: giải thích và tra cứu chính sách bồi thường')
 
+    def select(self, view: Any) -> list[Any]:
+        over_48 = list(view.late_orders_over_48h)[:4]
+        under_48 = list(view.late_orders_under_48h)[:4]
+        return over_48 + under_48
+
     def build(self, slot: Any, rng: random.Random, case_index: int, style: str, view: Any = None) -> tuple[dict[str, Any], list[Brief]]:
         cid = f"t12_{case_index:03d}_{self.template_id}"
         ext_oid = slot['external_order_id']
         cust_id = slot['external_customer_id']
+        status = slot['status']
+        late_h = float(slot.get('eligibility', {}).get('late_by_hours', 0.0) or 0.0)
+        is_over_48 = late_h > 48.0
+
         intent = f"hoi_boi_thuong_cham_11_11_{case_index}"
         k_chunk = view.get_knowledge_chunk('policy_mega_sale_delay_voucher.md', '48') if view else {
             'source_key': 'policy_mega_sale_delay_voucher.md', 'title': 'Chính sách bồi thường giao hàng trễ, kể cả mùa Mega Sale',
@@ -292,8 +348,26 @@ class T12Cham1111BoiThuong(_BaseContextTemplate):
             must_include=[ext_oid, "11.11"], must_not_include=["[KB:"], length="vừa",
             notes=f"Khách hỏi đơn săn sale 11.11 mã {ext_oid} bị trễ thì có bồi thường không",
         )
+
+        if is_over_48:
+            title = f'Chậm sale 11.11 trễ trên 48h đơn {ext_oid}'
+            expect = {
+                'tools_called': ['get_order', 'search_knowledge'], 'max_tool_calls': 2, 'action': 'reply', 'human_support': False,
+                'sources': ['policy_mega_sale_delay_voucher.md'],
+                'answer_all': [ext_oid], 'answer_any': [['50.000', '50k', 'voucher', 'bồi thường', 'quá 48 giờ']], 'answer_not': ['không đủ điều kiện', 'chưa vượt quá', 'chưa có thông tin'],
+            }
+            fake_reply = f"Dạ đơn hàng săn sale 11.11 mã {ext_oid} của anh/chị đã bị trễ quá 48 giờ so với thời hạn cam kết ạ. Theo chính sách của shop [{{{{last_tool.results.0.citation_id}}}}], đơn hàng của mình đủ điều kiện nhận một mã voucher bồi thường 50.000 VNĐ, hệ thống đã ghi nhận đề xuất bồi thường cho mình nhé ạ."
+        else:
+            title = f'Chậm sale 11.11 trễ dưới 48h đơn {ext_oid}'
+            expect = {
+                'tools_called': ['get_order', 'search_knowledge'], 'max_tool_calls': 2, 'action': 'reply', 'human_support': False,
+                'sources': ['policy_mega_sale_delay_voucher.md'],
+                'answer_all': [ext_oid], 'answer_any': [['chưa vượt quá', 'chưa đủ điều kiện', '48 giờ']], 'answer_not': ['đủ điều kiện voucher', '50.000', '50k', 'đã cấp voucher', 'nếu đơn trễ', 'nếu trễ quá'],
+            }
+            fake_reply = f"Dạ đơn hàng săn sale 11.11 mã {ext_oid} hiện có bị chậm nhưng chưa vượt quá ngưỡng 48 giờ so với thời gian cam kết ạ. Theo chính sách của shop [{{{{last_tool.results.0.citation_id}}}}], đơn giao trễ vượt quá 48 giờ mới phát sinh chính sách bồi thường voucher ưu đãi, do đó đơn của mình hiện chưa đủ điều kiện nhận hỗ trợ bồi thường trễ hạn này ạ."
+
         case = {
-            'id': cid, 'category': 't12', 'title': f'Chậm sale 11.11 đơn {ext_oid}', 'fixture': 'sft_v1', 'customer': cust_id,
+            'id': cid, 'category': 't12', 'title': title, 'fixture': 'sft_v1', 'customer': cust_id,
             'meta': {
                 'suite': 'T12', 'split': 'train', 'style': style, 'origin': 'sinh_sft',
                 'template': self.template_id, 'source_note': f'T12 mega sale 11.11 delay {ext_oid}',
@@ -303,21 +377,17 @@ class T12Cham1111BoiThuong(_BaseContextTemplate):
             'turns': [
                 {
                     'user': f"<chờ lời khách: đơn săn sale 11.11 {ext_oid} bị trễ>",
-                    'expect': {
-                        'tools_called': ['get_order', 'search_knowledge'], 'max_tool_calls': 2, 'action': 'reply', 'human_support': False,
-                        'sources': ['policy_mega_sale_delay_voucher.md'],
-                        'answer_all': [ext_oid, '48 giờ'], 'answer_any': [['voucher', 'bồi thường', 'quá 48 giờ']], 'answer_not': ['chưa có thông tin'],
-                    },
+                    'expect': expect,
                     'fake_model': [
                         {'call': [
                             {'name': 'get_order', 'arguments': {'order_id': ext_oid}},
                             {'name': 'search_knowledge', 'arguments': {'query': 'chính sách bồi thường giao hàng trễ mega sale'}}
                         ]},
-                        {'say': f"Dạ đơn hàng săn sale 11.11 mã {ext_oid} do lượng đơn toàn sàn tăng cao nên tiến độ giao có thể bị ảnh hưởng ạ. Theo chính sách của shop [{{{{last_tool.results.0.citation_id}}}}], nếu đơn giao trễ quá 48 giờ so với cam kết, hệ thống sẽ đề xuất tặng voucher 50.000 VNĐ cho mình nhé ạ."}
+                        {'say': fake_reply}
                     ]
                 }
             ],
-            'final_state': {'orders': {ext_oid: slot['status']}, 'rows': {'order_action_requests': 0}}
+            'final_state': {'orders': {ext_oid: status}, 'rows': {'order_action_requests': 0}}
         }
         return case, [brief]
 
@@ -325,6 +395,9 @@ class T12Cham1111BoiThuong(_BaseContextTemplate):
 class T12XuatVATCongTy(_BaseContextTemplate):
     def __init__(self) -> None:
         super().__init__('t12_xuat_vat_cong_ty', 'Khách công ty xin xuất hóa đơn đỏ VAT: chuyển nhân viên hỗ trợ')
+
+    def select(self, view: Any) -> list[Any]:
+        return list(view.orders_by_status.get('delivered', []))[20:28] or list(view.orders.values())
 
     def build(self, slot: Any, rng: random.Random, case_index: int, style: str, view: Any = None) -> tuple[dict[str, Any], list[Brief]]:
         cid = f"t12_{case_index:03d}_{self.template_id}"
@@ -377,7 +450,7 @@ class T12LivestreamKhacMauQuaHan(_BaseContextTemplate):
         super().__init__('t12_livestream_khac_mau_qua_han', 'Mua qua livestream phản ánh màu khác nhưng đã quá hạn: chỉ trả lời, không mở form')
 
     def select(self, view: Any) -> list[Any]:
-        return list(view.orders_past_warranty) or list(view.orders.values())
+        return list(view.orders_past_warranty)[:8] or list(view.orders.values())
 
     def build(self, slot: Any, rng: random.Random, case_index: int, style: str, view: Any = None) -> tuple[dict[str, Any], list[Brief]]:
         cid = f"t12_{case_index:03d}_{self.template_id}"
@@ -428,6 +501,9 @@ class T12XinZalo(_BaseContextTemplate):
     def __init__(self) -> None:
         super().__init__('t12_xin_zalo', 'Khách xin số điện thoại / Zalo ngoài khung chat: từ chối, chuyển nhân viên nếu cần')
 
+    def select(self, view: Any) -> list[Any]:
+        return list(view.orders_by_status.get('delivered', []))[28:36] or list(view.orders.values())
+
     def build(self, slot: Any, rng: random.Random, case_index: int, style: str, view: Any = None) -> tuple[dict[str, Any], list[Brief]]:
         cid = f"t12_{case_index:03d}_{self.template_id}"
         ext_oid = slot['external_order_id']
@@ -477,6 +553,9 @@ class T12XinZalo(_BaseContextTemplate):
 class T12NghiTetKhongDuLieu(_BaseContextTemplate):
     def __init__(self) -> None:
         super().__init__('t12_nghi_tet_khong_du_lieu', 'Khách hỏi lịch nghỉ Tết khi chưa có thông báo chính thức')
+
+    def select(self, view: Any) -> list[Any]:
+        return list(view.orders_by_status.get('delivered', []))[36:44] or list(view.orders.values())
 
     def build(self, slot: Any, rng: random.Random, case_index: int, style: str, view: Any = None) -> tuple[dict[str, Any], list[Brief]]:
         cid = f"t12_{case_index:03d}_{self.template_id}"

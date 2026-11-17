@@ -31,7 +31,7 @@
     "shipping": 19,
     "late_orders": 27,
     "late_over_48": 8,
-    "failed_returned": 25,
+    "failed_returned": 10,
     "past_warranty": 8,
     "refund_slow_or_fail": 17
   },

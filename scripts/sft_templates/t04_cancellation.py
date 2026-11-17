@@ -216,38 +216,61 @@ class T04BoMotMon(BaseTemplate):
         super().__init__('t04_bo_mot_mon', 'T04', 10, description='Khách muốn bỏ 1 món trong đơn: giải thích không hủy lẻ món')
 
     def select(self, view: Any) -> list[Any]:
-        # Orders with multiple items
-        multi = [o for o in view.orders.values() if len(o.get('items', [])) >= 2]
-        return multi or list(view.orders_by_status['pending'])
+        # Only select multi-item orders that are pending (can_self_service_cancel) or shipping
+        multi_pending = [o for o in view.orders_can_cancel if len(o.get('items', [])) >= 2]
+        multi_shipping = [o for o in view.orders_by_status.get('shipping', []) if len(o.get('items', [])) >= 2]
+        # 4 pending * 2 = 8, 1 shipping * 2 = 2 -> total 10 cases!
+        slots = multi_pending + multi_pending + multi_shipping + multi_shipping
+        return slots or list(view.orders_can_cancel)
 
     def build(self, slot: Any, rng: random.Random, case_index: int, style: str, view: Any = None) -> tuple[dict[str, Any], list[Brief]]:
         cid = f"t04_{case_index:03d}_{self.template_id}"
         ext_oid = slot['external_order_id']
         cust_id = slot['external_customer_id']
+        status = slot['status']
+
         brief = Brief(
             brief_id=f"brf_{cid}_t1", case_id=cid, turn=1, suite=self.suite, template=self.template_id, style=style,
             persona="khách_hàng_muon_bo_mon", intent="yeu_cau_huy_rieng_mot_mon",
             must_include=[ext_oid], must_not_include=["không thể hủy riêng từng món"], length="vừa",
             notes=f"Khách hỏi đơn {ext_oid} muốn hủy bớt 1 món trong đơn được không",
         )
+
+        if status == 'shipping':
+            title = f'Bỏ một món trong đơn shipping {ext_oid}'
+            expect = {
+                'tools_called': ['get_order'], 'tools_not_called': ['prepare_order_action'],
+                'max_tool_calls': 1, 'action': 'reply', 'human_support': False,
+                'answer_all': [ext_oid],
+                'answer_any': [['hủy riêng', 'từng món', 'đang vận chuyển', 'đang giao', 'từ chối nhận']],
+                'answer_not': ['đã hủy thành công', 'chưa có thông tin'],
+            }
+            fake_reply = f"Dạ hệ thống hiện không hỗ trợ hủy riêng từng sản phẩm trong cùng một đơn hàng ạ. Đơn hàng {ext_oid} hiện đang được vận chuyển nên không thể tự hủy trên hệ thống được nữa. Khi shipper giao tới, anh/chị có thể từ chối nhận toàn bộ kiện hàng hoặc nhận rồi gửi yêu cầu trả hàng cho món không muốn lấy nhé ạ."
+        else:
+            title = f'Bỏ một món trong đơn pending {ext_oid}'
+            expect = {
+                'tools_called': ['get_order'], 'tools_not_called': ['prepare_order_action'],
+                'max_tool_calls': 1, 'action': 'reply', 'human_support': False,
+                'answer_all': [ext_oid],
+                'answer_any': [['hủy riêng', 'từng món', 'toàn bộ đơn', 'cả đơn']],
+                'answer_not': ['đã hủy thành công', 'chưa có thông tin'],
+            }
+            fake_reply = f"Dạ hệ thống hiện không hỗ trợ hủy riêng từng sản phẩm trong cùng một đơn hàng ạ. Đơn hàng {ext_oid} hiện đang ở trạng thái chờ xử lý, nếu muốn bỏ món, anh/chị có thể hủy toàn bộ đơn hàng này rồi đặt lại đơn mới với các sản phẩm mong muốn nhé ạ."
+
         case = {
-            'id': cid, 'category': 't04', 'title': f'Bỏ một món trong đơn {ext_oid}', 'fixture': 'sft_v1', 'customer': cust_id,
+            'id': cid, 'category': 't04', 'title': title, 'fixture': 'sft_v1', 'customer': cust_id,
             'meta': {'suite': 'T04', 'split': 'train', 'style': style, 'origin': 'sinh_sft', 'template': self.template_id, 'source_note': f'T04 cancel single item {ext_oid}', 'vn_context': []},
             'turns': [
                 {
                     'user': f"<chờ lời khách: muốn bỏ 1 món trong đơn {ext_oid}>",
-                    'expect': {
-                        'tools_called': ['get_order'], 'tools_not_called': ['prepare_order_action'],
-                        'max_tool_calls': 1, 'action': 'reply', 'human_support': False,
-                        'answer_all': [ext_oid], 'answer_any': [['hủy riêng', 'từng món', 'toàn bộ đơn', 'cả đơn']], 'answer_not': ['đã hủy thành công'],
-                    },
+                    'expect': expect,
                     'fake_model': [
                         {'call': [{'name': 'get_order', 'arguments': {'order_id': ext_oid}}]},
-                        {'say': f"Dạ hệ thống hiện không hỗ trợ hủy riêng từng sản phẩm trong cùng một đơn hàng ạ. Nếu muốn thay đổi, anh/chị cần hủy toàn bộ đơn {ext_oid} và đặt lại đơn mới với các sản phẩm mong muốn nhé ạ."}
+                        {'say': fake_reply}
                     ]
                 }
             ],
-            'final_state': {'orders': {ext_oid: slot['status']}, 'rows': {'order_action_requests': 0}}
+            'final_state': {'orders': {ext_oid: status}, 'rows': {'order_action_requests': 0}}
         }
         return case, [brief]
 

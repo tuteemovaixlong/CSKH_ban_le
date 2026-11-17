@@ -67,7 +67,7 @@
 | Đơn đang giao (`shipping`) | ≥ 10 | **19** | ĐẠT |
 | Đơn giao trễ (`is_late_vs_promised`) | ≥ 8 | **27** | ĐẠT |
 | Đơn giao trễ trên 48 giờ (`late_by_hours > 48`) | ≥ 4 | **8** | ĐẠT |
-| Đơn giao thất bại / hoàn về | ≥ 6 | **25** | ĐẠT |
+| Đơn giao thất bại / hoàn về (N7: tính theo trạng thái giao hàng `delivery`) | ≥ 6 | **10** | ĐẠT |
 | Đơn hết hạn bảo hành (`within_warranty == False`) | ≥ 6 | **8** | ĐẠT |
 | Đơn hoàn tiền chậm hoặc thất bại (`processing` / `failed`) | ≥ 6 | **17** | ĐẠT |
 
@@ -286,6 +286,20 @@ Toàn bộ 1.200 ca được quét kiểm tra số lần xuất hiện của t�
    - `build_sft_fixture.py` tính toán đường dẫn tương đối chuẩn POSIX theo thư mục gốc repo: `python scripts/build_sft_fixture.py --out data/demo_events/store_events_sft_v1.jsonl`.
 10. **N6 — Đa dạng hóa lời hỏi của nhân viên trong T11:**
     - Biên soạn 4–6 biến thể câu hỏi viết tay tự nhiên cho từng khung ca có nhân viên hỏi đáp trong T11 (11 khung), xoay vòng theo `case_index` để tránh tình trạng mô hình học vẹt câu lệnh lặp lại.
+11. **R1 — Chuẩn hóa tiền đề và chọn đơn độc lập trong T12 (`scripts/sft_templates/t12_fraud_context.py`):**
+    - `t12_cham_11_11_boi_thuong`: chỉ chọn đơn `is_late_vs_promised == True`, chia 2 nhánh rõ ràng: 4 ca trễ > 48h (`late_by_hours > 48`) đủ điều kiện đề xuất voucher 50.000 VNĐ theo `policy_mega_sale_delay_voucher.md`; 4 ca trễ ≤ 48h (`0 < late_by_hours <= 48`) nêu rõ đơn có bị chậm nhưng chưa vượt quá 48h nên chưa đủ điều kiện nhận voucher bồi thường, `answer_not` cấm nhắc số tiền voucher 50.000.
+    - `t12_dong_kiem_cod_mop_vo`: chỉ chọn 8 đơn `status == 'shipping'` độc lập. Kiểm tra COD nếu `payment_method == 'cod'`. Chỉ dẫn đồng kiểm và từ chối nhận hàng nếu móp vỡ theo `delivery_inspection.md`.
+    - `t12_gia_danh_shipper_doi_phi`, `t12_gia_danh_kho_bao_hiem`, `t12_xin_otp`: chọn đơn `shipping`/`pending` ở các offset lệch nhau hoàn toàn (0..8, 8..16, 16..24); vừa cảnh báo thủ đoạn lừa đảo vừa nêu trạng thái đơn thật trên hệ thống.
+    - `t12_link_gia_nhan_hoan_tien`: chọn 8 đơn có lịch sử hoàn tiền hoặc hủy trả trước; cảnh báo link lạ, nêu kênh hoàn tiền chính thức (`refunds.md`) và trạng thái hoàn tiền thật của đơn.
+    - `t12_xuat_vat_cong_ty`, `t12_xin_zalo`, `t12_nghi_tet_khong_du_lieu`: chọn các tập đơn `delivered` ở các khoảng offset độc lập (20..28, 28..36, 36..44), tách bạch hoàn toàn với `t12_livestream_khac_mau_qua_han`.
+12. **R2 — `t04_bo_mot_mon` chọn đơn nhiều món và phản hồi chuẩn theo trạng thái thực tế (`scripts/sft_templates/t04_cancellation.py`):**
+    - `select(view)` chỉ chọn đơn `len(items) >= 2` gồm đơn `pending` (`can_self_service_cancel == True`) và đơn `shipping` (`SIM-O-50105`).
+    - Nhánh `pending`: nêu rõ sàn không hỗ trợ hủy riêng 1 món, hướng dẫn hủy toàn bộ đơn tự phục vụ khi đơn còn ở trạng thái `pending` và đặt lại (`tools_not_called: ['prepare_order_action']`).
+    - Nhánh `shipping`: nêu rõ sàn không hỗ trợ hủy riêng 1 món, và đơn đã giao bên vận chuyển nên không thể tự hủy; hướng dẫn từ chối nhận khi shipper giao đến hoặc mở yêu cầu đổi/trả sau khi nhận hàng.
+13. **N7 — Tính toán chuẩn xác số đơn giao thất bại / hoàn về (`build_sft_fixture.py`, `view.py`):**
+    - Lọc theo `(o.get('delivery') or {}).get('status') in ('failed', 'returned')`, không gộp nhầm `status == 'cancelled'`. Số lượng đạt 10 đơn (vượt ngưỡng yêu cầu ≥ 6).
+14. **N8 — Mở rộng unit test ràng buộc tiền đề đơn (`tests/test_w670_sft_fixture_cases.py`):**
+    - `test_order_eligibility_and_template_constraints` được mở rộng kiểm tra tự động toàn bộ 10 ca của `t04_bo_mot_mon` (đủ >= 2 món, đúng cờ hủy/shipping) và toàn bộ 80 ca của 10 khung T12 (đúng cờ trễ, trạng thái giao hàng, trạng thái hoàn tiền, các tập đơn disjoint).
 
 ---
 
@@ -299,7 +313,7 @@ Toàn bộ 1.200 ca được quét kiểm tra số lần xuất hiện của t�
   - `test_validate_train_case_contract`: PASS (kiểm tra hợp đồng ca huấn luyện)
   - `test_sft_cases_generator_and_pilot_check`: PASS (chạy pilot 24 ca đạt 100%)
   - `test_pilot_100_coverage_and_style_distribution`: PASS (phủ 98 khung ≥ 90, 20 ca/giọng ≥ 8, check đạt 100%)
-  - `test_order_eligibility_and_template_constraints`: PASS (assert mỗi khung dùng đơn ≤ 3 lần bắt regex cả đơn story, kiểm tra đúng cờ eligibility P2)
+  - `test_order_eligibility_and_template_constraints`: PASS (assert mỗi khung dùng đơn ≤ 3 lần bắt regex cả đơn story, kiểm tra đúng cờ eligibility P2, xác thực toàn diện tiền đề R1 và R2)
   - `test_utterance_validation_n1_rules`: PASS (so sánh không dấu 2 phía, injection không bị chặn bởi must_not_include, teencode/sai_chinh_ta rút gọn tên SP và khớp linh hoạt ≥ 60%)
   - `test_utterance_peak_hour_and_mock_cache`: PASS (chặn giờ cao điểm VN 13:00–17:00, chạy tiếp từ cache)
   - `test_utterance_n2_n3_retry_and_concurrency`: PASS (thử lại lùi số mũ 1, 2, 4s cho HTTP 429, 3 lần thử lại nội dung với feedback, an toàn `--limit` không ghi ca rỗng)
@@ -322,4 +336,4 @@ Toàn bộ 1.200 ca được quét kiểm tra số lần xuất hiện của t�
 ---
 
 ## 5. Kết Luận
-Toàn bộ 4 vấn đề ưu tiên (P1–P4) và 6 điểm kỹ thuật (N1–N6) theo yêu cầu của Owner, Claude và Carbon đã được giải quyết triệt để trên cùng nhánh `phase-r1-w6-7-0-a`. Dữ liệu fixture `sft_v1`, catalog 117 khung ca, tooling sinh lời khách và hệ thống kiểm định đạt độ tin cậy tuyệt đối (100% pass trên 1.200 ca), sẵn sàng để tiến hành các bước tiếp theo của W6.7.
+Toàn bộ các vấn đề ưu tiên (P1–P4), các điểm kỹ thuật (N1–N6), cùng các yêu cầu chuẩn hóa logic đơn hàng (R1, R2, N7, N8) theo phản hồi của Owner, Claude và Carbon (`09_PHAN_HOI_PR120.md`, `10_PHAN_HOI_PR120_V2.md`) đã được giải quyết triệt để trên cùng nhánh `phase-r1-w6-7-0-a`. Dữ liệu fixture `sft_v1`, catalog 117 khung ca, tooling sinh lời khách và hệ thống kiểm định đạt độ tin cậy tuyệt đối (100% pass trên 1.200 ca), sẵn sàng để tiến hành các bước tiếp theo của W6.7.

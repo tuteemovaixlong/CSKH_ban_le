@@ -302,6 +302,25 @@ class TestW670SftFixtureCases(unittest.TestCase):
                     self.assertTrue(el.get('is_late_vs_promised') and float(el.get('late_by_hours', 0) or 0) > 48, f"{tmpl} uses order {oid} not late > 48h")
                 elif tmpl == 't01_giao_tre_duoi_48h':
                     self.assertTrue(el.get('is_late_vs_promised') and float(el.get('late_by_hours', 0) or 0) <= 48, f"{tmpl} uses order {oid} not late <= 48h")
+                elif tmpl == 't04_bo_mot_mon':
+                    self.assertGreaterEqual(len(o.get('items', [])), 2, f"{tmpl} order {oid} has < 2 items")
+                    self.assertIn(o.get('status'), ('pending', 'shipping'), f"{tmpl} order {oid} has invalid status {o.get('status')}")
+                    if o.get('status') == 'pending':
+                        self.assertTrue(el.get('can_self_service_cancel'), f"{tmpl} pending order {oid} cannot self cancel")
+                elif tmpl == 't12_cham_11_11_boi_thuong':
+                    self.assertTrue(el.get('is_late_vs_promised'), f"{tmpl} order {oid} not late")
+                elif tmpl == 't12_dong_kiem_cod_mop_vo':
+                    self.assertEqual(o.get('status'), 'shipping', f"{tmpl} order {oid} not shipping")
+                elif tmpl in ('t12_gia_danh_shipper_doi_phi', 't12_gia_danh_kho_bao_hiem', 't12_xin_otp'):
+                    self.assertIn(o.get('status'), ('shipping', 'pending'), f"{tmpl} order {oid} not shipping or pending")
+                elif tmpl == 't12_link_gia_nhan_hoan_tien':
+                    has_refund = (o.get('refund_summary') or {}).get('count', 0) > 0
+                    is_cancelled_prepaid = (o.get('status') == 'cancelled' and o.get('payment_method') != 'cod')
+                    self.assertTrue(has_refund or is_cancelled_prepaid, f"{tmpl} order {oid} lacks refund context")
+                elif tmpl == 't12_livestream_khac_mau_qua_han':
+                    self.assertFalse(el.get('within_warranty'), f"{tmpl} order {oid} within warranty")
+                elif tmpl in ('t12_xuat_vat_cong_ty', 't12_xin_zalo', 't12_nghi_tet_khong_du_lieu'):
+                    self.assertEqual(o.get('status'), 'delivered', f"{tmpl} order {oid} not delivered")
 
     def test_utterance_validation_n1_rules(self) -> None:
         """N1: Utterance validation rules: accents stripped on both sides for khong_dau, injection handling."""

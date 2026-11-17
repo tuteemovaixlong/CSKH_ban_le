@@ -90,7 +90,7 @@ class SftView:
         self.orders_failed_or_returned: list[dict[str, Any]] = []
 
         for ord_dict in self.orders.values():
-            if ord_dict.get("status") in ("cancelled", "returned") or ord_dict.get("delivery", {}).get("status") in ("failed", "returned"):
+            if (ord_dict.get("delivery") or {}).get("status") in ("failed", "returned"):
                 self.orders_failed_or_returned.append(ord_dict)
             el = ord_dict.get('eligibility', {})
             late_h = float(el.get('late_by_hours', 0.0) or 0.0)
