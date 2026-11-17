@@ -1,0 +1,52 @@
+{
+  "seed": 20261201,
+  "days": 30,
+  "merchant_id": "MERCHANT-SIM-001",
+  "counters": {
+    "next_customer_no": 5001,
+    "next_order_no": 50001,
+    "next_shipment_no": 50001,
+    "next_payment_no": 50001,
+    "next_refund_no": 50001,
+    "next_voucher_no": 50001,
+    "next_story_no": 501
+  },
+  "stories": {
+    "dang_trung_chuyen": 8,
+    "nghen_kho_mega_sale": 8,
+    "cap_nhat_ao_giao_lai": 8,
+    "giao_that_bai_hoan_ve": 8,
+    "giao_tre_han_cam_ket": 8,
+    "het_bao_hanh": 8,
+    "qua_han_doi_tra": 8,
+    "hoan_tien_cham": 8,
+    "hoan_tien_that_bai": 8,
+    "huy_truoc_khi_giao": 8,
+    "giao_dung_han_cod": 2,
+    "thanh_toan_that_bai_roi_thanh_cong": 2,
+    "doi_size_trong_han": 2
+  },
+  "threshold_checks": {
+    "pending_cancel": 16,
+    "shipping": 19,
+    "late_orders": 27,
+    "late_over_48": 8,
+    "failed_returned": 10,
+    "past_warranty": 8,
+    "refund_slow_or_fail": 17
+  },
+  "event_counts_by_type": {
+    "customer.upserted": 170,
+    "order.created": 216,
+    "order.status_changed": 784,
+    "payment.updated": 336,
+    "shipment.updated": 1564,
+    "product.upserted": 20,
+    "refund.updated": 84
+  },
+  "total_events": 3174,
+  "total_orders": 216,
+  "total_customers": 170,
+  "sha256": "e42767485ae047082a73f8eebdcfce4a5c35fec62ed35eb30c19868440e043cc",
+  "build_command": "python scripts/build_sft_fixture.py --out data/demo_events/store_events_sft_v1.jsonl"
+}
