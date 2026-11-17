@@ -36,13 +36,17 @@ class T08TraDonRoiHoiPhiShip(BaseTemplate):
         cust_id = slot['external_customer_id']
         fee = slot.get('shipping_fee') or 30000
         b1 = Brief(brief_id=f"brf_{cid}_t1", case_id=cid, turn=1, suite=self.suite, template=self.template_id, style=style,
-                   persona="khách_hàng_tra_don", intent="tra_cuu_don_hang_luot_1", must_include=[ext_oid], length="ngắn")
+                   persona="khách_hàng_tra_don", intent=f"tra_cuu_don_hang_luot_1_{case_index}", must_include=[ext_oid], length="ngắn")
         b2 = Brief(brief_id=f"brf_{cid}_t2", case_id=cid, turn=2, suite=self.suite, template=self.template_id, style=style,
-                   persona="khách_hàng_tra_don", intent="hoi_phi_ship_don_vua_tra", must_include=["phí ship"],
+                   persona="khách_hàng_tra_don", intent=f"hoi_phi_ship_don_vua_tra_{case_index}", must_include=["phí ship"],
                    earlier_turns=[{'turn': 1, 'intent': 'tra_cuu_don_hang_luot_1', 'assistant': f'đơn {ext_oid} đã giao'}], length="ngắn")
         case = {
             'id': cid, 'category': 't08', 'title': f'Tra đơn rồi hỏi phí ship {ext_oid}', 'fixture': 'sft_v1', 'customer': cust_id,
-            'meta': {'suite': 'T08', 'split': 'train', 'style': style, 'origin': 'sinh_sft', 'template': self.template_id, 'source_note': f'T08 order then ship fee {ext_oid}', 'vn_context': []},
+            'meta': {
+                'suite': 'T08', 'split': 'train', 'style': style, 'origin': 'sinh_sft',
+                'template': self.template_id, 'source_note': f'T08 order then ship fee {ext_oid}',
+                'slot_key': ext_oid, 'intent': f"order_then_fee_{case_index}", 'vn_context': []
+            },
             'turns': [
                 {
                     'user': f"<chờ lời khách: tra cứu đơn {ext_oid}>",
@@ -54,9 +58,13 @@ class T08TraDonRoiHoiPhiShip(BaseTemplate):
                 },
                 {
                     'user': "<chờ lời khách: hỏi phí ship của đơn này là bao nhiêu>",
-                    'expect': {'tools_not_called': ['prepare_order_action'], 'max_tool_calls': 1, 'action': 'reply', 'human_support': False, 'answer_any': [['phí ship', 'phí vận chuyển', 'VNĐ']], 'answer_not': ['đã hủy']},
+                    'expect': {
+                        'tools_called': ['get_order'], 'max_tool_calls': 2, 'action': 'reply', 'human_support': False,
+                        'answer_all': [ext_oid], 'answer_any': [['phí ship', 'phí vận chuyển', 'VNĐ']], 'answer_not': ['đã hủy']
+                    },
                     'fake_model': [
-                        {'say': f"Dạ phí vận chuyển của đơn hàng {ext_oid} này là {fee:,} VNĐ anh/chị nhé ạ."}
+                        {'call': [{'name': 'get_order', 'arguments': {'order_id': ext_oid}}]},
+                        {'say': f"Dạ theo thông tin đơn {ext_oid}, phí vận chuyển của đơn hàng này là {fee:,} VNĐ anh/chị nhé ạ."}
                     ]
                 }
             ],
@@ -161,14 +169,34 @@ class T08HuyRoiHoiHoanTien(BaseTemplate):
         cid = f"t08_{case_index:03d}_{self.template_id}"
         ext_oid = slot['external_order_id']
         cust_id = slot['external_customer_id']
+        is_cod = (slot.get('payment_method') == 'cod')
+
+        k_chunk = view.get_knowledge_chunk('refunds.md', '12 đến 72 giờ') if view else {
+            'source_key': 'refunds.md', 'title': 'Chính sách hoàn tiền',
+            'chunk': 'Đơn thanh toán khi nhận hàng (COD) bị hủy trước khi giao: khách chưa trả tiền nên không có khoản hoàn. Đơn đã thanh toán trước bị hủy: hoàn toàn bộ số tiền đã trả. Sau khi cửa hàng xác nhận hoàn tiền, cổng thanh toán thường xử lý xong trong 12 đến 72 giờ.'
+        }
+
         b1 = Brief(brief_id=f"brf_{cid}_t1", case_id=cid, turn=1, suite=self.suite, template=self.template_id, style=style,
-                   persona="khách_hàng_huy_don", intent="yeu_cau_huy_don_luot_1", must_include=[ext_oid], length="ngắn")
+                   persona="khách_hàng_huy_don", intent=f"yeu_cau_huy_don_luot_1_{case_index}", must_include=[ext_oid], length="ngắn")
         b2 = Brief(brief_id=f"brf_{cid}_t2", case_id=cid, turn=2, suite=self.suite, template=self.template_id, style=style,
-                   persona="khách_hàng_huy_don", intent="hoi_tien_hoan_ve_dau_luot_2", must_include=["hoàn tiền"],
+                   persona="khách_hàng_huy_don", intent=f"hoi_tien_hoan_ve_dau_luot_2_{case_index}", must_include=["hoàn tiền"],
                    earlier_turns=[{'turn': 1, 'intent': 'yeu_cau_huy_don_luot_1', 'assistant': f'đã mở biểu mẫu hủy đơn {ext_oid}'}], length="ngắn")
+
+        if is_cod:
+            say_t2 = f"Dạ theo chính sách hoàn tiền của shop [{{{{last_tool.results.0.citation_id}}}}], đơn hàng {ext_oid} thanh toán COD khi nhận hàng nên khi hủy trước khi giao anh/chị chưa trả tiền, do đó sẽ không phát sinh khoản tiền hoàn nào ạ."
+            ans_any_t2 = [['chưa trả tiền', 'không phát sinh', 'chưa thanh toán']]
+        else:
+            say_t2 = f"Dạ theo chính sách hoàn tiền [{{{{last_tool.results.0.citation_id}}}}], sau khi đơn hàng {ext_oid} hoàn tất hủy, cổng thanh toán sẽ xử lý hoàn tiền về tài khoản ban đầu trong vòng 12 đến 72 giờ ạ."
+            ans_any_t2 = [['12 đến 72 giờ', '12–72 giờ', 'tài khoản']]
+
         case = {
             'id': cid, 'category': 't08', 'title': f'Hủy đơn rồi hỏi hoàn tiền {ext_oid}', 'fixture': 'sft_v1', 'customer': cust_id,
-            'meta': {'suite': 'T08', 'split': 'train', 'style': style, 'origin': 'sinh_sft', 'template': self.template_id, 'source_note': f'T08 cancel then refund inquiry {ext_oid}', 'vn_context': []},
+            'meta': {
+                'suite': 'T08', 'split': 'train', 'style': style, 'origin': 'sinh_sft',
+                'template': self.template_id, 'source_note': f'T08 cancel then refund inquiry {ext_oid}',
+                'slot_key': ext_oid, 'intent': f"cancel_then_refund_{case_index}", 'vn_context': []
+            },
+            'knowledge': [k_chunk],
             'turns': [
                 {
                     'user': f"<chờ lời khách: yêu cầu hủy đơn {ext_oid}>",
@@ -180,9 +208,13 @@ class T08HuyRoiHoiHoanTien(BaseTemplate):
                 },
                 {
                     'user': "<chờ lời khách: hủy xong thì tiền hoàn về đâu>",
-                    'expect': {'tools_not_called': ['prepare_order_action'], 'max_tool_calls': 1, 'action': 'reply', 'human_support': False, 'answer_any': [['tài khoản', 'ngân hàng', 'hoàn tiền']], 'answer_not': ['chưa có thông tin']},
+                    'expect': {
+                        'tools_called': ['search_knowledge'], 'max_tool_calls': 2, 'action': 'reply', 'human_support': False,
+                        'sources': ['refunds.md'], 'answer_any': ans_any_t2, 'answer_not': ['3 đến 5 ngày', '3-5 ngày', 'chưa có thông tin']
+                    },
                     'fake_model': [
-                        {'say': f"Dạ sau khi đơn hàng {ext_oid} hoàn tất hủy, tiền thanh toán sẽ được hoàn tự động về tài khoản ngân hàng ban đầu của anh/chị trong 3-5 ngày làm việc ạ."}
+                        {'call': [{'name': 'search_knowledge', 'arguments': {'query': 'thời gian hoàn tiền khi hủy đơn hàng'}}]},
+                        {'say': say_t2}
                     ]
                 }
             ],
@@ -205,13 +237,17 @@ class T08NhieuDonThamChieuDonLucNay(BaseTemplate):
         ord1 = ords[0] if ords else {'external_order_id': 'SIM-O-50006', 'status': 'delivered'}
         ext_oid = ord1['external_order_id']
         b1 = Brief(brief_id=f"brf_{cid}_t1", case_id=cid, turn=1, suite=self.suite, template=self.template_id, style=style,
-                   persona="khách_hàng_nhieu_don", intent="tra_cuu_don_cu_the_luot_1", must_include=[ext_oid], length="ngắn")
+                   persona="khách_hàng_nhieu_don", intent=f"tra_cuu_don_cu_the_luot_1_{case_index}", must_include=[ext_oid], length="ngắn")
         b2 = Brief(brief_id=f"brf_{cid}_t2", case_id=cid, turn=2, suite=self.suite, template=self.template_id, style=style,
-                   persona="khách_hàng_nhieu_don", intent="hoi_them_ve_don_vua_hoi", must_include=["đơn lúc nãy"],
+                   persona="khách_hàng_nhieu_don", intent=f"hoi_them_ve_don_vua_hoi_{case_index}", must_include=["đơn lúc nãy"],
                    earlier_turns=[{'turn': 1, 'intent': 'tra_cuu_don_cu_the_luot_1', 'assistant': f'đơn {ext_oid} đã giao'}], length="ngắn")
         case = {
             'id': cid, 'category': 't08', 'title': f'Tham chiếu đơn lúc nãy {ext_oid}', 'fixture': 'sft_v1', 'customer': cust_id,
-            'meta': {'suite': 'T08', 'split': 'train', 'style': style, 'origin': 'sinh_sft', 'template': self.template_id, 'source_note': f'T08 refer to focused order {ext_oid}', 'vn_context': []},
+            'meta': {
+                'suite': 'T08', 'split': 'train', 'style': style, 'origin': 'sinh_sft',
+                'template': self.template_id, 'source_note': f'T08 refer to focused order {ext_oid}',
+                'slot_key': ext_oid, 'intent': f"refer_focused_order_{case_index}", 'vn_context': []
+            },
             'turns': [
                 {
                     'user': f"<chờ lời khách: tra cứu đơn {ext_oid}>",
@@ -223,9 +259,13 @@ class T08NhieuDonThamChieuDonLucNay(BaseTemplate):
                 },
                 {
                     'user': "<chờ lời khách: thế đơn lúc nãy có được đổi hàng không>",
-                    'expect': {'tools_not_called': ['list_orders'], 'max_tool_calls': 1, 'action': 'reply', 'human_support': False, 'answer_any': [['đổi hàng', 'đổi size', '15 ngày']], 'answer_not': ['chưa có thông tin']},
+                    'expect': {
+                        'tools_called': ['get_order'], 'tools_not_called': ['list_orders'], 'max_tool_calls': 2, 'action': 'reply', 'human_support': False,
+                        'answer_all': [ext_oid], 'answer_any': [['đổi hàng', 'đổi size', '15 ngày']], 'answer_not': ['chưa có thông tin']
+                    },
                     'fake_model': [
-                        {'say': f"Dạ đơn {ext_oid} lúc nãy vẫn trong thời hạn đổi hàng ạ, nếu muốn đổi size anh/chị báo em để em mở biểu mẫu hỗ trợ nhé ạ."}
+                        {'call': [{'name': 'get_order', 'arguments': {'order_id': ext_oid}}]},
+                        {'say': f"Dạ em đã kiểm tra lại đơn {ext_oid} lúc nãy, đơn hàng này đã giao và vẫn còn trong thời hạn 15 ngày đổi size ạ. Nếu anh/chị muốn đổi size, em sẽ hỗ trợ mở biểu mẫu đổi hàng nhé ạ."}
                     ]
                 }
             ],

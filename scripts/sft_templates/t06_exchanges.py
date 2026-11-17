@@ -25,29 +25,58 @@ class T06DoiSizeConHang(BaseTemplate):
         super().__init__('t06_doi_size_con_hang', 'T06', 10, description='Đổi size sản phẩm còn hàng trong vòng 15 ngày')
 
     def select(self, view: Any) -> list[Any]:
-        # Orders within 15 days with apparel products
-        ords = [o for o in view.delivered_within_7 if o.get('product_id') in ('P-101', 'P-102', 'P-103', 'P-104', 'P-202', 'P-203')]
-        return ords or view.delivered_within_7
+        apparel_pids = {'P-101', 'P-102', 'P-103', 'P-104', 'P-202', 'P-203', 'P-301', 'P-501', 'P-502', 'P-503', 'P-504', 'P-601', 'P-602', 'P-603'}
+        ords = [o for o in view.orders_size_exchange_eligible if o.get('product_id') in apparel_pids]
+        return ords or list(view.orders_size_exchange_eligible)
 
     def build(self, slot: Any, rng: random.Random, case_index: int, style: str, view: Any = None) -> tuple[dict[str, Any], list[Brief]]:
         cid = f"t06_{case_index:03d}_{self.template_id}"
         ext_oid = slot['external_order_id']
         cust_id = slot['external_customer_id']
+        pid = slot.get('product_id')
         curr_var = slot.get('variant') or 'Trắng · Size L'
-        # Target variant: swap size (e.g. L -> M or M -> L)
-        color = curr_var.split('·')[0].strip() if '·' in curr_var else 'Trắng'
-        target_size = 'M' if 'L' in curr_var else 'L'
-        target_label = f"{color} · Size {target_size}"
+
+        matching_in_stock = [
+            v for v in getattr(view, 'in_stock_variants', [])
+            if v.get('product_id') == pid and v.get('variant_name') != curr_var
+        ] if view else []
+
+        if matching_in_stock:
+            chosen = matching_in_stock[case_index % len(matching_in_stock)]
+            target_label = chosen['variant_name']
+            target_size = chosen['size']
+        else:
+            color = curr_var.split('·')[0].strip() if '·' in curr_var else 'Trắng'
+            target_size = 'M' if 'L' in curr_var else 'L'
+            target_label = f"{color} · Size {target_size}"
+
+        intents = [
+            f"yeu_cau_doi_size_con_hang_{case_index}",
+            f"hoi_doi_sang_size_vua_hon_{case_index}",
+            f"thac_mac_doi_size_khi_mac_chat_{case_index}",
+            f"check_doi_size_{target_size}_con_hang_{case_index}",
+            f"yeu_cau_mo_bieu_mau_doi_size_{case_index}",
+            f"hoi_thu_tuc_doi_sang_size_{target_size}_{case_index}",
+            f"kiem_tra_doi_size_trong_15_ngay_{case_index}",
+            f"doi_size_san_pham_vua_nhan_{case_index}",
+            f"check_hang_doi_size_san_co_{case_index}",
+            f"xac_nhan_doi_sang_bien_the_con_{case_index}",
+        ]
+        intent = intents[(case_index - 1) % len(intents)]
 
         brief = Brief(
             brief_id=f"brf_{cid}_t1", case_id=cid, turn=1, suite=self.suite, template=self.template_id, style=style,
-            persona="khách_hàng_mac_khong_vua", intent="yeu_cau_doi_size_con_hang",
+            persona="khách_hàng_mac_khong_vua", intent=intent,
             must_include=[ext_oid, target_size], must_not_include=["choose_order_action_reason"], length="vừa",
             notes=f"Khách nhận đơn {ext_oid} mặc hơi chật/rộng muốn đổi sang size {target_size}",
         )
         case = {
             'id': cid, 'category': 't06', 'title': f'Đổi size còn hàng đơn {ext_oid}', 'fixture': 'sft_v1', 'customer': cust_id,
-            'meta': {'suite': 'T06', 'split': 'train', 'style': style, 'origin': 'sinh_sft', 'template': self.template_id, 'source_note': f'T06 exchange in stock {ext_oid}', 'vn_context': ['doi_size_thoi_trang']},
+            'meta': {
+                'suite': 'T06', 'split': 'train', 'style': style, 'origin': 'sinh_sft',
+                'template': self.template_id, 'source_note': f'T06 exchange in stock {ext_oid}',
+                'slot_key': ext_oid, 'intent': intent, 'vn_context': ['doi_size_thoi_trang']
+            },
             'turns': [
                 {
                     'user': f"<chờ lời khách: muốn đổi đơn {ext_oid} sang size {target_size}>",
@@ -264,36 +293,65 @@ class T06DoiMau(BaseTemplate):
 
 class T06Doi11LoiTrong90Ngay(BaseTemplate):
     def __init__(self) -> None:
-        super().__init__('t06_doi_1_1_loi_trong_90_ngay', 'T06', 10, description='Đổi 1-1 sản phẩm bị lỗi sản xuất trong thời hạn bảo hành 90 ngày')
+        super().__init__('t06_doi_1_1_loi_trong_90_ngay', 'T06', 10, description='Đổi 1-1 sản phẩm bị lỗi sản xuất trong thời hạn bảo hành')
 
     def select(self, view: Any) -> list[Any]:
-        return list(view.delivered_16_to_90)
+        return list(view.orders_warranty_only) or list(view.delivered_16_to_90)
 
     def build(self, slot: Any, rng: random.Random, case_index: int, style: str, view: Any = None) -> tuple[dict[str, Any], list[Brief]]:
         cid = f"t06_{case_index:03d}_{self.template_id}"
         ext_oid = slot['external_order_id']
         cust_id = slot['external_customer_id']
-        curr_var = slot.get('variant') or 'Trắng · Size L'
+        w_days = int(slot.get('eligibility', {}).get('warranty_window_days', 90))
+        k_chunk = view.get_knowledge_chunk('policy_warranty_exchange_1to1.md', 'bảo hành') if view else {
+            'source_key': 'policy_warranty_exchange_1to1.md', 'title': 'Chính sách bảo hành, đổi mới 1-1 tận nhà',
+            'chunk': 'Thời hạn bảo hành đổi mới tiêu chuẩn là **90 ngày kể từ ngày giao hàng** đối với lỗi do nhà sản xuất (bung chỉ, hỏng khóa kéo, lỗi đường may, rách viền).'
+        }
+        intents = [
+            f"yeu_cau_bao_hanh_doi_moi_1_1_{case_index}",
+            f"bao_loi_san_xuat_doi_1_1_{case_index}",
+            f"thac_mac_bao_hanh_san_pham_loi_{case_index}",
+            f"check_dieu_kien_bao_hanh_1_doi_1_{case_index}",
+            f"yeu_cau_mo_doi_bao_hanh_loi_chi_{case_index}",
+            f"hoi_thu_tuc_doi_1_1_trong_bao_hanh_{case_index}",
+            f"kiem_tra_bao_hanh_loi_duong_may_{case_index}",
+            f"bao_do_loi_khoa_keo_doi_moi_{case_index}",
+            f"check_han_bao_hanh_doi_1_1_{case_index}",
+            f"xac_nhan_doi_1_1_do_loi_nha_san_xuat_{case_index}",
+        ]
+        intent = intents[(case_index - 1) % len(intents)]
+
         brief = Brief(
             brief_id=f"brf_{cid}_t1", case_id=cid, turn=1, suite=self.suite, template=self.template_id, style=style,
-            persona="khách_hàng_bao_hang_loi_chi", intent="yeu_cau_bao_hanh_doi_moi_1_1",
+            persona="khách_hàng_bao_hang_loi_chi", intent=intent,
             must_include=[ext_oid, "lỗi"], must_not_include=["choose_order_action_reason"], length="vừa",
-            notes=f"Khách báo đồ đơn {ext_oid} bị bung chỉ/hỏng khóa sau 3 tuần sử dụng",
+            notes=f"Khách báo đồ đơn {ext_oid} bị bung chỉ/hỏng khóa sau vài tuần sử dụng",
         )
         case = {
-            'id': cid, 'category': 't06', 'title': f'Bảo hành đổi 1-1 lỗi 90 ngày {ext_oid}', 'fixture': 'sft_v1', 'customer': cust_id,
-            'meta': {'suite': 'T06', 'split': 'train', 'style': style, 'origin': 'sinh_sft', 'template': self.template_id, 'source_note': f'T06 warranty 1-1 defective item {ext_oid}', 'vn_context': ['hang_loi']},
+            'id': cid, 'category': 't06', 'title': f'Bảo hành đổi 1-1 lỗi {w_days} ngày {ext_oid}', 'fixture': 'sft_v1', 'customer': cust_id,
+            'meta': {
+                'suite': 'T06', 'split': 'train', 'style': style, 'origin': 'sinh_sft',
+                'template': self.template_id, 'source_note': f'T06 warranty 1-1 defective item {ext_oid}',
+                'slot_key': ext_oid, 'intent': intent, 'vn_context': ['hang_loi']
+            },
+            'knowledge': [k_chunk],
             'turns': [
                 {
                     'user': f"<chờ lời khách: báo hàng lỗi bảo hành đơn {ext_oid}>",
                     'expect': {
-                        'tools_called': ['prepare_order_action'], 'max_tool_calls': 1, 'action': 'choose_order_action_reason',
+                        'tools_called': ['prepare_order_action', 'search_knowledge'], 'max_tool_calls': 2, 'action': 'choose_order_action_reason',
                         'order_action': {'order_id': ext_oid, 'action_type': 'exchange'},
-                        'human_support': False, 'answer_all': [ext_oid], 'answer_any': [['bảo hành', 'đổi 1-1', 'biểu mẫu', 'lỗi']], 'answer_not': ['chưa có thông tin'],
+                        'human_support': False, 'sources': ['policy_warranty_exchange_1to1.md'],
+                        'answer_all': [ext_oid, f"{w_days} ngày"],
+                        'answer_any': [['bảo hành', 'đổi 1-1', 'biểu mẫu', 'lỗi']],
+                        'answer_not': ['chưa có thông tin'],
                     },
                     'fake_model': [
-                        {'call': [{'name': 'prepare_order_action', 'arguments': {'order_id': ext_oid, 'action_type': 'exchange'}}]},
-                        {'say': f"Dạ đơn hàng {ext_oid} vẫn nằm trong thời hạn bảo hành 90 ngày cho lỗi nhà sản xuất ạ. Em đã mở biểu mẫu yêu cầu bảo hành đổi mới 1-1 trên màn hình cho anh/chị rồi ạ."}
+                        {'call': [
+                            {'name': 'prepare_order_action', 'arguments': {'order_id': ext_oid, 'action_type': 'exchange'}},
+                            {'name': 'search_knowledge', 'arguments': {'query': 'chính sách bảo hành đổi mới 1-1 lỗi sản xuất'}}
+                        ]},
+                        {'say': f"Dạ theo chính sách bảo hành của shop [{{{{last_tool.results.0.citation_id}}}}], đơn hàng {ext_oid} vẫn nằm trong thời hạn bảo hành {w_days} ngày cho lỗi nhà sản xuất; em đã mở biểu mẫu yêu cầu bảo hành đổi mới 1-1 trên màn hình cho anh/chị rồi ạ."}
                     ]
                 }
             ],

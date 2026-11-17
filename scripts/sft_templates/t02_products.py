@@ -156,13 +156,24 @@ class T02TonKhoBienTheCon(BaseTemplate):
         super().__init__('t02_ton_kho_bien_the_con', 'T02', 10, description='Kiểm tra tồn kho biến thể còn hàng (in_stock)')
 
     def select(self, view: Any) -> list[Any]:
-        # Variants known to be in stock: P-101 Trắng M, P-102 Đen L, P-103 Xanh Nhạt M
-        return [
-            {'product_id': 'P-101', 'name': 'Áo thun Essential', 'size': 'M', 'color': 'Trắng'},
-            {'product_id': 'P-102', 'name': 'Áo khoác Everyday', 'size': 'L', 'color': 'Đen'},
-            {'product_id': 'P-103', 'name': 'Áo Sơ Mi Oxford Dài Tay', 'size': 'M', 'color': 'Xanh Nhạt'},
-            {'product_id': 'P-104', 'name': 'Áo Khoác Gió Bomber 2 Lớp', 'size': 'M', 'color': 'Đen'},
-            {'product_id': 'P-202', 'name': 'Áo polo', 'size': 'M', 'color': 'Xanh Navy'},
+        slots = []
+        for v in getattr(view, 'in_stock_variants', []):
+            pid = v.get('product_id')
+            p = view.catalog.products.get(pid)
+            if p:
+                slots.append({
+                    'product_id': pid,
+                    'name': p['name'],
+                    'size': v.get('size') or 'M',
+                    'color': v.get('color') or 'Trắng',
+                    'stock': v.get('stock') or 1,
+                })
+        return slots or [
+            {'product_id': 'P-101', 'name': 'Áo thun Essential', 'size': 'M', 'color': 'Trắng', 'stock': 12},
+            {'product_id': 'P-102', 'name': 'Áo khoác Everyday', 'size': 'L', 'color': 'Đen', 'stock': 15},
+            {'product_id': 'P-103', 'name': 'Áo Sơ Mi Oxford Dài Tay', 'size': 'M', 'color': 'Xanh Nhạt', 'stock': 8},
+            {'product_id': 'P-104', 'name': 'Áo Khoác Gió Bomber 2 Lớp', 'size': 'M', 'color': 'Đen', 'stock': 14},
+            {'product_id': 'P-202', 'name': 'Áo polo', 'size': 'M', 'color': 'Xanh', 'stock': 18},
         ]
 
     def build(self, slot: Any, rng: random.Random, case_index: int, style: str, view: Any = None) -> tuple[dict[str, Any], list[Brief]]:
@@ -172,6 +183,19 @@ class T02TonKhoBienTheCon(BaseTemplate):
         size = slot['size']
         color = slot['color']
         cust_id = list(view.customers.keys())[case_index % len(view.customers)] if view else 'SIM-C-5001'
+        intents = [
+            f"kiem_tra_ton_kho_con_hang_{size}_{color}",
+            f"hoi_con_size_khong_{size}_{color}",
+            f"check_hang_san_co_{size}_{color}",
+            f"hoi_dat_mua_mau_{color}_size_{size}",
+            f"xac_nhan_con_hang_trong_kho_{size}_{color}",
+            f"thac_mac_so_luong_con_lai_{size}_{color}",
+            f"kiem_tra_bien_the_con_hang_{size}_{color}",
+            f"hoi_mau_va_size_con_ban_khong_{size}_{color}",
+            f"check_kho_san_pham_{size}_{color}",
+            f"hoi_mua_ngay_size_{size}_{color}",
+        ]
+        intent = intents[(case_index - 1) % len(intents)]
         brief = Brief(
             brief_id=f"brf_{cid}_t1",
             case_id=cid,
@@ -180,7 +204,7 @@ class T02TonKhoBienTheCon(BaseTemplate):
             template=self.template_id,
             style=style,
             persona="khách_hàng_hoi_mua_hang",
-            intent="kiem_tra_ton_kho_con_hang",
+            intent=intent,
             must_include=[pname, size, color],
             must_not_include=["hết hàng", "tạm hết"],
             length="vừa",
@@ -199,6 +223,8 @@ class T02TonKhoBienTheCon(BaseTemplate):
                 'origin': 'sinh_sft',
                 'template': self.template_id,
                 'source_note': f'T02 inventory in stock {pid}',
+                'slot_key': f"{pid}_{color}_{size}",
+                'intent': intent,
                 'vn_context': [],
             },
             'turns': [
@@ -231,8 +257,19 @@ class T02TonKhoBienTheHetGoiY(BaseTemplate):
         super().__init__('t02_ton_kho_bien_the_het_goi_y', 'T02', 10, description='Tồn kho biến thể hết hàng, gợi ý size/màu khác')
 
     def select(self, view: Any) -> list[Any]:
-        # Variants with stock 0: P-101 Trắng XL, P-102 Đen S, P-104 Đen L
-        return [
+        slots = []
+        for v in getattr(view, 'out_of_stock_variants', []):
+            pid = v.get('product_id')
+            p = view.catalog.products.get(pid)
+            if p:
+                slots.append({
+                    'product_id': pid,
+                    'name': p['name'],
+                    'size': v.get('size') or 'XL',
+                    'color': v.get('color') or 'Trắng',
+                    'suggest_size': 'M' if (v.get('size') or '').upper() == 'XL' else 'L',
+                })
+        return slots or [
             {'product_id': 'P-101', 'name': 'Áo thun Essential', 'size': 'XL', 'color': 'Trắng', 'suggest_size': 'L'},
             {'product_id': 'P-102', 'name': 'Áo khoác Everyday', 'size': 'S', 'color': 'Đen', 'suggest_size': 'M'},
             {'product_id': 'P-104', 'name': 'Áo Khoác Gió Bomber 2 Lớp', 'size': 'L', 'color': 'Đen', 'suggest_size': 'M'},
@@ -244,8 +281,21 @@ class T02TonKhoBienTheHetGoiY(BaseTemplate):
         pname = slot['name']
         size = slot['size']
         color = slot['color']
-        suggest = slot['suggest_size']
+        suggest = slot.get('suggest_size', 'M')
         cust_id = list(view.customers.keys())[(case_index + 2) % len(view.customers)] if view else 'SIM-C-5001'
+        intents = [
+            f"kiem_tra_ton_kho_het_hang_{size}_{color}",
+            f"hoi_size_het_hang_goi_y_khac_{size}",
+            f"thac_mac_con_hang_khong_{size}_{color}",
+            f"check_bien_the_tam_het_{size}_{color}",
+            f"hoi_size_{size}_mau_{color}_con_khong",
+            f"hoi_san_pham_da_chay_hang_chua_{size}",
+            f"kiem_tra_kho_het_size_{size}",
+            f"check_hang_size_lon_con_khong_{size}",
+            f"hoi_khi_nao_ve_them_size_{size}",
+            f"hoi_goi_y_size_thay_the_cho_{size}",
+        ]
+        intent = intents[(case_index - 1) % len(intents)]
         brief = Brief(
             brief_id=f"brf_{cid}_t1",
             case_id=cid,
@@ -254,7 +304,7 @@ class T02TonKhoBienTheHetGoiY(BaseTemplate):
             template=self.template_id,
             style=style,
             persona="khách_hàng_hoi_mua_size_lon",
-            intent="kiem_tra_ton_kho_het_hang",
+            intent=intent,
             must_include=[pname, size, color],
             must_not_include=["còn nhiều hàng"],
             length="vừa",
@@ -273,6 +323,8 @@ class T02TonKhoBienTheHetGoiY(BaseTemplate):
                 'origin': 'sinh_sft',
                 'template': self.template_id,
                 'source_note': f'T02 inventory out of stock {pid}',
+                'slot_key': f"{pid}_{color}_{size}",
+                'intent': intent,
                 'vn_context': [],
             },
             'turns': [
@@ -570,13 +622,22 @@ class T02SanPhamKhongCo(BaseTemplate):
         super().__init__('t02_san_pham_khong_co', 'T02', 10, description='Khách tìm kiếm sản phẩm hoàn toàn không tồn tại trong catalog')
 
     def select(self, view: Any) -> list[Any]:
-        # Non-existent product queries
         return [
             {'query': 'giày patin trẻ em 4 bánh', 'non_pid': 'P-999'},
             {'query': 'bàn chải điện siêu âm', 'non_pid': 'P-998'},
             {'query': 'máy hút bụi mini cầm tay', 'non_pid': 'P-997'},
             {'query': 'áo phao bơi cứu sinh', 'non_pid': 'P-996'},
             {'query': 'kính bơi chống sương mù', 'non_pid': 'P-995'},
+            {'query': 'nồi chiên không dầu điện tử', 'non_pid': 'P-994'},
+            {'query': 'tai nghe chống ồn bluetooth', 'non_pid': 'P-993'},
+            {'query': 'đồng hồ thông minh thể thao', 'non_pid': 'P-992'},
+            {'query': 'máy cạo râu tự động', 'non_pid': 'P-991'},
+            {'query': 'balo chống gù học sinh', 'non_pid': 'P-990'},
+            {'query': 'vợt cầu lông cacbon', 'non_pid': 'P-989'},
+            {'query': 'sữa bột tăng cân cho bé', 'non_pid': 'P-988'},
+            {'query': 'thảm tập yoga cao su', 'non_pid': 'P-987'},
+            {'query': 'kính thực tế ảo vr', 'non_pid': 'P-986'},
+            {'query': 'nước hoa vùng kín', 'non_pid': 'P-985'},
         ]
 
     def build(self, slot: Any, rng: random.Random, case_index: int, style: str, view: Any = None) -> tuple[dict[str, Any], list[Brief]]:
@@ -584,6 +645,19 @@ class T02SanPhamKhongCo(BaseTemplate):
         query = slot['query']
         non_pid = slot['non_pid']
         cust_id = list(view.customers.keys())[case_index % len(view.customers)] if view else 'SIM-C-5001'
+        intents = [
+            f"tim_kiem_san_pham_khong_kinh_doanh_{case_index}",
+            f"hoi_shop_co_ban_khong_{case_index}",
+            f"check_mat_hang_ngoai_catalog_{case_index}",
+            f"hoi_dat_hang_mon_khong_co_{case_index}",
+            f"thac_mac_co_kinh_doanh_khong_{case_index}",
+            f"kiem_tra_san_pham_khong_ton_tai_{case_index}",
+            f"hoi_mua_mon_khong_co_trong_shop_{case_index}",
+            f"tim_mat_hang_la_{case_index}",
+            f"check_xem_shop_co_mon_nay_khong_{case_index}",
+            f"hoi_san_pham_khong_co_trong_kho_{case_index}",
+        ]
+        intent = intents[(case_index - 1) % len(intents)]
         brief = Brief(
             brief_id=f"brf_{cid}_t1",
             case_id=cid,
@@ -592,7 +666,7 @@ class T02SanPhamKhongCo(BaseTemplate):
             template=self.template_id,
             style=style,
             persona="khách_hàng_tim_mon_khong_ban",
-            intent="tim_kiem_san_pham_khong_kinh_doanh",
+            intent=intent,
             must_include=[query],
             must_not_include=["còn hàng", "đang bán"],
             length="ngắn",
@@ -611,6 +685,8 @@ class T02SanPhamKhongCo(BaseTemplate):
                 'origin': 'sinh_sft',
                 'template': self.template_id,
                 'source_note': f'T02 non-existent product search {query}',
+                'slot_key': query,
+                'intent': intent,
                 'vn_context': [],
             },
             'turns': [

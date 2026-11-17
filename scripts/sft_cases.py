@@ -11,7 +11,7 @@ import argparse
 import json
 import random
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -70,18 +70,30 @@ def generate_cases(
             all_cases.append(case)
             all_briefs.extend(b.to_dict() for b in briefs)
 
+    # Assert each template uses any single order at most 3 times
+    import re
+    usage_by_tmpl: dict[str, Counter[str]] = defaultdict(Counter)
+    for c in all_cases:
+        tmpl_name = c['meta']['template']
+        text = str(c)
+        for oid in set(re.findall(r'SIM-O-\d+', text)):
+            usage_by_tmpl[tmpl_name][oid] += 1
+    for tmpl_name, cnts in usage_by_tmpl.items():
+        for oid, cnt in cnts.items():
+            assert cnt <= 3, f"Template {tmpl_name} uses order {oid} {cnt} times (> 3)"
+
     # If pilot mode is requested (e.g. 100 or 24)
     if pilot is not None:
         pilot_n = int(pilot)
         assert 12 <= pilot_n <= len(all_cases), f"Invalid pilot count {pilot_n}"
 
-        # Stratified sampling across suites T01..T12
-        cases_by_suite: dict[str, list[dict[str, Any]]] = {}
+        # Group cases by suite, then by template
+        cases_by_suite_tmpl: dict[str, dict[str, list[dict[str, Any]]]] = {}
         for c in all_cases:
             s = c['meta']['suite']
-            cases_by_suite.setdefault(s, []).append(c)
+            t = c['meta']['template']
+            cases_by_suite_tmpl.setdefault(s, {}).setdefault(t, []).append(c)
 
-        selected_cases: list[dict[str, Any]] = []
         if pilot_n == 100:
             # Exact stratified targets for 100: each >= 5, total 100
             # T01: 8, T02: 8, T03: 9, T04: 8, T05: 8, T06: 8, T07: 5, T08: 12, T09: 7, T10: 5, T11: 15, T12: 7
@@ -89,17 +101,55 @@ def generate_cases(
                 'T01': 8, 'T02': 8, 'T03': 9, 'T04': 8, 'T05': 8, 'T06': 8,
                 'T07': 5, 'T08': 12, 'T09': 7, 'T10': 5, 'T11': 15, 'T12': 7,
             }
-            for s, target_cnt in pilot_targets.items():
-                selected_cases.extend(cases_by_suite[s][:target_cnt])
         else:
-            # Proportional with min 1 per suite
-            remaining = pilot_n
-            suites = sorted(cases_by_suite.keys())
-            for s in suites:
-                cnt = max(1, round(len(cases_by_suite[s]) / len(all_cases) * pilot_n))
-                cnt = min(cnt, len(cases_by_suite[s]))
-                selected_cases.extend(cases_by_suite[s][:cnt])
-            selected_cases = selected_cases[:pilot_n]
+            pilot_targets = {}
+            for s in sorted(cases_by_suite_tmpl.keys()):
+                s_total = sum(len(c_list) for c_list in cases_by_suite_tmpl[s].values())
+                cnt = max(1, round(s_total / len(all_cases) * pilot_n))
+                pilot_targets[s] = cnt
+            # Adjust if sum != pilot_n
+            diff = pilot_n - sum(pilot_targets.values())
+            for s in sorted(cases_by_suite_tmpl.keys()):
+                if diff == 0:
+                    break
+                if diff > 0:
+                    pilot_targets[s] += 1
+                    diff -= 1
+                elif diff < 0 and pilot_targets[s] > 1:
+                    pilot_targets[s] -= 1
+                    diff += 1
+
+        selected_cases: list[dict[str, Any]] = []
+        style_counts: Counter[str] = Counter()
+
+        for s, target_cnt in pilot_targets.items():
+            tmpl_dict = cases_by_suite_tmpl.get(s, {})
+            tmpl_list = list(tmpl_dict.keys())
+            if not tmpl_list:
+                continue
+            chosen_in_suite: list[dict[str, Any]] = []
+            tmpl_used_idx = Counter()
+            while len(chosen_in_suite) < target_cnt:
+                progress = False
+                for tmpl_id in tmpl_list:
+                    if len(chosen_in_suite) >= target_cnt:
+                        break
+                    cases_for_tmpl = tmpl_dict[tmpl_id]
+                    idx = tmpl_used_idx[tmpl_id]
+                    if idx < len(cases_for_tmpl):
+                        avail_candidates = cases_for_tmpl[idx:]
+                        avail_candidates_sorted = sorted(avail_candidates, key=lambda c: style_counts[c['meta']['style']])
+                        picked = avail_candidates_sorted[0]
+                        cases_for_tmpl.remove(picked)
+                        cases_for_tmpl.insert(idx, picked)
+                        tmpl_used_idx[tmpl_id] += 1
+
+                        chosen_in_suite.append(picked)
+                        style_counts[picked['meta']['style']] += 1
+                        progress = True
+                if not progress:
+                    break
+            selected_cases.extend(chosen_in_suite)
 
         all_cases = selected_cases
         case_ids = {c['id'] for c in all_cases}
@@ -165,7 +215,11 @@ def generate_cases(
 
 
 def check_cases(out_dir: Path | str, cases_path: Path | str | None = None) -> dict[str, Any]:
+    import copy
+    import importlib.util
     from scripts.run_agent_scenarios import ScriptedGateway, run_scenario
+
+    has_pdfium = importlib.util.find_spec('pypdfium2') is not None
 
     target_dir = Path(out_dir).resolve()
     cases_file = Path(cases_path).resolve() if cases_path else target_dir / 'cases_sft_v1.jsonl'
@@ -182,12 +236,42 @@ def check_cases(out_dir: Path | str, cases_path: Path | str | None = None) -> di
     failures_by_case: dict[str, list[str]] = {}
 
     for idx, c in enumerate(cases, 1):
+        c_to_run = c
+        if not has_pdfium:
+            c_to_run = copy.deepcopy(c)
+            # Flatten text_pdf attachments into message text for environments without pypdfium2
+            if c_to_run.get('actor') == 'staff_case_assist':
+                for msg in c_to_run.get('case_setup', {}).get('customer_messages', []):
+                    att = msg.get('attachment')
+                    if isinstance(att, dict) and att.get('kind') == 'text_pdf':
+                        pages = att.get('pages', [])
+                        pdf_txt = '\n' + '\n'.join(f'[Trang {i}] {p}' for i, p in enumerate(pages, 1))
+                        msg['text'] = (msg.get('text') or '') + pdf_txt
+                        del msg['attachment']
+            for turn in c_to_run.get('turns', []):
+                att = turn.get('attachment')
+                if isinstance(att, dict) and att.get('kind') == 'text_pdf':
+                    pages = att.get('pages', [])
+                    pdf_txt = '\n' + '\n'.join(f'[Trang {i}] {p}' for i, p in enumerate(pages, 1))
+                    turn['user'] = (turn.get('user') or '') + pdf_txt
+                    del turn['attachment']
+
         gw = ScriptedGateway()
-        res = run_scenario(c, gw, mode='fake')
-        if res['passed']:
+        res = run_scenario(c_to_run, gw, mode='fake')
+
+        # Check for answer_check drops or audits
+        check_fails = []
+        for t_idx, t_res in enumerate(res.get('turns', []), 1):
+            if t_res.get('answer_check'):
+                check_fails.append(f"turn {t_idx} dropped claims: {t_res['answer_check']}")
+            if t_res.get('answer_check_audit'):
+                check_fails.append(f"turn {t_idx} audit flag: {t_res['answer_check_audit']}")
+
+        if res['passed'] and not check_fails:
             passed_count += 1
         else:
-            failures_by_case[c['id']] = res['failures']
+            all_fails = list(res.get('failures', [])) + check_fails
+            failures_by_case[c['id']] = all_fails
 
     pass_rate = passed_count / len(cases)
     result = {

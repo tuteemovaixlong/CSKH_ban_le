@@ -26,8 +26,16 @@ class Brief:
     length: str = "vừa"  # "ngắn", "vừa", "dài"
     notes: str = ""
     injection: str | None = None
+    setup_msg_index: int = 0
 
     def to_dict(self) -> dict[str, Any]:
+        must = list(self.must_include)
+        may = list(self.may_include)
+        if self.style == "khong_dau":
+            from scripts.sft_utterances import strip_vietnamese_accents
+            must = [strip_vietnamese_accents(x) for x in must]
+            may = [strip_vietnamese_accents(x) for x in may]
+
         data: dict[str, Any] = {
             "brief_id": self.brief_id,
             "case_id": self.case_id,
@@ -37,8 +45,8 @@ class Brief:
             "style": self.style,
             "persona": self.persona,
             "intent": self.intent,
-            "must_include": self.must_include,
-            "may_include": self.may_include,
+            "must_include": must,
+            "may_include": may,
             "must_not_include": self.must_not_include,
             "earlier_turns": self.earlier_turns,
             "length": self.length,
@@ -46,6 +54,8 @@ class Brief:
         }
         if self.injection is not None:
             data["injection"] = self.injection
+        if self.setup_msg_index != 0:
+            data["setup_msg_index"] = self.setup_msg_index
         return data
 
 

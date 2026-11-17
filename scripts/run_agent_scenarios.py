@@ -69,16 +69,13 @@ REFUSAL = ('Chưa có --endpoint nên script không chạy.\n'
            'Muốn kiểm tra mã xung quanh model mà không cần model: dùng --fake (gateway giả, không mạng).')
 
 # W6.1b-D12: Scenarios run strictly on data/demo_events/store_events.jsonl with zero hardcoded SQL seed rows.
-class _FixturesDict(dict):
-    """Scenario runner fixtures mapping supporting sft_v1 while keeping W3.2 runner test expectations exact."""
-    def __iter__(self):
-        return iter([k for k in super().__iter__() if k != 'sft_v1'])
-
-FIXTURES = _FixturesDict({
+FIXTURES = {
     'standard': 'store_events.jsonl',
     'late_voucher_issued': 'store_events.jsonl+voucher_loop',
+}
+TRAIN_FIXTURES = {
     'sft_v1': 'store_events_sft_v1.jsonl',
-})
+}
 _DEMO_TEMPLATE_CACHE = {}
 _CALL_CONTEXT = ContextVar('eval_call_context', default={})
 COUNTED_TABLES = (
@@ -602,7 +599,7 @@ def percentile(values, pct):
 # ---------------------------------------------------------------- running
 
 def _provision_demo_template(fixture_name, persistent_sessions_cls):
-    if fixture_name not in FIXTURES:
+    if fixture_name not in FIXTURES and fixture_name not in TRAIN_FIXTURES:
         raise ScenarioError(f'unknown fixture {fixture_name!r}')
     cached = _DEMO_TEMPLATE_CACHE.get(fixture_name)
     if cached is not None and Path(cached.name).is_dir():

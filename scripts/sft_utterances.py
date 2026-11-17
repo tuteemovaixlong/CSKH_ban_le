@@ -9,10 +9,15 @@ CLI:
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
+import inspect
 import json
 import os
 import re
 import sys
+import threading
+import time
+import unicodedata
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -33,6 +38,22 @@ VIETNAMESE_ACCENTS_RE = re.compile(
     r"[àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ"
     r"ÀÁẢÃẠĂẰẮẲẴẶÂẦẤẨẪẬÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴĐ]"
 )
+
+
+def strip_vietnamese_accents(s: str) -> str:
+    """Strip Vietnamese accents from string: đ/Đ -> d/D and remove combining marks."""
+    s = s.replace('đ', 'd').replace('Đ', 'D')
+    decomposed = unicodedata.normalize('NFKD', s)
+    return ''.join(c for c in decomposed if not unicodedata.combining(c))
+
+
+def normalize_brief_for_style(brief: dict[str, Any]) -> dict[str, Any]:
+    """Normalize brief requirements based on style: convert must_include/may_include to unaccented if khong_dau."""
+    b = dict(brief)
+    if b.get("style") == "khong_dau":
+        b["must_include"] = [strip_vietnamese_accents(x) for x in b.get("must_include", [])]
+        b["may_include"] = [strip_vietnamese_accents(x) for x in b.get("may_include", [])]
+    return b
 
 SYSTEM_PROMPT = """Bạn là người viết lời khách hàng cho bộ dữ liệu chăm sóc khách hàng (CSKH) thương mại điện tử Việt Nam.
 Nhiệm vụ: Bạn nhận được một phiếu yêu cầu (JSON brief) và phải viết MỘT câu hoặc đoạn tin nhắn của khách hàng đúng theo yêu cầu trong phiếu.
@@ -94,10 +115,25 @@ def validate_utterance(
     if not txt:
         return False, "Câu trả lời rỗng"
 
+    style = brief.get("style", "chuan")
+    is_khong_dau = style == "khong_dau"
+
     # 1. must_include check
-    for item in brief.get("must_include", []):
-        if item not in txt:
-            return False, f"Thiếu chuỗi bắt buộc '{item}'"
+    for raw_item in brief.get("must_include", []):
+        item = strip_vietnamese_accents(raw_item) if is_khong_dau else raw_item
+        # IDs, codes, numeric identifiers (e.g. SIM-O-50001, VCH-..., 11.11, P-101): check case-sensitive
+        if any(c.isdigit() or c == '-' for c in item):
+            if item not in txt:
+                return False, f"Thiếu chuỗi bắt buộc '{item}'"
+        else:
+            if item.lower() not in txt.lower():
+                return False, f"Thiếu chuỗi bắt buộc '{item}'"
+
+    # 1b. injection check if specified in brief
+    injection = brief.get("injection")
+    if injection:
+        if injection not in txt:
+            return False, f"Thiếu chuỗi chèn lệnh (injection) '{injection}'"
 
     # 2. must_not_include check (using eval_regrade.v2)
     canon_user = eval_regrade.v2(txt)
@@ -107,7 +143,6 @@ def validate_utterance(
 
     # 3. length check
     length_req = brief.get("length", "vừa")
-    style = brief.get("style", "chuan")
     words = txt.split()
 
     if style == "dai":
@@ -117,9 +152,12 @@ def validate_utterance(
         if len(words) > 40 or len(txt) > 220:
             return False, f"Yêu cầu 'ngắn' nhưng câu dài quá ({len(words)} từ)"
 
-    # 4. khong_dau check
-    if style == "khong_dau":
-        if VIETNAMESE_ACCENTS_RE.search(txt):
+    # 4. khong_dau check (exclude injection string if present)
+    if is_khong_dau:
+        txt_to_check = txt
+        if injection:
+            txt_to_check = txt_to_check.replace(injection, "")
+        if VIETNAMESE_ACCENTS_RE.search(txt_to_check):
             return False, "Giọng 'khong_dau' nhưng có chứa ký tự tiếng Việt có dấu"
 
     # 5. Overlap with all 250 evaluation cases: Jaccard 5-gram <= 0.45 and no common substring >= 40 chars
@@ -143,7 +181,7 @@ class DeepSeekClient:
         endpoint: str = DEFAULT_ENDPOINT,
         model: str = DEFAULT_MODEL,
         api_key: str | None = None,
-        mock_handler: Callable[[dict[str, Any]], str] | None = None,
+        mock_handler: Callable[..., str] | None = None,
     ) -> None:
         self.endpoint = endpoint
         self.model = model
@@ -151,48 +189,55 @@ class DeepSeekClient:
         self.mock_handler = mock_handler
 
     def call(self, brief: dict[str, Any], feedback: str | None = None) -> str:
-        if self.mock_handler is not None:
-            return self.mock_handler(brief)
+        for retry in range(4):
+            try:
+                if self.mock_handler is not None:
+                    sig = inspect.signature(self.mock_handler)
+                    if len(sig.parameters) >= 2:
+                        return self.mock_handler(brief, feedback)
+                    return self.mock_handler(brief)
 
-        if not self.api_key:
-            raise ValueError("Thiếu biến môi trường DEEPSEEK_API_KEY để gọi DeepSeek API.")
+                if not self.api_key:
+                    raise ValueError("Thiếu biến môi trường DEEPSEEK_API_KEY để gọi DeepSeek API.")
 
-        user_content = json.dumps(brief, ensure_ascii=False, indent=2)
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"Hãy viết lời khách cho phiếu sau:\n{user_content}"},
-        ]
-        if feedback:
-            messages.append(
-                {"role": "system", "content": f"LẦN THỬ TRƯỚC BỊ LỖI: {feedback}. Hãy sửa lại đúng các quy tắc."}
-            )
+                user_content = json.dumps(brief, ensure_ascii=False, indent=2)
+                messages = [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": f"Hãy viết lời khách cho phiếu sau:\n{user_content}"},
+                ]
+                if feedback:
+                    messages.append(
+                        {"role": "system", "content": f"LẦN THỬ TRƯỚC BỊ LỖI: {feedback}. Hãy sửa lại đúng các quy tắc."}
+                    )
 
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": 1.0,
-            "response_format": {"type": "json_object"},
-        }
+                payload = {
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": 1.0,
+                    "response_format": {"type": "json_object"},
+                }
 
-        req = urllib.request.Request(
-            self.endpoint,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
+                req = urllib.request.Request(
+                    self.endpoint,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    method="POST",
+                )
 
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                choice = data["choices"][0]["message"]["content"]
-                parsed = json.loads(choice)
-                return str(parsed.get("user") or "").strip()
-        except urllib.error.HTTPError as exc:
-            err_body = exc.read().decode("utf-8", errors="ignore")
-            raise RuntimeError(f"DeepSeek API HTTP {exc.code}: {err_body}") from exc
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    choice = data["choices"][0]["message"]["content"]
+                    parsed = json.loads(choice)
+                    return str(parsed.get("user") or "").strip()
+            except urllib.error.HTTPError as exc:
+                if exc.code in (429, 500, 502, 503, 504) and retry < 3:
+                    time.sleep(0.05 * (2 ** retry))
+                    continue
+                err_body = exc.read().decode("utf-8", errors="ignore")
+                raise RuntimeError(f"DeepSeek API HTTP {exc.code}: {err_body}") from exc
 
 
 def fill_utterances(
@@ -200,6 +245,7 @@ def fill_utterances(
     *,
     endpoint: str = DEFAULT_ENDPOINT,
     model: str = DEFAULT_MODEL,
+    concurrency: int = 8,
     allow_peak: bool = False,
     limit: int | None = None,
     client: DeepSeekClient | None = None,
@@ -235,62 +281,87 @@ def fill_utterances(
     briefs: list[dict[str, Any]] = []
     for line in briefs_file.read_text(encoding="utf-8").splitlines():
         if line.strip():
-            briefs.append(json.loads(line))
+            briefs.append(normalize_brief_for_style(json.loads(line)))
 
     eval_utterances = get_eval_user_utterances()
     template_utterances: dict[str, list[str]] = {}
 
+    # Pre-populate template_utterances from existing cache
+    brief_by_id = {b["brief_id"]: b for b in briefs}
     for bid, txt in cache.items():
-        pass
+        if bid in brief_by_id:
+            tmpl = brief_by_id[bid].get("template", "unknown")
+            template_utterances.setdefault(tmpl, []).append(txt)
 
     llm = client or DeepSeekClient(endpoint=endpoint, model=model)
 
-    filled_count = 0
-    failed_count = 0
-    failures: list[dict[str, Any]] = []
-
     target_briefs = briefs if limit is None else briefs[: int(limit)]
+    uncached_by_tmpl: dict[str, list[dict[str, Any]]] = {}
+
+    filled_count = 0
+    for b in target_briefs:
+        bid = b["brief_id"]
+        tmpl = b.get("template", "unknown")
+        template_utterances.setdefault(tmpl, [])
+        if bid in cache:
+            filled_count += 1
+        else:
+            uncached_by_tmpl.setdefault(tmpl, []).append(b)
+
+    failures: list[dict[str, Any]] = []
+    cache_lock = threading.Lock()
 
     with open(cache_file, "a", encoding="utf-8") as cache_fh:
-        for b in target_briefs:
-            bid = b["brief_id"]
-            tmpl = b.get("template", "unknown")
-            template_list = template_utterances.setdefault(tmpl, [])
+        def process_template(tmpl_name: str, b_list: list[dict[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
+            t_list = template_utterances[tmpl_name]
+            loc_filled = 0
+            loc_failures = []
+            for b in b_list:
+                bid = b["brief_id"]
+                feedback = None
+                success = False
+                final_user = ""
 
-            if bid in cache:
-                template_list.append(cache[bid])
-                filled_count += 1
-                continue
+                # 1 initial call + up to 3 retries with feedback (total 4 attempts)
+                for attempt in range(4):
+                    try:
+                        generated = llm.call(b, feedback=feedback)
+                    except Exception as exc:
+                        feedback = f"Lỗi gọi API: {exc}"
+                        continue
 
-            # Generation loop with up to 3 retries
-            feedback = None
-            success = False
-            final_user = ""
+                    ok, reason = validate_utterance(generated, b, eval_utterances, t_list)
+                    if ok:
+                        final_user = generated
+                        success = True
+                        break
+                    else:
+                        feedback = reason
 
-            for attempt in range(1, 4):
-                try:
-                    generated = llm.call(b, feedback=feedback)
-                except Exception as exc:
-                    feedback = f"Lỗi gọi API: {exc}"
-                    continue
-
-                ok, reason = validate_utterance(generated, b, eval_utterances, template_list)
-                if ok:
-                    final_user = generated
-                    success = True
-                    break
+                if success:
+                    t_list.append(final_user)
+                    with cache_lock:
+                        cache[bid] = final_user
+                        cache_fh.write(json.dumps({"brief_id": bid, "user": final_user}, ensure_ascii=False) + "\n")
+                        cache_fh.flush()
+                    loc_filled += 1
                 else:
-                    feedback = reason
+                    loc_failures.append({"brief_id": bid, "case_id": b["case_id"], "reason": feedback})
+            return loc_filled, loc_failures
 
-            if success:
-                cache[bid] = final_user
-                template_list.append(final_user)
-                cache_fh.write(json.dumps({"brief_id": bid, "user": final_user}, ensure_ascii=False) + "\n")
-                cache_fh.flush()
-                filled_count += 1
-            else:
-                failed_count += 1
-                failures.append({"brief_id": bid, "case_id": b["case_id"], "reason": feedback})
+        if uncached_by_tmpl:
+            max_workers = max(1, min(concurrency, len(uncached_by_tmpl)))
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {
+                    executor.submit(process_template, tmpl, b_list): tmpl
+                    for tmpl, b_list in uncached_by_tmpl.items()
+                }
+                for fut in concurrent.futures.as_completed(futures):
+                    loc_filled, loc_fails = fut.result()
+                    filled_count += loc_filled
+                    failures.extend(loc_fails)
+
+    failed_count = len(failures)
 
     # Assemble cases_sft_v1_filled.jsonl
     cases: list[dict[str, Any]] = []
@@ -298,41 +369,45 @@ def fill_utterances(
         if line.strip():
             cases.append(json.loads(line))
 
-    # Index briefs by (case_id, turn)
-    brief_map: dict[tuple[str, int], str] = {}
-    setup_brief_map: dict[str, str] = {}
-
+    case_briefs_map: dict[str, list[dict[str, Any]]] = {}
     for b in briefs:
-        bid = b["brief_id"]
-        if bid in cache:
-            if b.get("suite") == "T11" and "_setup" in bid:
-                setup_brief_map[b["case_id"]] = cache[bid]
-            else:
-                brief_map[(b["case_id"], b["turn"])] = cache[bid]
+        case_briefs_map.setdefault(b["case_id"], []).append(b)
 
+    failed_case_ids = {f["case_id"] for f in failures}
     filled_cases = []
     dropped_cases = []
+    pending_cases = []
 
     for c in cases:
         cid = c["id"]
-        is_complete = True
+        c_briefs = case_briefs_map.get(cid, [])
+        all_cached = bool(c_briefs) and all(b["brief_id"] in cache for b in c_briefs)
 
-        if c.get("actor") == "staff_case_assist":
-            if cid in setup_brief_map:
-                c["case_setup"]["customer_messages"][0]["text"] = setup_brief_map[cid]
-            elif any(f["case_id"] == cid for f in failures):
-                is_complete = False
+        if all_cached:
+            c_copy = json.loads(json.dumps(c))
+            for b in c_briefs:
+                bid = b["brief_id"]
+                txt = cache[bid]
+                if b.get("suite") == "T11" and "_setup" in bid:
+                    idx = int(b.get("setup_msg_index", 0))
+                    c_copy["case_setup"]["customer_messages"][idx]["text"] = txt
+                else:
+                    turn_idx = int(b["turn"]) - 1
+                    c_copy["turns"][turn_idx]["user"] = txt
 
-        for t_idx, turn in enumerate(c.get("turns", []), start=1):
-            if (cid, t_idx) in brief_map:
-                turn["user"] = brief_map[(cid, t_idx)]
-            elif any(f["case_id"] == cid for f in failures):
-                is_complete = False
-
-        if is_complete:
-            filled_cases.append(c)
+            c_str = json.dumps(c_copy, ensure_ascii=False)
+            if "<chờ lời khách" not in c_str:
+                filled_cases.append(c_copy)
+            else:
+                if cid in failed_case_ids:
+                    dropped_cases.append(cid)
+                else:
+                    pending_cases.append(cid)
         else:
-            dropped_cases.append(cid)
+            if cid in failed_case_ids:
+                dropped_cases.append(cid)
+            else:
+                pending_cases.append(cid)
 
     with open(filled_file, "w", encoding="utf-8") as f:
         for fc in filled_cases:
@@ -344,7 +419,8 @@ def fill_utterances(
         f"- Số câu đã điền thành công: **{filled_count}**",
         f"- Số câu thất bại: **{failed_count}**",
         f"- Số ca hoàn chỉnh: **{len(filled_cases)}**",
-        f"- Số ca bị loại: **{len(dropped_cases)}**",
+        f"- Số ca bị loại (thất bại): **{len(dropped_cases)}**",
+        f"- Số ca chưa chạy (pending): **{len(pending_cases)}**",
         "",
         "## Danh sách ca thất bại (nếu có)",
     ]
@@ -362,6 +438,7 @@ def fill_utterances(
         "failed_count": failed_count,
         "filled_cases": len(filled_cases),
         "dropped_cases": len(dropped_cases),
+        "pending_cases": len(pending_cases),
         "report_path": report_file,
     }
 
@@ -385,13 +462,17 @@ def main() -> int:
             args.dir,
             endpoint=args.endpoint,
             model=args.model,
+            concurrency=args.concurrency,
             allow_peak=args.allow_peak,
             limit=args.limit,
         )
         print(f"Filled: {res['filled_count']}/{res['total_briefs']} briefs.")
-        print(f"Cases: {res['filled_cases']} complete, {res['dropped_cases']} dropped.")
+        print(f"Cases: {res['filled_cases']} complete, {res['dropped_cases']} dropped, {res['pending_cases']} pending.")
         print(f"Report: {res['report_path']}")
         return 0
+
+    parser.print_help()
+    return 1
 
     parser.print_help()
     return 1

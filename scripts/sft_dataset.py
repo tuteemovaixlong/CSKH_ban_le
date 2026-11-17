@@ -131,6 +131,8 @@ def validate_train_case(case: dict[str, Any]) -> dict[str, Any]:
     norm['meta']['split'] = 'dev'
     norm['meta']['origin'] = 'mo_phong'
     norm['meta'].pop('template', None)
+    norm['meta'].pop('slot_key', None)
+    norm['meta'].pop('intent', None)
 
     # If user utterances are placeholders (e.g. empty), eval_dataset_v2 requires text length >= 2
     # Temporarily substitute dummy text if turn['user'] is placeholder to pass structural checks
@@ -157,6 +159,7 @@ def validate_train_set(cases: list[dict[str, Any]]) -> None:
     assert isinstance(cases, list), 'cases must be a list'
     ids: set[str] = set()
     template_counts: Counter[str] = Counter()
+    seen_triples: set[tuple[str, str, str]] = set()
     eval_utterances = get_eval_user_utterances()
 
     for case in cases:
@@ -168,6 +171,13 @@ def validate_train_set(cases: list[dict[str, Any]]) -> None:
         tmpl = case['meta']['template']
         template_counts[tmpl] += 1
         assert template_counts[tmpl] <= 15, f'Template {tmpl} has {template_counts[tmpl]} cases (>15)'
+
+        # Check (template_id, slot_key, intent) uniqueness (03 A4 diversity requirement)
+        slot_k = str(case['meta'].get('slot_key') or case.get('customer') or cid)
+        intent = str(case['meta'].get('intent') or cid)
+        triple = (tmpl, slot_k, intent)
+        assert triple not in seen_triples, f'Duplicate (template, slot_key, intent) triple: {triple} in case {cid}'
+        seen_triples.add(triple)
 
         # Check filled customer utterances against 250 evaluation cases
         for turn in case.get('turns', []):

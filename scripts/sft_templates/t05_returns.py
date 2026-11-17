@@ -218,7 +218,6 @@ class T05HoanTienCODVeDau(BaseTemplate):
         super().__init__('t05_hoan_tien_cod_ve_dau', 'T05', 10, description='Khách trả hàng hỏi tiền COD đã trả thì nhận lại bằng cách nào')
 
     def select(self, view: Any) -> list[Any]:
-        # COD delivered orders
         cod_ords = [o for o in view.delivered_within_7 if o.get('payment_method') == 'cod']
         return cod_ords or view.delivered_within_7
 
@@ -226,25 +225,51 @@ class T05HoanTienCODVeDau(BaseTemplate):
         cid = f"t05_{case_index:03d}_{self.template_id}"
         ext_oid = slot['external_order_id']
         cust_id = slot['external_customer_id']
+        k_chunk = view.get_knowledge_chunk('refunds.md', 'COD') if view else {
+            'source_key': 'refunds.md', 'title': 'Chính sách hoàn tiền',
+            'chunk': 'Đơn COD đã trả tiền mặt rồi trả hàng: cổng thanh toán gửi hướng dẫn nhận hoàn tiền qua kênh của sàn để khách tự nhập thông tin nhận tiền. Shop và trợ lý không bao giờ hỏi số thẻ, số tài khoản, mật khẩu hay mã OTP qua chat.'
+        }
+        intents = [
+            f"hoi_phuong_thuc_hoan_tien_cod_{case_index}",
+            f"tra_cuu_nhan_lai_tien_mat_cod_{case_index}",
+            f"hoi_tien_cod_hoan_ve_dau_{case_index}",
+            f"check_cach_nhan_tien_hoan_don_cod_{case_index}",
+            f"thac_mac_tra_tien_mat_khi_tra_hang_hoan_the_nao_{case_index}",
+            f"hoi_huong_dan_nhan_hoan_tien_don_cod_{case_index}",
+            f"kiem_tra_quy_trinh_hoan_tien_mat_cod_{case_index}",
+            f"hoi_kenh_nhan_tien_hoan_cod_{case_index}",
+            f"check_hoan_tien_don_thanh_toan_khi_nhan_{case_index}",
+            f"xac_nhan_nhan_lai_tien_hang_cod_{case_index}",
+        ]
+        intent = intents[(case_index - 1) % len(intents)]
         brief = Brief(
             brief_id=f"brf_{cid}_t1", case_id=cid, turn=1, suite=self.suite, template=self.template_id, style=style,
-            persona="khách_hàng_hoi_phuong_thuc_hoan", intent="hoi_phuong_thuc_hoan_tien_cod",
-            must_include=[ext_oid], must_not_include=["chuyển khoản ngân hàng", "[KB:"], length="vừa",
+            persona="khách_hàng_hoi_phuong_thuc_hoan", intent=intent,
+            must_include=[ext_oid], must_not_include=["[KB:"], length="vừa",
             notes=f"Khách hỏi đơn {ext_oid} trả tiền mặt cho shipper thì khi trả hàng shop trả tiền vào đâu",
         )
         case = {
             'id': cid, 'category': 't05', 'title': f'Hoàn tiền COD đơn {ext_oid}', 'fixture': 'sft_v1', 'customer': cust_id,
-            'meta': {'suite': 'T05', 'split': 'train', 'style': style, 'origin': 'sinh_sft', 'template': self.template_id, 'source_note': f'T05 COD refund method {ext_oid}', 'vn_context': ['cod', 'hoan_vi_ngan_hang']},
+            'meta': {
+                'suite': 'T05', 'split': 'train', 'style': style, 'origin': 'sinh_sft',
+                'template': self.template_id, 'source_note': f'T05 COD refund method {ext_oid}',
+                'slot_key': ext_oid, 'intent': intent, 'vn_context': ['cod', 'hoan_vi_ngan_hang']
+            },
+            'knowledge': [k_chunk],
             'turns': [
                 {
                     'user': f"<chờ lời khách: hỏi tiền hoàn COD đơn {ext_oid}>",
                     'expect': {
-                        'tools_called': ['get_order'], 'max_tool_calls': 1, 'action': 'reply', 'human_support': False,
-                        'answer_all': [ext_oid], 'answer_any': [['tài khoản', 'ngân hàng', 'chuyển khoản', 'STK']], 'answer_not': ['chưa có thông tin'],
+                        'tools_called': ['get_order', 'search_knowledge'], 'max_tool_calls': 2, 'action': 'reply', 'human_support': False,
+                        'sources': ['refunds.md'],
+                        'answer_all': [ext_oid], 'answer_any': [['kênh của sàn', 'hướng dẫn', 'tự nhập']], 'answer_not': ['xin số tài khoản', 'gửi số tài khoản qua chat', 'STK'],
                     },
                     'fake_model': [
-                        {'call': [{'name': 'get_order', 'arguments': {'order_id': ext_oid}}]},
-                        {'say': f"Dạ với đơn hàng {ext_oid} thanh toán COD khi nhận hàng, sau khi shop nhận lại sản phẩm và kiểm tra hợp lệ, tiền hoàn sẽ được chuyển khoản trực tiếp vào tài khoản ngân hàng của anh/chị ạ."}
+                        {'call': [
+                            {'name': 'get_order', 'arguments': {'order_id': ext_oid}},
+                            {'name': 'search_knowledge', 'arguments': {'query': 'hoàn tiền đơn hàng COD nhận lại tiền bằng cách nào'}}
+                        ]},
+                        {'say': f"Dạ theo chính sách của shop [{{{{last_tool.results.0.citation_id}}}}], với đơn {ext_oid} thanh toán COD khi nhận hàng, cổng thanh toán sẽ gửi hướng dẫn qua kênh của sàn để anh/chị tự nhập thông tin nhận tiền hoàn; shop và trợ lý không bao giờ hỏi số tài khoản qua khung chat này ạ."}
                     ]
                 }
             ],
@@ -264,9 +289,22 @@ class T05KhachNoiTraNhungMuonDoi(BaseTemplate):
         cid = f"t05_{case_index:03d}_{self.template_id}"
         ext_oid = slot['external_order_id']
         cust_id = slot['external_customer_id']
+        intents = [
+            f"noi_tra_nhung_muon_doi_size_{case_index}",
+            f"hoi_tra_hang_de_lay_size_vua_hon_{case_index}",
+            f"thac_mac_tra_do_doi_sang_size_khac_{case_index}",
+            f"check_tra_don_nhung_that_ra_doi_{case_index}",
+            f"hoi_tra_de_lay_mau_hoac_size_khac_{case_index}",
+            f"yeu_cau_tra_nhung_nhu_cau_doi_hang_{case_index}",
+            f"thay_vi_tra_thi_doi_size_duoc_khong_{case_index}",
+            f"hoi_tra_do_do_khong_vua_size_{case_index}",
+            f"check_doi_size_khi_khach_bao_tra_{case_index}",
+            f"xac_nhan_huong_dan_doi_size_thay_vi_tra_{case_index}",
+        ]
+        intent = intents[(case_index - 1) % len(intents)]
         brief = Brief(
             brief_id=f"brf_{cid}_t1", case_id=cid, turn=1, suite=self.suite, template=self.template_id, style=style,
-            persona="khách_hàng_dung_nham_tu", intent="noi_tra_nhung_muon_doi_size",
+            persona="khách_hàng_dung_nham_tu", intent=intent,
             must_include=[ext_oid], must_not_include=["chính sách đổi size 15 ngày"], length="vừa",
             notes=f"Khách bảo 'cho mình trả đơn {ext_oid} để lấy cái size lớn hơn nhé'",
         )
@@ -276,7 +314,11 @@ class T05KhachNoiTraNhungMuonDoi(BaseTemplate):
         }
         case = {
             'id': cid, 'category': 't05', 'title': f'Nói trả nhưng muốn đổi size {ext_oid}', 'fixture': 'sft_v1', 'customer': cust_id,
-            'meta': {'suite': 'T05', 'split': 'train', 'style': style, 'origin': 'sinh_sft', 'template': self.template_id, 'source_note': f'T05 return intent is exchange {ext_oid}', 'vn_context': ['doi_size_thoi_trang']},
+            'meta': {
+                'suite': 'T05', 'split': 'train', 'style': style, 'origin': 'sinh_sft',
+                'template': self.template_id, 'source_note': f'T05 return intent is exchange {ext_oid}',
+                'slot_key': ext_oid, 'intent': intent, 'vn_context': ['doi_size_thoi_trang']
+            },
             'knowledge': [k_chunk],
             'turns': [
                 {
@@ -287,8 +329,11 @@ class T05KhachNoiTraNhungMuonDoi(BaseTemplate):
                         'answer_all': [ext_oid], 'answer_any': [['đổi size', 'đổi hàng', '15 ngày']], 'answer_not': ['đã hủy thành công'],
                     },
                     'fake_model': [
-                        {'call': [{'name': 'get_order', 'arguments': {'order_id': ext_oid}}, {'name': 'search_knowledge', 'arguments': {'query': 'chính sách đổi size 2 chiều tận nhà'}}]},
-                        {'say': f"Dạ nếu anh/chị muốn lấy size khác cho đơn {ext_oid}, shop có hỗ trợ chính sách đổi size 2 chiều tận nhà trong 15 ngày ạ [{{{{last_tool.results.0.citation_id}}}}]. Anh/chị chỉ cần yêu cầu đổi size thì shipper sẽ mang size mới tới tận nơi cho mình nhé ạ."}
+                        {'call': [
+                            {'name': 'get_order', 'arguments': {'order_id': ext_oid}},
+                            {'name': 'search_knowledge', 'arguments': {'query': 'chính sách đổi size 2 chiều tận nhà'}}
+                        ]},
+                        {'say': f"Dạ nếu anh/chị muốn lấy size khác cho đơn {ext_oid}, shop có hỗ trợ chính sách đổi size 2 chiều tận nhà trong 15 ngày và shipper sẽ mang size mới tới giao nhận cùng lúc ạ [{{{{last_tool.results.0.citation_id}}}}]."}
                     ]
                 }
             ],

@@ -78,27 +78,75 @@ class SftView:
             }
             self.customer_orders[ext_c] = detailed_ords
 
-        # Delivered order buckets
-        self.delivered_within_7: list[dict[str, Any]] = []
-        self.delivered_8_to_15: list[dict[str, Any]] = []
-        self.delivered_16_to_90: list[dict[str, Any]] = []
-        self.delivered_over_90: list[dict[str, Any]] = []
+        # Eligibility-driven order classification
+        self.orders_return_eligible: list[dict[str, Any]] = []
+        self.orders_size_exchange_eligible: list[dict[str, Any]] = []
+        self.orders_warranty_only: list[dict[str, Any]] = []
+        self.orders_past_warranty: list[dict[str, Any]] = []
+        self.orders_can_cancel: list[dict[str, Any]] = []
         self.late_orders: list[dict[str, Any]] = []
+        self.late_orders_under_48h: list[dict[str, Any]] = []
+        self.late_orders_over_48h: list[dict[str, Any]] = []
+        self.orders_failed_or_returned: list[dict[str, Any]] = []
+
+        for ord_dict in self.orders.values():
+            if ord_dict.get("status") in ("cancelled", "returned") or ord_dict.get("delivery", {}).get("status") in ("failed", "returned"):
+                self.orders_failed_or_returned.append(ord_dict)
+            el = ord_dict.get('eligibility', {})
+            late_h = float(el.get('late_by_hours', 0.0) or 0.0)
+            if late_h > 0:
+                self.late_orders.append(ord_dict)
+                if late_h <= 48.0:
+                    self.late_orders_under_48h.append(ord_dict)
+                else:
+                    self.late_orders_over_48h.append(ord_dict)
+
+            if el.get('can_self_service_cancel') or ord_dict.get('status') == 'pending':
+                self.orders_can_cancel.append(ord_dict)
 
         for ord_dict in self.orders_by_status['delivered']:
             el = ord_dict.get('eligibility', {})
-            days = el.get('days_since_delivery', 0.0)
-            if days <= 7:
-                self.delivered_within_7.append(ord_dict)
-            elif days <= 15:
-                self.delivered_8_to_15.append(ord_dict)
-            elif days <= 90:
-                self.delivered_16_to_90.append(ord_dict)
-            else:
-                self.delivered_over_90.append(ord_dict)
+            within_ret = bool(el.get('within_return_window'))
+            within_size = bool(el.get('within_size_exchange_window'))
+            within_war = bool(el.get('within_warranty'))
 
-            if el.get('late_by_hours', 0.0) > 0:
-                self.late_orders.append(ord_dict)
+            if within_ret:
+                self.orders_return_eligible.append(ord_dict)
+            if within_size:
+                self.orders_size_exchange_eligible.append(ord_dict)
+            if not within_size and within_war:
+                self.orders_warranty_only.append(ord_dict)
+            if not within_war:
+                self.orders_past_warranty.append(ord_dict)
+
+        # Backwards compatible aliases
+        self.delivered_within_7 = self.orders_return_eligible
+        self.delivered_8_to_15 = [o for o in self.orders_size_exchange_eligible if o not in self.orders_return_eligible]
+        self.delivered_16_to_90 = self.orders_warranty_only
+        self.delivered_over_90 = self.orders_past_warranty
+
+        # Refund summary classification
+        self.orders_refund_processing: list[dict[str, Any]] = []
+        self.orders_refund_failed: list[dict[str, Any]] = []
+        self.orders_refund_completed: list[dict[str, Any]] = []
+
+        for ord_dict in self.orders.values():
+            ref = ord_dict.get('refund_summary') or {}
+            st = ref.get('latest_status')
+            if st == 'processing':
+                self.orders_refund_processing.append(ord_dict)
+            elif st == 'failed':
+                self.orders_refund_failed.append(ord_dict)
+            elif st == 'completed':
+                self.orders_refund_completed.append(ord_dict)
+
+        # Variant inventory
+        self.product_variants: list[dict[str, Any]] = []
+        with self.store.connection() as db:
+            for r in db.execute("SELECT * FROM product_variants").fetchall():
+                self.product_variants.append(dict(r))
+        self.in_stock_variants = [v for v in self.product_variants if (v.get('stock') or 0) > 0]
+        self.out_of_stock_variants = [v for v in self.product_variants if (v.get('stock') or 0) == 0]
 
         # Knowledge docs cache
         self.knowledge_docs: dict[str, dict[str, Any]] = {}
@@ -107,7 +155,12 @@ class SftView:
                 text = p.read_text(encoding='utf-8')
                 m = re.search(r'^#\s+(.+?)\s*$', text, re.M)
                 title = m.group(1).strip() if m else p.stem
-                paras = [para.strip() for para in text.split('\n\n') if para.strip() and not para.strip().startswith('#')]
+                paras = [
+                    para.strip() for para in text.split('\n\n')
+                    if para.strip()
+                    and not para.strip().startswith('#')
+                    and 'Tài liệu giả lập của RetailOps Demo' not in para
+                ]
                 self.knowledge_docs[p.name] = {
                     'source_key': p.name,
                     'title': title,
