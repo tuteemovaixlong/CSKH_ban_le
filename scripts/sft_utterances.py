@@ -56,6 +56,15 @@ VIETNAMESE_ACCENTS_RE = re.compile(
 )
 
 
+# Mã định danh trong dữ liệu sft_v1: SIM-O-50001, SIM-O-ST-502, SIM-C-1234, P-501, VCH-VIP-500K-1, REF-TEST-AUTO-…
+# Lời khách chỉ được nhắc mã có trong phiếu (kể cả lượt trước, chuỗi chèn lệnh) — mã tự bịa làm ca lệch kho dữ liệu.
+CODE_RE = re.compile(r"\b[A-Za-z]{1,4}(?:-[A-Za-z0-9]+){1,5}\b")
+
+
+def extract_codes(text: str) -> set[str]:
+    return {m.upper() for m in CODE_RE.findall(str(text or "")) if any(ch.isdigit() for ch in m)}
+
+
 def strip_vietnamese_accents(s: str) -> str:
     """Strip Vietnamese accents from string: đ/Đ -> d/D and remove combining marks."""
     s = s.replace('đ', 'd').replace('Đ', 'D')
@@ -221,6 +230,11 @@ def validate_utterance(
     if injection:
         if injection not in txt:
             return False, f"Thiếu chuỗi chèn lệnh (injection) '{injection}'"
+
+    # 1c. Không có mã (đơn/khách/sản phẩm/voucher) nào ngoài các mã phiếu đã cho
+    allowed_codes = extract_codes(json.dumps(brief, ensure_ascii=False))
+    for code in sorted(extract_codes(txt) - allowed_codes):
+        return False, f"Có mã '{code}' không có trong phiếu (không được tự bịa mã đơn/sản phẩm)"
 
     # 2. must_not_include check (using eval_regrade.v2)
     canon_user = eval_regrade.v2(txt)
@@ -619,9 +633,87 @@ def fill_utterances(
     }
 
 
+def verify_utterances(generate_dir: Path | str) -> dict[str, Any]:
+    """Kiểm lại cache và tệp ca đã điền theo ĐÚNG bộ phiếu trong thư mục (chạy sau fill, trước khi sinh quỹ đạo).
+
+    Bắt: câu trong cache thuộc phiếu không có ở đây hoặc viết cho phiếu khác nội dung (cache lấy từ lần sinh khác),
+    câu không còn qua luật (mã bắt buộc, mã lạ, cụm cấm, giọng, độ dài, trùng ca đo), ca đã điền lệch cache,
+    ca còn chỗ trống hoặc thiếu nhãn người viết. Không kiểm trùng trong khung (fill đã kiểm theo thứ tự viết).
+    """
+    gen_dir = Path(generate_dir).resolve()
+    briefs = {}
+    for line in (gen_dir / "briefs_sft_v1.jsonl").read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            b = normalize_brief_for_style(json.loads(line))
+            briefs[b["brief_id"]] = b
+    cache: dict[str, dict[str, Any]] = {}
+    problems: list[str] = []
+    cache_file = gen_dir / "utterances_cache.jsonl"
+    if cache_file.is_file():
+        for n, line in enumerate(cache_file.read_text(encoding="utf-8").splitlines(), 1):
+            if not line.strip():
+                continue
+            rec = json.loads(line)
+            bid = rec.get("brief_id")
+            if bid in cache and cache[bid].get("user") != rec.get("user"):
+                problems.append(f"cache dòng {n}: {bid} có hai câu khác nhau")
+            cache[bid] = rec
+
+    eval_utterances = get_eval_user_utterances()
+    for bid, rec in cache.items():
+        if bid not in briefs:
+            problems.append(f"{bid}: có trong cache nhưng không có trong briefs_sft_v1.jsonl (cache từ lần sinh khác?)")
+            continue
+        ok, reason = validate_utterance(rec.get("user", ""), briefs[bid], eval_utterances, [])
+        if not ok:
+            problems.append(f"{bid}: {reason}")
+
+    filled_file = gen_dir / "cases_sft_v1_filled.jsonl"
+    filled_cases = 0
+    if filled_file.is_file():
+        by_case: dict[str, list[dict[str, Any]]] = {}
+        for b in briefs.values():
+            by_case.setdefault(b["case_id"], []).append(b)
+        for line in filled_file.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            case = json.loads(line)
+            filled_cases += 1
+            cid = case["id"]
+            if case.get("fixture") != "sft_v1":
+                problems.append(f"{cid}: fixture {case.get('fixture')!r} khác 'sft_v1'")
+            if "<chờ lời khách" in json.dumps(case, ensure_ascii=False):
+                problems.append(f"{cid}: còn chỗ trống chưa điền")
+            writers = set()
+            for b in by_case.get(cid, []):
+                rec = cache.get(b["brief_id"])
+                if rec is None:
+                    problems.append(f"{cid}: phiếu {b['brief_id']} không có trong cache")
+                    continue
+                writers.add(str(rec.get("writer") or UNLABELED_WRITER))
+                if b.get("suite") == "T11" and "_setup" in b["brief_id"]:
+                    got = case["case_setup"]["customer_messages"][int(b.get("setup_msg_index", 0))]["text"]
+                else:
+                    got = case["turns"][int(b["turn"]) - 1]["user"]
+                if got != rec.get("user"):
+                    problems.append(f"{cid}: câu ở {b['brief_id']} khác câu trong cache")
+            if sorted(writers) != list((case.get("meta") or {}).get("utterance_writers") or []):
+                problems.append(f"{cid}: meta.utterance_writers {case.get('meta', {}).get('utterance_writers')} ≠ cache {sorted(writers)}")
+
+    return {
+        "briefs": len(briefs),
+        "cached": sum(1 for b in cache if b in briefs),
+        "filled_cases": filled_cases,
+        "problems": problems,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate and validate customer utterances")
     subparsers = parser.add_subparsers(dest="command")
+
+    p_verify = subparsers.add_parser("verify", help="Re-check cache and filled cases against this directory's briefs")
+    p_verify.add_argument("--dir", required=True, help="Generation directory containing briefs, cache and filled cases")
 
     p_fill = subparsers.add_parser("fill", help="Fill customer utterances from briefs")
     p_fill.add_argument("--dir", required=True, help="Generation directory containing briefs and cases")
@@ -653,6 +745,14 @@ def main() -> int:
     )
 
     args = parser.parse_args()
+
+    if args.command == "verify":
+        res = verify_utterances(args.dir)
+        print(f"Verify: {res['cached']}/{res['briefs']} briefs cached, {res['filled_cases']} filled cases, "
+              f"{len(res['problems'])} problems.")
+        for p in res["problems"][:50]:
+            print("  -", p)
+        return 1 if res["problems"] else 0
 
     if args.command == "fill":
         res = fill_utterances(
