@@ -82,6 +82,11 @@ def generate_cases(
         for oid, cnt in cnts.items():
             assert cnt <= 3, f"Template {tmpl_name} uses order {oid} {cnt} times (> 3)"
 
+    # Every brief must be satisfiable: no banned phrase inside a required phrase (checked on all 1,200, before pilot cut)
+    from scripts.sft_utterances import brief_conflicts
+    conflicts = [msg for b in all_briefs for msg in brief_conflicts(b)]
+    assert not conflicts, "Contradictory briefs (must_not_include inside must_include):\n  " + "\n  ".join(conflicts[:20])
+
     # If pilot mode is requested (e.g. 100 or 24)
     if pilot is not None:
         pilot_n = int(pilot)
@@ -163,11 +168,12 @@ def generate_cases(
     briefs_file = target_dir / 'briefs_sft_v1.jsonl'
     report_file = target_dir / 'generate_report.md'
 
-    with open(cases_file, 'w', encoding='utf-8') as f:
+    # newline='\n': cùng nội dung → cùng SHA256 trên Linux (Colab) lẫn Windows (manifest bộ dữ liệu)
+    with open(cases_file, 'w', encoding='utf-8', newline='\n') as f:
         for c in all_cases:
             f.write(json.dumps(c, ensure_ascii=False) + '\n')
 
-    with open(briefs_file, 'w', encoding='utf-8') as f:
+    with open(briefs_file, 'w', encoding='utf-8', newline='\n') as f:
         for b in all_briefs:
             f.write(json.dumps(b, ensure_ascii=False) + '\n')
 
@@ -209,7 +215,7 @@ def generate_cases(
     for tid, count in sorted(template_counts.items()):
         report_lines.append(f"| `{tid}` | {count} |")
 
-    report_file.write_text('\n'.join(report_lines) + '\n', encoding='utf-8')
+    report_file.write_text('\n'.join(report_lines) + '\n', encoding='utf-8', newline='\n')
 
     return all_cases, all_briefs, report_file
 

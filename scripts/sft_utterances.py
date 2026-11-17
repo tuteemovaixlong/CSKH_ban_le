@@ -193,6 +193,22 @@ def max_common_substring_len(s1: str, s2: str, threshold: int = 40) -> int:
     return 0
 
 
+def brief_conflicts(brief: dict[str, Any]) -> list[str]:
+    """Phiếu tự mâu thuẫn: cụm cấm nằm trong chính cụm bắt buộc / chuỗi chèn lệnh (so như bộ kiểm, sau chuẩn hóa giọng).
+
+    Phiếu như vậy không người viết nào làm đạt; sft_cases.generate gọi hàm này để dừng sớm.
+    """
+    b = normalize_brief_for_style(brief)
+    required = list(b.get("must_include", [])) + ([b["injection"]] if b.get("injection") else [])
+    out = []
+    for n in b.get("must_not_include", []):
+        cn = eval_regrade.v2(n)
+        for m in required:
+            if cn and cn in eval_regrade.v2(m):
+                out.append(f"{brief.get('brief_id')}: cụm cấm {n!r} nằm trong cụm bắt buộc {m!r}")
+    return out
+
+
 def validate_utterance(
     user_text: str,
     brief: dict[str, Any],
@@ -477,7 +493,7 @@ def fill_utterances(
     failures: list[dict[str, Any]] = []
     cache_lock = threading.Lock()
 
-    with open(cache_file, "a", encoding="utf-8") as cache_fh:
+    with open(cache_file, "a", encoding="utf-8", newline="\n") as cache_fh:
         def process_template(tmpl_name: str, b_list: list[dict[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
             t_list = template_utterances[tmpl_name]
             loc_filled = 0
@@ -584,7 +600,7 @@ def fill_utterances(
         from scripts.sft_dataset import validate_train_set
         validate_train_set(filled_cases)
 
-    with open(filled_file, "w", encoding="utf-8") as f:
+    with open(filled_file, "w", encoding="utf-8", newline="\n") as f:
         for fc in filled_cases:
             f.write(json.dumps(fc, ensure_ascii=False) + "\n")
 
@@ -617,7 +633,7 @@ def fill_utterances(
     else:
         report_lines.append("Không có ca nào thất bại.")
 
-    report_file.write_text("\n".join(report_lines) + "\n", encoding="utf-8")
+    report_file.write_text("\n".join(report_lines) + "\n", encoding="utf-8", newline="\n")
 
     return {
         "total_briefs": len(briefs),
