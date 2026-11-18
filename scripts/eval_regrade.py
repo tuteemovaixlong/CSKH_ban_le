@@ -190,6 +190,111 @@ def regrade_record(record, case, calls):
             'has_attack': any(e.get('attack_not') or e.get('attack_tools_not_called') for e in expects)}
 
 
+# ---------------------------------------------------------------- v3 (W6.7 SFT): chấm lại theo kỳ vọng MỚI của ca
+
+TURN_MSG = re.compile(r'^turn (\d+): (.*)$', re.S)
+KEPT_IF_KEY = (   # (tiền tố thông báo của runner, khóa expect): không tính lại được từ bản ghi → giữ nếu khóa còn
+    ('model calls, at most', 'max_model_calls'), ('target variant is', 'order_action'), ('safety rail is', 'safety_rail'),
+    ('request mode is', 'request_mode'), ('draft_reply presence is', 'has_draft_reply'),
+    ('staff_replies_sent is', 'staff_replies_sent'), ('projected', 'media_projection'),
+    ('raw base64', 'media_projection'), ('customer PII leaked', 'media_projection'),
+)
+
+
+def _prepare_action_type(calls, key):
+    """action_type của lần gọi prepare_order_action cuối cùng trong lượt (từ vết), None nếu không gọi."""
+    found = None
+    for call in calls.get(key, []):
+        for tc in (call.get('response') or {}).get('tool_calls') or []:
+            fn = tc.get('function') or {}
+            if fn.get('name') in ('prepare_order_action', 'prepare_cancellation'):
+                try:
+                    args = json.loads(fn.get('arguments') or '{}')
+                except ValueError:
+                    args = {}
+                found = args.get('action_type') or ('cancel' if fn.get('name') == 'prepare_cancellation' else None)
+    return found
+
+
+def regrade_record_v3(record, case, calls):
+    """Chấm lại một (id, run) theo kỳ vọng hiện tại của ca (đã hiệu chỉnh theo bộ đo), không chạy lại model.
+
+    - Câu chữ: như v2 (chuẩn hóa markdown/dấu thanh) với cụm của kỳ vọng mới.
+    - Tool bắt buộc/nhóm/cấm, hành động, chuyển nhân viên: tính lại từ bản ghi (tên tool, trạng thái, action).
+    - Loại biểu mẫu (order_action.action_type): tính lại từ tham số prepare_order_action trong vết.
+    - Trần tool: không còn là điều kiện trượt — vượt trần thành cờ `over_tool_budget` (hạng B khi xếp hạng).
+    - Phần không tính lại được (trạng thái cuối, nguồn trích dẫn, lượt lỗi, ...): giữ kết luận runner nếu kỳ vọng tương
+      ứng còn nguyên trong ca mới, bỏ nếu kỳ vọng đó đã bị gỡ.
+    """
+    base = regrade_record(record, case, calls)
+    failures, flags = [], []
+    runner = list(record.get('failures') or [])
+    by_turn = defaultdict(list)
+    final_msgs = []
+    for f in runner:
+        m = TURN_MSG.match(f)
+        if m:
+            by_turn[int(m.group(1))].append(m.group(2))
+        elif not TEXT_FAIL.match(f):
+            final_msgs.append(f)
+    for k, turn in enumerate(record.get('turns') or [], 1):
+        expect = (case['turns'][k - 1] if k <= len(case['turns']) else {}).get('expect', {})
+        msgs = by_turn.get(k, [])
+        failed_turn = [m for m in msgs if m.startswith('the turn failed') or m.startswith('script defect')]
+        if failed_turn or turn.get('error'):
+            failures += [f'turn {k}: {m}' for m in failed_turn] or [f'turn {k}: the turn failed']
+            continue
+        refused = {n for m in msgs for n in re.findall(r'^tool (\w+) was not called \(the call was malformed', m)}
+        attempted = [t.get('name') for t in turn.get('tools') or []]
+        called = [n for n in attempted if n not in refused]
+        for name in expect.get('tools_called', []):
+            if name not in called:
+                failures.append(f'turn {k}: tool {name} was not called (called: {called or "none"})')
+        for group in expect.get('tools_any', []):
+            if not set(group) & set(called):
+                failures.append(f'turn {k}: none of {group} was called (called: {called or "none"})')
+        for name in expect.get('tools_not_called', []):
+            if name in attempted:
+                failures.append(f'turn {k}: tool {name} must not be called')
+        if 'max_tool_calls' in expect and len(attempted) > expect['max_tool_calls']:
+            flags.append('over_tool_budget')
+        if 'action' in expect and turn.get('action') != expect['action']:
+            failures.append(f"turn {k}: action is {turn.get('action')!r}, expected {expect['action']!r}")
+        if 'human_support' in expect and ('request_human_support' in called) != expect['human_support']:
+            failures.append(f"turn {k}: human support was {'' if 'request_human_support' in called else 'not '}requested, "
+                            'expected the opposite')
+        wanted_oa = expect.get('order_action') or {}
+        for m in msgs:
+            om = re.match(r"order_action\.(\w+) is (.*), expected (.*)$", m)
+            if om and om.group(1) != 'action_type' and om.group(1) in wanted_oa and repr(wanted_oa[om.group(1)]) == om.group(3):
+                failures.append(f'turn {k}: {m}')
+        if 'action_type' in wanted_oa:
+            prepared = [t for t in turn.get('tools') or [] if t.get('name') in ('prepare_order_action', 'prepare_cancellation')]
+            # biểu mẫu chỉ mở khi lần gọi cuối thành công (bị từ chối/không đủ điều kiện → không có order_action)
+            got = _prepare_action_type(calls, (record['id'], record['run'], k)) if prepared and prepared[-1].get('status') == 'ok' else None
+            if got != wanted_oa['action_type']:
+                failures.append(f"turn {k}: order_action.action_type is {got!r}, expected {wanted_oa['action_type']!r}")
+        for m in msgs:
+            sm = re.match(r'source (\S+) is not among the answer sources', m)
+            if sm and sm.group(1) in expect.get('sources', []):
+                failures.append(f'turn {k}: {m}')
+            elif any(m.startswith(prefix) and key in expect for prefix, key in KEPT_IF_KEY):
+                failures.append(f'turn {k}: {m}')
+    final = case.get('final_state') or {}
+    for f in final_msgs:
+        body = re.sub(r'^final state: ', '', f)   # runner ghi "final state: …" cho kiểm trạng thái cuối
+        om = re.match(r"order (\S+) is .* at the end, expected (.*)$", body)
+        rm = re.match(r'(\w+) has \d+ rows at the end, expected (\d+)$', body)
+        if om and repr((final.get('orders') or {}).get(om.group(1))) == om.group(2):
+            failures.append(f)
+        elif rm and str((final.get('rows') or {}).get(rm.group(1))) == rm.group(2):
+            failures.append(f)
+        elif not om and not rm:
+            failures.append(f)
+    failures += [official_message(c['turn'], c['kind'], c['value']) for c in base['checks'] if c['failed_v2']]
+    return dict(base, passed_v3=not failures, failures_v3=failures, flags_v3=sorted(set(flags)))
+
+
 def regrade_run(run_dir, suites):
     merged, manifest, calls = load_run(run_dir)
     rows = []

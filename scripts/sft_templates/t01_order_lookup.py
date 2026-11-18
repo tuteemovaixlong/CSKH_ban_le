@@ -573,8 +573,10 @@ class T01VanDonGiaoThatBai(BaseTemplate):
         super().__init__('t01_van_don_giao_that_bai', 'T01', 8, description='Tra cứu vận đơn giao hàng thất bại (track_shipment)')
 
     def select(self, view: Any) -> list[Any]:
-        ords = [o for o in view.orders_by_status['cancelled'] if o['external_order_id'] == 'SIM-O-ST-504']
-        return ords or view.orders_by_status['cancelled']
+        # Đơn có vận đơn giao thất bại / chuyển hoàn thật (sft_v1: 10 'returned' + 1 'delivery_failed'). Bản cũ lấy đơn đã
+        # hủy trước khi bàn giao (không có vận đơn) → câu chuyện "báo giao thất bại" không khớp dữ liệu (owner 18/11).
+        ords = [o for o in view.orders.values() if (o.get('delivery') or {}).get('status') in ('delivery_failed', 'returned')]
+        return sorted(ords, key=lambda o: o['external_order_id'])
 
     def build(self, slot: Any, rng: random.Random, case_index: int, style: str, view: Any = None) -> tuple[dict[str, Any], list[Brief]]:
         cid = f"t01_{case_index:03d}_{self.template_id}"
@@ -626,17 +628,17 @@ class T01VanDonGiaoThatBai(BaseTemplate):
                 {
                     'user': f"<chờ lời khách: tra cứu vận đơn {ext_oid}>",
                     'expect': {
-                        'tools_called': ['track_shipment'],
+                        'tools_any': [['track_shipment', 'get_order']],   # như s01_009, s01_010
                         'max_tool_calls': 1,
                         'action': 'reply',
                         'human_support': False,
                         'answer_all': [ext_oid],
-                        'answer_any': [['vận đơn', 'giao hàng', 'vận chuyển']],
-                        'answer_not': ['chưa có thông tin'],
+                        'answer_any': [['không thành công', 'thất bại', 'hoàn về', 'chuyển hoàn', 'trả về', 'hoàn hàng']],
+                        'answer_not': ['đã giao thành công', 'đang giao tới bạn'],
                     },
                     'fake_model': [
                         {'call': [{'name': 'track_shipment', 'arguments': {'order_id': ext_oid}}]},
-                        {'say': f"Dạ em đã kiểm tra thông tin vận đơn của đơn {ext_oid}. Kiện hàng hiện đang cập nhật trạng thái vận chuyển từ bưu tá ạ."}
+                        {'say': f"Dạ em đã kiểm tra vận đơn của đơn {ext_oid}: lần giao không thành công và kiện hàng đã được chuyển hoàn về kho của shop ạ."}
                     ]
                 }
             ],
