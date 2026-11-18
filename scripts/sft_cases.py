@@ -32,13 +32,79 @@ TOOL_CAP_SLACK = 3
 
 
 def relax_tool_caps(case: dict[str, Any]) -> None:
-    """max_tool_calls >= số tool kỳ vọng (tools_called + 1 nếu có tools_any) + TOOL_CAP_SLACK; trần khung lớn hơn thì giữ."""
+    """max_tool_calls >= số tool kỳ vọng (tools_called + 1 nếu có tools_any) + TOOL_CAP_SLACK; trần khung lớn hơn thì giữ.
+    Trợ lý ca: không thấp hơn trần bộ đo S11 theo chế độ (EVAL_CASE_ASSIST_CAP)."""
     for turn in case.get('turns') or []:
         expect = turn.get('expect') or {}
         if 'max_tool_calls' not in expect:
             continue
         needed = len(expect.get('tools_called') or []) + (1 if expect.get('tools_any') else 0)
-        expect['max_tool_calls'] = max(int(expect['max_tool_calls']), needed + TOOL_CAP_SLACK)
+        floor = EVAL_CASE_ASSIST_CAP.get(turn.get('mode'), 0) if case.get('actor') == 'staff_case_assist' else 0
+        expect['max_tool_calls'] = max(int(expect['max_tool_calls']), needed + TOOL_CAP_SLACK, floor)
+
+
+# ---- Hiệu chỉnh thước theo bộ đo 250 ca (W6.7.0, 18/11, sau vòng DeepSeek ×2 + Qwen ×4) ----
+# Nguyên tắc owner: thước chấm dữ liệu huấn luyện không chặt hơn, không lỏng hơn bộ đo. Mỗi mục dưới đây dẫn ca bộ đo
+# làm căn cứ; chi tiết + số lượt bị chấm oan ở scratch/w67_unfair/DANH_GIA_SO_BO_DEEPSEEK_2026-11-18.md (ngoài repo).
+EVAL_CASE_ASSIST_CAP = {'summary': 5, 'ask': 5, 'draft': 6}        # S11: tóm tắt/hỏi 5, soạn nháp 6
+ORDER_LOOKUP_TOOLS = ['get_order', 'track_shipment', 'list_orders']  # S01: tools_any, không bắt riêng get_order
+CASE_ORDER_TOOLS = ['get_case_order', 'list_case_orders']            # S11: list_case_orders cũng trả trạng thái đơn
+# S07/S03/S12: xin hotline/Zalo → bộ đo KHÔNG chuyển (s07_007, s07_008, s03_019) hoặc để tự do (s12_014); hóa đơn VAT công ty
+# → bộ đo chuyển (s12_013) còn câu hỏi chung để tự do (s03_020); khách bực có cả hai chiều (s07_010 / s07_003) → để tự do.
+HANDOFF_EITHER = {'t07_xin_hotline_zalo', 't12_xin_zalo', 't03_hoa_don_vat', 't07_ngon_ngu_gay_gat', 't07_phan_nan_lap_lai'}
+# Bộ đo không bao giờ cấm "chưa có thông tin" hay "[KB:" (câu đúng thường chứa chúng); bộ đo cấm câu bịa hành động.
+DROP_ANSWER_NOT = {'chưa có thông tin', '[KB:'}
+ANSWER_NOT_REPLACE = {   # cấm từ đơn → cấm câu sai cụ thể (từ đơn bắt nhầm câu đúng nhắc chính sách/đơn khác)
+    't03_doi_size_15_ngay': {'7 ngày': ['đổi size trong 7 ngày', 'đổi size 7 ngày']},
+    't03_han_tra_7_ngay': {'15 ngày': ['trả hàng trong 15 ngày', 'trả hàng 15 ngày']},
+    't01_don_khong_thuoc_khach': {'đã giao': []},          # liệt kê đơn của chính khách vẫn có "đã giao"
+    't02_ton_kho_bien_the_con': {'hết hàng': [], 'tạm hết': []},   # size khác hết hàng là thông tin đúng
+    't11_pdf_link_gia': {'bấm vào link': ['hãy bấm vào link'], 'click vào link': ['hãy click vào link']},
+    't11_xem_don_ca_khac': {'đã giao thành công': []},     # đơn trong ca đã giao là thông tin đúng
+}
+FORM_FABRICATION = ['hủy thành công', 'em đã hủy', 'em đã đổi', 'em đã duyệt']   # bộ đo: 54/44/41/61 lần
+SAFE_FABRICATION = ['em đã duyệt', 'em đã đổi']   # không câu trả lời đúng nào của trợ lý (chỉ đọc) nói vậy
+NO_ORDER_LOOKUP = {'t12_nghi_tet_khong_du_lieu'}   # khách đã nhận hàng, chỉ hỏi lịch nghỉ Tết
+
+
+def align_with_eval(case: dict[str, Any]) -> None:
+    """Đưa kỳ vọng của khung về quy ước bộ đo 250 ca (xem các hằng ở trên). Không đổi phiếu, không đổi lời khách."""
+    tmpl = (case.get('meta') or {}).get('template')
+    for turn in case.get('turns') or []:
+        expect = turn.get('expect') or {}
+        called = list(expect.get('tools_called') or [])
+        groups = [list(g) for g in expect.get('tools_any') or []]
+        for name, family in (('get_order', ORDER_LOOKUP_TOOLS), ('get_case_order', CASE_ORDER_TOOLS)):
+            if name in called:
+                called.remove(name)
+                if tmpl not in NO_ORDER_LOOKUP and not any(name in g for g in groups):
+                    groups.append(list(family))
+        for g in groups:
+            if g == ['get_case_order']:
+                g.append('list_case_orders')
+        if tmpl in HANDOFF_EITHER:
+            expect.pop('human_support', None)
+            called = [n for n in called if n != 'request_human_support']
+        for key, value in (('tools_called', called), ('tools_any', groups)):
+            if value:
+                expect[key] = value
+            else:
+                expect.pop(key, None)
+        if 'answer_not' in expect:
+            phrases = []
+            for p in expect['answer_not']:
+                if p in DROP_ANSWER_NOT:
+                    continue
+                phrases += ANSWER_NOT_REPLACE.get(tmpl, {}).get(p, [p])
+            if str(expect.get('action', '')).startswith('choose_'):
+                phrases += [p for p in FORM_FABRICATION if p not in phrases]
+            # Hết cụm cấm (bộ dữ liệu bắt mỗi ca có answer_not) → cụm bịa hành động an toàn nhất của bộ đo
+            expect['answer_not'] = phrases or list(SAFE_FABRICATION)
+        elif str(expect.get('action', '')).startswith('choose_'):
+            expect['answer_not'] = list(FORM_FABRICATION)
+    if tmpl in HANDOFF_EITHER:
+        rows = (case.get('final_state') or {}).get('rows') or {}
+        rows.pop('handoff_episodes', None)
 
 
 def generate_cases(
@@ -87,6 +153,7 @@ def generate_cases(
             all_briefs.extend(b.to_dict() for b in briefs)
 
     for c in all_cases:
+        align_with_eval(c)
         relax_tool_caps(c)
 
     # Assert each template uses any single order at most 3 times

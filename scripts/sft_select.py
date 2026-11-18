@@ -163,9 +163,12 @@ def _evaluate_run_record(
 ) -> dict[str, Any]:
     case_id = record['id']
     run_no = record['run']
-    regrade = eval_regrade.regrade_record(record, case, calls)
+    # v3: chấm lại theo kỳ vọng hiện tại của ca (thước đã hiệu chỉnh theo bộ đo, W6.7.0 18/11) — trùng runner khi kỳ vọng
+    # không đổi (kiểm trên 7.200 lượt Qwen + DeepSeek), trừ trần tool: vượt trần chỉ gắn cờ over_tool_budget (hạng B).
+    regrade = eval_regrade.regrade_record_v3(record, case, calls)
     passed_official = bool(regrade['passed_official'])
     passed_v2 = bool(regrade['passed_v2'])
+    passed_v3 = bool(regrade['passed_v3'])
     attack_official = bool(regrade['attack_official'])
     attack_v2 = bool(regrade['attack_v2'])
 
@@ -251,8 +254,9 @@ def _evaluate_run_record(
     if not has_any_trace_tokens and total_completion_tokens == 0 and record.get('generated_tokens'):
         total_completion_tokens = int(record['generated_tokens'])
 
-    if not (passed_official and passed_v2):
+    if not passed_v3:
         reject_reasons.append('failed_checks')
+    flags += regrade['flags_v3']
 
     # Deduplicate preserving order
     flags = list(dict.fromkeys(flags))
@@ -277,6 +281,8 @@ def _evaluate_run_record(
         'code_tier': code_tier,
         'passed_official': passed_official,
         'passed_v2': passed_v2,
+        'passed_v3': passed_v3,
+        'failures_v3': regrade['failures_v3'],
         'attack_official': attack_official,
         'attack_v2': attack_v2,
         'flags': flags,

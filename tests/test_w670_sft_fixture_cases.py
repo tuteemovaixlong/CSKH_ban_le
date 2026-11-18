@@ -270,11 +270,15 @@ class TestW670SftFixtureCases(unittest.TestCase):
         """W6.7 đợt đủ (Colab 17/11, manifest trên Drive w67_utterances/33de659/full): bộ ca và phiếu
         phải tái lập đúng từng byte từ repo. Đổi khung làm đổi bộ dữ liệu → cập nhật SHA ở đây có chủ đích."""
         archived = {
-            # v2 (17/11 khuya): trần tool nới thành mức chống vòng lặp (relax_tool_caps); v1 là c2ebefbb…
-            'cases_sft_v1.jsonl': 'e5bbe61c56fa0665ebd4c5f21722b6cbb7433ede4d40360e8d0397c9fae01138',
-            # phiếu không đổi → 1.406 câu Glimmer đã viết vẫn dùng nguyên
-            'briefs_sft_v1.jsonl': '5dcb600aea03c4271d5f2d0d48caf66014348494eafe1b313d920520e2133846',
+            # v3 (18/11): thước hiệu chỉnh theo bộ đo (align_with_eval) + 3 khung sửa phiếu; v2 e5bbe61c…, v1 c2ebefbb…
+            'cases_sft_v1.jsonl': '5e5a751daffad89a6aae8532e67cc4431d2d57c50976bf5d6e533cc82eb316ba',
+            # 32 phiếu đổi (t01_van_don_giao_that_bai, t08_san_pham_roi_ve_don lượt 1, t08_hoi_bao_hanh_roi_mo_doi lượt 2);
+            # v2 5dcb600a…
+            'briefs_sft_v1.jsonl': 'acc6850a39a9e74147890029b7086a1f13ac27f2e99ece727af1ee70f8ff9fbd',
         }
+        # Mọi phiếu ngoài 3 khung làm lại trùng từng byte với v2 → 1.350 câu Glimmer đã viết dùng lại nguyên
+        redo = {'t01_van_don_giao_that_bai', 't08_san_pham_roi_ve_don', 't08_hoi_bao_hanh_roi_mo_doi'}
+        kept_v2_sha = '2b29fc010f9184606079bb7130fd72b67e80b2ed804a92ce72dea6a855782d7f'
         with tempfile.TemporaryDirectory(prefix='test-sft-archive-') as td:
             cases, briefs, _ = generate_cases(td)   # generate tự dừng nếu có phiếu mâu thuẫn
             self.assertEqual((len(cases), len(briefs)), (1200, 1406))
@@ -282,6 +286,11 @@ class TestW670SftFixtureCases(unittest.TestCase):
                 data = (Path(td) / name).read_bytes()
                 self.assertNotIn(b'\r\n', data, f'{name} must be written with LF on every OS')
                 self.assertEqual(hashlib.sha256(data).hexdigest(), sha, f'{name} differs from the archived W6.7 dataset')
+            kept = [line for line in (Path(td) / 'briefs_sft_v1.jsonl').read_text(encoding='utf-8').splitlines()
+                    if line.strip() and json.loads(line)['template'] not in redo]
+            self.assertEqual(len(kept), 1350)
+            self.assertEqual(hashlib.sha256(('\n'.join(kept) + '\n').encode('utf-8')).hexdigest(), kept_v2_sha,
+                             'briefs outside the 3 redone templates must stay byte-identical to v2 (utterances reused)')
             # Trần tool = mức chống vòng lặp: dư ít nhất TOOL_CAP_SLACK so với số tool kỳ vọng, như bộ đo (dư 2–6)
             for c in cases:
                 for t in c['turns']:
@@ -396,7 +405,11 @@ class TestW670SftFixtureCases(unittest.TestCase):
         self.assertEqual(len(cases), 1200)
         self.assertEqual((suites['T01'], suites['T02']), (90, 100))
         tools = Counter(n for c in cases for t in c['turns'] for n in t['expect'].get('tools_called', []))
-        self.assertGreaterEqual(tools['track_shipment'], 34)
+        # 18/11: t01_van_don_giao_that_bai nhận track_shipment | get_order như s01_009/s01_010 (nhóm tools_any)
+        tracked = sum(1 for c in cases for t in c['turns']
+                      if 'track_shipment' in t['expect'].get('tools_called', [])
+                      or any(g[0] == 'track_shipment' for g in t['expect'].get('tools_any', [])))
+        self.assertGreaterEqual(tracked, 34)
         self.assertGreaterEqual(tools['search_products'], 15)
 
         for c in cases:

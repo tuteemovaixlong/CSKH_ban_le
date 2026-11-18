@@ -122,12 +122,14 @@ class T05GiaoSaiMauLoiShop(BaseTemplate):
                     'user': f"<chờ lời khách: khiếu nại giao sai đơn {ext_oid}>",
                     'expect': {
                         'tools_called': ['prepare_order_action'], 'max_tool_calls': 1, 'action': 'choose_order_action_reason',
-                        'order_action': {'order_id': ext_oid, 'action_type': 'return'}, 'human_support': False,
-                        'answer_all': [ext_oid], 'answer_any': [['biểu mẫu', 'giao sai', 'trả hàng']], 'answer_not': ['chưa có thông tin'],
+                        # Khách chỉ phàn nàn giao sai màu, không nói trả hay đổi → mở biểu mẫu trả HOẶC đổi đều đúng
+                        # (s05_005 đòi trả vì khách nói rõ "mở trả hàng"; owner 18/11: không ép loại biểu mẫu).
+                        'order_action': {'order_id': ext_oid}, 'human_support': False,
+                        'answer_all': [ext_oid], 'answer_any': [['biểu mẫu', 'giao sai', 'trả hàng', 'đổi hàng']], 'answer_not': ['chưa có thông tin'],
                     },
                     'fake_model': [
                         {'call': [{'name': 'prepare_order_action', 'arguments': {'order_id': ext_oid, 'action_type': 'return'}}]},
-                        {'say': f"Dạ shop rất xin lỗi anh/chị vì sự cố giao sai mẫu cho đơn {ext_oid}. Em đã mở biểu mẫu trả hàng trên màn hình để anh/chị thao tác nhé ạ."}
+                        {'say': f"Dạ shop rất xin lỗi anh/chị vì sự cố giao sai mẫu cho đơn {ext_oid}. Shop đã mở biểu mẫu trả hàng trên màn hình để anh/chị thao tác nhé ạ."}
                     ]
                 }
             ],
@@ -176,7 +178,7 @@ class T05TraDonChuaGiao(BaseTemplate):
 
 class T05DaCoYeuCauMo(BaseTemplate):
     def __init__(self) -> None:
-        super().__init__('t05_da_co_yeu_cau_mo', 'T05', 10, description='Khách yêu cầu trả hàng đơn đã có yêu cầu đang mở')
+        super().__init__('t05_da_co_yeu_cau_mo', 'T05', 10, description='Khách tưởng đã gửi yêu cầu trả nhưng hệ thống chưa ghi nhận')
 
     def select(self, view: Any) -> list[Any]:
         return list(view.delivered_within_7)
@@ -191,20 +193,24 @@ class T05DaCoYeuCauMo(BaseTemplate):
             must_include=[ext_oid], must_not_include=["open_request_exists"], length="ngắn",
             notes=f"Khách hỏi lại việc trả hàng đơn {ext_oid}",
         )
+        # Kho sft_v1 KHÔNG có yêu cầu trả nào đang mở (đơn trong 7 ngày, chưa có order_action_requests): khách tưởng đã
+        # gửi yêu cầu nhưng hệ thống chưa ghi nhận. Đúng = tra đơn, nói rõ chưa ghi nhận, không bịa "đang xử lý"; mở lại
+        # biểu mẫu trả hay chỉ hướng dẫn đều được (owner 18/11; trước đây đòi mở biểu mẫu khi khách chỉ hỏi tiến độ).
         case = {
-            'id': cid, 'category': 't05', 'title': f'Yêu cầu trả đơn đã mở {ext_oid}', 'fixture': 'sft_v1', 'customer': cust_id,
-            'meta': {'suite': 'T05', 'split': 'train', 'style': style, 'origin': 'sinh_sft', 'template': self.template_id, 'source_note': f'T05 open request exists {ext_oid}', 'vn_context': []},
+            'id': cid, 'category': 't05', 'title': f'Khách tưởng đã gửi yêu cầu trả {ext_oid}', 'fixture': 'sft_v1', 'customer': cust_id,
+            'meta': {'suite': 'T05', 'split': 'train', 'style': style, 'origin': 'sinh_sft', 'template': self.template_id, 'source_note': f'T05 claimed request not recorded {ext_oid}', 'vn_context': []},
             'turns': [
                 {
                     'user': f"<chờ lời khách: yêu cầu trả hàng đơn {ext_oid}>",
                     'expect': {
-                        'tools_called': ['prepare_order_action'], 'max_tool_calls': 1, 'action': 'choose_order_action_reason',
-                        'order_action': {'order_id': ext_oid, 'action_type': 'return'}, 'human_support': False,
-                        'answer_all': [ext_oid], 'answer_any': [['biểu mẫu', 'trả hàng', 'yêu cầu']], 'answer_not': ['chưa có thông tin'],
+                        'tools_any': [['get_order', 'prepare_order_action', 'list_orders']], 'max_tool_calls': 1, 'human_support': False,
+                        'answer_all': [ext_oid],
+                        'answer_any': [['chưa ghi nhận', 'chưa có yêu cầu', 'không có yêu cầu', 'chưa nhận được yêu cầu', 'không thấy yêu cầu', 'chưa thấy yêu cầu']],
+                        'answer_not': ['yêu cầu của bạn đang được xử lý', 'yêu cầu đang được xử lý', 'đã được duyệt', 'em đã hủy', 'em đã duyệt'],
                     },
                     'fake_model': [
-                        {'call': [{'name': 'prepare_order_action', 'arguments': {'order_id': ext_oid, 'action_type': 'return'}}]},
-                        {'say': f"Dạ em đã mở biểu mẫu trả hàng cho đơn {ext_oid} rồi ạ, anh/chị vui lòng kiểm tra và hoàn tất trên biểu mẫu giúp em nhé."}
+                        {'call': [{'name': 'get_order', 'arguments': {'order_id': ext_oid}}]},
+                        {'say': f"Dạ em đã kiểm tra đơn {ext_oid}: hệ thống hiện chưa ghi nhận yêu cầu trả hàng nào cho đơn này ạ. Đơn vẫn trong hạn trả 7 ngày, anh/chị cần mở lại biểu mẫu trả hàng thì báo em nhé."}
                     ]
                 }
             ],
@@ -323,17 +329,18 @@ class T05KhachNoiTraNhungMuonDoi(BaseTemplate):
             'turns': [
                 {
                     'user': f"<chờ lời khách: muốn trả hàng lấy size khác đơn {ext_oid}>",
+                    # Khách nói thẳng muốn lấy size lớn hơn → mở biểu mẫu ĐỔI (như s06_006: mở đổi dù khách chưa
+                    # chọn size); không mở biểu mẫu trả. Owner 18/11 (trước đây đòi chỉ trả lời: 0/30 lượt cả hai model).
                     'expect': {
-                        'tools_called': ['get_order', 'search_knowledge'], 'max_tool_calls': 2, 'action': 'reply', 'human_support': False,
-                        'sources': ['policy_size_exchange_twoway.md'],
-                        'answer_all': [ext_oid], 'answer_any': [['đổi size', 'đổi hàng', '15 ngày']], 'answer_not': ['đã hủy thành công'],
+                        'tools_called': ['prepare_order_action'], 'max_tool_calls': 2, 'action': 'choose_order_action_reason',
+                        'order_action': {'order_id': ext_oid, 'action_type': 'exchange'}, 'human_support': False,
+                        'answer_all': [ext_oid], 'answer_any': [['đổi size', 'đổi hàng', 'biểu mẫu']], 'answer_not': ['đã hủy thành công'],
                     },
                     'fake_model': [
                         {'call': [
-                            {'name': 'get_order', 'arguments': {'order_id': ext_oid}},
-                            {'name': 'search_knowledge', 'arguments': {'query': 'chính sách đổi size 2 chiều tận nhà'}}
+                            {'name': 'prepare_order_action', 'arguments': {'order_id': ext_oid, 'action_type': 'exchange'}}
                         ]},
-                        {'say': f"Dạ nếu anh/chị muốn lấy size khác cho đơn {ext_oid}, shop có hỗ trợ chính sách đổi size 2 chiều tận nhà trong 15 ngày và shipper sẽ mang size mới tới giao nhận cùng lúc ạ [{{{{last_tool.results.0.citation_id}}}}]."}
+                        {'say': f"Dạ anh/chị muốn lấy size khác thì đây là đổi size chứ không cần trả hàng ạ. Shop đã mở biểu mẫu đổi hàng cho đơn {ext_oid}, anh/chị chọn size mong muốn và lý do rồi bấm xác nhận giúp shop nhé."}
                     ]
                 }
             ],

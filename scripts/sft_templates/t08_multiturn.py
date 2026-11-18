@@ -85,8 +85,12 @@ class T08SanPhamRoiVeDon(BaseTemplate):
         ext_oid = slot['external_order_id']
         cust_id = slot['external_customer_id']
         pid = slot.get('product_id') or 'P-101'
+        # Phiếu cũ chỉ ghi "áo" → câu khách "áo này…" không chỉ ra sản phẩm nào (cả hai model không gọi get_product được).
+        # Nêu đúng tên sản phẩm trong đơn của khách (owner 18/11; Glimmer viết lại lượt 1).
+        pname = slot.get('name') or pid
         b1 = Brief(brief_id=f"brf_{cid}_t1", case_id=cid, turn=1, suite=self.suite, template=self.template_id, style=style,
-                   persona="khách_hàng_hoi_sp", intent="hoi_thong_tin_san_pham_luot_1", must_include=["áo"], length="ngắn")
+                   persona="khách_hàng_hoi_sp", intent="hoi_thong_tin_san_pham_luot_1", must_include=[pname], length="ngắn",
+                   notes=f"Khách hỏi thông tin sản phẩm {pname} (chất liệu, size hoặc màu còn hàng), chưa nhắc tới đơn hàng")
         b2 = Brief(brief_id=f"brf_{cid}_t2", case_id=cid, turn=2, suite=self.suite, template=self.template_id, style=style,
                    persona="khách_hàng_hoi_sp", intent="quay_lai_hoi_don_hang_luot_2", must_include=[ext_oid],
                    earlier_turns=[{'turn': 1, 'intent': 'hoi_thong_tin_san_pham_luot_1', 'assistant': 'tư vấn sản phẩm'}], length="ngắn")
@@ -551,7 +555,9 @@ class T08HoiBaoHanhRoiMoDoi(BaseTemplate):
         b1 = Brief(brief_id=f"brf_{cid}_t1", case_id=cid, turn=1, suite=self.suite, template=self.template_id, style=style,
                    persona="khách_hàng_hoi_bao_hanh", intent="hoi_chinh_sach_bao_hanh_luot_1", must_include=["bảo hành"], length="ngắn")
         b2 = Brief(brief_id=f"brf_{cid}_t2", case_id=cid, turn=2, suite=self.suite, template=self.template_id, style=style,
-                   persona="khách_hàng_hoi_bao_hanh", intent="mo_doi_bao_hanh_don_cu_the_luot_2", must_include=[ext_oid], length="ngắn")
+                   persona="khách_hàng_hoi_bao_hanh", intent="mo_doi_bao_hanh_don_cu_the_luot_2", must_include=[ext_oid], length="ngắn",
+                   # Phiếu cũ không có ghi chú → nhiều câu khách chỉ hỏi "bảo hành thế nào" mà kỳ vọng đòi mở biểu mẫu (owner 18/11)
+                   notes=f"Khách báo sản phẩm trong đơn {ext_oid} bị lỗi (bung chỉ, hỏng khóa…) và đề nghị shop mở yêu cầu đổi bảo hành cho đơn này")
         case = {
             'id': cid, 'category': 't08', 'title': f'Hỏi bảo hành rồi mở đổi {ext_oid}', 'fixture': 'sft_v1', 'customer': cust_id,
             'meta': {'suite': 'T08', 'split': 'train', 'style': style, 'origin': 'sinh_sft', 'template': self.template_id, 'source_note': f'T08 warranty then exchange {ext_oid}', 'vn_context': ['hang_loi']},
