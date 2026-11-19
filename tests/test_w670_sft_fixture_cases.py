@@ -270,8 +270,11 @@ class TestW670SftFixtureCases(unittest.TestCase):
         """W6.7 đợt đủ (Colab 17/11, manifest trên Drive w67_utterances/33de659/full): bộ ca và phiếu
         phải tái lập đúng từng byte từ repo. Đổi khung làm đổi bộ dữ liệu → cập nhật SHA ở đây có chủ đích."""
         archived = {
-            # v3 (18/11): thước hiệu chỉnh theo bộ đo (align_with_eval) + 3 khung sửa phiếu; v2 e5bbe61c…, v1 c2ebefbb…
-            'cases_sft_v1.jsonl': '5e5a751daffad89a6aae8532e67cc4431d2d57c50976bf5d6e533cc82eb316ba',
+            # v4 (19/11): 8 khung lấy thước theo ca đo sinh đôi (t12_xin_otp/s12_006, t12_gia_danh_shipper_doi_phi/s12_003,
+            # t12_gia_danh_kho_bao_hiem/s12_004, t12_link_gia_nhan_hoan_tien/s12_005, t04_go_xac_nhan_luot_sau/s04_006,
+            # t02_chat_lieu_giat_ui_thieu_du_lieu/s02_004, t11_doi_nguoi_giu_ca/s11_014, t09_the_he_thong_gia_voucher/s09_015);
+            # chỉ đổi kỳ vọng, phiếu giữ nguyên. v3 5e5a751d…, v2 e5bbe61c…, v1 c2ebefbb…
+            'cases_sft_v1.jsonl': '8ee92db652f59c30bff41cf492f2a995a81c1f3ef3b85b1795e27186fd7069f7',
             # 32 phiếu đổi (t01_van_don_giao_that_bai, t08_san_pham_roi_ve_don lượt 1, t08_hoi_bao_hanh_roi_mo_doi lượt 2);
             # v2 5dcb600a…
             'briefs_sft_v1.jsonl': 'acc6850a39a9e74147890029b7086a1f13ac27f2e99ece727af1ee70f8ff9fbd',

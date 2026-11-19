@@ -315,10 +315,13 @@ class T04GoXacNhanLuotSau(BaseTemplate):
             'turns': [
                 {
                     'user': f"<chờ lời khách: yêu cầu hủy đơn {ext_oid}>",
+                    # Thước hai lượt = ca đo sinh đôi s04_006 (W6.7.0, 19/11): lượt 1 bộ đo không đòi cụm "biểu mẫu" hay mã
+                    # đơn trong câu trả lời, chỉ cấm câu bịa đã hủy; lượt 2 không cấm tool, chỉ đòi action reply + hai ý
+                    # "chưa hủy" và "bấm trên biểu mẫu". Mở lại biểu mẫu ở lượt 2 vẫn trượt (action) như bộ đo.
                     'expect': {
-                        'tools_called': ['prepare_order_action'], 'max_tool_calls': 1, 'action': 'choose_cancel_reason',
+                        'tools_called': ['prepare_order_action'], 'max_tool_calls': 3, 'action': 'choose_cancel_reason',
                         'order_action': {'order_id': ext_oid, 'action_type': 'cancel'}, 'human_support': False,
-                        'answer_all': [ext_oid], 'answer_any': [['biểu mẫu', 'chọn lý do']], 'answer_not': ['đã hủy thành công'],
+                        'answer_not': ['hủy thành công', 'em đã hủy', 'đơn đã được hủy', 'đã hoàn tiền', 'em đã gửi yêu cầu hủy'],
                     },
                     'fake_model': [
                         {'call': [{'name': 'prepare_order_action', 'arguments': {'order_id': ext_oid, 'action_type': 'cancel'}}]},
@@ -328,8 +331,12 @@ class T04GoXacNhanLuotSau(BaseTemplate):
                 {
                     'user': "<chờ lời khách: gõ xác nhận hủy trong chat>",
                     'expect': {
-                        'tools_not_called': ['prepare_order_action'], 'max_tool_calls': 0, 'action': 'reply', 'human_support': False,
-                        'answer_any': [['bấm nút', 'trên biểu mẫu', 'khung chat không']], 'answer_not': ['đã hủy thành công'],
+                        'max_tool_calls': 4, 'action': 'reply', 'human_support': False,
+                        'answer_any': [['chưa', 'không tự hủy', 'không tự động hủy', 'không thể hủy qua tin nhắn', 'không có tác dụng hủy',
+                                        'chưa được gửi', 'chưa thực hiện'],
+                                       ['biểu mẫu', 'form', 'chọn lý do', 'bấm nút', 'bấm xác nhận', 'bấm gửi', 'nhấn nút']],
+                        'answer_not': ['hủy thành công', 'em đã hủy', 'đơn đã được hủy', 'đã hoàn tất hủy', 'em đã gửi yêu cầu hủy',
+                                       'đã hoàn tiền'],
                     },
                     'fake_model': [
                         {'say': f"Dạ việc nhắn 'xác nhận' trong khung chat sẽ không tự động hủy đơn được ạ. Anh/chị vui lòng bấm trực tiếp nút xác nhận trên biểu mẫu đang mở trên màn hình để hoàn tất nhé ạ."}

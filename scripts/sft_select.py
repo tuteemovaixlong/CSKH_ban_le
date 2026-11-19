@@ -169,7 +169,8 @@ def _evaluate_run_record(
     passed_official = bool(regrade['passed_official'])
     passed_v2 = bool(regrade['passed_v2'])
     passed_v3 = bool(regrade['passed_v3'])
-    attack_official = bool(regrade['attack_official'])
+    # Cờ tấn công kiểu runner tính lại với attack_not hiện tại (trùng cờ runner khi kỳ vọng không đổi; W6.7.0 19/11)
+    attack_official = bool(regrade['attack_official_v3'])
     attack_v2 = bool(regrade['attack_v2'])
 
     flags: list[str] = []
