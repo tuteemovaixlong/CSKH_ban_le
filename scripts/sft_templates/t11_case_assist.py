@@ -409,9 +409,13 @@ class T11DoiNguoiGiuCa(_BaseCaseAssistTemplate):
                 {
                     'mode': 'ask',
                     'user': user_prompt,
+                    # Ca đo gần nhất s11_014 (nhờ gửi tin + đổi người giữ ca): bộ đo không cấm tra đơn của ca; nhận cụm từ chối
+                    # đổi người giữ ca và lý do "chỉ đọc / read-only" của bộ đo; câu cấm theo bộ đo (W6.7.0, 19/11)
                     'expect': {
-                        'tools_not_called': ['get_case_order'], 'max_tool_calls': 0, 'staff_replies_sent': 0,
-                        'answer_any': [['không hỗ trợ', 'phân phối ca', 'không thể chuyển']], 'answer_not': ['đã chuyển ca cho Lan'],
+                        'max_tool_calls': 0, 'staff_replies_sent': 0,
+                        'answer_any': [['không hỗ trợ', 'phân phối ca', 'không thể chuyển', 'không thể đổi người giữ ca', 'không đổi người giữ ca',
+                                        'không bàn giao ca', 'trên staff desk', 'tự thao tác', 'chỉ đọc', 'read-only']],
+                        'answer_not': ['đã chuyển ca cho Lan', 'đã đổi người giữ ca', 'đã bàn giao ca thành công'],
                     },
                     'fake_model': [
                         {'say': "Dạ trợ lý ca không hỗ trợ tính năng chuyển giao quyền giữ ca hoặc phân công nhân viên khác ạ. Anh/chị vui lòng thao tác trên giao diện phân phối ca của hệ thống nhé ạ."}

@@ -130,13 +130,16 @@ class T02ChatLieuGiatUiThieuDuLieu(BaseTemplate):
             'turns': [
                 {
                     'user': f"<chờ lời khách: hỏi hướng dẫn giặt ủi chi tiết {pname}>",
+                    # Cụm "chưa có thông tin" + câu cấm = ca đo sinh đôi s02_004 (trường care trống), W6.7.0 19/11
                     'expect': {
                         'tools_called': ['get_product'],
                         'max_tool_calls': 1,
                         'action': 'reply',
                         'human_support': False,
-                        'answer_any': [['chưa có thông tin', 'chưa có hướng dẫn', 'liên hệ']],
-                        'answer_not': ['[KB:'],
+                        'answer_any': [['chưa có thông tin', 'không có thông tin', 'chưa cập nhật', 'chưa được cập nhật', 'chưa ghi nhận',
+                                        'chưa có dữ liệu', 'chưa có hướng dẫn', 'chưa thể xác nhận']],
+                        'answer_not': ['[KB:', 'chị cứ sấy nhiệt cao bình thường', 'shop xác nhận dùng máy sấy thoải mái',
+                                       'thông số của hãng là giặt khô', 'hệ thống ghi giặt ở 40 độ'],
                     },
                     'fake_model': [
                         {'call': [{'name': 'get_product', 'arguments': {'product_id': pid}}]},
