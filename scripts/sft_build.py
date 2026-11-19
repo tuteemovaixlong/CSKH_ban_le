@@ -21,12 +21,14 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts import eval_regrade, sft_dataset  # noqa: E402
+from scripts import eval_regrade, sft_dataset, sft_select  # noqa: E402
 from scripts.run_agent_scenarios import percentile  # noqa: E402
 
 DEFAULT_SEED = 20261203
 DEFAULT_VAL_RATIO = 0.1
 CHARS_PER_TOKEN = 3.2
+CJK_RE = sft_select.CJK_RE
+CJK_SPAN_RE = sft_select.CJK_SPAN_RE
 
 SECRET_PATTERNS = (
     ('openai_or_sk_key', re.compile(r'sk-[A-Za-z0-9_-]{8,}')),
@@ -242,6 +244,81 @@ def _sample_char_length(sample: dict[str, Any]) -> int:
     return len(json.dumps(payload, ensure_ascii=False))
 
 
+def _load_owner_edits(path: Path) -> list[dict[str, Any]]:
+    if not path.is_file():
+        raise FileNotFoundError(f'Không tìm thấy tệp lớp phủ --owner-edits: {path}')
+    rows = _read_jsonl(path)
+    edits: list[dict[str, Any]] = []
+    for idx, row in enumerate(rows, 1):
+        if not isinstance(row, dict):
+            raise ValueError(f'--owner-edits dòng {idx}: phải là JSON object')
+        cid = row.get('case_id')
+        model = row.get('model')
+        run_raw = row.get('run')
+        old = row.get('old')
+        new = row.get('new')
+        if not isinstance(cid, str) or not cid:
+            raise ValueError(f'--owner-edits dòng {idx}: thiếu case_id')
+        if not isinstance(model, str) or not model:
+            raise ValueError(f'--owner-edits dòng {idx}: thiếu model')
+        if isinstance(run_raw, bool) or run_raw is None:
+            raise ValueError(f'--owner-edits dòng {idx}: thiếu run')
+        try:
+            run_no = int(run_raw)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f'--owner-edits dòng {idx}: run không hợp lệ {run_raw!r}') from exc
+        if not isinstance(old, str) or not old:
+            raise ValueError(f'--owner-edits dòng {idx}: trường old phải là chuỗi không rỗng')
+        if not isinstance(new, str):
+            raise ValueError(f'--owner-edits dòng {idx}: trường new phải là chuỗi')
+        edits.append({
+            'line': idx,
+            'case_id': cid,
+            'model': model,
+            'run': run_no,
+            'old': old,
+            'new': new,
+            'owner_edit': str(row.get('owner_edit') or 'cjk'),
+        })
+    return edits
+
+
+def _apply_owner_edits(
+    norm_msgs: list[dict[str, Any]],
+    edit_indices: list[int],
+    all_edits: list[dict[str, Any]],
+    applied_counts: list[int],
+) -> str | None:
+    """Áp lớp phủ old -> new lên mọi content/reasoning_content của trợ lý (tin trước và tin cuối)."""
+    applied_tag: str | None = None
+    for idx in edit_indices:
+        edit = all_edits[idx]
+        old = edit['old']
+        new = edit['new']
+        for msg in norm_msgs:
+            if msg.get('role') != 'assistant':
+                continue
+            for field in ('content', 'reasoning_content'):
+                val = msg.get(field)
+                if isinstance(val, str) and old in val:
+                    msg[field] = val.replace(old, new)
+                    applied_counts[idx] += 1
+                    applied_tag = edit['owner_edit']
+    return applied_tag
+
+
+def _find_assistant_cjk(norm_msgs: list[dict[str, Any]]) -> list[str]:
+    spans: list[str] = []
+    for msg in norm_msgs:
+        if msg.get('role') != 'assistant':
+            continue
+        for field in ('content', 'reasoning_content'):
+            val = msg.get(field)
+            if isinstance(val, str) and val:
+                spans.extend(m.group(0) for m in CJK_SPAN_RE.finditer(val))
+    return spans
+
+
 def build_sft_dataset(
     selection_path: Path,
     cases_path: Path,
@@ -250,6 +327,7 @@ def build_sft_dataset(
     val_ratio: float = DEFAULT_VAL_RATIO,
     seed: int = DEFAULT_SEED,
     eval_suites_dir: Path | None = None,
+    owner_edits_path: Path | None = None,
 ) -> dict[str, Any]:
     if not 0.0 <= val_ratio < 1.0:
         raise ValueError(f'--val-ratio must be in [0, 1), got {val_ratio}')
@@ -258,19 +336,29 @@ def build_sft_dataset(
     cases_by_id = {c['id']: c for c in _read_jsonl(cases_path)}
     eval_v1, eval_v2 = load_eval_utterance_sets(eval_suites_dir)
 
+    all_edits: list[dict[str, Any]] = _load_owner_edits(owner_edits_path) if owner_edits_path is not None else []
+    edits_by_run: dict[tuple[str, str, int], list[int]] = defaultdict(list)
+    for idx, edit in enumerate(all_edits):
+        edits_by_run[(edit['case_id'], edit['model'], edit['run'])].append(idx)
+    applied_counts = [0] * len(all_edits)
+
     trace_cache: dict[Path, dict[tuple[Any, Any, Any], list[dict[str, Any]]]] = {}
     merged_cache: dict[Path, dict[tuple[str, int], list[dict[str, Any]]]] = {}
     kept: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
+    seen_case_entries: Counter[str] = Counter()
 
     for entry in selection.get('selected') or []:
         cid = entry['case_id']
         run_no = int(entry['run'])
-        model = entry['source_model']
+        model = entry.get('model') or entry['source_model']
+        seen_case_entries[cid] += 1
+        role = entry.get('role') or ('primary' if seen_case_entries[cid] == 1 else 'second')
+        entry_slot = 1 if role == 'primary' and seen_case_entries[cid] == 1 else max(2, seen_case_entries[cid])
 
         if str(cid).strip().lower().startswith('s'):
             rejected.append({
-                'case_id': cid, 'model': model, 'run': run_no, 'turn': None,
+                'case_id': cid, 'model': model, 'run': run_no, 'turn': None, 'role': role,
                 'reason': 'eval_case_id_prefix_s',
             })
             continue
@@ -290,12 +378,15 @@ def build_sft_dataset(
         n_turns = len(case.get('turns') or [])
         case_meta = case.get('meta') or {}
         rail_turns = set(entry.get('rail_turns') or [])
+        matching_edit_indices = edits_by_run.get((cid, model, run_no), [])
 
         for turn_no in range(1, n_turns + 1):
+            sample_id = f'{cid}#t{turn_no}' if entry_slot == 1 else f'{cid}#t{turn_no}#{entry_slot}'
             turn_calls = calls.get((cid, run_no, turn_no), [])
             if turn_no in rail_turns:
                 rejected.append({
                     'case_id': cid, 'model': model, 'run': run_no, 'turn': turn_no,
+                    'role': role, 'sample_id': sample_id,
                     'reason': 'rail_turn_no_model_call',
                 })
                 continue
@@ -305,6 +396,7 @@ def build_sft_dataset(
                 if _is_merged_rail_turn(merged_cache[rdir], cid, run_no, turn_no):
                     rejected.append({
                         'case_id': cid, 'model': model, 'run': run_no, 'turn': turn_no,
+                        'role': role, 'sample_id': sample_id,
                         'reason': 'rail_turn_no_model_call',
                     })
                     continue
@@ -313,6 +405,7 @@ def build_sft_dataset(
             if not stop_calls:
                 rejected.append({
                     'case_id': cid, 'model': model, 'run': run_no, 'turn': turn_no,
+                    'role': role, 'sample_id': sample_id,
                     'reason': 'missing_stop_call',
                 })
                 continue
@@ -325,6 +418,7 @@ def build_sft_dataset(
             if err_reason or norm_msgs is None:
                 rejected.append({
                     'case_id': cid, 'model': model, 'run': run_no, 'turn': turn_no,
+                    'role': role, 'sample_id': sample_id,
                     'reason': err_reason or 'invalid_messages',
                 })
                 continue
@@ -339,23 +433,46 @@ def build_sft_dataset(
                 'reasoning_content': '' if final_reasoning is None else str(final_reasoning),
             })
 
+            # W6.7.2 mục E: áp lớp phủ owner edits trên bản sao trong bộ nhớ (không sửa vết gốc).
+            owner_edit_tag = (
+                _apply_owner_edits(norm_msgs, matching_edit_indices, all_edits, applied_counts)
+                if matching_edit_indices
+                else None
+            )
+
+            # W6.7.2 mục E: chặn mẫu còn chữ Hán/Nhật/Hàn trong văn bản trợ lý sau lớp phủ.
+            cjk_spans = _find_assistant_cjk(norm_msgs)
+            if cjk_spans:
+                rejected.append({
+                    'case_id': cid, 'model': model, 'run': run_no, 'turn': turn_no,
+                    'role': role, 'sample_id': sample_id,
+                    'reason': 'cjk_text',
+                    'cjk_spans': cjk_spans[:10],
+                })
+                continue
+
             # P2: Reject DeepSeek samples that mention "deepseek" in any message
             if model == 'deepseek' and 'deepseek' in json.dumps(norm_msgs, ensure_ascii=False).lower():
                 rejected.append({
                     'case_id': cid, 'model': model, 'run': run_no, 'turn': turn_no,
+                    'role': role, 'sample_id': sample_id,
                     'reason': 'model_identity_leak',
                 })
                 continue
 
             tools = copy.deepcopy(req.get('tools') or [])
             sample_meta = {
+                'sample_id': sample_id,
                 'case_id': cid,
                 'template': case_meta.get('template') or entry.get('template', ''),
                 'suite': case_meta.get('suite') or entry.get('suite') or case.get('category', '').upper(),
                 'turn': turn_no,
+                'source': model,
                 'source_model': model,
                 'run': run_no,
                 'tier': entry['tier'],
+                'role': role,
+                'owner_edit': owner_edit_tag,
                 'style': case_meta.get('style') or entry.get('style', ''),
                 'repo_sha': entry.get('repo_sha') or (selection.get('repo_sha') or {}).get(model),
             }
@@ -369,6 +486,7 @@ def build_sft_dataset(
             ):
                 rejected.append({
                     'case_id': cid, 'model': model, 'run': run_no, 'turn': turn_no,
+                    'role': role, 'sample_id': sample_id,
                     'reason': 'eval_utterance_overlap',
                 })
                 continue
@@ -378,11 +496,25 @@ def build_sft_dataset(
             if secret_kind:
                 rejected.append({
                     'case_id': cid, 'model': model, 'run': run_no, 'turn': turn_no,
+                    'role': role, 'sample_id': sample_id,
                     'reason': f'secret_detected:{secret_kind}',
                 })
                 continue
 
             kept.append(sample)
+
+    # Mỗi dòng trong --owner-edits phải áp được ít nhất một lần; nếu không thì dừng có lỗi trước khi ghi tệp.
+    unapplied = [
+        all_edits[idx] for idx, cnt in enumerate(applied_counts) if cnt == 0
+    ]
+    if unapplied:
+        preview = ', '.join(
+            f"dòng {e['line']} ({e['case_id']}|{e['model']}|{e['run']})"
+            for e in unapplied[:5]
+        )
+        raise ValueError(
+            f'--owner-edits có {len(unapplied)} dòng không áp được lần nào: {preview}'
+        )
 
     templates = sorted({s['meta']['template'] for s in kept})
     n_templates = len(templates)
@@ -421,6 +553,16 @@ def build_sft_dataset(
         }
         for m in sorted(set(src_counts) | {'qwen', 'deepseek'})
     }
+    by_tier = Counter(s['meta']['tier'] for s in kept)
+    by_role = Counter(s['meta']['role'] for s in kept)
+    by_sstr = Counter(
+        f"{s['meta']['suite']}|{s['meta']['source']}|{s['meta']['tier']}|{s['meta']['role']}"
+        for s in kept
+    )
+    owner_edit_counts = Counter(
+        s['meta']['owner_edit'] for s in kept if s['meta'].get('owner_edit') is not None
+    )
+    cjk_rejected = [r for r in rejected if r.get('reason') == 'cjk_text']
 
     turn_idx_counts = Counter(str(s['meta']['turn']) for s in kept)
     turns_per_case: Counter[str] = Counter()
@@ -446,6 +588,7 @@ def build_sft_dataset(
     stats = {
         'seed': seed,
         'val_ratio': val_ratio,
+        'owner_edits_path': str(owner_edits_path.resolve()) if owner_edits_path is not None else None,
         'samples': {
             'total': total_kept,
             'train': len(train_samples),
@@ -464,6 +607,13 @@ def build_sft_dataset(
         },
         'by_suite': dict(sorted(by_suite.items())),
         'by_source': by_source,
+        'by_tier': dict(sorted(by_tier.items())),
+        'by_role': {r: by_role.get(r, 0) for r in ('primary', 'second')},
+        'by_suite_source_tier_role': dict(sorted(by_sstr.items())),
+        'owner_edit_samples': sum(owner_edit_counts.values()),
+        'by_owner_edit': dict(sorted(owner_edit_counts.items())),
+        'cjk_rejected_count': len(cjk_rejected),
+        'cjk_rejected': cjk_rejected,
         'by_turn_index': dict(sorted(turn_idx_counts.items(), key=lambda kv: int(kv[0]))),
         'by_case_turns': dict(sorted(turns_per_case.items(), key=lambda kv: int(kv[0]))),
         'runtime_info_calls': {
@@ -508,6 +658,9 @@ def _render_build_report(stats: dict[str, Any]) -> str:
         f'- Tổng số ca: **{cs["total"]}** (`train`: **{cs["train"]}**, `val`: **{cs["val"]}**)',
         f'- Tổng số khung: **{tm["total"]}** (`train`: **{tm["train"]}**, `val`: **{tm["val"]}**; `val_ratio` = {stats["val_ratio"]}, `seed` = {stats["seed"]})',
         f'- Khung trong `val`: {", ".join(f"`{t}`" for t in tm["val_templates"]) or "(không có)"}',
+        f'- Theo Tier: {stats.get("by_tier") or {}} | Theo vai (`role`): {stats.get("by_role") or {}}',
+        f'- Số mẫu có lớp phủ `owner_edit`: **{stats.get("owner_edit_samples", 0)}** ({stats.get("by_owner_edit") or {}})',
+        f'- Số mẫu loại vì còn chữ Hán/Nhật/Hàn (`cjk_text`): **{stats.get("cjk_rejected_count", 0)}**',
         '',
         '## Nguồn mẫu (`source_model`)',
         '',
@@ -516,6 +669,20 @@ def _render_build_report(stats: dict[str, Any]) -> str:
     ]
     for src, info in stats['by_source'].items():
         lines.append(f'| `{src}` | {info["count"]} | {100 * info["ratio"]:.1f}% |')
+
+    lines += [
+        '',
+        '## Phân bổ theo bộ × nguồn × tier × vai',
+        '',
+        '| Bộ | Nguồn | Tier | Vai | Số mẫu |',
+        '|---|---|---|---|---|',
+    ]
+    sstr = stats.get('by_suite_source_tier_role') or {}
+    for key, cnt in sorted(sstr.items()):
+        suite, src, tier, role = key.split('|')
+        lines.append(f'| {suite} | `{src}` | {tier} | `{role}` | {cnt} |')
+    if not sstr:
+        lines.append('| (trống) | - | - | - | 0 |')
 
     lines += [
         '',
@@ -560,6 +727,16 @@ def _render_build_report(stats: dict[str, Any]) -> str:
     if not rj['by_reason']:
         lines.append('| (không có) | 0 |')
 
+    cjk_items = stats.get('cjk_rejected') or []
+    if cjk_items:
+        lines += ['', f'### Danh sách mẫu loại vì `cjk_text` ({len(cjk_items)})', '']
+        for item in cjk_items:
+            spans = ', '.join(f'`{sp}`' for sp in (item.get('cjk_spans') or []))
+            lines.append(
+                f"- `{item.get('sample_id') or item['case_id']}` "
+                f"(`{item['case_id']}|{item['model']}|{item['run']}`, lượt {item['turn']}): {spans}"
+            )
+
     lines.append('')
     return '\n'.join(lines)
 
@@ -569,6 +746,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--selection', required=True, type=Path, help='Tệp selection.json từ sft_select.py select')
     parser.add_argument('--cases', required=True, type=Path, help='Tệp ca huấn luyện JSONL')
     parser.add_argument('--out-dir', required=True, type=Path, help='Thư mục xuất train.jsonl, val.jsonl, stats.json, build_report.md')
+    parser.add_argument('--owner-edits', type=Path, default=None,
+                        help='Tệp lớp phủ owner_edits_cjk.jsonl (áp lên văn bản trợ lý, không sửa vết gốc)')
     parser.add_argument('--val-ratio', type=float, default=DEFAULT_VAL_RATIO, help='Tỉ lệ khung dành cho val (mặc định 0.1)')
     parser.add_argument('--seed', type=int, default=DEFAULT_SEED, help='Seed tách train/val theo khung')
     return parser
@@ -587,6 +766,7 @@ def main(argv: list[str] | None = None) -> int:
             args.out_dir,
             val_ratio=args.val_ratio,
             seed=args.seed,
+            owner_edits_path=args.owner_edits,
         )
     except (ValueError, FileNotFoundError) as exc:
         print(f'Lỗi: {exc}', file=sys.stderr)
@@ -594,7 +774,7 @@ def main(argv: list[str] | None = None) -> int:
     sm = stats['samples']
     print(
         f"sft_build: {sm['total']} mẫu (train={sm['train']}, val={sm['val']}), "
-        f"loại={stats['rejected']['total']} -> {args.out_dir}"
+        f"owner_edit={stats['owner_edit_samples']}, loại={stats['rejected']['total']} -> {args.out_dir}"
     )
     return 0
 
