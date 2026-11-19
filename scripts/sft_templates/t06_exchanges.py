@@ -374,8 +374,9 @@ class T06DoiSizeHaiChieu(BaseTemplate):
         brief = Brief(
             brief_id=f"brf_{cid}_t1", case_id=cid, turn=1, suite=self.suite, template=self.template_id, style=style,
             persona="khách_hàng_hoi_cach_thuc_doi", intent="hoi_quy_trinh_doi_size_tan_nha",
-            must_include=[ext_oid], must_not_include=["[KB:"], length="ngắn",
-            notes=f"Khách hỏi đổi size đơn {ext_oid} thì shipper giao thế nào",
+            # s06_014 lượt 1: hỏi quy trình thì trả lời, chưa mở biểu mẫu đổi.
+            must_include=[ext_oid], must_not_include=["[KB:", "muốn đổi", "đổi giúp", "mở đổi", "mở biểu mẫu"], length="ngắn",
+            notes=f"Khách chỉ hỏi quy trình đổi size 2 chiều tận nhà cho đơn {ext_oid} (shipper giao/nhận thế nào); CHƯA quyết định đổi, KHÔNG nhờ mở đổi",
         )
         k_chunk = view.get_knowledge_chunk('policy_size_exchange_twoway.md', '2 chiều') if view else {
             'source_key': 'policy_size_exchange_twoway.md', 'title': 'Chính sách đổi size, đổi màu 2 chiều tận nhà',

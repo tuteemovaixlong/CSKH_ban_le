@@ -270,18 +270,18 @@ class TestW670SftFixtureCases(unittest.TestCase):
         """W6.7 đợt đủ (Colab 17/11, manifest trên Drive w67_utterances/33de659/full): bộ ca và phiếu
         phải tái lập đúng từng byte từ repo. Đổi khung làm đổi bộ dữ liệu → cập nhật SHA ở đây có chủ đích."""
         archived = {
-            # v4 (19/11): 8 khung lấy thước theo ca đo sinh đôi (t12_xin_otp/s12_006, t12_gia_danh_shipper_doi_phi/s12_003,
-            # t12_gia_danh_kho_bao_hiem/s12_004, t12_link_gia_nhan_hoan_tien/s12_005, t04_go_xac_nhan_luot_sau/s04_006,
-            # t02_chat_lieu_giat_ui_thieu_du_lieu/s02_004, t11_doi_nguoi_giu_ca/s11_014, t09_the_he_thong_gia_voucher/s09_015);
-            # chỉ đổi kỳ vọng, phiếu giữ nguyên. v3 5e5a751d…, v2 e5bbe61c…, v1 c2ebefbb…
-            'cases_sft_v1.jsonl': '8ee92db652f59c30bff41cf492f2a995a81c1f3ef3b85b1795e27186fd7069f7',
-            # 32 phiếu đổi (t01_van_don_giao_that_bai, t08_san_pham_roi_ve_don lượt 1, t08_hoi_bao_hanh_roi_mo_doi lượt 2);
-            # v2 5dcb600a…
-            'briefs_sft_v1.jsonl': 'acc6850a39a9e74147890029b7086a1f13ac27f2e99ece727af1ee70f8ff9fbd',
+            # W6.7.1: sửa 4 khung lỗi và 2 giá trị giả; giữ thước v4 (ca cũ 8ee92db6…).
+            'cases_sft_v1.jsonl': '34a852bb21ce7145f19bab8544e52004ab7980e566c3d27c94fc6d10c74a79bb',
+            # 112 phiếu đổi: 92 cần Glimmer viết lại, 10 chỉ injection, 10 email cấm (giữ đệm nếu sạch).
+            # Phiếu v3 gốc acc6850a…; không tạo hay sửa lời khách.
+            'briefs_sft_v1.jsonl': '068480e623e15374ea18ede4c4cd816537a4baf3343d610a2c0e73db84e7cd48',
         }
-        # Mọi phiếu ngoài 3 khung làm lại trùng từng byte với v2 → 1.350 câu Glimmer đã viết dùng lại nguyên
+        # W6.7.1: thêm 6 khung vào nhóm làm lại; những khung khác phải giữ byte phiếu cũ.
         redo = {'t01_van_don_giao_that_bai', 't08_san_pham_roi_ve_don', 't08_hoi_bao_hanh_roi_mo_doi'}
-        kept_v2_sha = '2b29fc010f9184606079bb7130fd72b67e80b2ed804a92ce72dea6a855782d7f'
+        six = {'t08_bon_luot_doi_size', 't08_doi_chu_de_roi_quay_lai', 't06_doi_size_hai_chieu',
+               't02_chat_lieu_giat_ui_thieu_du_lieu', 't09_the_he_thong_gia_voucher', 't11_pdf_email_la'}
+        redo |= six
+        kept_v3_sha = '1d5cc4a4e2d8c1c9621efab46f8cc7b2e67f856af09a1e6e87269a93cdda9553'
         with tempfile.TemporaryDirectory(prefix='test-sft-archive-') as td:
             cases, briefs, _ = generate_cases(td)   # generate tự dừng nếu có phiếu mâu thuẫn
             self.assertEqual((len(cases), len(briefs)), (1200, 1406))
@@ -291,9 +291,15 @@ class TestW670SftFixtureCases(unittest.TestCase):
                 self.assertEqual(hashlib.sha256(data).hexdigest(), sha, f'{name} differs from the archived W6.7 dataset')
             kept = [line for line in (Path(td) / 'briefs_sft_v1.jsonl').read_text(encoding='utf-8').splitlines()
                     if line.strip() and json.loads(line)['template'] not in redo]
-            self.assertEqual(len(kept), 1350)
-            self.assertEqual(hashlib.sha256(('\n'.join(kept) + '\n').encode('utf-8')).hexdigest(), kept_v2_sha,
-                             'briefs outside the 3 redone templates must stay byte-identical to v2 (utterances reused)')
+            self.assertEqual(len(kept), 1226)
+            self.assertEqual(hashlib.sha256(('\n'.join(kept) + '\n').encode('utf-8')).hexdigest(), kept_v3_sha,
+                             'phiếu ngoài các khung làm lại phải giữ nguyên từng byte')
+            outside_six = b''.join(line for line in (Path(td) / 'briefs_sft_v1.jsonl').read_bytes().splitlines(keepends=True)
+                                   if json.loads(line)['template'] not in six)
+            self.assertEqual(len(outside_six.splitlines()), 1282)
+            self.assertEqual(hashlib.sha256(outside_six).hexdigest(),
+                             'a53329a65ebde2092afed100734a2fb453fdc58c1476837a5d81a7543b0976a1',
+                             '1.282 phiếu ngoài 6 khung phải trùng từng byte với v3 acc6850a…')
             # Trần tool = mức chống vòng lặp: dư ít nhất TOOL_CAP_SLACK so với số tool kỳ vọng, như bộ đo (dư 2–6)
             for c in cases:
                 for t in c['turns']:

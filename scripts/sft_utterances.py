@@ -27,6 +27,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import threading
 import time
 import unicodedata
@@ -724,9 +725,136 @@ def verify_utterances(generate_dir: Path | str) -> dict[str, Any]:
     }
 
 
+def _brief_index(path: Path):
+    result, raw = {}, {}
+    for line in path.read_bytes().splitlines(keepends=True):
+        if line.strip():
+            row = json.loads(line)
+            bid = row['brief_id']
+            if bid in result:
+                raise ValueError(f'Phiếu bị trùng brief_id: {bid}')
+            result[bid] = row
+            raw[bid] = line
+    return result, raw
+
+
+def _cache_changes(generate_dir: Path, old_briefs: Path):
+    old, old_raw = _brief_index(old_briefs)
+    current, current_raw = _brief_index(generate_dir / 'briefs_sft_v1.jsonl')
+    changed = set()
+    injections = {}
+    t11_email_only = {}
+    for bid in old.keys() | current.keys():
+        before, after = old.get(bid), current.get(bid)
+        if before == after:
+            continue
+        if before and after:
+            keys = {k for k in before.keys() | after.keys()
+                    if k not in before or k not in after or before[k] != after[k]}
+            if keys == {'injection'} and all(isinstance(b.get('injection'), str) and b['injection']
+                                               for b in (before, after)):
+                injections[bid] = (before['injection'], after['injection'])
+                continue
+            # Quyết định owner W6.7.1: chỉ giữ đệm t11 nếu đúng một email cấm được đổi,
+            # toàn bộ byte khác của phiếu v3 giữ nguyên; không mở rộng sang thay đổi khác.
+            if (keys == {'must_not_include'} and before.get('template') == 't11_pdf_email_la'
+                    and after.get('template') == 't11_pdf_email_la'):
+                forbidden = before.get('must_not_include', [])
+                emails = [x for x in forbidden if isinstance(x, str) and re.fullmatch(
+                    r'ketoan-uynhiem-\d+@fake-retailops-mail\.com', x)]
+                if len(emails) == 1:
+                    previous = emails[0]
+                    following = previous.replace('@fake-retailops-mail.com', '@thanhtoan-ncc.example')
+                    expected = [following if x == previous else x for x in forbidden]
+                    if (forbidden.count(previous) == 1 and after['must_not_include'] == expected
+                            and old_raw[bid].count(previous.encode('utf-8')) == 1
+                            and old_raw[bid].replace(previous.encode('utf-8'), following.encode('utf-8'), 1)
+                            == current_raw[bid]):
+                        t11_email_only[bid] = (previous, following)
+                        continue
+        changed.add(bid)
+    return changed, injections, t11_email_only
+
+
+def _replace_cache(path: Path, data: bytes) -> None:
+    # Chỉ thay tệp sau khi kiểm hết các dòng; lỗi ở cuối không được để cache đổi dở dang.
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix='.cache-', delete=False) as fh:
+            tmp_path = Path(fh.name)
+            fh.write(data)
+        os.replace(tmp_path, path)
+    finally:
+        if tmp_path is not None and tmp_path.exists():
+            tmp_path.unlink()
+
+
+def drop_cache(generate_dir: Path | str, old_briefs: Path | str) -> dict[str, Any]:
+    """Xóa đệm của phiếu đổi, giữ nguyên từng byte dòng khác và nhóm chỉ đổi injection."""
+    directory = Path(generate_dir)
+    changed, _, t11_email_only = _cache_changes(directory, Path(old_briefs))
+    path = directory / 'utterances_cache.jsonl'
+    data = path.read_bytes()
+    kept, removed, retained_t11 = [], [], []
+    records = [(line, json.loads(line) if line.strip() else {}) for line in data.splitlines(keepends=True)]
+    for _, row in records:
+        bid = row.get('brief_id')
+        if bid in t11_email_only:
+            text = row.get('user')
+            if not isinstance(text, str) or any(
+                    token.casefold() in text.casefold() for token in (*t11_email_only[bid], 'retailops-mail')):
+                changed.add(bid)  # Có một dòng nhiễm thì xóa mọi dòng đệm của phiếu đó.
+    for line, row in records:
+        bid = row.get('brief_id')
+        if bid in changed:
+            removed.append(bid)
+        else:
+            kept.append(line)
+            if bid in t11_email_only:
+                retained_t11.append(bid)
+    # Không ghi đè bản sao lưu của lần trước: owner cần giữ được bộ đệm trước khi xóa.
+    backup = directory / 'utterances_cache.before_drop.jsonl'
+    with backup.open('xb') as fh:
+        fh.write(data)
+    if removed:
+        _replace_cache(path, b''.join(kept))
+    return {'removed': len(removed), 'brief_ids': sorted(set(removed)), 'backup': str(backup),
+            'retained_t11': len(retained_t11), 'retained_t11_brief_ids': sorted(set(retained_t11))}
+
+
+def migrate_injection(generate_dir: Path | str, old_briefs: Path | str) -> dict[str, Any]:
+    """Thay đúng một chuỗi injection, giữ nhãn tác giả/model; hoàn toàn offline."""
+    directory = Path(generate_dir)
+    _, injections, _ = _cache_changes(directory, Path(old_briefs))
+    path = directory / 'utterances_cache.jsonl'
+    lines, migrated = [], []
+    for line in path.read_bytes().splitlines(keepends=True):
+        row = json.loads(line) if line.strip() else {}
+        bid = row.get('brief_id')
+        if bid in injections:
+            before, after = injections[bid]
+            text = row.get('user')
+            count = text.count(before) if isinstance(text, str) else 0
+            if count != 1:
+                raise ValueError(f'{bid}: injection cũ xuất hiện {count} lần, cần đúng 1 lần')
+            row['user'] = text.replace(before, after, 1)
+            row['migrated'] = 'injection'
+            line = (json.dumps(row, ensure_ascii=False) + '\n').encode('utf-8')
+            migrated.append(bid)
+        lines.append(line)
+    if migrated:
+        _replace_cache(path, b''.join(lines))
+    return {'migrated': len(migrated), 'brief_ids': sorted(set(migrated))}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate and validate customer utterances")
     subparsers = parser.add_subparsers(dest="command")
+
+    for command in ('drop-cache', 'migrate-injection'):
+        cache_parser = subparsers.add_parser(command, help='Bảo trì đệm offline khi phiếu đổi')
+        cache_parser.add_argument('--dir', required=True, help='Thư mục phiếu hiện tại và bản sao bộ đệm')
+        cache_parser.add_argument('--old-briefs', required=True, help='Phiếu v3 trước khi sửa khung')
 
     p_verify = subparsers.add_parser("verify", help="Re-check cache and filled cases against this directory's briefs")
     p_verify.add_argument("--dir", required=True, help="Generation directory containing briefs, cache and filled cases")
@@ -761,6 +889,16 @@ def main() -> int:
     )
 
     args = parser.parse_args()
+
+    if args.command in ('drop-cache', 'migrate-injection'):
+        operation = drop_cache if args.command == 'drop-cache' else migrate_injection
+        try:
+            result = operation(args.dir, args.old_briefs)
+        except (ValueError, OSError) as exc:
+            print(f'Lỗi: {exc}', file=sys.stderr)
+            return 1
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
 
     if args.command == "verify":
         res = verify_utterances(args.dir)
