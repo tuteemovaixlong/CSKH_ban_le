@@ -28,7 +28,7 @@ from scripts import eval_regrade  # noqa: E402
 MODEL_PRIORITY = {'qwen': 0, 'deepseek': 1}
 TIER_PRIORITY = {'A_code': 0, 'B_code': 1}
 MODEL_NAME_RE = re.compile(r'(?i)\b(?:qwen|deepseek)[\w./:-]*')
-MAX_TOOL_RESULT_CHARS = 3000
+DEFAULT_MAX_TOOL_CHARS = 3000
 DEFAULT_SEED = 20261203
 DEFAULT_BATCH_SIZE = 25
 REQUIREMENT_TEXT = (
@@ -86,6 +86,13 @@ Mỗi mục ghi một dòng JSON trong `verdicts/<A|B>/batch-NN.jsonl` với đ�
 - Không mở `map.json`, vết gốc, thư mục kết quả, hay phiếu của nhóm giám khảo còn lại.
 - Không đánh giá độ dài câu trả lời hay phong cách văn phong ngoài câu hỏi trong `requirement`.
 """.format(requirement=REQUIREMENT_TEXT)
+
+
+def rubric_text(max_tool_chars: int = DEFAULT_MAX_TOOL_CHARS) -> str:
+    # W6.7.1: mốc hiển thị phải khớp giới hạn dùng khi xuất gói chấm.
+    if max_tool_chars <= 0:
+        raise ValueError('--max-tool-chars phải lớn hơn 0')
+    return RUBRIC_TEXT.replace('3.000 ký tự', f"{max_tool_chars:,} ký tự".replace(',', '.'))
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -382,6 +389,7 @@ def score_runs(
 
 def _extract_turn_steps(
     turn_calls: list[dict[str, Any]],
+    max_tool_chars: int = DEFAULT_MAX_TOOL_CHARS,
 ) -> tuple[list[dict[str, Any]], str]:
     """Reconstruct each assistant step (reasoning, tool_calls, truncated tool_results) for one turn."""
     stop_indices = [i for i, c in enumerate(turn_calls) if (c.get('response') or {}).get('finish_reason') == 'stop']
@@ -438,7 +446,7 @@ def _extract_turn_steps(
                 queue_pos += 1
             step_results.append({
                 'name': tc['name'],
-                'content': raw_res[:MAX_TOOL_RESULT_CHARS],
+                'content': raw_res[:max_tool_chars],
             })
 
         steps.append({
@@ -520,7 +528,10 @@ def export_judge_round(
     after_paths: list[Path] | None = None,
     seed: int = DEFAULT_SEED,
     batch_size: int = DEFAULT_BATCH_SIZE,
+    max_tool_chars: int = DEFAULT_MAX_TOOL_CHARS,
 ) -> dict[str, Any]:
+    # Giữ mặc định 3.000 để tái lập vòng 1; owner có thể chọn 8.000 ở vòng gộp.
+    rubric_text(max_tool_chars)  # kiểm tham số trước khi ghi bất kỳ tệp nào
     if (out_dir / 'map.json').exists() or (out_dir / 'packets').exists():
         raise FileExistsError(f'{out_dir} đã có gói chấm; mỗi thư mục chấm chỉ xuất một lần')
     if round_no > 1 and not after_paths:
@@ -575,7 +586,7 @@ def export_judge_round(
             if turn_no in rail_turns:
                 continue
             turn_calls = calls.get((cid, run_no, turn_no), [])
-            steps, trace_answer = _extract_turn_steps(turn_calls)
+            steps, trace_answer = _extract_turn_steps(turn_calls, max_tool_chars)
             turns_text = cand.get('turns_text') or []
             fallback_answer = turns_text[turn_no - 1] if turn_no - 1 < len(turns_text) else ''
             answer = trace_answer if trace_answer else fallback_answer
@@ -642,6 +653,7 @@ def export_judge_round(
         'scores_path': str(scores_path.resolve()),
         'seed': seed,
         'batch_size': batch_size,
+        'max_tool_chars': max_tool_chars,
         'batches': {
             f'batch-{n:02d}': [items[i]['item_id'] for i in b]
             for n, b in enumerate(batches, 1)
@@ -1006,6 +1018,8 @@ def _render_selection_report(selection: dict[str, Any]) -> str:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog='sft_select.py', description=__doc__.split('\n\n')[0])
     parser.add_argument('--print-rubric', action='store_true', help='In đầy đủ hướng dẫn chấm tier cho giám khảo và thoát')
+    parser.add_argument('--max-tool-chars', type=int, default=DEFAULT_MAX_TOOL_CHARS,
+                        help='Giới hạn ký tự kết quả tool trong rubric (mặc định 3000)')
     sub = parser.add_subparsers(dest='command')
 
     p_score = sub.add_parser('score', help='Chấm code, gắn cờ và xếp hạng ứng viên từ kết quả runner')
@@ -1022,6 +1036,8 @@ def build_parser() -> argparse.ArgumentParser:
                        help='Tệp adjudicated JSON từ các vòng trước (bắt buộc nếu --round >= 2)')
     p_exp.add_argument('--seed', type=int, default=DEFAULT_SEED)
     p_exp.add_argument('--batch-size', type=int, default=DEFAULT_BATCH_SIZE)
+    p_exp.add_argument('--max-tool-chars', type=int, default=argparse.SUPPRESS,
+                       help='Giới hạn ký tự mỗi kết quả tool (mặc định 3000)')
 
     p_imp = sub.add_parser('import', help='Đọc phiếu giám khảo A/B, kiểm trích dẫn và xếp Tier A/B/C')
     p_imp.add_argument('--judge-dir', required=True, type=Path, help='Thư mục gói chấm chứa map.json và verdicts/')
@@ -1046,7 +1062,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.print_rubric:
-        print(RUBRIC_TEXT)
+        if args.max_tool_chars <= 0:
+            parser.error('--max-tool-chars phải lớn hơn 0')
+        print(rubric_text(args.max_tool_chars))
         return 0
     if not args.command:
         parser.error('a subcommand (score, export, import, select) or --print-rubric is required')
@@ -1070,6 +1088,7 @@ def main(argv: list[str] | None = None) -> int:
                 after_paths=after_flat,
                 seed=args.seed,
                 batch_size=args.batch_size,
+                max_tool_chars=args.max_tool_chars,
             )
             print(
                 f"export vòng {info['round']}: {info['candidates']} ứng viên, "

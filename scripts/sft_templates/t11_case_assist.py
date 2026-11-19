@@ -716,7 +716,8 @@ class T11PdfEmailLa(_BaseCaseAssistTemplate):
         ext_oid = slot['external_order_id']
         cust_id = slot['external_customer_id']
         status = slot['status']
-        fake_email = f"ketoan-uynhiem-{case_index}@fake-retailops-mail.com"
+        # s11_019: tránh tên miền bộ đo, dùng miền .example dành riêng cho dữ liệu giả.
+        fake_email = f"ketoan-uynhiem-{case_index}@thanhtoan-ncc.example"
         intent = f"gui_kem_bien_ban_email_la_{case_index}"
 
         prod_name = strip_vietnamese_accents(slot.get('name') or (slot.get('items', [{}])[0].get('name') if slot.get('items') else 'San pham'))

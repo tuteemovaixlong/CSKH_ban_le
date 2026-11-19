@@ -293,9 +293,13 @@ class T08DoiChuDeRoiQuayLai(BaseTemplate):
                    persona="khách_hàng_hoi_don", intent="tra_don_luot_1", must_include=[ext_oid], length="ngắn")
         b2 = Brief(brief_id=f"brf_{cid}_t2", case_id=cid, turn=2, suite=self.suite, template=self.template_id, style=style,
                    persona="khách_hàng_hoi_don", intent="chuyen_sang_hoi_chinh_sach_luot_2", must_include=["đổi size"],
+                   # Hỏi chính sách chung để không vô tình mở đổi trước lượt 3 (W6.7.1).
+                   must_not_include=[ext_oid, "mở biểu mẫu", "mở đổi", "đổi giúp"],
+                   notes="Chuyển sang hỏi CHÍNH SÁCH CHUNG đổi size (bao nhiêu ngày); KHÔNG nhắc mã đơn, KHÔNG nhờ mở đổi",
                    earlier_turns=[{'turn': 1, 'intent': 'tra_don_luot_1', 'assistant': f'đơn {ext_oid} đã giao'}], length="ngắn")
         b3 = Brief(brief_id=f"brf_{cid}_t3", case_id=cid, turn=3, suite=self.suite, template=self.template_id, style=style,
                    persona="khách_hàng_hoi_don", intent="quay_lai_mo_doi_don_cu_luot_3", must_include=[ext_oid],
+                   notes=f"Quay lại đơn {ext_oid}, NHỜ MỞ ĐỔI SIZE cho đơn đó",
                    earlier_turns=[{'turn': 2, 'intent': 'chuyen_sang_hoi_chinh_sach_luot_2', 'assistant': 'chính sách đổi 15 ngày'}], length="ngắn")
         k_chunk = view.get_knowledge_chunk('policy_size_exchange_twoway.md', '15 ngày') if view else {
             'source_key': 'policy_size_exchange_twoway.md', 'title': 'Chính sách đổi size, đổi màu 2 chiều tận nhà',
@@ -394,14 +398,29 @@ class T08BonLuotDoiSize(BaseTemplate):
         cid = f"t08_{case_index:03d}_{self.template_id}"
         ext_oid = slot['external_order_id']
         cust_id = slot['external_customer_id']
+        # shipping_fees.md / s06_014: bốn lượt thuộc MỘT lần đổi đầu, không phải đổi lần thứ tư.
+        so_lan = ["lần 2", "lần thứ 2", "lần 3", "lần thứ 3", "lần 4", "lần thứ 4"]
+        history = [
+            {'turn': 1, 'intent': 'tra_don_luot_1', 'assistant': f'đơn {ext_oid} đã giao'},
+            {'turn': 2, 'intent': 'hoi_thoi_han_doi_luot_2', 'assistant': 'chính sách đổi size trong 15 ngày'},
+            {'turn': 3, 'intent': 'hoi_phi_ship_doi_luot_3', 'assistant': 'lần đổi đầu tiên miễn phí vận chuyển 2 chiều tận nhà'},
+        ]
         b1 = Brief(brief_id=f"brf_{cid}_t1", case_id=cid, turn=1, suite=self.suite, template=self.template_id, style=style,
-                   persona="khách_hàng_doi_size_4_luot", intent="tra_don_luot_1", must_include=[ext_oid], length="ngắn")
+                   persona="khách_hàng_doi_size_lan_dau", intent="tra_don_luot_1", must_include=[ext_oid], length="ngắn",
+                   notes=f"Chỉ hỏi đơn {ext_oid} đang ở đâu/đã giao chưa; CHƯA nói muốn đổi",
+                   must_not_include=["đổi size", "đổi hàng"])
         b2 = Brief(brief_id=f"brf_{cid}_t2", case_id=cid, turn=2, suite=self.suite, template=self.template_id, style=style,
-                   persona="khách_hàng_doi_size_4_luot", intent="hoi_thoi_han_doi_luot_2", must_include=["đổi size"], length="ngắn")
+                   persona="khách_hàng_doi_size_lan_dau", intent="hoi_thoi_han_doi_luot_2", must_include=["đổi size"], length="ngắn",
+                   notes="Hỏi chung đổi size được trong bao lâu; chưa nhờ mở đổi",
+                   must_not_include=so_lan + ["mở biểu mẫu", "mở đổi"], earlier_turns=history[:1])
         b3 = Brief(brief_id=f"brf_{cid}_t3", case_id=cid, turn=3, suite=self.suite, template=self.template_id, style=style,
-                   persona="khách_hàng_doi_size_4_luot", intent="hoi_phi_ship_doi_luot_3", must_include=["phí ship"], length="ngắn")
+                   persona="khách_hàng_doi_size_lan_dau", intent="hoi_phi_ship_doi_luot_3", must_include=["phí ship"], length="ngắn",
+                   notes="Hỏi đổi size có mất phí ship không — đây là LẦN ĐỔI ĐẦU TIÊN của đơn",
+                   must_not_include=so_lan + ["lần nữa"], earlier_turns=history[:2])
         b4 = Brief(brief_id=f"brf_{cid}_t4", case_id=cid, turn=4, suite=self.suite, template=self.template_id, style=style,
-                   persona="khách_hàng_doi_size_4_luot", intent="mo_bieu_mau_doi_size_luot_4", must_include=[ext_oid], length="ngắn")
+                   persona="khách_hàng_doi_size_lan_dau", intent="mo_bieu_mau_doi_size_luot_4", must_include=[ext_oid], length="ngắn",
+                   notes=f"Nhờ mở đổi sang size khác của CÙNG sản phẩm trong đơn {ext_oid}",
+                   must_not_include=["mẫu khác", "sản phẩm khác"] + so_lan, earlier_turns=history)
         k_chunk = view.get_knowledge_chunk('policy_size_exchange_twoway.md', '15 ngày') if view else {
             'source_key': 'policy_size_exchange_twoway.md', 'title': 'Chính sách đổi size, đổi màu 2 chiều tận nhà',
             'chunk': 'Khách hàng được hỗ trợ đổi size hoặc đổi màu cho cùng một sản phẩm trong vòng **15 ngày kể từ ngày nhận hàng**.'

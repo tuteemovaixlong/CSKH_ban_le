@@ -90,8 +90,10 @@ class T02ChatLieuGiatUiThieuDuLieu(BaseTemplate):
         super().__init__('t02_chat_lieu_giat_ui_thieu_du_lieu', 'T02', 10, description='Hỏi chất liệu / giặt ủi khi catalog không có trường giặt ủi')
 
     def select(self, view: Any) -> list[Any]:
-        # Products without washing/ironing instructions in description
-        return [p for p in view.catalog.products.values() if 'ủi' not in (p.get('description') or '').lower() and 'giặt' not in (p.get('description') or '').lower()]
+        # s02_004: chỉ hỏi thiếu dữ liệu ủi trên quần áo; care cũng là nguồn dữ liệu như description.
+        return [p for p in view.catalog.products.values()
+                if any(k in str(p.get('category', '')).lower() for k in ('áo', 'quần', 'thời trang'))
+                and all('ủi' not in (p.get(field) or '').lower() for field in ('care', 'description'))]
 
     def build(self, slot: Any, rng: random.Random, case_index: int, style: str, view: Any = None) -> tuple[dict[str, Any], list[Brief]]:
         cid = f"t02_{case_index:03d}_{self.template_id}"
