@@ -296,4 +296,9 @@ for cls in _TEMPLATE_CLASSES:
     inst = cls()
     TEMPLATES[inst.template_id] = inst
 
+# Sinh sau cùng để giữ nguyên RNG và mọi phiếu của 1.200 ca cũ.
+from .t14_handoff import T14_TEMPLATES
+for inst in T14_TEMPLATES:
+    TEMPLATES[inst.template_id] = inst
+
 __all__ = ['BaseTemplate', 'Brief', 'SftView', 'TEMPLATES']

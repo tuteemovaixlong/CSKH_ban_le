@@ -260,8 +260,13 @@ def regrade_record_v3(record, case, calls):
             flags.append('over_tool_budget')
         if 'action' in expect and turn.get('action') != expect['action']:
             failures.append(f"turn {k}: action is {turn.get('action')!r}, expected {expect['action']!r}")
-        if 'human_support' in expect and ('request_human_support' in called) != expect['human_support']:
-            failures.append(f"turn {k}: human support was {'' if 'request_human_support' in called else 'not '}requested, "
+        handoffs = [t for t in turn.get('tools') or []
+                    if t.get('name') == 'request_human_support' and t.get('name') not in refused]
+        if any('status' not in t for t in handoffs):
+            flags.append('handoff_status_unknown')
+        handoff_ok = any(t.get('status', 'ok') == 'ok' for t in handoffs)
+        if 'human_support' in expect and handoff_ok != expect['human_support']:
+            failures.append(f"turn {k}: human support was {'' if handoff_ok else 'not '}requested, "
                             'expected the opposite')
         wanted_oa = expect.get('order_action') or {}
         for m in msgs:

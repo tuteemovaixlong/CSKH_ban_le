@@ -92,7 +92,7 @@ def validate_train_case(case: dict[str, Any]) -> dict[str, Any]:
 
     check(
         isinstance(name, str)
-        and bool(re.fullmatch(r't(0[1-9]|1[0-2])_[0-9]{3}_[a-z0-9_]+', name))
+        and bool(re.fullmatch(r't(0[1-9]|1[0-2]|14)_[0-9]{3}_[a-z0-9_]+', name))
         and len(name) <= 60,
         'id',
         'expected tNN_NNN_description, <=60 chars',
@@ -142,6 +142,11 @@ def validate_train_case(case: dict[str, Any]) -> dict[str, Any]:
     norm['meta'].pop('slot_key', None)
     norm['meta'].pop('intent', None)
     norm['meta'].pop('utterance_writers', None)
+    # Dùng bộ kiểm cấu trúc S07 cho T14, không mở rộng hợp đồng bộ đo S01–S12.
+    if category == 't14':
+        norm['id'] = 's07' + norm['id'][3:]
+        norm['category'] = 's07'
+        norm['meta']['suite'] = 'S07'
 
     # If user utterances are placeholders (e.g. empty), eval_dataset_v2 requires text length >= 2
     # Temporarily substitute dummy text if turn['user'] is placeholder to pass structural checks

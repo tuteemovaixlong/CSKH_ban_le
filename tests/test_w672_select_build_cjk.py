@@ -573,15 +573,16 @@ class TestW672BuildAndCjk(unittest.TestCase):
             self.assertIn('từ nhăn xong', joined_news)              # thêm cách cả hai bên
             self.assertIn('áo bị lắm.', joined_news)                # (xóa) gộp khoảng trắng hai bên
 
-            # 3) Kiểm dòng phủ không áp được -> sft_build dừng có lỗi (vì có other_entry của t99_other!)
+            # W6.7.3 F: dòng của run ngoài selection được bỏ qua và liệt kê.
             build_fail_dir = root / 'build_fail'
             code_fail, _, err_fail = _run_module(
                 sft_build, '--selection', str(fx['sel_path']), '--cases', str(fx['cases_path']),
                 '--out-dir', str(build_fail_dir), '--owner-edits', str(edits_path),
             )
-            self.assertEqual(code_fail, 2)
-            self.assertIn('không áp được', err_fail)
-            self.assertFalse((build_fail_dir / 'train.jsonl').exists())
+            self.assertEqual(code_fail, 0, err_fail)
+            stats_unused = json.loads((build_fail_dir / 'stats.json').read_text(encoding='utf-8'))
+            self.assertTrue(stats_unused['unused_owner_edits'])
+            self.assertTrue((build_fail_dir / 'train.jsonl').exists())
 
             # 4) Ghi tệp lớp phủ sạch (chỉ 7 dòng của t08) -> chạy sft_build
             clean_edits_path = root / 'clean_edits.jsonl'
