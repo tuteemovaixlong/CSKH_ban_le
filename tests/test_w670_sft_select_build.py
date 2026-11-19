@@ -637,8 +637,9 @@ class TestW670SftSelectAndBuild(unittest.TestCase):
                 'khong_chac',
             )
 
-            # 4. EXPORT ROUND 2 --after adj1
-            # c1 and c4 already have Tier A -> skipped; c2 exports deepseek#1 (A_code, ranked ahead of qwen#3 B_code under P1); c3 exports qwen#2 (B_code)
+            # 4. EXPORT ROUND 2 --after adj1 (luật W6.7.2 mục A: Qwen trước, chỉ A_code, 3 lớp q_next/ds_pair/q_second)
+            # - c1 và c4 đã có Tier A Qwen và còn A_code DeepSeek chưa chấm -> xuất lớp ds_pair
+            # - c2 (Tier C) và c3 (Tier B) không còn A_code Qwen chưa chấm (chỉ còn B_code hoặc DeepSeek) -> không xuất
             judge2 = root / 'judge_r2'
             code, _ = self._run_select(
                 'export', '--scores', str(scores_path), '--out', str(judge2),
@@ -648,23 +649,72 @@ class TestW670SftSelectAndBuild(unittest.TestCase):
             map2 = json.loads((judge2 / 'map.json').read_text(encoding='utf-8'))
             self.assertEqual(
                 sorted(map2['candidates'].keys()),
-                ['t04_003_khong_tier_a#qwen#2', 't08_002_da_luot_doi_chu_de#deepseek#1'],
+                ['t01_001_tra_don_delivered#deepseek#1', 't11_004_staff_case_assist#deepseek#1'],
             )
+            self.assertEqual(map2['candidates']['t01_001_tra_don_delivered#deepseek#1']['cls'], 'ds_pair')
+            self.assertEqual(map2['candidates']['t11_004_staff_case_assist#deepseek#1']['cls'], 'ds_pair')
+            self.assertEqual(map2['after'], [str(adj1_path.resolve())])
+            packets2_raw = ''.join(p.read_text(encoding='utf-8') for p in sorted((judge2 / 'packets').glob('batch-*.jsonl')))
+            self.assertNotIn('ds_pair', packets2_raw)
+            self.assertNotIn('q_next', packets2_raw)
             self._write_verdicts(judge2, 'A', map2, lambda iid, it: {'item_id': iid, 'verdict': 'dat', 'quote': it['text'][:20], 'reason': 'Đạt.'})
             self._write_verdicts(judge2, 'B', map2, lambda iid, it: {'item_id': iid, 'verdict': 'dat', 'quote': it['text'][:20], 'reason': 'Đạt.'})
             adj2_path = root / 'adjudicated_r2.json'
             code, _ = self._run_select('import', '--judge-dir', str(judge2), '--scores', str(scores_path), '--out', str(adj2_path))
             self.assertEqual(code, 0)
             adj2 = json.loads(adj2_path.read_text(encoding='utf-8'))
-            # c2 deepseek#1 is A_code -> Tier A!; c3 qwen#2 is B_code -> Tier B!
-            self.assertEqual(adj2['candidates']['t08_002_da_luot_doi_chu_de#deepseek#1']['tier'], 'A')
-            self.assertEqual(adj2['candidates']['t04_003_khong_tier_a#qwen#2']['tier'], 'B')
+            self.assertEqual(adj2['candidates']['t01_001_tra_don_delivered#deepseek#1']['tier'], 'A')
+            self.assertEqual(adj2['candidates']['t11_004_staff_case_assist#deepseek#1']['tier'], 'A')
 
-            # 5. SELECT (strict Tier A only)
-            sel_path = root / 'selection.json'
+            # 5. SELECT --max-per-case 1 (giữ hành vi 1 mẫu/ca cũ: Qwen trước, DeepSeek fallback)
+            # Kiểm trực tiếp trên adj1 + adj2 (c1, c4 đều chọn Qwen dù DeepSeek cũng Tier A; c2, c3 bị bỏ)
+            sel_r2_path = root / 'selection_r2_one.json'
             code, _ = self._run_select(
                 'select', '--scores', str(scores_path),
                 '--adjudicated', str(adj1_path), str(adj2_path),
+                '--max-per-case', '1',
+                '--out', str(sel_r2_path),
+            )
+            self.assertEqual(code, 0)
+            sel_r2 = json.loads(sel_r2_path.read_text(encoding='utf-8'))
+            self.assertEqual(
+                {s['case_id']: (s['source_model'], s['run'], s['tier'], s['role']) for s in sel_r2['selected']},
+                {
+                    't01_001_tra_don_delivered': ('qwen', 4, 'A', 'primary'),
+                    't11_004_staff_case_assist': ('qwen', 1, 'A', 'primary'),
+                },
+            )
+            self.assertEqual(
+                {d['case_id']: d['reason'] for d in sel_r2['dropped']},
+                {'t08_002_da_luot_doi_chu_de': 'not_judged_yet', 't04_003_khong_tier_a': 'no_tier_a_judged'},
+            )
+
+            # Bổ sung phiếu Tier A cho c2 deepseek#1 để kiểm DeepSeek fallback khi Qwen không có Tier A + kiểm sft_build
+            adj_c2_ds_path = root / 'adjudicated_c2_ds.json'
+            adj_c2_ds_path.write_text(json.dumps({
+                'round': 3,
+                'judge_dir': str(root / 'judge_r3'),
+                'scores_path': str(scores_path),
+                'agreement_ab': {'items': 0, 'agreed': 0, 'percent': None, 'kappa': None},
+                'verdicts': {},
+                'candidates': {
+                    't08_002_da_luot_doi_chu_de#deepseek#1': {
+                        'case_id': 't08_002_da_luot_doi_chu_de',
+                        'model': 'deepseek',
+                        'run': 1,
+                        'code_tier': 'A_code',
+                        'rank': 1,
+                        'item_ids': [],
+                        'tier': 'A',
+                    },
+                },
+            }, ensure_ascii=False), encoding='utf-8')
+
+            sel_path = root / 'selection.json'
+            code, _ = self._run_select(
+                'select', '--scores', str(scores_path),
+                '--adjudicated', str(adj1_path), str(adj2_path), str(adj_c2_ds_path),
+                '--max-per-case', '1',
                 '--out', str(sel_path),
             )
             self.assertEqual(code, 0)
@@ -679,12 +729,12 @@ class TestW670SftSelectAndBuild(unittest.TestCase):
             self.assertEqual([d['case_id'] for d in sel['dropped']], ['t04_003_khong_tier_a'])
             self.assertEqual(sel['dropped'][0]['reason'], 'no_tier_a_judged')
 
-            # SELECT with --allow-b
+            # SELECT with --allow-b --max-per-case 1
             sel_b_path = root / 'selection_b.json'
             code, _ = self._run_select(
                 'select', '--scores', str(scores_path),
-                '--adjudicated', str(adj1_path), str(adj2_path),
-                '--allow-b', '--out', str(sel_b_path),
+                '--adjudicated', str(adj1_path), str(adj2_path), str(adj_c2_ds_path),
+                '--allow-b', '--max-per-case', '1', '--out', str(sel_b_path),
             )
             self.assertEqual(code, 0)
             sel_b = json.loads(sel_b_path.read_text(encoding='utf-8'))
