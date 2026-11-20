@@ -856,6 +856,7 @@ def export_judge_round(
     batch_size: int = DEFAULT_BATCH_SIZE,
     max_tool_chars: int = DEFAULT_MAX_TOOL_CHARS,
     exclude_templates: set[str] | list[str] | None = None,
+    ds_next: bool = False,
 ) -> dict[str, Any]:
     # Giữ mặc định 3.000 để tái lập vòng 1; owner có thể chọn 8.000 ở vòng 2 / trọng tài.
     rubric_text(max_tool_chars)  # kiểm tham số trước khi ghi bất kỳ tệp nào
@@ -906,9 +907,11 @@ def export_judge_round(
 
             picked: list[tuple[str, dict[str, Any]]] = []
             if best_tier_a is None:
-                # Lớp q_next: ca chưa có Tier A -> A_code Qwen chưa chấm, rank tốt nhất; không có thì không xuất.
+                # Lớp q_next: ca chưa có Tier A -> A_code Qwen chưa chấm, rank tốt nhất; không có thì xét ds_next nếu bật cờ.
                 if unjudged_qwen:
                     picked.append(('q_next', unjudged_qwen[0]))
+                elif ds_next and unjudged_ds:
+                    picked.append(('ds_next', unjudged_ds[0]))
             elif best_tier_a['model'] == 'qwen':
                 # Lớp ds_pair: Tier A tốt nhất của ca là Qwen -> A_code DeepSeek chưa chấm, rank tốt nhất.
                 if unjudged_ds:
@@ -2361,6 +2364,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_exp.add_argument('--base-map', type=Path, default=None, help='Đường dẫn map.json gốc tùy chọn khi --arbiter')
     p_exp.add_argument('--exclude-templates', nargs='+', action='append', default=None,
                        help='Danh sách tên khung cần loại trừ (không ghim cứng trong code)')
+    p_exp.add_argument('--ds-next', action='store_true',
+                       help='Ở vòng >= 2, xuất thêm lớp ds_next (DeepSeek A_code đầu tiên chưa chấm) khi ca chưa có Tier A/S và hết Qwen A_code')
     p_exp.add_argument('--seed', type=int, default=DEFAULT_SEED)
     p_exp.add_argument('--batch-size', type=int, default=DEFAULT_BATCH_SIZE)
     p_exp.add_argument('--max-tool-chars', type=int, default=argparse.SUPPRESS,
@@ -2473,6 +2478,7 @@ def main(argv: list[str] | None = None) -> int:
                 batch_size=args.batch_size,
                 max_tool_chars=args.max_tool_chars,
                 exclude_templates=args.exclude_templates,
+                ds_next=args.ds_next,
             )
             extra = f" {info['by_class']}" if 'by_class' in info else ''
             print(
