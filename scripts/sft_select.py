@@ -505,8 +505,11 @@ def score_runs(
         repo_shas[model] = sha
         excluded = global_exclusions | read_exclusions(spec.get('exclude_cases'))
         logs = _read_jsonl(Path(spec['hint_log'])) if spec.get('hint_log') else []
-        verified_requests = {(row.get('case_id'), row.get('turn'), row.get('request_sha256'))
-                             for row in logs if row.get('hinted') is True}
+        verified_requests = {
+            (row.get('case_id'), row.get('turn'), row[field])
+            for row in logs if row.get('hinted') is True
+            for field in ('request_sha256', 'trace_request_sha256') if row.get(field)
+        }
         for record in merged.get('scenarios') or []:
             cid = record['id']
             if cid not in cases:
