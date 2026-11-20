@@ -69,10 +69,13 @@ def _load_calls_for_models(
         run_dirs.update({k: v for k, v in extra_run_dirs.items() if v})
     calls_by_model: dict[str, dict[tuple[Any, Any, Any], list[dict[str, Any]]]] = {}
     for model in sorted(models):
+        if 'runs' in scores_data:
+            calls_by_model[model] = sft_select._score_calls(scores_data, model)
+            continue
         rdir = run_dirs.get(model)
         if not rdir:
             raise ValueError(f'Thiếu run_dir cho model {model!r}')
-        _, _, calls = eval_regrade.load_run(Path(rdir))
+        calls = sft_select.load_mapped_trace_calls(Path(rdir))
         calls_by_model[model] = calls
     return calls_by_model
 

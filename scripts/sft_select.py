@@ -42,10 +42,10 @@ DEFAULT_BATCH_SIZE = 25
 DEFAULT_TIER_S_BATCH_SIZE = 20
 
 # Hằng số dùng chung W6.7.2 — theo quyết định owner ngày 19/11/2026:
-# - 5 bộ khó ưu tiên lấy mẫu thứ hai (DeepSeek Tier A trước, không có thì Qwen khác độ giống < 0,85).
-HARD_SUITES = frozenset({'T05', 'T06', 'T08', 'T11', 'T12'})
-# - Hai bộ dễ áp trần mẫu thứ hai chặt hơn (<= 25% số ca có mẫu chính của khung).
-EASY_TIGHT = frozenset({'T09', 'T10'})
+# - W6.7.3: 4 bộ khó; T11 chỉ lấy mẫu thứ hai qua Tier S của chính ca đó.
+HARD_SUITES = frozenset({'T05', 'T06', 'T08', 'T12'})
+# - T09/T10/T14 áp trần mẫu thứ hai chặt hơn (<= 25% số ca có mẫu chính của khung).
+EASY_TIGHT = frozenset({'T09', 'T10', 'T14'})
 # - Trần số ca có mẫu thứ hai theo khung: 50% khung thường, 25% cho T09/T10.
 SECOND_CAP = 0.5
 SECOND_CAP_TIGHT = 0.25
@@ -460,6 +460,8 @@ def _parse_run_specs(specs: list[str]) -> dict[str, Path]:
 def score_runs(
     cases_path: Path,
     run_specs: dict[str, Path],
+    *, runs: list[dict[str, Any]] | None = None,
+    exclude_cases: Path | None = None,
 ) -> dict[str, Any]:
     cases_list = _read_jsonl(cases_path)
     cases = {c['id']: c for c in cases_list}
@@ -470,17 +472,83 @@ def score_runs(
     repo_shas: dict[str, str | None] = {}
     by_case_runs: dict[str, list[dict[str, Any]]] = defaultdict(list)
 
-    for model in sorted(run_specs, key=lambda m: MODEL_PRIORITY.get(m, 99)):
-        rdir = run_specs[model]
+    specs = runs if runs is not None else [
+        {'model': m, 'dir': str(run_specs[m]), 'run_offset': 0, 'hinted': False}
+        for m in sorted(run_specs, key=lambda m: MODEL_PRIORITY.get(m, 99))]
+    if runs is not None and (not isinstance(runs, list) or not runs):
+        raise ValueError('--runs phải chứa danh sách lượt chạy không rỗng')
+
+    def read_exclusions(path: Path | str | None) -> set[str]:
+        if path is None:
+            return set()
+        return {line.strip() for line in Path(path).read_text(encoding='utf-8-sig').splitlines() if line.strip()}
+
+    global_exclusions = read_exclusions(exclude_cases)
+    occupied = set()
+    run_owners = {}
+    labels = set()
+    for spec_no, spec in enumerate(specs):
+        model, rdir = spec['model'], Path(spec['dir'])
+        if model not in MODEL_PRIORITY:
+            raise ValueError(f'Model không hợp lệ: {model}')
+        offset = spec.get('run_offset', 0)
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise ValueError('run_offset phải là số nguyên không âm')
+        if runs is not None:
+            if ('run_offset' not in spec or not isinstance(spec.get('label'), str) or not spec['label']
+                    or spec['label'] in labels or not isinstance(spec.get('hinted'), bool)):
+                raise ValueError('Mỗi lượt chạy cần label duy nhất và hinted kiểu boolean')
+            labels.add(spec['label'])
         run_dir_strings[model] = str(rdir.resolve())
         merged, manifest, calls = eval_regrade.load_run(rdir)
         sha = (merged.get('provenance') or {}).get('git_sha') or manifest.get('git_sha')
         repo_shas[model] = sha
+        excluded = global_exclusions | read_exclusions(spec.get('exclude_cases'))
+        logs = _read_jsonl(Path(spec['hint_log'])) if spec.get('hint_log') else []
+        verified_requests = {(row.get('case_id'), row.get('turn'), row.get('request_sha256'))
+                             for row in logs if row.get('hinted') is True}
         for record in merged.get('scenarios') or []:
             cid = record['id']
             if cid not in cases:
                 raise ValueError(f'Case {cid!r} in {rdir} not found in {cases_path}')
-            by_case_runs[cid].append(_evaluate_run_record(model, record, cases[cid], calls))
+            shifted_run = record['run'] + offset
+            key = (model, cid, shifted_run)
+            owner = (model, shifted_run)
+            if key in occupied or (owner in run_owners and run_owners[owner] != spec_no):
+                raise ValueError(f'Số run trùng theo model: {model}#{shifted_run}')
+            occupied.add(key)
+            run_owners[owner] = spec_no
+            cand = _evaluate_run_record(model, record, cases[cid], calls)
+            reasons = ['stale_input'] if cid in excluded else []
+            for number, turn in enumerate(record.get('turns') or [], 1):
+                current = cases[cid].get('turns', [])
+                if number <= len(current) and 'user' in turn and turn['user'] != current[number-1]['user']:
+                    reasons.append('stale_input')
+                traces = calls.get((cid, record['run'], number), [])
+                # Vết cũ thiếu trường user không đủ dữ kiện để kết luận đầu vào đổi.
+                # Không suy ngược từ prompt đã định dạng/che dữ liệu của ứng dụng.
+                if spec.get('hinted'):
+                    text = json.dumps([t.get('response') or {} for t in traces], ensure_ascii=False)
+                    text += json.dumps({k: v for k, v in turn.items() if k in ('answer', 'draft_reply', 'reasoning', 'reasoning_content')}, ensure_ascii=False)
+                    if re.search(r'GOI_Y|HET_GOI_Y|gợi ý sinh dữ liệu|\bhint\b', text, re.I):
+                        reasons.append('hint_leak')
+                    # Mỗi lời gọi đã chèn phải có dấu vết khớp hash thân yêu cầu gốc.
+                    from scripts.sft_hint_proxy import sha256
+                    verified = bool(traces) and all(
+                        (cid, number, sha256(json.dumps(t.get('request') or {}, ensure_ascii=False).encode('utf-8')))
+                        in verified_requests for t in traces)
+                    if not verified:
+                        cand['flags'].append('hint_unverified')
+            if reasons:
+                cand['code_tier'] = 'rejected'
+                cand['reject_reasons'] = list(dict.fromkeys(cand['reject_reasons'] + reasons))
+            elif cand['flags'] and cand['code_tier'] == 'A_code':
+                cand['code_tier'] = 'B_code'
+            cand['flags'] = list(dict.fromkeys(cand['flags']))
+            if runs is not None:
+                cand.update(run=shifted_run, source_run=record['run'], run_dir=str(rdir.resolve()),
+                            hinted=spec['hinted'], run_label=spec['label'], repo_sha=sha)
+            by_case_runs[cid].append(cand)
 
     case_entries: dict[str, Any] = {}
     for cid, case in cases.items():
@@ -501,13 +569,45 @@ def score_runs(
             'candidates': eligible,
             'rejected': rejected,
         }
+        if runs is not None:
+            case_entries[cid]['modes'] = [t.get('mode') for t in case.get('turns', []) if t.get('mode')]
 
-    return {
+    result = {
         'cases_path': str(cases_path.resolve()),
         'run_dirs': run_dir_strings,
         'repo_sha': repo_shas,
         'cases': case_entries,
     }
+    if runs is not None:
+        result['runs'] = specs
+    return result
+
+
+def load_mapped_trace_calls(run_dir: Path, run_offset: int = 0):
+    """Ánh xạ vết dùng chung cho chấm/chọn, CJK và dựng SFT; không sửa vết nguồn."""
+    result = defaultdict(list)
+    for path in sorted(run_dir.glob('shard-*.jsonl')):
+        for call in _read_jsonl(path):
+            source_run = call.get('run')
+            run = source_run + run_offset if run_offset else source_run
+            result[(call.get('case_id'), run, call.get('turn'))].append(call)
+    return result
+
+
+def _score_calls(scores: dict[str, Any], model: str):
+    """Khóa vết theo run toàn cục; vết nguồn vẫn giữ số run gốc."""
+    if 'runs' not in scores:
+        return load_mapped_trace_calls(Path(scores['run_dirs'][model]))
+    result = {}
+    for spec in scores['runs']:
+        if spec['model'] != model:
+            continue
+        calls = load_mapped_trace_calls(Path(spec['dir']), spec['run_offset'])
+        for key, values in calls.items():
+            if key in result:
+                raise ValueError(f'Vết run trùng: {key}')
+            result[key] = values
+    return result
 
 
 def _extract_turn_steps(
@@ -826,8 +926,7 @@ def export_judge_round(
     # Load traces for needed models only
     calls_by_model: dict[str, dict[tuple[Any, Any, Any], list[dict[str, Any]]]] = {}
     for model in {c['model'] for c in selected_candidates}:
-        rdir = Path(scores_data['run_dirs'][model])
-        _, _, calls = eval_regrade.load_run(rdir)
+        calls = _score_calls(scores_data, model)
         calls_by_model[model] = calls
 
     rng = random.Random(seed)
@@ -1177,7 +1276,7 @@ def export_arbiter(
     needed_models = {base_map['items'][iid]['model'] for iid in sent}
     calls_by_model: dict[str, dict[tuple[Any, Any, Any], list[dict[str, Any]]]] = {}
     for model in needed_models:
-        _, _, calls = eval_regrade.load_run(Path(scores_data['run_dirs'][model]))
+        calls = _score_calls(scores_data, model)
         calls_by_model[model] = calls
 
     # Chặn an toàn: dựng lại ở số ký tự gốc phải trùng text trong map.json gốc, lệch thì dừng trước khi ghi tệp.
@@ -1372,7 +1471,7 @@ def export_tier_s(
     needed_models = {m for _, p, o in pair_specs for m in (p['model'], o['model'])}
     calls_by_model: dict[str, dict[tuple[Any, Any, Any], list[dict[str, Any]]]] = {}
     for model in needed_models:
-        _, _, calls = eval_regrade.load_run(Path(scores_data['run_dirs'][model]))
+        calls = _score_calls(scores_data, model)
         calls_by_model[model] = calls
 
     rng = random.Random(seed)
@@ -1709,7 +1808,7 @@ def _make_selection_entry(
     used_fallback: bool = False,
 ) -> dict[str, Any]:
     model = cand['model']
-    return {
+    result = {
         'case_id': case_entry['case_id'],
         'template': case_entry.get('template', ''),
         'suite': case_entry.get('suite', ''),
@@ -1723,14 +1822,18 @@ def _make_selection_entry(
         'rule': rule,
         'code_tier': cand['code_tier'],
         'allow_b_fallback': used_fallback,
-        'run_dir': scores_data['run_dirs'][model],
-        'repo_sha': (scores_data.get('repo_sha') or {}).get(model),
+        'run_dir': cand.get('run_dir') or scores_data['run_dirs'][model],
+        'repo_sha': cand.get('repo_sha') or (scores_data.get('repo_sha') or {}).get(model),
         'turns_count': int(case_entry.get('turns_count') or cand.get('turns_count') or 1),
         'rail_turns': list(cand.get('rail_turns') or []),
         'tool_calls': cand['tool_calls'],
         'completion_tokens': cand['completion_tokens'],
         'answer_chars': cand['answer_chars'],
     }
+    for key in ('hinted', 'run_label', 'source_run'):
+        if key in cand:
+            result[key] = cand[key]
+    return result
 
 
 def select_candidates(
@@ -1742,6 +1845,8 @@ def select_candidates(
     max_per_case: int = 2,
     seed: int = DEFAULT_SEED,
     exclude_templates: set[str] | list[str] | None = None,
+    suite_caps: dict[str, float] | None = None,
+    mode_caps: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     if max_per_case < 1:
         raise ValueError('--max-per-case phải lớn hơn hoặc bằng 1')
@@ -1794,16 +1899,21 @@ def select_candidates(
             # Mẫu chính: Qwen tốt nhất (S trước A, rồi rank); không có Qwen Tier A -> DeepSeek tốt nhất (S trước A, rồi rank).
             tier_a_sorted = sorted(
                 tier_a_cands,
-                key=lambda c: (
+                key=lambda c: ((
+                    0 if _eff_tier(cid, c) == 'S' else 1,
+                    bool(c.get('hinted', False)),
+                    MODEL_PRIORITY.get(c['model'], 99), c['rank'],
+                ) if any(x.get('hinted') for x in tier_a_cands) else (
                     MODEL_PRIORITY.get(c['model'], 99),
                     0 if _eff_tier(cid, c) == 'S' else 1,
+                    bool(c.get('hinted', False)),
                     c['rank'],
-                ),
+                )),
             )
             chosen = tier_a_sorted[0]
             chosen_tier = _eff_tier(cid, chosen)
         elif allow_b:
-            for cand in candidates:
+            for cand in sorted(candidates, key=lambda c: (bool(c.get('hinted', False)), c['rank'])):
                 adj_c = adjudicated_by_cand.get((cid, cand['model'], int(cand['run'])))
                 if adj_c and adj_c.get('tier') == 'B':
                     chosen = cand
@@ -1832,7 +1942,7 @@ def select_candidates(
         if max_per_case >= 2 and chosen_tier in ('A', 'S'):
             others = sorted(
                 [c for c in tier_a_cands if c is not chosen],
-                key=lambda c: (0 if _eff_tier(cid, c) == 'S' else 1, c['rank']),
+                key=lambda c: (0 if _eff_tier(cid, c) == 'S' else 1, bool(c.get('hinted', False)), c['rank']),
             )
             suite = case_entry.get('suite', '')
             is_hard = suite in HARD_SUITES
@@ -1963,8 +2073,61 @@ def select_candidates(
             ds_total -= 1
             total_samples -= 1
 
+    proportion_drops = []
+    if suite_caps or mode_caps:
+        for cap in list((suite_caps or {}).values()) + list((mode_caps or {}).values()):
+            if not 0 < cap <= 1:
+                raise ValueError('Trần tỉ trọng phải thuộc (0, 1]')
+        cases_for_modes = {c['id']: c for c in _read_jsonl(Path(scores_data['cases_path']))}
+
+        def modes(item):
+            case = cases_for_modes[item['case_id']]
+            return [t.get('mode', '') for n, t in enumerate(case.get('turns') or [], 1)
+                    if n not in item.get('rail_turns', [])]
+
+        while True:
+            entries = list(primaries_by_case.values()) + list(seconds_by_case.values())
+            suite_counts, mode_counts = Counter(), Counter()
+            total = 0
+            for item in entries:
+                ms = modes(item)
+                total += len(ms)
+                suite_counts[item['suite']] += len(ms)
+                mode_counts.update(f"{item['suite']}:{mode}" for mode in ms)
+            over_suites = {s for s, cap in (suite_caps or {}).items()
+                           if total and Fraction(suite_counts[s], total) > Fraction(str(cap))}
+            over_modes = {key for key, cap in (mode_caps or {}).items()
+                          if suite_counts[key.split(':')[0]] and
+                          Fraction(mode_counts[key], suite_counts[key.split(':')[0]]) > Fraction(str(cap))}
+            if not over_suites and not over_modes:
+                break
+            victims = [item for item in entries if 'draft' not in modes(item) and (
+                item['suite'] in over_suites or any(f"{item['suite']}:{mode}" in over_modes for mode in modes(item)))]
+            if not victims:
+                break  # draft được bảo vệ dù trần không thể đạt.
+            def drop_rank(item):
+                over_mode = any(f"{item['suite']}:{mode}" in over_modes for mode in modes(item))
+                cand = next(c for c in scores_data['cases'][item['case_id']]['candidates']
+                            if c['model'] == item['model'] and c['run'] == item['run'])
+                return (0 if over_mode else 1, 0 if item['role'] == 'second' else 1,
+                        -cand['rank'], _hash_tiebreak(seed, item['case_id']))
+            victim = min(victims, key=drop_rank)
+            # Không giữ mẫu thứ hai khi mẫu chính của chính ca ấy bị cắt.
+            to_drop = [victim]
+            if victim['role'] == 'primary' and victim['case_id'] in seconds_by_case:
+                to_drop.insert(0, seconds_by_case[victim['case_id']])
+            for item in to_drop:
+                target = seconds_by_case if item['role'] == 'second' else primaries_by_case
+                target.pop(item['case_id'])
+                proportion_drops.append({**item, 'modes': modes(item)})
+                if item['role'] == 'primary':
+                    dropped.append({'case_id': item['case_id'], 'template': item['template'],
+                                    'suite': item['suite'], 'reason': 'proportion_cap', 'detail': modes(item)})
+
     selected: list[dict[str, Any]] = []
     for cid in case_order:
+        if cid not in primaries_by_case:
+            continue
         selected.append(primaries_by_case[cid])
         if cid in seconds_by_case:
             selected.append(seconds_by_case[cid])
@@ -2028,6 +2191,14 @@ def select_candidates(
             'rounds': round_agreements,
         },
     }
+    if suite_caps or mode_caps:
+        selection['summary']['proportion_caps'] = {
+            'suite': suite_caps or {}, 'mode': mode_caps or {}, 'dropped': proportion_drops,
+            'dropped_samples': sum(len(item['modes']) for item in proportion_drops),
+            'by_suite_mode_role': dict(sorted(Counter(
+                f"{item['suite']}|{mode}|{item['role']}" for item in proportion_drops for mode in item['modes']).items())),
+            'remaining_over_suites': sorted(over_suites), 'remaining_over_modes': sorted(over_modes),
+        }
     _write_json(out_path, selection)
     report_path = out_path.parent / 'selection_report.md'
     report_path.write_text(_render_selection_report(selection), encoding='utf-8')
@@ -2134,8 +2305,30 @@ def _render_selection_report(selection: dict[str, Any]) -> str:
             detail = f' ({", ".join(d["detail"])})' if d.get('detail') else ''
             lines.append(f'- `{d["case_id"]}` [{d["suite"]}/{d["template"]}]: `{d["reason"]}`{detail}')
 
+    if 'proportion_caps' in s:
+        caps_info = s['proportion_caps']
+        lines += ['', '## Trần tỉ trọng theo bộ × chế độ × vai', '',
+                  f'- Số mẫu bỏ: {caps_info["dropped_samples"]}',
+                  f'- Phân bổ: {caps_info["by_suite_mode_role"]}',
+                  f'- Bộ còn vượt trần do bảo vệ draft: {caps_info["remaining_over_suites"]}',
+                  f'- Chế độ còn vượt trần do bảo vệ draft: {caps_info["remaining_over_modes"]}']
     lines.append('')
     return '\n'.join(lines)
+
+
+def _parse_caps(specs, *, mode=False):
+    result = {}
+    for spec in specs or []:
+        for piece in spec.split(','):
+            key, sep, value = piece.partition('=')
+            pattern = r'T\d{2}:(?:draft|ask|summary)' if mode else r'T\d{2}'
+            if not sep or not re.fullmatch(pattern, key) or key in result:
+                raise ValueError(f'Trần tỉ trọng không hợp lệ hoặc trùng: {piece}')
+            ratio = float(value)
+            if not 0 < ratio <= 1:
+                raise ValueError(f'Trần tỉ trọng phải thuộc (0, 1]: {piece}')
+            result[key] = ratio
+    return result
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -2148,9 +2341,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_score = sub.add_parser('score', help='Chấm code, gắn cờ và xếp hạng ứng viên từ kết quả runner')
     p_score.add_argument('--cases', required=True, type=Path, help='Tệp ca huấn luyện JSONL')
-    p_score.add_argument('--run', action='append', required=True, metavar='MODEL=DIR',
+    p_score.add_argument('--run', '--run-dir', action='append', default=[], metavar='MODEL=DIR',
                          help='Thư mục kết quả theo model, ví dụ qwen=dir hoặc deepseek=dir')
     p_score.add_argument('--out', required=True, type=Path, help='Đường dẫn scores.json đầu ra')
+    p_score.add_argument('--runs', type=Path, help='Danh sách lượt chạy có offset và nhãn gợi ý')
+    p_score.add_argument('--exclude-cases', type=Path, help='Danh sách case_id loại vì đầu vào cũ, áp cho mọi thư mục')
 
     p_exp = sub.add_parser('export', help='Xuất gói giám khảo ẩn danh cho vòng 1, vòng 2 hoặc trọng tài (--arbiter)')
     p_exp.add_argument('--scores', required=True, type=Path, help='Tệp scores.json')
@@ -2206,6 +2401,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_sel.add_argument('--exclude-templates', nargs='+', action='append', default=None,
                        help='Danh sách tên khung cần loại trừ')
     p_sel.add_argument('--out', required=True, type=Path, help='Tệp selection.json đầu ra')
+    p_sel.add_argument('--suite-cap', action='append', default=[], help='Ví dụ T11=0.12')
+    p_sel.add_argument('--mode-cap', action='append', default=[], help='Ví dụ T11:summary=0.25,T11:ask=0.45')
 
     return parser
 
@@ -2234,8 +2431,11 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.command == 'score':
+            if bool(args.run) == bool(args.runs):
+                raise ValueError('Chọn đúng một trong --run-dir và --runs')
             run_specs = _parse_run_specs(args.run)
-            result = score_runs(args.cases, run_specs)
+            runs = json.loads(args.runs.read_text(encoding='utf-8')) if args.runs else None
+            result = score_runs(args.cases, run_specs, runs=runs, exclude_cases=args.exclude_cases)
             _write_json(args.out, result)
             total = len(result['cases'])
             with_cand = sum(1 for c in result['cases'].values() if c['candidates'])
@@ -2349,6 +2549,8 @@ def main(argv: list[str] | None = None) -> int:
                 max_per_case=args.max_per_case,
                 seed=args.seed,
                 exclude_templates=args.exclude_templates,
+                suite_caps=_parse_caps(args.suite_cap),
+                mode_caps=_parse_caps(args.mode_cap, mode=True),
             )
             s = sel['summary']
             print(

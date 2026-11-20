@@ -39,7 +39,7 @@ class AlignWithEvalTest(unittest.TestCase):
         self.assertEqual(c['turns'][1]['expect']['max_tool_calls'], 5)   # S11 tóm tắt
 
     def test_handoff_either_drops_check_tool_and_final_rows(self):
-        c = mk_case('t07_xin_hotline_zalo',
+        c = mk_case('t12_xin_zalo',
                     [{'expect': {'tools_called': ['request_human_support'], 'human_support': True, 'max_tool_calls': 4,
                                  'answer_not': ['chưa có thông tin']}}],
                     final={'rows': {'order_action_requests': 0, 'handoff_episodes': 1}})
@@ -127,7 +127,7 @@ class RegradeV3Test(unittest.TestCase):
         self.assertEqual(v['flags_v3'], ['over_tool_budget'])
 
     def test_removed_handoff_expectation_drops_runner_failures(self):
-        old = mk_case('t03_hoa_don_vat', [{'expect': {'human_support': False, 'answer_all': ['SIM-O-1']}}],
+        old = mk_case('t12_xin_zalo', [{'expect': {'human_support': False, 'answer_all': ['SIM-O-1']}}],
                       final={'rows': {'handoff_episodes': 0}})
         new = copy.deepcopy(old)
         sc.align_with_eval(new)

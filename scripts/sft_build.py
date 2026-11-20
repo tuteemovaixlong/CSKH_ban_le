@@ -23,6 +23,7 @@ if str(ROOT) not in sys.path:
 
 from scripts import eval_regrade, sft_dataset, sft_select  # noqa: E402
 from scripts.run_agent_scenarios import percentile  # noqa: E402
+from scripts.sft_eval_values import eval_values  # noqa: E402
 
 DEFAULT_SEED = 20261203
 DEFAULT_VAL_RATIO = 0.1
@@ -90,12 +91,8 @@ def load_eval_utterance_sets(suites_dir: Path | None = None) -> tuple[set[str], 
     return norm_v1, norm_v2
 
 
-def _load_trace_calls(run_dir: Path) -> dict[tuple[Any, Any, Any], list[dict[str, Any]]]:
-    calls: dict[tuple[Any, Any, Any], list[dict[str, Any]]] = defaultdict(list)
-    for path in sorted(run_dir.glob('shard-*.jsonl')):
-        for call in _read_jsonl(path):
-            calls[(call.get('case_id'), call.get('run'), call.get('turn'))].append(call)
-    return calls
+def _load_trace_calls(run_dir: Path, run_offset: int = 0) -> dict[tuple[Any, Any, Any], list[dict[str, Any]]]:
+    return sft_select.load_mapped_trace_calls(run_dir, run_offset)
 
 
 def _load_merged_turns(run_dir: Path) -> dict[tuple[str, int], list[dict[str, Any]]]:
@@ -335,14 +332,19 @@ def build_sft_dataset(
     selection = json.loads(selection_path.read_text(encoding='utf-8'))
     cases_by_id = {c['id']: c for c in _read_jsonl(cases_path)}
     eval_v1, eval_v2 = load_eval_utterance_sets(eval_suites_dir)
+    forbidden_eval_values = sorted(eval_values(eval_suites_dir))
 
     all_edits: list[dict[str, Any]] = _load_owner_edits(owner_edits_path) if owner_edits_path is not None else []
+    selected_run_keys = {(entry['case_id'], entry.get('model') or entry['source_model'], int(entry['run']))
+                         for entry in selection.get('selected') or []}
+    unused_owner_edits = [edit for edit in all_edits
+                          if (edit['case_id'], edit['model'], edit['run']) not in selected_run_keys]
     edits_by_run: dict[tuple[str, str, int], list[int]] = defaultdict(list)
     for idx, edit in enumerate(all_edits):
         edits_by_run[(edit['case_id'], edit['model'], edit['run'])].append(idx)
     applied_counts = [0] * len(all_edits)
 
-    trace_cache: dict[Path, dict[tuple[Any, Any, Any], list[dict[str, Any]]]] = {}
+    trace_cache: dict[tuple[Path, int], dict[tuple[Any, Any, Any], list[dict[str, Any]]]] = {}
     merged_cache: dict[Path, dict[tuple[str, int], list[dict[str, Any]]]] = {}
     kept: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
@@ -351,6 +353,7 @@ def build_sft_dataset(
     for entry in selection.get('selected') or []:
         cid = entry['case_id']
         run_no = int(entry['run'])
+        source_run = int(entry.get('source_run', run_no))
         model = entry.get('model') or entry['source_model']
         seen_case_entries[cid] += 1
         role = entry.get('role') or ('primary' if seen_case_entries[cid] == 1 else 'second')
@@ -371,9 +374,10 @@ def build_sft_dataset(
         if not rdir_str:
             raise ValueError(f'Missing run_dir for model {model!r} in selection')
         rdir = Path(rdir_str).resolve()
-        if rdir not in trace_cache:
-            trace_cache[rdir] = _load_trace_calls(rdir)
-        calls = trace_cache[rdir]
+        trace_key = (rdir, run_no - source_run)
+        if trace_key not in trace_cache:
+            trace_cache[trace_key] = _load_trace_calls(rdir, trace_key[1])
+        calls = trace_cache[trace_key]
 
         n_turns = len(case.get('turns') or [])
         case_meta = case.get('meta') or {}
@@ -393,7 +397,7 @@ def build_sft_dataset(
             if not turn_calls:
                 if rdir not in merged_cache:
                     merged_cache[rdir] = _load_merged_turns(rdir)
-                if _is_merged_rail_turn(merged_cache[rdir], cid, run_no, turn_no):
+                if _is_merged_rail_turn(merged_cache[rdir], cid, source_run, turn_no):
                     rejected.append({
                         'case_id': cid, 'model': model, 'run': run_no, 'turn': turn_no,
                         'role': role, 'sample_id': sample_id,
@@ -432,6 +436,9 @@ def build_sft_dataset(
                 'content': '' if final_content is None else str(final_content),
                 'reasoning_content': '' if final_reasoning is None else str(final_reasoning),
             })
+            from scripts.sft_hint_proxy import START, END
+            if any(marker in json.dumps(norm_msgs, ensure_ascii=False) for marker in (START, END)):
+                raise ValueError(f'{sample_id}: mẫu còn chuỗi đánh dấu gợi ý')
 
             # W6.7.2 mục E: áp lớp phủ owner edits trên bản sao trong bộ nhớ (không sửa vết gốc).
             owner_edit_tag = (
@@ -439,6 +446,19 @@ def build_sft_dataset(
                 if matching_edit_indices
                 else None
             )
+            if any(marker in json.dumps(norm_msgs, ensure_ascii=False) for marker in (START, END)):
+                raise ValueError(f'{sample_id}: mẫu còn chuỗi đánh dấu gợi ý sau lớp phủ')
+
+            # G: kiểm mọi tin, gồm system, tool và suy luận; không chỉ lời khách.
+            serialized_messages = json.dumps(norm_msgs, ensure_ascii=False)
+            eval_hits = [value for value in forbidden_eval_values if value in serialized_messages]
+            if eval_hits:
+                rejected.append({
+                    'case_id': cid, 'model': model, 'run': run_no, 'turn': turn_no,
+                    'role': role, 'sample_id': sample_id,
+                    'reason': 'eval_value', 'eval_values': eval_hits,
+                })
+                continue
 
             # W6.7.2 mục E: chặn mẫu còn chữ Hán/Nhật/Hàn trong văn bản trợ lý sau lớp phủ.
             cjk_spans = _find_assistant_cjk(norm_msgs)
@@ -477,6 +497,8 @@ def build_sft_dataset(
                 'repo_sha': entry.get('repo_sha') or (selection.get('repo_sha') or {}).get(model),
             }
             sample = {'messages': norm_msgs, 'tools': tools, 'meta': sample_meta}
+            if 'hinted' in entry:
+                sample_meta['hinted'] = bool(entry['hinted'])
 
             # Check overlap with 250 eval customer utterances
             user_texts = _extract_user_texts(norm_msgs, case, turn_no)
@@ -506,6 +528,7 @@ def build_sft_dataset(
     # Mỗi dòng trong --owner-edits phải áp được ít nhất một lần; nếu không thì dừng có lỗi trước khi ghi tệp.
     unapplied = [
         all_edits[idx] for idx, cnt in enumerate(applied_counts) if cnt == 0
+        and (all_edits[idx]['case_id'], all_edits[idx]['model'], all_edits[idx]['run']) in selected_run_keys
     ]
     if unapplied:
         preview = ', '.join(
@@ -636,6 +659,11 @@ def build_sft_dataset(
             'items': rejected,
         },
     }
+    if any('hinted' in entry for entry in selection.get('selected') or []):
+        stats['by_hinted'] = {str(value).lower(): sum(s['meta'].get('hinted', False) == value for s in kept)
+                              for value in (False, True)}
+    if owner_edits_path is not None:
+        stats['unused_owner_edits'] = unused_owner_edits
     _write_json(out_dir / 'stats.json', stats)
     (out_dir / 'build_report.md').write_text(_render_build_report(stats), encoding='utf-8')
     return stats
@@ -669,6 +697,10 @@ def _render_build_report(stats: dict[str, Any]) -> str:
     ]
     for src, info in stats['by_source'].items():
         lines.append(f'| `{src}` | {info["count"]} | {100 * info["ratio"]:.1f}% |')
+    if 'by_hinted' in stats:
+        lines += ['', f'- Theo gợi ý (`hinted`): {stats["by_hinted"]}']
+    if 'unused_owner_edits' in stats:
+        lines += ['', f'- Lớp phủ ngoài selection (`unused_owner_edits`): {stats["unused_owner_edits"]}']
 
     lines += [
         '',
@@ -726,6 +758,16 @@ def _render_build_report(stats: dict[str, Any]) -> str:
         lines.append(f'| `{reason}` | {cnt} |')
     if not rj['by_reason']:
         lines.append('| (không có) | 0 |')
+
+    eval_items = [item for item in (rj.get('items') or []) if item.get('reason') == 'eval_value']
+    if eval_items:
+        lines += ['', f'### Danh sách mẫu loại vì `eval_value` ({len(eval_items)})', '']
+        for item in eval_items:
+            values = ', '.join(f'`{value}`' for value in item['eval_values'])
+            lines.append(
+                f"- `{item['sample_id']}` "
+                f"(`{item['case_id']}|{item['model']}|{item['run']}`, lượt {item['turn']}): {values}"
+            )
 
     cjk_items = stats.get('cjk_rejected') or []
     if cjk_items:

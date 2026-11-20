@@ -220,6 +220,12 @@ def validate_utterance(
     if not txt:
         return False, "Câu trả lời rỗng"
 
+    if brief.get('rail_pass'):
+        from retailops.workflow.safety import safety_gate
+        rail = safety_gate(txt)
+        if rail is not None:
+            return False, f"Bị rào an toàn chặn ({rail.rail})"
+
     style = brief.get("style", "chuan")
     is_khong_dau = style == "khong_dau"
 

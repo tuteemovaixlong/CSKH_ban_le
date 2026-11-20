@@ -27,6 +27,7 @@ class Brief:
     notes: str = ""
     injection: str | None = None
     setup_msg_index: int = 0
+    rail_pass: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         must = list(self.must_include)
@@ -73,6 +74,8 @@ class Brief:
             data["injection"] = self.injection
         if self.setup_msg_index != 0:
             data["setup_msg_index"] = self.setup_msg_index
+        if self.rail_pass:
+            data["rail_pass"] = True
         return data
 
 

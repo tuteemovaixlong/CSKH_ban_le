@@ -271,10 +271,10 @@ class TestW670SftFixtureCases(unittest.TestCase):
         phải tái lập đúng từng byte từ repo. Đổi khung làm đổi bộ dữ liệu → cập nhật SHA ở đây có chủ đích."""
         archived = {
             # W6.7.1: sửa 4 khung lỗi và 2 giá trị giả; giữ thước v4 (ca cũ 8ee92db6…).
-            'cases_sft_v1.jsonl': '34a852bb21ce7145f19bab8544e52004ab7980e566c3d27c94fc6d10c74a79bb',
+            'cases_sft_v1.jsonl': '56d47a64908b37f2ec7ded513fca80ba1f81ce64f9ac2cbc74e064a24c44a11e',
             # 112 phiếu đổi: 92 cần Glimmer viết lại, 10 chỉ injection, 10 email cấm (giữ đệm nếu sạch).
             # Phiếu v3 gốc acc6850a…; không tạo hay sửa lời khách.
-            'briefs_sft_v1.jsonl': '068480e623e15374ea18ede4c4cd816537a4baf3343d610a2c0e73db84e7cd48',
+            'briefs_sft_v1.jsonl': 'ed8b290b9d251297fd2d7fa66d49cf16bfd10ac41013e09118dc4cbfd3fff3a4',
         }
         # W6.7.1: thêm 6 khung vào nhóm làm lại; những khung khác phải giữ byte phiếu cũ.
         redo = {'t01_van_don_giao_that_bai', 't08_san_pham_roi_ve_don', 't08_hoi_bao_hanh_roi_mo_doi'}
@@ -284,18 +284,18 @@ class TestW670SftFixtureCases(unittest.TestCase):
         kept_v3_sha = '1d5cc4a4e2d8c1c9621efab46f8cc7b2e67f856af09a1e6e87269a93cdda9553'
         with tempfile.TemporaryDirectory(prefix='test-sft-archive-') as td:
             cases, briefs, _ = generate_cases(td)   # generate tự dừng nếu có phiếu mâu thuẫn
-            self.assertEqual((len(cases), len(briefs)), (1200, 1406))
+            self.assertEqual((len(cases), len(briefs)), (1380, 1646))
             for name, sha in archived.items():
                 data = (Path(td) / name).read_bytes()
                 self.assertNotIn(b'\r\n', data, f'{name} must be written with LF on every OS')
                 self.assertEqual(hashlib.sha256(data).hexdigest(), sha, f'{name} differs from the archived W6.7 dataset')
             kept = [line for line in (Path(td) / 'briefs_sft_v1.jsonl').read_text(encoding='utf-8').splitlines()
-                    if line.strip() and json.loads(line)['template'] not in redo]
+                    if line.strip() and json.loads(line)['template'] not in redo and json.loads(line)['suite'] != 'T14']
             self.assertEqual(len(kept), 1226)
             self.assertEqual(hashlib.sha256(('\n'.join(kept) + '\n').encode('utf-8')).hexdigest(), kept_v3_sha,
                              'phiếu ngoài các khung làm lại phải giữ nguyên từng byte')
             outside_six = b''.join(line for line in (Path(td) / 'briefs_sft_v1.jsonl').read_bytes().splitlines(keepends=True)
-                                   if json.loads(line)['template'] not in six)
+                                   if json.loads(line)['template'] not in six and json.loads(line)['suite'] != 'T14')
             self.assertEqual(len(outside_six.splitlines()), 1282)
             self.assertEqual(hashlib.sha256(outside_six).hexdigest(),
                              'a53329a65ebde2092afed100734a2fb453fdc58c1476837a5d81a7543b0976a1',
@@ -411,7 +411,7 @@ class TestW670SftFixtureCases(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='test-gap-fill-') as td:
             cases, _, _ = generate_cases(td, pilot=None, seed=20261202)
         suites = Counter(c['meta']['suite'] for c in cases)
-        self.assertEqual(len(cases), 1200)
+        self.assertEqual(len(cases), 1380)
         self.assertEqual((suites['T01'], suites['T02']), (90, 100))
         tools = Counter(n for c in cases for t in c['turns'] for n in t['expect'].get('tools_called', []))
         # 18/11: t01_van_don_giao_that_bai nhận track_shipment | get_order như s01_009/s01_010 (nhóm tools_any)

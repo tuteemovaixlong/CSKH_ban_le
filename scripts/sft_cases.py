@@ -49,9 +49,9 @@ def relax_tool_caps(case: dict[str, Any]) -> None:
 EVAL_CASE_ASSIST_CAP = {'summary': 5, 'ask': 5, 'draft': 6}        # S11: tóm tắt/hỏi 5, soạn nháp 6
 ORDER_LOOKUP_TOOLS = ['get_order', 'track_shipment', 'list_orders']  # S01: tools_any, không bắt riêng get_order
 CASE_ORDER_TOOLS = ['get_case_order', 'list_case_orders']            # S11: list_case_orders cũng trả trạng thái đơn
-# S07/S03/S12: xin hotline/Zalo → bộ đo KHÔNG chuyển (s07_007, s07_008, s03_019) hoặc để tự do (s12_014); hóa đơn VAT công ty
-# → bộ đo chuyển (s12_013) còn câu hỏi chung để tự do (s03_020); khách bực có cả hai chiều (s07_010 / s07_003) → để tự do.
-HANDOFF_EITHER = {'t07_xin_hotline_zalo', 't12_xin_zalo', 't03_hoa_don_vat', 't07_ngon_ngu_gay_gat', 't07_phan_nan_lap_lai'}
+# W6.7.3: hỏi hotline/VAT không chuyển; phàn nàn lặp lại bắt buộc chuyển.
+# Khách bực lần đầu phải tra đơn, chuyển tùy model; xin Zalo T12 giữ tự do.
+HANDOFF_EITHER = {'t12_xin_zalo', 't07_ngon_ngu_gay_gat'}
 # Bộ đo không bao giờ cấm "chưa có thông tin" hay "[KB:" (câu đúng thường chứa chúng); bộ đo cấm câu bịa hành động.
 DROP_ANSWER_NOT = {'chưa có thông tin', '[KB:'}
 ANSWER_NOT_REPLACE = {   # cấm từ đơn → cấm câu sai cụ thể (từ đơn bắt nhầm câu đúng nhắc chính sách/đơn khác)
@@ -67,11 +67,38 @@ SAFE_FABRICATION = ['em đã duyệt', 'em đã đổi']   # không câu trả l
 NO_ORDER_LOOKUP = {'t12_nghi_tet_khong_du_lieu'}   # khách đã nhận hàng, chỉ hỏi lịch nghỉ Tết
 
 
-def align_with_eval(case: dict[str, Any]) -> None:
+def align_with_eval(case: dict[str, Any], view: Any = None) -> None:
     """Đưa kỳ vọng của khung về quy ước bộ đo 250 ca (xem các hằng ở trên). Không đổi phiếu, không đổi lời khách."""
     tmpl = (case.get('meta') or {}).get('template')
+    if tmpl == 't07_xin_hotline_zalo':
+        # Ngoại lệ owner W6.7.3: chỉ 12 ca hotline được thêm knowledge;
+        # runner --knowledge real dùng KB thật nên không đổi đầu vào lượt chạy thật.
+        case['knowledge'] = [(view or SftView()).get_knowledge_chunk('store_hours_contact.md')]
     for turn in case.get('turns') or []:
         expect = turn.get('expect') or {}
+        if tmpl == 't07_xin_hotline_zalo':
+            expect.update(tools_called=['search_knowledge'],
+                          tools_not_called=['request_human_support'], human_support=False,
+                          sources=['store_hours_contact.md'],
+                          answer_any=[['không có hotline', 'không có số điện thoại', 'không có tổng đài',
+                                       'không có Zalo', 'không có số liên hệ'],
+                                      ['khung chat', 'tại đây', 'cuộc trò chuyện này']],
+                          answer_not=['đã chuyển cuộc trò chuyện', 'hotline của shop là',
+                                      'số điện thoại của shop là', 'Zalo của shop là'])
+            turn['fake_model'] = [
+                {'call': [{'name': 'search_knowledge', 'arguments': {'query': 'giờ làm việc liên hệ hotline'}}]},
+                {'say': 'Shop không có hotline; anh/chị liên hệ tại khung chat này '
+                        '[{{last_tool.results.0.citation_id}}].'}]
+            case['final_state']['rows']['handoff_episodes'] = 0
+        elif tmpl == 't03_hoa_don_vat':
+            expect.update(tools_not_called=['request_human_support'], human_support=False,
+                          answer_any=[['sàn', 'nhà cung cấp hóa đơn', 'trang của sàn', 'không cần gửi']])
+            turn['fake_model'][-1]['say'] = (
+                'Hóa đơn do sàn hoặc nhà cung cấp hóa đơn phát hành; tự nhập thông tin trên trang của sàn '
+                'trong vòng 7 ngày. Không cần gửi mã số thuế qua chat [{{last_tool.results.0.citation_id}}].')
+        elif tmpl == 't07_ngon_ngu_gay_gat':
+            expect['tools_any'] = [['list_orders', 'get_order', 'track_shipment']]
+            turn['fake_model'].insert(0, {'call': [{'name': 'list_orders', 'arguments': {}}]})
         called = list(expect.get('tools_called') or [])
         groups = [list(g) for g in expect.get('tools_any') or []]
         for name, family in (('get_order', ORDER_LOOKUP_TOOLS), ('get_case_order', CASE_ORDER_TOOLS)):
@@ -153,7 +180,7 @@ def generate_cases(
             all_briefs.extend(b.to_dict() for b in briefs)
 
     for c in all_cases:
-        align_with_eval(c)
+        align_with_eval(c, view=view)
         relax_tool_caps(c)
 
     # Assert each template uses any single order at most 3 times
@@ -272,7 +299,7 @@ def generate_cases(
         "# Báo Cáo Sinh Khung Ca SFT v1",
         f"- Tổng số ca: **{len(all_cases)}**",
         f"- Tổng số phiếu lời khách (briefs): **{len(all_briefs)}**",
-        f"- Chế độ: **{'Pilot ' + str(pilot) if pilot else 'Toàn phần 1.200 ca'}**",
+        f"- Chế độ: **{'Pilot ' + str(pilot) if pilot else 'Toàn phần ' + str(len(all_cases)) + ' ca'}**",
         f"- Seed: `{seed}`",
         f"- Số khung sử dụng: **{len(template_counts)}**",
         "",
@@ -329,8 +356,15 @@ def check_cases(out_dir: Path | str, cases_path: Path | str | None = None) -> di
 
     for idx, c in enumerate(cases, 1):
         c_to_run = c
-        if not has_pdfium:
+        if (c.get('meta') or {}).get('suite') == 'T14':
             c_to_run = copy.deepcopy(c)
+            for number, turn in enumerate(c_to_run.get('turns') or [], 1):
+                if not turn.get('user'):
+                    # Mã định danh chỉ dùng cho giao thức test fake, không phải lời khách;
+                    # không ghi trở lại bộ ca hay bộ đệm lời khách.
+                    turn['user'] = f"{c['id']}#t{number}"
+        if not has_pdfium:
+            c_to_run = copy.deepcopy(c_to_run)
             # Flatten text_pdf attachments into message text for environments without pypdfium2
             if c_to_run.get('actor') == 'staff_case_assist':
                 for msg in c_to_run.get('case_setup', {}).get('customer_messages', []):
