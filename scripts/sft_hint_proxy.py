@@ -20,6 +20,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from scripts.eval_telemetry import safe_payload
+
 START = '<<<GOI_Y_SINH_DU_LIEU>>>'
 END = '<<<HET_GOI_Y>>>'
 
@@ -135,9 +137,13 @@ def make_server(listen: tuple[str, int], upstream: str, index: HintIndex, log: P
             info = {'case_id': None, 'turn': None, 'hinted': False, 'hint_sha256': None, 'reason': 'no_hint'}
             if self.command == 'POST' and path == '/v1/chat/completions':
                 try:
-                    payload, info = index.inject(json.loads(body), scope=scope)
+                    raw_payload = json.loads(body)
+                    payload, info = index.inject(raw_payload, scope=scope)
                     if info['hinted']:
                         body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+                    info['trace_request_sha256'] = sha256(
+                        json.dumps(safe_payload(raw_payload), ensure_ascii=False).encode('utf-8')
+                    )
                 except (ValueError, TypeError, KeyError):
                     self.send_error(400, explain='Yêu cầu JSON không hợp lệ')
                     return
