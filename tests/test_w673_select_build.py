@@ -2,9 +2,7 @@
 import copy
 import csv
 import json
-import subprocess
 import tempfile
-import types
 import unittest
 from pathlib import Path
 
@@ -15,21 +13,13 @@ from scripts import sft_select as select, sft_build as build, sft_cjk as cjk
 from scripts.sft_hint_proxy import START, END, sha256
 from tests.test_w670_sft_select_build import _build_synthetic_workspace, _make_turn_trace
 from tests.test_w672_select_build_cjk import _mk_cand, _write_scores
+from tests.w673_regression_pins import assert_snapshot, snapshot
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def write(path, obj):
     path.write_text(json.dumps(obj, ensure_ascii=False), encoding='utf-8')
-
-
-def baseline_module(name):
-    # 084b39b chứa nguyên bộ ca v4; trước W6.7.3, origin/main chỉ thêm tài liệu/W6.7.2.
-    source = subprocess.check_output(['git','show', f'0780af0207c858c993e6d745923feb000bdf1e4d:scripts/{name}.py'], cwd=ROOT).decode('utf-8')
-    mod = types.ModuleType('baseline_' + name)
-    mod.__file__ = str(ROOT/'scripts'/f'{name}.py')
-    exec(compile(source, mod.__file__, 'exec'), mod.__dict__)
-    return mod
 
 
 class PipelineTests(unittest.TestCase):
@@ -75,19 +65,15 @@ class PipelineTests(unittest.TestCase):
             legacy_selected=[select._make_selection_entry(legacy['cases'][cid],c,legacy,tier='A',role='primary',rule=None)
                              for c in legacy['cases'][cid]['candidates']]
             write(root/'old_selection',{'selected':legacy_selected})
-            old=baseline_module('sft_cjk')
-            old.export_cjk(root/'old_scores',root/'old_selection',root/'old_sheet')
-            before=(root/'old_sheet').read_bytes();(root/'old_sheet').unlink()
             cjk.export_cjk(root/'old_scores',root/'old_selection',root/'old_sheet')
-            self.assertEqual(before,(root/'old_sheet').read_bytes())
+            assert_snapshot(self, 'pipeline_cjk_export', (root/'old_sheet').read_bytes(), root)
             with (root/'old_sheet').open(encoding='utf-8-sig',newline='') as fh:old_rows=list(csv.DictReader(fh))
             for row in old_rows:row['sua_thanh']=chr(65)
             with (root/'old_filled').open('w',encoding='utf-8-sig',newline='') as fh:
                 writer=csv.DictWriter(fh,fieldnames=cjk.CSV_FIELDS);writer.writeheader();writer.writerows(old_rows)
-            old.import_cjk(root/'old_filled',root/'old_scores',root/'old_edits')
-            before=(root/'old_edits').read_bytes();(root/'old_edits').unlink()
-            cjk.import_cjk(root/'old_filled',root/'old_scores',root/'old_edits')
-            self.assertEqual(before,(root/'old_edits').read_bytes())
+            code, result = cjk.import_cjk(root/'old_filled',root/'old_scores',root/'old_edits')
+            self.assertEqual(code, 0, result)
+            assert_snapshot(self, 'pipeline_cjk_import', (root/'old_edits').read_bytes(), root)
 
     def test_unused_owner_edits_and_selected_unapplied_error(self):
         with tempfile.TemporaryDirectory() as td:
@@ -167,26 +153,16 @@ class PipelineTests(unittest.TestCase):
     def test_legacy_score_export_import_select_build_bytes(self):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td);fx=_build_synthetic_workspace(root)
-            old=baseline_module('sft_select');oldbuild=baseline_module('sft_build')
             dirs={'qwen':fx['qwen_dir'],'deepseek':fx['ds_dir']}
-            self.assertEqual(select.score_runs(fx['cases_path'],dirs),old.score_runs(fx['cases_path'],dirs))
             write(root/'scores',select.score_runs(fx['cases_path'],dirs))
-            # Cùng đường dẫn để so sánh nguyên byte, kể cả đường dẫn ghi trong map/report.
+            assert_snapshot(self, 'pipeline_scores', (root/'scores').read_bytes(), root)
             for round_no in (1,2):
                 out=root/f'judge{round_no}'
                 after=None if round_no==1 else [root/'adj']
-                snapshots=[]
-                for module in (old,select):
-                    module.export_judge_round(root/'scores',out,round_no=round_no,after_paths=after)
-                    snapshots.append({str(p.relative_to(out)):p.read_bytes() for p in out.rglob('*') if p.is_file()})
-                    for p in out.rglob('*'):
-                        if p.is_file():p.unlink()
-                    for p in sorted(out.rglob('*'),key=lambda p:len(p.parts),reverse=True):
-                        if p.is_dir():p.rmdir()
-                    out.rmdir()
-                self.assertEqual(snapshots[0],snapshots[1])
+                select.export_judge_round(root/'scores',out,round_no=round_no,after_paths=after)
+                files={p.relative_to(out).as_posix():p.read_bytes() for p in out.rglob('*') if p.is_file()}
+                assert_snapshot(self, 'pipeline_round_'+str(round_no), files, root)
                 if round_no==1:
-                    # Nhập cùng phiếu giả bằng cả hai phiên bản, so byte adjudicated.
                     judge=root/'import_judge'
                     select.export_judge_round(root/'scores',judge)
                     mapping=json.loads((judge/'map.json').read_text(encoding='utf-8'))
@@ -195,22 +171,32 @@ class PipelineTests(unittest.TestCase):
                         for batch,ids in mapping['batches'].items():
                             rows=[dict(item_id=iid,verdict='dat',quote=mapping['items'][iid]['text'][:25],reason=chr(82)) for iid in ids]
                             (folder/f'{batch}.jsonl').write_text('\n'.join(json.dumps(r,ensure_ascii=False) for r in rows),encoding='utf-8')
-                    old.import_judge_round(judge,root/'scores',root/'imported')
-                    imported=(root/'imported').read_bytes()
-                    select.import_judge_round(judge,root/'scores',root/'imported')
-                    self.assertEqual(imported,(root/'imported').read_bytes())
+                    code, result = select.import_judge_round(judge,root/'scores',root/'imported')
+                    self.assertEqual(code, 0, result)
+                    assert_snapshot(self, 'pipeline_import', (root/'imported').read_bytes(), root)
                     scores=json.loads((root/'scores').read_text())
                     judged={f"{cid}#{c['model']}#{c['run']}":dict(case_id=cid,model=c['model'],run=c['run'],tier='A')
                             for cid,entry in scores['cases'].items() for c in entry['candidates']}
                     write(root/'adj',{'candidates':judged})
-            old.select_candidates(root/'scores',[root/'adj'],root/'selection',max_per_case=1)
-            before=(root/'selection').read_bytes()
             select.select_candidates(root/'scores',[root/'adj'],root/'selection',max_per_case=1)
-            self.assertEqual(before,(root/'selection').read_bytes())
-            oldbuild.build_sft_dataset(root/'selection',fx['cases_path'],root/'build')
-            before={p.name:p.read_bytes() for p in (root/'build').iterdir()}
+            assert_snapshot(self, 'pipeline_select', {
+                'selection':(root/'selection').read_bytes(),
+                'selection_report.md':(root/'selection_report.md').read_bytes(),
+            }, root)
             build.build_sft_dataset(root/'selection',fx['cases_path'],root/'build')
-            self.assertEqual(before,{p.name:p.read_bytes() for p in (root/'build').iterdir()})
+            assert_snapshot(self, 'pipeline_build', {
+                p.name:p.read_bytes() for p in (root/'build').iterdir() if p.is_file()
+            }, root)
+
+    def test_pinned_bytes_normalize_only_workspace_paths_and_newlines(self):
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            first=json.dumps({'path':str(Path(a)/'run'),'content':chr(65)*3},indent=2).encode()
+            second=json.dumps({'path':str(Path(b)/'run'),'content':chr(65)*3},indent=2).encode()
+            self.assertEqual(snapshot(first,Path(a)),snapshot(second,Path(b)))
+            self.assertEqual(snapshot(first,Path(a)),snapshot(first.replace(b'\n',b'\r\n'),Path(a)))
+            changed=json.dumps({'path':str(Path(b)/'run'),'content':chr(66)*3},indent=2).encode()
+            self.assertNotEqual(snapshot(first,Path(a)),snapshot(changed,Path(b)))
+            self.assertNotEqual(snapshot(first,Path(a)),snapshot(second.replace(b'  ',b' '),Path(b)))
 
     def test_caps_no_draft_removed_and_unhinted_preferred(self):
         self.assertNotIn('T11',select.HARD_SUITES)

@@ -3,9 +3,7 @@ import contextlib
 import copy
 import io
 import json
-import subprocess
 import tempfile
-import types
 import unittest
 from pathlib import Path
 
@@ -16,8 +14,8 @@ if not (ROOT / 'scripts/sft_select.py').is_file():
 from scripts import sft_build as build, sft_select as select, sft_eval_values as values
 from tests.test_w670_sft_select_build import _make_turn_trace, _build_synthetic_workspace
 from tests import test_w671_sft_no_eval_values as fixture_check
+from tests.w673_regression_pins import assert_snapshot
 
-BASE = '0f21789f1a37dd99d38dc31d46fd3e930e6c3c85'
 
 
 def write_json(path, value):
@@ -26,14 +24,6 @@ def write_json(path, value):
 
 def write_lines(path, rows):
     path.write_text(''.join(json.dumps(r, ensure_ascii=False) + '\n' for r in rows), encoding='utf-8')
-
-
-def baseline(name):
-    source = subprocess.check_output(['git', 'show', f'{BASE}:scripts/{name}.py'], cwd=ROOT).decode('utf-8')
-    mod = types.ModuleType('before_g_' + name)
-    mod.__file__ = str(ROOT / 'scripts' / f'{name}.py')
-    exec(compile(source, mod.__file__, 'exec'), mod.__dict__)
-    return mod
 
 
 def staff_fixture(root):
@@ -77,10 +67,7 @@ class ExcludeCasesTests(unittest.TestCase):
             unfiltered = select.score_runs(root / 'cases', {}, runs=specs)
             self.assertEqual([c['run'] for c in unfiltered['cases'][cid]['candidates']], [1, 5])
             select._write_json(root / 'unfiltered', unfiltered)
-            before = (root / 'unfiltered').read_bytes()
-            old_select = baseline('sft_select')
-            old_select._write_json(root / 'unfiltered', old_select.score_runs(root / 'cases', {}, runs=specs))
-            self.assertEqual(before, (root / 'unfiltered').read_bytes())
+            assert_snapshot(self, 'g_runs_scores', (root / 'unfiltered').read_bytes(), root)
             specs[0]['exclude_cases'] = str(root / 'ids')
             filtered = select.score_runs(root / 'cases', {}, runs=specs)
             self.assertEqual([c['run'] for c in filtered['cases'][cid]['candidates']], [5])
@@ -98,10 +85,7 @@ class ExcludeCasesTests(unittest.TestCase):
                     '--run-dir', f'deepseek={root / "fresh"}', '--out', str(root / 'scores')]
             with contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(select.main(args), 0)
-            before = (root / 'scores').read_bytes()
-            old = baseline('sft_select')
-            old._write_json(root / 'scores', old.score_runs(root / 'cases', {'qwen': root / 'old', 'deepseek': root / 'fresh'}))
-            self.assertEqual(before, (root / 'scores').read_bytes())
+            assert_snapshot(self, 'g_legacy_scores', (root / 'scores').read_bytes(), root)
             with contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(select.main(args + ['--exclude-cases', str(root / 'ids')]), 0)
             result = json.loads((root / 'scores').read_text(encoding='utf-8'))['cases']
@@ -174,11 +158,10 @@ class EvalValueBuildTests(unittest.TestCase):
             selected = [select._make_selection_entry(entry, entry['candidates'][0], scores, tier='A', role='primary', rule=None)
                         for entry in scores['cases'].values() if entry['candidates']]
             write_json(root / 'selection', {'selected': selected})
-            old = baseline('sft_build')
-            old.build_sft_dataset(root / 'selection', fixture['cases_path'], root / 'built')
-            before = {p.name: p.read_bytes() for p in (root / 'built').iterdir()}
             build.build_sft_dataset(root / 'selection', fixture['cases_path'], root / 'built')
-            self.assertEqual(before, {p.name: p.read_bytes() for p in (root / 'built').iterdir()})
+            assert_snapshot(self, 'g_build', {
+                p.name:p.read_bytes() for p in (root / 'built').iterdir() if p.is_file()
+            }, root)
 
 
 if __name__ == '__main__':
