@@ -1,5 +1,7 @@
 # Báo cáo bổ sung G — Chặn vết cũ và giá trị giả của bộ đo
 
+[Bản sửa CI: test chạy được trong clone nông](SUA_CI_CLONE_NONG.md).
+
 Nhánh: `phase-r1-w6-7-3-khung-do`. Mốc trước G:
 `0f21789f1a37dd99d38dc31d46fd3e930e6c3c85`.
 SHA commit bổ sung được ghi trong tin bàn giao sau push.

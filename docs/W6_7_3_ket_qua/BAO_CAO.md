@@ -1,5 +1,7 @@
 # Báo cáo thực thi W6.7.3
 
+[Bản sửa CI: test chạy được trong clone nông](SUA_CI_CLONE_NONG.md).
+
 [Báo cáo bổ sung G: loại vết cũ và chặn giá trị giả](BO_SUNG_G.md). Kết quả dưới đây thuộc lượt A–F.
 
 Nhánh: `phase-r1-w6-7-3-khung-do`. Rẽ từ `origin/main` tại
