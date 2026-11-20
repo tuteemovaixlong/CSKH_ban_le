@@ -65,7 +65,7 @@ Không đọc lại dữ liệu thật v3, không sửa bộ đệm lời khách
 | `unittest tests.test_w673_stale_eval_values` | 5/5 qua |
 | `unittest discover -s tests -p "test_w673_*.py"` | 21/21 qua, gồm 180/180 ca T14 qua gateway giả |
 | `unittest discover -s tests -p "test_w672_*.py"` | 11/11 qua |
-| Nhóm bảy module hồi quy SFT/regrade/cache/export/no_eval_values ở 04 | 64 test qua, 1 test PDF bỏ qua vì thiếu pypdfium2 |
+| Nhóm bảy module hồi quy SFT/regrade/cache/export/no_eval_values ở 04 | 64 test, không lỗi; 1 test PDF bỏ qua vì thiếu pypdfium2 |
 | `test_audit_remediation` | 10/10 qua |
 | `build_agent_notebook.py --check` | Đồng bộ |
 | `check_docs_contract.py`, `git diff --check` | Qua |

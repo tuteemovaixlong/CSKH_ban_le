@@ -39,5 +39,3 @@ def eval_values(suites_dir: Path | None = None):
                 values.update(VALUE_RE.findall(text))
     return {v for v in values if len(v) >= 8
             and not v.startswith(('SIM-', 'KB:', 'P-')) and 'retailops.local' not in v}
-
-
