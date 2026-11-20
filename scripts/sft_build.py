@@ -23,6 +23,7 @@ if str(ROOT) not in sys.path:
 
 from scripts import eval_regrade, sft_dataset, sft_select  # noqa: E402
 from scripts.run_agent_scenarios import percentile  # noqa: E402
+from scripts.sft_eval_values import eval_values  # noqa: E402
 
 DEFAULT_SEED = 20261203
 DEFAULT_VAL_RATIO = 0.1
@@ -331,6 +332,7 @@ def build_sft_dataset(
     selection = json.loads(selection_path.read_text(encoding='utf-8'))
     cases_by_id = {c['id']: c for c in _read_jsonl(cases_path)}
     eval_v1, eval_v2 = load_eval_utterance_sets(eval_suites_dir)
+    forbidden_eval_values = sorted(eval_values(eval_suites_dir))
 
     all_edits: list[dict[str, Any]] = _load_owner_edits(owner_edits_path) if owner_edits_path is not None else []
     selected_run_keys = {(entry['case_id'], entry.get('model') or entry['source_model'], int(entry['run']))
@@ -446,6 +448,17 @@ def build_sft_dataset(
             )
             if any(marker in json.dumps(norm_msgs, ensure_ascii=False) for marker in (START, END)):
                 raise ValueError(f'{sample_id}: mẫu còn chuỗi đánh dấu gợi ý sau lớp phủ')
+
+            # G: kiểm mọi tin, gồm system, tool và suy luận; không chỉ lời khách.
+            serialized_messages = json.dumps(norm_msgs, ensure_ascii=False)
+            eval_hits = [value for value in forbidden_eval_values if value in serialized_messages]
+            if eval_hits:
+                rejected.append({
+                    'case_id': cid, 'model': model, 'run': run_no, 'turn': turn_no,
+                    'role': role, 'sample_id': sample_id,
+                    'reason': 'eval_value', 'eval_values': eval_hits,
+                })
+                continue
 
             # W6.7.2 mục E: chặn mẫu còn chữ Hán/Nhật/Hàn trong văn bản trợ lý sau lớp phủ.
             cjk_spans = _find_assistant_cjk(norm_msgs)
@@ -745,6 +758,16 @@ def _render_build_report(stats: dict[str, Any]) -> str:
         lines.append(f'| `{reason}` | {cnt} |')
     if not rj['by_reason']:
         lines.append('| (không có) | 0 |')
+
+    eval_items = [item for item in (rj.get('items') or []) if item.get('reason') == 'eval_value']
+    if eval_items:
+        lines += ['', f'### Danh sách mẫu loại vì `eval_value` ({len(eval_items)})', '']
+        for item in eval_items:
+            values = ', '.join(f'`{value}`' for value in item['eval_values'])
+            lines.append(
+                f"- `{item['sample_id']}` "
+                f"(`{item['case_id']}|{item['model']}|{item['run']}`, lượt {item['turn']}): {values}"
+            )
 
     cjk_items = stats.get('cjk_rejected') or []
     if cjk_items:

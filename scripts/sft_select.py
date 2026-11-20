@@ -461,6 +461,7 @@ def score_runs(
     cases_path: Path,
     run_specs: dict[str, Path],
     *, runs: list[dict[str, Any]] | None = None,
+    exclude_cases: Path | None = None,
 ) -> dict[str, Any]:
     cases_list = _read_jsonl(cases_path)
     cases = {c['id']: c for c in cases_list}
@@ -476,6 +477,13 @@ def score_runs(
         for m in sorted(run_specs, key=lambda m: MODEL_PRIORITY.get(m, 99))]
     if runs is not None and (not isinstance(runs, list) or not runs):
         raise ValueError('--runs phải chứa danh sách lượt chạy không rỗng')
+
+    def read_exclusions(path: Path | str | None) -> set[str]:
+        if path is None:
+            return set()
+        return {line.strip() for line in Path(path).read_text(encoding='utf-8-sig').splitlines() if line.strip()}
+
+    global_exclusions = read_exclusions(exclude_cases)
     occupied = set()
     run_owners = {}
     labels = set()
@@ -495,6 +503,7 @@ def score_runs(
         merged, manifest, calls = eval_regrade.load_run(rdir)
         sha = (merged.get('provenance') or {}).get('git_sha') or manifest.get('git_sha')
         repo_shas[model] = sha
+        excluded = global_exclusions | read_exclusions(spec.get('exclude_cases'))
         logs = _read_jsonl(Path(spec['hint_log'])) if spec.get('hint_log') else []
         verified_requests = {(row.get('case_id'), row.get('turn'), row.get('request_sha256'))
                              for row in logs if row.get('hinted') is True}
@@ -510,7 +519,7 @@ def score_runs(
             occupied.add(key)
             run_owners[owner] = spec_no
             cand = _evaluate_run_record(model, record, cases[cid], calls)
-            reasons = []
+            reasons = ['stale_input'] if cid in excluded else []
             for number, turn in enumerate(record.get('turns') or [], 1):
                 current = cases[cid].get('turns', [])
                 if number <= len(current) and 'user' in turn and turn['user'] != current[number-1]['user']:
@@ -2336,6 +2345,7 @@ def build_parser() -> argparse.ArgumentParser:
                          help='Thư mục kết quả theo model, ví dụ qwen=dir hoặc deepseek=dir')
     p_score.add_argument('--out', required=True, type=Path, help='Đường dẫn scores.json đầu ra')
     p_score.add_argument('--runs', type=Path, help='Danh sách lượt chạy có offset và nhãn gợi ý')
+    p_score.add_argument('--exclude-cases', type=Path, help='Danh sách case_id loại vì đầu vào cũ, áp cho mọi thư mục')
 
     p_exp = sub.add_parser('export', help='Xuất gói giám khảo ẩn danh cho vòng 1, vòng 2 hoặc trọng tài (--arbiter)')
     p_exp.add_argument('--scores', required=True, type=Path, help='Tệp scores.json')
@@ -2425,7 +2435,7 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError('Chọn đúng một trong --run-dir và --runs')
             run_specs = _parse_run_specs(args.run)
             runs = json.loads(args.runs.read_text(encoding='utf-8')) if args.runs else None
-            result = score_runs(args.cases, run_specs, runs=runs)
+            result = score_runs(args.cases, run_specs, runs=runs, exclude_cases=args.exclude_cases)
             _write_json(args.out, result)
             total = len(result['cases'])
             with_cand = sum(1 for c in result['cases'].values() if c['candidates'])

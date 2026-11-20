@@ -1,5 +1,7 @@
 # Báo cáo thực thi W6.7.3
 
+[Báo cáo bổ sung G: loại vết cũ và chặn giá trị giả](BO_SUNG_G.md). Kết quả dưới đây thuộc lượt A–F.
+
 Nhánh: `phase-r1-w6-7-3-khung-do`. Rẽ từ `origin/main` tại
 `0780af0207c858c993e6d745923feb000bdf1e4d`, sau `git fetch origin`.
 SHA đầu nhánh sau commit/push được ghi trong tin bàn giao đi kèm báo cáo này.
